@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 lgui = { path = "../..", default-features = false, features = ["renderer-skia-software", "widgets"] }
+icondata = "0.7"

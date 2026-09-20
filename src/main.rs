@@ -18,11 +18,24 @@ mod state;
 mod theme;
 mod ui;
 
+use lgui::icons::SvgIconRegistry;
 use lgui::prelude::*;
 use lgui::WinitApplication;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
+        .svg_icons(
+            SvgIconRegistry::new()
+                .with_icon("panel-left", icondata::LuPanelLeft)
+                .with_icon("git-branch", icondata::LuGitBranch)
+                .with_icon("search", icondata::LuSearch)
+                .with_icon("command", icondata::LuCommand)
+                .with_icon("play", icondata::LuPlay)
+                .with_icon("sparkles", icondata::LuSparkles)
+                .with_icon("square", icondata::LuSquare)
+                .with_icon("close", icondata::LuX)
+                .with_icon("minus", icondata::LuMinus),
+        )
         .provide(RendererKind::Skia(GraphicsPreference::Auto))
         .memory_options(MemoryOptions::unbounded(ImageCachePolicy::WhileVisible, false))
         .window_options(
