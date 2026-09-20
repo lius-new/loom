@@ -56,7 +56,7 @@ pub const DIFF_ADD_FG: Color = Color(0x6ee7b7);
 pub const GHOST: Color = Color(0x64748b);
 
 // ---- Layout metrics (px) ----------------------------------------------
-pub const TITLEBAR_H: f32 = 40.0;
+pub const TITLEBAR_H: f32 = 32.0;
 pub const TABS_H: f32 = 32.0;
 pub const STATUS_H: f32 = 24.0;
 pub const SIDEBAR_W: f32 = 224.0;

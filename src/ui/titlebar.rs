@@ -1,11 +1,11 @@
-//! Custom (frameless) title bar: project drawer toggle, git pill, command
-//! palette trigger, test-run pill, model selector, assistant toggle, and the
-//! three window controls (minimize / maximize / close) on the far right.
+//! Custom (frameless) title bar: project drawer toggle and git pill on the
+//! left, and the three window controls (minimize / maximize / close) on the
+//! far right.
 //!
 //! The bar is marked as a native window drag region; interactive children
 //! (the buttons) are excluded automatically by hit testing.
 
-use lgui::core::{ellipse, Color, IconStyle, UiElement, UiEventContext, UiId, precompiled};
+use lgui::core::{Color, IconStyle, UiElement, UiEventContext, UiId, precompiled};
 use lgui::prelude::{panel, text, Element, State, TextVerticalAlign, UiRect, VisualStyle, WindowMode};
 
 use crate::state::AppState;
@@ -22,18 +22,18 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     // ---- Left cluster --------------------------------------------------
     // Project drawer toggle
     let st = state.clone();
-    let proj = UiRect::new(rect.left + 14.0, rect.top + 8.0, rect.left + 86.0, rect.top + 32.0);
+    let proj = UiRect::new(rect.left + 14.0, rect.top + 4.0, rect.left + 86.0, rect.top + 28.0);
     let proj_btn = panel(proj, VisualStyle::default())
         .event_policy(lgui::core::EventPolicy::INTERACTIVE)
         .on_click(move || st.update(|app| app.show_drawer = !app.show_drawer))
         .child(icon(
             "titlebar.project",
             "panel-left",
-            UiRect::new(proj.left + 7.0, rect.top + 14.0, proj.left + 19.0, rect.top + 26.0),
+            UiRect::new(proj.left + 7.0, rect.top + 10.0, proj.left + 19.0, rect.top + 22.0),
             theme::ACCENT,
         ))
         .child(text(
-            UiRect::new(proj.left + 26.0, rect.top + 10.0, proj.right, rect.top + 30.0),
+            UiRect::new(proj.left + 26.0, rect.top + 6.0, proj.right, rect.top + 26.0),
             "Project",
             theme::sans_semibold(theme::ACCENT, theme::UI_SIZE)
                 .vertical_align(TextVerticalAlign::XCenter),
@@ -41,90 +41,22 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     bar = bar.child(proj_btn);
 
     // Git pill
-    let pill = UiRect::new(rect.left + 94.0, rect.top + 10.0, rect.left + 174.0, rect.top + 30.0);
+    let pill = UiRect::new(rect.left + 94.0, rect.top + 6.0, rect.left + 174.0, rect.top + 26.0);
     bar = bar.child(panel(pill, VisualStyle::filled(theme::SURFACE).radius(12.0)));
     bar = bar.child(icon(
         "titlebar.git",
         "git-branch",
-        UiRect::new(pill.left + 8.0, rect.top + 14.0, pill.left + 20.0, rect.top + 26.0),
+        UiRect::new(pill.left + 8.0, rect.top + 10.0, pill.left + 20.0, rect.top + 22.0),
         theme::ZINC_300,
     ));
     bar = bar.child(text(
-        UiRect::new(pill.left + 24.0, rect.top + 11.0, pill.right, rect.top + 29.0),
+        UiRect::new(pill.left + 24.0, rect.top + 7.0, pill.right, rect.top + 25.0),
         "main*  +24 -3",
         theme::mono(theme::ZINC_300, theme::SMALL).vertical_align(TextVerticalAlign::XCenter),
     ));
 
-    // ---- Center: command palette trigger ------------------------------
-    let st = state.clone();
-    let cx = rect.left + (rect.right - rect.left) / 2.0;
-    let trig = UiRect::new(cx - 172.0, rect.top + 7.0, cx + 118.0, rect.top + 33.0);
-    let trig_btn = panel(trig, VisualStyle::filled(theme::SURFACE).radius(8.0))
-        .event_policy(lgui::core::EventPolicy::INTERACTIVE)
-        .on_click(move || st.update(|app| app.show_palette = true))
-        .child(icon(
-            "titlebar.search",
-            "search",
-            UiRect::new(trig.left + 10.0, rect.top + 14.0, trig.left + 22.0, rect.top + 26.0),
-            theme::ZINC_400,
-        ))
-        .child(text(
-            UiRect::new(trig.left + 28.0, rect.top + 10.0, trig.left + 220.0, rect.top + 30.0),
-            "src > Services > WalletService.cs",
-            theme::mono(theme::ZINC_400, theme::SMALL).vertical_align(TextVerticalAlign::XCenter),
-        ))
-        .child(icon(
-            "titlebar.command",
-            "command",
-            UiRect::new(trig.right - 34.0, rect.top + 14.0, trig.right - 22.0, rect.top + 26.0),
-            theme::ZINC_500,
-        ));
-    bar = bar.child(trig_btn);
-
     // ---- Right cluster (anchored to the window controls) --------------
     let right = rect.right - 4.0;
-
-    // Test run pill
-    let tp = UiRect::new(right - 312.0, rect.top + 10.0, right - 236.0, rect.top + 30.0);
-    bar = bar.child(panel(tp, VisualStyle::filled(theme::SURFACE).radius(12.0)));
-    bar = bar.child(icon(
-        "titlebar.run",
-        "play",
-        UiRect::new(tp.left + 8.0, rect.top + 14.0, tp.left + 20.0, rect.top + 26.0),
-        theme::EMERALD_400,
-    ));
-    bar = bar.child(text(
-        UiRect::new(tp.left + 24.0, rect.top + 11.0, tp.right, rect.top + 29.0),
-        "Test Run",
-        theme::mono(theme::EMERALD_400, theme::SMALL).vertical_align(TextVerticalAlign::XCenter),
-    ));
-
-    // Model selector (static)
-    let ms = UiRect::new(right - 232.0, rect.top + 8.0, right - 160.0, rect.top + 32.0);
-    bar = bar.child(panel(ms, VisualStyle::filled(theme::SURFACE).radius(6.0)));
-    bar = bar.child(ellipse(
-        UiRect::new(ms.left + 10.0, rect.top + 17.0, ms.left + 16.0, rect.top + 23.0),
-        VisualStyle::filled(theme::ACCENT),
-    ));
-    bar = bar.child(text(
-        UiRect::new(ms.left + 22.0, rect.top + 11.0, ms.right - 8.0, rect.top + 29.0),
-        "Claude 3.7",
-        theme::mono(theme::ZINC_300, theme::SMALL).vertical_align(TextVerticalAlign::XCenter),
-    ));
-
-    // Assistant toggle
-    let st = state.clone();
-    let ab = UiRect::new(right - 152.0, rect.top + 10.0, right - 136.0, rect.top + 30.0);
-    let ab_btn = panel(ab, VisualStyle::default())
-        .event_policy(lgui::core::EventPolicy::INTERACTIVE)
-        .on_click(move || st.update(|app| app.show_assistant = !app.show_assistant))
-        .child(icon(
-            "titlebar.assistant",
-            "sparkles",
-            UiRect::new(ab.left, rect.top + 11.0, ab.right, rect.top + 29.0),
-            theme::ACCENT,
-        ));
-    bar = bar.child(ab_btn);
 
     // ---- Window controls (far right) ----------------------------------
     let min_r = UiRect::new(right - 108.0, rect.top, right - 72.0, rect.bottom);
@@ -140,7 +72,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.minimize",
             "minus",
-            UiRect::new(min_r.left + 12.0, rect.top + 14.0, min_r.right - 12.0, rect.top + 26.0),
+            UiRect::new(min_r.left + 12.0, rect.top + 10.0, min_r.right - 12.0, rect.top + 22.0),
             theme::ZINC_400,
         ));
     bar = bar.child(min_btn);
@@ -159,7 +91,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.maximize",
             "square",
-            UiRect::new(max_r.left + 12.0, rect.top + 14.0, max_r.right - 12.0, rect.top + 26.0),
+            UiRect::new(max_r.left + 12.0, rect.top + 10.0, max_r.right - 12.0, rect.top + 22.0),
             theme::ZINC_400,
         ));
     bar = bar.child(max_btn);
@@ -173,10 +105,16 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.close",
             "close",
-            UiRect::new(close_r.left + 12.0, rect.top + 14.0, close_r.right - 12.0, rect.top + 26.0),
+            UiRect::new(close_r.left + 12.0, rect.top + 10.0, close_r.right - 12.0, rect.top + 22.0),
             theme::ZINC_400,
         ));
     bar = bar.child(close_btn);
+
+    // Hairline bottom border
+    bar = bar.child(panel(
+        UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
+        VisualStyle::filled(theme::BORDER),
+    ));
 
     bar
 }
