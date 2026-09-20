@@ -82,7 +82,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     bar = bar.child(trig_btn);
 
     // ---- Right cluster (anchored to the window controls) --------------
-    let right = rect.right - 8.0;
+    let right = rect.right - 4.0;
 
     // Test run pill
     let tp = UiRect::new(right - 312.0, rect.top + 10.0, right - 236.0, rect.top + 30.0);
@@ -127,9 +127,9 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     bar = bar.child(ab_btn);
 
     // ---- Window controls (far right) ----------------------------------
-    let min_r = UiRect::new(right - 132.0, rect.top, right - 88.0, rect.bottom);
-    let max_r = UiRect::new(right - 88.0, rect.top, right - 44.0, rect.bottom);
-    let close_r = UiRect::new(right - 44.0, rect.top, right, rect.bottom);
+    let min_r = UiRect::new(right - 108.0, rect.top, right - 72.0, rect.bottom);
+    let max_r = UiRect::new(right - 72.0, rect.top, right - 36.0, rect.bottom);
+    let close_r = UiRect::new(right - 36.0, rect.top, right, rect.bottom);
 
     // Minimize
     let min_btn = panel(min_r, VisualStyle::default())
@@ -140,7 +140,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.minimize",
             "minus",
-            UiRect::new(min_r.left + 16.0, rect.top + 14.0, min_r.right - 16.0, rect.top + 26.0),
+            UiRect::new(min_r.left + 12.0, rect.top + 14.0, min_r.right - 12.0, rect.top + 26.0),
             theme::ZINC_400,
         ));
     bar = bar.child(min_btn);
@@ -159,7 +159,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.maximize",
             "square",
-            UiRect::new(max_r.left + 16.0, rect.top + 14.0, max_r.right - 16.0, rect.top + 26.0),
+            UiRect::new(max_r.left + 12.0, rect.top + 14.0, max_r.right - 12.0, rect.top + 26.0),
             theme::ZINC_400,
         ));
     bar = bar.child(max_btn);
@@ -173,7 +173,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.close",
             "close",
-            UiRect::new(close_r.left + 16.0, rect.top + 14.0, close_r.right - 16.0, rect.top + 26.0),
+            UiRect::new(close_r.left + 12.0, rect.top + 14.0, close_r.right - 12.0, rect.top + 26.0),
             theme::ZINC_400,
         ));
     bar = bar.child(close_btn);
