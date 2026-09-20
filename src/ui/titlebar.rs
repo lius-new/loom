@@ -153,7 +153,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             let maximized = st.get().window_maximized;
             let _ = ctx
                 .window()
-                .set_mode(if maximized { WindowMode::Windowed } else { WindowMode::Fullscreen });
+                .set_mode(if maximized { WindowMode::Windowed } else { WindowMode::Maximized });
             st.update(|app| app.window_maximized = !app.window_maximized);
         })
         .child(icon(
