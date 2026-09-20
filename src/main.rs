@@ -43,7 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .title("leditor")
                 .size(Size::new(900.0, 600.0))
                 // Frameless: we render our own custom title bar (see ui/titlebar.rs).
-                .native_titlebar(false),
+                .native_titlebar(false)
+                // Windows 11 DWM rounded corners.
+                .corner_radius(8),
         )
         .run(app::app)?;
     Ok(())
