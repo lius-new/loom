@@ -33,8 +33,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_icon("play", icondata::LuPlay)
                 .with_icon("sparkles", icondata::LuSparkles)
                 .with_icon("square", icondata::LuSquare)
-                .with_icon("close", icondata::LuX)
-                .with_icon("minus", icondata::LuMinus),
+                // X strokes: a 1px round cap (radius 0.5px) lands between pixel centers,
+                // leaving the tips faint. Use butt caps and extend the endpoints outward
+                // so each diagonal terminates on a solid pixel.
+                .with_icon(
+                    "close",
+                    r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="butt" stroke-linejoin="round" opacity="currentOpacity"><path d="M19.5 4.5 4.5 19.5"/><path d="m4.5 4.5 15 15"/></svg>"#,
+                )
+                // y=11 (not 12) so the 1px stroke snaps to a single pixel row at 12px size.
+                .with_icon(
+                    "minus",
+                    r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="currentOpacity"><path d="M5 11h14"/></svg>"#,
+                ),
         )
         .provide(RendererKind::Skia(GraphicsPreference::Auto))
         .memory_options(MemoryOptions::unbounded(ImageCachePolicy::WhileVisible, false))

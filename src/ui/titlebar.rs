@@ -140,7 +140,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.minimize",
             "minus",
-            UiRect::new(min_r.left + 14.0, rect.top + 12.0, min_r.right - 14.0, rect.top + 28.0),
+            UiRect::new(min_r.left + 16.0, rect.top + 14.0, min_r.right - 16.0, rect.top + 26.0),
             theme::ZINC_400,
         ));
     bar = bar.child(min_btn);
@@ -159,7 +159,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.maximize",
             "square",
-            UiRect::new(max_r.left + 14.0, rect.top + 12.0, max_r.right - 14.0, rect.top + 28.0),
+            UiRect::new(max_r.left + 16.0, rect.top + 14.0, max_r.right - 16.0, rect.top + 26.0),
             theme::ZINC_400,
         ));
     bar = bar.child(max_btn);
@@ -173,7 +173,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.close",
             "close",
-            UiRect::new(close_r.left + 14.0, rect.top + 12.0, close_r.right - 14.0, rect.top + 28.0),
+            UiRect::new(close_r.left + 16.0, rect.top + 14.0, close_r.right - 16.0, rect.top + 26.0),
             theme::ZINC_400,
         ));
     bar = bar.child(close_btn);
