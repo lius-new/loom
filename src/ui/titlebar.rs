@@ -6,7 +6,7 @@
 //! (the buttons) are excluded automatically by hit testing.
 
 use lgui::core::{ellipse, Color, IconStyle, UiElement, UiEventContext, UiId, precompiled};
-use lgui::prelude::{panel, text, Element, State, UiRect, VisualStyle, WindowMode};
+use lgui::prelude::{panel, text, Element, State, TextVerticalAlign, UiRect, VisualStyle, WindowMode};
 
 use crate::state::AppState;
 use crate::theme;
@@ -29,13 +29,14 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.project",
             "panel-left",
-            UiRect::new(proj.left + 7.0, rect.top + 11.0, proj.left + 23.0, rect.top + 27.0),
+            UiRect::new(proj.left + 7.0, rect.top + 14.0, proj.left + 19.0, rect.top + 26.0),
             theme::ACCENT,
         ))
         .child(text(
             UiRect::new(proj.left + 26.0, rect.top + 10.0, proj.right, rect.top + 30.0),
             "Project",
-            theme::sans_semibold(theme::ACCENT, theme::UI_SIZE),
+            theme::sans_semibold(theme::ACCENT, theme::UI_SIZE)
+                .vertical_align(TextVerticalAlign::XCenter),
         ));
     bar = bar.child(proj_btn);
 
@@ -45,13 +46,13 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     bar = bar.child(icon(
         "titlebar.git",
         "git-branch",
-        UiRect::new(pill.left + 8.0, rect.top + 12.0, pill.left + 22.0, rect.top + 26.0),
+        UiRect::new(pill.left + 8.0, rect.top + 14.0, pill.left + 20.0, rect.top + 26.0),
         theme::ZINC_300,
     ));
     bar = bar.child(text(
         UiRect::new(pill.left + 24.0, rect.top + 11.0, pill.right, rect.top + 29.0),
         "main*  +24 -3",
-        theme::mono(theme::ZINC_300, theme::SMALL),
+        theme::mono(theme::ZINC_300, theme::SMALL).vertical_align(TextVerticalAlign::XCenter),
     ));
 
     // ---- Center: command palette trigger ------------------------------
@@ -64,18 +65,18 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.search",
             "search",
-            UiRect::new(trig.left + 10.0, rect.top + 11.0, trig.left + 24.0, rect.top + 25.0),
+            UiRect::new(trig.left + 10.0, rect.top + 14.0, trig.left + 22.0, rect.top + 26.0),
             theme::ZINC_400,
         ))
         .child(text(
             UiRect::new(trig.left + 28.0, rect.top + 10.0, trig.left + 220.0, rect.top + 30.0),
             "src > Services > WalletService.cs",
-            theme::mono(theme::ZINC_400, theme::SMALL),
+            theme::mono(theme::ZINC_400, theme::SMALL).vertical_align(TextVerticalAlign::XCenter),
         ))
         .child(icon(
             "titlebar.command",
             "command",
-            UiRect::new(trig.right - 34.0, rect.top + 11.0, trig.right - 20.0, rect.top + 25.0),
+            UiRect::new(trig.right - 34.0, rect.top + 14.0, trig.right - 22.0, rect.top + 26.0),
             theme::ZINC_500,
         ));
     bar = bar.child(trig_btn);
@@ -89,26 +90,26 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     bar = bar.child(icon(
         "titlebar.run",
         "play",
-        UiRect::new(tp.left + 8.0, rect.top + 12.0, tp.left + 22.0, rect.top + 26.0),
+        UiRect::new(tp.left + 8.0, rect.top + 14.0, tp.left + 20.0, rect.top + 26.0),
         theme::EMERALD_400,
     ));
     bar = bar.child(text(
         UiRect::new(tp.left + 24.0, rect.top + 11.0, tp.right, rect.top + 29.0),
         "Test Run",
-        theme::mono(theme::EMERALD_400, theme::SMALL),
+        theme::mono(theme::EMERALD_400, theme::SMALL).vertical_align(TextVerticalAlign::XCenter),
     ));
 
     // Model selector (static)
     let ms = UiRect::new(right - 232.0, rect.top + 8.0, right - 160.0, rect.top + 32.0);
     bar = bar.child(panel(ms, VisualStyle::filled(theme::SURFACE).radius(6.0)));
     bar = bar.child(ellipse(
-        UiRect::new(ms.left + 10.0, rect.top + 18.0, ms.left + 16.0, rect.top + 24.0),
+        UiRect::new(ms.left + 10.0, rect.top + 17.0, ms.left + 16.0, rect.top + 23.0),
         VisualStyle::filled(theme::ACCENT),
     ));
     bar = bar.child(text(
         UiRect::new(ms.left + 22.0, rect.top + 11.0, ms.right - 8.0, rect.top + 29.0),
         "Claude 3.7",
-        theme::mono(theme::ZINC_300, theme::SMALL),
+        theme::mono(theme::ZINC_300, theme::SMALL).vertical_align(TextVerticalAlign::XCenter),
     ));
 
     // Assistant toggle
