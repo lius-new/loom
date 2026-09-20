@@ -6,7 +6,7 @@
 //! (the buttons) are excluded automatically by hit testing.
 
 use lgui::core::{Color, IconStyle, UiElement, UiEventContext, UiId, precompiled};
-use lgui::prelude::{panel, text, Element, State, TextVerticalAlign, UiRect, VisualStyle, WindowMode};
+use lgui::prelude::{Element, State, TextVerticalAlign, UiRect, VisualStyle, panel, text};
 
 use crate::state::AppState;
 use crate::theme;
@@ -22,18 +22,33 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     // ---- Left cluster --------------------------------------------------
     // Project drawer toggle
     let st = state.clone();
-    let proj = UiRect::new(rect.left + 14.0, rect.top + 4.0, rect.left + 86.0, rect.top + 28.0);
+    let proj = UiRect::new(
+        rect.left + 14.0,
+        rect.top + 4.0,
+        rect.left + 86.0,
+        rect.top + 28.0,
+    );
     let proj_btn = panel(proj, VisualStyle::default())
         .event_policy(lgui::core::EventPolicy::INTERACTIVE)
         .on_click(move || st.update(|app| app.show_drawer = !app.show_drawer))
         .child(icon(
             "titlebar.project",
             "panel-left",
-            UiRect::new(proj.left + 7.0, rect.top + 10.0, proj.left + 19.0, rect.top + 22.0),
+            UiRect::new(
+                proj.left + 7.0,
+                rect.top + 10.0,
+                proj.left + 19.0,
+                rect.top + 22.0,
+            ),
             theme::ACCENT,
         ))
         .child(text(
-            UiRect::new(proj.left + 26.0, rect.top + 6.0, proj.right, rect.top + 26.0),
+            UiRect::new(
+                proj.left + 26.0,
+                rect.top + 6.0,
+                proj.right,
+                rect.top + 26.0,
+            ),
             "Project",
             theme::sans_semibold(theme::ACCENT, theme::UI_SIZE)
                 .vertical_align(TextVerticalAlign::XCenter),
@@ -41,16 +56,34 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     bar = bar.child(proj_btn);
 
     // Git pill
-    let pill = UiRect::new(rect.left + 94.0, rect.top + 6.0, rect.left + 174.0, rect.top + 26.0);
-    bar = bar.child(panel(pill, VisualStyle::filled(theme::SURFACE).radius(12.0)));
+    let pill = UiRect::new(
+        rect.left + 94.0,
+        rect.top + 6.0,
+        rect.left + 174.0,
+        rect.top + 26.0,
+    );
+    bar = bar.child(panel(
+        pill,
+        VisualStyle::filled(theme::SURFACE).radius(12.0),
+    ));
     bar = bar.child(icon(
         "titlebar.git",
         "git-branch",
-        UiRect::new(pill.left + 8.0, rect.top + 10.0, pill.left + 20.0, rect.top + 22.0),
+        UiRect::new(
+            pill.left + 8.0,
+            rect.top + 10.0,
+            pill.left + 20.0,
+            rect.top + 22.0,
+        ),
         theme::ZINC_300,
     ));
     bar = bar.child(text(
-        UiRect::new(pill.left + 24.0, rect.top + 7.0, pill.right, rect.top + 25.0),
+        UiRect::new(
+            pill.left + 24.0,
+            rect.top + 7.0,
+            pill.right,
+            rect.top + 25.0,
+        ),
         "main*  +24 -3",
         theme::mono(theme::ZINC_300, theme::SMALL).vertical_align(TextVerticalAlign::XCenter),
     ));
@@ -72,26 +105,31 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.minimize",
             "minus",
-            UiRect::new(min_r.left + 12.0, rect.top + 10.0, min_r.right - 12.0, rect.top + 22.0),
+            UiRect::new(
+                min_r.left + 12.0,
+                rect.top + 10.0,
+                min_r.right - 12.0,
+                rect.top + 22.0,
+            ),
             theme::ZINC_400,
         ));
     bar = bar.child(min_btn);
 
-    // Maximize / restore (toggles fullscreen)
-    let st = state.clone();
+    // Maximize / restore (toggles between maximized and windowed)
     let max_btn = panel(max_r, VisualStyle::default())
         .event_policy(lgui::core::EventPolicy::INTERACTIVE)
-        .on_click(move |ctx: &mut UiEventContext| {
-            let maximized = st.get().window_maximized;
-            let _ = ctx
-                .window()
-                .set_mode(if maximized { WindowMode::Windowed } else { WindowMode::Maximized });
-            st.update(|app| app.window_maximized = !app.window_maximized);
+        .on_click(|ctx: &mut UiEventContext| {
+            let _ = ctx.window().toggle_maximize();
         })
         .child(icon(
             "titlebar.maximize",
             "square",
-            UiRect::new(max_r.left + 12.0, rect.top + 10.0, max_r.right - 12.0, rect.top + 22.0),
+            UiRect::new(
+                max_r.left + 12.0,
+                rect.top + 10.0,
+                max_r.right - 12.0,
+                rect.top + 22.0,
+            ),
             theme::ZINC_400,
         ));
     bar = bar.child(max_btn);
@@ -105,7 +143,12 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.close",
             "close",
-            UiRect::new(close_r.left + 12.0, rect.top + 10.0, close_r.right - 12.0, rect.top + 22.0),
+            UiRect::new(
+                close_r.left + 12.0,
+                rect.top + 10.0,
+                close_r.right - 12.0,
+                rect.top + 22.0,
+            ),
             theme::ZINC_400,
         ));
     bar = bar.child(close_btn);

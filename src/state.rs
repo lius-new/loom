@@ -13,8 +13,6 @@ pub struct AppState {
     pub show_palette: bool,
     pub show_cmdk: bool,
     pub toast: Option<String>,
-    /// Tracks the maximize/restore toggle performed by the custom title bar.
-    pub window_maximized: bool,
 }
 
 impl AppState {
@@ -28,7 +26,6 @@ impl AppState {
             show_palette: false,
             show_cmdk: false,
             toast: None,
-            window_maximized: false,
         }
     }
 
