@@ -1,5 +1,4 @@
-//! File drawer: filter input, the workspace file tree (folders + files),
-//! and the dependencies list.
+//! File drawer: the workspace file tree (folders + files).
 
 use std::collections::HashSet;
 
@@ -138,50 +137,20 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     let active = s.workspace.active();
     let collapsed = s.collapsed.clone();
 
-    let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
-
-    // Filter input (decorative)
-    let flt = UiRect::new(rect.left + 12.0, rect.top + 12.0, rect.right - 12.0, rect.top + 38.0);
-    bar = bar.child(panel(flt, VisualStyle::filled(theme::SURFACE).radius(6.0)));
-    bar = bar.child(text(
-        UiRect::new(flt.left + 10.0, rect.top + 17.0, flt.right, rect.top + 33.0),
-        "⌕ Filter files...",
-        theme::mono(theme::ZINC_500, theme::SMALL),
-    ));
+    let bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
 
     // Workspace tree
-    let (b, mut y) = tree(
+    let (b, _) = tree(
         bar,
         &DIR_SRC,
         0,
-        rect.top + 52.0,
+        rect.top + 8.0,
         rect,
         state.clone(),
         active,
         &collapsed,
     );
     let mut bar = b;
-
-    // Dependencies
-    y += 10.0;
-    bar = bar.child(text(
-        UiRect::new(rect.left + 14.0, y, rect.right, y + 18.0),
-        "DEPENDENCIES",
-        theme::sans_semibold(theme::ZINC_500, theme::SMALL),
-    ));
-    y += 20.0;
-    let dep_w = measure("cs");
-    let dep_x = rect.left + 14.0 + dep_w + 6.0;
-    bar = bar.child(text(
-        UiRect::new(rect.left + 14.0, y + 4.0, dep_x, y + 20.0),
-        "cs",
-        theme::mono_bold(theme::ZINC_400, theme::SMALL),
-    ));
-    bar = bar.child(text(
-        UiRect::new(dep_x, y + 4.0, rect.right - 12.0, y + 20.0),
-        "GameServer.csproj",
-        theme::mono(theme::ZINC_600, theme::UI_SIZE),
-    ));
 
     // Resize handle on the drawer's left edge. An 8px invisible hit strip
     // (drawn last, above the opaque file rows) carries the drag; the 1px
