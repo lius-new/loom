@@ -1,9 +1,18 @@
 //! Application state — the single reactive root owned by the UI.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use crate::input::keymap::Action;
 use crate::model::workspace::Workspace;
+
+/// One entry in a loaded directory listing.
+#[derive(Clone)]
+pub struct DirEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -13,15 +22,22 @@ pub struct AppState {
     pub show_terminal: bool,
     pub show_palette: bool,
     pub toast: Option<String>,
-    pub collapsed: HashSet<&'static str>,
+    /// Cached entries per loaded directory (key = directory path string).
+    /// Renders read from this cache; the filesystem is only hit on open and
+    /// on first expand.
+    pub dir_entries: HashMap<String, Vec<DirEntry>>,
+    /// Directory paths currently expanded in the tree.
+    pub expanded: HashSet<String>,
     pub sidebar_w: f32,
     pub resizing_sidebar: bool,
     /// Empty-space context menu anchor (screen coords) when open.
     pub context_menu: Option<(f32, f32)>,
     /// Index of the context-menu item currently hovered, if any.
     pub context_menu_hover: Option<usize>,
-    /// Folders added via the context menu (names under the `src` root).
-    pub added_folders: Vec<String>,
+    /// The folder currently browsed in the file tree, if any.
+    pub open_dir: Option<PathBuf>,
+    /// Vertical scroll offset of the file tree, in pixels (0 = top).
+    pub tree_scroll: f32,
 }
 
 impl AppState {
@@ -33,12 +49,14 @@ impl AppState {
             show_terminal: false,
             show_palette: false,
             toast: None,
-            collapsed: HashSet::new(),
+            dir_entries: HashMap::new(),
+            expanded: HashSet::new(),
             sidebar_w: crate::theme::SIDEBAR_W,
             resizing_sidebar: false,
             context_menu: None,
             context_menu_hover: None,
-            added_folders: Vec::new(),
+            open_dir: None,
+            tree_scroll: 0.0,
         }
     }
 
@@ -52,7 +70,7 @@ impl AppState {
             Action::CloseOverlay => {
                 self.show_palette = false;
             }
-            Action::OpenFile(id) => self.workspace.set_active(id),
+            Action::OpenFile(id) => self.workspace.open(id),
             Action::CloseFile(id) => self.workspace.close(id),
             Action::NextFile => self.workspace.next(),
             Action::PrevFile => self.workspace.prev(),

@@ -42,7 +42,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             .event_policy(EventPolicy::INTERACTIVE)
             .on_click(move || {
                 st.update(move |app| {
-                    app.workspace.set_active(id);
+                    app.workspace.open(id);
                     app.show_palette = false;
                 })
             })

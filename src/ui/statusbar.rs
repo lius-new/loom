@@ -4,8 +4,11 @@
 //! Items are laid out from measured text widths so every gap is uniform, and
 //! each text rect carries a small right margin so glyphs are never clipped by
 //! the rect bounds.
+//!
+//! With no active file there is no cursor position or language to report, so
+//! only the universal editor settings (indent mode, encoding) remain.
 
-use lgui::prelude::{panel, text, Element, State, UiRect, VisualStyle};
+use lgui::prelude::{panel, text, Element, State, TextStyle, UiRect, VisualStyle};
 use lgui::text::measure_width;
 
 use crate::model::document::meta;
@@ -31,52 +34,58 @@ fn measure(s: &str) -> f32 {
 
 pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     let s = state.get();
-    let id = s.workspace.active();
-    let m = meta(id);
-    let (line, col) = s.workspace.active_buffer().line_col();
 
     let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
 
-    let ln = format!("Ln {}, Col {}", line + 1, col + 1);
-    let spaces = "Spaces: 2";
-    let enc = "UTF-8";
-    let badge = m.lang.badge();
+    // Right-aligned items. Without an active file, only the editor-wide
+    // settings are shown (no Ln/Col position, no language badge).
+    let mut items: Vec<(String, TextStyle)> = Vec::new();
+    if let Some(id) = s.workspace.active() {
+        let m = meta(id);
+        let (line, col) = s
+            .workspace
+            .active_buffer()
+            .expect("active buffer exists")
+            .line_col();
+        items.push((
+            format!("Ln {}, Col {}", line + 1, col + 1),
+            theme::mono(theme::ZINC_400, theme::SMALL),
+        ));
+        items.push((
+            "Spaces: 2".to_string(),
+            theme::mono(theme::ZINC_500, theme::SMALL),
+        ));
+        items.push((
+            "UTF-8".to_string(),
+            theme::mono(theme::ZINC_500, theme::SMALL),
+        ));
+        items.push((
+            m.lang.badge().to_string(),
+            theme::mono_bold(m.lang.badge_color(), theme::SMALL),
+        ));
+    } else {
+        items.push((
+            "Spaces: 2".to_string(),
+            theme::mono(theme::ZINC_500, theme::SMALL),
+        ));
+        items.push((
+            "UTF-8".to_string(),
+            theme::mono(theme::ZINC_500, theme::SMALL),
+        ));
+    }
 
-    let widths = [measure(&ln), measure(spaces), measure(enc), measure(badge)];
-    let total = widths.iter().sum::<f32>() + GAP * 3.0;
-
+    let total = items.iter().map(|(s, _)| measure(s)).sum::<f32>()
+        + GAP * (items.len().saturating_sub(1)) as f32;
     let mut x = rect.right - EDGE_PAD - total;
-
-    let ln_w = widths[0];
-    bar = bar.child(text(
-        UiRect::new(x, rect.top, x + ln_w + TEXT_MARGIN, rect.bottom),
-        ln,
-        theme::mono(theme::ZINC_400, theme::SMALL),
-    ));
-    x += ln_w + GAP;
-
-    let spaces_w = widths[1];
-    bar = bar.child(text(
-        UiRect::new(x, rect.top, x + spaces_w + TEXT_MARGIN, rect.bottom),
-        spaces,
-        theme::mono(theme::ZINC_500, theme::SMALL),
-    ));
-    x += spaces_w + GAP;
-
-    let enc_w = widths[2];
-    bar = bar.child(text(
-        UiRect::new(x, rect.top, x + enc_w + TEXT_MARGIN, rect.bottom),
-        enc,
-        theme::mono(theme::ZINC_500, theme::SMALL),
-    ));
-    x += enc_w + GAP;
-
-    let badge_w = widths[3];
-    bar = bar.child(text(
-        UiRect::new(x, rect.top, x + badge_w + TEXT_MARGIN, rect.bottom),
-        badge,
-        theme::mono_bold(m.lang.badge_color(), theme::SMALL),
-    ));
+    for (label, style) in items {
+        let w = measure(&label);
+        bar = bar.child(text(
+            UiRect::new(x, rect.top, x + w + TEXT_MARGIN, rect.bottom),
+            label,
+            style,
+        ));
+        x += w + GAP;
+    }
 
     // Hairline top border (matches the title bar's bottom border).
     bar = bar.child(panel(

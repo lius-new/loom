@@ -3,25 +3,21 @@
 use std::collections::HashMap;
 
 use crate::model::buffer::TextBuffer;
-use crate::model::document::{meta, FileId, FILE_ORDER};
+use crate::model::document::{meta, FileId};
 
 #[derive(Clone)]
 pub struct Workspace {
     open: Vec<FileId>,
-    active: FileId,
+    active: Option<FileId>,
     buffers: HashMap<FileId, TextBuffer>,
 }
 
 impl Workspace {
     pub fn new() -> Self {
-        let mut buffers = HashMap::new();
-        for id in FILE_ORDER {
-            buffers.insert(id, TextBuffer::new(meta(id).code));
-        }
         Self {
-            open: FILE_ORDER.to_vec(),
-            active: FileId::Wallet,
-            buffers,
+            open: Vec::new(),
+            active: None,
+            buffers: HashMap::new(),
         }
     }
 
@@ -29,7 +25,8 @@ impl Workspace {
         &self.open
     }
 
-    pub fn active(&self) -> FileId {
+    /// The active file, if any. `None` means no file is open.
+    pub fn active(&self) -> Option<FileId> {
         self.active
     }
 
@@ -37,44 +34,57 @@ impl Workspace {
         self.open.contains(&id)
     }
 
-    pub fn active_buffer(&self) -> &TextBuffer {
-        self.buffers.get(&self.active).expect("active buffer exists")
+    pub fn active_buffer(&self) -> Option<&TextBuffer> {
+        self.active.and_then(|id| self.buffers.get(&id))
     }
 
-    pub fn active_buffer_mut(&mut self) -> &mut TextBuffer {
-        self.buffers
-            .get_mut(&self.active)
-            .expect("active buffer exists")
+    pub fn active_buffer_mut(&mut self) -> Option<&mut TextBuffer> {
+        self.active.and_then(|id| self.buffers.get_mut(&id))
     }
 
+    /// Open a file: create its buffer from the catalog if needed, then activate it.
+    pub fn open(&mut self, id: FileId) {
+        if !self.buffers.contains_key(&id) {
+            self.buffers.insert(id, TextBuffer::new(meta(id).code));
+            self.open.push(id);
+        }
+        self.active = Some(id);
+    }
+
+    /// Switch to an already-open file. No-op if `id` isn't open.
     pub fn set_active(&mut self, id: FileId) {
         if self.buffers.contains_key(&id) {
-            self.active = id;
+            self.active = Some(id);
         }
     }
 
     pub fn close(&mut self, id: FileId) {
-        if self.open.len() <= 1 {
-            return; // keep at least one buffer
-        }
         if let Some(pos) = self.open.iter().position(|&f| f == id) {
             self.open.remove(pos);
             self.buffers.remove(&id);
-            if self.active == id {
-                self.active = self.open[pos.min(self.open.len() - 1)];
+            if self.active == Some(id) {
+                self.active = if self.open.is_empty() {
+                    None
+                } else {
+                    Some(self.open[pos.min(self.open.len() - 1)])
+                };
             }
         }
     }
 
     pub fn next(&mut self) {
-        if let Some(pos) = self.open.iter().position(|&f| f == self.active) {
-            self.active = self.open[(pos + 1) % self.open.len()];
+        if let Some(active) = self.active {
+            if let Some(pos) = self.open.iter().position(|&f| f == active) {
+                self.active = Some(self.open[(pos + 1) % self.open.len()]);
+            }
         }
     }
 
     pub fn prev(&mut self) {
-        if let Some(pos) = self.open.iter().position(|&f| f == self.active) {
-            self.active = self.open[(pos + self.open.len() - 1) % self.open.len()];
+        if let Some(active) = self.active {
+            if let Some(pos) = self.open.iter().position(|&f| f == active) {
+                self.active = Some(self.open[(pos + self.open.len() - 1) % self.open.len()]);
+            }
         }
     }
 }

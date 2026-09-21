@@ -80,36 +80,6 @@ pub enum FileId {
 
 pub const FILE_ORDER: [FileId; 3] = [FileId::Wallet, FileId::Combat, FileId::Auth];
 
-/// A folder node in the workspace tree.
-pub struct Folder {
-    pub name: &'static str,
-    pub subdirs: &'static [Folder],
-    pub files: &'static [FileId],
-}
-
-pub const DIR_AUTH: Folder = Folder {
-    name: "Auth",
-    subdirs: &[],
-    files: &[FileId::Auth],
-};
-pub const DIR_SERVICES: Folder = Folder {
-    name: "Services",
-    subdirs: &[],
-    files: &[FileId::Wallet],
-};
-pub const DIR_SIMULATION: Folder = Folder {
-    name: "Simulation",
-    subdirs: &[],
-    files: &[FileId::Combat],
-};
-
-/// Workspace root: everything lives under `src`.
-pub const DIR_SRC: Folder = Folder {
-    name: "src",
-    subdirs: &[DIR_AUTH, DIR_SERVICES, DIR_SIMULATION],
-    files: &[],
-};
-
 pub static WALLET: FileMeta = FileMeta {
     name: "WalletService.cs",
     lang: Language::CSharp,

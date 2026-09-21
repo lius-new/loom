@@ -56,7 +56,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         let tab_w = PAD + badge_w + GAP + name_w + GAP + close_w + PAD;
 
         let pill = UiRect::new(x, rect.top + PILL_INSET, x + tab_w, rect.bottom - PILL_INSET);
-        let name_style = if id == active {
+        let name_style = if Some(id) == active {
             theme::mono(theme::ZINC_100, theme::UI_SIZE)
         } else {
             theme::mono(theme::ZINC_400, theme::UI_SIZE)
@@ -69,7 +69,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         let st = state.clone();
         // Active tab gets a crisp 1px border; see theme::bordered for why a
         // filled ring is used instead of a stroked outline.
-        let mut tab_el = if id == active {
+        let mut tab_el = if Some(id) == active {
             theme::bordered(pill, theme::BG, theme::BORDER, 2.0, 1.0)
         } else {
             panel(pill, VisualStyle::default().radius(2.0))
@@ -88,8 +88,8 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             name_style,
         ));
 
-        // Close button (last remaining tab cannot be closed)
-        if s.workspace.open_files().len() > 1 {
+        // Close button
+        {
             let st = state.clone();
             tab_el = tab_el.child(
                 panel(
