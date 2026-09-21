@@ -34,17 +34,20 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         h - theme::STATUS_H
     };
     let editor_left = 0.0;
-    let editor_right = if show_drawer { w - s.sidebar_w } else { w };
+    // The editor always spans the full width; the drawer floats above it as a
+    // sibling so the two regions stay independent (the editor never learns the
+    // drawer's width). Tabs, however, sit beside the drawer and end at its edge.
+    let tabs_right = if show_drawer { w - s.sidebar_w } else { w };
     let tabs_rect = UiRect::new(
         editor_left,
         theme::TITLEBAR_H,
-        editor_right,
+        tabs_right,
         theme::TITLEBAR_H + theme::TABS_H,
     );
     let code_rect = UiRect::new(
         editor_left,
         theme::TITLEBAR_H + theme::TABS_H,
-        editor_right,
+        w,
         main_bottom,
     );
 
