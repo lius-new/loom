@@ -3,7 +3,7 @@
 //! Centralizes colors, layout metrics and text-style helpers so every UI
 //! module renders from a single source of truth.
 
-use lgui::prelude::{Color, Stroke, TextAlign, TextStyle};
+use lgui::prelude::{panel, Color, Element, Stroke, TextAlign, TextStyle, UiRect, VisualStyle};
 
 // ---- Editor chrome -----------------------------------------------------
 pub const BG: Color = Color(0x14161b); // primary editor background
@@ -57,7 +57,7 @@ pub const GHOST: Color = Color(0x64748b);
 
 // ---- Layout metrics (px) ----------------------------------------------
 pub const TITLEBAR_H: f32 = 32.0;
-pub const TABS_H: f32 = 32.0;
+pub const TABS_H: f32 = 28.0;
 pub const STATUS_H: f32 = 24.0;
 pub const SIDEBAR_W: f32 = 224.0;
 pub const ASSISTANT_W: f32 = 320.0;
@@ -97,4 +97,37 @@ pub fn sans_semibold(color: Color, size: f32) -> TextStyle {
 
 pub fn hairline(color: Color) -> Stroke {
     Stroke::new(color, 1.0, 255)
+}
+
+// ---- Surfaces ----------------------------------------------------------
+
+/// A panel with a crisp `width`-px border, drawn as a filled ring.
+///
+/// WHY A FILLED RING INSTEAD OF `VisualStyle::stroked`?
+/// Skia strokes are centered on the rect edge and anti-aliased. A 1px stroke
+/// therefore smears half a pixel onto each side of the edge, and anti-aliasing
+/// spreads the color across two pixel rows — so it renders as a blurry ~2px
+/// line. Tuning the stroke width (0.5 / 0.75 / 1.0) only makes it fainter or
+/// fatter; it can never land on exactly 1px.
+///
+/// Instead we paint an outer rect in `border` and an inner rect in `fill`,
+/// inset by `width`, leaving a `width`-px ring. Filled rects are pixel-aligned
+/// (the same technique as the 1px divider panels in the title/status bars), so
+/// the border is exactly `width` px and stays crisp at any scale factor.
+///
+/// Use this anywhere you need a hairline border on a (possibly rounded)
+/// surface. `radius` is the OUTER corner radius; the inner corner uses
+/// `radius - width` so the ring thickness stays uniform through the corners.
+pub fn bordered(rect: UiRect, fill: Color, border: Color, radius: f32, width: f32) -> Element {
+    let outer = panel(rect, VisualStyle::filled(border).radius(radius));
+    let inner_rect = UiRect::new(
+        rect.left + width,
+        rect.top + width,
+        rect.right - width,
+        rect.bottom - width,
+    );
+    outer.child(panel(
+        inner_rect,
+        VisualStyle::filled(fill).radius((radius - width).max(0.0)),
+    ))
 }
