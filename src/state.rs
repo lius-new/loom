@@ -14,6 +14,8 @@ pub struct AppState {
     pub show_palette: bool,
     pub toast: Option<String>,
     pub collapsed: HashSet<&'static str>,
+    pub sidebar_w: f32,
+    pub resizing_sidebar: bool,
 }
 
 impl AppState {
@@ -26,6 +28,8 @@ impl AppState {
             show_palette: false,
             toast: None,
             collapsed: HashSet::new(),
+            sidebar_w: crate::theme::SIDEBAR_W,
+            resizing_sidebar: false,
         }
     }
 

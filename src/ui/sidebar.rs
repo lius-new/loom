@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use lgui::core::{ellipse, Color, EventPolicy, IconStyle, UiElement, UiId, precompiled};
+use lgui::core::{ellipse, Color, CursorIcon, EventPolicy, IconStyle, UiElement, UiId, precompiled};
 use lgui::prelude::{panel, text, Element, State, UiRect, VisualStyle};
 use lgui::text::measure_width;
 
@@ -182,6 +182,37 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         "GameServer.csproj",
         theme::mono(theme::ZINC_600, theme::UI_SIZE),
     ));
+
+    // Resize handle on the drawer's left edge. An 8px invisible hit strip
+    // (drawn last, above the opaque file rows) carries the drag; the 1px
+    // filled panel inside it is the visible divider.
+    let handle_rect = UiRect::new(rect.left, rect.top, rect.left + 8.0, rect.bottom);
+    let win_right = rect.right;
+    let st_down = state.clone();
+    let st_move = state.clone();
+    let st_up = state.clone();
+    let handle = panel(handle_rect, VisualStyle::default())
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::ResizeHorizontal)
+        .on_pointer_down(move |_cx, _p| {
+            st_down.update(move |app| app.resizing_sidebar = true);
+        })
+        .on_pointer_move(move |_cx, p| {
+            st_move.update(move |app| {
+                if app.resizing_sidebar {
+                    app.sidebar_w = (win_right - p.point.x)
+                        .clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W);
+                }
+            });
+        })
+        .on_pointer_up(move |_cx, _p| {
+            st_up.update(move |app| app.resizing_sidebar = false);
+        })
+        .child(panel(
+            UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
+            VisualStyle::filled(theme::BORDER),
+        ));
+    bar = bar.child(handle);
 
     bar
 }

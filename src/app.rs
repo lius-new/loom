@@ -33,8 +33,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     } else {
         h - theme::STATUS_H
     };
-    let editor_left = if show_drawer { theme::SIDEBAR_W } else { 0.0 };
-    let editor_right = w;
+    let editor_left = 0.0;
+    let editor_right = if show_drawer { w - s.sidebar_w } else { w };
     let tabs_rect = UiRect::new(
         editor_left,
         theme::TITLEBAR_H,
@@ -60,14 +60,15 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Compose chrome (back-to-front) -------------------------------
     root = root.child(titlebar::render(titlebar_rect, state.clone()));
 
+    root = root.child(tabs::render(tabs_rect, state.clone()));
+    root = root.child(editor_view::render(code_rect, state.clone()));
+
     if show_drawer {
         root = root.child(sidebar::render(
-            UiRect::new(0.0, theme::TITLEBAR_H, theme::SIDEBAR_W, main_bottom),
+            UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom),
             state.clone(),
         ));
     }
-    root = root.child(tabs::render(tabs_rect, state.clone()));
-    root = root.child(editor_view::render(code_rect, state.clone()));
 
     if show_term {
         root = root.child(terminal::render(UiRect::new(
