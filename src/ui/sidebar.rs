@@ -109,7 +109,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
 
             // Scrollbar, drawn outside the clip so it stays fixed.
             if max_scroll > 0.0 {
-                bar = bar.child(scrollbar(rect, content_bottom, scroll));
+                bar = bar.child(scrollbar(rect, content_bottom, scroll, state.clone()));
             }
         }
     }
@@ -333,7 +333,12 @@ fn build_tree(
 
 /// Fixed vertical scrollbar for the file tree: a thin track plus a thumb whose
 /// height and position reflect the visible/content ratio and the scroll offset.
-fn scrollbar(rect: UiRect, content_bottom: f32, scroll: f32) -> Element {
+fn scrollbar(
+    rect: UiRect,
+    content_bottom: f32,
+    scroll: f32,
+    state: State<AppState>,
+) -> Element {
     let content_top = rect.top + 8.0;
     let content_h = (content_bottom - content_top).max(1.0);
     let viewport_h = rect.height();
@@ -355,8 +360,37 @@ fn scrollbar(rect: UiRect, content_bottom: f32, scroll: f32) -> Element {
         track.top + travel * (scroll / max_scroll)
     };
 
-    panel(track, VisualStyle::filled(theme::ZINC_800).radius(2.0)).child(panel(
+    // Draggable thumb: on pointer-down we remember how far above the thumb's
+    // top the cursor is, then map the pointer's vertical movement through the
+    // track's travel range onto the scroll range. Track geometry and the
+    // scroll range are fixed during a drag (content height can't change), so
+    // capturing them here is safe.
+    let track_top = track.top;
+    let st_down = state.clone();
+    let st_move = state.clone();
+    let st_up = state.clone();
+    let thumb = panel(
         UiRect::new(track.left, thumb_top, track.right, thumb_top + thumb_h),
         VisualStyle::filled(theme::ZINC_600).radius(2.0),
-    ))
+    )
+    .event_policy(EventPolicy::INTERACTIVE)
+    .on_pointer_down(move |_cx, p| {
+        st_down.update(move |app| {
+            app.scrollbar_dragging = true;
+            app.scrollbar_drag_offset = p.point.y - thumb_top;
+        });
+    })
+    .on_pointer_move(move |_cx, p| {
+        st_move.update(move |app| {
+            if app.scrollbar_dragging && travel > 0.0 {
+                let t = (p.point.y - track_top - app.scrollbar_drag_offset) / travel * max_scroll;
+                app.tree_scroll = t.clamp(0.0, max_scroll);
+            }
+        });
+    })
+    .on_pointer_up(move |_cx, _p| {
+        st_up.update(move |app| app.scrollbar_dragging = false);
+    });
+
+    panel(track, VisualStyle::filled(theme::ZINC_800).radius(2.0)).child(thumb)
 }

@@ -38,6 +38,10 @@ pub struct AppState {
     pub open_dir: Option<PathBuf>,
     /// Vertical scroll offset of the file tree, in pixels (0 = top).
     pub tree_scroll: f32,
+    /// True while the file-tree scrollbar thumb is being dragged.
+    pub scrollbar_dragging: bool,
+    /// Pointer y offset from the thumb's top when the drag began.
+    pub scrollbar_drag_offset: f32,
 }
 
 impl AppState {
@@ -57,6 +61,8 @@ impl AppState {
             context_menu_hover: None,
             open_dir: None,
             tree_scroll: 0.0,
+            scrollbar_dragging: false,
+            scrollbar_drag_offset: 0.0,
         }
     }
 
