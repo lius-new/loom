@@ -1,5 +1,7 @@
 //! Application state — the single reactive root owned by the UI.
 
+use std::collections::HashSet;
+
 use crate::input::keymap::Action;
 use crate::model::workspace::Workspace;
 
@@ -11,6 +13,7 @@ pub struct AppState {
     pub show_terminal: bool,
     pub show_palette: bool,
     pub toast: Option<String>,
+    pub collapsed: HashSet<&'static str>,
 }
 
 impl AppState {
@@ -22,6 +25,7 @@ impl AppState {
             show_terminal: false,
             show_palette: false,
             toast: None,
+            collapsed: HashSet::new(),
         }
     }
 
