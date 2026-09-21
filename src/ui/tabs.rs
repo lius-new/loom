@@ -1,7 +1,7 @@
 //! Editor tab strip: buffer tabs with language badges, a close button, and
-//! the Cmd+K / terminal controls on the right.
+//! the terminal control on the right.
 
-use lgui::core::EventPolicy;
+use lgui::core::{Color, EventPolicy, IconStyle, UiElement, UiId, precompiled};
 use lgui::prelude::{panel, text, Element, State, UiRect, VisualStyle};
 use lgui::text::measure_width;
 
@@ -17,6 +17,12 @@ const GAP: f32 = 8.0;
 const TAB_GAP: f32 = 4.0;
 /// Extra right margin inside text rects so the last glyph is not clipped.
 const TEXT_MARGIN: f32 = 6.0;
+/// Left padding of the tab cluster. The strip itself has no padding — each
+/// cluster (tabs / controls) applies its own, so parent padding never leaks
+/// out as an outer margin.
+const TABS_PAD: f32 = 8.0;
+/// Vertical inset of each tab pill inside the strip.
+const PILL_INSET: f32 = 4.0;
 
 /// Natural text width measured with the renderer's text system, falling back
 /// to a per-character estimate when no text system is installed.
@@ -27,15 +33,21 @@ fn measure(s: &str, size: f32, weight: i32) -> f32 {
     })
 }
 
+/// A color-tinted, resolution-independent SVG icon (rasterized at physical pixels).
+fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Element {
+    precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
+}
+
 pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     let s = state.get();
     let active = s.workspace.active();
 
     let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
 
-    // Tabs are content-sized rounded pills, inset 2px vertically, separated
-    // by a 4px gap, with a hairline bottom border under the whole strip.
-    let mut x = rect.left + 8.0;
+    // Tabs are content-sized rounded pills, inset PILL_INSET vertically,
+    // separated by TAB_GAP. The strip has no padding; this cluster's left
+    // padding is TABS_PAD.
+    let mut x = rect.left + TABS_PAD;
     for &id in s.workspace.open_files() {
         let m = meta(id);
         let badge_w = measure(m.lang.badge(), theme::SMALL, 700);
@@ -43,7 +55,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         let close_w = measure("✕", theme::SMALL, 400);
         let tab_w = PAD + badge_w + GAP + name_w + GAP + close_w + PAD;
 
-        let pill = UiRect::new(x, rect.top + 4.0, x + tab_w, rect.bottom - 4.0);
+        let pill = UiRect::new(x, rect.top + PILL_INSET, x + tab_w, rect.bottom - PILL_INSET);
         let name_style = if id == active {
             theme::mono(theme::ZINC_100, theme::UI_SIZE)
         } else {
@@ -98,29 +110,44 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         x += tab_w + TAB_GAP;
     }
 
-    // Right controls: Cmd+K sparkles + terminal toggle
-    let st = state.clone();
-    let ck = UiRect::new(rect.right - 140.0, rect.top + 4.0, rect.right - 78.0, rect.bottom - 4.0);
-    let ck_btn = panel(ck, VisualStyle::default())
-        .event_policy(EventPolicy::INTERACTIVE)
-        .on_click(move || st.update(|app| app.show_cmdk = true))
-        .child(text(
-            UiRect::new(ck.left + 6.0, rect.top + 4.0, ck.right, rect.bottom - 4.0),
-            "✦ Cmd+K",
-            theme::mono(theme::ZINC_400, theme::SMALL),
-        ));
-    bar = bar.child(ck_btn);
+    // Right control cluster: the icon-only terminal toggle sits in a
+    // right-aligned cluster bounded by a 1px divider (left) and the strip
+    // edge (right). The cluster applies its own padding (CLUSTER_PAD on the
+    // right), so the icon's left gap (divider -> icon) and right gap
+    // (icon -> strip edge) are equal. The divider spans the full strip height.
+    const CLUSTER_PAD: f32 = 8.0;
+    const ICON: f32 = 14.0;
 
+    let icon_r = UiRect::new(
+        rect.right - CLUSTER_PAD - ICON,
+        rect.top + 7.0,
+        rect.right - CLUSTER_PAD,
+        rect.bottom - 7.0,
+    );
+
+    // Left border of the cluster: a full-height 1px vertical divider.
+    let divider = UiRect::new(
+        icon_r.left - CLUSTER_PAD - 1.0,
+        rect.top,
+        icon_r.left - CLUSTER_PAD,
+        rect.bottom,
+    );
+    bar = bar.child(panel(divider, VisualStyle::filled(theme::BORDER)));
+
+    // Click target spans the whole cluster, full height, with an opaque
+    // SIDEBAR fill (matching the strip) so any tab pills scrolling underneath
+    // stay hidden behind the control cluster.
     let st = state.clone();
-    let tt = UiRect::new(rect.right - 70.0, rect.top + 4.0, rect.right - 16.0, rect.bottom - 4.0);
-    let tt_btn = panel(tt, VisualStyle::default())
+    let btn = UiRect::new(
+        icon_r.left - CLUSTER_PAD,
+        rect.top,
+        rect.right,
+        rect.bottom,
+    );
+    let tt_btn = panel(btn, VisualStyle::filled(theme::SIDEBAR))
         .event_policy(EventPolicy::INTERACTIVE)
         .on_click(move || st.update(|app| app.show_terminal = !app.show_terminal))
-        .child(text(
-            UiRect::new(tt.left + 6.0, rect.top + 4.0, tt.right, rect.bottom - 4.0),
-            "❯_",
-            theme::mono(theme::ZINC_400, theme::SMALL),
-        ));
+        .child(icon("tabs.terminal", "terminal", icon_r, theme::ZINC_400));
     bar = bar.child(tt_btn);
 
     // Hairline bottom border (matches the title bar).

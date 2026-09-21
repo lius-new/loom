@@ -32,6 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_icon("command", icondata::LuCommand)
                 .with_icon("play", icondata::LuPlay)
                 .with_icon("sparkles", icondata::LuSparkles)
+                .with_icon("terminal", icondata::LuTerminal)
                 .with_icon("square", icondata::LuSquare)
                 // X strokes: a 1px round cap (radius 0.5px) lands between pixel centers,
                 // leaving the tips faint. Use butt caps and extend the endpoints outward
