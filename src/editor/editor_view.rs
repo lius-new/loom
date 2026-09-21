@@ -97,16 +97,6 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         ));
     }
 
-    // ---- Inline AI diff card (WalletService.cs only) ------------------
-    if id == FileId::Wallet {
-        root = root.child(diff_card(UiRect::new(
-            code_left + 24.0,
-            code_top + 7.0 * theme::LINE_H,
-            code_left + 24.0 + 400.0,
-            code_top + 14.0 * theme::LINE_H,
-        )));
-    }
-
     let _ = code_width;
 
     // ---- Editing handlers ---------------------------------------------
@@ -167,53 +157,4 @@ fn handle_key(state: &State<AppState>, ev: &KeyboardEvent) {
     }
 }
 
-/// The static inline AI diff widget (title + Accept/Reject + diff rows).
-fn diff_card(rect: UiRect) -> Element {
-    let mut card = panel(rect, VisualStyle::filled(theme::SURFACE));
-    card = card.event_policy(EventPolicy::INTERACTIVE);
 
-    let title = UiRect::new(rect.left + 12.0, rect.top + 8.0, rect.right - 12.0, rect.top + 30.0);
-    card = card.child(text(
-        title,
-        "AI Diff: Distributed Redis Idempotency Lock",
-        theme::sans_semibold(theme::ZINC_100, theme::SMALL),
-    ));
-
-    let accept = UiRect::new(rect.right - 160.0, rect.top + 8.0, rect.right - 108.0, rect.top + 26.0);
-    card = card.child(text(
-        accept,
-        "Accept (Tab)",
-        theme::mono_bold(theme::EMERALD_400, theme::SMALL),
-    ));
-    let reject = UiRect::new(rect.right - 100.0, rect.top + 8.0, rect.right - 16.0, rect.top + 26.0);
-    card = card.child(text(
-        reject,
-        "Reject (Esc)",
-        theme::mono_bold(theme::ZINC_500, theme::SMALL),
-    ));
-
-    // Diff rows: [del, add, del, add]
-    let rows: [(&str, bool); 4] = [
-        ("-   var senderBal = _cache.GetBalanceAsync(sender);", true),
-        ("+   var senderBal = await _cache.GetBalanceAsync(sender);", false),
-        ("-   await _cache.TransferAsync(sender, receiver, amount);", true),
-        ("+   return await _cache.CommitTransferAsync(sender, receiver, amount);", false),
-    ];
-    for (i, (content, is_del)) in rows.iter().enumerate() {
-        let y = rect.top + 32.0 + i as f32 * 20.0;
-        let row = UiRect::new(rect.left, y, rect.right, y + 20.0);
-        let (bg, fg) = if *is_del {
-            (theme::DIFF_DEL_BG, theme::DIFF_DEL_FG)
-        } else {
-            (theme::DIFF_ADD_BG, theme::DIFF_ADD_FG)
-        };
-        card = card.child(panel(row, VisualStyle::filled(bg)));
-        card = card.child(text(
-            UiRect::new(rect.left + 12.0, y, rect.right - 12.0, y + 20.0),
-            *content,
-            theme::mono(fg, theme::CODE_SIZE),
-        ));
-    }
-
-    card
-}
