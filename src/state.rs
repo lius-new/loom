@@ -8,10 +8,8 @@ pub struct AppState {
     pub workspace: Workspace,
     pub focused: bool,
     pub show_drawer: bool,
-    pub show_assistant: bool,
     pub show_terminal: bool,
     pub show_palette: bool,
-    pub show_cmdk: bool,
     pub toast: Option<String>,
 }
 
@@ -21,10 +19,8 @@ impl AppState {
             workspace: Workspace::new(),
             focused: false,
             show_drawer: true,
-            show_assistant: true,
             show_terminal: false,
             show_palette: false,
-            show_cmdk: false,
             toast: None,
         }
     }
@@ -33,18 +29,11 @@ impl AppState {
         match action {
             Action::OpenPalette => {
                 self.show_palette = true;
-                self.show_cmdk = false;
-            }
-            Action::OpenCmdK => {
-                self.show_cmdk = true;
-                self.show_palette = false;
             }
             Action::ToggleDrawer => self.show_drawer = !self.show_drawer,
-            Action::ToggleAssistant => self.show_assistant = !self.show_assistant,
             Action::ToggleTerminal => self.show_terminal = !self.show_terminal,
             Action::CloseOverlay => {
                 self.show_palette = false;
-                self.show_cmdk = false;
             }
             Action::OpenFile(id) => self.workspace.set_active(id),
             Action::CloseFile(id) => self.workspace.close(id),

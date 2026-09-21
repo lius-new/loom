@@ -60,7 +60,6 @@ pub const TITLEBAR_H: f32 = 32.0;
 pub const TABS_H: f32 = 28.0;
 pub const STATUS_H: f32 = 24.0;
 pub const SIDEBAR_W: f32 = 224.0;
-pub const ASSISTANT_W: f32 = 320.0;
 pub const TERMINAL_H: f32 = 176.0;
 pub const GUTTER_W: f32 = 48.0;
 pub const LINE_H: f32 = 24.0;

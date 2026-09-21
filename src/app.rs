@@ -10,7 +10,7 @@ use crate::input::keymap;
 use crate::state::AppState;
 use crate::theme;
 use crate::ui::{
-    assistant, cmdk, command_palette, sidebar, statusbar, tabs, terminal, titlebar, toast,
+    command_palette, sidebar, statusbar, tabs, terminal, titlebar, toast,
 };
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
@@ -23,9 +23,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let s = state.get();
     let show_term = s.show_terminal;
     let show_drawer = s.show_drawer;
-    let show_asst = s.show_assistant;
     let show_palette = s.show_palette;
-    let show_cmdk = s.show_cmdk;
 
     // ---- Region layout ------------------------------------------------
     let titlebar_rect = UiRect::new(0.0, 0.0, w, theme::TITLEBAR_H);
@@ -36,11 +34,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         h - theme::STATUS_H
     };
     let editor_left = if show_drawer { theme::SIDEBAR_W } else { 0.0 };
-    let editor_right = if show_asst {
-        w - theme::ASSISTANT_W
-    } else {
-        w
-    };
+    let editor_right = w;
     let tabs_rect = UiRect::new(
         editor_left,
         theme::TITLEBAR_H,
@@ -72,15 +66,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             state.clone(),
         ));
     }
-    if show_asst {
-        root = root.child(assistant::render(UiRect::new(
-            w - theme::ASSISTANT_W,
-            theme::TITLEBAR_H,
-            w,
-            main_bottom,
-        )));
-    }
-
     root = root.child(tabs::render(tabs_rect, state.clone()));
     root = root.child(editor_view::render(code_rect, state.clone()));
 
@@ -98,9 +83,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Overlays ------------------------------------------------------
     if show_palette {
         root = root.child(command_palette::render(vp, state.clone()));
-    }
-    if show_cmdk {
-        root = root.child(cmdk::render(vp, state.clone()));
     }
     root = root.child(toast::render(vp, state.clone()));
 

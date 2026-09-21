@@ -10,9 +10,7 @@ use crate::model::document::FileId;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
     OpenPalette,
-    OpenCmdK,
     ToggleDrawer,
-    ToggleAssistant,
     ToggleTerminal,
     CloseOverlay,
     OpenFile(FileId),
@@ -25,9 +23,7 @@ pub enum Action {
 ///
 /// Shortcuts (Cmd/Ctrl is accepted so it works on macOS and Linux/Windows):
 /// * Cmd/Ctrl+P — command palette
-/// * Cmd/Ctrl+K — inline AI prompt
 /// * Cmd/Ctrl+B — toggle file drawer
-/// * Cmd/Ctrl+L — toggle assistant
 /// * Esc         — close overlays
 pub fn action_for(ev: &KeyboardEvent) -> Option<Action> {
     if ev.state != KeyState::Down {
@@ -46,9 +42,7 @@ pub fn action_for(ev: &KeyboardEvent) -> Option<Action> {
         return match &ev.key {
             LogicalKey::Character(c) => match c.as_str() {
                 "p" | "P" => Some(Action::OpenPalette),
-                "k" | "K" => Some(Action::OpenCmdK),
                 "b" | "B" => Some(Action::ToggleDrawer),
-                "l" | "L" => Some(Action::ToggleAssistant),
                 "`" => Some(Action::ToggleTerminal),
                 _ => None,
             },
