@@ -5,6 +5,7 @@
 //! each other directly — the root (`app.rs`) owns layout and composition.
 
 pub mod command_palette;
+pub mod context_menu;
 pub mod sidebar;
 pub mod statusbar;
 pub mod tabs;

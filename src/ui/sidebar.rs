@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use lgui::core::{ellipse, Color, CursorIcon, EventPolicy, IconStyle, UiElement, UiId, precompiled};
+use lgui::core::{ellipse, Color, CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiId, precompiled};
 use lgui::prelude::{panel, text, Element, State, UiRect, VisualStyle};
 use lgui::text::measure_width;
 
@@ -139,8 +139,21 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
 
     let bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
 
+    // Background right-click capture: covers the whole drawer at the lowest
+    // z-order. File rows and the resize handle are drawn later and sit above
+    // it, so they win hit-testing and this only receives events on empty space.
+    let st_menu = state.clone();
+    let capture = panel(rect, VisualStyle::default())
+        .event_policy(EventPolicy::INTERACTIVE)
+        .on_pointer_down_with_button(move |_cx, p, button| {
+            if button == PointerButton::Right {
+                st_menu.update(move |app| app.context_menu = Some((p.point.x, p.point.y)));
+            }
+        });
+    let bar = bar.child(capture);
+
     // Workspace tree
-    let (b, _) = tree(
+    let (b, mut y) = tree(
         bar,
         &DIR_SRC,
         0,
@@ -151,6 +164,26 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         &collapsed,
     );
     let mut bar = b;
+
+    // Folders added via the empty-space context menu, rendered under `src`.
+    for name in &s.added_folders {
+        let row = UiRect::new(rect.left, y, rect.right, y + 20.0);
+        let indent = rect.left + 12.0 + INDENT;
+        let fid = UiId::owned(format!("added-folder-{name}"));
+        let row_el = panel(row, VisualStyle::default())
+            .child(precompiled(UiElement::icon(
+                fid,
+                UiRect::new(indent, y + 4.0, indent + 12.0, y + 16.0),
+                "folder",
+            ).icon_style(IconStyle::new(theme::ZINC_400))))
+            .child(text(
+                UiRect::new(indent + 16.0, y + 2.0, rect.right - 12.0, y + 18.0),
+                name.clone(),
+                theme::mono(theme::ZINC_300, theme::UI_SIZE),
+            ));
+        bar = bar.child(row_el);
+        y += 20.0;
+    }
 
     // Resize handle on the drawer's left edge. An 8px invisible hit strip
     // (drawn last, above the opaque file rows) carries the drag; the 1px

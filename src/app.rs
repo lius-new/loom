@@ -10,7 +10,7 @@ use crate::input::keymap;
 use crate::state::AppState;
 use crate::theme;
 use crate::ui::{
-    command_palette, sidebar, statusbar, tabs, terminal, titlebar, toast,
+    command_palette, context_menu, sidebar, statusbar, tabs, terminal, titlebar, toast,
 };
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
@@ -87,6 +87,9 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Overlays ------------------------------------------------------
     if show_palette {
         root = root.child(command_palette::render(vp, state.clone()));
+    }
+    if let Some(pos) = s.context_menu {
+        root = root.child(context_menu::render(vp, pos, state.clone()));
     }
     root = root.child(toast::render(vp, state.clone()));
 

@@ -16,6 +16,12 @@ pub struct AppState {
     pub collapsed: HashSet<&'static str>,
     pub sidebar_w: f32,
     pub resizing_sidebar: bool,
+    /// Empty-space context menu anchor (screen coords) when open.
+    pub context_menu: Option<(f32, f32)>,
+    /// Index of the context-menu item currently hovered, if any.
+    pub context_menu_hover: Option<usize>,
+    /// Folders added via the context menu (names under the `src` root).
+    pub added_folders: Vec<String>,
 }
 
 impl AppState {
@@ -30,6 +36,9 @@ impl AppState {
             collapsed: HashSet::new(),
             sidebar_w: crate::theme::SIDEBAR_W,
             resizing_sidebar: false,
+            context_menu: None,
+            context_menu_hover: None,
+            added_folders: Vec::new(),
         }
     }
 
