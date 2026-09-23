@@ -4,6 +4,7 @@
 //! Components read `AppState` through `State<AppState>` and never talk to
 //! each other directly — the root (`app.rs`) owns layout and composition.
 
+pub mod clone_repository;
 pub mod command_palette;
 pub mod context_menu;
 pub mod sidebar;

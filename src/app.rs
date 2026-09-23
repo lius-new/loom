@@ -16,7 +16,8 @@ use crate::state::AppState;
 use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
 use crate::ui::{
-    command_palette, context_menu, sidebar, statusbar, tabs, terminal, titlebar, toast,
+    clone_repository, command_palette, context_menu, sidebar, statusbar, tabs, terminal, titlebar,
+    toast,
 };
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
@@ -34,6 +35,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let editor_focus = cx.focus_handle(editor_id.clone());
     let terminal_id = cx.use_stable_id();
     let terminal_focus = cx.focus_handle(terminal_id.clone());
+    let clone_input_id = cx.use_stable_id();
+    let clone_input_focus = cx.focus_handle(clone_input_id.clone());
     let vp = cx.viewport();
     let w = vp.width();
     let h = vp.height();
@@ -43,6 +46,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let show_term = s.show_terminal;
     let show_drawer = s.show_drawer;
     let show_palette = s.show_palette;
+    let show_clone_dialog = s.show_clone_dialog;
 
     // ---- Region layout ------------------------------------------------
     let titlebar_rect = UiRect::new(0.0, 0.0, w, theme::TITLEBAR_H);
@@ -108,37 +112,40 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             mounted_terminal_focus.focus();
         }
     });
+    let mounted_clone_focus = clone_input_focus.clone();
+    cx.use_effect(show_clone_dialog, move || {
+        if show_clone_dialog {
+            mounted_clone_focus.focus();
+        }
+    });
     let blink_focused = s.terminal_focused;
     let blink_state = terminal_cursor_blink.clone();
-    cx.use_effect(
-        (show_term, blink_focused, active_terminal_id),
-        move || {
-            blink_state.set(true);
-            let (stop_sender, stop_receiver) = mpsc::channel();
-            let worker = if show_term && blink_focused {
-                let worker_state = blink_state.clone();
-                thread::Builder::new()
-                    .name("leditor-terminal-cursor-blink".to_string())
-                    .spawn(move || {
-                        while let Err(RecvTimeoutError::Timeout) =
-                            stop_receiver.recv_timeout(Duration::from_millis(500))
-                        {
-                            worker_state.update(|visible| *visible = !*visible);
-                        }
-                    })
-                    .ok()
-            } else {
-                None
-            };
+    cx.use_effect((show_term, blink_focused, active_terminal_id), move || {
+        blink_state.set(true);
+        let (stop_sender, stop_receiver) = mpsc::channel();
+        let worker = if show_term && blink_focused {
+            let worker_state = blink_state.clone();
+            thread::Builder::new()
+                .name("leditor-terminal-cursor-blink".to_string())
+                .spawn(move || {
+                    while let Err(RecvTimeoutError::Timeout) =
+                        stop_receiver.recv_timeout(Duration::from_millis(500))
+                    {
+                        worker_state.update(|visible| *visible = !*visible);
+                    }
+                })
+                .ok()
+        } else {
+            None
+        };
 
-            move || {
-                let _ = stop_sender.send(());
-                if let Some(worker) = worker {
-                    let _ = worker.join();
-                }
+        move || {
+            let _ = stop_sender.send(());
+            if let Some(worker) = worker {
+                let _ = worker.join();
             }
-        },
-    );
+        }
+    });
 
     // ---- Root (global shortcut listener) ------------------------------
     let mut root = group(vp);
@@ -171,14 +178,19 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // rows. Capturing at the root also observes moves into sibling regions and
     // overlays, so the scrollbar thumb disappears as soon as the drawer is
     // left.
-    let was_sidebar_hovered = s.sidebar_hovered;
     let st_hover = state.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
             let hovered = show_drawer && sidebar_rect.contains(pointer.point);
-            if hovered != was_sidebar_hovered {
-                st_hover.update(move |app| app.sidebar_hovered = hovered);
-            }
+            st_hover.try_update(move |app| {
+                let changed =
+                    app.sidebar_hovered != hovered || (!hovered && app.tree_hovered_path.is_some());
+                app.sidebar_hovered = hovered;
+                if !hovered {
+                    app.tree_hovered_path = None;
+                }
+                changed
+            });
         }
     });
 
@@ -187,8 +199,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         if let UiEventPayload::PointerMove { pointer } = payload {
             let hovered = code_rect.contains(pointer.point);
             st_editor_hover.try_update(move |app| {
-                let changed = app.editor_hovered != hovered
-                    || (!hovered && app.welcome_hover.is_some());
+                let changed =
+                    app.editor_hovered != hovered || (!hovered && app.welcome_hover.is_some());
                 app.editor_hovered = hovered;
                 if !hovered {
                     app.welcome_hover = None;
@@ -246,6 +258,14 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
     if let Some(pos) = s.context_menu {
         root = root.child(context_menu::render(vp, pos, state.clone()));
+    }
+    if show_clone_dialog {
+        root = root.child(clone_repository::render(
+            vp,
+            state.clone(),
+            clone_input_focus,
+            clone_input_id,
+        ));
     }
     root = root.child(toast::render(vp, state.clone()));
 

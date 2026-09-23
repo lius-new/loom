@@ -8,6 +8,7 @@ use lgui::core::{KeyState, KeyboardEvent, LogicalKey, NamedKey};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
     OpenPalette,
+    CloneRepository,
     ToggleDrawer,
     ToggleTerminal,
     CloseOverlay,
@@ -19,6 +20,7 @@ pub enum Action {
 ///
 /// Shortcuts (Cmd/Ctrl is accepted so it works on macOS and Linux/Windows):
 /// * Cmd/Ctrl+P — command palette
+/// * Cmd/Ctrl+Shift+G — clone repository
 /// * Cmd/Ctrl+B — toggle file drawer
 /// * Esc         — close overlays
 pub fn action_for(ev: &KeyboardEvent) -> Option<Action> {
@@ -39,6 +41,7 @@ pub fn action_for(ev: &KeyboardEvent) -> Option<Action> {
             LogicalKey::Character(c) => match c.as_str() {
                 "p" | "P" => Some(Action::OpenPalette),
                 "b" | "B" => Some(Action::ToggleDrawer),
+                "g" | "G" if ev.modifiers.shift() => Some(Action::CloneRepository),
                 "`" => Some(Action::ToggleTerminal),
                 _ => None,
             },

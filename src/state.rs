@@ -40,6 +40,8 @@ pub struct AppState {
     pub resizing_sidebar: bool,
     /// Whether the pointer is currently inside the file-tree drawer.
     pub sidebar_hovered: bool,
+    /// File-tree row path currently under the pointer.
+    pub tree_hovered_path: Option<String>,
     /// Empty-space context menu anchor (screen coords) when open.
     pub context_menu: Option<(f32, f32)>,
     /// Index of the context-menu item currently hovered, if any.
@@ -70,6 +72,16 @@ pub struct AppState {
     pub editor_horizontal_scrollbar_drag_offset: f32,
     /// Welcome-page row currently under the pointer.
     pub welcome_hover: Option<usize>,
+    /// Whether the repository-clone dialog is visible.
+    pub show_clone_dialog: bool,
+    /// Repository URL entered in the clone dialog.
+    pub clone_repository_url: String,
+    /// Whether a git clone process is currently running.
+    pub cloning_repository: bool,
+    /// Last clone validation or process error shown in the dialog.
+    pub clone_repository_error: Option<String>,
+    /// Whether the repository URL input currently owns keyboard focus.
+    pub clone_input_focused: bool,
 }
 
 impl AppState {
@@ -90,6 +102,7 @@ impl AppState {
             sidebar_w: crate::theme::SIDEBAR_W,
             resizing_sidebar: false,
             sidebar_hovered: false,
+            tree_hovered_path: None,
             context_menu: None,
             context_menu_hover: None,
             open_dir: None,
@@ -105,6 +118,11 @@ impl AppState {
             editor_horizontal_scrollbar_dragging: false,
             editor_horizontal_scrollbar_drag_offset: 0.0,
             welcome_hover: None,
+            show_clone_dialog: false,
+            clone_repository_url: String::new(),
+            cloning_repository: false,
+            clone_repository_error: None,
+            clone_input_focused: false,
         }
     }
 
@@ -112,6 +130,13 @@ impl AppState {
         match action {
             Action::OpenPalette => {
                 self.show_palette = true;
+            }
+            Action::CloneRepository => {
+                if !self.cloning_repository {
+                    self.show_palette = false;
+                    self.show_clone_dialog = true;
+                    self.clone_repository_error = None;
+                }
             }
             Action::ToggleDrawer => {
                 self.show_drawer = !self.show_drawer;
@@ -122,6 +147,10 @@ impl AppState {
             Action::ToggleTerminal => self.show_terminal = !self.show_terminal,
             Action::CloseOverlay => {
                 self.show_palette = false;
+                if !self.cloning_repository {
+                    self.show_clone_dialog = false;
+                    self.clone_input_focused = false;
+                }
             }
             Action::NextFile => self.workspace.next(),
             Action::PrevFile => self.workspace.prev(),

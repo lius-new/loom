@@ -11,15 +11,16 @@ use std::fs;
 use std::path::Path;
 
 use lgui::core::{
-    clip, CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiEventKind,
-    UiEventPayload, UiFocusHandle, UiId, WheelUnit, precompiled,
+    CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiEventKind, UiEventPayload,
+    UiFocusHandle, UiId, WheelUnit, clip, precompiled,
 };
-use lgui::dialogs::{system_file_dialogs, FileDialogOptions};
-use lgui::prelude::{panel, text, Element, State, TextAlign, UiRect, VisualStyle};
+use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
 use crate::state::{AppState, DirEntry};
 use crate::theme;
+use crate::workspace_actions;
 
+const HEADER_H: f32 = theme::TABS_H;
 const ROW_H: f32 = 20.0;
 const INDENT: f32 = 12.0;
 const TREE_ICON_SIZE: f32 = 16.0;
@@ -51,15 +52,26 @@ struct StickyRow {
 
 pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
     let s = state.get();
+    let header_rect = UiRect::new(rect.left, rect.top, rect.right, rect.top + HEADER_H);
+    let content_rect = UiRect::new(rect.left, header_rect.bottom, rect.right, rect.bottom);
 
-    let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
+    let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR))
+        .child(drawer_header(header_rect, state.clone()));
 
     // Background right-click capture: covers the drawer at the lowest z-order.
     // Rows and the resize handle are drawn later and sit above it, so they win
     // hit-testing and this only receives events on empty space.
     let st_menu = state.clone();
-    let capture = panel(rect, VisualStyle::default())
+    let clear_hover = state.clone();
+    let capture = panel(content_rect, VisualStyle::default())
         .event_policy(EventPolicy::INTERACTIVE)
+        .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
+            clear_hover.try_update(|app| {
+                let changed = app.tree_hovered_path.is_some();
+                app.tree_hovered_path = None;
+                changed
+            });
+        })
         .on_pointer_down_with_button(move |_cx, p, button| {
             if button == PointerButton::Right {
                 st_menu.update(move |app| app.context_menu = Some((p.point.x, p.point.y)));
@@ -70,7 +82,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     // Content: empty-state prompt, or the open folder's tree.
     match &s.open_dir {
         None => {
-            for el in empty_state(rect, state.clone()) {
+            for el in empty_state(content_rect, state.clone()) {
                 bar = bar.child(el);
             }
         }
@@ -80,13 +92,13 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| key.clone());
-            let content_right = tree_content_right(&key, &root_name, &s, rect.left)
-                .max(rect.right);
-            let max_scroll_x = (content_right - rect.right).max(0.0);
+            let content_right =
+                tree_content_right(&key, &root_name, &s, content_rect.left).max(content_rect.right);
+            let max_scroll_x = (content_right - content_rect.right).max(0.0);
             let scroll_x = s.tree_scroll_x.clamp(0.0, max_scroll_x);
 
-            let mut y = rect.top + 8.0;
-            let indent = rect.left + INDENT;
+            let mut y = content_rect.top + 8.0;
+            let indent = content_rect.left + INDENT;
             let is_expanded = s.expanded.contains(&key);
 
             let root = StickyDirectory {
@@ -110,12 +122,13 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                 &key,
                 &root_name,
                 indent,
-                rect,
+                content_rect,
                 y,
                 content_right,
                 0.0,
                 is_expanded,
                 false,
+                s.tree_hovered_path.as_deref() == Some(key.as_str()),
                 &state,
             ));
             y += ROW_H;
@@ -127,7 +140,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                 let guide_x = indent + TREE_ICON_SIZE / 2.0;
                 tree_els.extend(build_tree(
                     &key,
-                    rect,
+                    content_rect,
                     &mut y,
                     1,
                     &s,
@@ -148,7 +161,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
 
             // How far the content can be pulled up before its last row reaches
             // the drawer's bottom edge.
-            let max_scroll = (content_bottom - rect.bottom).max(0.0);
+            let max_scroll = (content_bottom - content_rect.bottom).max(0.0);
             let scroll = s.tree_scroll.clamp(0.0, max_scroll);
 
             // Keep wheel scrolling on the tree root so sticky rows, the
@@ -157,16 +170,12 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             bar = bar.on_event(UiEventKind::Wheel, move |_cx, payload| {
                 if let UiEventPayload::Wheel { delta } = payload {
                     let (step_x, step_y) = match delta.unit {
-                        WheelUnit::Lines => (
-                            delta.x * ROW_H * 3.0,
-                            delta.y * ROW_H * 3.0,
-                        ),
+                        WheelUnit::Lines => (delta.x * ROW_H * 3.0, delta.y * ROW_H * 3.0),
                         WheelUnit::Pixels => (delta.x, delta.y),
                     };
                     st.update(move |app| {
                         app.tree_scroll = (app.tree_scroll - step_y).clamp(0.0, max_scroll);
-                        app.tree_scroll_x =
-                            (app.tree_scroll_x - step_x).clamp(0.0, max_scroll_x);
+                        app.tree_scroll_x = (app.tree_scroll_x - step_x).clamp(0.0, max_scroll_x);
                     });
                 }
             });
@@ -174,7 +183,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             // Clip container: keeps rows inside the drawer while scrolling.
             // The content offset is the negated scroll (scrolling down moves
             // the content up).
-            let mut clip_el = clip(rect, -scroll_x, -scroll);
+            let mut clip_el = clip(content_rect, -scroll_x, -scroll);
             for el in tree_els {
                 clip_el = clip_el.child(el);
             }
@@ -182,19 +191,23 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
 
             // Draw deepest sticky rows first. Parents are added last so a
             // departing child slides underneath its fixed ancestor.
-            for sticky in sticky_rows(&rows, rect.top, scroll).into_iter().rev() {
+            for sticky in sticky_rows(&rows, content_rect.top, scroll)
+                .into_iter()
+                .rev()
+            {
                 let directory = sticky.directory;
-                let indent = rect.left + INDENT + directory.depth as f32 * INDENT;
+                let indent = content_rect.left + INDENT + directory.depth as f32 * INDENT;
                 bar = bar.child(dir_row(
                     &directory.key,
                     &directory.name,
                     indent,
-                    rect,
+                    content_rect,
                     sticky.top,
                     content_right,
                     -scroll_x,
                     directory.is_expanded,
                     true,
+                    false,
                     &state,
                 ));
             }
@@ -202,17 +215,15 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             // Scrollbar, drawn outside the clip so it stays fixed.
             if max_scroll > 0.0 && (s.sidebar_hovered || s.scrollbar_dragging) {
                 bar = bar.child(vertical_scrollbar(
-                    rect,
+                    content_rect,
                     content_bottom,
                     scroll,
                     state.clone(),
                 ));
             }
-            if max_scroll_x > 0.0
-                && (s.sidebar_hovered || s.horizontal_scrollbar_dragging)
-            {
+            if max_scroll_x > 0.0 && (s.sidebar_hovered || s.horizontal_scrollbar_dragging) {
                 bar = bar.child(horizontal_scrollbar(
-                    rect,
+                    content_rect,
                     content_right,
                     scroll_x,
                     state.clone(),
@@ -261,65 +272,224 @@ fn resized_sidebar_width(window_right: f32, pointer_x: f32) -> f32 {
     (window_right - pointer_x).clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W)
 }
 
-/// Empty state: a short prompt plus a compact "Open Folder" button, centered
-/// in the drawer.
+pub(super) fn drawer_icon(
+    id: &'static str,
+    key: &'static str,
+    rect: UiRect,
+    color: lgui::prelude::Color,
+) -> Element {
+    precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
+}
+
+fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
+    let mut header = panel(rect, VisualStyle::filled(theme::SIDEBAR));
+    let icon_top = rect.top + (rect.height() - 14.0) / 2.0;
+    let explorer_icon = UiRect::new(
+        rect.left + 12.0,
+        icon_top,
+        rect.left + 26.0,
+        icon_top + 14.0,
+    );
+    header = header.child(drawer_icon(
+        "sidebar.explorer",
+        "explorer",
+        explorer_icon,
+        theme::ZINC_500,
+    ));
+    header = header.child(text(
+        UiRect::new(
+            explorer_icon.right + 7.0,
+            rect.top,
+            rect.right - 40.0,
+            rect.bottom,
+        ),
+        "EXPLORER",
+        theme::mono_bold(theme::ZINC_300, theme::SMALL).tracking(0.8),
+    ));
+
+    let collapse_hit = UiRect::new(
+        rect.right - 32.0,
+        rect.top + 2.0,
+        rect.right - 4.0,
+        rect.bottom,
+    );
+    let collapse_icon = UiRect::new(
+        collapse_hit.left + 7.0,
+        icon_top,
+        collapse_hit.left + 21.0,
+        icon_top + 14.0,
+    );
+    let collapse_state = state;
+    header = header.child(
+        panel(collapse_hit, VisualStyle::default().radius(3.0))
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                collapse_state.update(|app| {
+                    app.show_drawer = false;
+                    app.sidebar_hovered = false;
+                    app.tree_hovered_path = None;
+                });
+            })
+            .child(drawer_icon(
+                "sidebar.collapse.icon",
+                "chevron-right",
+                collapse_icon,
+                theme::ZINC_500,
+            )),
+    );
+
+    header.child(panel(
+        UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
+        VisualStyle::filled(theme::BORDER),
+    ))
+}
+
+/// Empty state from the Explorer mockup, without its recent-workspace and
+/// bottom workspace-switching sections.
 fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
     let cx = (rect.left + rect.right) / 2.0;
-    let cy = (rect.top + rect.bottom) / 2.0;
-
-    let title = text(
-        UiRect::new(rect.left + 16.0, cy - 42.0, rect.right - 16.0, cy - 22.0),
-        "No folder open",
-        theme::sans_semibold(theme::ZINC_200, theme::UI_SIZE),
-    );
-
-    let desc = text(
-        UiRect::new(rect.left + 16.0, cy - 20.0, rect.right - 16.0, cy - 4.0),
-        "Open a folder to browse its files",
-        theme::sans(theme::ZINC_500, theme::SMALL),
-    );
-
-    let btn_w = 110.0;
-    let btn_h = 24.0;
-    let btn_rect = UiRect::new(
-        cx - btn_w / 2.0,
-        cy + 8.0,
-        cx + btn_w / 2.0,
-        cy + 8.0 + btn_h,
-    );
-    let st = state.clone();
-    let mut btn_style = theme::sans_semibold(theme::ZINC_200, theme::UI_SIZE);
-    btn_style.align = TextAlign::Center;
-    let btn = theme::bordered(btn_rect, theme::SURFACE, theme::BORDER, 4.0, 1.0)
-        .event_policy(EventPolicy::INTERACTIVE)
-        .on_click(move || {
-            let options = FileDialogOptions::new().title("Open Folder");
-            if let Some(path) = system_file_dialogs().pick_folder(&options) {
-                st.update(move |app| {
-                    let key = path.to_string_lossy().into_owned();
-                    let entries = read_entries(&path);
-                    app.open_dir = Some(path);
-                    app.dir_entries.clear();
-                    app.dir_entries.insert(key.clone(), entries);
-                    app.expanded.clear();
-                    app.expanded.insert(key); // root starts expanded
-                    app.tree_scroll = 0.0;
-                    app.tree_scroll_x = 0.0;
-                });
-            }
-        })
-        .child(text(
+    let icon_rect = UiRect::new(cx - 24.0, rect.top + 28.0, cx + 24.0, rect.top + 76.0);
+    let icon =
+        theme::bordered(icon_rect, theme::SURFACE, theme::BORDER, 10.0, 1.0).child(drawer_icon(
+            "sidebar.empty.folder",
+            crate::file_icons::FOLDER_ICON,
             UiRect::new(
-                btn_rect.left,
-                btn_rect.top + 4.0,
-                btn_rect.right,
-                btn_rect.bottom - 4.0,
+                icon_rect.left + 12.0,
+                icon_rect.top + 12.0,
+                icon_rect.right - 12.0,
+                icon_rect.bottom - 12.0,
             ),
-            "Open Folder",
-            btn_style,
+            theme::ZINC_500,
         ));
 
-    vec![title.into(), desc.into(), btn]
+    let mut centered_title = theme::sans_semibold(theme::ZINC_200, theme::UI_SIZE);
+    centered_title.align = TextAlign::Center;
+    let title = text(
+        UiRect::new(
+            rect.left + 14.0,
+            rect.top + 88.0,
+            rect.right - 14.0,
+            rect.top + 108.0,
+        ),
+        "No Folder Opened",
+        centered_title,
+    );
+
+    let mut centered_desc = theme::sans(theme::ZINC_500, theme::SMALL);
+    centered_desc.align = TextAlign::Center;
+    let desc_line_one = text(
+        UiRect::new(
+            rect.left + 14.0,
+            rect.top + 111.0,
+            rect.right - 14.0,
+            rect.top + 128.0,
+        ),
+        "Open a directory to explore files,",
+        centered_desc,
+    );
+    let desc_line_two = text(
+        UiRect::new(
+            rect.left + 14.0,
+            rect.top + 127.0,
+            rect.right - 14.0,
+            rect.top + 144.0,
+        ),
+        "track changes, and start editing.",
+        centered_desc,
+    );
+
+    let btn_rect = UiRect::new(
+        rect.left + 14.0,
+        rect.top + 164.0,
+        rect.right - 14.0,
+        rect.top + 198.0,
+    );
+    let st = state.clone();
+    let btn = theme::bordered(btn_rect, theme::SURFACE, theme::BORDER, 4.0, 1.0)
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .on_click(move || {
+            workspace_actions::choose_folder(&st);
+        })
+        .child(drawer_icon(
+            "sidebar.empty.open-folder",
+            crate::file_icons::FOLDER_OPEN_ICON,
+            UiRect::new(
+                btn_rect.left + 12.0,
+                btn_rect.top + 10.0,
+                btn_rect.left + 26.0,
+                btn_rect.top + 24.0,
+            ),
+            theme::ACCENT,
+        ))
+        .child(text(
+            UiRect::new(
+                btn_rect.left + 34.0,
+                btn_rect.top,
+                btn_rect.right - 12.0,
+                btn_rect.bottom,
+            ),
+            "Open Folder",
+            theme::sans_semibold(theme::ZINC_200, theme::UI_SIZE),
+        ));
+
+    let clone_rect = UiRect::new(
+        rect.left + 14.0,
+        rect.top + 202.0,
+        rect.right - 14.0,
+        rect.top + 232.0,
+    );
+    let clone_state = state;
+    let clone_btn = panel(clone_rect, VisualStyle::default().radius(4.0))
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .on_click(move || {
+            clone_state.update(|app| {
+                app.show_clone_dialog = true;
+                app.clone_repository_error = None;
+            });
+        })
+        .child(drawer_icon(
+            "sidebar.empty.clone",
+            "git-branch",
+            UiRect::new(
+                clone_rect.left + 12.0,
+                clone_rect.top + 8.0,
+                clone_rect.left + 26.0,
+                clone_rect.top + 22.0,
+            ),
+            theme::ZINC_600,
+        ))
+        .child(text(
+            UiRect::new(
+                clone_rect.left + 34.0,
+                clone_rect.top,
+                clone_rect.right - 92.0,
+                clone_rect.bottom,
+            ),
+            "Clone Repository...",
+            theme::sans(theme::ZINC_400, theme::UI_SIZE),
+        ))
+        .child(text(
+            UiRect::new(
+                clone_rect.right - 86.0,
+                clone_rect.top,
+                clone_rect.right - 12.0,
+                clone_rect.bottom,
+            ),
+            "Ctrl+Shift+G",
+            theme::mono_right(theme::ZINC_600, 9.0),
+        ));
+
+    vec![
+        icon,
+        title.into(),
+        desc_line_one.into(),
+        desc_line_two.into(),
+        btn,
+        clone_btn,
+    ]
 }
 
 /// Read and sort one directory's entries (directories first, then name).
@@ -335,11 +505,7 @@ fn read_entries(dir: &Path) -> Vec<DirEntry> {
             .collect(),
         Err(_) => Vec::new(),
     };
-    v.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.name.cmp(&b.name))
-    });
+    v.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
     v
 }
 
@@ -353,9 +519,7 @@ fn read_text_file(path: &Path) -> Result<String, String> {
         return Err(format!("Could not open {name}: not a regular file"));
     }
     if metadata.len() > MAX_EDITABLE_FILE_BYTES {
-        return Err(format!(
-            "Could not open {name}: file is larger than 4 MiB"
-        ));
+        return Err(format!("Could not open {name}: file is larger than 4 MiB"));
     }
     fs::read_to_string(path).map_err(|error| format!("Could not open {name} as UTF-8: {error}"))
 }
@@ -372,6 +536,7 @@ fn dir_row(
     content_offset_x: f32,
     is_expanded: bool,
     sticky: bool,
+    hovered: bool,
     state: &State<AppState>,
 ) -> Element {
     let row_right = if sticky { rect.right } else { content_right };
@@ -391,29 +556,44 @@ fn dir_row(
     let fid = UiId::owned(format!("tree-{layer}-{key}"));
     let style = if sticky {
         VisualStyle::filled(theme::SIDEBAR)
+    } else if hovered {
+        VisualStyle::filled(theme::SURFACE)
     } else {
         VisualStyle::default()
     };
 
-    let st = state.clone();
-    let k = key.to_string();
-    panel(row_rect, style)
-        .event_policy(EventPolicy::INTERACTIVE)
-        .on_click(move || {
-            let key = k.clone();
-            st.update(move |app| {
-                if app.expanded.contains(&key) {
-                    app.expanded.remove(&key);
-                } else {
-                    app.expanded.insert(key.clone());
-                    if !app.dir_entries.contains_key(&key) {
-                        let entries = read_entries(Path::new(&key));
-                        app.dir_entries.insert(key.clone(), entries);
-                    }
-                }
+    let mut row = panel(row_rect, style).event_policy(EventPolicy::INTERACTIVE);
+    if !sticky {
+        let hover_state = state.clone();
+        let hover_key = key.to_string();
+        row = row.on_pointer_move(move |_cx, _pointer| {
+            let key = hover_key.clone();
+            hover_state.try_update(move |app| {
+                let changed = app.tree_hovered_path.as_deref() != Some(key.as_str());
+                app.tree_hovered_path = Some(key);
+                changed
             });
-        })
-        .child(precompiled(UiElement::icon(
+        });
+    }
+
+    let click_state = state.clone();
+    let click_key = key.to_string();
+    row.on_click(move || {
+        let key = click_key.clone();
+        click_state.update(move |app| {
+            if app.expanded.contains(&key) {
+                app.expanded.remove(&key);
+            } else {
+                app.expanded.insert(key.clone());
+                if !app.dir_entries.contains_key(&key) {
+                    let entries = read_entries(Path::new(&key));
+                    app.dir_entries.insert(key.clone(), entries);
+                }
+            }
+        });
+    })
+    .child(precompiled(
+        UiElement::icon(
             fid,
             UiRect::new(
                 indent,
@@ -422,17 +602,14 @@ fn dir_row(
                 y + 2.0 + TREE_ICON_SIZE,
             ),
             icon,
-        ).icon_style(IconStyle::new(theme::ZINC_400))))
-        .child(text(
-            UiRect::new(
-                indent + TREE_LABEL_OFFSET,
-                y + 2.0,
-                text_right,
-                y + 18.0,
-            ),
-            name.to_string(),
-            theme::mono(theme::ZINC_300, theme::UI_SIZE),
-        ))
+        )
+        .icon_style(IconStyle::new(theme::ZINC_400)),
+    ))
+    .child(text(
+        UiRect::new(indent + TREE_LABEL_OFFSET, y + 2.0, text_right, y + 18.0),
+        name.to_string(),
+        theme::mono(theme::ZINC_300, theme::UI_SIZE),
+    ))
 }
 
 /// Renders the cached entries for `dir_key`, advancing `y` by one row per
@@ -485,6 +662,7 @@ fn build_tree(
                 0.0,
                 is_expanded,
                 false,
+                s.tree_hovered_path.as_deref() == Some(key.as_str()),
                 state,
             ));
         } else {
@@ -500,13 +678,25 @@ fn build_tree(
             let open_id = s.workspace.file_id_for_path(&file_path);
             let row_style = if s.workspace.active_path() == Some(file_path.as_path()) {
                 VisualStyle::filled(theme::ACTIVE_LINE)
+            } else if s.tree_hovered_path.as_deref() == Some(key.as_str()) {
+                VisualStyle::filled(theme::SURFACE)
             } else {
                 VisualStyle::default()
             };
+            let hover_state = state.clone();
+            let hover_key = key.clone();
             let st = state.clone();
             let focus = editor_focus.clone();
             let row = panel(row_rect, row_style)
                 .event_policy(EventPolicy::INTERACTIVE)
+                .on_pointer_move(move |_cx, _pointer| {
+                    let key = hover_key.clone();
+                    hover_state.try_update(move |app| {
+                        let changed = app.tree_hovered_path.as_deref() != Some(key.as_str());
+                        app.tree_hovered_path = Some(key);
+                        changed
+                    });
+                })
                 .on_click(move || {
                     if let Some(id) = open_id {
                         st.update(move |app| app.workspace.set_active(id));
@@ -597,13 +787,7 @@ fn tree_content_right(root_key: &str, root_name: &str, s: &AppState, left: f32) 
     right
 }
 
-fn extend_content_right(
-    dir_key: &str,
-    depth: usize,
-    s: &AppState,
-    left: f32,
-    right: &mut f32,
-) {
+fn extend_content_right(dir_key: &str, depth: usize, s: &AppState, left: f32, right: &mut f32) {
     let Some(entries) = s.dir_entries.get(dir_key) else {
         return;
     };
@@ -776,8 +960,7 @@ fn horizontal_scrollbar(
     .on_pointer_move(move |_cx, p| {
         st_move.update(move |app| {
             if app.horizontal_scrollbar_dragging && travel > 0.0 {
-                let t = (p.point.x - track_left - app.horizontal_scrollbar_drag_offset)
-                    / travel
+                let t = (p.point.x - track_left - app.horizontal_scrollbar_drag_offset) / travel
                     * max_scroll;
                 app.tree_scroll_x = t.clamp(0.0, max_scroll);
             }
@@ -901,13 +1084,7 @@ mod tests {
     #[test]
     fn sidebar_resize_tracks_both_drag_directions_and_clamps() {
         assert_eq!(resized_sidebar_width(1_000.0, 750.0), 250.0);
-        assert_eq!(
-            resized_sidebar_width(1_000.0, 900.0),
-            theme::SIDEBAR_MIN_W
-        );
-        assert_eq!(
-            resized_sidebar_width(1_000.0, 500.0),
-            theme::SIDEBAR_MAX_W
-        );
+        assert_eq!(resized_sidebar_width(1_000.0, 900.0), theme::SIDEBAR_MIN_W);
+        assert_eq!(resized_sidebar_width(1_000.0, 500.0), theme::SIDEBAR_MAX_W);
     }
 }

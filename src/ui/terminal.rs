@@ -570,7 +570,7 @@ fn key_bytes(event: &KeyboardEvent) -> Option<Vec<u8>> {
     {
         let lower = character.to_ascii_lowercase();
         // These remain editor-wide shortcuts while the terminal is focused.
-        if matches!(lower, 'p' | 'b' | '`') {
+        if matches!(lower, 'p' | 'b' | 'g' | '`') {
             return None;
         }
         if lower.is_ascii_lowercase() {
