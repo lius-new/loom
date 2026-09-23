@@ -50,6 +50,16 @@ pub struct AppState {
     pub horizontal_scrollbar_dragging: bool,
     /// Pointer x offset from the horizontal thumb's left when dragging began.
     pub horizontal_scrollbar_drag_offset: f32,
+    /// Whether the pointer is currently inside the visible code editor.
+    pub editor_hovered: bool,
+    /// True while the editor's vertical overlay scrollbar is being dragged.
+    pub editor_vertical_scrollbar_dragging: bool,
+    /// Pointer y offset from the editor vertical thumb's top.
+    pub editor_vertical_scrollbar_drag_offset: f32,
+    /// True while the editor's horizontal overlay scrollbar is being dragged.
+    pub editor_horizontal_scrollbar_dragging: bool,
+    /// Pointer x offset from the editor horizontal thumb's left.
+    pub editor_horizontal_scrollbar_drag_offset: f32,
 }
 
 impl AppState {
@@ -75,6 +85,11 @@ impl AppState {
             scrollbar_drag_offset: 0.0,
             horizontal_scrollbar_dragging: false,
             horizontal_scrollbar_drag_offset: 0.0,
+            editor_hovered: false,
+            editor_vertical_scrollbar_dragging: false,
+            editor_vertical_scrollbar_drag_offset: 0.0,
+            editor_horizontal_scrollbar_dragging: false,
+            editor_horizontal_scrollbar_drag_offset: 0.0,
         }
     }
 

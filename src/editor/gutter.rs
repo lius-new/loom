@@ -1,16 +1,23 @@
 //! The line-number gutter with clickable breakpoint dots.
 
+use std::ops::Range;
+
 use lgui::core::ellipse;
 use lgui::prelude::{group, text, Color, Element, UiRect, VisualStyle};
 
 use crate::theme;
 
-/// Render line numbers for `line_count` lines. `breakpoint_line` is 1-based
+/// Render only `visible_lines` while preserving their absolute document rows.
+/// `breakpoint_line` is 1-based
 /// and draws a rose dot next to that number.
-pub fn render(rect: UiRect, line_count: usize, breakpoint_line: Option<usize>) -> Element {
+pub fn render(
+    rect: UiRect,
+    visible_lines: Range<usize>,
+    breakpoint_line: Option<usize>,
+) -> Element {
     let mut g = group(rect);
 
-    for i in 0..line_count {
+    for i in visible_lines {
         let y = rect.top + i as f32 * theme::LINE_H;
         let has_bp = breakpoint_line == Some(i + 1);
 

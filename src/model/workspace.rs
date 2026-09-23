@@ -10,6 +10,8 @@ use crate::model::document::{FileId, FileMeta};
 struct OpenDocument {
     meta: FileMeta,
     buffer: TextBuffer,
+    scroll_x: f32,
+    scroll_y: f32,
 }
 
 #[derive(Clone)]
@@ -68,6 +70,21 @@ impl Workspace {
             .map(|document| &mut document.buffer)
     }
 
+    pub fn active_scroll(&self) -> (f32, f32) {
+        self.active
+            .and_then(|id| self.documents.get(&id))
+            .map_or((0.0, 0.0), |document| {
+                (document.scroll_x, document.scroll_y)
+            })
+    }
+
+    pub fn set_active_scroll(&mut self, x: f32, y: f32) {
+        if let Some(document) = self.active.and_then(|id| self.documents.get_mut(&id)) {
+            document.scroll_x = x.max(0.0);
+            document.scroll_y = y.max(0.0);
+        }
+    }
+
     pub fn open_path(&mut self, path: PathBuf, contents: String) -> FileId {
         if let Some(id) = self.file_id_for_path(&path) {
             self.active = Some(id);
@@ -81,6 +98,8 @@ impl Workspace {
             OpenDocument {
                 meta: FileMeta::from_path(path.clone()),
                 buffer: TextBuffer::new(contents),
+                scroll_x: 0.0,
+                scroll_y: 0.0,
             },
         );
         self.paths.insert(path, id);
@@ -154,5 +173,19 @@ mod tests {
 
         assert_eq!(workspace.active(), Some(first));
         assert_eq!(workspace.file_id_for_path(Path::new("second.txt")), None);
+    }
+
+    #[test]
+    fn keeps_an_independent_scroll_position_for_each_document() {
+        let mut workspace = Workspace::new();
+        let first = workspace.open_path(PathBuf::from("first.txt"), "first".into());
+        workspace.set_active_scroll(24.0, 120.0);
+        let second = workspace.open_path(PathBuf::from("second.txt"), "second".into());
+        workspace.set_active_scroll(8.0, 40.0);
+
+        workspace.set_active(first);
+        assert_eq!(workspace.active_scroll(), (24.0, 120.0));
+        workspace.set_active(second);
+        assert_eq!(workspace.active_scroll(), (8.0, 40.0));
     }
 }

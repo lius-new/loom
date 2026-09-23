@@ -36,9 +36,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         h - theme::STATUS_H
     };
     let editor_left = 0.0;
-    // The editor always spans the full width; the drawer floats above it as a
-    // sibling so the two regions stay independent (the editor never learns the
-    // drawer's width). Tabs, however, sit beside the drawer and end at its edge.
+    // The editor and its overlay scrollbars stop at the drawer's visible edge.
+    // This keeps the vertical editor thumb reachable while the drawer is open.
     let tabs_right = if show_drawer { w - s.sidebar_w } else { w };
     let tabs_rect = UiRect::new(
         editor_left,
@@ -49,7 +48,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let code_rect = UiRect::new(
         editor_left,
         theme::TITLEBAR_H + theme::TABS_H,
-        w,
+        tabs_right,
         main_bottom,
     );
     let sidebar_rect = UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom);
@@ -74,6 +73,17 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             let hovered = show_drawer && sidebar_rect.contains(pointer.point);
             if hovered != was_sidebar_hovered {
                 st_hover.update(move |app| app.sidebar_hovered = hovered);
+            }
+        }
+    });
+
+    let was_editor_hovered = s.editor_hovered;
+    let st_editor_hover = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
+        if let UiEventPayload::PointerMove { pointer } = payload {
+            let hovered = code_rect.contains(pointer.point);
+            if hovered != was_editor_hovered {
+                st_editor_hover.update(move |app| app.editor_hovered = hovered);
             }
         }
     });
