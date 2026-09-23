@@ -22,6 +22,9 @@ use crate::theme;
 
 const ROW_H: f32 = 20.0;
 const INDENT: f32 = 12.0;
+const TREE_ICON_SIZE: f32 = 16.0;
+const TREE_ICON_GAP: f32 = 4.0;
+const TREE_LABEL_OFFSET: f32 = TREE_ICON_SIZE + TREE_ICON_GAP;
 
 #[derive(Clone, Debug)]
 struct StickyDirectory {
@@ -120,7 +123,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                 // Indent guide: a faint 1px line under the root's icon, from
                 // the row bottom to the bottom of its last child.
                 let children_top = y;
-                let guide_x = indent + 6.0;
+                let guide_x = indent + TREE_ICON_SIZE / 2.0;
                 tree_els.extend(build_tree(
                     &key,
                     rect,
@@ -355,7 +358,11 @@ fn dir_row(
     } else {
         content_right - 12.0
     };
-    let icon = if is_expanded { "folder-open" } else { "folder" };
+    let icon = if is_expanded {
+        crate::file_icons::FOLDER_OPEN_ICON
+    } else {
+        crate::file_icons::FOLDER_ICON
+    };
     let layer = if sticky { "sticky" } else { "content" };
     let fid = UiId::owned(format!("tree-{layer}-{key}"));
     let style = if sticky {
@@ -384,11 +391,21 @@ fn dir_row(
         })
         .child(precompiled(UiElement::icon(
             fid,
-            UiRect::new(indent, y + 4.0, indent + 12.0, y + 16.0),
+            UiRect::new(
+                indent,
+                y + 2.0,
+                indent + TREE_ICON_SIZE,
+                y + 2.0 + TREE_ICON_SIZE,
+            ),
             icon,
         ).icon_style(IconStyle::new(theme::ZINC_400))))
         .child(text(
-            UiRect::new(indent + 16.0, y + 2.0, text_right, y + 18.0),
+            UiRect::new(
+                indent + TREE_LABEL_OFFSET,
+                y + 2.0,
+                text_right,
+                y + 18.0,
+            ),
             name.to_string(),
             theme::mono(theme::ZINC_300, theme::UI_SIZE),
         ))
@@ -452,10 +469,30 @@ fn build_tree(
                 sticky_path: path.clone(),
             });
             let row_rect = UiRect::new(rect.left, *y, content_right, *y + ROW_H);
+            let icon_id = UiId::owned(format!("tree-file-icon-{key}"));
+            let icon = crate::file_icons::icon_for_file(&name);
             let row = panel(row_rect, VisualStyle::default())
                 .event_policy(EventPolicy::INTERACTIVE)
+                .child(precompiled(
+                    UiElement::icon(
+                        icon_id,
+                        UiRect::new(
+                            indent,
+                            *y + 2.0,
+                            indent + TREE_ICON_SIZE,
+                            *y + 2.0 + TREE_ICON_SIZE,
+                        ),
+                        icon,
+                    )
+                    .icon_style(IconStyle::new(theme::ZINC_400)),
+                ))
                 .child(text(
-                    UiRect::new(indent + 16.0, *y + 2.0, content_right - 12.0, *y + 18.0),
+                    UiRect::new(
+                        indent + TREE_LABEL_OFFSET,
+                        *y + 2.0,
+                        content_right - 12.0,
+                        *y + 18.0,
+                    ),
                     name,
                     theme::mono(theme::ZINC_400, theme::UI_SIZE),
                 ));
@@ -468,7 +505,7 @@ fn build_tree(
             // Indent guide under an expanded folder's icon: spans from the
             // folder row bottom to the bottom of its last child.
             let children_top = *y;
-            let guide_x = indent + 6.0;
+            let guide_x = indent + TREE_ICON_SIZE / 2.0;
             els.extend(build_tree(
                 &key,
                 rect,
@@ -530,7 +567,7 @@ fn extend_content_right(
 
 fn row_content_right(left: f32, depth: usize, name: &str) -> f32 {
     let label_width = name.chars().count() as f32 * theme::CHAR_W;
-    left + INDENT + depth as f32 * INDENT + 16.0 + label_width + 12.0
+    left + INDENT + depth as f32 * INDENT + TREE_LABEL_OFFSET + label_width + 12.0
 }
 
 /// Resolves the directory ancestry pinned above the scrolling content.

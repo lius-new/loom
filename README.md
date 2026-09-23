@@ -14,6 +14,7 @@ leditor/
 ## Features
 
 - Plain text editing (UTF-8 safe)
+- File tree icons selected by exact filename and longest matching extension
 - `Enter` — new line, `Tab` — indent (4 spaces)
 - `Backspace` / `Delete` — remove character before/after caret
 - Arrow keys — move caret left/right/up/down
@@ -21,6 +22,16 @@ leditor/
 - A visible caret (only while the editor has focus) and a status bar showing `Ln X, Col Y`
 
 The editor is keyboard-driven: click the dark editing area to focus it, then type.
+
+## File icons
+
+The entire workspace tree uses a focused subset of the open-source Material
+Icon Theme, including closed folders, open folders, and file types. Exact
+filenames such as `Cargo.toml` and `Dockerfile` take priority over extensions;
+compound extensions are matched longest-first, and unknown files use a generic
+document icon. Attribution, source revision, and the upstream MIT license are
+stored with the SVG assets under
+`assets/icon-themes/material/`.
 
 ## Build & run
 

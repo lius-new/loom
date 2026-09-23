@@ -12,6 +12,7 @@
 
 mod app;
 mod editor;
+mod file_icons;
 mod input;
 mod model;
 mod state;
@@ -24,7 +25,7 @@ use lgui::WinitApplication;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
-        .svg_icons(
+        .svg_icons(file_icons::register(
             SvgIconRegistry::new()
                 .with_icon("panel-left", icondata::LuPanelLeft)
                 .with_icon("git-branch", icondata::LuGitBranch)
@@ -32,8 +33,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_icon("command", icondata::LuCommand)
                 .with_icon("play", icondata::LuPlay)
                 .with_icon("terminal", icondata::LuTerminal)
-                .with_icon("folder", icondata::LuFolder)
-                .with_icon("folder-open", icondata::LuFolderOpen)
                 .with_icon("square", icondata::LuSquare)
                 // X strokes: a 1px round cap (radius 0.5px) lands between pixel centers,
                 // leaving the tips faint. Use butt caps and extend the endpoints outward
@@ -47,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "minus",
                     r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="currentOpacity"><path d="M5 11h14"/></svg>"#,
                 ),
-        )
+        ))
         .provide(RendererKind::Skia(GraphicsPreference::Auto))
         .memory_options(MemoryOptions::unbounded(ImageCachePolicy::WhileVisible, false))
         .window_options(
