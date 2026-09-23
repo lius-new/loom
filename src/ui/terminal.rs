@@ -60,6 +60,7 @@ pub fn render(
     controller: TerminalController,
     terminal_tabs: State<TerminalTabs>,
     application: Arc<ApplicationHandle>,
+    cursor_blink_visible: bool,
     max_height: f32,
 ) -> Element {
     let app_state = state.get();
@@ -232,7 +233,12 @@ pub fn render(
         )),
     );
 
-    terminal = terminal.child(render_screen(content, &snapshot, terminal_focused));
+    terminal = terminal.child(render_screen(
+        content,
+        &snapshot,
+        terminal_focused,
+        cursor_blink_visible,
+    ));
 
     if shell_menu_open {
         terminal = terminal.child(shell_menu(
@@ -425,6 +431,7 @@ fn render_screen(
     content: UiRect,
     snapshot: &crate::terminal_session::TerminalSnapshot,
     focused: bool,
+    cursor_blink_visible: bool,
 ) -> Element {
     let mut screen = group(content);
     for (row, runs) in snapshot.lines.iter().enumerate() {
@@ -469,7 +476,7 @@ fn render_screen(
         }
     }
 
-    if snapshot.cursor_visible {
+    if cursor_is_drawn(snapshot.cursor_visible, focused, cursor_blink_visible) {
         let cursor = terminal_cursor_rect(content, snapshot.cursor);
         let cursor_style = if focused {
             VisualStyle::filled(theme::ZINC_300).alpha(0xc8)
@@ -489,6 +496,10 @@ fn render_screen(
     }
 
     clip(content, 0.0, 0.0).child(screen)
+}
+
+fn cursor_is_drawn(pty_visible: bool, focused: bool, blink_visible: bool) -> bool {
+    pty_visible && (!focused || blink_visible)
 }
 
 fn shell_menu(
@@ -595,6 +606,14 @@ fn resized_height(panel_bottom: f32, pointer_y: f32, max_height: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focused_terminal_cursor_follows_blink_phase() {
+        assert!(cursor_is_drawn(true, true, true));
+        assert!(!cursor_is_drawn(true, true, false));
+        assert!(cursor_is_drawn(true, false, false));
+        assert!(!cursor_is_drawn(false, true, true));
+    }
 
     #[test]
     fn terminal_resize_height_is_clamped_to_its_allowed_range() {

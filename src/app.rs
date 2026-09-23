@@ -2,6 +2,10 @@
 //! keymap, and composes every UI module. No module talks to another directly —
 //! all cross-cutting state lives in `AppState`.
 
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread;
+use std::time::Duration;
+
 use lgui::ApplicationHandle;
 use lgui::core::{KeyboardEvent, UiEventKind, UiEventPayload};
 use lgui::prelude::{Element, RenderCx, UiRect, group};
@@ -18,6 +22,8 @@ use crate::ui::{
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state(AppState::new());
     let terminal_tabs = cx.state(TerminalTabs::new());
+    let terminal_cursor_blink = cx.state(true);
+    let terminal_cursor_visible = terminal_cursor_blink.get();
     let terminal_tab_snapshot = terminal_tabs.get();
     let active_terminal_id = terminal_tab_snapshot.active_id();
     let terminal_controller = terminal_tab_snapshot
@@ -102,6 +108,37 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             mounted_terminal_focus.focus();
         }
     });
+    let blink_focused = s.terminal_focused;
+    let blink_state = terminal_cursor_blink.clone();
+    cx.use_effect(
+        (show_term, blink_focused, active_terminal_id),
+        move || {
+            blink_state.set(true);
+            let (stop_sender, stop_receiver) = mpsc::channel();
+            let worker = if show_term && blink_focused {
+                let worker_state = blink_state.clone();
+                thread::Builder::new()
+                    .name("leditor-terminal-cursor-blink".to_string())
+                    .spawn(move || {
+                        while let Err(RecvTimeoutError::Timeout) =
+                            stop_receiver.recv_timeout(Duration::from_millis(500))
+                        {
+                            worker_state.update(|visible| *visible = !*visible);
+                        }
+                    })
+                    .ok()
+            } else {
+                None
+            };
+
+            move || {
+                let _ = stop_sender.send(());
+                if let Some(worker) = worker {
+                    let _ = worker.join();
+                }
+            }
+        },
+    );
 
     // ---- Root (global shortcut listener) ------------------------------
     let mut root = group(vp);
@@ -186,6 +223,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_controller,
             terminal_tabs,
             application,
+            terminal_cursor_visible,
             max_terminal_h,
         ));
     }
