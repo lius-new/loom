@@ -24,6 +24,10 @@ pub struct AppState {
     pub terminal_h: f32,
     /// True while the terminal's top resize handle is being dragged.
     pub resizing_terminal: bool,
+    /// Whether keyboard input is currently routed to the terminal surface.
+    pub terminal_focused: bool,
+    /// Whether the terminal shell selector is expanded.
+    pub terminal_shell_menu: bool,
     pub show_palette: bool,
     pub toast: Option<String>,
     /// Cached entries per loaded directory (key = directory path string).
@@ -75,6 +79,8 @@ impl AppState {
             show_terminal: false,
             terminal_h: crate::theme::TERMINAL_H,
             resizing_terminal: false,
+            terminal_focused: false,
+            terminal_shell_menu: false,
             show_palette: false,
             toast: None,
             dir_entries: HashMap::new(),

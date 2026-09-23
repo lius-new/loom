@@ -2,12 +2,14 @@
 //! keymap, and composes every UI module. No module talks to another directly —
 //! all cross-cutting state lives in `AppState`.
 
+use lgui::ApplicationHandle;
 use lgui::core::{KeyboardEvent, UiEventKind, UiEventPayload};
-use lgui::prelude::{group, Element, RenderCx, UiRect};
+use lgui::prelude::{Element, RenderCx, UiRect, group};
 
 use crate::editor::editor_view;
 use crate::input::keymap;
 use crate::state::AppState;
+use crate::terminal_session::TerminalController;
 use crate::theme;
 use crate::ui::{
     command_palette, context_menu, sidebar, statusbar, tabs, terminal, titlebar, toast,
@@ -15,8 +17,12 @@ use crate::ui::{
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state(AppState::new());
+    let terminal_controller = cx.state(TerminalController::new()).get();
+    let application = cx.application().resource::<ApplicationHandle>();
     let editor_id = cx.use_stable_id();
     let editor_focus = cx.focus_handle(editor_id.clone());
+    let terminal_id = cx.use_stable_id();
+    let terminal_focus = cx.focus_handle(terminal_id.clone());
     let vp = cx.viewport();
     let w = vp.width();
     let h = vp.height();
@@ -30,15 +36,10 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Region layout ------------------------------------------------
     let titlebar_rect = UiRect::new(0.0, 0.0, w, theme::TITLEBAR_H);
     let statusbar_rect = UiRect::new(0.0, h - theme::STATUS_H, w, h);
-    let max_terminal_h = (h
-        - theme::STATUS_H
-        - theme::TITLEBAR_H
-        - theme::TABS_H
-        - theme::EDITOR_MIN_H)
-        .clamp(theme::TERMINAL_MIN_H, theme::TERMINAL_MAX_H);
-    let terminal_h = s
-        .terminal_h
-        .clamp(theme::TERMINAL_MIN_H, max_terminal_h);
+    let max_terminal_h =
+        (h - theme::STATUS_H - theme::TITLEBAR_H - theme::TABS_H - theme::EDITOR_MIN_H)
+            .clamp(theme::TERMINAL_MIN_H, theme::TERMINAL_MAX_H);
+    let terminal_h = s.terminal_h.clamp(theme::TERMINAL_MIN_H, max_terminal_h);
     let main_bottom = if show_term {
         h - theme::STATUS_H - terminal_h
     } else {
@@ -61,12 +62,54 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         main_bottom,
     );
     let sidebar_rect = UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom);
+    let terminal_rect = UiRect::new(
+        0.0,
+        h - theme::STATUS_H - terminal_h,
+        w,
+        h - theme::STATUS_H,
+    );
+    let terminal_size = terminal::pty_size(terminal_rect);
+    let terminal_cwd = s.open_dir.clone().or_else(|| std::env::current_dir().ok());
+
+    let terminal_start = terminal_controller.clone();
+    let terminal_start_application = application.clone();
+    let start_cwd = terminal_cwd.clone();
+    cx.use_effect(
+        (show_term, terminal_size, terminal_cwd.clone()),
+        move || {
+            if show_term {
+                terminal_start.ensure_started(
+                    start_cwd.as_deref(),
+                    terminal_size,
+                    terminal_start_application,
+                );
+            }
+        },
+    );
+    let mounted_terminal_focus = terminal_focus.clone();
+    cx.use_effect(show_term, move || {
+        if show_term {
+            mounted_terminal_focus.focus();
+        }
+    });
 
     // ---- Root (global shortcut listener) ------------------------------
     let mut root = group(vp);
     let st = state.clone();
+    let global_editor_focus = editor_focus.clone();
+    let global_terminal_focus = terminal_focus.clone();
     root = root.on_key_down(move |_ctx, ev: &KeyboardEvent| {
         if let Some(action) = keymap::action_for(ev) {
+            if action == keymap::Action::ToggleTerminal {
+                let opening = !st.get().show_terminal;
+                st.update(move |app| app.apply(action));
+                if opening {
+                    global_terminal_focus.focus();
+                } else {
+                    global_editor_focus.focus();
+                }
+                return;
+            }
             st.update(move |app| app.apply(action));
         }
     });
@@ -104,6 +147,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         tabs_rect,
         state.clone(),
         editor_focus.clone(),
+        terminal_focus.clone(),
     ));
     root = root.child(editor_view::render(code_rect, state.clone(), editor_id));
 
@@ -117,14 +161,15 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     if show_term {
         root = root.child(terminal::render(
-            UiRect::new(
-                0.0,
-                h - theme::STATUS_H - terminal_h,
-                w,
-                h - theme::STATUS_H,
-            ),
+            terminal_rect,
             state.clone(),
             editor_focus.clone(),
+            terminal_focus,
+            terminal_id,
+            terminal_controller,
+            application,
+            terminal_cwd,
+            terminal_size,
             max_terminal_h,
         ));
     }
@@ -133,11 +178,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     // ---- Overlays ------------------------------------------------------
     if show_palette {
-        root = root.child(command_palette::render(
-            vp,
-            state.clone(),
-            editor_focus,
-        ));
+        root = root.child(command_palette::render(vp, state.clone(), editor_focus));
     }
     if let Some(pos) = s.context_menu {
         root = root.child(context_menu::render(vp, pos, state.clone()));

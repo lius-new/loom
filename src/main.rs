@@ -16,12 +16,13 @@ mod file_icons;
 mod input;
 mod model;
 mod state;
+mod terminal_session;
 mod theme;
 mod ui;
 
+use lgui::WinitApplication;
 use lgui::icons::SvgIconRegistry;
 use lgui::prelude::*;
-use lgui::WinitApplication;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))

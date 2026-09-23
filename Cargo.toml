@@ -6,3 +6,10 @@ edition = "2024"
 [dependencies]
 lgui = { path = "../..", default-features = false, features = ["renderer-skia-software", "widgets", "dialogs"] }
 icondata = "0.7"
+vt100 = "0.16"
+
+[target.'cfg(windows)'.dependencies]
+conpty = "0.7"
+
+[target.'cfg(not(windows))'.dependencies]
+portable-pty = "0.9"

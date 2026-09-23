@@ -2,7 +2,7 @@
 //! the terminal control on the right.
 
 use lgui::core::{Color, EventPolicy, IconStyle, UiElement, UiFocusHandle, UiId, precompiled};
-use lgui::prelude::{panel, text, Element, State, UiRect, VisualStyle};
+use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 use lgui::text::{self, TextLayoutRequest};
 
 use crate::state::AppState;
@@ -36,9 +36,9 @@ fn measure(s: &str, size: f32, weight: i32) -> f32 {
     let bounds = UiRect::new(0.0, 0.0, 10_000.0, size);
     let mut request = TextLayoutRequest::single_line(s, bounds, size, weight);
     request.font_families = theme::MONO_FAMILIES;
-    text::layout(&request).map(|layout| layout.width).unwrap_or_else(|| {
-        s.chars().count() as f32 * theme::CHAR_W * (size / theme::CODE_SIZE)
-    })
+    text::layout(&request)
+        .map(|layout| layout.width)
+        .unwrap_or_else(|| s.chars().count() as f32 * theme::CHAR_W * (size / theme::CODE_SIZE))
 }
 
 fn ellipsize(value: &str, max_width: f32, size: f32, weight: i32) -> String {
@@ -80,7 +80,12 @@ fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Elem
     precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
 }
 
-pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
+pub fn render(
+    rect: UiRect,
+    state: State<AppState>,
+    editor_focus: UiFocusHandle,
+    terminal_focus: UiFocusHandle,
+) -> Element {
     let s = state.get();
     let active = s.workspace.active();
 
@@ -88,8 +93,8 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     let controls_left = rect.right - CLUSTER_PAD - ICON - CLUSTER_PAD - 1.0;
     let tab_count = s.workspace.open_files().len().max(1) as f32;
     let available_tabs_w = (controls_left - rect.left - TABS_PAD).max(MIN_TAB_W);
-    let tab_cap = ((available_tabs_w - TAB_GAP * (tab_count - 1.0)) / tab_count)
-        .clamp(MIN_TAB_W, MAX_TAB_W);
+    let tab_cap =
+        ((available_tabs_w - TAB_GAP * (tab_count - 1.0)) / tab_count).clamp(MIN_TAB_W, MAX_TAB_W);
 
     // Tabs are content-sized rounded pills, inset PILL_INSET vertically,
     // separated by TAB_GAP. The strip has no padding; this cluster's left
@@ -105,7 +110,12 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         let fixed_w = PAD + badge_w + GAP + GAP + close_w + PAD;
         let tab_w = (fixed_w + name_w).min(tab_cap).max(MIN_TAB_W);
 
-        let pill = UiRect::new(x, rect.top + PILL_INSET, x + tab_w, rect.bottom - PILL_INSET);
+        let pill = UiRect::new(
+            x,
+            rect.top + PILL_INSET,
+            x + tab_w,
+            rect.bottom - PILL_INSET,
+        );
         let name_style = if Some(id) == active {
             theme::mono(theme::ZINC_100, theme::UI_SIZE)
         } else {
@@ -139,7 +149,12 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         });
 
         tab_el = tab_el.child(text(
-            UiRect::new(badge_left, pill.top, badge_left + badge_w + TEXT_MARGIN, pill.bottom),
+            UiRect::new(
+                badge_left,
+                pill.top,
+                badge_left + badge_w + TEXT_MARGIN,
+                pill.bottom,
+            ),
             m.lang.badge(),
             theme::mono_bold(m.lang.badge_color(), theme::SMALL),
         ));
@@ -164,7 +179,12 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                     focus.focus();
                 })
                 .child(text(
-                    UiRect::new(close_left, pill.top, close_left + close_w + TEXT_MARGIN, pill.bottom),
+                    UiRect::new(
+                        close_left,
+                        pill.top,
+                        close_left + close_w + TEXT_MARGIN,
+                        pill.bottom,
+                    ),
                     "✕",
                     theme::mono(theme::ZINC_500, theme::SMALL),
                 )),
@@ -200,15 +220,20 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     // SIDEBAR fill (matching the strip) so any tab pills scrolling underneath
     // stay hidden behind the control cluster.
     let st = state.clone();
-    let btn = UiRect::new(
-        icon_r.left - CLUSTER_PAD,
-        rect.top,
-        rect.right,
-        rect.bottom,
-    );
+    let editor_target = editor_focus.clone();
+    let terminal_target = terminal_focus;
+    let btn = UiRect::new(icon_r.left - CLUSTER_PAD, rect.top, rect.right, rect.bottom);
     let tt_btn = panel(btn, VisualStyle::filled(theme::SIDEBAR))
         .event_policy(EventPolicy::INTERACTIVE)
-        .on_click(move || st.update(|app| app.show_terminal = !app.show_terminal))
+        .on_click(move || {
+            let opening = !st.get().show_terminal;
+            st.update(|app| app.show_terminal = !app.show_terminal);
+            if opening {
+                terminal_target.focus();
+            } else {
+                editor_target.focus();
+            }
+        })
         .child(icon("tabs.terminal", "terminal", icon_r, theme::ZINC_400));
     bar = bar.child(tt_btn);
 
@@ -241,9 +266,6 @@ mod tests {
 
     #[test]
     fn short_file_names_remain_unchanged() {
-        assert_eq!(
-            ellipsize("main.rs", 200.0, theme::UI_SIZE, 400),
-            "main.rs"
-        );
+        assert_eq!(ellipsize("main.rs", 200.0, theme::UI_SIZE, 400), "main.rs");
     }
 }
