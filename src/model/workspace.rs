@@ -10,6 +10,7 @@ use crate::model::document::{FileId, FileMeta};
 struct OpenDocument {
     meta: FileMeta,
     buffer: TextBuffer,
+    saved_text: String,
     scroll_x: f32,
     scroll_y: f32,
 }
@@ -70,6 +71,30 @@ impl Workspace {
             .map(|document| &mut document.buffer)
     }
 
+    pub fn is_dirty(&self, id: FileId) -> bool {
+        self.documents
+            .get(&id)
+            .is_some_and(|document| document.buffer.text() != document.saved_text)
+    }
+
+    pub fn active_save_snapshot(&self) -> Option<(FileId, PathBuf, String)> {
+        let id = self.active?;
+        let document = self.documents.get(&id)?;
+        Some((
+            id,
+            document.meta.path.clone(),
+            document.buffer.text().to_owned(),
+        ))
+    }
+
+    pub fn mark_saved(&mut self, id: FileId) -> bool {
+        let Some(document) = self.documents.get_mut(&id) else {
+            return false;
+        };
+        document.saved_text = document.buffer.text().to_owned();
+        true
+    }
+
     pub fn active_scroll(&self) -> (f32, f32) {
         self.active
             .and_then(|id| self.documents.get(&id))
@@ -93,11 +118,13 @@ impl Workspace {
 
         let id = FileId::new(self.next_file_id);
         self.next_file_id += 1;
+        let saved_text = contents.clone();
         self.documents.insert(
             id,
             OpenDocument {
                 meta: FileMeta::from_path(path.clone()),
                 buffer: TextBuffer::new(contents),
+                saved_text,
                 scroll_x: 0.0,
                 scroll_y: 0.0,
             },
@@ -187,5 +214,28 @@ mod tests {
         assert_eq!(workspace.active_scroll(), (24.0, 120.0));
         workspace.set_active(second);
         assert_eq!(workspace.active_scroll(), (8.0, 40.0));
+    }
+
+    #[test]
+    fn dirty_state_tracks_content_against_the_opened_file() {
+        let mut workspace = Workspace::new();
+        let file = workspace.open_path(PathBuf::from("notes.txt"), "hello".into());
+
+        assert!(!workspace.is_dirty(file));
+        workspace.active_buffer_mut().unwrap().move_end();
+        assert!(!workspace.is_dirty(file));
+
+        workspace.active_buffer_mut().unwrap().insert("!");
+        assert!(workspace.is_dirty(file));
+
+        let (snapshot_id, path, contents) = workspace.active_save_snapshot().unwrap();
+        assert_eq!(snapshot_id, file);
+        assert_eq!(path, PathBuf::from("notes.txt"));
+        assert_eq!(contents, "hello!");
+        assert!(workspace.mark_saved(file));
+        assert!(!workspace.is_dirty(file));
+
+        workspace.active_buffer_mut().unwrap().backspace();
+        assert!(workspace.is_dirty(file));
     }
 }

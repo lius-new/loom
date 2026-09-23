@@ -30,6 +30,7 @@ pub(super) const MAX_TAB_W: f32 = 220.0;
 pub(super) const MIN_TAB_W: f32 = 96.0;
 const CLUSTER_PAD: f32 = 8.0;
 const ICON: f32 = 14.0;
+const DIRTY_MARK: &str = "●";
 
 /// Natural text width measured with the renderer's text system, falling back
 /// to a per-character estimate when no text system is installed.
@@ -108,8 +109,15 @@ pub fn render(
         };
         let badge_w = measure(m.lang.badge(), theme::SMALL, 700);
         let name_w = measure(&m.name, theme::UI_SIZE, 400);
+        let dirty = s.workspace.is_dirty(id);
+        let dirty_w = if dirty {
+            measure(DIRTY_MARK, theme::SMALL, 400)
+        } else {
+            0.0
+        };
         let close_w = measure("✕", theme::SMALL, 400);
-        let fixed_w = PAD + badge_w + GAP + GAP + close_w + PAD;
+        let dirty_slot_w = if dirty { dirty_w + GAP } else { 0.0 };
+        let fixed_w = PAD + badge_w + GAP + GAP + dirty_slot_w + close_w + PAD;
         let tab_w = (fixed_w + name_w).min(tab_cap).max(MIN_TAB_W);
 
         let pill = UiRect::new(
@@ -127,7 +135,13 @@ pub fn render(
         let badge_left = pill.left + PAD;
         let name_left = badge_left + badge_w + GAP;
         let close_left = pill.right - PAD - close_w;
-        let name_slot_w = (close_left - GAP - name_left).max(0.0);
+        let dirty_left = close_left - GAP - dirty_w;
+        let name_right = if dirty {
+            dirty_left - GAP
+        } else {
+            close_left - GAP
+        };
+        let name_slot_w = (name_right - name_left).max(0.0);
         let display_name = ellipsize(
             &m.name,
             (name_slot_w - TEXT_MARGIN).max(0.0),
@@ -165,6 +179,18 @@ pub fn render(
             display_name,
             name_style,
         ));
+        if dirty {
+            tab_el = tab_el.child(text(
+                UiRect::new(
+                    dirty_left,
+                    pill.top,
+                    dirty_left + dirty_w + TEXT_MARGIN,
+                    pill.bottom,
+                ),
+                DIRTY_MARK,
+                theme::mono(theme::ACCENT, theme::SMALL),
+            ));
+        }
 
         // Close button
         {

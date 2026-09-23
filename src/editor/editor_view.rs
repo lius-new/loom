@@ -1,6 +1,7 @@
 //! The central code viewport: gutter, syntax-highlighted source, cursor and
 //! editor-specific overlay scrollbars.
 
+use std::fs;
 use std::ops::Range;
 
 use lgui::core::{
@@ -253,7 +254,15 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_id: UiId) -> Element 
     });
 
     let st_key = state.clone();
-    root = root.on_key_down(move |_ctx, event| handle_key(&st_key, event, rect));
+    root = root.on_key_down(move |ctx, event| {
+        if is_save_shortcut(event) {
+            save_active_document(&st_key);
+            ctx.prevent_default();
+            ctx.stop_propagation();
+        } else {
+            handle_key(&st_key, event, rect);
+        }
+    });
 
     let st_focus = state.clone();
     root = root.on_focus(move |_ctx| st_focus.update(|app| app.focused = true));
@@ -663,9 +672,34 @@ fn handle_key(state: &State<AppState>, event: &KeyboardEvent, rect: UiRect) {
     });
 }
 
+fn is_save_shortcut(event: &KeyboardEvent) -> bool {
+    event.state == KeyState::Down
+        && (event.modifiers.ctrl() || event.modifiers.meta())
+        && matches!(
+            &event.key,
+            LogicalKey::Character(value) if value.eq_ignore_ascii_case("s")
+        )
+}
+
+fn save_active_document(state: &State<AppState>) {
+    let Some((id, path, contents)) = state.get().workspace.active_save_snapshot() else {
+        return;
+    };
+
+    match fs::write(&path, contents.as_bytes()) {
+        Ok(()) => state.update(move |app| {
+            app.workspace.mark_saved(id);
+        }),
+        Err(error) => state.update(move |app| {
+            app.show_toast(format!("Could not save {}: {error}", path.display()));
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lgui::core::KeyModifiers;
 
     #[test]
     fn visible_range_keeps_only_rows_around_the_viewport() {
@@ -707,5 +741,19 @@ mod tests {
         );
         assert_eq!(line_index_from_point(50.0, 100.0, 0.0, 10), 0);
         assert_eq!(line_index_from_point(900.0, 100.0, 0.0, 10), 9);
+    }
+
+    #[test]
+    fn save_shortcut_accepts_control_or_command_s() {
+        let event = |modifiers| KeyboardEvent {
+            state: KeyState::Down,
+            key: LogicalKey::Character("s".into()),
+            modifiers,
+            ..Default::default()
+        };
+
+        assert!(is_save_shortcut(&event(KeyModifiers::CONTROL)));
+        assert!(is_save_shortcut(&event(KeyModifiers::META)));
+        assert!(!is_save_shortcut(&event(KeyModifiers::SHIFT)));
     }
 }
