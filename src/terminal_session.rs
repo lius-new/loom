@@ -130,6 +130,84 @@ pub struct TerminalController {
     inner: Arc<TerminalInner>,
 }
 
+#[derive(Clone)]
+pub struct TerminalTab {
+    pub id: u64,
+    pub controller: TerminalController,
+}
+
+#[derive(Clone)]
+pub struct TerminalTabs {
+    tabs: Vec<TerminalTab>,
+    active_id: Option<u64>,
+    next_id: u64,
+}
+
+impl TerminalTabs {
+    pub fn new() -> Self {
+        let mut tabs = Self {
+            tabs: Vec::new(),
+            active_id: None,
+            next_id: 1,
+        };
+        tabs.add(ShellKind::default());
+        tabs
+    }
+
+    pub fn tabs(&self) -> &[TerminalTab] {
+        &self.tabs
+    }
+
+    pub fn active_id(&self) -> Option<u64> {
+        self.active_id
+    }
+
+    pub fn active(&self) -> Option<&TerminalTab> {
+        let active_id = self.active_id?;
+        self.tabs.iter().find(|tab| tab.id == active_id)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
+    pub fn add(&mut self, shell: ShellKind) -> u64 {
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        self.tabs.push(TerminalTab {
+            id,
+            controller: TerminalController::with_shell(shell),
+        });
+        self.active_id = Some(id);
+        id
+    }
+
+    pub fn select(&mut self, id: u64) {
+        if self.tabs.iter().any(|tab| tab.id == id) {
+            self.active_id = Some(id);
+        }
+    }
+
+    pub fn close(&mut self, id: u64) -> Option<TerminalController> {
+        let index = self.tabs.iter().position(|tab| tab.id == id)?;
+        let removed = self.tabs.remove(index);
+        if self.active_id == Some(id) {
+            self.active_id = self
+                .tabs
+                .get(index)
+                .or_else(|| self.tabs.last())
+                .map(|tab| tab.id);
+        }
+        Some(removed.controller)
+    }
+}
+
+impl Default for TerminalTabs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct TerminalInner {
     parser: Mutex<vt100::Parser>,
     process: Mutex<Option<RunningProcess>>,
@@ -158,11 +236,15 @@ struct SpawnedShell {
 
 impl TerminalController {
     pub fn new() -> Self {
+        Self::with_shell(ShellKind::default())
+    }
+
+    pub fn with_shell(shell: ShellKind) -> Self {
         Self {
             inner: Arc::new(TerminalInner {
                 parser: Mutex::new(vt100::Parser::new(24, 80, SCROLLBACK_ROWS)),
                 process: Mutex::new(None),
-                shell: Mutex::new(ShellKind::default()),
+                shell: Mutex::new(shell),
                 status: Mutex::new(TerminalStatus::Idle),
                 generation: AtomicU64::new(0),
             }),
@@ -728,6 +810,27 @@ mod tests {
             runs.iter()
                 .any(|run| { run.text == "red" && run.style.foreground == Some(0xcd3131) })
         );
+    }
+
+    #[test]
+    fn terminal_tabs_add_select_and_close_neighboring_sessions() {
+        let mut tabs = TerminalTabs::new();
+        let first = tabs.active_id().expect("initial terminal tab");
+        let second = tabs.add(ShellKind::Bash);
+        assert_eq!(tabs.tabs().len(), 2);
+        assert_eq!(tabs.active_id(), Some(second));
+        assert_eq!(
+            tabs.active().map(|tab| tab.controller.shell()),
+            Some(ShellKind::Bash)
+        );
+
+        tabs.select(first);
+        assert_eq!(tabs.active_id(), Some(first));
+        tabs.close(first);
+        assert_eq!(tabs.active_id(), Some(second));
+        tabs.close(second);
+        assert!(tabs.is_empty());
+        assert_eq!(tabs.active_id(), None);
     }
 
     #[cfg(target_os = "windows")]

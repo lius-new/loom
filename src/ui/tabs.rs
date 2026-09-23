@@ -6,33 +6,34 @@ use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 use lgui::text::{self, TextLayoutRequest};
 
 use crate::state::AppState;
+use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
 
 /// Horizontal padding inside each tab pill (px-3 in the mockup).
-const PAD: f32 = 12.0;
+pub(super) const PAD: f32 = 12.0;
 /// Gap between badge, name and close icon (gap-2 in the mockup).
-const GAP: f32 = 8.0;
+pub(super) const GAP: f32 = 8.0;
 /// Gap between adjacent tab pills.
-const TAB_GAP: f32 = 4.0;
+pub(super) const TAB_GAP: f32 = 4.0;
 /// Extra right margin inside text rects so the last glyph is not clipped.
-const TEXT_MARGIN: f32 = 6.0;
+pub(super) const TEXT_MARGIN: f32 = 6.0;
 /// Left padding of the tab cluster. The strip itself has no padding — each
 /// cluster (tabs / controls) applies its own, so parent padding never leaks
 /// out as an outer margin.
-const TABS_PAD: f32 = 8.0;
+pub(super) const TABS_PAD: f32 = 8.0;
 /// Vertical inset of each tab pill inside the strip.
-const PILL_INSET: f32 = 4.0;
+pub(super) const PILL_INSET: f32 = 4.0;
 /// VS Code-style upper bound: long names truncate instead of allowing one tab
 /// to grow underneath the right-side controls.
-const MAX_TAB_W: f32 = 220.0;
+pub(super) const MAX_TAB_W: f32 = 220.0;
 /// Keeps the badge, an ellipsis and the close button usable when tabs shrink.
-const MIN_TAB_W: f32 = 96.0;
+pub(super) const MIN_TAB_W: f32 = 96.0;
 const CLUSTER_PAD: f32 = 8.0;
 const ICON: f32 = 14.0;
 
 /// Natural text width measured with the renderer's text system, falling back
 /// to a per-character estimate when no text system is installed.
-fn measure(s: &str, size: f32, weight: i32) -> f32 {
+pub(super) fn measure(s: &str, size: f32, weight: i32) -> f32 {
     let bounds = UiRect::new(0.0, 0.0, 10_000.0, size);
     let mut request = TextLayoutRequest::single_line(s, bounds, size, weight);
     request.font_families = theme::MONO_FAMILIES;
@@ -41,7 +42,7 @@ fn measure(s: &str, size: f32, weight: i32) -> f32 {
         .unwrap_or_else(|| s.chars().count() as f32 * theme::CHAR_W * (size / theme::CODE_SIZE))
 }
 
-fn ellipsize(value: &str, max_width: f32, size: f32, weight: i32) -> String {
+pub(super) fn ellipsize(value: &str, max_width: f32, size: f32, weight: i32) -> String {
     if measure(value, size, weight) <= max_width {
         return value.to_owned();
     }
@@ -85,6 +86,7 @@ pub fn render(
     state: State<AppState>,
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
+    terminal_tabs: State<TerminalTabs>,
 ) -> Element {
     let s = state.get();
     let active = s.workspace.active();
@@ -220,6 +222,7 @@ pub fn render(
     // SIDEBAR fill (matching the strip) so any tab pills scrolling underneath
     // stay hidden behind the control cluster.
     let st = state.clone();
+    let terminal_sessions = terminal_tabs;
     let editor_target = editor_focus.clone();
     let terminal_target = terminal_focus;
     let btn = UiRect::new(icon_r.left - CLUSTER_PAD, rect.top, rect.right, rect.bottom);
@@ -227,6 +230,11 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .on_click(move || {
             let opening = !st.get().show_terminal;
+            if opening && terminal_sessions.get().is_empty() {
+                terminal_sessions.update(|tabs| {
+                    tabs.add(ShellKind::default());
+                });
+            }
             st.update(|app| app.show_terminal = !app.show_terminal);
             if opening {
                 terminal_target.focus();

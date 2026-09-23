@@ -9,7 +9,7 @@ use lgui::prelude::{Element, RenderCx, UiRect, group};
 use crate::editor::editor_view;
 use crate::input::keymap;
 use crate::state::AppState;
-use crate::terminal_session::TerminalController;
+use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
 use crate::ui::{
     command_palette, context_menu, sidebar, statusbar, tabs, terminal, titlebar, toast,
@@ -17,7 +17,12 @@ use crate::ui::{
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state(AppState::new());
-    let terminal_controller = cx.state(TerminalController::new()).get();
+    let terminal_tabs = cx.state(TerminalTabs::new());
+    let terminal_tab_snapshot = terminal_tabs.get();
+    let active_terminal_id = terminal_tab_snapshot.active_id();
+    let terminal_controller = terminal_tab_snapshot
+        .active()
+        .map(|tab| tab.controller.clone());
     let application = cx.application().resource::<ApplicationHandle>();
     let editor_id = cx.use_stable_id();
     let editor_focus = cx.focus_handle(editor_id.clone());
@@ -75,9 +80,14 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_start_application = application.clone();
     let start_cwd = terminal_cwd.clone();
     cx.use_effect(
-        (show_term, terminal_size, terminal_cwd.clone()),
+        (
+            show_term,
+            active_terminal_id,
+            terminal_size,
+            terminal_cwd.clone(),
+        ),
         move || {
-            if show_term {
+            if show_term && let Some(terminal_start) = terminal_start.as_ref() {
                 terminal_start.ensure_started(
                     start_cwd.as_deref(),
                     terminal_size,
@@ -98,10 +108,16 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let st = state.clone();
     let global_editor_focus = editor_focus.clone();
     let global_terminal_focus = terminal_focus.clone();
+    let global_terminal_tabs = terminal_tabs.clone();
     root = root.on_key_down(move |_ctx, ev: &KeyboardEvent| {
         if let Some(action) = keymap::action_for(ev) {
             if action == keymap::Action::ToggleTerminal {
                 let opening = !st.get().show_terminal;
+                if opening && global_terminal_tabs.get().is_empty() {
+                    global_terminal_tabs.update(|tabs| {
+                        tabs.add(ShellKind::default());
+                    });
+                }
                 st.update(move |app| app.apply(action));
                 if opening {
                     global_terminal_focus.focus();
@@ -148,6 +164,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         state.clone(),
         editor_focus.clone(),
         terminal_focus.clone(),
+        terminal_tabs.clone(),
     ));
     root = root.child(editor_view::render(code_rect, state.clone(), editor_id));
 
@@ -159,7 +176,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         ));
     }
 
-    if show_term {
+    if show_term && let Some(terminal_controller) = terminal_controller {
         root = root.child(terminal::render(
             terminal_rect,
             state.clone(),
@@ -167,9 +184,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_focus,
             terminal_id,
             terminal_controller,
+            terminal_tabs,
             application,
-            terminal_cwd,
-            terminal_size,
             max_terminal_h,
         ));
     }

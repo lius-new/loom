@@ -1,6 +1,5 @@
 //! Bottom terminal panel backed by a real platform PTY.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use lgui::ApplicationHandle;
@@ -12,13 +11,16 @@ use lgui::core::{
 use lgui::prelude::{Color, Element, State, UiRect, VisualStyle, group, panel, text};
 
 use crate::state::AppState;
-use crate::terminal_session::{ShellKind, TerminalController, TerminalSize};
+use crate::terminal_session::{
+    ShellKind, TerminalController, TerminalSize, TerminalTab, TerminalTabs,
+};
 use crate::theme;
+use crate::ui::tabs::{
+    GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
+    TEXT_MARGIN, ellipsize, measure,
+};
 
 const HEADER_H: f32 = 34.0;
-const HEADER_PAD: f32 = 12.0;
-const TOOL_BUTTON_W: f32 = 28.0;
-const TOOL_ICON: f32 = 14.0;
 const INSTANCE_W: f32 = 132.0;
 const BODY_PAD_X: f32 = 12.0;
 const BODY_PAD_Y: f32 = 6.0;
@@ -31,22 +33,6 @@ const SHELL_MENU_ROW_H: f32 = 28.0;
 
 fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Element {
     precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
-}
-
-fn icon_button(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Element {
-    let icon_left = rect.left + (rect.width() - TOOL_ICON) / 2.0;
-    let icon_top = rect.top + (rect.height() - TOOL_ICON) / 2.0;
-    panel(rect, VisualStyle::default()).child(icon(
-        id,
-        key,
-        UiRect::new(
-            icon_left,
-            icon_top,
-            icon_left + TOOL_ICON,
-            icon_top + TOOL_ICON,
-        ),
-        color,
-    ))
 }
 
 pub fn pty_size(rect: UiRect) -> TerminalSize {
@@ -72,9 +58,8 @@ pub fn render(
     terminal_focus: UiFocusHandle,
     terminal_id: UiId,
     controller: TerminalController,
+    terminal_tabs: State<TerminalTabs>,
     application: Arc<ApplicationHandle>,
-    cwd: Option<PathBuf>,
-    size: TerminalSize,
     max_height: f32,
 ) -> Element {
     let app_state = state.get();
@@ -82,6 +67,11 @@ pub fn render(
     let terminal_focused = app_state.terminal_focused;
     let shell_menu_open = app_state.terminal_shell_menu;
     let snapshot = controller.snapshot();
+    let terminal_tab_snapshot = terminal_tabs.get();
+    let active_tab_id = terminal_tab_snapshot
+        .active_id()
+        .expect("a visible terminal panel must have an active tab");
+    let tab_items = terminal_tab_snapshot.tabs().to_vec();
     let header = UiRect::new(rect.left, rect.top + 1.0, rect.right, rect.top + HEADER_H);
     let body = UiRect::new(rect.left, header.bottom, rect.right, rect.bottom);
     let content = UiRect::new(
@@ -169,64 +159,31 @@ pub fn render(
         VisualStyle::filled(theme::BORDER),
     ));
 
-    let title_left = rect.left + HEADER_PAD;
-    terminal = terminal.child(text(
-        UiRect::new(title_left, header.top, title_left + 70.0, header.bottom),
-        "TERMINAL",
-        theme::sans_semibold(theme::ZINC_200, theme::SMALL),
-    ));
-    terminal = terminal.child(panel(
-        UiRect::new(
-            title_left,
-            header.bottom - 2.0,
-            title_left + 52.0,
-            header.bottom,
-        ),
-        VisualStyle::filled(theme::ACCENT),
-    ));
-
-    let mut tool_right = rect.right - 6.0;
-    let close_rect = UiRect::new(
-        tool_right - TOOL_BUTTON_W,
-        header.top,
-        tool_right,
-        header.bottom,
-    );
-    tool_right = close_rect.left;
-    let maximize_rect = UiRect::new(
-        tool_right - TOOL_BUTTON_W,
-        header.top,
-        tool_right,
-        header.bottom,
-    );
-    tool_right = maximize_rect.left;
-    let trash_rect = UiRect::new(
-        tool_right - TOOL_BUTTON_W,
-        header.top,
-        tool_right,
-        header.bottom,
-    );
-    tool_right = trash_rect.left;
-    let split_rect = UiRect::new(
-        tool_right - TOOL_BUTTON_W,
-        header.top,
-        tool_right,
-        header.bottom,
-    );
-    tool_right = split_rect.left;
-    let plus_rect = UiRect::new(
-        tool_right - TOOL_BUTTON_W,
-        header.top,
-        tool_right,
-        header.bottom,
-    );
-    tool_right = plus_rect.left - 4.0;
+    let tool_right = rect.right - 6.0;
     let instance_rect = UiRect::new(
         tool_right - INSTANCE_W,
         header.top + 5.0,
         tool_right,
         header.bottom - 5.0,
     );
+
+    let tab_strip_left = rect.left;
+    let tab_strip = UiRect::new(
+        tab_strip_left,
+        header.top,
+        (instance_rect.left - 8.0).max(tab_strip_left),
+        header.bottom,
+    );
+    terminal = terminal.child(render_terminal_tabs(
+        tab_strip,
+        &tab_items,
+        active_tab_id,
+        terminal_tabs.clone(),
+        state.clone(),
+        terminal_focus.clone(),
+        editor_focus.clone(),
+        application.clone(),
+    ));
 
     let menu_state = state.clone();
     let menu_focus = terminal_focus.clone();
@@ -275,93 +232,14 @@ pub fn render(
         )),
     );
 
-    let restart_controller = controller.clone();
-    let restart_application = application.clone();
-    let restart_cwd = cwd.clone();
-    let restart_focus = terminal_focus.clone();
-    terminal = terminal.child(
-        icon_button("terminal.new", "plus", plus_rect, theme::ZINC_400)
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                restart_controller.restart(
-                    restart_controller.shell(),
-                    restart_cwd.as_deref(),
-                    size,
-                    restart_application.clone(),
-                );
-                restart_focus.focus();
-            }),
-    );
-    terminal = terminal.child(icon_button(
-        "terminal.split",
-        "split-terminal",
-        split_rect,
-        theme::ZINC_600,
-    ));
-
-    let stop_controller = controller.clone();
-    let stop_application = application.clone();
-    let stop_focus = terminal_focus.clone();
-    terminal = terminal.child(
-        icon_button("terminal.trash", "trash", trash_rect, theme::ZINC_400)
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                stop_controller.terminate(&stop_application);
-                stop_focus.focus();
-            }),
-    );
-
-    let maximize_state = state.clone();
-    terminal = terminal.child(
-        icon_button(
-            "terminal.maximize",
-            "maximize",
-            maximize_rect,
-            theme::ZINC_400,
-        )
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(CursorIcon::Pointer)
-        .on_click(move || {
-            maximize_state.update(move |app| {
-                app.terminal_h = if (app.terminal_h - max_height).abs() < 1.0 {
-                    theme::TERMINAL_H.min(max_height)
-                } else {
-                    max_height
-                };
-            });
-        }),
-    );
-
-    let close_state = state.clone();
-    let close_focus = editor_focus;
-    terminal = terminal.child(
-        icon_button("terminal.close", "close", close_rect, theme::ZINC_500)
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                close_state.update(|app| {
-                    app.show_terminal = false;
-                    app.terminal_shell_menu = false;
-                    app.terminal_focused = false;
-                });
-                close_focus.focus();
-            }),
-    );
-
     terminal = terminal.child(render_screen(content, &snapshot, terminal_focused));
 
     if shell_menu_open {
         terminal = terminal.child(shell_menu(
             instance_rect,
-            snapshot.shell,
             state.clone(),
             terminal_focus.clone(),
-            controller.clone(),
-            application.clone(),
-            cwd,
-            size,
+            terminal_tabs.clone(),
         ));
     }
 
@@ -398,6 +276,149 @@ pub fn render(
     );
 
     terminal
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_terminal_tabs(
+    rect: UiRect,
+    tabs: &[TerminalTab],
+    active_id: u64,
+    terminal_tabs: State<TerminalTabs>,
+    state: State<AppState>,
+    terminal_focus: UiFocusHandle,
+    editor_focus: UiFocusHandle,
+    application: Arc<ApplicationHandle>,
+) -> Element {
+    let mut strip = group(rect);
+    if tabs.is_empty() || rect.width() <= 0.0 {
+        return strip;
+    }
+
+    let count = tabs.len() as f32;
+    let available_tabs_width = (rect.width() - TABS_PAD).max(MIN_TAB_W);
+    let tab_cap =
+        ((available_tabs_width - TAB_GAP * (count - 1.0)) / count).clamp(MIN_TAB_W, MAX_TAB_W);
+
+    let mut left = rect.left + TABS_PAD;
+    for tab in tabs {
+        let name = tab.controller.shell().short_label();
+        let name_width = measure(name, theme::UI_SIZE, 400);
+        let close_width = measure("✕", theme::SMALL, 400);
+        let fixed_width = TAB_PAD + TAB_CONTENT_GAP + close_width + TAB_PAD;
+        let tab_width = (fixed_width + name_width).min(tab_cap).max(MIN_TAB_W);
+        let tab_rect = UiRect::new(
+            left,
+            rect.top + PILL_INSET,
+            left + tab_width,
+            rect.bottom - PILL_INSET,
+        );
+        let name_left = tab_rect.left + TAB_PAD;
+        let close_left = tab_rect.right - TAB_PAD - close_width;
+        let close_rect = UiRect::new(
+            close_left,
+            tab_rect.top,
+            tab_rect.right - TAB_PAD,
+            tab_rect.bottom,
+        );
+        let name_slot_width = (close_left - TAB_CONTENT_GAP - name_left).max(0.0);
+        let display_name = ellipsize(
+            name,
+            (name_slot_width - TEXT_MARGIN).max(0.0),
+            theme::UI_SIZE,
+            400,
+        );
+        let label_rect = UiRect::new(
+            name_left,
+            tab_rect.top,
+            name_left + name_slot_width,
+            tab_rect.bottom,
+        );
+        let active = tab.id == active_id;
+        let visual = if active {
+            theme::bordered(tab_rect, theme::BG, theme::BORDER, 2.0, 1.0)
+        } else {
+            panel(tab_rect, VisualStyle::default().radius(2.0))
+        }
+        .child(text(
+            label_rect,
+            display_name,
+            theme::mono(
+                if active {
+                    theme::ZINC_100
+                } else {
+                    theme::ZINC_400
+                },
+                theme::UI_SIZE,
+            ),
+        ));
+        strip = strip.child(visual);
+
+        let select_tabs = terminal_tabs.clone();
+        let select_focus = terminal_focus.clone();
+        let tab_id = tab.id;
+        strip = strip.child(
+            panel(
+                UiRect::new(
+                    tab_rect.left,
+                    tab_rect.top,
+                    (close_left - TAB_CONTENT_GAP).max(tab_rect.left),
+                    tab_rect.bottom,
+                ),
+                VisualStyle::default(),
+            )
+            .key(format!("terminal-tab-select-{tab_id}"))
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                select_tabs.update(move |tabs| tabs.select(tab_id));
+                select_focus.focus();
+            }),
+        );
+
+        let close_controller = tab.controller.clone();
+        let close_tabs = terminal_tabs.clone();
+        let close_state = state.clone();
+        let close_terminal_focus = terminal_focus.clone();
+        let close_editor_focus = editor_focus.clone();
+        let close_application = application.clone();
+        strip = strip.child(
+            panel(close_rect, VisualStyle::default())
+                .key(format!("terminal-tab-close-{tab_id}"))
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || {
+                    close_controller.terminate(&close_application);
+                    let closing_last_tab = close_tabs.get().tabs().len() == 1;
+                    close_tabs.update(move |tabs| {
+                        tabs.close(tab_id);
+                    });
+                    if closing_last_tab {
+                        close_state.update(|app| {
+                            app.show_terminal = false;
+                            app.terminal_shell_menu = false;
+                            app.terminal_focused = false;
+                        });
+                        close_editor_focus.focus();
+                    } else {
+                        close_terminal_focus.focus();
+                    }
+                })
+                .child(text(
+                    UiRect::new(
+                        close_left,
+                        tab_rect.top,
+                        close_left + close_width + TEXT_MARGIN,
+                        tab_rect.bottom,
+                    ),
+                    "✕",
+                    theme::mono(theme::ZINC_500, theme::SMALL),
+                )),
+        );
+
+        left += tab_width + TAB_GAP;
+    }
+
+    clip(rect, 0.0, 0.0).child(strip)
 }
 
 fn render_screen(
@@ -470,16 +491,11 @@ fn render_screen(
     clip(content, 0.0, 0.0).child(screen)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn shell_menu(
     instance_rect: UiRect,
-    active: ShellKind,
     state: State<AppState>,
     focus: UiFocusHandle,
-    controller: TerminalController,
-    application: Arc<ApplicationHandle>,
-    cwd: Option<PathBuf>,
-    size: TerminalSize,
+    terminal_tabs: State<TerminalTabs>,
 ) -> Element {
     let menu_rect = UiRect::new(
         instance_rect.right - SHELL_MENU_W,
@@ -498,34 +514,20 @@ fn shell_menu(
         );
         let row_state = state.clone();
         let row_focus = focus.clone();
-        let row_controller = controller.clone();
-        let row_application = application.clone();
-        let row_cwd = cwd.clone();
-        let mut item = panel(
-            row,
-            if shell == active {
-                VisualStyle::filled(theme::ACTIVE_LINE).radius(3.0)
-            } else {
-                VisualStyle::default().radius(3.0)
-            },
-        )
-        .key(format!("terminal-shell-{}", shell.short_label()))
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(CursorIcon::Pointer)
-        .on_click(move || {
-            row_controller.restart(shell, row_cwd.as_deref(), size, row_application.clone());
-            row_state.update(|app| app.terminal_shell_menu = false);
-            row_focus.focus();
-        });
-        if shell == active {
-            item = item.child(text(
-                UiRect::new(row.left + 8.0, row.top, row.left + 22.0, row.bottom),
-                "•",
-                theme::mono_bold(theme::ACCENT, theme::UI_SIZE),
-            ));
-        }
-        item = item.child(text(
-            UiRect::new(row.left + 24.0, row.top, row.right - 8.0, row.bottom),
+        let row_tabs = terminal_tabs.clone();
+        let item = panel(row, VisualStyle::default().radius(3.0))
+            .key(format!("terminal-shell-{}", shell.short_label()))
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                row_tabs.update(move |tabs| {
+                    tabs.add(shell);
+                });
+                row_state.update(|app| app.terminal_shell_menu = false);
+                row_focus.focus();
+            });
+        let item = item.child(text(
+            UiRect::new(row.left + 8.0, row.top, row.right - 8.0, row.bottom),
             shell.label(),
             theme::mono(theme::ZINC_200, theme::UI_SIZE),
         ));
