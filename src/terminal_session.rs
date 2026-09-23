@@ -638,22 +638,52 @@ fn line_runs(screen: &vt100::Screen, row: u16, cols: u16) -> Vec<TerminalRun> {
     let mut runs = Vec::new();
     let mut current: Option<TerminalRun> = None;
 
-    for col in 0..cols {
+    let mut col = 0;
+    while col < cols {
         let Some(cell) = screen.cell(row, col) else {
+            col += 1;
             continue;
         };
+        if cell.is_wide_continuation() {
+            col += 1;
+            continue;
+        }
         let style = cell_style(cell);
-        let cell_text = if cell.is_wide_continuation() {
-            ""
-        } else if cell.has_contents() {
+        let cell_text = if cell.has_contents() {
             cell.contents()
         } else {
             " "
         };
+        let columns = if cell.is_wide() && col + 1 < cols {
+            2
+        } else {
+            1
+        };
+
+        // Skia shapes a fallback CJK font by its own glyph advances, while a
+        // terminal positions every wide cell on an exact two-column grid.
+        // Keeping a wide cell out of neighboring text runs prevents paragraph
+        // shaping from moving or clipping it when the two width models differ.
+        if columns == 2 {
+            if let Some(run) = current.take() {
+                push_visible_run(&mut runs, run);
+            }
+            push_visible_run(
+                &mut runs,
+                TerminalRun {
+                    start_col: col,
+                    columns,
+                    text: cell_text.to_owned(),
+                    style,
+                },
+            );
+            col += columns;
+            continue;
+        }
 
         match current.as_mut() {
             Some(run) if run.style == style => {
-                run.columns += 1;
+                run.columns += columns;
                 run.text.push_str(cell_text);
             }
             Some(_) => {
@@ -661,7 +691,7 @@ fn line_runs(screen: &vt100::Screen, row: u16, cols: u16) -> Vec<TerminalRun> {
                 push_visible_run(&mut runs, run);
                 current = Some(TerminalRun {
                     start_col: col,
-                    columns: 1,
+                    columns,
                     text: cell_text.to_owned(),
                     style,
                 });
@@ -669,12 +699,13 @@ fn line_runs(screen: &vt100::Screen, row: u16, cols: u16) -> Vec<TerminalRun> {
             None => {
                 current = Some(TerminalRun {
                     start_col: col,
-                    columns: 1,
+                    columns,
                     text: cell_text.to_owned(),
                     style,
                 });
             }
         }
+        col += columns;
     }
     if let Some(run) = current {
         push_visible_run(&mut runs, run);
@@ -813,6 +844,23 @@ mod tests {
     }
 
     #[test]
+    fn wide_terminal_cells_keep_their_two_column_positions() {
+        let mut parser = vt100::Parser::new(2, 20, 0);
+        parser.process("A中文B".as_bytes());
+
+        let runs = line_runs(parser.screen(), 0, 20);
+        let visible = runs
+            .iter()
+            .map(|run| (run.start_col, run.columns, run.text.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            visible,
+            vec![(0, 1, "A"), (1, 2, "中"), (3, 2, "文"), (5, 1, "B")]
+        );
+    }
+
+    #[test]
     fn terminal_tabs_add_select_and_close_neighboring_sessions() {
         let mut tabs = TerminalTabs::new();
         let first = tabs.active_id().expect("initial terminal tab");
@@ -838,6 +886,11 @@ mod tests {
     #[ignore = "manual Windows ConPTY smoke test"]
     fn supported_shells_round_trip_through_real_conpty_sessions() {
         assert_shell_round_trip(ShellKind::PowerShell, b"Write-Output (6*7)\r", "42");
+        assert_shell_round_trip(
+            ShellKind::PowerShell,
+            "Write-Output '中文输入测试'\r".as_bytes(),
+            "中文输入测试",
+        );
         assert_shell_round_trip(ShellKind::Cmd, b"set /a 6*7\r", "42");
         assert_shell_round_trip(ShellKind::Bash, b"printf '%s\\n' $((6*7))\r", "42");
     }
