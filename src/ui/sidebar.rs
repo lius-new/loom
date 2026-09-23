@@ -23,6 +23,28 @@ use crate::theme;
 const ROW_H: f32 = 20.0;
 const INDENT: f32 = 12.0;
 
+#[derive(Clone, Debug)]
+struct StickyDirectory {
+    key: String,
+    name: String,
+    depth: usize,
+    source_y: f32,
+    is_expanded: bool,
+}
+
+#[derive(Clone, Debug)]
+struct TreeRowMeta {
+    y: f32,
+    depth: usize,
+    sticky_path: Vec<StickyDirectory>,
+}
+
+#[derive(Clone, Debug)]
+struct StickyRow {
+    directory: StickyDirectory,
+    top: f32,
+}
+
 pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     let s = state.get();
 
@@ -59,10 +81,33 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             let indent = rect.left + INDENT;
             let is_expanded = s.expanded.contains(&key);
 
+            let root = StickyDirectory {
+                key: key.clone(),
+                name: root_name.clone(),
+                depth: 0,
+                source_y: y,
+                is_expanded,
+            };
+            let mut path = vec![root.clone()];
+            let mut rows = vec![TreeRowMeta {
+                y,
+                depth: 0,
+                sticky_path: path.clone(),
+            }];
+
             // Collect the tree (root node + contents) into a flat element
-            // list and remember where it ends so we can compute scroll range.
+            // list and retain each row's directory ancestry for sticky rows.
             let mut tree_els: Vec<Element> = Vec::new();
-            tree_els.push(dir_row(&key, &root_name, indent, rect, y, is_expanded, &state));
+            tree_els.push(dir_row(
+                &key,
+                &root_name,
+                indent,
+                rect,
+                y,
+                is_expanded,
+                false,
+                &state,
+            ));
             y += ROW_H;
 
             if is_expanded {
@@ -70,7 +115,16 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                 // the row bottom to the bottom of its last child.
                 let children_top = y;
                 let guide_x = indent + 6.0;
-                tree_els.extend(build_tree(&key, rect, &mut y, 1, &s, &state));
+                tree_els.extend(build_tree(
+                    &key,
+                    rect,
+                    &mut y,
+                    1,
+                    &s,
+                    &state,
+                    &mut path,
+                    &mut rows,
+                ));
                 if y > children_top {
                     tree_els.push(panel(
                         UiRect::new(guide_x, children_top, guide_x + 1.0, y),
@@ -85,13 +139,10 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             let max_scroll = (content_bottom - rect.bottom).max(0.0);
             let scroll = s.tree_scroll.clamp(0.0, max_scroll);
 
-            // Clip container: keeps rows inside the drawer while scrolling.
-            // The content offset is the negated scroll (scrolling down moves
-            // the content up). Wheel events land here because rows carry no
-            // wheel handler, so hit-testing walks up to this node.
+            // Keep wheel scrolling on the tree root so sticky rows, the
+            // scrollbar track and ordinary rows all participate equally.
             let st = state.clone();
-            let mut clip_el = clip(rect, 0.0, -scroll)
-                .on_event(UiEventKind::Wheel, move |_cx, payload| {
+            bar = bar.on_event(UiEventKind::Wheel, move |_cx, payload| {
                 if let UiEventPayload::Wheel { delta } = payload {
                     let step = match delta.unit {
                         WheelUnit::Lines => delta.y * ROW_H * 3.0,
@@ -102,10 +153,32 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                     });
                 }
             });
+
+            // Clip container: keeps rows inside the drawer while scrolling.
+            // The content offset is the negated scroll (scrolling down moves
+            // the content up).
+            let mut clip_el = clip(rect, 0.0, -scroll);
             for el in tree_els {
                 clip_el = clip_el.child(el);
             }
             bar = bar.child(clip_el);
+
+            // Draw deepest sticky rows first. Parents are added last so a
+            // departing child slides underneath its fixed ancestor.
+            for sticky in sticky_rows(&rows, rect.top, scroll).into_iter().rev() {
+                let directory = sticky.directory;
+                let indent = rect.left + INDENT + directory.depth as f32 * INDENT;
+                bar = bar.child(dir_row(
+                    &directory.key,
+                    &directory.name,
+                    indent,
+                    rect,
+                    sticky.top,
+                    directory.is_expanded,
+                    true,
+                    &state,
+                ));
+            }
 
             // Scrollbar, drawn outside the clip so it stays fixed.
             if max_scroll > 0.0 {
@@ -238,15 +311,22 @@ fn dir_row(
     rect: UiRect,
     y: f32,
     is_expanded: bool,
+    sticky: bool,
     state: &State<AppState>,
 ) -> Element {
     let row_rect = UiRect::new(rect.left, y, rect.right, y + ROW_H);
     let icon = if is_expanded { "folder-open" } else { "folder" };
-    let fid = UiId::owned(format!("tree-{key}"));
+    let layer = if sticky { "sticky" } else { "content" };
+    let fid = UiId::owned(format!("tree-{layer}-{key}"));
+    let style = if sticky {
+        VisualStyle::filled(theme::SIDEBAR)
+    } else {
+        VisualStyle::default()
+    };
 
     let st = state.clone();
     let k = key.to_string();
-    panel(row_rect, VisualStyle::default())
+    panel(row_rect, style)
         .event_policy(EventPolicy::INTERACTIVE)
         .on_click(move || {
             let key = k.clone();
@@ -283,6 +363,8 @@ fn build_tree(
     depth: usize,
     s: &AppState,
     state: &State<AppState>,
+    path: &mut Vec<StickyDirectory>,
+    rows: &mut Vec<TreeRowMeta>,
 ) -> Vec<Element> {
     let mut els = Vec::new();
 
@@ -298,8 +380,34 @@ fn build_tree(
 
         if is_dir {
             let is_expanded = s.expanded.contains(&key);
-            els.push(dir_row(&key, &name, indent, rect, *y, is_expanded, state));
+            path.push(StickyDirectory {
+                key: key.clone(),
+                name: name.clone(),
+                depth,
+                source_y: *y,
+                is_expanded,
+            });
+            rows.push(TreeRowMeta {
+                y: *y,
+                depth,
+                sticky_path: path.clone(),
+            });
+            els.push(dir_row(
+                &key,
+                &name,
+                indent,
+                rect,
+                *y,
+                is_expanded,
+                false,
+                state,
+            ));
         } else {
+            rows.push(TreeRowMeta {
+                y: *y,
+                depth,
+                sticky_path: path.clone(),
+            });
             let row_rect = UiRect::new(rect.left, *y, rect.right, *y + ROW_H);
             let row = panel(row_rect, VisualStyle::default())
                 .event_policy(EventPolicy::INTERACTIVE)
@@ -318,7 +426,16 @@ fn build_tree(
             // folder row bottom to the bottom of its last child.
             let children_top = *y;
             let guide_x = indent + 6.0;
-            els.extend(build_tree(&key, rect, y, depth + 1, s, state));
+            els.extend(build_tree(
+                &key,
+                rect,
+                y,
+                depth + 1,
+                s,
+                state,
+                path,
+                rows,
+            ));
             if *y > children_top {
                 els.push(panel(
                     UiRect::new(guide_x, children_top, guide_x + 1.0, *y),
@@ -326,9 +443,53 @@ fn build_tree(
                 ));
             }
         }
+        if is_dir {
+            path.pop();
+        }
     }
 
     els
+}
+
+/// Resolves the directory ancestry pinned above the scrolling content.
+///
+/// A row becomes active when it reaches the slot immediately below its
+/// ancestors. The first later row outside a directory's subtree then pushes
+/// that directory upward until the replacement takes over the same slot.
+fn sticky_rows(rows: &[TreeRowMeta], viewport_top: f32, scroll: f32) -> Vec<StickyRow> {
+    if scroll <= 0.0 {
+        return Vec::new();
+    }
+
+    let mut active_path = Vec::new();
+    for row in rows {
+        let slot_top = viewport_top + row.depth as f32 * ROW_H;
+        if row.y - scroll <= slot_top {
+            active_path = row.sticky_path.clone();
+        }
+    }
+
+    active_path
+        .into_iter()
+        .map(|directory| {
+            let slot_top = viewport_top + directory.depth as f32 * ROW_H;
+            let boundary_top = rows
+                .iter()
+                .find(|row| {
+                    row.y > directory.source_y
+                        && !row
+                            .sticky_path
+                            .iter()
+                            .any(|ancestor| ancestor.key == directory.key)
+                })
+                .map(|row| row.y - scroll - ROW_H)
+                .unwrap_or(slot_top);
+            StickyRow {
+                directory,
+                top: slot_top.min(boundary_top),
+            }
+        })
+        .collect()
 }
 
 /// Fixed vertical scrollbar for the file tree: a thin track plus a thumb whose
@@ -393,4 +554,78 @@ fn scrollbar(
     });
 
     panel(track, VisualStyle::filled(theme::ZINC_800).radius(2.0)).child(thumb)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn directory(key: &str, depth: usize, source_y: f32) -> StickyDirectory {
+        StickyDirectory {
+            key: key.to_string(),
+            name: key.to_string(),
+            depth,
+            source_y,
+            is_expanded: true,
+        }
+    }
+
+    fn row(y: f32, depth: usize, sticky_path: &[StickyDirectory]) -> TreeRowMeta {
+        TreeRowMeta {
+            y,
+            depth,
+            sticky_path: sticky_path.to_vec(),
+        }
+    }
+
+    #[test]
+    fn pins_the_current_directory_and_its_ancestors() {
+        let root = directory("root", 0, 8.0);
+        let src = directory("src", 1, 28.0);
+        let rows = vec![
+            row(8.0, 0, std::slice::from_ref(&root)),
+            row(28.0, 1, &[root.clone(), src.clone()]),
+            row(48.0, 2, &[root.clone(), src.clone()]),
+            row(68.0, 2, &[root.clone(), src.clone()]),
+        ];
+
+        let sticky = sticky_rows(&rows, 0.0, 48.0);
+
+        assert_eq!(sticky.len(), 2);
+        assert_eq!(sticky[0].directory.key, "root");
+        assert_eq!(sticky[0].top, 0.0);
+        assert_eq!(sticky[1].directory.key, "src");
+        assert_eq!(sticky[1].top, ROW_H);
+    }
+
+    #[test]
+    fn next_sibling_pushes_the_current_directory_out() {
+        let root = directory("root", 0, 8.0);
+        let src = directory("src", 1, 28.0);
+        let tests = directory("tests", 1, 88.0);
+        let rows = vec![
+            row(8.0, 0, std::slice::from_ref(&root)),
+            row(28.0, 1, &[root.clone(), src.clone()]),
+            row(48.0, 2, &[root.clone(), src.clone()]),
+            row(68.0, 2, &[root.clone(), src.clone()]),
+            row(88.0, 1, &[root.clone(), tests.clone()]),
+        ];
+
+        let being_pushed = sticky_rows(&rows, 0.0, 55.0);
+        assert_eq!(being_pushed[1].directory.key, "src");
+        assert_eq!(being_pushed[1].top, 13.0);
+
+        let replaced = sticky_rows(&rows, 0.0, 68.0);
+        assert_eq!(replaced[1].directory.key, "tests");
+        assert_eq!(replaced[1].top, ROW_H);
+    }
+
+    #[test]
+    fn waits_until_a_directory_reaches_its_sticky_slot() {
+        let root = directory("root", 0, 8.0);
+        let rows = vec![row(8.0, 0, std::slice::from_ref(&root))];
+
+        assert!(sticky_rows(&rows, 0.0, 7.0).is_empty());
+        assert_eq!(sticky_rows(&rows, 0.0, 8.0).len(), 1);
+    }
 }
