@@ -30,8 +30,17 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Region layout ------------------------------------------------
     let titlebar_rect = UiRect::new(0.0, 0.0, w, theme::TITLEBAR_H);
     let statusbar_rect = UiRect::new(0.0, h - theme::STATUS_H, w, h);
+    let max_terminal_h = (h
+        - theme::STATUS_H
+        - theme::TITLEBAR_H
+        - theme::TABS_H
+        - theme::EDITOR_MIN_H)
+        .clamp(theme::TERMINAL_MIN_H, theme::TERMINAL_MAX_H);
+    let terminal_h = s
+        .terminal_h
+        .clamp(theme::TERMINAL_MIN_H, max_terminal_h);
     let main_bottom = if show_term {
-        h - theme::STATUS_H - theme::TERMINAL_H
+        h - theme::STATUS_H - terminal_h
     } else {
         h - theme::STATUS_H
     };
@@ -107,12 +116,17 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
 
     if show_term {
-        root = root.child(terminal::render(UiRect::new(
-            0.0,
-            h - theme::STATUS_H - theme::TERMINAL_H,
-            w,
-            h - theme::STATUS_H,
-        )));
+        root = root.child(terminal::render(
+            UiRect::new(
+                0.0,
+                h - theme::STATUS_H - terminal_h,
+                w,
+                h - theme::STATUS_H,
+            ),
+            state.clone(),
+            editor_focus.clone(),
+            max_terminal_h,
+        ));
     }
 
     root = root.child(statusbar::render(statusbar_rect, state.clone()));

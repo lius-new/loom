@@ -20,6 +20,10 @@ pub struct AppState {
     pub focused: bool,
     pub show_drawer: bool,
     pub show_terminal: bool,
+    /// Current terminal panel height in logical pixels.
+    pub terminal_h: f32,
+    /// True while the terminal's top resize handle is being dragged.
+    pub resizing_terminal: bool,
     pub show_palette: bool,
     pub toast: Option<String>,
     /// Cached entries per loaded directory (key = directory path string).
@@ -69,6 +73,8 @@ impl AppState {
             focused: false,
             show_drawer: true,
             show_terminal: false,
+            terminal_h: crate::theme::TERMINAL_H,
+            resizing_terminal: false,
             show_palette: false,
             toast: None,
             dir_entries: HashMap::new(),
