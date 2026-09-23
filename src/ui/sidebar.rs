@@ -225,6 +225,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     let st_move = state.clone();
     let st_up = state.clone();
     let handle = panel(handle_rect, VisualStyle::default())
+        .key("file-tree-resize-handle")
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::ResizeHorizontal)
         .on_pointer_down(move |_cx, _p| {
@@ -615,6 +616,7 @@ fn vertical_scrollbar(
         UiRect::new(track.left, thumb_top, track.right, thumb_top + thumb_h),
         VisualStyle::filled(theme::ZINC_600).radius(2.0),
     )
+    .key("file-tree-vertical-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down(move |_cx, p| {
         st_down.update(move |app| {
@@ -672,6 +674,7 @@ fn horizontal_scrollbar(
         UiRect::new(thumb_left, track.top, thumb_left + thumb_w, track.bottom),
         VisualStyle::filled(theme::ZINC_600).radius(2.0),
     )
+    .key("file-tree-horizontal-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down(move |_cx, p| {
         st_down.update(move |app| {
