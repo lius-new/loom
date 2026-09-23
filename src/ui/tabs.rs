@@ -3,7 +3,7 @@
 
 use lgui::core::{Color, EventPolicy, IconStyle, UiElement, UiFocusHandle, UiId, precompiled};
 use lgui::prelude::{panel, text, Element, State, UiRect, VisualStyle};
-use lgui::text::measure_width;
+use lgui::text::{self, TextLayoutRequest};
 
 use crate::state::AppState;
 use crate::theme;
@@ -22,14 +22,57 @@ const TEXT_MARGIN: f32 = 6.0;
 const TABS_PAD: f32 = 8.0;
 /// Vertical inset of each tab pill inside the strip.
 const PILL_INSET: f32 = 4.0;
+/// VS Code-style upper bound: long names truncate instead of allowing one tab
+/// to grow underneath the right-side controls.
+const MAX_TAB_W: f32 = 220.0;
+/// Keeps the badge, an ellipsis and the close button usable when tabs shrink.
+const MIN_TAB_W: f32 = 96.0;
+const CLUSTER_PAD: f32 = 8.0;
+const ICON: f32 = 14.0;
 
 /// Natural text width measured with the renderer's text system, falling back
 /// to a per-character estimate when no text system is installed.
 fn measure(s: &str, size: f32, weight: i32) -> f32 {
     let bounds = UiRect::new(0.0, 0.0, 10_000.0, size);
-    measure_width(s, bounds, size, weight).unwrap_or_else(|| {
+    let mut request = TextLayoutRequest::single_line(s, bounds, size, weight);
+    request.font_families = theme::MONO_FAMILIES;
+    text::layout(&request).map(|layout| layout.width).unwrap_or_else(|| {
         s.chars().count() as f32 * theme::CHAR_W * (size / theme::CODE_SIZE)
     })
+}
+
+fn ellipsize(value: &str, max_width: f32, size: f32, weight: i32) -> String {
+    if measure(value, size, weight) <= max_width {
+        return value.to_owned();
+    }
+
+    const ELLIPSIS: &str = "…";
+    if max_width <= measure(ELLIPSIS, size, weight) {
+        return ELLIPSIS.to_owned();
+    }
+
+    let chars: Vec<char> = value.chars().collect();
+    let mut low = 0;
+    let mut high = chars.len();
+    while low < high {
+        let middle = (low + high + 1) / 2;
+        let candidate = chars[..middle]
+            .iter()
+            .copied()
+            .chain(ELLIPSIS.chars())
+            .collect::<String>();
+        if measure(&candidate, size, weight) <= max_width {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+
+    chars[..low]
+        .iter()
+        .copied()
+        .chain(ELLIPSIS.chars())
+        .collect()
 }
 
 /// A color-tinted, resolution-independent SVG icon (rasterized at physical pixels).
@@ -42,6 +85,11 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     let active = s.workspace.active();
 
     let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
+    let controls_left = rect.right - CLUSTER_PAD - ICON - CLUSTER_PAD - 1.0;
+    let tab_count = s.workspace.open_files().len().max(1) as f32;
+    let available_tabs_w = (controls_left - rect.left - TABS_PAD).max(MIN_TAB_W);
+    let tab_cap = ((available_tabs_w - TAB_GAP * (tab_count - 1.0)) / tab_count)
+        .clamp(MIN_TAB_W, MAX_TAB_W);
 
     // Tabs are content-sized rounded pills, inset PILL_INSET vertically,
     // separated by TAB_GAP. The strip has no padding; this cluster's left
@@ -54,7 +102,8 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         let badge_w = measure(m.lang.badge(), theme::SMALL, 700);
         let name_w = measure(&m.name, theme::UI_SIZE, 400);
         let close_w = measure("✕", theme::SMALL, 400);
-        let tab_w = PAD + badge_w + GAP + name_w + GAP + close_w + PAD;
+        let fixed_w = PAD + badge_w + GAP + GAP + close_w + PAD;
+        let tab_w = (fixed_w + name_w).min(tab_cap).max(MIN_TAB_W);
 
         let pill = UiRect::new(x, rect.top + PILL_INSET, x + tab_w, rect.bottom - PILL_INSET);
         let name_style = if Some(id) == active {
@@ -66,6 +115,13 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         let badge_left = pill.left + PAD;
         let name_left = badge_left + badge_w + GAP;
         let close_left = pill.right - PAD - close_w;
+        let name_slot_w = (close_left - GAP - name_left).max(0.0);
+        let display_name = ellipsize(
+            &m.name,
+            (name_slot_w - TEXT_MARGIN).max(0.0),
+            theme::UI_SIZE,
+            400,
+        );
 
         let st = state.clone();
         let focus = editor_focus.clone();
@@ -88,8 +144,8 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             theme::mono_bold(m.lang.badge_color(), theme::SMALL),
         ));
         tab_el = tab_el.child(text(
-            UiRect::new(name_left, pill.top, name_left + name_w + TEXT_MARGIN, pill.bottom),
-            m.name.clone(),
+            UiRect::new(name_left, pill.top, name_left + name_slot_w, pill.bottom),
+            display_name,
             name_style,
         ));
 
@@ -124,9 +180,6 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     // edge (right). The cluster applies its own padding (CLUSTER_PAD on the
     // right), so the icon's left gap (divider -> icon) and right gap
     // (icon -> strip edge) are equal. The divider spans the full strip height.
-    const CLUSTER_PAD: f32 = 8.0;
-    const ICON: f32 = 14.0;
-
     let icon_r = UiRect::new(
         rect.right - CLUSTER_PAD - ICON,
         rect.top + 7.0,
@@ -166,4 +219,31 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     ));
 
     bar
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_file_names_end_with_an_ellipsis_and_fit_the_budget() {
+        let budget = measure("very-long…", theme::UI_SIZE, 400);
+        let result = ellipsize(
+            "very-long-file-name-that-keeps-going.rs",
+            budget,
+            theme::UI_SIZE,
+            400,
+        );
+
+        assert!(result.ends_with('…'));
+        assert!(measure(&result, theme::UI_SIZE, 400) <= budget);
+    }
+
+    #[test]
+    fn short_file_names_remain_unchanged() {
+        assert_eq!(
+            ellipsize("main.rs", 200.0, theme::UI_SIZE, 400),
+            "main.rs"
+        );
+    }
 }
