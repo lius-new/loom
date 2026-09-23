@@ -76,6 +76,10 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| key.clone());
+            let content_right = tree_content_right(&key, &root_name, &s, rect.left)
+                .max(rect.right);
+            let max_scroll_x = (content_right - rect.right).max(0.0);
+            let scroll_x = s.tree_scroll_x.clamp(0.0, max_scroll_x);
 
             let mut y = rect.top + 8.0;
             let indent = rect.left + INDENT;
@@ -104,6 +108,8 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                 indent,
                 rect,
                 y,
+                content_right,
+                0.0,
                 is_expanded,
                 false,
                 &state,
@@ -124,6 +130,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                     &state,
                     &mut path,
                     &mut rows,
+                    content_right,
                 ));
                 if y > children_top {
                     tree_els.push(panel(
@@ -144,12 +151,17 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             let st = state.clone();
             bar = bar.on_event(UiEventKind::Wheel, move |_cx, payload| {
                 if let UiEventPayload::Wheel { delta } = payload {
-                    let step = match delta.unit {
-                        WheelUnit::Lines => delta.y * ROW_H * 3.0,
-                        WheelUnit::Pixels => delta.y,
+                    let (step_x, step_y) = match delta.unit {
+                        WheelUnit::Lines => (
+                            delta.x * ROW_H * 3.0,
+                            delta.y * ROW_H * 3.0,
+                        ),
+                        WheelUnit::Pixels => (delta.x, delta.y),
                     };
                     st.update(move |app| {
-                        app.tree_scroll = (app.tree_scroll - step).clamp(0.0, max_scroll);
+                        app.tree_scroll = (app.tree_scroll - step_y).clamp(0.0, max_scroll);
+                        app.tree_scroll_x =
+                            (app.tree_scroll_x - step_x).clamp(0.0, max_scroll_x);
                     });
                 }
             });
@@ -157,7 +169,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             // Clip container: keeps rows inside the drawer while scrolling.
             // The content offset is the negated scroll (scrolling down moves
             // the content up).
-            let mut clip_el = clip(rect, 0.0, -scroll);
+            let mut clip_el = clip(rect, -scroll_x, -scroll);
             for el in tree_els {
                 clip_el = clip_el.child(el);
             }
@@ -174,6 +186,8 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                     indent,
                     rect,
                     sticky.top,
+                    content_right,
+                    -scroll_x,
                     directory.is_expanded,
                     true,
                     &state,
@@ -181,8 +195,23 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             }
 
             // Scrollbar, drawn outside the clip so it stays fixed.
-            if max_scroll > 0.0 {
-                bar = bar.child(scrollbar(rect, content_bottom, scroll, state.clone()));
+            if max_scroll > 0.0 && (s.sidebar_hovered || s.scrollbar_dragging) {
+                bar = bar.child(vertical_scrollbar(
+                    rect,
+                    content_bottom,
+                    scroll,
+                    state.clone(),
+                ));
+            }
+            if max_scroll_x > 0.0
+                && (s.sidebar_hovered || s.horizontal_scrollbar_dragging)
+            {
+                bar = bar.child(horizontal_scrollbar(
+                    rect,
+                    content_right,
+                    scroll_x,
+                    state.clone(),
+                ));
             }
         }
     }
@@ -264,6 +293,7 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
                     app.expanded.clear();
                     app.expanded.insert(key); // root starts expanded
                     app.tree_scroll = 0.0;
+                    app.tree_scroll_x = 0.0;
                 });
             }
         })
@@ -310,11 +340,20 @@ fn dir_row(
     indent: f32,
     rect: UiRect,
     y: f32,
+    content_right: f32,
+    content_offset_x: f32,
     is_expanded: bool,
     sticky: bool,
     state: &State<AppState>,
 ) -> Element {
-    let row_rect = UiRect::new(rect.left, y, rect.right, y + ROW_H);
+    let row_right = if sticky { rect.right } else { content_right };
+    let row_rect = UiRect::new(rect.left, y, row_right, y + ROW_H);
+    let indent = indent + content_offset_x;
+    let text_right = if sticky {
+        rect.right - 12.0
+    } else {
+        content_right - 12.0
+    };
     let icon = if is_expanded { "folder-open" } else { "folder" };
     let layer = if sticky { "sticky" } else { "content" };
     let fid = UiId::owned(format!("tree-{layer}-{key}"));
@@ -348,7 +387,7 @@ fn dir_row(
             icon,
         ).icon_style(IconStyle::new(theme::ZINC_400))))
         .child(text(
-            UiRect::new(indent + 16.0, y + 2.0, rect.right - 12.0, y + 18.0),
+            UiRect::new(indent + 16.0, y + 2.0, text_right, y + 18.0),
             name.to_string(),
             theme::mono(theme::ZINC_300, theme::UI_SIZE),
         ))
@@ -365,6 +404,7 @@ fn build_tree(
     state: &State<AppState>,
     path: &mut Vec<StickyDirectory>,
     rows: &mut Vec<TreeRowMeta>,
+    content_right: f32,
 ) -> Vec<Element> {
     let mut els = Vec::new();
 
@@ -398,6 +438,8 @@ fn build_tree(
                 indent,
                 rect,
                 *y,
+                content_right,
+                0.0,
                 is_expanded,
                 false,
                 state,
@@ -408,11 +450,11 @@ fn build_tree(
                 depth,
                 sticky_path: path.clone(),
             });
-            let row_rect = UiRect::new(rect.left, *y, rect.right, *y + ROW_H);
+            let row_rect = UiRect::new(rect.left, *y, content_right, *y + ROW_H);
             let row = panel(row_rect, VisualStyle::default())
                 .event_policy(EventPolicy::INTERACTIVE)
                 .child(text(
-                    UiRect::new(indent + 16.0, *y + 2.0, rect.right - 12.0, *y + 18.0),
+                    UiRect::new(indent + 16.0, *y + 2.0, content_right - 12.0, *y + 18.0),
                     name,
                     theme::mono(theme::ZINC_400, theme::UI_SIZE),
                 ));
@@ -435,6 +477,7 @@ fn build_tree(
                 state,
                 path,
                 rows,
+                content_right,
             ));
             if *y > children_top {
                 els.push(panel(
@@ -449,6 +492,44 @@ fn build_tree(
     }
 
     els
+}
+
+/// Right edge required by the currently visible tree rows. File-tree labels
+/// use the editor's monospace UI font, so the shared character advance gives
+/// a stable scroll range without measuring text during every frame.
+fn tree_content_right(root_key: &str, root_name: &str, s: &AppState, left: f32) -> f32 {
+    let mut right = row_content_right(left, 0, root_name);
+    if s.expanded.contains(root_key) {
+        extend_content_right(root_key, 1, s, left, &mut right);
+    }
+    right
+}
+
+fn extend_content_right(
+    dir_key: &str,
+    depth: usize,
+    s: &AppState,
+    left: f32,
+    right: &mut f32,
+) {
+    let Some(entries) = s.dir_entries.get(dir_key) else {
+        return;
+    };
+
+    for entry in entries {
+        *right = right.max(row_content_right(left, depth, &entry.name));
+        if entry.is_dir {
+            let key = entry.path.to_string_lossy();
+            if s.expanded.contains(key.as_ref()) {
+                extend_content_right(key.as_ref(), depth + 1, s, left, right);
+            }
+        }
+    }
+}
+
+fn row_content_right(left: f32, depth: usize, name: &str) -> f32 {
+    let label_width = name.chars().count() as f32 * theme::CHAR_W;
+    left + INDENT + depth as f32 * INDENT + 16.0 + label_width + 12.0
 }
 
 /// Resolves the directory ancestry pinned above the scrolling content.
@@ -492,9 +573,9 @@ fn sticky_rows(rows: &[TreeRowMeta], viewport_top: f32, scroll: f32) -> Vec<Stic
         .collect()
 }
 
-/// Fixed vertical scrollbar for the file tree: a thin track plus a thumb whose
-/// height and position reflect the visible/content ratio and the scroll offset.
-fn scrollbar(
+/// Fixed vertical scrollbar for the file tree. Only the draggable thumb is
+/// painted; the track remains invisible like the scrollbars in modern editors.
+fn vertical_scrollbar(
     rect: UiRect,
     content_bottom: f32,
     scroll: f32,
@@ -553,7 +634,64 @@ fn scrollbar(
         st_up.update(move |app| app.scrollbar_dragging = false);
     });
 
-    panel(track, VisualStyle::filled(theme::ZINC_800).radius(2.0)).child(thumb)
+    thumb
+}
+
+/// Fixed horizontal scrollbar for wide or deeply nested tree rows. As with
+/// the vertical scrollbar, only the draggable thumb is painted.
+fn horizontal_scrollbar(
+    rect: UiRect,
+    content_right: f32,
+    scroll: f32,
+    state: State<AppState>,
+) -> Element {
+    let content_w = (content_right - rect.left).max(1.0);
+    let viewport_w = rect.width();
+    let max_scroll = (content_right - rect.right).max(0.0);
+    let track = UiRect::new(
+        rect.left + 8.0,
+        rect.bottom - 7.0,
+        rect.right - 8.0,
+        rect.bottom - 3.0,
+    );
+    let thumb_w = (track.width() * viewport_w / content_w)
+        .max(24.0)
+        .min(track.width());
+    let travel = track.width() - thumb_w;
+    let thumb_left = if max_scroll == 0.0 {
+        track.left
+    } else {
+        track.left + travel * (scroll / max_scroll)
+    };
+
+    let track_left = track.left;
+    let st_down = state.clone();
+    let st_move = state.clone();
+    let st_up = state.clone();
+    panel(
+        UiRect::new(thumb_left, track.top, thumb_left + thumb_w, track.bottom),
+        VisualStyle::filled(theme::ZINC_600).radius(2.0),
+    )
+    .event_policy(EventPolicy::INTERACTIVE)
+    .on_pointer_down(move |_cx, p| {
+        st_down.update(move |app| {
+            app.horizontal_scrollbar_dragging = true;
+            app.horizontal_scrollbar_drag_offset = p.point.x - thumb_left;
+        });
+    })
+    .on_pointer_move(move |_cx, p| {
+        st_move.update(move |app| {
+            if app.horizontal_scrollbar_dragging && travel > 0.0 {
+                let t = (p.point.x - track_left - app.horizontal_scrollbar_drag_offset)
+                    / travel
+                    * max_scroll;
+                app.tree_scroll_x = t.clamp(0.0, max_scroll);
+            }
+        });
+    })
+    .on_pointer_up(move |_cx, _p| {
+        st_up.update(move |app| app.horizontal_scrollbar_dragging = false);
+    })
 }
 
 #[cfg(test)]
@@ -627,5 +765,42 @@ mod tests {
 
         assert!(sticky_rows(&rows, 0.0, 7.0).is_empty());
         assert_eq!(sticky_rows(&rows, 0.0, 8.0).len(), 1);
+    }
+
+    #[test]
+    fn horizontal_range_uses_only_visible_tree_rows() {
+        let root_key = "root";
+        let nested_key = "root/src";
+        let long_name = "a_very_long_nested_file_name.rs";
+        let mut state = AppState::new();
+        state.expanded.insert(root_key.to_string());
+        state.expanded.insert(nested_key.to_string());
+        state.dir_entries.insert(
+            root_key.to_string(),
+            vec![DirEntry {
+                name: "src".to_string(),
+                path: nested_key.into(),
+                is_dir: true,
+            }],
+        );
+        state.dir_entries.insert(
+            nested_key.to_string(),
+            vec![DirEntry {
+                name: long_name.to_string(),
+                path: format!("{nested_key}/{long_name}").into(),
+                is_dir: false,
+            }],
+        );
+
+        assert_eq!(
+            tree_content_right(root_key, "root", &state, 100.0),
+            row_content_right(100.0, 2, long_name)
+        );
+
+        state.expanded.remove(nested_key);
+        assert_eq!(
+            tree_content_right(root_key, "root", &state, 100.0),
+            row_content_right(100.0, 1, "src")
+        );
     }
 }

@@ -30,6 +30,8 @@ pub struct AppState {
     pub expanded: HashSet<String>,
     pub sidebar_w: f32,
     pub resizing_sidebar: bool,
+    /// Whether the pointer is currently inside the file-tree drawer.
+    pub sidebar_hovered: bool,
     /// Empty-space context menu anchor (screen coords) when open.
     pub context_menu: Option<(f32, f32)>,
     /// Index of the context-menu item currently hovered, if any.
@@ -38,10 +40,16 @@ pub struct AppState {
     pub open_dir: Option<PathBuf>,
     /// Vertical scroll offset of the file tree, in pixels (0 = top).
     pub tree_scroll: f32,
+    /// Horizontal scroll offset of the file tree, in pixels (0 = left).
+    pub tree_scroll_x: f32,
     /// True while the file-tree scrollbar thumb is being dragged.
     pub scrollbar_dragging: bool,
     /// Pointer y offset from the thumb's top when the drag began.
     pub scrollbar_drag_offset: f32,
+    /// True while the horizontal file-tree scrollbar thumb is being dragged.
+    pub horizontal_scrollbar_dragging: bool,
+    /// Pointer x offset from the horizontal thumb's left when dragging began.
+    pub horizontal_scrollbar_drag_offset: f32,
 }
 
 impl AppState {
@@ -57,12 +65,16 @@ impl AppState {
             expanded: HashSet::new(),
             sidebar_w: crate::theme::SIDEBAR_W,
             resizing_sidebar: false,
+            sidebar_hovered: false,
             context_menu: None,
             context_menu_hover: None,
             open_dir: None,
             tree_scroll: 0.0,
+            tree_scroll_x: 0.0,
             scrollbar_dragging: false,
             scrollbar_drag_offset: 0.0,
+            horizontal_scrollbar_dragging: false,
+            horizontal_scrollbar_drag_offset: 0.0,
         }
     }
 
@@ -71,7 +83,12 @@ impl AppState {
             Action::OpenPalette => {
                 self.show_palette = true;
             }
-            Action::ToggleDrawer => self.show_drawer = !self.show_drawer,
+            Action::ToggleDrawer => {
+                self.show_drawer = !self.show_drawer;
+                if !self.show_drawer {
+                    self.sidebar_hovered = false;
+                }
+            }
             Action::ToggleTerminal => self.show_terminal = !self.show_terminal,
             Action::CloseOverlay => {
                 self.show_palette = false;

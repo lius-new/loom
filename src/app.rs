@@ -2,7 +2,7 @@
 //! keymap, and composes every UI module. No module talks to another directly —
 //! all cross-cutting state lives in `AppState`.
 
-use lgui::core::KeyboardEvent;
+use lgui::core::{KeyboardEvent, UiEventKind, UiEventPayload};
 use lgui::prelude::{group, Element, RenderCx, UiRect};
 
 use crate::editor::editor_view;
@@ -50,6 +50,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         w,
         main_bottom,
     );
+    let sidebar_rect = UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom);
 
     // ---- Root (global shortcut listener) ------------------------------
     let mut root = group(vp);
@@ -60,6 +61,21 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         }
     });
 
+    // Track the pointer against the whole drawer rather than individual tree
+    // rows. Capturing at the root also observes moves into sibling regions and
+    // overlays, so the scrollbar thumb disappears as soon as the drawer is
+    // left.
+    let was_sidebar_hovered = s.sidebar_hovered;
+    let st_hover = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
+        if let UiEventPayload::PointerMove { pointer } = payload {
+            let hovered = show_drawer && sidebar_rect.contains(pointer.point);
+            if hovered != was_sidebar_hovered {
+                st_hover.update(move |app| app.sidebar_hovered = hovered);
+            }
+        }
+    });
+
     // ---- Compose chrome (back-to-front) -------------------------------
     root = root.child(titlebar::render(titlebar_rect, state.clone()));
 
@@ -67,10 +83,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.child(editor_view::render(code_rect, state.clone()));
 
     if show_drawer {
-        root = root.child(sidebar::render(
-            UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom),
-            state.clone(),
-        ));
+        root = root.child(sidebar::render(sidebar_rect, state.clone()));
     }
 
     if show_term {
