@@ -1,8 +1,6 @@
-//! Static file catalog: language, metadata and sample source code.
-//!
-//! The three buffers mirror the mockup's "Active Workspace" (WalletService.cs,
-//! CombatEngine.rs, auth.ts). Adding a file = adding a `FileId` variant, a
-//! `FileMeta` static, and an entry in `FILE_ORDER`.
+//! Runtime document identity and metadata.
+
+use std::path::{Path, PathBuf};
 
 use lgui::prelude::Color;
 
@@ -13,140 +11,110 @@ pub enum Language {
     CSharp,
     Rust,
     TypeScript,
+    JavaScript,
+    PlainText,
 }
 
 impl Language {
-    /// Short badge label shown in tabs / sidebar / palette.
-    pub fn badge(self) -> &'static str {
-        match self {
-            Language::CSharp => "C#",
-            Language::Rust => "RS",
-            Language::TypeScript => "TS",
+    pub fn from_path(path: &Path) -> Self {
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        match extension.as_str() {
+            "cs" => Self::CSharp,
+            "rs" => Self::Rust,
+            "ts" | "tsx" | "mts" | "cts" => Self::TypeScript,
+            "js" | "jsx" | "mjs" | "cjs" => Self::JavaScript,
+            _ => Self::PlainText,
         }
     }
 
-    /// Full language name for the status bar.
+    pub fn badge(self) -> &'static str {
+        match self {
+            Self::CSharp => "C#",
+            Self::Rust => "RS",
+            Self::TypeScript => "TS",
+            Self::JavaScript => "JS",
+            Self::PlainText => "TXT",
+        }
+    }
+
     pub fn long_name(self) -> &'static str {
         match self {
-            Language::CSharp => "C#",
-            Language::Rust => "Rust",
-            Language::TypeScript => "TypeScript",
+            Self::CSharp => "C#",
+            Self::Rust => "Rust",
+            Self::TypeScript => "TypeScript",
+            Self::JavaScript => "JavaScript",
+            Self::PlainText => "Plain Text",
         }
     }
 
     pub fn badge_color(self) -> Color {
         match self {
-            Language::CSharp => theme::PURPLE_400,
-            Language::Rust => theme::ORANGE_400,
-            Language::TypeScript => theme::BLUE_400,
+            Self::CSharp => theme::PURPLE_400,
+            Self::Rust => theme::ORANGE_400,
+            Self::TypeScript => theme::BLUE_400,
+            Self::JavaScript => theme::AMBER_400,
+            Self::PlainText => theme::ZINC_400,
         }
     }
-}
-
-/// Git status decoration for a file row/tab.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum GitDot {
-    Modified, // amber
-    New,      // emerald
-}
-
-impl GitDot {
-    pub fn color(self) -> Color {
-        match self {
-            GitDot::Modified => theme::AMBER_400,
-            GitDot::New => theme::EMERALD_400,
-        }
-    }
-}
-
-/// Static metadata for one file.
-pub struct FileMeta {
-    pub name: &'static str,
-    pub lang: Language,
-    pub dir: &'static str,  // short directory label
-    pub path: &'static str, // breadcrumb path
-    pub code: &'static str,
-    pub tests: &'static str, // "N tests passing"
-    pub has_refs: bool,      // show "2 references" in the CodeLens ribbon
-    pub git_dot: Option<GitDot>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum FileId {
-    Wallet,
-    Combat,
-    Auth,
+pub struct FileId(u64);
+
+impl FileId {
+    pub(crate) const fn new(value: u64) -> Self {
+        Self(value)
+    }
 }
 
-pub const FILE_ORDER: [FileId; 3] = [FileId::Wallet, FileId::Combat, FileId::Auth];
-
-pub static WALLET: FileMeta = FileMeta {
-    name: "WalletService.cs",
-    lang: Language::CSharp,
-    dir: "Services",
-    path: "src > Services > WalletService.cs",
-    code: r#"namespace GameServer.Services;
-
-public sealed class PlayerWalletService : IWalletService
-{
-  private readonly IRedisDatabase _cache;
-  private readonly ILogger<PlayerWalletService> _logger;
-
-  public async Task<bool> TransferCreditsAsync(Guid sender, Guid receiver, decimal amount)
-  {
-    if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(amount));
-    if (senderBal < amount) return false;
-    return await _cache.CommitTransferAsync(sender, receiver, amount);
-  }
-}"#,
-    tests: "14 tests passing",
-    has_refs: true,
-    git_dot: Some(GitDot::Modified),
-};
-
-pub static COMBAT: FileMeta = FileMeta {
-    name: "CombatEngine.rs",
-    lang: Language::Rust,
-    dir: "Simulation",
-    path: "src > Simulation > CombatEngine.rs",
-    code: r#"pub struct CombatEngine {
-  tick_rate: u32,
-  active_entities: Vec<EntityId>,
+#[derive(Clone, Debug)]
+pub struct FileMeta {
+    pub name: String,
+    pub lang: Language,
+    pub path: PathBuf,
 }
 
-impl CombatEngine {
-  pub fn calculate_damage_batch(&self, targets: &[Target]) -> Vec<f32> {
-    // Parallel computation pass over active damage matrices
-    targets.iter().map(|t| t.armor.calculate_mitigation(t.incoming)).collect()
-  }
-}"#,
-    tests: "28 tests passing",
-    has_refs: false,
-    git_dot: None,
-};
+impl FileMeta {
+    pub fn from_path(path: PathBuf) -> Self {
+        let name = path
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        let lang = Language::from_path(&path);
+        Self { name, lang, path }
+    }
 
-pub static AUTH: FileMeta = FileMeta {
-    name: "auth.ts",
-    lang: Language::TypeScript,
-    dir: "Auth",
-    path: "src > Auth > auth.ts",
-    code: r#"import { SignJWT, jwtVerify } from 'jose';
+    pub fn directory_label(&self) -> String {
+        self.path
+            .parent()
+            .and_then(Path::file_name)
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+}
 
-export async function createSessionToken(userId: string): Promise<string> {
-  return await new SignJWT({ sub: userId })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setExpirationTime('2h')
-    .sign(crypto.getRandomValues(new Uint8Array(32)));
-}"#,
-    tests: "8 tests passing",
-    has_refs: false,
-    git_dot: Some(GitDot::New),
-};
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub fn meta(id: FileId) -> &'static FileMeta {
-    match id {
-        FileId::Wallet => &WALLET,
-        FileId::Combat => &COMBAT,
-        FileId::Auth => &AUTH,
+    #[test]
+    fn detects_supported_editor_languages_from_paths() {
+        assert_eq!(Language::from_path(Path::new("main.RS")), Language::Rust);
+        assert_eq!(
+            Language::from_path(Path::new("component.tsx")),
+            Language::TypeScript
+        );
+        assert_eq!(
+            Language::from_path(Path::new("script.mjs")),
+            Language::JavaScript
+        );
+        assert_eq!(
+            Language::from_path(Path::new("README.md")),
+            Language::PlainText
+        );
     }
 }

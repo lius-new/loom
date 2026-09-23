@@ -1,11 +1,10 @@
 //! Editor tab strip: buffer tabs with language badges, a close button, and
 //! the terminal control on the right.
 
-use lgui::core::{Color, EventPolicy, IconStyle, UiElement, UiId, precompiled};
+use lgui::core::{Color, EventPolicy, IconStyle, UiElement, UiFocusHandle, UiId, precompiled};
 use lgui::prelude::{panel, text, Element, State, UiRect, VisualStyle};
 use lgui::text::measure_width;
 
-use crate::model::document::meta;
 use crate::state::AppState;
 use crate::theme;
 
@@ -38,7 +37,7 @@ fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Elem
     precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
 }
 
-pub fn render(rect: UiRect, state: State<AppState>) -> Element {
+pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
     let s = state.get();
     let active = s.workspace.active();
 
@@ -49,9 +48,11 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     // padding is TABS_PAD.
     let mut x = rect.left + TABS_PAD;
     for &id in s.workspace.open_files() {
-        let m = meta(id);
+        let Some(m) = s.workspace.meta(id) else {
+            continue;
+        };
         let badge_w = measure(m.lang.badge(), theme::SMALL, 700);
-        let name_w = measure(m.name, theme::UI_SIZE, 400);
+        let name_w = measure(&m.name, theme::UI_SIZE, 400);
         let close_w = measure("✕", theme::SMALL, 400);
         let tab_w = PAD + badge_w + GAP + name_w + GAP + close_w + PAD;
 
@@ -67,6 +68,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         let close_left = pill.right - PAD - close_w;
 
         let st = state.clone();
+        let focus = editor_focus.clone();
         // Active tab gets a crisp 1px border; see theme::bordered for why a
         // filled ring is used instead of a stroked outline.
         let mut tab_el = if Some(id) == active {
@@ -75,7 +77,10 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             panel(pill, VisualStyle::default().radius(2.0))
         }
         .event_policy(EventPolicy::INTERACTIVE)
-        .on_click(move || st.update(move |app| app.workspace.set_active(id)));
+        .on_click(move || {
+            st.update(move |app| app.workspace.set_active(id));
+            focus.focus();
+        });
 
         tab_el = tab_el.child(text(
             UiRect::new(badge_left, pill.top, badge_left + badge_w + TEXT_MARGIN, pill.bottom),
@@ -84,20 +89,24 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         ));
         tab_el = tab_el.child(text(
             UiRect::new(name_left, pill.top, name_left + name_w + TEXT_MARGIN, pill.bottom),
-            m.name,
+            m.name.clone(),
             name_style,
         ));
 
         // Close button
         {
             let st = state.clone();
+            let focus = editor_focus.clone();
             tab_el = tab_el.child(
                 panel(
                     UiRect::new(close_left, pill.top, pill.right - PAD, pill.bottom),
                     VisualStyle::default(),
                 )
                 .event_policy(EventPolicy::INTERACTIVE)
-                .on_click(move || st.update(move |app| app.workspace.close(id)))
+                .on_click(move || {
+                    st.update(move |app| app.workspace.close(id));
+                    focus.focus();
+                })
                 .child(text(
                     UiRect::new(close_left, pill.top, close_left + close_w + TEXT_MARGIN, pill.bottom),
                     "✕",

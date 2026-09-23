@@ -3,7 +3,7 @@
 //! Centralizes colors, layout metrics and text-style helpers so every UI
 //! module renders from a single source of truth.
 
-use lgui::prelude::{panel, Color, Element, Stroke, TextAlign, TextStyle, UiRect, VisualStyle};
+use lgui::prelude::{Color, Element, Stroke, TextAlign, TextStyle, UiRect, VisualStyle, panel};
 
 // ---- Editor chrome -----------------------------------------------------
 pub const BG: Color = Color(0x14161b); // primary editor background
@@ -67,6 +67,7 @@ pub const GUTTER_W: f32 = 48.0;
 pub const LINE_H: f32 = 24.0;
 pub const CODE_PAD: f32 = 16.0;
 pub const CHAR_W: f32 = 7.2; // monospace advance at CODE_SIZE
+pub const MONO_FAMILIES: &[&str] = &["Cascadia Mono", "Cascadia Code", "Consolas", "Courier New"];
 
 // ---- Font sizes --------------------------------------------------------
 pub const CODE_SIZE: f32 = 12.0;
@@ -75,15 +76,15 @@ pub const SMALL: f32 = 10.0;
 
 // ---- Text-style helpers ------------------------------------------------
 pub fn mono(color: Color, size: f32) -> TextStyle {
-    TextStyle::new(color, size, 400)
+    TextStyle::new(color, size, 400).font_families(MONO_FAMILIES)
 }
 
 pub fn mono_bold(color: Color, size: f32) -> TextStyle {
-    TextStyle::new(color, size, 700)
+    TextStyle::new(color, size, 700).font_families(MONO_FAMILIES)
 }
 
 pub fn mono_right(color: Color, size: f32) -> TextStyle {
-    let mut s = TextStyle::new(color, size, 400);
+    let mut s = TextStyle::new(color, size, 400).font_families(MONO_FAMILIES);
     s.align = TextAlign::Right;
     s
 }

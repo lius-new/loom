@@ -93,8 +93,6 @@ impl AppState {
             Action::CloseOverlay => {
                 self.show_palette = false;
             }
-            Action::OpenFile(id) => self.workspace.open(id),
-            Action::CloseFile(id) => self.workspace.close(id),
             Action::NextFile => self.workspace.next(),
             Action::PrevFile => self.workspace.prev(),
         }

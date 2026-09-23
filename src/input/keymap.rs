@@ -5,16 +5,12 @@
 
 use lgui::core::{KeyState, KeyboardEvent, LogicalKey, NamedKey};
 
-use crate::model::document::FileId;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
     OpenPalette,
     ToggleDrawer,
     ToggleTerminal,
     CloseOverlay,
-    OpenFile(FileId),
-    CloseFile(FileId),
     NextFile,
     PrevFile,
 }

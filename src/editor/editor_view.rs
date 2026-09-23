@@ -1,54 +1,49 @@
-//! The central code viewport: CodeLens ribbon, gutter, syntax-highlighted
-//! source, cursor, ghost completion and the inline AI diff card.
+//! The central code viewport: gutter, syntax-highlighted source and cursor.
 //!
 //! This is the only component that mutates the buffer — through `State<AppState>`
 //! updates — so editing logic stays co-located and the rest of the app only
 //! reads buffers.
 
-use lgui::core::{EventPolicy, KeyState, KeyboardEvent, LogicalKey, NamedKey};
-use lgui::prelude::{group, panel, text, Element, State, UiRect, VisualStyle};
+use lgui::core::{EventPolicy, KeyState, KeyboardEvent, LogicalKey, NamedKey, UiElement, UiId};
+use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel, text};
+use lgui::text::{self, TextLayout, TextLayoutRequest};
 
 use crate::editor::gutter;
 use crate::editor::syntax;
-use crate::model::document::{meta, FileId};
 use crate::state::AppState;
 use crate::theme;
 
 /// Render the active file's editor surface into `rect`.
-pub fn render(rect: UiRect, state: State<AppState>) -> Element {
+pub fn render(rect: UiRect, state: State<AppState>, editor_id: UiId) -> Element {
     // Snapshot the state for this frame (State<T>.get() clones).
     let s = state.get();
 
     // ---- Root interactive surface -------------------------------------
-    let mut root = panel(rect, VisualStyle::filled(theme::BG));
+    let mut root = Element::new(move |cx| {
+        UiElement::panel(editor_id, rect, VisualStyle::filled(theme::BG)).children(cx.children)
+    });
     root = root.event_policy(EventPolicy::INTERACTIVE);
 
     if let Some(id) = s.workspace.active() {
-        let m = meta(id);
+        let m = s
+            .workspace
+            .meta(id)
+            .expect("active document metadata exists");
         let buf = s.workspace.active_buffer().expect("active buffer exists");
         let (cline, ccol) = buf.line_col();
         let n_lines = buf.line_count();
 
-        let code_top = rect.top + theme::LINE_H; // one row reserved for CodeLens
+        let code_top = rect.top;
         let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
-        let code_width = rect.right - code_left;
-
-        // ---- CodeLens ribbon ------------------------------------------
-        let tests = if m.has_refs {
-            format!("✨ AI Refactor • {} • 2 references", m.tests)
-        } else {
-            format!("✨ AI Refactor • {}", m.tests)
-        };
-        let lens_rect = UiRect::new(code_left, rect.top, rect.right - 8.0, rect.top + theme::LINE_H);
-        root = root.child(text(lens_rect, tests, theme::mono(theme::ZINC_500, theme::SMALL)));
 
         // ---- Gutter ----------------------------------------------------
-        let gutter_rect = UiRect::new(rect.left, code_top, rect.left + theme::GUTTER_W, rect.bottom);
-        root = root.child(gutter::render(
-            gutter_rect,
-            n_lines,
-            if id == FileId::Wallet { Some(5) } else { None },
-        ));
+        let gutter_rect = UiRect::new(
+            rect.left,
+            code_top,
+            rect.left + theme::GUTTER_W,
+            rect.bottom,
+        );
+        root = root.child(gutter::render(gutter_rect, n_lines, None));
 
         // ---- Active-line highlight ------------------------------------
         let hl = UiRect::new(
@@ -63,31 +58,27 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         let mut lines = group(UiRect::new(code_left, code_top, rect.right, rect.bottom));
         for i in 0..n_lines {
             let y = code_top + i as f32 * theme::LINE_H;
+            let line = buf.line(i);
+            let layout = layout_line(line, code_left, y, rect.right);
             let mut x = code_left;
-            for (span, color) in syntax::highlight_line(buf.line(i), m.lang) {
-                let w = span.chars().count() as f32 * theme::CHAR_W;
-                let r = UiRect::new(x, y, x + w + 4.0, y + theme::LINE_H);
+            let mut char_offset = 0;
+            for (span, color) in syntax::highlight_line(line, m.lang) {
+                char_offset += span.chars().count();
+                let next_x = caret_x(layout.as_ref(), char_offset)
+                    .unwrap_or_else(|| x + span.chars().count() as f32 * theme::CHAR_W);
+                let r = UiRect::new(x, y, next_x.max(x) + 4.0, y + theme::LINE_H);
                 lines = lines.child(text(r, span, theme::mono(color, theme::CODE_SIZE)));
-                x += w;
+                x = next_x;
             }
-        }
-
-        // Ghost autocomplete (WalletService.cs only)
-        if id == FileId::Wallet {
-            let gx = code_left + 460.0;
-            let gy = code_top + 10.0 * theme::LINE_H;
-            lines = lines.child(text(
-                UiRect::new(gx, gy, rect.right - 8.0, gy + theme::LINE_H),
-                "// [Tab] to insert auto-rollback audit logging",
-                theme::mono(theme::GHOST, theme::CODE_SIZE),
-            ));
         }
 
         root = root.child(lines);
 
         // ---- Cursor ----------------------------------------------------
-        let cx = code_left + ccol as f32 * theme::CHAR_W;
         let cy = code_top + cline as f32 * theme::LINE_H;
+        let cursor_layout = layout_line(buf.line(cline), code_left, cy, rect.right);
+        let cx = caret_x(cursor_layout.as_ref(), ccol)
+            .unwrap_or(code_left + ccol as f32 * theme::CHAR_W);
         let cursor_rect = UiRect::new(cx, cy + 3.0, cx + 2.0, cy + theme::LINE_H - 3.0);
         if s.focused {
             root = root.child(panel(cursor_rect, VisualStyle::filled(theme::ACCENT)));
@@ -97,8 +88,6 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                 VisualStyle::default().stroked(theme::hairline(theme::ACCENT)),
             ));
         }
-
-        let _ = code_width;
     } else {
         // Empty state: no file is open.
         let cy = rect.top + (rect.bottom - rect.top) / 2.0;
@@ -130,6 +119,17 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     root = root.on_blur(move |_ctx| st.update(|app| app.focused = false));
 
     root
+}
+
+fn layout_line(line: &str, left: f32, top: f32, right: f32) -> Option<TextLayout> {
+    let bounds = UiRect::new(left, top, right.max(left + 1.0), top + theme::LINE_H);
+    let mut request = TextLayoutRequest::single_line(line, bounds, theme::CODE_SIZE, 400);
+    request.font_families = theme::MONO_FAMILIES;
+    text::layout(&request)
+}
+
+fn caret_x(layout: Option<&TextLayout>, char_index: usize) -> Option<f32> {
+    layout?.caret_rect(char_index).map(|rect| rect.left)
 }
 
 fn handle_key(state: &State<AppState>, ev: &KeyboardEvent) {

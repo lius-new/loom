@@ -1,15 +1,24 @@
-//! The set of open files and the active buffer.
+//! Open disk-backed documents and the active editor buffer.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::model::buffer::TextBuffer;
-use crate::model::document::{meta, FileId};
+use crate::model::document::{FileId, FileMeta};
+
+#[derive(Clone)]
+struct OpenDocument {
+    meta: FileMeta,
+    buffer: TextBuffer,
+}
 
 #[derive(Clone)]
 pub struct Workspace {
     open: Vec<FileId>,
     active: Option<FileId>,
-    buffers: HashMap<FileId, TextBuffer>,
+    documents: HashMap<FileId, OpenDocument>,
+    paths: HashMap<PathBuf, FileId>,
+    next_file_id: u64,
 }
 
 impl Workspace {
@@ -17,7 +26,9 @@ impl Workspace {
         Self {
             open: Vec::new(),
             active: None,
-            buffers: HashMap::new(),
+            documents: HashMap::new(),
+            paths: HashMap::new(),
+            next_file_id: 1,
         }
     }
 
@@ -25,56 +36,83 @@ impl Workspace {
         &self.open
     }
 
-    /// The active file, if any. `None` means no file is open.
     pub fn active(&self) -> Option<FileId> {
         self.active
     }
 
-    pub fn is_open(&self, id: FileId) -> bool {
-        self.open.contains(&id)
+    pub fn meta(&self, id: FileId) -> Option<&FileMeta> {
+        self.documents.get(&id).map(|document| &document.meta)
+    }
+
+    pub fn active_meta(&self) -> Option<&FileMeta> {
+        self.active.and_then(|id| self.meta(id))
+    }
+
+    pub fn active_path(&self) -> Option<&Path> {
+        self.active_meta().map(|meta| meta.path.as_path())
+    }
+
+    pub fn file_id_for_path(&self, path: &Path) -> Option<FileId> {
+        self.paths.get(path).copied()
     }
 
     pub fn active_buffer(&self) -> Option<&TextBuffer> {
-        self.active.and_then(|id| self.buffers.get(&id))
+        self.active
+            .and_then(|id| self.documents.get(&id))
+            .map(|document| &document.buffer)
     }
 
     pub fn active_buffer_mut(&mut self) -> Option<&mut TextBuffer> {
-        self.active.and_then(|id| self.buffers.get_mut(&id))
+        self.active
+            .and_then(|id| self.documents.get_mut(&id))
+            .map(|document| &mut document.buffer)
     }
 
-    /// Open a file: create its buffer from the catalog if needed, then activate it.
-    pub fn open(&mut self, id: FileId) {
-        if !self.buffers.contains_key(&id) {
-            self.buffers.insert(id, TextBuffer::new(meta(id).code));
-            self.open.push(id);
+    pub fn open_path(&mut self, path: PathBuf, contents: String) -> FileId {
+        if let Some(id) = self.file_id_for_path(&path) {
+            self.active = Some(id);
+            return id;
         }
+
+        let id = FileId::new(self.next_file_id);
+        self.next_file_id += 1;
+        self.documents.insert(
+            id,
+            OpenDocument {
+                meta: FileMeta::from_path(path.clone()),
+                buffer: TextBuffer::new(contents),
+            },
+        );
+        self.paths.insert(path, id);
+        self.open.push(id);
         self.active = Some(id);
+        id
     }
 
-    /// Switch to an already-open file. No-op if `id` isn't open.
     pub fn set_active(&mut self, id: FileId) {
-        if self.buffers.contains_key(&id) {
+        if self.documents.contains_key(&id) {
             self.active = Some(id);
         }
     }
 
     pub fn close(&mut self, id: FileId) {
-        if let Some(pos) = self.open.iter().position(|&f| f == id) {
+        if let Some(pos) = self.open.iter().position(|&file| file == id) {
             self.open.remove(pos);
-            self.buffers.remove(&id);
+            if let Some(document) = self.documents.remove(&id) {
+                self.paths.remove(&document.meta.path);
+            }
             if self.active == Some(id) {
-                self.active = if self.open.is_empty() {
-                    None
-                } else {
-                    Some(self.open[pos.min(self.open.len() - 1)])
-                };
+                self.active = self
+                    .open
+                    .get(pos.min(self.open.len().saturating_sub(1)))
+                    .copied();
             }
         }
     }
 
     pub fn next(&mut self) {
         if let Some(active) = self.active {
-            if let Some(pos) = self.open.iter().position(|&f| f == active) {
+            if let Some(pos) = self.open.iter().position(|&file| file == active) {
                 self.active = Some(self.open[(pos + 1) % self.open.len()]);
             }
         }
@@ -82,9 +120,39 @@ impl Workspace {
 
     pub fn prev(&mut self) {
         if let Some(active) = self.active {
-            if let Some(pos) = self.open.iter().position(|&f| f == active) {
+            if let Some(pos) = self.open.iter().position(|&file| file == active) {
                 self.active = Some(self.open[(pos + self.open.len() - 1) % self.open.len()]);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_disk_files_once_and_reactivates_existing_document() {
+        let mut workspace = Workspace::new();
+        let first = workspace.open_path(PathBuf::from("src/main.rs"), "fn main() {}".into());
+        let second = workspace.open_path(PathBuf::from("README.md"), "hello".into());
+        let reopened = workspace.open_path(PathBuf::from("src/main.rs"), "ignored".into());
+
+        assert_eq!(reopened, first);
+        assert_eq!(workspace.active(), Some(first));
+        assert_eq!(workspace.open_files(), &[first, second]);
+        assert_eq!(workspace.active_buffer().unwrap().text(), "fn main() {}");
+    }
+
+    #[test]
+    fn closing_document_removes_its_path_and_activates_a_neighbor() {
+        let mut workspace = Workspace::new();
+        let first = workspace.open_path(PathBuf::from("first.txt"), "first".into());
+        let second = workspace.open_path(PathBuf::from("second.txt"), "second".into());
+
+        workspace.close(second);
+
+        assert_eq!(workspace.active(), Some(first));
+        assert_eq!(workspace.file_id_for_path(Path::new("second.txt")), None);
     }
 }

@@ -12,7 +12,7 @@ use std::path::Path;
 
 use lgui::core::{
     clip, CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiEventKind,
-    UiEventPayload, UiId, WheelUnit, precompiled,
+    UiEventPayload, UiFocusHandle, UiId, WheelUnit, precompiled,
 };
 use lgui::dialogs::{system_file_dialogs, FileDialogOptions};
 use lgui::prelude::{panel, text, Element, State, TextAlign, UiRect, VisualStyle};
@@ -25,6 +25,7 @@ const INDENT: f32 = 12.0;
 const TREE_ICON_SIZE: f32 = 16.0;
 const TREE_ICON_GAP: f32 = 4.0;
 const TREE_LABEL_OFFSET: f32 = TREE_ICON_SIZE + TREE_ICON_GAP;
+const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 struct StickyDirectory {
@@ -48,7 +49,7 @@ struct StickyRow {
     top: f32,
 }
 
-pub fn render(rect: UiRect, state: State<AppState>) -> Element {
+pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
     let s = state.get();
 
     let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
@@ -134,6 +135,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                     &mut path,
                     &mut rows,
                     content_right,
+                    &editor_focus,
                 ));
                 if y > children_top {
                     tree_els.push(panel(
@@ -336,6 +338,23 @@ fn read_entries(dir: &Path) -> Vec<DirEntry> {
     v
 }
 
+fn read_text_file(path: &Path) -> Result<String, String> {
+    let name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let metadata = fs::metadata(path).map_err(|error| format!("Could not open {name}: {error}"))?;
+    if !metadata.is_file() {
+        return Err(format!("Could not open {name}: not a regular file"));
+    }
+    if metadata.len() > MAX_EDITABLE_FILE_BYTES {
+        return Err(format!(
+            "Could not open {name}: file is larger than 4 MiB"
+        ));
+    }
+    fs::read_to_string(path).map_err(|error| format!("Could not open {name} as UTF-8: {error}"))
+}
+
 /// A directory node row: icon (folder/folder-open), name, and a click handler
 /// that toggles expansion (reading the directory on first expand).
 fn dir_row(
@@ -423,6 +442,7 @@ fn build_tree(
     path: &mut Vec<StickyDirectory>,
     rows: &mut Vec<TreeRowMeta>,
     content_right: f32,
+    editor_focus: &UiFocusHandle,
 ) -> Vec<Element> {
     let mut els = Vec::new();
 
@@ -471,8 +491,36 @@ fn build_tree(
             let row_rect = UiRect::new(rect.left, *y, content_right, *y + ROW_H);
             let icon_id = UiId::owned(format!("tree-file-icon-{key}"));
             let icon = crate::file_icons::icon_for_file(&name);
-            let row = panel(row_rect, VisualStyle::default())
+            let file_path = entry.path.clone();
+            let open_id = s.workspace.file_id_for_path(&file_path);
+            let row_style = if s.workspace.active_path() == Some(file_path.as_path()) {
+                VisualStyle::filled(theme::ACTIVE_LINE)
+            } else {
+                VisualStyle::default()
+            };
+            let st = state.clone();
+            let focus = editor_focus.clone();
+            let row = panel(row_rect, row_style)
                 .event_policy(EventPolicy::INTERACTIVE)
+                .on_click(move || {
+                    if let Some(id) = open_id {
+                        st.update(move |app| app.workspace.set_active(id));
+                        focus.focus();
+                        return;
+                    }
+
+                    let path = file_path.clone();
+                    match read_text_file(&path) {
+                        Ok(contents) => {
+                            st.update(move |app| {
+                                app.workspace.open_path(path, contents);
+                                app.toast = None;
+                            });
+                            focus.focus();
+                        }
+                        Err(message) => st.update(move |app| app.show_toast(message)),
+                    }
+                })
                 .child(precompiled(
                     UiElement::icon(
                         icon_id,
@@ -516,6 +564,7 @@ fn build_tree(
                 path,
                 rows,
                 content_right,
+                editor_focus,
             ));
             if *y > children_top {
                 els.push(panel(

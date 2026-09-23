@@ -1,9 +1,8 @@
 //! Lightweight syntax highlighter.
 //!
 //! A tiny hand-rolled lexer (no regex/parser dependency) that classifies each
-//! token and maps it to a `theme` color. It is intentionally simple — enough
-//! to render the three sample files faithfully — and can be replaced by a real
-//! tree-sitter grammar later without touching the editor view.
+//! token and maps it to a `theme` color. It is intentionally simple and can be
+//! replaced by a real tree-sitter grammar without touching the editor view.
 
 use lgui::prelude::Color;
 
@@ -187,13 +186,14 @@ fn is_keyword(text: &str, lang: Language) -> bool {
             "trait", "enum", "const", "static", "ref", "async", "await", "move", "in", "as",
             "box", "dyn", "unsafe", "extern", "crate", "super",
         ],
-        Language::TypeScript => &[
+        Language::TypeScript | Language::JavaScript => &[
             "import", "from", "export", "async", "function", "return", "await", "new", "const",
             "let", "var", "if", "else", "for", "while", "throw", "try", "catch", "typeof",
             "interface", "type", "class", "extends", "implements", "public", "private",
             "readonly", "static", "true", "false", "null", "undefined", "this", "in", "of",
             "as",
         ],
+        Language::PlainText => &[],
     };
     list.contains(&text)
 }
@@ -208,10 +208,11 @@ fn is_builtin_type(text: &str, lang: Language) -> bool {
             "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32",
             "f64", "bool", "str", "char",
         ],
-        Language::TypeScript => &[
+        Language::TypeScript | Language::JavaScript => &[
             "string", "number", "boolean", "any", "void", "unknown", "never", "object",
             "symbol", "bigint",
         ],
+        Language::PlainText => &[],
     };
     list.contains(&text)
 }

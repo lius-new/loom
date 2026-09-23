@@ -14,6 +14,7 @@ leditor/
 ## Features
 
 - Plain text editing (UTF-8 safe)
+- Click a UTF-8 file in the tree to open or reactivate an editable tab
 - File tree icons selected by exact filename and longest matching extension
 - `Enter` — new line, `Tab` — indent (4 spaces)
 - `Backspace` / `Delete` — remove character before/after caret

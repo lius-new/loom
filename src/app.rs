@@ -15,6 +15,8 @@ use crate::ui::{
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state(AppState::new());
+    let editor_id = cx.use_stable_id();
+    let editor_focus = cx.focus_handle(editor_id.clone());
     let vp = cx.viewport();
     let w = vp.width();
     let h = vp.height();
@@ -79,11 +81,19 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Compose chrome (back-to-front) -------------------------------
     root = root.child(titlebar::render(titlebar_rect, state.clone()));
 
-    root = root.child(tabs::render(tabs_rect, state.clone()));
-    root = root.child(editor_view::render(code_rect, state.clone()));
+    root = root.child(tabs::render(
+        tabs_rect,
+        state.clone(),
+        editor_focus.clone(),
+    ));
+    root = root.child(editor_view::render(code_rect, state.clone(), editor_id));
 
     if show_drawer {
-        root = root.child(sidebar::render(sidebar_rect, state.clone()));
+        root = root.child(sidebar::render(
+            sidebar_rect,
+            state.clone(),
+            editor_focus.clone(),
+        ));
     }
 
     if show_term {
@@ -99,7 +109,11 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     // ---- Overlays ------------------------------------------------------
     if show_palette {
-        root = root.child(command_palette::render(vp, state.clone()));
+        root = root.child(command_palette::render(
+            vp,
+            state.clone(),
+            editor_focus,
+        ));
     }
     if let Some(pos) = s.context_menu {
         root = root.child(context_menu::render(vp, pos, state.clone()));
