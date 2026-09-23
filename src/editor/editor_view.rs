@@ -4,7 +4,8 @@
 use std::ops::Range;
 
 use lgui::core::{
-    EventPolicy, KeyState, KeyboardEvent, LogicalKey, NamedKey, UiElement, UiId, WheelUnit, clip,
+    EventPolicy, KeyState, KeyboardEvent, LogicalKey, NamedKey, PointerButton, UiElement, UiId,
+    WheelUnit, clip,
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel, text};
 use lgui::text::{self, TextLayout, TextLayoutRequest};
@@ -75,6 +76,39 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_id: UiId) -> Element 
         let scroll_x = stored_x.clamp(0.0, metrics.max_x);
         let scroll_y = stored_y.clamp(0.0, metrics.max_y);
         let visible_lines = visible_line_range(scroll_y, metrics.viewport_h, lines.len());
+        let has_vertical = metrics.max_y > 0.0;
+        let has_horizontal = metrics.max_x > 0.0;
+
+        let st_pointer = state.clone();
+        root = root.on_pointer_down_with_button(move |cx, pointer, button| {
+            let point = pointer.point;
+            let over_vertical_scrollbar =
+                has_vertical && point.x >= rect.right - SCROLLBAR_SIZE;
+            let over_horizontal_scrollbar =
+                has_horizontal && point.y >= rect.bottom - SCROLLBAR_SIZE;
+            if button != PointerButton::Left
+                || point.x < code_left
+                || over_vertical_scrollbar
+                || over_horizontal_scrollbar
+            {
+                return;
+            }
+
+            st_pointer.update(move |app| {
+                let cursor = app.workspace.active_buffer().map(|buffer| {
+                    cursor_offset_from_point(
+                        buffer, rect, code_left, metrics, scroll_x, scroll_y, point.x, point.y,
+                    )
+                });
+                if let Some(cursor) = cursor
+                    && let Some(buffer) = app.workspace.active_buffer_mut()
+                {
+                    buffer.set_cursor(cursor);
+                }
+                reveal_cursor(app, rect);
+            });
+            cx.stop_propagation();
+        });
 
         let st_wheel = state.clone();
         root = root.on_wheel(move |_cx, delta| {
@@ -169,8 +203,6 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_id: UiId) -> Element 
 
         root = root.child(clip(code_viewport, -scroll_x, -scroll_y).child(code));
 
-        let has_vertical = metrics.max_y > 0.0;
-        let has_horizontal = metrics.max_x > 0.0;
         let emphasized = s.editor_hovered
             || s.editor_vertical_scrollbar_dragging
             || s.editor_horizontal_scrollbar_dragging;
@@ -373,10 +405,9 @@ fn horizontal_scrollbar(
         })
         .on_pointer_drag(move |_cx, pointer| {
             st_track_move.update(move |app| {
-                let thumb_start = (pointer.point.x
-                    - track.left
-                    - app.editor_horizontal_scrollbar_drag_offset)
-                    .clamp(0.0, travel);
+                let thumb_start =
+                    (pointer.point.x - track.left - app.editor_horizontal_scrollbar_drag_offset)
+                        .clamp(0.0, travel);
                 let next = scroll_from_thumb(thumb_start, travel, metrics.max_x);
                 let (_, y) = app.workspace.active_scroll();
                 app.workspace.set_active_scroll(next, y);
@@ -506,6 +537,56 @@ fn caret_x(layout: Option<&TextLayout>, char_index: usize) -> Option<f32> {
     layout?.caret_rect(char_index).map(|rect| rect.left)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn cursor_offset_from_point(
+    buffer: &TextBuffer,
+    rect: UiRect,
+    code_left: f32,
+    metrics: ScrollMetrics,
+    scroll_x: f32,
+    scroll_y: f32,
+    point_x: f32,
+    point_y: f32,
+) -> usize {
+    let lines = document_lines(buffer);
+    let line = line_index_from_point(point_y, rect.top, scroll_y, lines.len());
+    let line_text = lines[line];
+    let content_x = point_x + scroll_x;
+    let content_y = point_y + scroll_y;
+    let line_top = rect.top + line as f32 * theme::LINE_H;
+    let char_index = layout_line(
+        line_text,
+        code_left,
+        line_top,
+        code_left + metrics.content_w,
+    )
+    .map(|layout| layout.hit_test(content_x, content_y).index)
+    .unwrap_or_else(|| {
+        (((content_x - code_left) / theme::CHAR_W).max(0.0).round() as usize)
+            .min(line_text.chars().count())
+    });
+    let line_start = buffer.line_bounds()[line].0;
+    line_start
+        + line_text
+            .char_indices()
+            .nth(char_index)
+            .map(|(offset, _)| offset)
+            .unwrap_or(line_text.len())
+}
+
+fn line_index_from_point(
+    point_y: f32,
+    viewport_top: f32,
+    scroll_y: f32,
+    line_count: usize,
+) -> usize {
+    if line_count == 0 {
+        return 0;
+    }
+    (((point_y - viewport_top + scroll_y) / theme::LINE_H).floor().max(0.0) as usize)
+        .min(line_count - 1)
+}
+
 fn reveal_cursor(app: &mut AppState, rect: UiRect) {
     let Some(buffer) = app.workspace.active_buffer() else {
         return;
@@ -616,5 +697,15 @@ mod tests {
     fn visual_columns_expand_tabs_and_wide_characters() {
         assert_eq!(visual_columns("a\tb"), 5);
         assert_eq!(visual_columns("a界b"), 4);
+    }
+
+    #[test]
+    fn pointer_line_accounts_for_vertical_scroll_and_clamps_to_document() {
+        assert_eq!(
+            line_index_from_point(100.0, 100.0, theme::LINE_H * 2.0, 10),
+            2
+        );
+        assert_eq!(line_index_from_point(50.0, 100.0, 0.0, 10), 0);
+        assert_eq!(line_index_from_point(900.0, 100.0, 0.0, 10), 9);
     }
 }
