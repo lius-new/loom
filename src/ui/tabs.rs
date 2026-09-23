@@ -103,6 +103,26 @@ pub fn render(
     // separated by TAB_GAP. The strip has no padding; this cluster's left
     // padding is TABS_PAD.
     let mut x = rect.left + TABS_PAD;
+    if s.workspace.open_files().is_empty() {
+        let label = "welcome";
+        let label_w = measure(label, theme::UI_SIZE, 400);
+        let tab_w = (PAD * 2.0 + label_w + TEXT_MARGIN)
+            .min(tab_cap)
+            .max(MIN_TAB_W);
+        let pill = UiRect::new(
+            x,
+            rect.top + PILL_INSET,
+            x + tab_w,
+            rect.bottom - PILL_INSET,
+        );
+        bar = bar.child(
+            theme::bordered(pill, theme::BG, theme::BORDER, 2.0, 1.0).child(text(
+                UiRect::new(pill.left + PAD, pill.top, pill.right - PAD, pill.bottom),
+                label,
+                theme::mono(theme::ZINC_100, theme::UI_SIZE),
+            )),
+        );
+    }
     for &id in s.workspace.open_files() {
         let Some(m) = s.workspace.meta(id) else {
             continue;

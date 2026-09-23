@@ -68,6 +68,8 @@ pub struct AppState {
     pub editor_horizontal_scrollbar_dragging: bool,
     /// Pointer x offset from the editor horizontal thumb's left.
     pub editor_horizontal_scrollbar_drag_offset: f32,
+    /// Welcome-page row currently under the pointer.
+    pub welcome_hover: Option<usize>,
 }
 
 impl AppState {
@@ -102,6 +104,7 @@ impl AppState {
             editor_vertical_scrollbar_drag_offset: 0.0,
             editor_horizontal_scrollbar_dragging: false,
             editor_horizontal_scrollbar_drag_offset: 0.0,
+            welcome_hover: None,
         }
     }
 

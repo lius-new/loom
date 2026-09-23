@@ -12,3 +12,4 @@ pub mod tabs;
 pub mod terminal;
 pub mod titlebar;
 pub mod toast;
+pub mod welcome;

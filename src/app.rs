@@ -182,14 +182,19 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         }
     });
 
-    let was_editor_hovered = s.editor_hovered;
     let st_editor_hover = state.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
             let hovered = code_rect.contains(pointer.point);
-            if hovered != was_editor_hovered {
-                st_editor_hover.update(move |app| app.editor_hovered = hovered);
-            }
+            st_editor_hover.try_update(move |app| {
+                let changed = app.editor_hovered != hovered
+                    || (!hovered && app.welcome_hover.is_some());
+                app.editor_hovered = hovered;
+                if !hovered {
+                    app.welcome_hover = None;
+                }
+                changed
+            });
         }
     });
 
@@ -203,7 +208,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         terminal_focus.clone(),
         terminal_tabs.clone(),
     ));
-    root = root.child(editor_view::render(code_rect, state.clone(), editor_id));
+    root = root.child(editor_view::render(
+        code_rect,
+        state.clone(),
+        editor_id,
+        editor_focus.clone(),
+    ));
 
     if show_drawer {
         root = root.child(sidebar::render(

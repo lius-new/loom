@@ -5,8 +5,8 @@ use std::fs;
 use std::ops::Range;
 
 use lgui::core::{
-    EventPolicy, KeyState, KeyboardEvent, LogicalKey, NamedKey, PointerButton, UiElement, UiId,
-    WheelUnit, clip,
+    EventPolicy, KeyState, KeyboardEvent, LogicalKey, NamedKey, PointerButton, UiElement,
+    UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel, text};
 use lgui::text::{self, TextLayout, TextLayoutRequest};
@@ -54,7 +54,12 @@ enum EditCommand {
 }
 
 /// Render the active file's editor surface into `rect`.
-pub fn render(rect: UiRect, state: State<AppState>, editor_id: UiId) -> Element {
+pub fn render(
+    rect: UiRect,
+    state: State<AppState>,
+    editor_id: UiId,
+    editor_focus: UiFocusHandle,
+) -> Element {
     let s = state.get();
 
     let mut root = Element::new(move |cx| {
@@ -229,16 +234,10 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_id: UiId) -> Element 
             ));
         }
     } else {
-        let center_y = rect.top + rect.height() / 2.0;
-        root = root.child(text(
-            UiRect::new(
-                rect.left + 16.0,
-                center_y - 10.0,
-                rect.right - 16.0,
-                center_y + 10.0,
-            ),
-            "No file open — pick one from the file tree",
-            theme::sans(theme::ZINC_500, theme::SMALL),
+        root = root.child(crate::ui::welcome::render(
+            rect,
+            state.clone(),
+            editor_focus,
         ));
     }
 

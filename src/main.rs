@@ -19,6 +19,7 @@ mod state;
 mod terminal_session;
 mod theme;
 mod ui;
+mod workspace_actions;
 
 use lgui::WinitApplication;
 use lgui::icons::SvgIconRegistry;
