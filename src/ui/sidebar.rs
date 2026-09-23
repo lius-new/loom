@@ -233,14 +233,15 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         .key("file-tree-resize-handle")
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::ResizeHorizontal)
-        .on_pointer_down(move |_cx, _p| {
-            st_down.update(move |app| app.resizing_sidebar = true);
+        .on_pointer_down_with_button(move |_cx, _p, button| {
+            if button == PointerButton::Left {
+                st_down.update(move |app| app.resizing_sidebar = true);
+            }
         })
-        .on_pointer_move(move |_cx, p| {
+        .on_pointer_drag(move |_cx, p| {
             st_move.update(move |app| {
                 if app.resizing_sidebar {
-                    app.sidebar_w = (win_right - p.point.x)
-                        .clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W);
+                    app.sidebar_w = resized_sidebar_width(win_right, p.point.x);
                 }
             });
         })
@@ -254,6 +255,10 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     bar = bar.child(handle);
 
     bar
+}
+
+fn resized_sidebar_width(window_right: f32, pointer_x: f32) -> f32 {
+    (window_right - pointer_x).clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W)
 }
 
 /// Empty state: a short prompt plus a compact "Open Folder" button, centered
@@ -890,6 +895,19 @@ mod tests {
         assert_eq!(
             tree_content_right(root_key, "root", &state, 100.0),
             row_content_right(100.0, 1, "src")
+        );
+    }
+
+    #[test]
+    fn sidebar_resize_tracks_both_drag_directions_and_clamps() {
+        assert_eq!(resized_sidebar_width(1_000.0, 750.0), 250.0);
+        assert_eq!(
+            resized_sidebar_width(1_000.0, 900.0),
+            theme::SIDEBAR_MIN_W
+        );
+        assert_eq!(
+            resized_sidebar_width(1_000.0, 500.0),
+            theme::SIDEBAR_MAX_W
         );
     }
 }
