@@ -21,11 +21,14 @@ mod theme;
 mod ui;
 mod workspace_actions;
 
-use lgui::WinitApplication;
+use image::imageops::FilterType;
 use lgui::icons::SvgIconRegistry;
 use lgui::prelude::*;
+use lgui::{WinitApplication, WinitWindowIcon, WinitWindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let native_window_options = native_window_options()?;
+
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
         .svg_icons(file_icons::register(
             SvgIconRegistry::new()
@@ -65,8 +68,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Frameless: we render our own custom title bar (see ui/titlebar.rs).
                 .native_titlebar(false)
                 // Windows 11 DWM rounded corners.
-                .corner_radius(8),
+                .corner_radius(8)
+                .with_platform_options(native_window_options),
         )
         .run(app::app)?;
     Ok(())
+}
+
+fn native_window_options() -> Result<WinitWindowOptions, Box<dyn std::error::Error>> {
+    let source = image::load_from_memory_with_format(
+        include_bytes!("../assets/source/app-icon.png"),
+        image::ImageFormat::Png,
+    )?
+    .into_rgba8();
+    let (source_width, source_height) = source.dimensions();
+
+    let window_pixels = image::imageops::resize(&source, 32, 32, FilterType::Lanczos3);
+    let window_icon = WinitWindowIcon::from_rgba(window_pixels.into_raw(), 32, 32)?;
+    let options = WinitWindowOptions::new().window_icon(window_icon);
+
+    #[cfg(target_os = "windows")]
+    let options = options.taskbar_icon(WinitWindowIcon::from_rgba(
+        source.into_raw(),
+        source_width,
+        source_height,
+    )?);
+
+    Ok(options)
 }
