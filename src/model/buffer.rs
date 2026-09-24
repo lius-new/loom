@@ -52,7 +52,8 @@ impl TextBuffer {
             return;
         }
         if let Some(c) = self.text[self.cursor..].chars().next() {
-            self.text.replace_range(self.cursor..self.cursor + c.len_utf8(), "");
+            self.text
+                .replace_range(self.cursor..self.cursor + c.len_utf8(), "");
         }
     }
 
@@ -157,8 +158,5 @@ impl TextBuffer {
 }
 
 fn char_index_to_byte(s: &str, n: usize) -> usize {
-    s.char_indices()
-        .nth(n)
-        .map(|(i, _)| i)
-        .unwrap_or(s.len())
+    s.char_indices().nth(n).map(|(i, _)| i).unwrap_or(s.len())
 }

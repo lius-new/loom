@@ -2,11 +2,20 @@
 name = "leditor"
 version = "0.1.0"
 edition = "2024"
+description = "A minimal text editor built with lgui"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lius-new/loom"
+readme = "README.md"
 
 [dependencies]
-lgui = { path = "../..", default-features = false, features = ["renderer-skia-software", "widgets", "dialogs"] }
 icondata = "0.7"
 vt100 = "0.16"
+
+[dependencies.lgui]
+git = "https://github.com/lius-new/lgui.git"
+branch = "main"
+default-features = false
+features = ["renderer-skia-software", "widgets", "dialogs"]
 
 [target.'cfg(windows)'.dependencies]
 conpty = "0.7"

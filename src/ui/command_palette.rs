@@ -1,7 +1,7 @@
 //! Command palette overlay (Cmd/Ctrl+P): currently open file picker.
 
 use lgui::core::{EventPolicy, UiFocusHandle};
-use lgui::prelude::{panel, text, Element, State, UiRect, VisualStyle};
+use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
 use crate::state::AppState;
 use crate::theme;

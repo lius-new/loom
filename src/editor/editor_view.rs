@@ -88,8 +88,7 @@ pub fn render(
         let st_pointer = state.clone();
         root = root.on_pointer_down_with_button(move |cx, pointer, button| {
             let point = pointer.point;
-            let over_vertical_scrollbar =
-                has_vertical && point.x >= rect.right - SCROLLBAR_SIZE;
+            let over_vertical_scrollbar = has_vertical && point.x >= rect.right - SCROLLBAR_SIZE;
             let over_horizontal_scrollbar =
                 has_horizontal && point.y >= rect.bottom - SCROLLBAR_SIZE;
             if button != PointerButton::Left
@@ -591,7 +590,9 @@ fn line_index_from_point(
     if line_count == 0 {
         return 0;
     }
-    (((point_y - viewport_top + scroll_y) / theme::LINE_H).floor().max(0.0) as usize)
+    (((point_y - viewport_top + scroll_y) / theme::LINE_H)
+        .floor()
+        .max(0.0) as usize)
         .min(line_count - 1)
 }
 

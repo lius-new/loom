@@ -1,14 +1,15 @@
 # leditor
 
-A minimal text editor written in Rust, using the [lgui](https://crates.io/crates/lgui) GUI library.
+A minimal text editor written in Rust, using the
+[lgui](https://github.com/lius-new/lgui) GUI library.
 
 ## Project layout
 
 ```
 leditor/
-├── Cargo.toml   # package manifest + lgui dependency
-└── src/
-    └── main.rs  # the whole editor
+├── assets/       # application and file-type icons
+├── Cargo.toml    # package manifest + lgui dependency
+└── src/          # application, editor, model, terminal, and UI modules
 ```
 
 ## Features
@@ -40,6 +41,10 @@ stored with the SVG assets under
 cargo build --release
 cargo run --release
 ```
+
+The project follows the `main` branch of the lgui repository. `Cargo.lock`
+pins the exact lgui commit used by a build. Run `cargo update -p lgui` when you
+want to update that pinned commit.
 
 `lgui` uses Skia for rendering and Winit for the window. The renderer is the
 **software** Skia backend (`renderer-skia-software`), which presents via

@@ -8,7 +8,7 @@
 //! With no active file there is no cursor position or language to report, so
 //! only the universal editor settings (indent mode, encoding) remain.
 
-use lgui::prelude::{panel, text, Element, State, TextStyle, UiRect, VisualStyle};
+use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text};
 use lgui::text::measure_width;
 
 use crate::state::AppState;
@@ -40,7 +40,10 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     // settings are shown (no Ln/Col position, no language badge).
     let mut items: Vec<(String, TextStyle)> = Vec::new();
     if let Some(id) = s.workspace.active() {
-        let m = s.workspace.meta(id).expect("active document metadata exists");
+        let m = s
+            .workspace
+            .meta(id)
+            .expect("active document metadata exists");
         let (line, col) = s
             .workspace
             .active_buffer()

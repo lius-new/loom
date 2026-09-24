@@ -6,7 +6,7 @@
 //! Every action is a no-op for now — clicking an item simply closes the menu.
 
 use lgui::core::{EventPolicy, UiEventKind};
-use lgui::prelude::{panel, text, Color, Element, ShadowStyle, State, UiRect, VisualStyle};
+use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
 use lgui::text::measure_width;
 
 use crate::state::AppState;
@@ -30,12 +30,24 @@ enum Entry {
 }
 
 const ENTRIES: &[Entry] = &[
-    Entry::Item { label: "New File", shortcut: None },
-    Entry::Item { label: "New Folder", shortcut: None },
+    Entry::Item {
+        label: "New File",
+        shortcut: None,
+    },
+    Entry::Item {
+        label: "New Folder",
+        shortcut: None,
+    },
     Entry::Separator,
-    Entry::Item { label: "Open in Terminal", shortcut: None },
+    Entry::Item {
+        label: "Open in Terminal",
+        shortcut: None,
+    },
     Entry::Separator,
-    Entry::Item { label: "Add Folders to Project", shortcut: None },
+    Entry::Item {
+        label: "Add Folders to Project",
+        shortcut: None,
+    },
 ];
 
 /// Natural width of `s` at the menu text size, using the renderer's own text
@@ -110,7 +122,12 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
     // the pointer is over the surface but not on an item (padding, separators).
     let st_clear = state.clone();
     let mut surface = theme::bordered(card, theme::SURFACE, theme::BORDER, 6.0, MENU_BORDER)
-        .shadow(ShadowStyle::new(Color::BLACK).alpha(80).offset(0.0, 2.0).blur(3.0))
+        .shadow(
+            ShadowStyle::new(Color::BLACK)
+                .alpha(80)
+                .offset(0.0, 2.0)
+                .blur(3.0),
+        )
         .event_policy(EventPolicy::INTERACTIVE)
         .on_event_capture(UiEventKind::PointerMove, move |_cx, _p| {
             st_clear.try_update(|app| {
@@ -141,7 +158,12 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
                 y += SEP_H;
             }
             Entry::Item { label, shortcut } => {
-                let item_rect = UiRect::new(card.left + MENU_BORDER, y, card.right - MENU_BORDER, y + ITEM_H);
+                let item_rect = UiRect::new(
+                    card.left + MENU_BORDER,
+                    y,
+                    card.right - MENU_BORDER,
+                    y + ITEM_H,
+                );
                 let hovered = s.context_menu_hover == Some(index);
                 let idx = index;
                 let label = *label;
@@ -180,7 +202,11 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
                     item_rect.right - ITEM_PAD_X,
                     item_rect.bottom,
                 );
-                let label_color = if hovered { theme::ZINC_100 } else { theme::ZINC_300 };
+                let label_color = if hovered {
+                    theme::ZINC_100
+                } else {
+                    theme::ZINC_300
+                };
                 item = item.child(text(
                     label_rect,
                     label,
