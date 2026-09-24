@@ -6,6 +6,6 @@
 The canonical artwork is retained as the 256 x 256 RGBA PNG at
 `source/app-icon.png`. Regenerate the ICO after changing that source image:
 
-```powershell
-./scripts/generate-app-icon.ps1
+```console
+node ./scripts/generate-app-icon.js
 ```
