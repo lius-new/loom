@@ -47,7 +47,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             });
         });
 
-    let title_w = measure("Leditor", 18.0, 700);
+    let title_w = measure("Loom", 18.0, 700);
     welcome = welcome.child(text(
         UiRect::new(
             page_left,
@@ -55,7 +55,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             page_left + title_w + TEXT_MARGIN,
             page_top + 26.0,
         ),
-        "Leditor",
+        "Loom",
         theme::mono_bold(theme::ZINC_100, 18.0),
     ));
     welcome = welcome.child(text(
@@ -284,7 +284,7 @@ fn footer(rect: UiRect) -> Element {
         ))
         .child(text(
             UiRect::new(rect.left, rect.top + 10.0, rect.right, rect.top + 28.0),
-            "Welcome to Leditor",
+            "Welcome to Loom",
             theme::sans_semibold(theme::ZINC_300, theme::UI_SIZE),
         ))
         .child(text(

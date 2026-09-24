@@ -88,7 +88,7 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
     });
     let clone_state = state.clone();
     thread::Builder::new()
-        .name("leditor-git-clone".to_owned())
+        .name("loom-git-clone".to_owned())
         .spawn(move || {
             let result = Command::new("git")
                 .arg("clone")

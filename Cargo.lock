@@ -1457,17 +1457,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
-name = "leditor"
-version = "0.1.0"
-dependencies = [
- "conpty",
- "icondata",
- "lgui",
- "portable-pty",
- "vt100",
-]
-
-[[package]]
 name = "lgui"
 version = "0.2.2"
 source = "git+https://github.com/lius-new/lgui.git?branch=main#77365d1b730b9e511082867ddb964bdaaad34558"
@@ -1631,6 +1620,17 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "loom"
+version = "0.1.0"
+dependencies = [
+ "conpty",
+ "icondata",
+ "lgui",
+ "portable-pty",
+ "vt100",
+]
 
 [[package]]
 name = "memchr"

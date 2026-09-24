@@ -294,7 +294,7 @@ impl TerminalController {
                 let reader_inner = Arc::downgrade(&self.inner);
                 let reader_application = Arc::clone(&application);
                 thread::Builder::new()
-                    .name("leditor-terminal-output".to_owned())
+                    .name("loom-terminal-output".to_owned())
                     .spawn(move || {
                         let mut bytes = [0_u8; 8 * 1024];
                         loop {
@@ -479,7 +479,7 @@ fn configure_std_command(
     command.envs(env::vars_os());
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    command.env("TERM_PROGRAM", "leditor");
+    command.env("TERM_PROGRAM", "loom");
 }
 
 #[cfg(not(windows))]
@@ -508,7 +508,7 @@ fn spawn_shell(
     }
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    command.env("TERM_PROGRAM", "leditor");
+    command.env("TERM_PROGRAM", "loom");
 
     let child = pair
         .slave
@@ -573,7 +573,7 @@ fn terminate_process(process: &mut RunningProcess) {
 #[cfg(windows)]
 fn spawn_waiter(inner: Weak<TerminalInner>, generation: u64, application: Arc<ApplicationHandle>) {
     thread::Builder::new()
-        .name("leditor-terminal-wait".to_owned())
+        .name("loom-terminal-wait".to_owned())
         .spawn(move || {
             loop {
                 let Some(inner) = current_inner(&inner, generation) else {
@@ -608,7 +608,7 @@ fn spawn_waiter(
     application: Arc<ApplicationHandle>,
 ) {
     thread::Builder::new()
-        .name("leditor-terminal-wait".to_owned())
+        .name("loom-terminal-wait".to_owned())
         .spawn(move || {
             let status = child.wait();
             let Some(inner) = current_inner(&inner, generation) else {

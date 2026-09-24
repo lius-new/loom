@@ -126,7 +126,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         let worker = if show_term && blink_focused {
             let worker_state = blink_state.clone();
             thread::Builder::new()
-                .name("leditor-terminal-cursor-blink".to_string())
+                .name("loom-terminal-cursor-blink".to_string())
                 .spawn(move || {
                     while let Err(RecvTimeoutError::Timeout) =
                         stop_receiver.recv_timeout(Duration::from_millis(500))

@@ -1,4 +1,4 @@
-//! leditor — a modular text editor port of the "Aura Code" mockup.
+//! Loom — a modular text editor port of the "Aura Code" mockup.
 //!
 //! Layer map:
 //!   app      — root component, layout & composition
@@ -59,8 +59,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .provide(RendererKind::Skia(GraphicsPreference::Auto))
         .memory_options(MemoryOptions::unbounded(ImageCachePolicy::WhileVisible, false))
         .window_options(
-            WindowOptions::new("leditor")
-                .title("leditor")
+            WindowOptions::new("loom")
+                .title("Loom")
                 .size(Size::new(900.0, 600.0))
                 // Frameless: we render our own custom title bar (see ui/titlebar.rs).
                 .native_titlebar(false)

@@ -1,4 +1,4 @@
-# leditor
+# Loom
 
 A minimal text editor written in Rust, using the
 [lgui](https://github.com/lius-new/lgui) GUI library.
@@ -6,7 +6,7 @@ A minimal text editor written in Rust, using the
 ## Project layout
 
 ```
-leditor/
+loom/
 ├── assets/       # application and file-type icons
 ├── Cargo.toml    # package manifest + lgui dependency
 └── src/          # application, editor, model, terminal, and UI modules
