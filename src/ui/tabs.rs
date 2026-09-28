@@ -1,12 +1,11 @@
 //! Editor tab strip: buffer tabs with language badges, a close button, and
-//! the terminal control on the right.
+//! the collapsed drawer control on the right.
 
 use lgui::core::{Color, EventPolicy, IconStyle, UiElement, UiFocusHandle, UiId, precompiled};
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 use lgui::text::{self, TextLayoutRequest};
 
 use crate::state::AppState;
-use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
 
 /// Horizontal padding inside each tab pill (px-3 in the mockup).
@@ -82,18 +81,16 @@ fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Elem
     precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
 }
 
-pub fn render(
-    rect: UiRect,
-    state: State<AppState>,
-    editor_focus: UiFocusHandle,
-    terminal_focus: UiFocusHandle,
-    terminal_tabs: State<TerminalTabs>,
-) -> Element {
+pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
     let s = state.get();
     let active = s.workspace.active();
 
     let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
-    let controls_left = rect.right - CLUSTER_PAD - ICON - CLUSTER_PAD - 1.0;
+    let controls_left = if s.show_drawer {
+        rect.right
+    } else {
+        rect.right - CLUSTER_PAD - ICON - CLUSTER_PAD - 1.0
+    };
     let tab_count = s.workspace.open_files().len().max(1) as f32;
     let available_tabs_w = (controls_left - rect.left - TABS_PAD).max(MIN_TAB_W);
     let tab_cap =
@@ -243,53 +240,29 @@ pub fn render(
         x += tab_w + TAB_GAP;
     }
 
-    // Right control cluster: the icon-only terminal toggle sits in a
-    // right-aligned cluster bounded by a 1px divider (left) and the strip
-    // edge (right). The cluster applies its own padding (CLUSTER_PAD on the
-    // right), so the icon's left gap (divider -> icon) and right gap
-    // (icon -> strip edge) are equal. The divider spans the full strip height.
-    let icon_r = UiRect::new(
-        rect.right - CLUSTER_PAD - ICON,
-        rect.top + 7.0,
-        rect.right - CLUSTER_PAD,
-        rect.bottom - 7.0,
-    );
-
-    // Left border of the cluster: a full-height 1px vertical divider.
-    let divider = UiRect::new(
-        icon_r.left - CLUSTER_PAD - 1.0,
-        rect.top,
-        icon_r.left - CLUSTER_PAD,
-        rect.bottom,
-    );
-    bar = bar.child(panel(divider, VisualStyle::filled(theme::BORDER)));
-
-    // Click target spans the whole cluster, full height, with an opaque
-    // SIDEBAR fill (matching the strip) so any tab pills scrolling underneath
-    // stay hidden behind the control cluster.
-    let st = state.clone();
-    let terminal_sessions = terminal_tabs;
-    let editor_target = editor_focus.clone();
-    let terminal_target = terminal_focus;
-    let btn = UiRect::new(icon_r.left - CLUSTER_PAD, rect.top, rect.right, rect.bottom);
-    let tt_btn = panel(btn, VisualStyle::filled(theme::SIDEBAR))
-        .event_policy(EventPolicy::INTERACTIVE)
-        .on_click(move || {
-            let opening = !st.get().show_terminal;
-            if opening && terminal_sessions.get().is_empty() {
-                terminal_sessions.update(|tabs| {
-                    tabs.add(ShellKind::default());
-                });
-            }
-            st.update(|app| app.show_terminal = !app.show_terminal);
-            if opening {
-                terminal_target.focus();
-            } else {
-                editor_target.focus();
-            }
-        })
-        .child(icon("tabs.terminal", "terminal", icon_r, theme::ZINC_400));
-    bar = bar.child(tt_btn);
+    // Show the drawer toggle here only when the drawer is collapsed.
+    if !s.show_drawer {
+        let top = rect.top + (rect.height() - ICON) / 2.0;
+        let icon_r = UiRect::new(
+            rect.right - CLUSTER_PAD - ICON,
+            top,
+            rect.right - CLUSTER_PAD,
+            top + ICON,
+        );
+        bar = bar.child(panel(
+            UiRect::new(controls_left, rect.top, controls_left + 1.0, rect.bottom),
+            VisualStyle::filled(theme::BORDER),
+        ));
+        bar = bar.child(
+            panel(
+                UiRect::new(controls_left + 1.0, rect.top, rect.right, rect.bottom),
+                VisualStyle::filled(theme::SIDEBAR),
+            )
+            .event_policy(EventPolicy::INTERACTIVE)
+            .on_click(move || state.update(|app| app.show_drawer = true))
+            .child(icon("tabs.drawer", "panel-left", icon_r, theme::ZINC_400)),
+        );
+    }
 
     // Hairline bottom border (matches the title bar).
     bar = bar.child(panel(

@@ -211,15 +211,9 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     // ---- Compose chrome (back-to-front) -------------------------------
-    root = root.child(titlebar::render(titlebar_rect, state.clone()));
+    root = root.child(titlebar::render(titlebar_rect));
 
-    root = root.child(tabs::render(
-        tabs_rect,
-        state.clone(),
-        editor_focus.clone(),
-        terminal_focus.clone(),
-        terminal_tabs.clone(),
-    ));
+    root = root.child(tabs::render(tabs_rect, state.clone(), editor_focus.clone()));
     root = root.child(editor_view::render(
         code_rect,
         state.clone(),
@@ -240,17 +234,23 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_rect,
             state.clone(),
             editor_focus.clone(),
-            terminal_focus,
+            terminal_focus.clone(),
             terminal_id,
             terminal_controller,
-            terminal_tabs,
+            terminal_tabs.clone(),
             application,
             terminal_cursor_visible,
             max_terminal_h,
         ));
     }
 
-    root = root.child(statusbar::render(statusbar_rect, state.clone()));
+    root = root.child(statusbar::render(
+        statusbar_rect,
+        state.clone(),
+        editor_focus.clone(),
+        terminal_focus,
+        terminal_tabs,
+    ));
 
     // ---- Overlays ------------------------------------------------------
     if show_palette {

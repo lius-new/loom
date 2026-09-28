@@ -1,4 +1,4 @@
-//! Custom (frameless) title bar: project drawer toggle and git pill on the
+//! Custom (frameless) title bar: git pill on the
 //! left, and the three window controls (minimize / maximize / close) on the
 //! far right.
 //!
@@ -6,9 +6,8 @@
 //! (the buttons) are excluded automatically by hit testing.
 
 use lgui::core::{Color, IconStyle, UiElement, UiEventContext, UiId, precompiled};
-use lgui::prelude::{Element, State, TextVerticalAlign, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, TextVerticalAlign, UiRect, VisualStyle, panel, text};
 
-use crate::state::AppState;
 use crate::theme;
 
 /// A color-tinted, resolution-independent SVG icon (rasterized at physical pixels).
@@ -16,50 +15,15 @@ fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Elem
     precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
 }
 
-pub fn render(rect: UiRect, state: State<AppState>) -> Element {
+pub fn render(rect: UiRect) -> Element {
     let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR)).window_drag_region();
 
     // ---- Left cluster --------------------------------------------------
-    // Project drawer toggle
-    let st = state.clone();
-    let proj = UiRect::new(
-        rect.left + 14.0,
-        rect.top + 4.0,
-        rect.left + 86.0,
-        rect.top + 28.0,
-    );
-    let proj_btn = panel(proj, VisualStyle::default())
-        .event_policy(lgui::core::EventPolicy::INTERACTIVE)
-        .on_click(move || st.update(|app| app.show_drawer = !app.show_drawer))
-        .child(icon(
-            "titlebar.project",
-            "panel-left",
-            UiRect::new(
-                proj.left + 7.0,
-                rect.top + 10.0,
-                proj.left + 19.0,
-                rect.top + 22.0,
-            ),
-            theme::ACCENT,
-        ))
-        .child(text(
-            UiRect::new(
-                proj.left + 26.0,
-                rect.top + 6.0,
-                proj.right,
-                rect.top + 26.0,
-            ),
-            "Project",
-            theme::sans_semibold(theme::ACCENT, theme::UI_SIZE)
-                .vertical_align(TextVerticalAlign::XCenter),
-        ));
-    bar = bar.child(proj_btn);
-
     // Git pill
     let pill = UiRect::new(
-        rect.left + 94.0,
+        rect.left + 14.0,
         rect.top + 6.0,
-        rect.left + 174.0,
+        rect.left + 94.0,
         rect.top + 26.0,
     );
     bar = bar.child(panel(

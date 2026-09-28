@@ -333,7 +333,7 @@ fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
             })
             .child(drawer_icon(
                 "sidebar.collapse.icon",
-                "chevron-right",
+                "panel-left",
                 collapse_icon,
                 theme::ZINC_500,
             )),
