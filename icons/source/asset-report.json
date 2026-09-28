@@ -1,0 +1,262 @@
+[
+  {
+    "file": "android-chrome-192x192.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      192,
+      192
+    ],
+    "bytes": 32490
+  },
+  {
+    "file": "android-chrome-512x512.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      512,
+      512
+    ],
+    "bytes": 200865
+  },
+  {
+    "file": "app-icon-transparent-1024.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      1024,
+      1024
+    ],
+    "bytes": 578291
+  },
+  {
+    "file": "app-icon-transparent-128.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      128,
+      128
+    ],
+    "bytes": 16464
+  },
+  {
+    "file": "app-icon-transparent-16.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      16,
+      16
+    ],
+    "bytes": 823
+  },
+  {
+    "file": "app-icon-transparent-256.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      256,
+      256
+    ],
+    "bytes": 48589
+  },
+  {
+    "file": "app-icon-transparent-32.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      32,
+      32
+    ],
+    "bytes": 2156
+  },
+  {
+    "file": "app-icon-transparent-48.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      48,
+      48
+    ],
+    "bytes": 3879
+  },
+  {
+    "file": "app-icon-transparent-512.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      512,
+      512
+    ],
+    "bytes": 162001
+  },
+  {
+    "file": "app-icon-transparent-64.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      64,
+      64
+    ],
+    "bytes": 5852
+  },
+  {
+    "file": "app-icon-white-1024.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      1024,
+      1024
+    ],
+    "bytes": 637226
+  },
+  {
+    "file": "app-icon-white-128.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      128,
+      128
+    ],
+    "bytes": 15903
+  },
+  {
+    "file": "app-icon-white-150.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      150,
+      150
+    ],
+    "bytes": 21086
+  },
+  {
+    "file": "app-icon-white-16.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      16,
+      16
+    ],
+    "bytes": 662
+  },
+  {
+    "file": "app-icon-white-180.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      180,
+      180
+    ],
+    "bytes": 29026
+  },
+  {
+    "file": "app-icon-white-192.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      192,
+      192
+    ],
+    "bytes": 32490
+  },
+  {
+    "file": "app-icon-white-256.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      256,
+      256
+    ],
+    "bytes": 55626
+  },
+  {
+    "file": "app-icon-white-32.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      32,
+      32
+    ],
+    "bytes": 1748
+  },
+  {
+    "file": "app-icon-white-48.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      48,
+      48
+    ],
+    "bytes": 3220
+  },
+  {
+    "file": "app-icon-white-512.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      512,
+      512
+    ],
+    "bytes": 200865
+  },
+  {
+    "file": "app-icon-white-64.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      64,
+      64
+    ],
+    "bytes": 5042
+  },
+  {
+    "file": "apple-touch-icon.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      180,
+      180
+    ],
+    "bytes": 29026
+  },
+  {
+    "file": "favicon-16x16.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      16,
+      16
+    ],
+    "bytes": 823
+  },
+  {
+    "file": "favicon-32x32.png",
+    "format": "PNG",
+    "mode": "RGBA",
+    "size": [
+      32,
+      32
+    ],
+    "bytes": 2156
+  },
+  {
+    "file": "favicon.ico",
+    "format": "ICO",
+    "mode": "RGBA",
+    "size": [
+      256,
+      256
+    ],
+    "bytes": 82776
+  },
+  {
+    "file": "mstile-150x150.png",
+    "format": "PNG",
+    "mode": "RGB",
+    "size": [
+      150,
+      150
+    ],
+    "bytes": 21086
+  }
+]

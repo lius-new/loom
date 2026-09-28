@@ -1,9 +1,10 @@
 fn main() {
-    println!("cargo:rerun-if-changed=assets/app-icon.ico");
+    println!("cargo:rerun-if-changed=icons/app.ico");
+    println!("cargo:rerun-if-changed=Cargo.toml");
 
     #[cfg(target_os = "windows")]
     winresource::WindowsResource::new()
-        .set_icon("assets/app-icon.ico")
+        .set_icon("icons/app.ico")
         .compile()
         .expect("embed the Loom application icon");
 }

@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 
-const DEFAULT_SIZES = [16, 24, 32, 48, 64, 128, 256];
+const DEFAULT_SIZES = [16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 128, 256];
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const LANCZOS_RADIUS = 3;
 
@@ -32,8 +32,8 @@ function crc32(buffer) {
 function parseArguments(argv) {
   const repositoryRoot = path.resolve(__dirname, '..');
   const options = {
-    source: path.join(repositoryRoot, 'assets', 'source', 'app-icon.png'),
-    output: path.join(repositoryRoot, 'assets', 'app-icon.ico'),
+    source: path.join(repositoryRoot, 'icons', 'source', 'app-icon-transparent-1024.png'),
+    output: path.join(repositoryRoot, 'icons', 'app.ico'),
     sizes: DEFAULT_SIZES,
   };
 
