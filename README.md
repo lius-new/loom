@@ -14,16 +14,45 @@ loom/
 
 ## Features
 
-- Plain text editing (UTF-8 safe)
-- Click a UTF-8 file in the tree to open or reactivate an editable tab
-- File tree icons selected by exact filename and longest matching extension
-- `Enter` — new line, `Tab` — indent (4 spaces)
-- `Backspace` / `Delete` — remove character before/after caret
-- Arrow keys — move caret left/right/up/down
-- `Home` / `End` — jump to start/end of line
-- A visible caret (only while the editor has focus) and a status bar showing `Ln X, Col Y`
+- UTF-8 text editing with grapheme-safe movement and deletion (including Chinese,
+  combining marks and Emoji); LF and CRLF line endings are preserved.
+- Click a file in the tree to open or reactivate its tab. Each document keeps its
+  own selection, scroll position and undo/redo history.
+- Click to place the caret, drag to select, Shift-click to extend the selection,
+  double-click to select a word, and triple-click or click a line number to select
+  a line. Dragging line numbers selects whole lines. Holding a drag beyond the
+  viewport scrolls continuously.
+- Right-click for Undo, Redo, Cut, Copy, Paste and Select All. Clipboard failures
+  leave the source text intact.
+- Mouse wheel scrolls vertically; Shift-wheel scrolls horizontally.
+- Chinese IME preedit text is displayed at the caret, with the native candidate
+  window anchored there. Only committed input changes the document.
 
-The editor is keyboard-driven: click the dark editing area to focus it, then type.
+### Editing shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| Arrow keys | Move by character or line; vertical movement remembers the desired column |
+| Ctrl + Left / Right | Move by word |
+| Home / End | Move to line start / end |
+| Ctrl + Home / End | Move to document start / end |
+| Page Up / Page Down | Move by one viewport |
+| Shift + any movement above | Extend selection from its anchor |
+| Ctrl + A | Select all |
+| Ctrl + C / X / V | Copy / cut / paste |
+| Ctrl + Z / Y | Undo / redo (Ctrl + Shift + Z also redoes) |
+| Backspace / Delete | Delete the selection or previous / next character |
+| Ctrl + Backspace / Delete | Delete the selection or previous / next word |
+| Enter | Insert a newline with the current indentation |
+| Tab / Shift + Tab | Indent / outdent; a selection applies to all selected lines |
+| Esc | Close the editor menu, or clear the selection |
+| Ctrl + S | Save the active file |
+
+Indentation uses two spaces; existing tabs display at four-column tab stops.
+Typing replaces the selection. Consecutive typing/deletion is grouped for undo;
+movement, paste, indentation, saving and focus changes separate undo groups.
+Editor shortcuts apply while the editor has focus; the terminal keeps its own
+keyboard handling. Command is also accepted in place of Ctrl.
 
 ## File icons
 

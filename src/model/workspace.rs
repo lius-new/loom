@@ -92,6 +92,7 @@ impl Workspace {
             return false;
         };
         document.saved_text = document.buffer.text().to_owned();
+        document.buffer.break_undo_group();
         true
     }
 

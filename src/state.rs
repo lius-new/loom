@@ -16,6 +16,7 @@ pub struct DirEntry {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub editor: crate::editor::interaction::EditorInteraction,
     pub workspace: Workspace,
     pub focused: bool,
     pub show_drawer: bool,
@@ -87,6 +88,7 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
+            editor: Default::default(),
             workspace: Workspace::new(),
             focused: false,
             show_drawer: true,
@@ -146,6 +148,7 @@ impl AppState {
             }
             Action::ToggleTerminal => self.show_terminal = !self.show_terminal,
             Action::CloseOverlay => {
+                self.editor.menu = None;
                 self.show_palette = false;
                 if !self.cloning_repository {
                     self.show_clone_dialog = false;

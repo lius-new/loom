@@ -8,6 +8,7 @@ use lgui::prelude::Color;
 
 use crate::model::document::Language;
 use crate::theme;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tok {
@@ -36,10 +37,23 @@ fn color_for(kind: Tok) -> Color {
 
 /// Split one source line into `(text, color)` spans.
 pub fn highlight_line(line: &str, lang: Language) -> Vec<(String, Color)> {
-    tokenize(line, lang)
-        .into_iter()
-        .map(|(text, kind)| (text, color_for(kind)))
-        .collect()
+    let boundaries: std::collections::HashSet<usize> =
+        line.grapheme_indices(true).map(|(i, _)| i).collect();
+    let mut spans: Vec<(String, Color)> = Vec::new();
+    let mut offset = 0;
+    for (text, kind) in tokenize(line, lang) {
+        let color = color_for(kind);
+        let len = text.len();
+        if let Some((previous, previous_color)) = spans.last_mut()
+            && (*previous_color == color || !boundaries.contains(&offset))
+        {
+            previous.push_str(&text);
+        } else {
+            spans.push((text, color));
+        }
+        offset += len;
+    }
+    spans
 }
 
 fn tokenize(line: &str, lang: Language) -> Vec<(String, Tok)> {

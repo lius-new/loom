@@ -16,11 +16,13 @@ path = "src/main.rs"
 icondata = "0.7"
 image = { version = "0.25", default-features = false, features = ["png"] }
 vt100 = "0.16"
+unicode-segmentation = "1.13"
+unicode-width = "0.2"
 
 [dependencies.lgui]
 git = "https://github.com/lius-new/lgui.git"
 default-features = false
-features = ["renderer-skia-software", "widgets", "dialogs"]
+features = ["renderer-skia-software", "widgets", "dialogs", "clipboard"]
 
 [target.'cfg(windows)'.dependencies]
 conpty = "0.7"

@@ -43,6 +43,16 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     // Snapshot toggles for this frame.
     let s = state.get();
+    let document_state = state.clone();
+    cx.use_effect(s.workspace.active(), move || {
+        document_state.update(|app| {
+            app.editor.drag = None;
+            app.editor.menu = None;
+            app.editor.preedit.clear();
+            app.editor.preedit_cursor = None;
+            app.editor.ime_pending = false;
+        });
+    });
     let show_term = s.show_terminal;
     let show_drawer = s.show_drawer;
     let show_palette = s.show_palette;
@@ -84,6 +94,31 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         h - theme::STATUS_H,
     );
     let terminal_size = terminal::pty_size(terminal_rect);
+    let drag_state = state.clone();
+    let dragging = s.editor.drag.is_some();
+    cx.use_effect((dragging, s.workspace.active(), code_rect), move || {
+        let (sender, receiver) = mpsc::channel();
+        let worker = if dragging {
+            thread::Builder::new()
+                .name("loom-selection-scroll".into())
+                .spawn(move || {
+                    while let Err(RecvTimeoutError::Timeout) =
+                        receiver.recv_timeout(Duration::from_millis(30))
+                    {
+                        drag_state.try_update(|app| editor_view::drag_scroll_tick(app, code_rect));
+                    }
+                })
+                .ok()
+        } else {
+            None
+        };
+        move || {
+            let _ = sender.send(());
+            if let Some(worker) = worker {
+                let _ = worker.join();
+            }
+        }
+    });
     let terminal_cwd = s.open_dir.clone().or_else(|| std::env::current_dir().ok());
 
     let terminal_start = terminal_controller.clone();
@@ -149,12 +184,33 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     // ---- Root (global shortcut listener) ------------------------------
     let mut root = group(vp);
+    for kind in [UiEventKind::KeyDown, UiEventKind::KeyUp] {
+        let modifiers_state = state.clone();
+        root = root.on_event_capture(kind, move |_, payload| {
+            if let UiEventPayload::Keyboard { event } = payload {
+                modifiers_state.try_update(|app| {
+                    let mut modifiers = event.modifiers;
+                    // Winit can report the modifier transition after the key event itself.
+                    if event.key == lgui::core::LogicalKey::Named(lgui::core::NamedKey::Shift) {
+                        modifiers.set(
+                            lgui::core::KeyModifiers::SHIFT,
+                            event.state == lgui::core::KeyState::Down,
+                        );
+                    }
+                    let changed = app.editor.modifiers != modifiers;
+                    app.editor.modifiers = modifiers;
+                    changed
+                });
+            }
+        });
+    }
     let st = state.clone();
     let global_editor_focus = editor_focus.clone();
     let global_terminal_focus = terminal_focus.clone();
     let global_terminal_tabs = terminal_tabs.clone();
-    root = root.on_key_down(move |_ctx, ev: &KeyboardEvent| {
+    root = root.on_key_down(move |ctx, ev: &KeyboardEvent| {
         if let Some(action) = keymap::action_for(ev) {
+            ctx.prevent_default();
             if action == keymap::Action::ToggleTerminal {
                 let opening = !st.get().show_terminal;
                 if opening && global_terminal_tabs.get().is_empty() {
@@ -253,6 +309,15 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     ));
 
     // ---- Overlays ------------------------------------------------------
+    if let Some(pos) = s.editor.menu {
+        root = root.child(crate::editor::edit_menu::render(
+            vp,
+            code_rect,
+            pos,
+            state.clone(),
+            editor_focus.clone(),
+        ));
+    }
     if show_palette {
         root = root.child(command_palette::render(vp, state.clone(), editor_focus));
     }
