@@ -261,7 +261,11 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         })
         .child(panel(
             UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
-            VisualStyle::filled(theme::BORDER),
+            VisualStyle::filled(if s.resizing_sidebar {
+                theme::ACCENT
+            } else {
+                theme::BORDER
+            }),
         ));
     bar = bar.child(handle);
 
