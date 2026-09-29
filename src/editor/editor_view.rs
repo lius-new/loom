@@ -535,7 +535,10 @@ fn vertical_scrollbar(
         st_thumb_up.update(|app| app.editor_vertical_scrollbar_dragging = false);
     });
 
-    group(track).child(track_hit).child(thumb)
+    group(track)
+        .key("editor-vertical-scrollbar")
+        .child(track_hit)
+        .child(thumb)
 }
 
 fn horizontal_scrollbar(
@@ -632,7 +635,83 @@ fn horizontal_scrollbar(
         st_thumb_up.update(|app| app.editor_horizontal_scrollbar_dragging = false);
     });
 
-    group(track).child(track_hit).child(thumb)
+    group(track)
+        .key("editor-horizontal-scrollbar")
+        .child(track_hit)
+        .child(thumb)
+}
+
+/// Update an active editor scrollbar drag from a window-level pointer move.
+///
+/// This deliberately uses only the pointer coordinate for the dragged axis,
+/// so moving away from the scrollbar strip does not interrupt the drag.
+pub fn drag_scrollbars(app: &mut AppState, rect: UiRect, pointer_x: f32, pointer_y: f32) -> bool {
+    if !app.editor_vertical_scrollbar_dragging && !app.editor_horizontal_scrollbar_dragging {
+        return false;
+    }
+
+    let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
+    let Some(metrics) = app.workspace.active_buffer().map(|buffer| {
+        let lines = document_lines(buffer);
+        scroll_metrics(rect, code_left, &lines)
+    }) else {
+        return finish_scrollbar_drag(app);
+    };
+    let (mut scroll_x, mut scroll_y) = app.workspace.active_scroll();
+
+    if app.editor_vertical_scrollbar_dragging && metrics.max_y > 0.0 {
+        let corner = if metrics.max_x > 0.0 {
+            SCROLLBAR_SIZE
+        } else {
+            0.0
+        };
+        let track_top = rect.top;
+        let track_length = (rect.bottom - corner) - track_top;
+        let geometry = thumb_geometry(
+            track_top,
+            track_length,
+            metrics.viewport_h,
+            metrics.content_h,
+            scroll_y,
+        );
+        let travel = track_length - geometry.length;
+        let thumb_start =
+            (pointer_y - track_top - app.editor_vertical_scrollbar_drag_offset).clamp(0.0, travel);
+        scroll_y = scroll_from_thumb(thumb_start, travel, metrics.max_y);
+    }
+
+    if app.editor_horizontal_scrollbar_dragging && metrics.max_x > 0.0 {
+        let corner = if metrics.max_y > 0.0 {
+            SCROLLBAR_SIZE
+        } else {
+            0.0
+        };
+        let track_left = code_left;
+        let track_length = (rect.right - corner) - track_left;
+        let geometry = thumb_geometry(
+            track_left,
+            track_length,
+            metrics.viewport_w,
+            metrics.content_w,
+            scroll_x,
+        );
+        let travel = track_length - geometry.length;
+        let thumb_start = (pointer_x - track_left - app.editor_horizontal_scrollbar_drag_offset)
+            .clamp(0.0, travel);
+        scroll_x = scroll_from_thumb(thumb_start, travel, metrics.max_x);
+    }
+
+    let previous = app.workspace.active_scroll();
+    app.workspace.set_active_scroll(scroll_x, scroll_y);
+    previous != app.workspace.active_scroll()
+}
+
+pub fn finish_scrollbar_drag(app: &mut AppState) -> bool {
+    let changed =
+        app.editor_vertical_scrollbar_dragging || app.editor_horizontal_scrollbar_dragging;
+    app.editor_vertical_scrollbar_dragging = false;
+    app.editor_horizontal_scrollbar_dragging = false;
+    changed
 }
 
 fn document_lines(buffer: &TextBuffer) -> Vec<&str> {
@@ -1227,6 +1306,76 @@ mod tests {
     }
 
     #[test]
+    fn scrollbar_release_survives_editor_child_reordering() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{
+            InputEvent, Point, PointerData, UiEventKind, UiEventPayload, UiScale,
+            dispatch_runtime_output,
+        };
+        use lgui::session::UiSession;
+        use std::sync::Arc;
+
+        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let output = exposed.clone();
+        let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state(document(&"line\n".repeat(100)));
+            *output.lock().unwrap() = Some(state.clone());
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id.clone());
+
+            let drag_state = state.clone();
+            let up_state = state.clone();
+            group(viewport)
+                .on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
+                    if let UiEventPayload::PointerMove { pointer } = payload {
+                        drag_state.try_update(|app| {
+                            drag_scrollbars(app, viewport, pointer.point.x, pointer.point.y)
+                        });
+                    }
+                })
+                .on_event_capture(UiEventKind::PointerUp, move |_cx, _payload| {
+                    up_state.try_update(finish_scrollbar_drag);
+                })
+                .child(render(viewport, state, id, focus))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        let app = ApplicationContext::empty(Default::default());
+        let mut send = |input| {
+            let events = session.handle_input(input);
+            dispatch_runtime_output(
+                events,
+                &app,
+                &lgui::window::WindowId::new("scrollbar-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        let pointer = |x, y| PointerData::mouse(Point::new(x, y));
+
+        send(InputEvent::PointerDown {
+            pointer: pointer(viewport.right - 4.0, 10.0),
+            button: PointerButton::Left,
+        });
+        send(InputEvent::PointerMove(pointer(100.0, 260.0)));
+        assert!(state.get().editor_vertical_scrollbar_dragging);
+        assert!(state.get().workspace.active_scroll().1 > 0.0);
+
+        send(InputEvent::PointerUp {
+            pointer: pointer(100.0, 260.0),
+            button: PointerButton::Left,
+        });
+        assert!(!state.get().editor_vertical_scrollbar_dragging);
+        let released_scroll = state.get().workspace.active_scroll().1;
+
+        send(InputEvent::PointerMove(pointer(100.0, 20.0)));
+        assert_eq!(state.get().workspace.active_scroll().1, released_scroll);
+    }
+
+    #[test]
     fn clipboard_cut_paste_and_undo_preserve_unicode_and_selection() {
         let mut app = document("你好 world");
         let clipboard = TestClipboard::default();
@@ -1307,6 +1456,35 @@ mod tests {
         );
         app.editor.drag = None;
         assert!(!drag_scroll_tick(&mut app, rect));
+    }
+
+    #[test]
+    fn scrollbar_drag_uses_window_pointer_outside_the_scrollbar_strip() {
+        let mut app = document(&(0..100).map(|i| format!("line {i}\n")).collect::<String>());
+        let rect = UiRect::new(0.0, 0.0, 400.0, 100.0);
+        app.editor_vertical_scrollbar_dragging = true;
+        app.editor_vertical_scrollbar_drag_offset = 4.0;
+
+        assert!(drag_scrollbars(&mut app, rect, 40.0, 500.0));
+        let bottom = app.workspace.active_scroll().1;
+        assert!(bottom > 0.0);
+
+        assert!(drag_scrollbars(&mut app, rect, 40.0, rect.top));
+        assert_eq!(app.workspace.active_scroll().1, 0.0);
+        assert!(finish_scrollbar_drag(&mut app));
+        assert!(!app.editor_vertical_scrollbar_dragging);
+        assert!(!finish_scrollbar_drag(&mut app));
+
+        let mut app = document(&"x".repeat(1_000));
+        app.editor_horizontal_scrollbar_dragging = true;
+        app.editor_horizontal_scrollbar_drag_offset = 4.0;
+
+        assert!(drag_scrollbars(&mut app, rect, 1_000.0, 40.0));
+        assert!(app.workspace.active_scroll().0 > 0.0);
+        assert!(drag_scrollbars(&mut app, rect, rect.left, 40.0));
+        assert_eq!(app.workspace.active_scroll().0, 0.0);
+        assert!(finish_scrollbar_drag(&mut app));
+        assert!(!app.editor_horizontal_scrollbar_dragging);
     }
 
     #[test]

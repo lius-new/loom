@@ -49,9 +49,13 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let w = vp.width();
     let h = vp.height();
     window_geometry::observe_viewport(w, h);
-    cx.use_event_once::<WindowFocusChanged>(|event| {
+    let window_focus_state = state.clone();
+    cx.use_event_once::<WindowFocusChanged>(move |event| {
         if event.window_id.as_str() == "loom" {
             window_geometry::handle_focus_change(event.focused);
+            if !event.focused {
+                window_focus_state.try_update(editor_view::finish_scrollbar_drag);
+            }
         }
     });
     cx.use_effect((), || {
@@ -313,6 +317,22 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
                 changed
             });
         }
+    });
+
+    // Keep editor scrollbar drags alive while the pointer is anywhere in the
+    // window. Relying only on the narrow thumb/track as the drag source makes
+    // the interaction fragile once the pointer leaves that hit region.
+    let st_editor_scrollbar_drag = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
+        if let UiEventPayload::PointerMove { pointer } = payload {
+            st_editor_scrollbar_drag.try_update(|app| {
+                editor_view::drag_scrollbars(app, code_rect, pointer.point.x, pointer.point.y)
+            });
+        }
+    });
+    let st_editor_scrollbar_up = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerUp, move |_ctx, _payload| {
+        st_editor_scrollbar_up.try_update(editor_view::finish_scrollbar_drag);
     });
 
     // ---- Compose chrome (back-to-front) -------------------------------
