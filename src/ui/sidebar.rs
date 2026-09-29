@@ -1,10 +1,10 @@
-//! File drawer: an empty-state prompt when no folder is open, or the folder's
+//! File drawer: an empty-state prompt when no folder is open, or the folders'
 //! file tree when one is. Also owns the right-click capture and resize handle.
 //!
 //! The tree is lazy: opening a folder reads only its top level, and a
 //! sub-directory is read from disk only when first expanded. Renders read from
 //! the cached listings, so no filesystem I/O happens per frame. The opened
-//! folder itself is shown as a root node (expanded by default) with its
+//! folders themselves are shown as root nodes (expanded by default) with their
 //! contents indented beneath it.
 
 use std::fs;
@@ -79,28 +79,41 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         });
     bar = bar.child(capture);
 
-    // Content: empty-state prompt, or the open folder's tree.
-    match &s.open_dir {
-        None => {
-            for el in empty_state(content_rect, state.clone()) {
-                bar = bar.child(el);
-            }
+    // Content: empty-state prompt, or all root folders in the current project.
+    if s.workspace_folders.is_empty() {
+        for el in empty_state(content_rect, state.clone()) {
+            bar = bar.child(el);
         }
-        Some(dir) => {
-            let key = dir.to_string_lossy().into_owned();
-            let root_name = dir
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| key.clone());
-            let content_right =
-                tree_content_right(&key, &root_name, &s, content_rect.left).max(content_rect.right);
-            let max_scroll_x = (content_right - content_rect.right).max(0.0);
-            let scroll_x = s.tree_scroll_x.clamp(0.0, max_scroll_x);
+    } else {
+        let roots = s
+            .workspace_folders
+            .iter()
+            .map(|dir| {
+                let key = dir.to_string_lossy().into_owned();
+                let name = dir
+                    .file_name()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| key.clone());
+                (key, name)
+            })
+            .collect::<Vec<_>>();
+        let content_right = roots
+            .iter()
+            .map(|(key, name)| tree_content_right(key, name, &s, content_rect.left))
+            .fold(content_rect.right, f32::max);
+        let max_scroll_x = (content_right - content_rect.right).max(0.0);
+        let scroll_x = s.tree_scroll_x.clamp(0.0, max_scroll_x);
 
-            let mut y = content_rect.top + 8.0;
-            let indent = content_rect.left + INDENT;
+        let mut y = content_rect.top + 8.0;
+        let indent = content_rect.left + INDENT;
+        let mut rows = Vec::new();
+        let mut tree_els = Vec::new();
+
+        // Collect every root and its descendants into one scrollable list.
+        // Each root starts a fresh sticky ancestry so adjacent workspaces push
+        // one another out at the top edge instead of nesting visually.
+        for (key, root_name) in roots {
             let is_expanded = s.expanded.contains(&key);
-
             let root = StickyDirectory {
                 key: key.clone(),
                 name: root_name.clone(),
@@ -108,16 +121,12 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                 source_y: y,
                 is_expanded,
             };
-            let mut path = vec![root.clone()];
-            let mut rows = vec![TreeRowMeta {
+            let mut path = vec![root];
+            rows.push(TreeRowMeta {
                 y,
                 depth: 0,
                 sticky_path: path.clone(),
-            }];
-
-            // Collect the tree (root node + contents) into a flat element
-            // list and retain each row's directory ancestry for sticky rows.
-            let mut tree_els: Vec<Element> = Vec::new();
+            });
             tree_els.push(dir_row(
                 &key,
                 &root_name,
@@ -134,8 +143,6 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             y += ROW_H;
 
             if is_expanded {
-                // Indent guide: a faint 1px line under the root's icon, from
-                // the row bottom to the bottom of its last child.
                 let children_top = y;
                 let guide_x = indent + TREE_ICON_SIZE / 2.0;
                 tree_els.extend(build_tree(
@@ -157,78 +164,68 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                     ));
                 }
             }
-            let content_bottom = y;
+        }
+        let content_bottom = y;
 
-            // How far the content can be pulled up before its last row reaches
-            // the drawer's bottom edge.
-            let max_scroll = (content_bottom - content_rect.bottom).max(0.0);
-            let scroll = s.tree_scroll.clamp(0.0, max_scroll);
+        let max_scroll = (content_bottom - content_rect.bottom).max(0.0);
+        let scroll = s.tree_scroll.clamp(0.0, max_scroll);
 
-            // Keep wheel scrolling on the tree root so sticky rows, the
-            // scrollbar track and ordinary rows all participate equally.
-            let st = state.clone();
-            bar = bar.on_event(UiEventKind::Wheel, move |_cx, payload| {
-                if let UiEventPayload::Wheel { delta } = payload {
-                    let (step_x, step_y) = match delta.unit {
-                        WheelUnit::Lines => (delta.x * ROW_H * 3.0, delta.y * ROW_H * 3.0),
-                        WheelUnit::Pixels => (delta.x, delta.y),
-                    };
-                    st.update(move |app| {
-                        app.tree_scroll = (app.tree_scroll - step_y).clamp(0.0, max_scroll);
-                        app.tree_scroll_x = (app.tree_scroll_x - step_x).clamp(0.0, max_scroll_x);
-                    });
-                }
-            });
-
-            // Clip container: keeps rows inside the drawer while scrolling.
-            // The content offset is the negated scroll (scrolling down moves
-            // the content up).
-            let mut clip_el = clip(content_rect, -scroll_x, -scroll);
-            for el in tree_els {
-                clip_el = clip_el.child(el);
+        let st = state.clone();
+        bar = bar.on_event(UiEventKind::Wheel, move |_cx, payload| {
+            if let UiEventPayload::Wheel { delta } = payload {
+                let (step_x, step_y) = match delta.unit {
+                    WheelUnit::Lines => (delta.x * ROW_H * 3.0, delta.y * ROW_H * 3.0),
+                    WheelUnit::Pixels => (delta.x, delta.y),
+                };
+                st.update(move |app| {
+                    app.tree_scroll = (app.tree_scroll - step_y).clamp(0.0, max_scroll);
+                    app.tree_scroll_x = (app.tree_scroll_x - step_x).clamp(0.0, max_scroll_x);
+                });
             }
-            bar = bar.child(clip_el);
+        });
 
-            // Draw deepest sticky rows first. Parents are added last so a
-            // departing child slides underneath its fixed ancestor.
-            for sticky in sticky_rows(&rows, content_rect.top, scroll)
-                .into_iter()
-                .rev()
-            {
-                let directory = sticky.directory;
-                let indent = content_rect.left + INDENT + directory.depth as f32 * INDENT;
-                bar = bar.child(dir_row(
-                    &directory.key,
-                    &directory.name,
-                    indent,
-                    content_rect,
-                    sticky.top,
-                    content_right,
-                    -scroll_x,
-                    directory.is_expanded,
-                    true,
-                    false,
-                    &state,
-                ));
-            }
+        let mut clip_el = clip(content_rect, -scroll_x, -scroll);
+        for el in tree_els {
+            clip_el = clip_el.child(el);
+        }
+        bar = bar.child(clip_el);
 
-            // Scrollbar, drawn outside the clip so it stays fixed.
-            if max_scroll > 0.0 && (s.sidebar_hovered || s.scrollbar_dragging) {
-                bar = bar.child(vertical_scrollbar(
-                    content_rect,
-                    content_bottom,
-                    scroll,
-                    state.clone(),
-                ));
-            }
-            if max_scroll_x > 0.0 && (s.sidebar_hovered || s.horizontal_scrollbar_dragging) {
-                bar = bar.child(horizontal_scrollbar(
-                    content_rect,
-                    content_right,
-                    scroll_x,
-                    state.clone(),
-                ));
-            }
+        for sticky in sticky_rows(&rows, content_rect.top, scroll)
+            .into_iter()
+            .rev()
+        {
+            let directory = sticky.directory;
+            let indent = content_rect.left + INDENT + directory.depth as f32 * INDENT;
+            bar = bar.child(dir_row(
+                &directory.key,
+                &directory.name,
+                indent,
+                content_rect,
+                sticky.top,
+                content_right,
+                -scroll_x,
+                directory.is_expanded,
+                true,
+                false,
+                &state,
+            ));
+        }
+
+        if max_scroll > 0.0 && (s.sidebar_hovered || s.scrollbar_dragging) {
+            bar = bar.child(vertical_scrollbar(
+                content_rect,
+                content_bottom,
+                scroll,
+                state.clone(),
+            ));
+        }
+        if max_scroll_x > 0.0 && (s.sidebar_hovered || s.horizontal_scrollbar_dragging) {
+            bar = bar.child(horizontal_scrollbar(
+                content_rect,
+                content_right,
+                scroll_x,
+                state.clone(),
+            ));
         }
     }
 

@@ -47,8 +47,8 @@ pub struct AppState {
     pub context_menu: Option<(f32, f32)>,
     /// Index of the context-menu item currently hovered, if any.
     pub context_menu_hover: Option<usize>,
-    /// The folder currently browsed in the file tree, if any.
-    pub open_dir: Option<PathBuf>,
+    /// Root folders currently browsed in the file tree, in display order.
+    pub workspace_folders: Vec<PathBuf>,
     /// Vertical scroll offset of the file tree, in pixels (0 = top).
     pub tree_scroll: f32,
     /// Horizontal scroll offset of the file tree, in pixels (0 = left).
@@ -107,7 +107,7 @@ impl AppState {
             tree_hovered_path: None,
             context_menu: None,
             context_menu_hover: None,
-            open_dir: None,
+            workspace_folders: Vec::new(),
             tree_scroll: 0.0,
             tree_scroll_x: 0.0,
             scrollbar_dragging: false,

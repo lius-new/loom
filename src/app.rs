@@ -119,7 +119,11 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         }
     });
-    let terminal_cwd = s.open_dir.clone().or_else(|| std::env::current_dir().ok());
+    let terminal_cwd = s
+        .workspace_folders
+        .first()
+        .cloned()
+        .or_else(|| std::env::current_dir().ok());
 
     let terminal_start = terminal_controller.clone();
     let terminal_start_application = application.clone();

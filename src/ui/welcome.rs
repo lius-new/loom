@@ -126,7 +126,10 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     );
     welcome = welcome.child(workspace_card_element(
         workspace_card,
-        snapshot.open_dir.as_deref(),
+        snapshot
+            .workspace_folders
+            .first()
+            .map(|path| path.as_path()),
         snapshot.welcome_hover == Some(ACTIONS.len()),
         state.clone(),
     ));

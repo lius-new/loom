@@ -3,7 +3,6 @@
 //! Right-clicking the empty area of the drawer opens a small menu of the
 //! actions that make sense in that context: create new items, open a terminal,
 //! or add folders to the project. Items are grouped by hairline separators.
-//! Every action is a no-op for now — clicking an item simply closes the menu.
 
 use lgui::core::{EventPolicy, UiEventKind};
 use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
@@ -11,6 +10,7 @@ use lgui::text::measure_width;
 
 use crate::state::AppState;
 use crate::theme;
+use crate::workspace_actions;
 
 const MENU_PAD: f32 = 4.0; // padding above/below the item list
 const ITEM_H: f32 = 22.0; // item row height
@@ -21,10 +21,17 @@ const TEXT_MARGIN: f32 = 6.0; // right margin so the last glyph is not clipped
 const MENU_BORDER: f32 = 1.0; // menu border width
 
 /// One row of the menu; `Separator` renders a hairline divider.
+#[derive(Clone, Copy)]
+enum MenuAction {
+    None,
+    AddFolder,
+}
+
 enum Entry {
     Item {
         label: &'static str,
         shortcut: Option<&'static str>,
+        action: MenuAction,
     },
     Separator,
 }
@@ -33,20 +40,24 @@ const ENTRIES: &[Entry] = &[
     Entry::Item {
         label: "New File",
         shortcut: None,
+        action: MenuAction::None,
     },
     Entry::Item {
         label: "New Folder",
         shortcut: None,
+        action: MenuAction::None,
     },
     Entry::Separator,
     Entry::Item {
         label: "Open in Terminal",
         shortcut: None,
+        action: MenuAction::None,
     },
     Entry::Separator,
     Entry::Item {
         label: "Add Folders to Project",
         shortcut: None,
+        action: MenuAction::AddFolder,
     },
 ];
 
@@ -68,7 +79,9 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
     let content_w = ENTRIES
         .iter()
         .map(|e| match e {
-            Entry::Item { label, shortcut } => {
+            Entry::Item {
+                label, shortcut, ..
+            } => {
                 let mut w = measure(label);
                 if let Some(sc) = shortcut {
                     w += SHORTCUT_GAP + measure(sc);
@@ -157,7 +170,11 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
                 ));
                 y += SEP_H;
             }
-            Entry::Item { label, shortcut } => {
+            Entry::Item {
+                label,
+                shortcut,
+                action,
+            } => {
                 let item_rect = UiRect::new(
                     card.left + MENU_BORDER,
                     y,
@@ -167,6 +184,7 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
                 let hovered = s.context_menu_hover == Some(index);
                 let idx = index;
                 let label = *label;
+                let action = *action;
 
                 let st_hover = state.clone();
                 let st_click = state.clone();
@@ -193,6 +211,9 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
                         app.context_menu = None;
                         app.context_menu_hover = None;
                     });
+                    if matches!(action, MenuAction::AddFolder) {
+                        workspace_actions::choose_folder_to_add(&st_click);
+                    }
                 });
 
                 // Label (left-aligned).

@@ -14,7 +14,7 @@ const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 pub fn choose_file(state: &State<AppState>) -> bool {
     let mut options = FileDialogOptions::new().title("Open File");
-    if let Some(directory) = state.get().open_dir {
+    if let Some(directory) = state.get().workspace_folders.first().cloned() {
         options = options.directory(directory);
     }
     let Some(path) = system_file_dialogs().pick_file(&options) else {
@@ -39,7 +39,7 @@ pub fn choose_file(state: &State<AppState>) -> bool {
 
 pub fn choose_folder(state: &State<AppState>) -> bool {
     let mut options = FileDialogOptions::new().title("Open Folder");
-    if let Some(directory) = state.get().open_dir {
+    if let Some(directory) = state.get().workspace_folders.first().cloned() {
         options = options.directory(directory);
     }
     let Some(path) = system_file_dialogs().pick_folder(&options) else {
@@ -47,6 +47,21 @@ pub fn choose_folder(state: &State<AppState>) -> bool {
     };
 
     state.update(move |app| load_folder(app, path));
+    true
+}
+
+/// Add another root folder to the current file tree without replacing the
+/// folders that are already open.
+pub fn choose_folder_to_add(state: &State<AppState>) -> bool {
+    let mut options = FileDialogOptions::new().title("Add Folder to Project");
+    if let Some(directory) = state.get().workspace_folders.first().cloned() {
+        options = options.directory(directory);
+    }
+    let Some(path) = system_file_dialogs().pick_folder(&options) else {
+        return false;
+    };
+
+    state.update(move |app| add_folder(app, path));
     true
 }
 
@@ -69,7 +84,7 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
     };
 
     let mut options = FileDialogOptions::new().title("Select Repository Location");
-    if let Some(directory) = state.get().open_dir {
+    if let Some(directory) = state.get().workspace_folders.first().cloned() {
         options = options.directory(directory);
     }
     let Some(parent) = system_file_dialogs().pick_folder(&options) else {
@@ -157,7 +172,8 @@ fn first_error_line(stderr: &str) -> String {
 fn load_folder(app: &mut AppState, path: PathBuf) {
     let key = path.to_string_lossy().into_owned();
     let entries = read_entries(&path);
-    app.open_dir = Some(path);
+    app.workspace_folders.clear();
+    app.workspace_folders.push(path);
     app.dir_entries.clear();
     app.dir_entries.insert(key.clone(), entries);
     app.expanded.clear();
@@ -166,6 +182,26 @@ fn load_folder(app: &mut AppState, path: PathBuf) {
     app.tree_scroll_x = 0.0;
     app.show_drawer = true;
     app.welcome_hover = None;
+}
+
+fn add_folder(app: &mut AppState, path: PathBuf) {
+    if app.workspace_folders.contains(&path) {
+        return;
+    }
+
+    let key = path.to_string_lossy().into_owned();
+    let entries = read_entries(&path);
+    let was_empty = app.workspace_folders.is_empty();
+    app.workspace_folders.push(path);
+    app.dir_entries.insert(key.clone(), entries);
+    app.expanded.insert(key);
+    if was_empty {
+        app.tree_scroll = 0.0;
+        app.tree_scroll_x = 0.0;
+    }
+    app.show_drawer = true;
+    app.welcome_hover = None;
+    app.toast = None;
 }
 
 fn read_entries(dir: &Path) -> Vec<DirEntry> {
@@ -217,5 +253,35 @@ mod tests {
             repository_directory_name("https://example.test/owner/project/"),
             Some("project".to_owned())
         );
+    }
+
+    #[test]
+    fn adding_a_folder_preserves_existing_roots_and_ignores_duplicates() {
+        let mut app = AppState::new();
+        let first = PathBuf::from("first-workspace");
+        let second = PathBuf::from("second-workspace");
+
+        load_folder(&mut app, first.clone());
+        add_folder(&mut app, second.clone());
+        add_folder(&mut app, first.clone());
+
+        assert_eq!(app.workspace_folders, vec![first.clone(), second.clone()]);
+        assert!(app.expanded.contains(&first.to_string_lossy().into_owned()));
+        assert!(
+            app.expanded
+                .contains(&second.to_string_lossy().into_owned())
+        );
+    }
+
+    #[test]
+    fn opening_a_folder_replaces_the_current_project_roots() {
+        let mut app = AppState::new();
+        let first = PathBuf::from("first-workspace");
+        let second = PathBuf::from("second-workspace");
+
+        add_folder(&mut app, first);
+        load_folder(&mut app, second.clone());
+
+        assert_eq!(app.workspace_folders, vec![second]);
     }
 }
