@@ -15,7 +15,9 @@ const COLUMN_GAP: f32 = 48.0;
 const SECTION_TITLE_H: f32 = 22.0;
 const ACTION_H: f32 = 34.0;
 const ACTION_GAP: f32 = 4.0;
-const WORKSPACE_CARD_H: f32 = 58.0;
+const WORKSPACE_CARD_H: f32 = 50.0;
+const WORKSPACE_CARD_GAP: f32 = 6.0;
+const MAX_VISIBLE_RECENTS: usize = 5;
 const FOOTER_H: f32 = 52.0;
 
 #[derive(Clone, Copy)]
@@ -117,24 +119,53 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         action_top += ACTION_H + ACTION_GAP;
     }
 
-    welcome = welcome.child(section_title(workspace_rect, "WORKSPACE"));
-    let workspace_card = UiRect::new(
-        workspace_rect.left,
-        workspace_rect.top + SECTION_TITLE_H,
-        workspace_rect.right,
-        workspace_rect.top + SECTION_TITLE_H + WORKSPACE_CARD_H,
-    );
-    welcome = welcome.child(workspace_card_element(
-        workspace_card,
-        snapshot
-            .workspace_folders
-            .first()
-            .map(|path| path.as_path()),
-        snapshot.welcome_hover == Some(ACTIONS.len()),
-        state.clone(),
-    ));
-
     let footer_min_height = if wide { 320.0 } else { 440.0 };
+    welcome = welcome.child(section_title(workspace_rect, "RECENT"));
+    let list_top = workspace_rect.top + SECTION_TITLE_H;
+    let list_bottom = if rect.height() >= footer_min_height {
+        rect.bottom - FOOTER_H - 12.0
+    } else {
+        rect.bottom
+    };
+    let available = (list_bottom - list_top).max(WORKSPACE_CARD_H);
+    let visible_count = (((available + WORKSPACE_CARD_GAP)
+        / (WORKSPACE_CARD_H + WORKSPACE_CARD_GAP))
+        .floor() as usize)
+        .clamp(1, MAX_VISIBLE_RECENTS);
+
+    if snapshot.recent_folders.is_empty() {
+        welcome = welcome.child(empty_recent_card(UiRect::new(
+            workspace_rect.left,
+            list_top,
+            workspace_rect.right,
+            list_top + WORKSPACE_CARD_H,
+        )));
+    } else {
+        let mut card_top = list_top;
+        for (recent_index, path) in snapshot
+            .recent_folders
+            .iter()
+            .take(visible_count)
+            .enumerate()
+        {
+            let hover_index = ACTIONS.len() + recent_index;
+            let card = UiRect::new(
+                workspace_rect.left,
+                card_top,
+                workspace_rect.right,
+                card_top + WORKSPACE_CARD_H,
+            );
+            welcome = welcome.child(recent_workspace_card(
+                card,
+                path,
+                hover_index,
+                snapshot.welcome_hover == Some(hover_index),
+                state.clone(),
+            ));
+            card_top += WORKSPACE_CARD_H + WORKSPACE_CARD_GAP;
+        }
+    }
+
     if rect.height() >= footer_min_height {
         welcome = welcome.child(footer(UiRect::new(
             page_left,
@@ -206,20 +237,21 @@ fn action_row(
         ))
 }
 
-fn workspace_card_element(
+fn empty_recent_card(rect: UiRect) -> Element {
+    theme::bordered(rect, theme::BG, theme::BORDER, 5.0, 1.0).child(text(
+        UiRect::new(rect.left + 12.0, rect.top, rect.right - 12.0, rect.bottom),
+        "No recent folders",
+        theme::mono(theme::ZINC_500, theme::UI_SIZE),
+    ))
+}
+
+fn recent_workspace_card(
     rect: UiRect,
-    open_dir: Option<&std::path::Path>,
+    path: &std::path::Path,
+    hover_index: usize,
     hovered: bool,
     state: State<AppState>,
 ) -> Element {
-    let Some(path) = open_dir else {
-        return theme::bordered(rect, theme::BG, theme::BORDER, 5.0, 1.0).child(text(
-            UiRect::new(rect.left + 12.0, rect.top, rect.right - 12.0, rect.bottom),
-            "No folder opened",
-            theme::mono(theme::ZINC_500, theme::UI_SIZE),
-        ));
-    };
-
     let name = path
         .file_name()
         .map(|value| value.to_string_lossy().into_owned())
@@ -238,18 +270,20 @@ fn workspace_card_element(
     };
     let hover_state = state.clone();
     let click_state = state;
+    let workspace_path = path.to_path_buf();
     surface
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_pointer_move(move |_cx, _pointer| {
-            hover_state.try_update(|app| {
-                let index = ACTIONS.len();
-                let changed = app.welcome_hover != Some(index);
-                app.welcome_hover = Some(index);
+            hover_state.try_update(move |app| {
+                let changed = app.welcome_hover != Some(hover_index);
+                app.welcome_hover = Some(hover_index);
                 changed
             });
         })
-        .on_click(move || click_state.update(|app| app.show_drawer = true))
+        .on_click(move || {
+            workspace_actions::open_recent_folder(&click_state, workspace_path.clone());
+        })
         .child(text(
             UiRect::new(
                 rect.left + 12.0,

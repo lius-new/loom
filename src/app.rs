@@ -21,7 +21,7 @@ use crate::ui::{
 };
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
-    let state = cx.state(AppState::new());
+    let state = cx.state_with(AppState::restored);
     let terminal_tabs = cx.state(TerminalTabs::new());
     let terminal_cursor_blink = cx.state(true);
     let terminal_cursor_visible = terminal_cursor_blink.get();

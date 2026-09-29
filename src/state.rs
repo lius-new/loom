@@ -49,6 +49,8 @@ pub struct AppState {
     pub context_menu_hover: Option<usize>,
     /// Root folders currently browsed in the file tree, in display order.
     pub workspace_folders: Vec<PathBuf>,
+    /// Previously opened workspace folders, most recently used first.
+    pub recent_folders: Vec<PathBuf>,
     /// Vertical scroll offset of the file tree, in pixels (0 = top).
     pub tree_scroll: f32,
     /// Horizontal scroll offset of the file tree, in pixels (0 = left).
@@ -108,6 +110,7 @@ impl AppState {
             context_menu: None,
             context_menu_hover: None,
             workspace_folders: Vec::new(),
+            recent_folders: Vec::new(),
             tree_scroll: 0.0,
             tree_scroll_x: 0.0,
             scrollbar_dragging: false,
@@ -126,6 +129,16 @@ impl AppState {
             clone_repository_error: None,
             clone_input_focused: false,
         }
+    }
+
+    /// Build the application state and restore the last file-tree session.
+    pub fn restored() -> Self {
+        let mut app = Self::new();
+        let session = crate::workspace_persistence::load();
+        app.workspace_folders = session.open_folders;
+        app.recent_folders = session.recent_folders;
+        crate::workspace_actions::hydrate_workspace_folders(&mut app);
+        app
     }
 
     pub fn apply(&mut self, action: Action) {

@@ -1699,6 +1699,8 @@ dependencies = [
  "image",
  "lgui",
  "portable-pty",
+ "serde",
+ "serde_json",
  "unicode-segmentation",
  "unicode-width",
  "vt100",

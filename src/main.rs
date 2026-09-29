@@ -20,6 +20,7 @@ mod terminal_session;
 mod theme;
 mod ui;
 mod workspace_actions;
+mod workspace_persistence;
 
 #[cfg(not(target_os = "windows"))]
 use image::imageops::FilterType;
