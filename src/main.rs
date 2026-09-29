@@ -19,6 +19,7 @@ mod state;
 mod terminal_session;
 mod theme;
 mod ui;
+mod window_geometry;
 mod workspace_actions;
 mod workspace_persistence;
 
@@ -30,6 +31,17 @@ use lgui::{WinitApplication, WinitWindowIcon, WinitWindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let native_window_options = native_window_options()?;
+    let window_options = window_geometry::restore_options(
+        WindowOptions::new("loom")
+            .title("Loom")
+            .size(Size::new(900.0, 600.0))
+            // Frameless: we render our own custom title bar (see ui/titlebar.rs).
+            .native_titlebar(false)
+            // Windows 11 DWM rounded corners.
+            .corner_radius(8)
+            .on_close_requested(window_geometry::handle_close_requested)
+            .with_platform_options(native_window_options),
+    );
 
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
         .svg_icons(file_icons::register(
@@ -63,16 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .provide(RendererKind::Skia(GraphicsPreference::Auto))
         .memory_options(MemoryOptions::unbounded(ImageCachePolicy::WhileVisible, false))
-        .window_options(
-            WindowOptions::new("loom")
-                .title("Loom")
-                .size(Size::new(900.0, 600.0))
-                // Frameless: we render our own custom title bar (see ui/titlebar.rs).
-                .native_titlebar(false)
-                // Windows 11 DWM rounded corners.
-                .corner_radius(8)
-                .with_platform_options(native_window_options),
-        )
+        .window_options(window_options)
         .run(app::app)?;
     Ok(())
 }

@@ -28,6 +28,11 @@ features = ["renderer-skia-software", "widgets", "dialogs", "clipboard"]
 
 [target.'cfg(windows)'.dependencies]
 conpty = "0.7"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [target.'cfg(not(windows))'.dependencies]
 portable-pty = "0.9"

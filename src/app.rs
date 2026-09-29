@@ -9,6 +9,7 @@ use std::time::Duration;
 use lgui::ApplicationHandle;
 use lgui::core::{KeyboardEvent, UiEventKind, UiEventPayload};
 use lgui::prelude::{Element, RenderCx, UiRect, group};
+use lgui::window::WindowFocusChanged;
 
 use crate::editor::editor_view;
 use crate::input::keymap;
@@ -19,6 +20,7 @@ use crate::ui::{
     clone_repository, command_palette, context_menu, sidebar, statusbar, tabs, terminal, titlebar,
     toast,
 };
+use crate::window_geometry;
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state_with(AppState::restored);
@@ -40,6 +42,16 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let vp = cx.viewport();
     let w = vp.width();
     let h = vp.height();
+    window_geometry::observe_viewport(w, h);
+    cx.use_event_once::<WindowFocusChanged>(|event| {
+        if event.window_id.as_str() == "loom" {
+            window_geometry::handle_focus_change(event.focused);
+        }
+    });
+    cx.use_effect((), || {
+        window_geometry::remember_native_window();
+        || {}
+    });
 
     // Snapshot toggles for this frame.
     let s = state.get();

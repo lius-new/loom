@@ -1704,6 +1704,7 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width",
  "vt100",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 

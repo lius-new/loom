@@ -4,10 +4,21 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
 pub const MAX_RECENT_FOLDERS: usize = 8;
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct WindowGeometry {
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub width: f32,
+    pub height: f32,
+    #[serde(default)]
+    pub maximized: bool,
+}
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct WorkspaceSession {
@@ -15,9 +26,18 @@ pub struct WorkspaceSession {
     pub open_folders: Vec<PathBuf>,
     #[serde(default)]
     pub recent_folders: Vec<PathBuf>,
+    #[serde(default)]
+    pub window: Option<WindowGeometry>,
 }
 
 pub fn load() -> WorkspaceSession {
+    let _guard = persistence_lock()
+        .lock()
+        .expect("persistence lock poisoned");
+    load_unlocked()
+}
+
+fn load_unlocked() -> WorkspaceSession {
     let Some(path) = session_path() else {
         return WorkspaceSession::default();
     };
@@ -28,25 +48,42 @@ pub fn load() -> WorkspaceSession {
 }
 
 pub fn save(open_folders: &[PathBuf], recent_folders: &[PathBuf]) -> io::Result<()> {
+    update(|session| {
+        session.open_folders = open_folders.to_vec();
+        session.recent_folders = recent_folders.to_vec();
+    })
+}
+
+pub fn save_window_geometry(geometry: WindowGeometry) -> io::Result<()> {
+    update(|session| session.window = Some(geometry))
+}
+
+fn update(change: impl FnOnce(&mut WorkspaceSession)) -> io::Result<()> {
+    let _guard = persistence_lock()
+        .lock()
+        .expect("persistence lock poisoned");
     let path = session_path().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
             "could not determine the user configuration directory",
         )
     })?;
-    save_to(&path, open_folders, recent_folders)
+    let mut session = load_unlocked();
+    change(&mut session);
+    save_to(&path, &session)
 }
 
-fn save_to(path: &Path, open_folders: &[PathBuf], recent_folders: &[PathBuf]) -> io::Result<()> {
+fn save_to(path: &Path, session: &WorkspaceSession) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let session = WorkspaceSession {
-        open_folders: open_folders.to_vec(),
-        recent_folders: recent_folders.to_vec(),
-    };
-    let contents = serde_json::to_vec_pretty(&session).map_err(io::Error::other)?;
+    let contents = serde_json::to_vec_pretty(session).map_err(io::Error::other)?;
     fs::write(path, contents)
+}
+
+fn persistence_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn session_path() -> Option<PathBuf> {
@@ -87,6 +124,13 @@ mod tests {
         let session = WorkspaceSession {
             open_folders: vec![PathBuf::from("one"), PathBuf::from("two")],
             recent_folders: vec![PathBuf::from("two"), PathBuf::from("one")],
+            window: Some(WindowGeometry {
+                x: Some(120),
+                y: Some(80),
+                width: 900.0,
+                height: 600.0,
+                maximized: false,
+            }),
         };
 
         let json = serde_json::to_string(&session).unwrap();
