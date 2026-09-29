@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  LOOM_VERSION: 0.1.0
+
+jobs:
+  quality:
+    name: Format and lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            libfreetype-dev \
+            libfontconfig-dev \
+            libegl1-mesa-dev \
+            libgl1-mesa-dev \
+            libgles2-mesa-dev \
+            libwayland-dev \
+            libxkbcommon-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: >-
+          cargo clippy --locked --all-targets --
+          -D warnings
+          -A clippy::redundant_closure_call
+          -A clippy::collapsible_if
+          -A clippy::too_many_arguments
+          -A clippy::let_and_return
+          -A clippy::manual_div_ceil
+
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            os: ubuntu-24.04
+            target_name: linux-x86_64
+            extension: tar.gz
+          - label: Windows x64
+            os: windows-2025
+            target_name: windows-x86_64
+            extension: zip
+          - label: macOS ARM64
+            os: macos-15
+            target_name: macos-aarch64
+            extension: tar.gz
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            libfreetype-dev \
+            libfontconfig-dev \
+            libegl1-mesa-dev \
+            libgl1-mesa-dev \
+            libgles2-mesa-dev \
+            libwayland-dev \
+            libxkbcommon-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          PACKAGE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}
+          ARCHIVE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}.${{ matrix.extension }}
+        run: |
+          mkdir -p "dist/$PACKAGE"
+          cp target/release/Loom README.md LICENSE-MIT LICENSE-APACHE "dist/$PACKAGE/"
+          chmod +x "dist/$PACKAGE/Loom"
+          tar -czf "dist/$ARCHIVE" -C dist "$PACKAGE"
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PACKAGE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}
+          ARCHIVE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}.${{ matrix.extension }}
+        run: |
+          $packageDir = Join-Path dist $env:PACKAGE
+          New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+          Copy-Item target/release/Loom.exe, README.md, LICENSE-MIT, LICENSE-APACHE $packageDir
+          Compress-Archive -Path $packageDir -DestinationPath (Join-Path dist $env:ARCHIVE)
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}
+          path: dist/Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}.${{ matrix.extension }}
+          if-no-files-found: error
+          retention-days: 14

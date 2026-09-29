@@ -75,6 +75,17 @@ The project follows the `main` branch of the lgui repository. `Cargo.lock`
 pins the exact lgui commit used by a build. Run `cargo update -p lgui` when you
 want to update that pinned commit.
 
+## Continuous integration and releases
+
+GitHub Actions checks formatting and Clippy on Linux, then tests and builds Loom
+on Ubuntu x64, Windows x64, and macOS ARM64. Successful runs expose packaged
+binaries as workflow artifacts.
+
+The release workflow validates that the requested version matches `Cargo.toml`.
+Push a version tag such as `v0.1.0`, or run the workflow manually with `0.1.0`,
+to build all three packages and publish them to the corresponding GitHub
+release.
+
 `lgui` uses Skia for rendering and Winit for the window. The renderer is the
 **software** Skia backend (`renderer-skia-software`), which presents via
 `softbuffer`. `skia-safe` downloads a prebuilt Skia archive automatically at
