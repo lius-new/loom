@@ -135,9 +135,18 @@ impl AppState {
     pub fn restored() -> Self {
         let mut app = Self::new();
         let session = crate::workspace_persistence::load();
+        app.show_terminal = session.show_terminal && !session.terminal_tabs.is_empty();
+        if let Some(height) = session.terminal_height.filter(|height| height.is_finite()) {
+            app.terminal_h = height;
+        }
         app.workspace_folders = session.open_folders;
         app.recent_folders = session.recent_folders;
         crate::workspace_actions::hydrate_workspace_folders(&mut app);
+        crate::workspace_actions::hydrate_file_tabs(
+            &mut app,
+            session.open_files,
+            session.active_file,
+        );
         app
     }
 

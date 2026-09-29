@@ -255,6 +255,41 @@ pub(crate) fn hydrate_workspace_folders(app: &mut AppState) {
     include_workspace_folders_in_recents(app);
 }
 
+/// Reopen the persisted file tabs from disk, preserving their order and the
+/// active tab. Files that are no longer readable are skipped independently.
+pub(crate) fn hydrate_file_tabs(
+    app: &mut AppState,
+    open_files: Vec<PathBuf>,
+    active_file: Option<PathBuf>,
+) {
+    hydrate_file_tabs_with(app, open_files, active_file, read_text_file);
+}
+
+fn hydrate_file_tabs_with(
+    app: &mut AppState,
+    open_files: Vec<PathBuf>,
+    active_file: Option<PathBuf>,
+    mut read: impl FnMut(&Path) -> Result<String, String>,
+) {
+    let mut first_restored = None;
+    let mut active_restored = None;
+    for path in open_files {
+        let Ok(contents) = read(&path) else {
+            continue;
+        };
+        let should_activate = active_file.as_deref() == Some(path.as_path());
+        let id = app.workspace.open_path(path, contents);
+        first_restored.get_or_insert(id);
+        if should_activate {
+            active_restored = Some(id);
+        }
+    }
+
+    if let Some(id) = active_restored.or(first_restored) {
+        app.workspace.set_active(id);
+    }
+}
+
 fn existing_unique(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut unique = Vec::new();
     for path in paths {
@@ -402,5 +437,29 @@ mod tests {
         include_workspace_folders_in_recents(&mut app);
 
         assert_eq!(app.recent_folders, vec![second, older, first]);
+    }
+
+    #[test]
+    fn restores_file_tabs_in_order_and_reactivates_the_saved_file() {
+        let mut app = AppState::new();
+        let first = PathBuf::from("first.rs");
+        let missing = PathBuf::from("missing.rs");
+        let second = PathBuf::from("second.rs");
+
+        hydrate_file_tabs_with(
+            &mut app,
+            vec![first.clone(), missing.clone(), second.clone()],
+            Some(first.clone()),
+            |path| {
+                if path == missing {
+                    Err("missing".to_owned())
+                } else {
+                    Ok(format!("// {}", path.display()))
+                }
+            },
+        );
+
+        assert_eq!(app.workspace.open_paths(), vec![first.clone(), second]);
+        assert_eq!(app.workspace.active_path(), Some(first.as_path()));
     }
 }

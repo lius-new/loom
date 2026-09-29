@@ -39,6 +39,14 @@ impl Workspace {
         &self.open
     }
 
+    pub fn open_paths(&self) -> Vec<PathBuf> {
+        self.open
+            .iter()
+            .filter_map(|id| self.documents.get(id))
+            .map(|document| document.meta.path.clone())
+            .collect()
+    }
+
     pub fn active(&self) -> Option<FileId> {
         self.active
     }
@@ -188,6 +196,10 @@ mod tests {
         assert_eq!(reopened, first);
         assert_eq!(workspace.active(), Some(first));
         assert_eq!(workspace.open_files(), &[first, second]);
+        assert_eq!(
+            workspace.open_paths(),
+            vec![PathBuf::from("src/main.rs"), PathBuf::from("README.md")]
+        );
         assert_eq!(workspace.active_buffer().unwrap().text(), "fn main() {}");
     }
 

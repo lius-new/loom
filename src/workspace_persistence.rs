@@ -8,6 +8,8 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::terminal_session::ShellKind;
+
 pub const MAX_RECENT_FOLDERS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -28,6 +30,18 @@ pub struct WorkspaceSession {
     pub recent_folders: Vec<PathBuf>,
     #[serde(default)]
     pub window: Option<WindowGeometry>,
+    #[serde(default)]
+    pub open_files: Vec<PathBuf>,
+    #[serde(default)]
+    pub active_file: Option<PathBuf>,
+    #[serde(default)]
+    pub terminal_tabs: Vec<ShellKind>,
+    #[serde(default)]
+    pub active_terminal: Option<usize>,
+    #[serde(default)]
+    pub show_terminal: bool,
+    #[serde(default)]
+    pub terminal_height: Option<f32>,
 }
 
 pub fn load() -> WorkspaceSession {
@@ -56,6 +70,27 @@ pub fn save(open_folders: &[PathBuf], recent_folders: &[PathBuf]) -> io::Result<
 
 pub fn save_window_geometry(geometry: WindowGeometry) -> io::Result<()> {
     update(|session| session.window = Some(geometry))
+}
+
+pub fn save_file_tabs(open_files: &[PathBuf], active_file: Option<&Path>) -> io::Result<()> {
+    update(|session| {
+        session.open_files = open_files.to_vec();
+        session.active_file = active_file.map(Path::to_path_buf);
+    })
+}
+
+pub fn save_terminal_state(
+    terminal_tabs: &[ShellKind],
+    active_terminal: Option<usize>,
+    show_terminal: bool,
+    terminal_height: f32,
+) -> io::Result<()> {
+    update(|session| {
+        session.terminal_tabs = terminal_tabs.to_vec();
+        session.active_terminal = active_terminal;
+        session.show_terminal = show_terminal;
+        session.terminal_height = Some(terminal_height);
+    })
 }
 
 fn update(change: impl FnOnce(&mut WorkspaceSession)) -> io::Result<()> {
@@ -131,6 +166,12 @@ mod tests {
                 height: 600.0,
                 maximized: false,
             }),
+            open_files: vec![PathBuf::from("one/main.rs"), PathBuf::from("two/lib.rs")],
+            active_file: Some(PathBuf::from("one/main.rs")),
+            terminal_tabs: vec![ShellKind::PowerShell, ShellKind::Bash],
+            active_terminal: Some(1),
+            show_terminal: true,
+            terminal_height: Some(320.0),
         };
 
         let json = serde_json::to_string(&session).unwrap();

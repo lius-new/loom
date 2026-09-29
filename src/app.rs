@@ -21,14 +21,20 @@ use crate::ui::{
     toast,
 };
 use crate::window_geometry;
+use crate::workspace_persistence;
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state_with(AppState::restored);
-    let terminal_tabs = cx.state(TerminalTabs::new());
+    let terminal_tabs = cx.state_with(|| {
+        let session = workspace_persistence::load();
+        TerminalTabs::restored(session.terminal_tabs, session.active_terminal)
+    });
     let terminal_cursor_blink = cx.state(true);
     let terminal_cursor_visible = terminal_cursor_blink.get();
     let terminal_tab_snapshot = terminal_tabs.get();
     let active_terminal_id = terminal_tab_snapshot.active_id();
+    let terminal_shells = terminal_tab_snapshot.shells();
+    let active_terminal_index = terminal_tab_snapshot.active_index();
     let terminal_controller = terminal_tab_snapshot
         .active()
         .map(|tab| tab.controller.clone());
@@ -55,6 +61,16 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     // Snapshot toggles for this frame.
     let s = state.get();
+    let open_tab_paths = s.workspace.open_paths();
+    let active_tab_path = s.workspace.active_path().map(std::path::Path::to_path_buf);
+    cx.use_effect(
+        (open_tab_paths.clone(), active_tab_path.clone()),
+        move || {
+            let _ =
+                workspace_persistence::save_file_tabs(&open_tab_paths, active_tab_path.as_deref());
+            || {}
+        },
+    );
     let document_state = state.clone();
     cx.use_effect(s.workspace.active(), move || {
         document_state.update(|app| {
@@ -66,6 +82,23 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         });
     });
     let show_term = s.show_terminal;
+    cx.use_effect(
+        (
+            terminal_shells.clone(),
+            active_terminal_index,
+            show_term,
+            s.terminal_h,
+        ),
+        move || {
+            let _ = workspace_persistence::save_terminal_state(
+                &terminal_shells,
+                active_terminal_index,
+                show_term,
+                s.terminal_h,
+            );
+            || {}
+        },
+    );
     let show_drawer = s.show_drawer;
     let show_palette = s.show_palette;
     let show_clone_dialog = s.show_clone_dialog;

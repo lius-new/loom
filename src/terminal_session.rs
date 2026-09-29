@@ -15,6 +15,7 @@ use std::time::Duration;
 use lgui::ApplicationHandle;
 #[cfg(not(windows))]
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use serde::{Deserialize, Serialize};
 
 const SCROLLBACK_ROWS: usize = 2_000;
 
@@ -26,7 +27,8 @@ pub struct TerminalSize {
     pub pixel_height: u16,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ShellKind {
     #[default]
     PowerShell,
@@ -145,13 +147,31 @@ pub struct TerminalTabs {
 
 impl TerminalTabs {
     pub fn new() -> Self {
-        let mut tabs = Self {
+        let mut tabs = Self::empty();
+        tabs.add(ShellKind::default());
+        tabs
+    }
+
+    pub fn restored(shells: Vec<ShellKind>, active_index: Option<usize>) -> Self {
+        let mut tabs = Self::empty();
+        for shell in shells {
+            tabs.add(shell);
+        }
+        if let Some(active_id) = active_index
+            .and_then(|index| tabs.tabs.get(index))
+            .map(|tab| tab.id)
+        {
+            tabs.active_id = Some(active_id);
+        }
+        tabs
+    }
+
+    fn empty() -> Self {
+        Self {
             tabs: Vec::new(),
             active_id: None,
             next_id: 1,
-        };
-        tabs.add(ShellKind::default());
-        tabs
+        }
     }
 
     pub fn tabs(&self) -> &[TerminalTab] {
@@ -165,6 +185,15 @@ impl TerminalTabs {
     pub fn active(&self) -> Option<&TerminalTab> {
         let active_id = self.active_id?;
         self.tabs.iter().find(|tab| tab.id == active_id)
+    }
+
+    pub fn shells(&self) -> Vec<ShellKind> {
+        self.tabs.iter().map(|tab| tab.controller.shell()).collect()
+    }
+
+    pub fn active_index(&self) -> Option<usize> {
+        let active_id = self.active_id?;
+        self.tabs.iter().position(|tab| tab.id == active_id)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -879,6 +908,28 @@ mod tests {
         tabs.close(second);
         assert!(tabs.is_empty());
         assert_eq!(tabs.active_id(), None);
+    }
+
+    #[test]
+    fn terminal_tabs_restore_shell_order_and_active_index() {
+        let tabs = TerminalTabs::restored(
+            vec![ShellKind::Cmd, ShellKind::Bash, ShellKind::PowerShell],
+            Some(1),
+        );
+
+        assert_eq!(
+            tabs.shells(),
+            vec![ShellKind::Cmd, ShellKind::Bash, ShellKind::PowerShell]
+        );
+        assert_eq!(tabs.active_index(), Some(1));
+        assert_eq!(
+            tabs.active().map(|tab| tab.controller.shell()),
+            Some(ShellKind::Bash)
+        );
+
+        let empty = TerminalTabs::restored(Vec::new(), None);
+        assert!(empty.is_empty());
+        assert_eq!(empty.active_index(), None);
     }
 
     #[cfg(target_os = "windows")]
