@@ -21,12 +21,23 @@ pub struct DiffRow {
     pub kind: DiffRowKind,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SplitDiffRow {
+    pub old_line: Option<usize>,
+    pub old_text: Option<String>,
+    pub new_line: Option<usize>,
+    pub new_text: Option<String>,
+    pub hunk: Option<String>,
+    pub changed: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct DiffDocument {
     pub repository_root: PathBuf,
     pub path: PathBuf,
     pub target: DiffTarget,
     pub rows: Vec<DiffRow>,
+    pub split_rows: Vec<SplitDiffRow>,
     pub binary: bool,
 }
 
@@ -101,11 +112,13 @@ impl DiffDocument {
             }
         }
 
+        let split_rows = build_split_rows(&rows);
         Self {
             repository_root,
             path,
             target,
             rows,
+            split_rows,
             binary,
         }
     }
@@ -116,7 +129,7 @@ impl DiffDocument {
         target: DiffTarget,
         contents: &str,
     ) -> Self {
-        let rows = contents
+        let rows: Vec<DiffRow> = contents
             .lines()
             .enumerate()
             .map(|(index, text)| DiffRow {
@@ -126,11 +139,13 @@ impl DiffDocument {
                 kind: DiffRowKind::Addition,
             })
             .collect();
+        let split_rows = build_split_rows(&rows);
         Self {
             repository_root,
             path,
             target,
             rows,
+            split_rows,
             binary: false,
         }
     }
@@ -158,6 +173,113 @@ impl DiffDocument {
     pub fn matches(&self, repository_root: &Path, path: &Path, target: DiffTarget) -> bool {
         self.repository_root == repository_root && self.path == path && self.target == target
     }
+
+    pub fn additions(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| row.kind == DiffRowKind::Addition)
+            .count()
+    }
+
+    pub fn deletions(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| row.kind == DiffRowKind::Deletion)
+            .count()
+    }
+
+    pub fn change_starts(&self, split: bool) -> Vec<usize> {
+        if split {
+            self.split_rows
+                .iter()
+                .enumerate()
+                .filter_map(|(index, row)| {
+                    (row.changed
+                        && (index == 0 || !self.split_rows[index.saturating_sub(1)].changed))
+                        .then_some(index)
+                })
+                .collect()
+        } else {
+            self.rows
+                .iter()
+                .enumerate()
+                .filter_map(|(index, row)| {
+                    let changed = matches!(row.kind, DiffRowKind::Addition | DiffRowKind::Deletion);
+                    let previous_changed = index > 0
+                        && matches!(
+                            self.rows[index - 1].kind,
+                            DiffRowKind::Addition | DiffRowKind::Deletion
+                        );
+                    (changed && !previous_changed).then_some(index)
+                })
+                .collect()
+        }
+    }
+}
+
+fn build_split_rows(rows: &[DiffRow]) -> Vec<SplitDiffRow> {
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < rows.len() {
+        match rows[index].kind {
+            DiffRowKind::Context => {
+                let row = &rows[index];
+                result.push(SplitDiffRow {
+                    old_line: row.old_line,
+                    old_text: Some(row.text.clone()),
+                    new_line: row.new_line,
+                    new_text: Some(row.text.clone()),
+                    hunk: None,
+                    changed: false,
+                });
+                index += 1;
+            }
+            DiffRowKind::Hunk => {
+                result.push(SplitDiffRow {
+                    old_line: None,
+                    old_text: None,
+                    new_line: None,
+                    new_text: None,
+                    hunk: Some(rows[index].text.clone()),
+                    changed: false,
+                });
+                index += 1;
+            }
+            DiffRowKind::Addition | DiffRowKind::Deletion => {
+                let block_start = index;
+                while index < rows.len()
+                    && matches!(
+                        rows[index].kind,
+                        DiffRowKind::Addition | DiffRowKind::Deletion
+                    )
+                {
+                    index += 1;
+                }
+                let block = &rows[block_start..index];
+                let deletions = block
+                    .iter()
+                    .filter(|row| row.kind == DiffRowKind::Deletion)
+                    .collect::<Vec<_>>();
+                let additions = block
+                    .iter()
+                    .filter(|row| row.kind == DiffRowKind::Addition)
+                    .collect::<Vec<_>>();
+                for offset in 0..deletions.len().max(additions.len()) {
+                    let old = deletions.get(offset).copied();
+                    let new = additions.get(offset).copied();
+                    result.push(SplitDiffRow {
+                        old_line: old.and_then(|row| row.old_line),
+                        old_text: old.map(|row| row.text.clone()),
+                        new_line: new.and_then(|row| row.new_line),
+                        new_text: new.map(|row| row.text.clone()),
+                        hunk: None,
+                        changed: true,
+                    });
+                }
+            }
+        }
+    }
+    result
 }
 
 fn line_number(value: usize) -> Option<usize> {
@@ -189,6 +311,13 @@ mod tests {
         assert_eq!(document.rows[1].new_line, None);
         assert_eq!(document.rows[2].kind, DiffRowKind::Addition);
         assert_eq!(document.rows[2].new_line, Some(2));
+        assert_eq!(document.split_rows.len(), 3);
+        assert_eq!(document.split_rows[1].old_text.as_deref(), Some("old"));
+        assert_eq!(document.split_rows[1].new_text.as_deref(), Some("new"));
+        assert_eq!(document.split_rows[2].old_text, None);
+        assert_eq!(document.split_rows[2].new_text.as_deref(), Some("more"));
+        assert_eq!(document.change_starts(false), vec![1]);
+        assert_eq!(document.change_starts(true), vec![1]);
         assert_eq!(document.title(), "a.txt (Working Tree)");
     }
 }

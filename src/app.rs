@@ -431,7 +431,11 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     root = root.child(tabs::render(tabs_rect, state.clone(), editor_focus.clone()));
     if s.workspace.active_diff().is_some() {
-        root = root.child(diff_editor::render(code_rect, state.clone()));
+        root = root.child(diff_editor::render(
+            code_rect,
+            state.clone(),
+            editor_focus.clone(),
+        ));
     } else {
         root = root.child(editor_view::render(
             code_rect,
