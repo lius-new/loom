@@ -1,8 +1,9 @@
-//! Command palette overlay (Cmd/Ctrl+P): currently open file picker.
+//! Command palette overlay (Cmd/Ctrl+P): semantic commands and open files.
 
 use lgui::core::{EventPolicy, UiFocusHandle};
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
+use crate::input::commands;
 use crate::state::AppState;
 use crate::theme;
 
@@ -38,11 +39,65 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             input.right - 12.0,
             card.top + 35.0,
         ),
-        "Open files",
+        "Commands and open files",
         theme::mono(theme::ZINC_500, theme::SMALL),
     ));
 
     let mut y = card.top + 54.0;
+    for command in commands::all() {
+        let enabled = (command.enabled)(&s);
+        let action = command.action;
+        let st = state.clone();
+        let row = UiRect::new(card.left + 8.0, y, card.right - 8.0, y + 28.0);
+        overlay = overlay.child(
+            panel(
+                row,
+                if enabled {
+                    VisualStyle::default()
+                } else {
+                    VisualStyle::filled(theme::BG)
+                },
+            )
+            .event_policy(EventPolicy::INTERACTIVE)
+            .on_click(move || {
+                if enabled {
+                    st.update(move |app| {
+                        app.show_palette = false;
+                        app.apply(action);
+                    });
+                }
+            })
+            .child(text(
+                UiRect::new(
+                    row.left + 10.0,
+                    row.top + 5.0,
+                    row.right - 110.0,
+                    row.bottom - 3.0,
+                ),
+                command.title,
+                theme::mono(
+                    if enabled {
+                        theme::ZINC_200
+                    } else {
+                        theme::ZINC_600
+                    },
+                    theme::UI_SIZE,
+                ),
+            ))
+            .child(text(
+                UiRect::new(
+                    row.right - 100.0,
+                    row.top + 5.0,
+                    row.right - 10.0,
+                    row.bottom - 3.0,
+                ),
+                command.category,
+                theme::mono(theme::ZINC_500, theme::SMALL),
+            )),
+        );
+        y += 28.0;
+    }
+    y += 6.0;
     if s.workspace.open_files().is_empty() {
         overlay = overlay.child(text(
             UiRect::new(card.left + 18.0, y + 8.0, card.right - 18.0, y + 28.0),

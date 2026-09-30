@@ -16,6 +16,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
+use crate::git::GitStoreSnapshot;
 use crate::state::{AppState, DirEntry};
 use crate::theme;
 use crate::workspace_actions;
@@ -50,8 +51,14 @@ struct StickyRow {
     top: f32,
 }
 
-pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
+pub fn render(
+    rect: UiRect,
+    state: State<AppState>,
+    git_store: State<GitStoreSnapshot>,
+    editor_focus: UiFocusHandle,
+) -> Element {
     let s = state.get();
+    let git = git_store.get();
     let header_rect = UiRect::new(rect.left, rect.top, rect.right, rect.top + HEADER_H);
     let content_rect = UiRect::new(rect.left, header_rect.bottom, rect.right, rect.bottom);
 
@@ -155,6 +162,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                     &mut path,
                     &mut rows,
                     content_right,
+                    &git,
                     &editor_focus,
                 ));
                 if y > children_top {
@@ -625,6 +633,7 @@ fn build_tree(
     path: &mut Vec<StickyDirectory>,
     rows: &mut Vec<TreeRowMeta>,
     content_right: f32,
+    git: &GitStoreSnapshot,
     editor_focus: &UiFocusHandle,
 ) -> Vec<Element> {
     let mut els = Vec::new();
@@ -677,6 +686,11 @@ fn build_tree(
             let icon = crate::file_icons::icon_for_file(&name);
             let file_path = entry.path.clone();
             let open_id = s.workspace.file_id_for_path(&file_path);
+            let git_indicator = git
+                .repository_for_path(&file_path)
+                .and_then(|repository| repository.state_for_absolute_path(&file_path))
+                .map(|state| state.display_kind().indicator())
+                .unwrap_or_default();
             let row_style = if s.workspace.active_path() == Some(file_path.as_path()) {
                 VisualStyle::filled(theme::ACTIVE_LINE)
             } else if s.tree_hovered_path.as_deref() == Some(key.as_str()) {
@@ -734,11 +748,21 @@ fn build_tree(
                     UiRect::new(
                         indent + TREE_LABEL_OFFSET,
                         *y + 2.0,
-                        content_right - 12.0,
+                        content_right - 30.0,
                         *y + 18.0,
                     ),
                     name,
                     theme::mono(theme::ZINC_400, theme::UI_SIZE),
+                ))
+                .child(text(
+                    UiRect::new(
+                        content_right - 25.0,
+                        *y + 2.0,
+                        content_right - 8.0,
+                        *y + 18.0,
+                    ),
+                    git_indicator,
+                    theme::mono(theme::ACCENT, theme::SMALL),
                 ));
             els.push(row);
         }
@@ -760,6 +784,7 @@ fn build_tree(
                 path,
                 rows,
                 content_right,
+                git,
                 editor_focus,
             ));
             if *y > children_top {

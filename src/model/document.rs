@@ -1,6 +1,8 @@
 //! Runtime document identity and metadata.
 
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use lgui::prelude::Color;
 
@@ -76,6 +78,38 @@ pub struct FileMeta {
     pub name: String,
     pub lang: Language,
     pub path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiskState {
+    pub modified_time: Option<SystemTime>,
+    pub size: u64,
+    pub content_hash: u64,
+}
+
+impl DiskState {
+    pub fn capture(path: &Path, contents: &str) -> Self {
+        let metadata = std::fs::metadata(path).ok();
+        Self {
+            modified_time: metadata.as_ref().and_then(|value| value.modified().ok()),
+            size: metadata
+                .as_ref()
+                .map_or(contents.len() as u64, std::fs::Metadata::len),
+            content_hash: content_hash(contents),
+        }
+    }
+
+    pub fn differs_from(&self, other: &Self) -> bool {
+        self.size != other.size
+            || self.content_hash != other.content_hash
+            || self.modified_time != other.modified_time
+    }
+}
+
+pub fn content_hash(contents: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    contents.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl FileMeta {

@@ -110,8 +110,16 @@ jobs:
           ARCHIVE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}.${{ matrix.extension }}
         run: |
           mkdir -p "dist/$PACKAGE"
-          cp target/release/Loom README.md LICENSE-MIT LICENSE-APACHE "dist/$PACKAGE/"
+          cp target/release/Loom README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md "dist/$PACKAGE/"
           chmod +x "dist/$PACKAGE/Loom"
+          bash scripts/stage-system-git-runtime.sh "dist/$PACKAGE"
+          runtime="$PWD/dist/$PACKAGE/runtime/git"
+          smoke="$RUNNER_TEMP/loom-git-smoke"
+          rm -rf "$smoke"
+          mkdir -p "$smoke"
+          GIT_EXEC_PATH="$runtime/libexec/git-core" GIT_TEMPLATE_DIR="$runtime/share/git-core/templates" \
+            "$runtime/bin/git" -C "$smoke" init
+          GIT_EXEC_PATH="$runtime/libexec/git-core" "$runtime/bin/git" -C "$smoke" status --porcelain=v2
           tar -czf "dist/$ARCHIVE" -C dist "$PACKAGE"
 
       - name: Package Windows binary
@@ -123,7 +131,17 @@ jobs:
         run: |
           $packageDir = Join-Path dist $env:PACKAGE
           New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-          Copy-Item target/release/Loom.exe, README.md, LICENSE-MIT, LICENSE-APACHE $packageDir
+          Copy-Item target/release/Loom.exe, README.md, LICENSE-MIT, LICENSE-APACHE, THIRD_PARTY_NOTICES.md $packageDir
+          $gitExe = (Get-Command git).Source
+          $gitRoot = Split-Path (Split-Path $gitExe -Parent) -Parent
+          $gitVersion = (& $gitExe --version).Split(' ')[2]
+          & scripts/package-git-runtime.ps1 -SourceRoot $gitRoot -PackageRoot $packageDir -Version $gitVersion -SourceUrl "system-package:Windows"
+          $runtimeGit = Join-Path $packageDir 'runtime/git/bin/git.exe'
+          if (-not (Test-Path $runtimeGit)) { $runtimeGit = Join-Path $packageDir 'runtime/git/cmd/git.exe' }
+          $smoke = Join-Path $env:RUNNER_TEMP 'loom-git-smoke'
+          New-Item -ItemType Directory -Path $smoke -Force | Out-Null
+          & $runtimeGit -C $smoke init
+          & $runtimeGit -C $smoke status --porcelain=v2
           Compress-Archive -Path $packageDir -DestinationPath (Join-Path dist $env:ARCHIVE)
 
       - name: Upload build artifact

@@ -64,6 +64,29 @@ document icon. Attribution, source revision, and the upstream MIT license are
 stored with the SVG assets under
 `assets/icon-themes/material/`.
 
+## Git integration
+
+Press `Ctrl+Shift+G` (or `Command+Shift+G`) to open Source Control. Loom discovers
+repositories for every workspace root and direct nested repository, then keeps
+branch, upstream, ahead/behind, staged, working-tree, untracked, rename and
+conflict state refreshed in the background. The title bar, status bar, file
+tree, editor gutter and Source Control drawer consume the same immutable
+repository snapshot.
+
+The Source Control drawer supports staging and unstaging, commit, fetch, pull
+and push. The Git backend also provides typed operations for hunk patches,
+branches, tags, history, blame, stash, worktrees, remotes, merge/rebase/
+cherry-pick recovery, submodules, LFS and sparse checkout. Git operations run
+outside the UI thread, are serialized per repository, classify common errors,
+and redact credentials from diagnostic output.
+
+Official packages contain a managed Git runtime with a SHA-256 manifest. Loom
+prefers that runtime and falls back to system Git when a managed runtime is not
+present. Advanced users and development builds can select a custom runtime
+through `GitRuntimeManager`. Open editor buffers are reconciled after Git
+operations: clean files reload automatically, while unsaved buffers are never
+overwritten and are marked when their disk version changes.
+
 ## Build & run
 
 ```sh

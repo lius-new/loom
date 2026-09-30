@@ -1,6 +1,7 @@
 //! The central code viewport: gutter, syntax-highlighted source, cursor and
 //! editor-specific overlay scrollbars.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
@@ -17,6 +18,7 @@ use super::commands::{self, Command};
 use super::interaction::{DragSelection, SelectionUnit};
 use crate::editor::gutter;
 use crate::editor::syntax;
+use crate::git::{GitStoreSnapshot, LineChange};
 use crate::model::buffer::TextBuffer;
 use crate::state::AppState;
 use crate::theme;
@@ -48,10 +50,12 @@ struct ThumbGeometry {
 pub fn render(
     rect: UiRect,
     state: State<AppState>,
+    git_store: State<GitStoreSnapshot>,
     editor_id: UiId,
     editor_focus: UiFocusHandle,
 ) -> Element {
     let s = state.get();
+    let git = git_store.get();
 
     let ime_rect = ime_cursor_rect(&s, rect);
     let mut root = Element::new(move |cx| {
@@ -69,6 +73,23 @@ pub fn render(
             .meta(id)
             .expect("active document metadata exists");
         let buffer = s.workspace.active_buffer().expect("active buffer exists");
+        let decorations = git
+            .line_changes
+            .get(&meta.path)
+            .map(|changes| {
+                changes
+                    .iter()
+                    .map(|(line, change)| {
+                        let decoration = match change {
+                            LineChange::Added => gutter::GutterDecoration::GitAdded,
+                            LineChange::Modified => gutter::GutterDecoration::GitModified,
+                            LineChange::Deleted => gutter::GutterDecoration::GitDeleted,
+                        };
+                        (*line, vec![decoration])
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
         let lines = document_lines(buffer);
         let (cursor_line, cursor_col) = buffer.line_col();
         let code_top = rect.top;
@@ -219,7 +240,7 @@ pub fn render(
         root = root.child(clip(gutter_viewport, 0.0, -scroll_y).child(gutter::render(
             gutter_content,
             visible_lines.clone(),
-            None,
+            &decorations,
         )));
 
         let code_viewport = UiRect::new(
@@ -1204,10 +1225,11 @@ mod tests {
         let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state(document("hello world\nsecond"));
+            let git_store = cx.state(GitStoreSnapshot::default());
             *output.lock().unwrap() = Some(state.clone());
             let id = cx.use_stable_id();
             let focus = cx.focus_handle(id.clone());
-            render(viewport, state, id, focus)
+            render(viewport, state, git_store, id, focus)
         });
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
@@ -1323,6 +1345,7 @@ mod tests {
             *output.lock().unwrap() = Some(state.clone());
             let id = cx.use_stable_id();
             let focus = cx.focus_handle(id.clone());
+            let git_store = cx.state(GitStoreSnapshot::default());
 
             let drag_state = state.clone();
             let up_state = state.clone();
@@ -1337,7 +1360,7 @@ mod tests {
                 .on_event_capture(UiEventKind::PointerUp, move |_cx, _payload| {
                     up_state.try_update(finish_scrollbar_drag);
                 })
-                .child(render(viewport, state, id, focus))
+                .child(render(viewport, state, git_store, id, focus))
         });
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);

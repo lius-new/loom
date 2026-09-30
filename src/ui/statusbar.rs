@@ -12,6 +12,7 @@ use lgui::core::{EventPolicy, IconStyle, UiElement, UiFocusHandle, UiId, precomp
 use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text};
 use lgui::text::measure_width;
 
+use crate::git::GitStoreSnapshot;
 use crate::state::AppState;
 use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
@@ -36,11 +37,13 @@ fn measure(s: &str) -> f32 {
 pub fn render(
     rect: UiRect,
     state: State<AppState>,
+    git_store: State<GitStoreSnapshot>,
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
     terminal_tabs: State<TerminalTabs>,
 ) -> Element {
     let s = state.get();
+    let git = git_store.get();
 
     let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
 
@@ -80,7 +83,6 @@ pub fn render(
                 .icon_style(IconStyle::new(color)),
         )),
     );
-
     // Right-aligned items. Without an active file, only the editor-wide
     // settings are shown (no Ln/Col position, no language badge).
     let mut items: Vec<(String, TextStyle)> = Vec::new();
@@ -117,6 +119,89 @@ pub fn render(
         ));
         items.push((
             "UTF-8".to_string(),
+            theme::mono(theme::ZINC_500, theme::SMALL),
+        ));
+    }
+
+    let git_dirty = git
+        .active()
+        .is_some_and(|repository| repository.dirty_count() > 0);
+    let git_label = git.active().map_or_else(
+        || "No Git".to_owned(),
+        |repository| {
+            let dirty = if git_dirty { "*" } else { "" };
+            format!("{}{}", repository.branch_label(), dirty)
+        },
+    );
+    let git_icon_w = 12.0;
+    let git_inner_gap = 5.0;
+    let git_pad = 7.0;
+    let git_w = git_pad * 2.0 + git_icon_w + git_inner_gap + measure(&git_label);
+    let git_rect = UiRect::new(
+        rect.left + 38.0,
+        rect.top + 2.0,
+        rect.left + 38.0 + git_w,
+        rect.bottom - 2.0,
+    );
+    let git_color = if git_dirty {
+        theme::AMBER_400
+    } else if git.active().is_some() {
+        theme::ZINC_400
+    } else {
+        theme::ZINC_700
+    };
+    let git_state = state.clone();
+    bar = bar.child(
+        panel(
+            git_rect,
+            if s.show_source_control {
+                VisualStyle::filled(theme::ACTIVE_LINE).radius(3.0)
+            } else {
+                VisualStyle::default()
+            },
+        )
+        .event_policy(EventPolicy::INTERACTIVE)
+        .on_click(move || {
+            git_state.update(|app| {
+                app.show_source_control = !app.show_source_control;
+                if !app.show_source_control {
+                    app.git_sidebar_hovered = false;
+                }
+            });
+        })
+        .child(precompiled(
+            UiElement::icon(
+                UiId::new("statusbar.git"),
+                UiRect::new(
+                    git_rect.left + git_pad,
+                    git_rect.top + 4.0,
+                    git_rect.left + git_pad + git_icon_w,
+                    git_rect.bottom - 4.0,
+                ),
+                "git-branch",
+            )
+            .icon_style(IconStyle::new(git_color)),
+        ))
+        .child(text(
+            UiRect::new(
+                git_rect.left + git_pad + git_icon_w + git_inner_gap,
+                git_rect.top,
+                git_rect.right - git_pad,
+                git_rect.bottom,
+            ),
+            git_label,
+            theme::mono(git_color, theme::SMALL),
+        )),
+    );
+    if let Some(operation) = &git.operation {
+        bar = bar.child(text(
+            UiRect::new(
+                git_rect.right + GAP,
+                rect.top,
+                git_rect.right + GAP + 180.0,
+                rect.bottom,
+            ),
+            operation.message.clone(),
             theme::mono(theme::ZINC_500, theme::SMALL),
         ));
     }

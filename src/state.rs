@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use crate::input::keymap::Action;
 use crate::model::workspace::Workspace;
+use crate::ui::components::input::InputState;
 
 /// One entry in a loaded directory listing.
 #[derive(Clone)]
@@ -19,7 +20,10 @@ pub struct AppState {
     pub editor: crate::editor::interaction::EditorInteraction,
     pub workspace: Workspace,
     pub focused: bool,
+    /// File explorer drawer on the right.
     pub show_drawer: bool,
+    /// Source Control drawer on the left. It is independent from Explorer.
+    pub show_source_control: bool,
     pub show_terminal: bool,
     /// Current terminal panel height in logical pixels.
     pub terminal_h: f32,
@@ -39,6 +43,14 @@ pub struct AppState {
     pub expanded: HashSet<String>,
     pub sidebar_w: f32,
     pub resizing_sidebar: bool,
+    /// Width and drag state for the independent left Source Control drawer.
+    pub git_sidebar_w: f32,
+    pub resizing_git_sidebar: bool,
+    pub git_scroll: f32,
+    /// Whether the pointer is currently inside the Source Control drawer.
+    pub git_sidebar_hovered: bool,
+    pub git_scrollbar_dragging: bool,
+    pub git_scrollbar_drag_offset: f32,
     /// Whether the pointer is currently inside the file-tree drawer.
     pub sidebar_hovered: bool,
     /// File-tree row path currently under the pointer.
@@ -85,6 +97,17 @@ pub struct AppState {
     pub clone_repository_error: Option<String>,
     /// Whether the repository URL input currently owns keyboard focus.
     pub clone_input_focused: bool,
+    /// Commit input retained across failures and repository refreshes.
+    pub git_commit_input: InputState,
+    pub git_commit_amend: bool,
+    pub git_commit_signoff: bool,
+    /// Expanded repository ids in a multi-root workspace.
+    pub git_expanded_repositories: HashSet<u64>,
+    /// Collapsed Source Control groups: conflicts, staged, unstaged, untracked.
+    pub git_collapsed_sections: HashSet<u8>,
+    pub git_tree_view: bool,
+    pub git_split_diff: bool,
+    pub git_inline_blame: bool,
 }
 
 impl AppState {
@@ -94,6 +117,7 @@ impl AppState {
             workspace: Workspace::new(),
             focused: false,
             show_drawer: true,
+            show_source_control: false,
             show_terminal: false,
             terminal_h: crate::theme::TERMINAL_H,
             resizing_terminal: false,
@@ -105,6 +129,12 @@ impl AppState {
             expanded: HashSet::new(),
             sidebar_w: crate::theme::SIDEBAR_W,
             resizing_sidebar: false,
+            git_sidebar_w: crate::theme::SIDEBAR_W,
+            resizing_git_sidebar: false,
+            git_scroll: 0.0,
+            git_sidebar_hovered: false,
+            git_scrollbar_dragging: false,
+            git_scrollbar_drag_offset: 0.0,
             sidebar_hovered: false,
             tree_hovered_path: None,
             context_menu: None,
@@ -128,6 +158,14 @@ impl AppState {
             cloning_repository: false,
             clone_repository_error: None,
             clone_input_focused: false,
+            git_commit_input: InputState::default(),
+            git_commit_amend: false,
+            git_commit_signoff: false,
+            git_expanded_repositories: HashSet::new(),
+            git_collapsed_sections: HashSet::new(),
+            git_tree_view: false,
+            git_split_diff: false,
+            git_inline_blame: false,
         }
     }
 
@@ -141,6 +179,10 @@ impl AppState {
         }
         app.workspace_folders = session.open_folders;
         app.recent_folders = session.recent_folders;
+        app.show_source_control = session.source_control_open;
+        app.git_tree_view = session.git_tree_view;
+        app.git_split_diff = session.git_split_diff;
+        app.git_inline_blame = session.git_inline_blame;
         crate::workspace_actions::hydrate_workspace_folders(&mut app);
         crate::workspace_actions::hydrate_file_tabs(
             &mut app,
@@ -161,6 +203,13 @@ impl AppState {
                     self.show_clone_dialog = true;
                     self.clone_repository_error = None;
                 }
+            }
+            Action::OpenSourceControl => {
+                self.show_palette = false;
+                self.show_source_control = true;
+            }
+            Action::OpenExplorer => {
+                self.show_drawer = true;
             }
             Action::ToggleDrawer => {
                 self.show_drawer = !self.show_drawer;

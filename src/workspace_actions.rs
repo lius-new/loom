@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::thread;
 
 use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
@@ -124,17 +123,18 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
     thread::Builder::new()
         .name("loom-git-clone".to_owned())
         .spawn(move || {
-            let result = Command::new("git")
-                .arg("clone")
-                .arg("--")
-                .arg(&url)
-                .arg(&target)
-                .output();
+            let result = crate::git::service().and_then(|service| {
+                service.clone_repository(
+                    &url,
+                    &target,
+                    &crate::git::command::CancellationToken::default(),
+                )
+            });
 
             clone_state.update(move |app| {
                 app.cloning_repository = false;
                 match result {
-                    Ok(output) if output.status.success() => {
+                    Ok(()) => {
                         app.toast = None;
                         load_folder(app, target);
                         app.show_clone_dialog = false;
@@ -142,12 +142,8 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
                         app.clone_repository_error = None;
                         app.clone_input_focused = false;
                     }
-                    Ok(output) => {
-                        let detail = String::from_utf8_lossy(&output.stderr);
-                        app.clone_repository_error = Some(first_error_line(&detail));
-                    }
                     Err(error) => {
-                        app.clone_repository_error = Some(format!("Could not run git: {error}"));
+                        app.clone_repository_error = Some(error.user_message());
                     }
                 }
             });

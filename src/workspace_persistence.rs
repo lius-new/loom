@@ -42,6 +42,14 @@ pub struct WorkspaceSession {
     pub show_terminal: bool,
     #[serde(default)]
     pub terminal_height: Option<f32>,
+    #[serde(default)]
+    pub source_control_open: bool,
+    #[serde(default)]
+    pub git_tree_view: bool,
+    #[serde(default)]
+    pub git_split_diff: bool,
+    #[serde(default)]
+    pub git_inline_blame: bool,
 }
 
 pub fn load() -> WorkspaceSession {
@@ -90,6 +98,20 @@ pub fn save_terminal_state(
         session.active_terminal = active_terminal;
         session.show_terminal = show_terminal;
         session.terminal_height = Some(terminal_height);
+    })
+}
+
+pub fn save_git_ui(
+    source_control_open: bool,
+    git_tree_view: bool,
+    git_split_diff: bool,
+    git_inline_blame: bool,
+) -> io::Result<()> {
+    update(|session| {
+        session.source_control_open = source_control_open;
+        session.git_tree_view = git_tree_view;
+        session.git_split_diff = git_split_diff;
+        session.git_inline_blame = git_inline_blame;
     })
 }
 
@@ -172,6 +194,10 @@ mod tests {
             active_terminal: Some(1),
             show_terminal: true,
             terminal_height: Some(320.0),
+            source_control_open: true,
+            git_tree_view: true,
+            git_split_diff: true,
+            git_inline_blame: true,
         };
 
         let json = serde_json::to_string(&session).unwrap();

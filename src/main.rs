@@ -8,12 +8,20 @@
 //!   editor/  — code surface (syntax, gutter, viewport)
 //!   ui/      — chrome components (titlebar, sidebar, tabs, …)
 //!   input/   — keymap: raw events → semantic actions
-#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+// Keep debug builds attached to the launching console so `cargo run` can be
+// stopped with Ctrl+C. Packaged release builds remain windowed and do not open
+// a console window.
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 #![allow(dead_code)] // the data layer & palette expose an intentionally broad API
 
 mod app;
 mod editor;
 mod file_icons;
+mod git;
+mod git_actions;
 mod input;
 mod model;
 mod state;
@@ -49,6 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             SvgIconRegistry::new()
                 .with_icon("panel-left", icondata::LuPanelLeft)
                 .with_icon("git-branch", icondata::LuGitBranch)
+                .with_icon("git-commit", icondata::LuGitCommitHorizontal)
                 .with_icon("search", icondata::LuSearch)
                 .with_icon("command", icondata::LuCommand)
                 .with_icon("play", icondata::LuPlay)

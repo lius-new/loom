@@ -12,19 +12,21 @@ use lgui::prelude::{Element, RenderCx, UiRect, group};
 use lgui::window::WindowFocusChanged;
 
 use crate::editor::editor_view;
+use crate::git::GitStoreSnapshot;
 use crate::input::keymap;
 use crate::state::AppState;
 use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
 use crate::ui::{
-    clone_repository, command_palette, context_menu, sidebar, statusbar, tabs, terminal, titlebar,
-    toast,
+    clone_repository, command_palette, context_menu, git_panel, sidebar, statusbar, tabs, terminal,
+    titlebar, toast,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state_with(AppState::restored);
+    let git_store = cx.state_with(GitStoreSnapshot::default);
     let terminal_tabs = cx.state_with(|| {
         let session = workspace_persistence::load();
         TerminalTabs::restored(session.terminal_tabs, session.active_terminal)
@@ -45,16 +47,24 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_focus = cx.focus_handle(terminal_id.clone());
     let clone_input_id = cx.use_stable_id();
     let clone_input_focus = cx.focus_handle(clone_input_id.clone());
+    let commit_input_id = cx.use_stable_id();
+    let commit_input_focus = cx.focus_handle(commit_input_id.clone());
     let vp = cx.viewport();
     let w = vp.width();
     let h = vp.height();
     window_geometry::observe_viewport(w, h);
     let window_focus_state = state.clone();
+    let window_focus_git_store = git_store.clone();
     cx.use_event_once::<WindowFocusChanged>(move |event| {
         if event.window_id.as_str() == "loom" {
             window_geometry::handle_focus_change(event.focused);
             if !event.focused {
                 window_focus_state.try_update(editor_view::finish_scrollbar_drag);
+            } else {
+                window_focus_state.update(|app| {
+                    app.workspace.reconcile_disk();
+                });
+                crate::git_actions::refresh(&window_focus_state, &window_focus_git_store);
             }
         }
     });
@@ -67,6 +77,22 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let s = state.get();
     let open_tab_paths = s.workspace.open_paths();
     let active_tab_path = s.workspace.active_path().map(std::path::Path::to_path_buf);
+    let git_roots = s.workspace_folders.clone();
+    let git_active_path = active_tab_path.clone();
+    let polling_store = git_store.clone();
+    cx.use_effect((git_roots.clone(), git_active_path.clone()), move || {
+        let handle = crate::git::start_polling_async(
+            git_roots,
+            git_active_path,
+            Duration::from_millis(2_000),
+            move |snapshot| {
+                polling_store.update(move |current| {
+                    current.replace_if_newer(snapshot);
+                })
+            },
+        );
+        move || drop(handle)
+    });
     cx.use_effect(
         (open_tab_paths.clone(), active_tab_path.clone()),
         move || {
@@ -104,6 +130,21 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         },
     );
     let show_drawer = s.show_drawer;
+    let git_ui_preferences = (
+        s.show_source_control,
+        s.git_tree_view,
+        s.git_split_diff,
+        s.git_inline_blame,
+    );
+    cx.use_effect(git_ui_preferences, move || {
+        let _ = workspace_persistence::save_git_ui(
+            git_ui_preferences.0,
+            git_ui_preferences.1,
+            git_ui_preferences.2,
+            git_ui_preferences.3,
+        );
+        || {}
+    });
     let show_palette = s.show_palette;
     let show_clone_dialog = s.show_clone_dialog;
 
@@ -119,10 +160,16 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     } else {
         h - theme::STATUS_H
     };
-    let editor_left = 0.0;
+    let source_control_left = s.show_source_control;
+    let explorer_right = show_drawer;
+    let editor_left = if source_control_left {
+        s.git_sidebar_w
+    } else {
+        0.0
+    };
     // The editor and its overlay scrollbars stop at the drawer's visible edge.
     // This keeps the vertical editor thumb reachable while the drawer is open.
-    let tabs_right = if show_drawer { w - s.sidebar_w } else { w };
+    let tabs_right = if explorer_right { w - s.sidebar_w } else { w };
     let tabs_rect = UiRect::new(
         editor_left,
         theme::TITLEBAR_H,
@@ -135,7 +182,13 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         tabs_right,
         main_bottom,
     );
-    let sidebar_rect = UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom);
+    let source_control_rect = UiRect::new(
+        0.0,
+        theme::TITLEBAR_H,
+        s.git_sidebar_w,
+        main_bottom,
+    );
+    let explorer_rect = UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom);
     let terminal_rect = UiRect::new(
         0.0,
         h - theme::STATUS_H - terminal_h,
@@ -257,6 +310,29 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         });
     }
+    let interrupt_state = state.clone();
+    let interrupt_controller = terminal_controller.clone();
+    let interrupt_application = application.clone();
+    root = root.on_event_capture(UiEventKind::KeyDown, move |ctx, payload| {
+        let UiEventPayload::Keyboard { event } = payload else {
+            return;
+        };
+        let is_ctrl_c = event.state == lgui::core::KeyState::Down
+            && event.modifiers.ctrl()
+            && matches!(
+                &event.key,
+                lgui::core::LogicalKey::Character(value) if value.eq_ignore_ascii_case("c")
+            );
+        if interrupt_state.get().terminal_focused
+            && is_ctrl_c
+            && let Some(controller) = interrupt_controller.as_ref()
+        {
+            controller.write(b"\x03");
+            interrupt_application.request_frame();
+            ctx.prevent_default();
+            ctx.stop_propagation();
+        }
+    });
     let st = state.clone();
     let global_editor_focus = editor_focus.clone();
     let global_terminal_focus = terminal_focus.clone();
@@ -290,7 +366,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let st_hover = state.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
-            let hovered = show_drawer && sidebar_rect.contains(pointer.point);
+            let hovered = show_drawer && explorer_rect.contains(pointer.point);
             st_hover.try_update(move |app| {
                 let changed =
                     app.sidebar_hovered != hovered || (!hovered && app.tree_hovered_path.is_some());
@@ -298,6 +374,21 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
                 if !hovered {
                     app.tree_hovered_path = None;
                 }
+                changed
+            });
+        }
+    });
+
+    // Keep Source Control's overlay scrollbar behavior aligned with Explorer:
+    // it is visible while the pointer is inside the drawer or while its thumb
+    // is being dragged.
+    let st_git_hover = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
+        if let UiEventPayload::PointerMove { pointer } = payload {
+            let hovered = source_control_left && source_control_rect.contains(pointer.point);
+            st_git_hover.try_update(move |app| {
+                let changed = app.git_sidebar_hovered != hovered;
+                app.git_sidebar_hovered = hovered;
                 changed
             });
         }
@@ -342,14 +433,26 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.child(editor_view::render(
         code_rect,
         state.clone(),
+        git_store.clone(),
         editor_id,
         editor_focus.clone(),
     ));
 
+    if source_control_left {
+        root = root.child(git_panel::render(
+            source_control_rect,
+            state.clone(),
+            git_store.clone(),
+            editor_focus.clone(),
+            commit_input_focus,
+            commit_input_id,
+        ));
+    }
     if show_drawer {
         root = root.child(sidebar::render(
-            sidebar_rect,
+            explorer_rect,
             state.clone(),
+            git_store.clone(),
             editor_focus.clone(),
         ));
     }
@@ -372,6 +475,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.child(statusbar::render(
         statusbar_rect,
         state.clone(),
+        git_store.clone(),
         editor_focus.clone(),
         terminal_focus,
         terminal_tabs,
