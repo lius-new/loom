@@ -8,6 +8,7 @@
 //!   editor/  — code surface (syntax, gutter, viewport)
 //!   ui/      — chrome components (titlebar, sidebar, tabs, …)
 //!   input/   — keymap: raw events → semantic actions
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 #![allow(dead_code)] // the data layer & palette expose an intentionally broad API
 
 mod app;
