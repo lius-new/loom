@@ -5,5 +5,6 @@
 //! * `workspace` — the set of open buffers and the active one.
 
 pub mod buffer;
+pub mod diff_document;
 pub mod document;
 pub mod workspace;

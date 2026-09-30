@@ -8,6 +8,7 @@ pub mod clone_repository;
 pub mod command_palette;
 pub mod components;
 pub mod context_menu;
+pub mod diff_editor;
 pub mod git_panel;
 pub mod sidebar;
 pub mod statusbar;

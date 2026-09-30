@@ -91,23 +91,26 @@ pub fn render(
             .workspace
             .meta(id)
             .expect("active document metadata exists");
-        let (line, col) = s
-            .workspace
-            .active_buffer()
-            .expect("active buffer exists")
-            .line_col();
-        items.push((
-            format!("Ln {}, Col {}", line + 1, col + 1),
-            theme::mono(theme::ZINC_400, theme::SMALL),
-        ));
-        items.push((
-            "Spaces: 2".to_string(),
-            theme::mono(theme::ZINC_500, theme::SMALL),
-        ));
-        items.push((
-            "UTF-8".to_string(),
-            theme::mono(theme::ZINC_500, theme::SMALL),
-        ));
+        if let Some(buffer) = s.workspace.active_buffer() {
+            let (line, col) = buffer.line_col();
+            items.push((
+                format!("Ln {}, Col {}", line + 1, col + 1),
+                theme::mono(theme::ZINC_400, theme::SMALL),
+            ));
+            items.push((
+                "Spaces: 2".to_string(),
+                theme::mono(theme::ZINC_500, theme::SMALL),
+            ));
+            items.push((
+                "UTF-8".to_string(),
+                theme::mono(theme::ZINC_500, theme::SMALL),
+            ));
+        } else {
+            items.push((
+                "Text Diff".to_string(),
+                theme::mono(theme::ZINC_500, theme::SMALL),
+            ));
+        }
         items.push((
             m.lang.badge().to_string(),
             theme::mono_bold(m.lang.badge_color(), theme::SMALL),

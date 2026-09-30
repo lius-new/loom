@@ -18,8 +18,8 @@ use crate::state::AppState;
 use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
 use crate::ui::{
-    clone_repository, command_palette, context_menu, git_panel, sidebar, statusbar, tabs, terminal,
-    titlebar, toast,
+    clone_repository, command_palette, context_menu, diff_editor, git_panel, sidebar, statusbar,
+    tabs, terminal, titlebar, toast,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -430,13 +430,17 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.child(titlebar::render(titlebar_rect));
 
     root = root.child(tabs::render(tabs_rect, state.clone(), editor_focus.clone()));
-    root = root.child(editor_view::render(
-        code_rect,
-        state.clone(),
-        git_store.clone(),
-        editor_id,
-        editor_focus.clone(),
-    ));
+    if s.workspace.active_diff().is_some() {
+        root = root.child(diff_editor::render(code_rect, state.clone()));
+    } else {
+        root = root.child(editor_view::render(
+            code_rect,
+            state.clone(),
+            git_store.clone(),
+            editor_id,
+            editor_focus.clone(),
+        ));
+    }
 
     if source_control_left {
         root = root.child(git_panel::render(

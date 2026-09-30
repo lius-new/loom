@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::git::DiffTarget;
 use crate::model::buffer::TextBuffer;
+use crate::model::diff_document::DiffDocument;
 use crate::model::document::{DiskState, FileId, FileMeta};
 
 #[derive(Clone)]
@@ -11,6 +13,7 @@ struct OpenDocument {
     meta: FileMeta,
     buffer: TextBuffer,
     saved_text: String,
+    diff: Option<DiffDocument>,
     scroll_x: f32,
     scroll_y: f32,
     disk_state: DiskState,
@@ -55,6 +58,7 @@ impl Workspace {
         self.open
             .iter()
             .filter_map(|id| self.documents.get(id))
+            .filter(|document| document.diff.is_none())
             .map(|document| document.meta.path.clone())
             .collect()
     }
@@ -75,6 +79,18 @@ impl Workspace {
         self.active_meta().map(|meta| meta.path.as_path())
     }
 
+    pub fn active_diff(&self) -> Option<&DiffDocument> {
+        self.active
+            .and_then(|id| self.documents.get(&id))
+            .and_then(|document| document.diff.as_ref())
+    }
+
+    pub fn is_diff(&self, id: FileId) -> bool {
+        self.documents
+            .get(&id)
+            .is_some_and(|document| document.diff.is_some())
+    }
+
     pub fn file_id_for_path(&self, path: &Path) -> Option<FileId> {
         self.paths.get(path).copied()
     }
@@ -82,19 +98,21 @@ impl Workspace {
     pub fn active_buffer(&self) -> Option<&TextBuffer> {
         self.active
             .and_then(|id| self.documents.get(&id))
+            .filter(|document| document.diff.is_none())
             .map(|document| &document.buffer)
     }
 
     pub fn active_buffer_mut(&mut self) -> Option<&mut TextBuffer> {
         self.active
             .and_then(|id| self.documents.get_mut(&id))
+            .filter(|document| document.diff.is_none())
             .map(|document| &mut document.buffer)
     }
 
     pub fn is_dirty(&self, id: FileId) -> bool {
-        self.documents
-            .get(&id)
-            .is_some_and(|document| document.buffer.text() != document.saved_text)
+        self.documents.get(&id).is_some_and(|document| {
+            document.diff.is_none() && document.buffer.text() != document.saved_text
+        })
     }
 
     pub fn dirty_paths(&self) -> Vec<PathBuf> {
@@ -115,18 +133,21 @@ impl Workspace {
     pub fn has_disk_conflict(&self, id: FileId) -> bool {
         self.documents
             .get(&id)
-            .is_some_and(|document| document.disk_conflict)
+            .is_some_and(|document| document.diff.is_none() && document.disk_conflict)
     }
 
     pub fn is_missing_on_disk(&self, id: FileId) -> bool {
         self.documents
             .get(&id)
-            .is_some_and(|document| document.missing_on_disk)
+            .is_some_and(|document| document.diff.is_none() && document.missing_on_disk)
     }
 
     pub fn active_save_snapshot(&self) -> Option<(FileId, PathBuf, String)> {
         let id = self.active?;
         let document = self.documents.get(&id)?;
+        if document.diff.is_some() {
+            return None;
+        }
         Some((
             id,
             document.meta.path.clone(),
@@ -138,6 +159,9 @@ impl Workspace {
         let Some(document) = self.documents.get_mut(&id) else {
             return false;
         };
+        if document.diff.is_some() {
+            return false;
+        }
         document.saved_text = document.buffer.text().to_owned();
         document.disk_state = DiskState::capture(&document.meta.path, &document.saved_text);
         document.disk_conflict = false;
@@ -177,6 +201,7 @@ impl Workspace {
                 meta: FileMeta::from_path(path.clone()),
                 buffer: TextBuffer::new(contents),
                 saved_text,
+                diff: None,
                 scroll_x: 0.0,
                 scroll_y: 0.0,
                 disk_state,
@@ -190,6 +215,60 @@ impl Workspace {
         id
     }
 
+    /// Open or refresh a read-only diff tab. A tab is uniquely identified by
+    /// repository, relative path and comparison target.
+    pub fn open_diff(&mut self, diff: DiffDocument) -> FileId {
+        if let Some((&id, document)) = self.documents.iter_mut().find(|(_, document)| {
+            document.diff.as_ref().is_some_and(|current| {
+                current.matches(&diff.repository_root, &diff.path, diff.target)
+            })
+        }) {
+            document.meta.name = diff.title();
+            document.meta.path = diff.absolute_path();
+            document.diff = Some(diff);
+            self.active = Some(id);
+            return id;
+        }
+
+        let id = FileId::new(self.next_file_id);
+        self.next_file_id += 1;
+        let absolute_path = diff.absolute_path();
+        let mut meta = FileMeta::from_path(absolute_path.clone());
+        meta.name = diff.title();
+        self.documents.insert(
+            id,
+            OpenDocument {
+                meta,
+                buffer: TextBuffer::new(String::new()),
+                saved_text: String::new(),
+                diff: Some(diff),
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                disk_state: DiskState::capture(&absolute_path, ""),
+                disk_conflict: false,
+                missing_on_disk: false,
+            },
+        );
+        self.open.push(id);
+        self.active = Some(id);
+        id
+    }
+
+    pub fn diff_id_for(
+        &self,
+        repository_root: &Path,
+        path: &Path,
+        target: DiffTarget,
+    ) -> Option<FileId> {
+        self.documents.iter().find_map(|(&id, document)| {
+            document
+                .diff
+                .as_ref()
+                .is_some_and(|diff| diff.matches(repository_root, path, target))
+                .then_some(id)
+        })
+    }
+
     pub fn set_active(&mut self, id: FileId) {
         if self.documents.contains_key(&id) {
             self.active = Some(id);
@@ -200,7 +279,9 @@ impl Workspace {
         if let Some(pos) = self.open.iter().position(|&file| file == id) {
             self.open.remove(pos);
             if let Some(document) = self.documents.remove(&id) {
-                self.paths.remove(&document.meta.path);
+                if document.diff.is_none() {
+                    self.paths.remove(&document.meta.path);
+                }
             }
             if self.active == Some(id) {
                 self.active = self
@@ -242,6 +323,9 @@ impl Workspace {
             return ReconcileResult::Failed(PathBuf::new(), "Document is not open.".into());
         };
         let path = document.meta.path.clone();
+        if document.diff.is_some() {
+            return ReconcileResult::Unchanged(path);
+        }
         let dirty = document.buffer.text() != document.saved_text;
         let previous = document.disk_state.clone();
         let contents = match std::fs::read_to_string(&path) {
@@ -281,6 +365,9 @@ impl Workspace {
             .documents
             .get_mut(&id)
             .ok_or_else(|| "Document is not open.".to_owned())?;
+        if document.diff.is_some() {
+            return Err("Diff documents are read-only.".to_owned());
+        }
         let contents = std::fs::read_to_string(&document.meta.path).map_err(|error| {
             format!("Could not reload {}: {error}", document.meta.path.display())
         })?;
@@ -296,6 +383,9 @@ impl Workspace {
         let Some(document) = self.documents.get_mut(&id) else {
             return false;
         };
+        if document.diff.is_some() {
+            return false;
+        }
         if let Ok(contents) = std::fs::read_to_string(&document.meta.path) {
             document.disk_state = DiskState::capture(&document.meta.path, &contents);
         }
@@ -321,6 +411,7 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::diff::UnifiedDiff;
 
     #[test]
     fn opens_disk_files_once_and_reactivates_existing_document() {
@@ -349,6 +440,31 @@ mod tests {
 
         assert_eq!(workspace.active(), Some(first));
         assert_eq!(workspace.file_id_for_path(Path::new("second.txt")), None);
+    }
+
+    #[test]
+    fn diff_tabs_are_reused_and_are_not_persisted_as_editable_files() {
+        let mut workspace = Workspace::new();
+        let file_path = PathBuf::from("repo/src/main.rs");
+        let file = workspace.open_path(file_path.clone(), "fn main() {}".into());
+        let make_diff = || {
+            DiffDocument::from_unified(
+                PathBuf::from("repo"),
+                PathBuf::from("src/main.rs"),
+                DiffTarget::IndexToWorktree,
+                UnifiedDiff::default(),
+            )
+        };
+
+        let first = workspace.open_diff(make_diff());
+        let reopened = workspace.open_diff(make_diff());
+
+        assert_eq!(first, reopened);
+        assert_eq!(workspace.active(), Some(first));
+        assert!(workspace.is_diff(first));
+        assert!(workspace.active_buffer().is_none());
+        assert_eq!(workspace.open_files(), &[file, first]);
+        assert_eq!(workspace.open_paths(), vec![file_path]);
     }
 
     #[test]

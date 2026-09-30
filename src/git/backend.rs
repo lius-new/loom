@@ -56,7 +56,32 @@ impl CliGitBackend {
         target: DiffTarget,
         paths: &[PathBuf],
     ) -> GitResult<String> {
+        self.diff_with_context(repository, target, paths, None)
+    }
+
+    /// Produce a whole-file diff suitable for a document-style diff editor.
+    /// A very large context keeps unchanged lines in the same parsed hunk
+    /// without requiring separate `git show` calls for the index and HEAD.
+    pub fn full_diff(
+        &self,
+        repository: &Path,
+        target: DiffTarget,
+        paths: &[PathBuf],
+    ) -> GitResult<String> {
+        self.diff_with_context(repository, target, paths, Some(1_000_000))
+    }
+
+    fn diff_with_context(
+        &self,
+        repository: &Path,
+        target: DiffTarget,
+        paths: &[PathBuf],
+        context: Option<usize>,
+    ) -> GitResult<String> {
         let mut args = vec![OsString::from("diff"), OsString::from("--no-ext-diff")];
+        if let Some(context) = context {
+            args.push(OsString::from(format!("--unified={context}")));
+        }
         match target {
             DiffTarget::HeadToIndex => args.push("--cached".into()),
             DiffTarget::IndexToWorktree => {}
@@ -76,6 +101,15 @@ impl CliGitBackend {
         paths: &[PathBuf],
     ) -> GitResult<UnifiedDiff> {
         parse_unified(&self.diff(repository, target, paths)?)
+    }
+
+    pub fn parsed_full_diff(
+        &self,
+        repository: &Path,
+        target: DiffTarget,
+        paths: &[PathBuf],
+    ) -> GitResult<UnifiedDiff> {
+        parse_unified(&self.full_diff(repository, target, paths)?)
     }
 
     pub fn stage(&self, repository: &Path, paths: &[PathBuf]) -> GitResult<()> {

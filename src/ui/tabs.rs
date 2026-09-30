@@ -124,7 +124,14 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         let Some(m) = s.workspace.meta(id) else {
             continue;
         };
-        let badge_w = measure(m.lang.badge(), theme::SMALL, 700);
+        let is_diff = s.workspace.is_diff(id);
+        let badge = if is_diff { "Δ" } else { m.lang.badge() };
+        let badge_color = if is_diff {
+            theme::PURPLE_400
+        } else {
+            m.lang.badge_color()
+        };
+        let badge_w = measure(badge, theme::SMALL, 700);
         let name_w = measure(&m.name, theme::UI_SIZE, 400);
         let dirty = s.workspace.is_dirty(id);
         let dirty_w = if dirty {
@@ -188,8 +195,8 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                 badge_left + badge_w + TEXT_MARGIN,
                 pill.bottom,
             ),
-            m.lang.badge(),
-            theme::mono_bold(m.lang.badge_color(), theme::SMALL),
+            badge,
+            theme::mono_bold(badge_color, theme::SMALL),
         ));
         tab_el = tab_el.child(text(
             UiRect::new(name_left, pill.top, name_left + name_slot_w, pill.bottom),

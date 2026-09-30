@@ -8,7 +8,8 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
-use crate::git::{ChangeKind, FileState, GitStoreSnapshot};
+use crate::git::{ChangeKind, DiffTarget, FileState, GitStoreSnapshot};
+use crate::model::diff_document::DiffDocument;
 use crate::state::AppState;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::{git_actions, theme};
@@ -169,13 +170,20 @@ pub fn render(
             continue;
         }
         for (path, file_state) in files.into_iter().take(100) {
-            let absolute = repository.worktree_root.join(path);
-            let active = app.workspace.active_path() == Some(absolute.as_path());
+            let target = if filter == 1 {
+                DiffTarget::HeadToIndex
+            } else {
+                DiffTarget::IndexToWorktree
+            };
+            let active = app.workspace.active_diff().is_some_and(|diff| {
+                diff.matches(&repository.worktree_root, path, target)
+            });
             content.push(file_row(
                 UiRect::new(rect.left, y, content_rect.right, y + ROW_H),
                 path.clone(),
                 file_state.clone(),
                 filter == 1,
+                target,
                 active,
                 repository.worktree_root.clone(),
                 state.clone(),
@@ -411,6 +419,7 @@ fn file_row(
     path: PathBuf,
     file_state: FileState,
     staged: bool,
+    target: DiffTarget,
     active: bool,
     repository_root: PathBuf,
     state: State<AppState>,
@@ -420,6 +429,9 @@ fn file_row(
     let absolute = repository_root.join(&path);
     let open_state = state.clone();
     let open_path = absolute.clone();
+    let open_repository = repository_root.clone();
+    let open_relative_path = path.clone();
+    let open_file_state = file_state.clone();
     let focus = editor_focus;
     let action_state = state.clone();
     let action_store = store.clone();
@@ -481,12 +493,50 @@ fn file_row(
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
-            if let Ok(contents) = std::fs::read_to_string(&open_path) {
-                let path = open_path.clone();
-                open_state.update(move |app| {
-                    app.workspace.open_path(path, contents);
-                });
-                focus.focus();
+            let result = crate::git::service().and_then(|service| {
+                service.backend().parsed_full_diff(
+                    &open_repository,
+                    target,
+                    std::slice::from_ref(&open_relative_path),
+                )
+            });
+            match result {
+                Ok(diff) => {
+                    let document = if diff.files.is_empty()
+                        && open_file_state.worktree == ChangeKind::Untracked
+                    {
+                        match std::fs::read_to_string(&open_path) {
+                            Ok(contents) => DiffDocument::added(
+                                open_repository.clone(),
+                                open_relative_path.clone(),
+                                target,
+                                &contents,
+                            ),
+                            Err(error) => {
+                                open_state.update(move |app| {
+                                    app.show_toast(format!("Could not open diff: {error}"));
+                                });
+                                return;
+                            }
+                        }
+                    } else {
+                        DiffDocument::from_unified(
+                            open_repository.clone(),
+                            open_relative_path.clone(),
+                            target,
+                            diff,
+                        )
+                    };
+                    open_state.update(move |app| {
+                        app.workspace.open_diff(document);
+                    });
+                    focus.focus();
+                }
+                Err(error) => {
+                    open_state.update(move |app| {
+                        app.show_toast(error.user_message());
+                    });
+                }
             }
         })
         .child(text(
