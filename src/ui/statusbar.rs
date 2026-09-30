@@ -134,14 +134,23 @@ pub fn render(
         },
     );
     let git_icon_w = 12.0;
+    let git_icon_h = 12.0;
     let git_inner_gap = 5.0;
     let git_pad = 7.0;
-    let git_w = git_pad * 2.0 + git_icon_w + git_inner_gap + measure(&git_label);
+    let git_badge_h = 16.0;
+    let git_w = git_pad * 2.0 + git_icon_w + git_inner_gap + measure(&git_label) + TEXT_MARGIN;
     let git_rect = UiRect::new(
         rect.left + 38.0,
-        rect.top + 2.0,
+        rect.top,
         rect.left + 38.0 + git_w,
-        rect.bottom - 2.0,
+        rect.bottom,
+    );
+    let git_badge_top = rect.top + (rect.height() - git_badge_h) / 2.0;
+    let git_badge_rect = UiRect::new(
+        git_rect.left,
+        git_badge_top,
+        git_rect.right,
+        git_badge_top + git_badge_h,
     );
     let git_color = if git_dirty {
         theme::AMBER_400
@@ -152,46 +161,47 @@ pub fn render(
     };
     let git_state = state.clone();
     bar = bar.child(
-        panel(
-            git_rect,
-            if s.show_source_control {
-                VisualStyle::filled(theme::ACTIVE_LINE).radius(3.0)
-            } else {
-                VisualStyle::default()
-            },
-        )
-        .event_policy(EventPolicy::INTERACTIVE)
-        .on_click(move || {
-            git_state.update(|app| {
-                app.show_source_control = !app.show_source_control;
-                if !app.show_source_control {
-                    app.git_sidebar_hovered = false;
-                }
-            });
-        })
-        .child(precompiled(
-            UiElement::icon(
-                UiId::new("statusbar.git"),
+        panel(git_rect, VisualStyle::default())
+            .event_policy(EventPolicy::INTERACTIVE)
+            .on_click(move || {
+                git_state.update(|app| {
+                    app.show_source_control = !app.show_source_control;
+                    if !app.show_source_control {
+                        app.git_sidebar_hovered = false;
+                    }
+                });
+            })
+            .child(panel(
+                git_badge_rect,
+                if s.show_source_control {
+                    VisualStyle::filled(theme::ACTIVE_LINE).radius(3.0)
+                } else {
+                    VisualStyle::default()
+                },
+            ))
+            .child(precompiled(
+                UiElement::icon(
+                    UiId::new("statusbar.git"),
+                    UiRect::new(
+                        git_badge_rect.left + git_pad,
+                        git_badge_rect.top + (git_badge_h - git_icon_h) / 2.0,
+                        git_badge_rect.left + git_pad + git_icon_w,
+                        git_badge_rect.top + (git_badge_h + git_icon_h) / 2.0,
+                    ),
+                    "git-branch",
+                )
+                .icon_style(IconStyle::new(git_color)),
+            ))
+            .child(text(
                 UiRect::new(
-                    git_rect.left + git_pad,
-                    git_rect.top + 4.0,
-                    git_rect.left + git_pad + git_icon_w,
-                    git_rect.bottom - 4.0,
+                    git_badge_rect.left + git_pad + git_icon_w + git_inner_gap,
+                    git_badge_rect.top,
+                    git_badge_rect.right - git_pad,
+                    git_badge_rect.bottom,
                 ),
-                "git-branch",
-            )
-            .icon_style(IconStyle::new(git_color)),
-        ))
-        .child(text(
-            UiRect::new(
-                git_rect.left + git_pad + git_icon_w + git_inner_gap,
-                git_rect.top,
-                git_rect.right - git_pad,
-                git_rect.bottom,
-            ),
-            git_label,
-            theme::mono(git_color, theme::SMALL),
-        )),
+                git_label,
+                theme::mono(git_color, theme::SMALL),
+            )),
     );
     if let Some(operation) = &git.operation {
         bar = bar.child(text(

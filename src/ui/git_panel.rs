@@ -222,17 +222,6 @@ pub fn render(
         UiRect::new(rect.left, prompt_top, rect.right, prompt_top + 1.0),
         VisualStyle::filled(theme::BORDER),
     ));
-    root = root.child(super::sidebar::drawer_icon(
-        "git-commit-prompt-icon",
-        "chevron-right",
-        UiRect::new(
-            rect.left + 10.0,
-            prompt_top + 12.0,
-            rect.left + 24.0,
-            prompt_top + 26.0,
-        ),
-        theme::ZINC_600,
-    ));
     let commit_button_rect = UiRect::new(
         rect.right - 34.0,
         prompt_top + 5.0,
@@ -241,7 +230,7 @@ pub fn render(
     );
     root = root.child(commit_input(
         UiRect::new(
-            rect.left + 30.0,
+            rect.left + 6.0,
             prompt_top,
             commit_button_rect.left - 4.0,
             rect.bottom,
@@ -407,7 +396,7 @@ fn commit_button(
     })
     .child(super::sidebar::drawer_icon(
         "git-commit-button-icon",
-        "git-commit",
+        "check",
         UiRect::new(rect.left + 7.0, rect.top + 7.0, rect.right - 7.0, rect.bottom - 7.0),
         if has_message {
             theme::ZINC_200

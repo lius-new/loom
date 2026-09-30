@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             SvgIconRegistry::new()
                 .with_icon("panel-left", icondata::LuPanelLeft)
                 .with_icon("git-branch", icondata::LuGitBranch)
-                .with_icon("git-commit", icondata::LuGitCommitHorizontal)
+                .with_icon("check", icondata::LuCheck)
                 .with_icon("search", icondata::LuSearch)
                 .with_icon("command", icondata::LuCommand)
                 .with_icon("play", icondata::LuPlay)

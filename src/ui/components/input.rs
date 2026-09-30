@@ -407,3 +407,150 @@ fn reveal_cursor(input: &mut InputState, viewport_w: f32, style: TextStyle) {
 fn single_line(value: &str) -> String {
     value.replace(['\r', '\n'], "")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lgui::application::{AppView, ApplicationContext};
+    use lgui::core::{
+        ImeEvent, InputEvent, Point, PointerButton, PointerData, UiScale, dispatch_runtime_output,
+    };
+    use lgui::session::UiSession;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct Harness {
+        input: InputState,
+    }
+
+    fn read(state: &Harness) -> &InputState {
+        &state.input
+    }
+
+    fn write(state: &mut Harness) -> &mut InputState {
+        &mut state.input
+    }
+
+    fn send(
+        session: &mut UiSession,
+        application: &ApplicationContext,
+        view: &AppView,
+        viewport: UiRect,
+        input: InputEvent,
+    ) {
+        let events = session.handle_input(input);
+        dispatch_runtime_output(
+            events,
+            application,
+            &lgui::window::WindowId::new("single-line-input-test"),
+            |action| session.handle_default_action(action),
+            |_| {},
+        );
+        session.render_view(view, viewport, UiScale::ONE);
+    }
+
+    #[test]
+    fn committed_ascii_and_ime_text_leave_the_caret_at_the_end() {
+        let exposed = Arc::new(Mutex::new(None::<State<Harness>>));
+        let output = exposed.clone();
+        let viewport = UiRect::new(0.0, 0.0, 240.0, 38.0);
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state(Harness::default());
+            *output.lock().unwrap() = Some(state.clone());
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id.clone());
+            render(
+                viewport,
+                id,
+                focus,
+                InputBinding::new(state, read, write),
+                InputOptions {
+                    label: "Test input",
+                    placeholder: "Test input",
+                    style: InputStyle {
+                        text: TextStyle::new(Color::WHITE, 10.0, 400),
+                        placeholder: TextStyle::new(Color::WHITE, 10.0, 400),
+                        caret: Color::WHITE,
+                        selection: Color::WHITE,
+                    },
+                },
+            )
+        });
+        let mut session = UiSession::new();
+        let application = ApplicationContext::empty(Default::default());
+        let _text = lgui::backend::install_text_environment(
+            &application,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+
+        send(
+            &mut session,
+            &application,
+            &view,
+            viewport,
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(Point::new(12.0, 19.0)),
+                button: PointerButton::Left,
+            },
+        );
+        send(
+            &mut session,
+            &application,
+            &view,
+            viewport,
+            InputEvent::TextInput("abc".to_owned()),
+        );
+        assert_eq!(state.get().input.text(), "abc");
+        assert_eq!(state.get().input.buffer.cursor(), 3);
+        let rendered_text = session
+            .tree()
+            .nodes()
+            .iter()
+            .filter_map(|node| node.text.as_deref())
+            .collect::<Vec<_>>();
+        assert!(
+            rendered_text.contains(&"abc"),
+            "rendered text: {rendered_text:?}"
+        );
+        let ascii_caret = session
+            .tree()
+            .nodes()
+            .iter()
+            .find_map(|node| node.ime_cursor_rect)
+            .unwrap();
+        assert!(
+            ascii_caret.left > TEXT_INSET,
+            "ASCII caret did not advance: {ascii_caret:?}"
+        );
+
+        send(
+            &mut session,
+            &application,
+            &view,
+            viewport,
+            InputEvent::Ime(ImeEvent::Preedit {
+                text: "nihao".to_owned(),
+                cursor: Some(5..5),
+            }),
+        );
+        send(
+            &mut session,
+            &application,
+            &view,
+            viewport,
+            InputEvent::Ime(ImeEvent::Commit("你好".to_owned())),
+        );
+        assert_eq!(state.get().input.text(), "abc你好");
+        assert_eq!(state.get().input.buffer.cursor(), "abc你好".len());
+        assert!(state.get().input.preedit.is_empty());
+        let ime_caret = session
+            .tree()
+            .nodes()
+            .iter()
+            .find_map(|node| node.ime_cursor_rect)
+            .unwrap();
+        assert!(ime_caret.left > ascii_caret.left);
+    }
+}

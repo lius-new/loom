@@ -40,10 +40,16 @@ impl SingleLineText {
     }
 
     pub fn width(&self) -> f32 {
-        self.layout.as_ref().map_or_else(
-            || UnicodeWidthStr::width(self.value.as_str()) as f32 * self.style.height * 0.6,
-            |layout| layout.width,
-        )
+        // Skia uses a negative sentinel for an empty paragraph's longest line.
+        // Treat invalid backend metrics as unavailable so empty IME prefixes
+        // contribute zero width instead of pulling the caret to the left edge.
+        self.layout
+            .as_ref()
+            .map(|layout| layout.width)
+            .filter(|width| width.is_finite() && *width >= 0.0)
+            .unwrap_or_else(|| {
+                UnicodeWidthStr::width(self.value.as_str()) as f32 * self.style.height * 0.6
+            })
     }
 
     pub fn caret_x(&self, byte_offset: usize) -> f32 {
