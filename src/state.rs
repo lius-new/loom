@@ -28,6 +28,11 @@ pub struct ExplorerCreateRequest {
 }
 
 #[derive(Clone)]
+pub struct ExplorerRenameRequest {
+    pub path: PathBuf,
+}
+
+#[derive(Clone)]
 pub struct AppState {
     pub editor: crate::editor::interaction::EditorInteraction,
     pub workspace: Workspace,
@@ -75,6 +80,8 @@ pub struct AppState {
     pub context_menu_hover: Option<usize>,
     /// Inline New File/New Folder editor currently shown in the file tree.
     pub explorer_create: Option<ExplorerCreateRequest>,
+    /// Inline directory rename editor currently shown in the file tree.
+    pub explorer_rename: Option<ExplorerRenameRequest>,
     pub explorer_create_input: InputState,
     pub explorer_create_error: Option<String>,
     /// Root folders currently browsed in the file tree, in display order.
@@ -159,6 +166,7 @@ impl AppState {
             context_menu_target: None,
             context_menu_hover: None,
             explorer_create: None,
+            explorer_rename: None,
             explorer_create_input: InputState::default(),
             explorer_create_error: None,
             workspace_folders: Vec::new(),

@@ -1,8 +1,7 @@
-//! Empty-space context menu overlay for the file drawer.
+//! Context menu overlay for the file drawer and its directory rows.
 //!
-//! Right-clicking the empty area of the drawer opens a small menu of the
-//! actions that make sense in that context: create new items, open a terminal,
-//! or add folders to the project. Items are grouped by hairline separators.
+//! Directory rows carry an explicit target; an empty-space invocation falls
+//! back to the active workspace root. Items are grouped by separators.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -32,6 +31,10 @@ enum MenuAction {
     NewFile,
     NewFolder,
     OpenTerminal,
+    Cut,
+    Copy,
+    Rename,
+    Delete,
     AddFolder,
     RemoveFolder,
     RevealInFileExplorer,
@@ -39,10 +42,18 @@ enum MenuAction {
     CopyRelativePath,
 }
 
-fn action_enabled(action: MenuAction, has_target: bool, can_remove: bool) -> bool {
+fn action_enabled(
+    action: MenuAction,
+    has_target: bool,
+    has_directory_target: bool,
+    can_remove: bool,
+) -> bool {
     match action {
         MenuAction::AddFolder => true,
         MenuAction::RemoveFolder => can_remove,
+        MenuAction::Cut | MenuAction::Copy | MenuAction::Rename | MenuAction::Delete => {
+            has_directory_target
+        }
         _ => has_target,
     }
 }
@@ -80,6 +91,17 @@ const ENTRIES: &[Entry] = &[
     },
     Entry::Separator,
     Entry::Item {
+        label: "Cut",
+        shortcut: None,
+        action: MenuAction::Cut,
+    },
+    Entry::Item {
+        label: "Copy",
+        shortcut: None,
+        action: MenuAction::Copy,
+    },
+    Entry::Separator,
+    Entry::Item {
         label: "Add Folder From Workspace",
         shortcut: None,
         action: MenuAction::AddFolder,
@@ -99,6 +121,17 @@ const ENTRIES: &[Entry] = &[
         label: "Copy Relative Path",
         shortcut: None,
         action: MenuAction::CopyRelativePath,
+    },
+    Entry::Separator,
+    Entry::Item {
+        label: "Rename",
+        shortcut: None,
+        action: MenuAction::Rename,
+    },
+    Entry::Item {
+        label: "Delete",
+        shortcut: None,
+        action: MenuAction::Delete,
     },
 ];
 
@@ -220,6 +253,7 @@ pub fn render(
 ) -> Element {
     let s = state.get();
     let target = context_target(&s);
+    let has_directory_target = s.context_menu_target.is_some();
     let can_remove = target
         .as_ref()
         .is_some_and(|path| s.workspace_folders.contains(path));
@@ -325,7 +359,8 @@ pub fn render(
                 shortcut,
                 action,
             } => {
-                let enabled = action_enabled(*action, target.is_some(), can_remove);
+                let enabled =
+                    action_enabled(*action, target.is_some(), has_directory_target, can_remove);
                 let item_rect = UiRect::new(
                     card.left + MENU_BORDER,
                     y,
@@ -399,6 +434,25 @@ pub fn render(
                                     app.show_terminal = true;
                                     app.terminal_shell_menu = false;
                                 });
+                            }
+                        }
+                        MenuAction::Cut | MenuAction::Copy => {
+                            if let Some(target) = action_target.as_deref() {
+                                workspace_actions::copy_directory(
+                                    &st_click,
+                                    target,
+                                    matches!(action, MenuAction::Cut),
+                                );
+                            }
+                        }
+                        MenuAction::Rename => {
+                            if let Some(target) = action_target.clone() {
+                                workspace_actions::begin_explorer_rename(&st_click, target);
+                            }
+                        }
+                        MenuAction::Delete => {
+                            if let Some(target) = action_target.clone() {
+                                workspace_actions::delete_directory(&st_click, target);
                             }
                         }
                         MenuAction::AddFolder => {
@@ -510,23 +564,37 @@ mod tests {
 
     #[test]
     fn only_add_folder_is_enabled_without_a_workspace() {
-        assert!(action_enabled(MenuAction::AddFolder, false, false));
+        assert!(action_enabled(MenuAction::AddFolder, false, false, false));
         assert!(!action_enabled(
             MenuAction::RevealInFileExplorer,
             false,
-            false
-        ));
-        assert!(!action_enabled(MenuAction::CopyPath, false, false));
-        assert!(!action_enabled(
-            MenuAction::CopyRelativePath,
             false,
             false
         ));
-        assert!(!action_enabled(MenuAction::NewFile, false, false));
-        assert!(!action_enabled(MenuAction::NewFolder, false, false));
-        assert!(!action_enabled(MenuAction::OpenTerminal, false, false));
-        assert!(!action_enabled(MenuAction::RemoveFolder, true, false));
-        assert!(action_enabled(MenuAction::RemoveFolder, true, true));
+        assert!(!action_enabled(MenuAction::CopyPath, false, false, false));
+        assert!(!action_enabled(
+            MenuAction::CopyRelativePath,
+            false,
+            false,
+            false
+        ));
+        assert!(!action_enabled(MenuAction::NewFile, false, false, false));
+        assert!(!action_enabled(MenuAction::NewFolder, false, false, false));
+        assert!(!action_enabled(
+            MenuAction::OpenTerminal,
+            false,
+            false,
+            false
+        ));
+        assert!(!action_enabled(
+            MenuAction::RemoveFolder,
+            true,
+            false,
+            false
+        ));
+        assert!(action_enabled(MenuAction::RemoveFolder, true, true, true));
+        assert!(!action_enabled(MenuAction::Rename, true, false, false));
+        assert!(action_enabled(MenuAction::Rename, true, true, false));
     }
 
     #[test]

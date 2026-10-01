@@ -152,7 +152,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let show_palette = s.show_palette;
     let show_clone_dialog = s.show_clone_dialog;
-    let creating_explorer_entry = s.explorer_create.is_some();
+    let editing_explorer_entry = s.explorer_create.is_some() || s.explorer_rename.is_some();
 
     // ---- Region layout ------------------------------------------------
     let titlebar_rect = UiRect::new(0.0, 0.0, w, theme::TITLEBAR_H);
@@ -268,8 +268,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let mounted_create_focus = explorer_create_input_focus.clone();
     let finished_create_focus = editor_focus.clone();
-    cx.use_effect(creating_explorer_entry, move || {
-        if creating_explorer_entry {
+    cx.use_effect(editing_explorer_entry, move || {
+        if editing_explorer_entry {
             mounted_create_focus.focus();
         } else {
             finished_create_focus.focus();

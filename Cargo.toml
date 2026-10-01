@@ -28,10 +28,12 @@ default-features = false
 features = ["renderer-skia-software", "widgets", "dialogs", "clipboard"]
 
 [target.'cfg(windows)'.dependencies]
+clipboard-win = "5.4"
 conpty = "0.7"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

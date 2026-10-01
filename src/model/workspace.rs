@@ -406,6 +406,39 @@ impl Workspace {
         self.paths.insert(new_path, id);
         true
     }
+
+    /// Retarget every open file below a renamed directory while preserving its
+    /// buffer, dirty state, active tab, and scroll position.
+    pub fn move_open_paths_under(&mut self, old_root: &Path, new_root: &Path) -> usize {
+        let moves = self
+            .paths
+            .keys()
+            .filter_map(|path| {
+                path.strip_prefix(old_root)
+                    .ok()
+                    .map(|relative| (path.clone(), new_root.join(relative)))
+            })
+            .collect::<Vec<_>>();
+        let mut moved = 0;
+        for (old_path, new_path) in moves {
+            moved += usize::from(self.move_open_path(&old_path, new_path));
+        }
+        moved
+    }
+
+    /// Close every editable document below a directory removed on disk.
+    pub fn close_paths_under(&mut self, root: &Path) -> usize {
+        let ids = self
+            .paths
+            .iter()
+            .filter_map(|(path, id)| path.starts_with(root).then_some(*id))
+            .collect::<Vec<_>>();
+        let count = ids.len();
+        for id in ids {
+            self.close(id);
+        }
+        count
+    }
 }
 
 #[cfg(test)]
@@ -502,6 +535,38 @@ mod tests {
 
         workspace.active_buffer_mut().unwrap().backspace();
         assert!(workspace.is_dirty(file));
+    }
+
+    #[test]
+    fn directory_rename_retargets_open_files_without_reopening_them() {
+        let mut workspace = Workspace::new();
+        let old_root = PathBuf::from("project/src");
+        let new_root = PathBuf::from("project/source");
+        let old_file = old_root.join("nested/main.rs");
+        let new_file = new_root.join("nested/main.rs");
+        let id = workspace.open_path(old_file.clone(), "fn main() {}".into());
+
+        assert_eq!(workspace.move_open_paths_under(&old_root, &new_root), 1);
+        assert_eq!(workspace.file_id_for_path(&old_file), None);
+        assert_eq!(workspace.file_id_for_path(&new_file), Some(id));
+        assert_eq!(workspace.active_path(), Some(new_file.as_path()));
+    }
+
+    #[test]
+    fn directory_delete_closes_only_open_files_below_that_directory() {
+        let mut workspace = Workspace::new();
+        let removed = workspace.open_path(PathBuf::from("project/src/main.rs"), String::new());
+        let kept_path = PathBuf::from("project/tests/main.rs");
+        let kept = workspace.open_path(kept_path.clone(), String::new());
+
+        assert_eq!(workspace.close_paths_under(Path::new("project/src")), 1);
+        assert_eq!(
+            workspace.file_id_for_path(Path::new("project/src/main.rs")),
+            None
+        );
+        assert_eq!(workspace.file_id_for_path(&kept_path), Some(kept));
+        assert_eq!(workspace.active(), Some(kept));
+        assert_ne!(workspace.active(), Some(removed));
     }
 
     #[test]

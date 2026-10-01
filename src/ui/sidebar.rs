@@ -141,19 +141,34 @@ pub fn render(
                 depth: 0,
                 sticky_path: path.clone(),
             });
-            tree_els.push(dir_row(
-                &key,
-                &root_name,
-                indent,
-                content_rect,
-                y,
-                content_right,
-                0.0,
-                is_expanded,
-                false,
-                s.tree_hovered_path.as_deref() == Some(key.as_str()),
-                &state,
-            ));
+            if s.explorer_rename
+                .as_ref()
+                .is_some_and(|request| request.path == root_path)
+            {
+                tree_els.push(rename_row(
+                    content_rect,
+                    y,
+                    indent,
+                    is_expanded,
+                    state.clone(),
+                    create_input_focus.clone(),
+                    create_input_id.clone(),
+                ));
+            } else {
+                tree_els.push(dir_row(
+                    &key,
+                    &root_name,
+                    indent,
+                    content_rect,
+                    y,
+                    content_right,
+                    0.0,
+                    is_expanded,
+                    false,
+                    s.tree_hovered_path.as_deref() == Some(key.as_str()),
+                    &state,
+                ));
+            }
             y += ROW_H;
 
             if s.explorer_create
@@ -639,6 +654,81 @@ fn create_row(
     .child(input)
 }
 
+fn rename_row(
+    rect: UiRect,
+    y: f32,
+    indent: f32,
+    is_expanded: bool,
+    state: State<AppState>,
+    focus: UiFocusHandle,
+    id: UiId,
+) -> Element {
+    let snapshot = state.get();
+    let border = if snapshot.explorer_create_error.is_some() {
+        theme::DIFF_DEL_BORDER
+    } else if snapshot.explorer_create_input.focused {
+        theme::ACCENT
+    } else {
+        theme::BORDER
+    };
+    let input_rect = UiRect::new(
+        indent + TREE_LABEL_OFFSET,
+        y + 2.0,
+        rect.right - 8.0,
+        y + ROW_H - 2.0,
+    );
+    let field_rect = UiRect::new(
+        input_rect.left + 1.0,
+        input_rect.top + 1.0,
+        input_rect.right - 1.0,
+        input_rect.bottom - 1.0,
+    );
+    let input = input::render(
+        field_rect,
+        id,
+        focus,
+        InputBinding::new(state, explorer_create_input, explorer_create_input_mut),
+        InputOptions {
+            label: "Rename folder",
+            placeholder: "",
+            style: InputStyle {
+                text: theme::mono(theme::ZINC_200, theme::UI_SIZE),
+                placeholder: theme::mono(theme::ZINC_600, theme::UI_SIZE),
+                caret: theme::ZINC_200,
+                selection: theme::ACCENT,
+            },
+            on_submit: Some(workspace_actions::finish_explorer_rename),
+            on_cancel: Some(workspace_actions::cancel_explorer_create),
+            on_blur: Some(workspace_actions::cancel_explorer_create),
+        },
+    );
+    let icon = if is_expanded {
+        crate::file_icons::FOLDER_OPEN_ICON
+    } else {
+        crate::file_icons::FOLDER_ICON
+    };
+
+    panel(
+        UiRect::new(rect.left, y, rect.right, y + ROW_H),
+        VisualStyle::filled(theme::SURFACE),
+    )
+    .child(precompiled(
+        UiElement::icon(
+            UiId::owned("tree-rename-icon"),
+            UiRect::new(
+                indent,
+                y + 2.0,
+                indent + TREE_ICON_SIZE,
+                y + 2.0 + TREE_ICON_SIZE,
+            ),
+            icon,
+        )
+        .icon_style(IconStyle::new(theme::ZINC_400)),
+    ))
+    .child(theme::bordered(input_rect, theme::BG, border, 3.0, 1.0))
+    .child(input)
+}
+
 fn explorer_create_input(app: &AppState) -> &InputState {
     &app.explorer_create_input
 }
@@ -791,19 +881,34 @@ fn build_tree(
                 depth,
                 sticky_path: path.clone(),
             });
-            els.push(dir_row(
-                &key,
-                &name,
-                indent,
-                rect,
-                *y,
-                content_right,
-                0.0,
-                is_expanded,
-                false,
-                s.tree_hovered_path.as_deref() == Some(key.as_str()),
-                state,
-            ));
+            if s.explorer_rename
+                .as_ref()
+                .is_some_and(|request| request.path == entry.path)
+            {
+                els.push(rename_row(
+                    rect,
+                    *y,
+                    indent,
+                    is_expanded,
+                    state.clone(),
+                    create_input_focus.clone(),
+                    create_input_id.clone(),
+                ));
+            } else {
+                els.push(dir_row(
+                    &key,
+                    &name,
+                    indent,
+                    rect,
+                    *y,
+                    content_right,
+                    0.0,
+                    is_expanded,
+                    false,
+                    s.tree_hovered_path.as_deref() == Some(key.as_str()),
+                    state,
+                ));
+            }
         } else {
             rows.push(TreeRowMeta {
                 y: *y,

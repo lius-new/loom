@@ -7,7 +7,9 @@ use std::thread;
 use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
 use lgui::prelude::State;
 
-use crate::state::{AppState, DirEntry, ExplorerCreateKind, ExplorerCreateRequest};
+use crate::state::{
+    AppState, DirEntry, ExplorerCreateKind, ExplorerCreateRequest, ExplorerRenameRequest,
+};
 use crate::workspace_persistence::{self, MAX_RECENT_FOLDERS};
 
 const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -69,6 +71,7 @@ pub fn begin_explorer_create(state: &State<AppState>, parent: PathBuf, kind: Exp
     state.update(move |app| {
         let key = parent.to_string_lossy().into_owned();
         app.expanded.insert(key);
+        app.explorer_rename = None;
         app.explorer_create = Some(ExplorerCreateRequest { kind, parent });
         app.explorer_create_input.clear();
         app.explorer_create_error = None;
@@ -78,9 +81,275 @@ pub fn begin_explorer_create(state: &State<AppState>, parent: PathBuf, kind: Exp
 pub fn cancel_explorer_create(state: &State<AppState>) {
     state.update(|app| {
         app.explorer_create = None;
+        app.explorer_rename = None;
         app.explorer_create_input.clear();
         app.explorer_create_error = None;
     });
+}
+
+pub fn copy_directory(state: &State<AppState>, path: &Path, cut: bool) {
+    let action = if cut { "Cut" } else { "Copied" };
+    match set_directory_clipboard(path, cut) {
+        Ok(()) => {
+            let name = path
+                .file_name()
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            state.update(move |app| app.show_toast(format!("{action} {name}.")));
+        }
+        Err(error) => state.update(move |app| app.show_toast(error)),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_directory_clipboard(path: &Path, cut: bool) -> Result<(), String> {
+    let path = windows_shell_path(path);
+    let _clipboard = clipboard_win::Clipboard::new_attempts(10)
+        .map_err(|error| format!("Could not open the clipboard: {error}"))?;
+    clipboard_win::empty().map_err(|error| format!("Could not clear the clipboard: {error}"))?;
+    clipboard_win::raw::set_file_list(&[path.as_str()])
+        .map_err(|error| format!("Could not copy the folder: {error}"))?;
+
+    let format = clipboard_win::register_format("Preferred DropEffect")
+        .ok_or_else(|| "Could not register the file clipboard format.".to_owned())?;
+    let effect = if cut { 2_u32 } else { 1_u32 };
+    clipboard_win::raw::set_without_clear(format.get(), &effect.to_le_bytes())
+        .map_err(|error| format!("Could not set the clipboard operation: {error}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_directory_clipboard(_path: &Path, _cut: bool) -> Result<(), String> {
+    Err("Copying folders is not supported on this platform yet.".to_owned())
+}
+
+pub fn begin_explorer_rename(state: &State<AppState>, path: PathBuf) {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        state.update(|app| app.show_toast("This folder name cannot be edited as text."));
+        return;
+    };
+    let name = name.to_owned();
+    state.update(move |app| {
+        app.explorer_create = None;
+        app.explorer_rename = Some(ExplorerRenameRequest { path });
+        app.explorer_create_input.set_text(name);
+        app.explorer_create_error = None;
+    });
+}
+
+pub fn finish_explorer_rename(state: &State<AppState>) {
+    let snapshot = state.get();
+    let Some(request) = snapshot.explorer_rename.clone() else {
+        return;
+    };
+    let raw_name = snapshot.explorer_create_input.text().to_owned();
+    drop(snapshot);
+
+    let target = match validate_rename_path(&request.path, &raw_name) {
+        Ok(target) => target,
+        Err(message) => {
+            state.update(move |app| {
+                app.explorer_create_error = Some(message.clone());
+                app.show_toast(message);
+            });
+            return;
+        }
+    };
+    if target == request.path {
+        cancel_explorer_create(state);
+        return;
+    }
+    if let Err(error) = fs::rename(&request.path, &target) {
+        let message = format!("Could not rename {}: {error}", request.path.display());
+        state.update(move |app| {
+            app.explorer_create_error = Some(message.clone());
+            app.show_toast(message);
+        });
+        return;
+    }
+
+    state.update(move |app| apply_renamed_directory_state(app, &request.path, &target));
+}
+
+fn validate_rename_path(path: &Path, raw_name: &str) -> Result<PathBuf, String> {
+    let name = raw_name.trim_matches('\t');
+    if name.is_empty() || name.chars().all(char::is_whitespace) {
+        return Err("A folder name must be provided.".to_owned());
+    }
+    if name.contains(['/', '\\']) || matches!(name, "." | "..") || invalid_file_name_segment(name) {
+        return Err(format!("The name '{name}' is not valid."));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "The workspace root cannot be renamed.".to_owned())?;
+    let target = parent.join(name);
+    if target == path {
+        return Ok(target);
+    }
+    if target.exists() {
+        return Err(format!("{} already exists.", target.display()));
+    }
+    Ok(target)
+}
+
+fn apply_renamed_directory_state(app: &mut AppState, old_path: &Path, new_path: &Path) {
+    let was_expanded = app.expanded.iter().any(|path| Path::new(path) == old_path);
+    app.workspace.move_open_paths_under(old_path, new_path);
+
+    let mut roots_changed = false;
+    for root in &mut app.workspace_folders {
+        if let Ok(relative) = root.strip_prefix(old_path) {
+            *root = new_path.join(relative);
+            roots_changed = true;
+        }
+    }
+    for recent in &mut app.recent_folders {
+        if let Ok(relative) = recent.strip_prefix(old_path) {
+            *recent = new_path.join(relative);
+        }
+    }
+    app.dir_entries
+        .retain(|path, _| !Path::new(path).starts_with(old_path));
+    app.expanded
+        .retain(|path| !Path::new(path).starts_with(old_path));
+    if let Some(parent) = new_path.parent()
+        && app.workspace_folders.iter().any(|root| parent.starts_with(root))
+    {
+        app.dir_entries
+            .insert(parent.to_string_lossy().into_owned(), read_entries(parent));
+    }
+    if was_expanded || app.workspace_folders.iter().any(|root| root == new_path) {
+        let key = new_path.to_string_lossy().into_owned();
+        app.dir_entries.insert(key.clone(), read_entries(new_path));
+        app.expanded.insert(key);
+    }
+    app.tree_hovered_path = None;
+    app.explorer_rename = None;
+    app.explorer_create_input.clear();
+    app.explorer_create_error = None;
+    app.toast = None;
+    if roots_changed {
+        persist_workspace(app);
+    }
+}
+
+pub fn delete_directory(state: &State<AppState>, path: PathBuf) {
+    if state.get().workspace.has_dirty_paths_under(&path) {
+        state.update(|app| app.show_toast("Save or close modified files in this folder first."));
+        return;
+    }
+    match move_directory_to_trash(&path) {
+        Ok(false) => {}
+        Ok(true) => state.update(move |app| apply_deleted_directory_state(app, &path)),
+        Err(error) => state.update(move |app| app.show_toast(error)),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn move_directory_to_trash(path: &Path) -> Result<bool, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::{
+        FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_WANTNUKEWARNING, SHFILEOPSTRUCTW,
+        SHFileOperationW,
+    };
+
+    let path = windows_shell_path(path);
+    let mut from = std::ffi::OsStr::new(&path)
+        .encode_wide()
+        .collect::<Vec<_>>();
+    from.extend([0, 0]);
+    let mut operation = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE,
+        pFrom: from.as_ptr(),
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING) as u16,
+        ..Default::default()
+    };
+    // FOF_ALLOWUNDO asks the shell to use the Recycle Bin; WANTNUKEWARNING
+    // preserves a shell warning if recycling is unavailable.
+    let result = unsafe { SHFileOperationW(&mut operation) };
+    if result != 0 {
+        return Err(format!(
+            "Could not move the folder to the Recycle Bin (shell error {result})."
+        ));
+    }
+    Ok(operation.fAnyOperationsAborted == 0)
+}
+
+#[cfg(target_os = "macos")]
+fn move_directory_to_trash(path: &Path) -> Result<bool, String> {
+    let status = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "on run argv",
+            "-e",
+            "tell application \"Finder\" to delete POSIX file (item 1 of argv)",
+            "-e",
+            "end run",
+            "--",
+        ])
+        .arg(path)
+        .status()
+        .map_err(|error| format!("Could not open Trash: {error}"))?;
+    if status.success() {
+        Ok(true)
+    } else {
+        Err("Could not move the folder to Trash.".to_owned())
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn move_directory_to_trash(path: &Path) -> Result<bool, String> {
+    let status = std::process::Command::new("gio")
+        .args(["trash", "--"])
+        .arg(path)
+        .status()
+        .map_err(|error| format!("Could not open Trash: {error}"))?;
+    if status.success() {
+        Ok(true)
+    } else {
+        Err("Could not move the folder to Trash.".to_owned())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_shell_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else if let Some(local) = value.strip_prefix(r"\\?\") {
+        local.to_owned()
+    } else {
+        value.into_owned()
+    }
+}
+
+fn apply_deleted_directory_state(app: &mut AppState, path: &Path) {
+    app.workspace.close_paths_under(path);
+    let original_root_count = app.workspace_folders.len();
+    let original_recent_count = app.recent_folders.len();
+    app.workspace_folders.retain(|root| !root.starts_with(path));
+    app.recent_folders
+        .retain(|recent| !recent.starts_with(path));
+    app.dir_entries
+        .retain(|cached, _| !Path::new(cached).starts_with(path));
+    app.expanded
+        .retain(|expanded| !Path::new(expanded).starts_with(path));
+    if let Some(parent) = path.parent()
+        && app.workspace_folders.iter().any(|root| parent.starts_with(root))
+    {
+        app.dir_entries
+            .insert(parent.to_string_lossy().into_owned(), read_entries(parent));
+    }
+    app.tree_hovered_path = None;
+    app.explorer_create = None;
+    app.explorer_rename = None;
+    app.explorer_create_input.clear();
+    app.explorer_create_error = None;
+    app.show_toast("Moved folder to Trash.");
+    if app.workspace_folders.len() != original_root_count
+        || app.recent_folders.len() != original_recent_count
+    {
+        persist_workspace(app);
+    }
 }
 
 /// Remove a root from the current workspace without touching it on disk.
@@ -121,6 +390,15 @@ fn remove_folder_state(app: &mut AppState, root: &Path) -> bool {
         .is_some_and(|request| request.parent.starts_with(root))
     {
         app.explorer_create = None;
+        app.explorer_create_input.clear();
+        app.explorer_create_error = None;
+    }
+    if app
+        .explorer_rename
+        .as_ref()
+        .is_some_and(|request| request.path.starts_with(root))
+    {
+        app.explorer_rename = None;
         app.explorer_create_input.clear();
         app.explorer_create_error = None;
     }
@@ -759,6 +1037,48 @@ mod tests {
         assert!(validate_create_path(&parent, "src/../outside").is_err());
     }
 
+    #[test]
+    fn rename_validation_accepts_one_folder_name_and_rejects_paths() {
+        let path = PathBuf::from("__loom_missing__/old-name");
+
+        assert_eq!(
+            validate_rename_path(&path, "new-name").unwrap(),
+            PathBuf::from("__loom_missing__/new-name")
+        );
+        assert!(validate_rename_path(&path, "nested/name").is_err());
+        assert!(validate_rename_path(&path, "..").is_err());
+        assert!(validate_rename_path(&path, "   ").is_err());
+    }
+
+    #[test]
+    fn renamed_directory_retargets_tabs_and_rebuilds_tree_state() {
+        let mut app = AppState::new();
+        let root = PathBuf::from("workspace");
+        let old_path = root.join("src");
+        let new_path = root.join("source");
+        let old_file = old_path.join("main.rs");
+        let new_file = new_path.join("main.rs");
+        app.workspace_folders = vec![root];
+        app.dir_entries
+            .insert(old_path.to_string_lossy().into_owned(), Vec::new());
+        app.expanded.insert(old_path.to_string_lossy().into_owned());
+        app.workspace.open_path(old_file, String::new());
+
+        apply_renamed_directory_state(&mut app, &old_path, &new_path);
+
+        assert_eq!(app.workspace.active_path(), Some(new_file.as_path()));
+        assert!(
+            app.dir_entries
+                .keys()
+                .all(|path| !Path::new(path).starts_with(&old_path))
+        );
+        assert!(
+            app.expanded
+                .contains(&new_path.to_string_lossy().into_owned())
+        );
+        assert!(app.explorer_rename.is_none());
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn create_path_validation_rejects_windows_device_and_invalid_names() {
@@ -767,5 +1087,18 @@ mod tests {
         assert!(validate_create_path(&parent, "CON.txt").is_err());
         assert!(validate_create_path(&parent, "bad?.txt").is_err());
         assert!(validate_create_path(&parent, "trailing.").is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn shell_paths_hide_windows_verbatim_prefixes() {
+        assert_eq!(
+            windows_shell_path(Path::new(r"\\?\D:\Documents\project")),
+            r"D:\Documents\project"
+        );
+        assert_eq!(
+            windows_shell_path(Path::new(r"\\?\UNC\server\share\project")),
+            r"\\server\share\project"
+        );
     }
 }
