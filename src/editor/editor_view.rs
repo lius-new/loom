@@ -135,6 +135,8 @@ pub fn render(
                         app.editor.menu_hover = None;
                         app.editor.drag = None;
                         app.context_menu = None;
+                        app.context_menu_target = None;
+                        app.context_menu_hover = None;
                     } else {
                         app.editor.menu = None;
                         let clicks = app.editor.click_count(id, point.x, point.y);

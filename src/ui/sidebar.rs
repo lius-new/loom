@@ -8,7 +8,7 @@
 //! contents indented beneath it.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use lgui::core::{
     CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiEventKind, UiEventPayload,
@@ -85,7 +85,10 @@ pub fn render(
         })
         .on_pointer_down_with_button(move |_cx, p, button| {
             if button == PointerButton::Right {
-                st_menu.update(move |app| app.context_menu = Some((p.point.x, p.point.y)));
+                st_menu.update(move |app| {
+                    app.context_menu = Some((p.point.x, p.point.y));
+                    app.context_menu_target = None;
+                });
             }
         });
     bar = bar.child(capture);
@@ -160,6 +163,7 @@ pub fn render(
                 tree_els.push(create_row(
                     content_rect,
                     y,
+                    indent,
                     state.clone(),
                     create_input_focus.clone(),
                     create_input_id.clone(),
@@ -182,6 +186,8 @@ pub fn render(
                     content_right,
                     &git,
                     &editor_focus,
+                    &create_input_focus,
+                    &create_input_id,
                 ));
                 if y > children_top {
                     tree_els.push(panel(
@@ -554,6 +560,7 @@ fn read_text_file(path: &Path) -> Result<String, String> {
 fn create_row(
     rect: UiRect,
     y: f32,
+    indent: f32,
     state: State<AppState>,
     focus: UiFocusHandle,
     id: UiId,
@@ -576,7 +583,7 @@ fn create_row(
         crate::file_icons::DEFAULT_FILE_ICON
     };
     let input_rect = UiRect::new(
-        rect.left + INDENT + TREE_LABEL_OFFSET,
+        indent + TREE_LABEL_OFFSET,
         y + 2.0,
         rect.right - 8.0,
         y + CREATE_ROW_H - 2.0,
@@ -619,9 +626,9 @@ fn create_row(
         UiElement::icon(
             UiId::owned("tree-create-icon"),
             UiRect::new(
-                rect.left + INDENT,
+                indent,
                 y + 6.0,
-                rect.left + INDENT + TREE_ICON_SIZE,
+                indent + TREE_ICON_SIZE,
                 y + 6.0 + TREE_ICON_SIZE,
             ),
             icon,
@@ -640,8 +647,8 @@ fn explorer_create_input_mut(app: &mut AppState) -> &mut InputState {
     &mut app.explorer_create_input
 }
 
-/// A directory node row: icon (folder/folder-open), name, and a click handler
-/// that toggles expansion (reading the directory on first expand).
+/// A directory node row: left-click toggles expansion; right-click opens the
+/// context menu for this directory.
 fn dir_row(
     key: &str,
     name: &str,
@@ -694,19 +701,32 @@ fn dir_row(
 
     let click_state = state.clone();
     let click_key = key.to_string();
-    row.on_click(move || {
+    row.on_pointer_down_with_button(move |cx, pointer, button| {
         let key = click_key.clone();
-        click_state.update(move |app| {
-            if app.expanded.contains(&key) {
-                app.expanded.remove(&key);
-            } else {
-                app.expanded.insert(key.clone());
-                if !app.dir_entries.contains_key(&key) {
-                    let entries = read_entries(Path::new(&key));
-                    app.dir_entries.insert(key.clone(), entries);
-                }
+        match button {
+            PointerButton::Left => {
+                click_state.update(move |app| {
+                    if app.expanded.contains(&key) {
+                        app.expanded.remove(&key);
+                    } else {
+                        app.expanded.insert(key.clone());
+                        if !app.dir_entries.contains_key(&key) {
+                            let entries = read_entries(Path::new(&key));
+                            app.dir_entries.insert(key.clone(), entries);
+                        }
+                    }
+                });
             }
-        });
+            PointerButton::Right => {
+                click_state.update(move |app| {
+                    app.context_menu = Some((pointer.point.x, pointer.point.y));
+                    app.context_menu_target = Some(PathBuf::from(key));
+                    app.context_menu_hover = None;
+                });
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
     })
     .child(precompiled(
         UiElement::icon(
@@ -742,6 +762,8 @@ fn build_tree(
     content_right: f32,
     git: &GitStoreSnapshot,
     editor_focus: &UiFocusHandle,
+    create_input_focus: &UiFocusHandle,
+    create_input_id: &UiId,
 ) -> Vec<Element> {
     let mut els = Vec::new();
 
@@ -876,6 +898,22 @@ fn build_tree(
 
         *y += ROW_H;
 
+        if is_dir
+            && s.explorer_create
+                .as_ref()
+                .is_some_and(|request| request.parent.as_path() == entry.path.as_path())
+        {
+            els.push(create_row(
+                rect,
+                *y,
+                indent,
+                state.clone(),
+                create_input_focus.clone(),
+                create_input_id.clone(),
+            ));
+            *y += CREATE_ROW_H;
+        }
+
         if is_dir && s.expanded.contains(&key) {
             // Indent guide under an expanded folder's icon: spans from the
             // folder row bottom to the bottom of its last child.
@@ -893,6 +931,8 @@ fn build_tree(
                 content_right,
                 git,
                 editor_focus,
+                create_input_focus,
+                create_input_id,
             ));
             if *y > children_top {
                 els.push(panel(

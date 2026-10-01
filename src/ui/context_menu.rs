@@ -32,7 +32,6 @@ enum MenuAction {
     NewFile,
     NewFolder,
     OpenTerminal,
-    None,
     AddFolder,
     RemoveFolder,
     RevealInFileExplorer,
@@ -40,8 +39,12 @@ enum MenuAction {
     CopyRelativePath,
 }
 
-fn action_enabled(action: MenuAction, has_workspace: bool) -> bool {
-    has_workspace || matches!(action, MenuAction::AddFolder)
+fn action_enabled(action: MenuAction, has_target: bool, can_remove: bool) -> bool {
+    match action {
+        MenuAction::AddFolder => true,
+        MenuAction::RemoveFolder => can_remove,
+        _ => has_target,
+    }
 }
 
 enum Entry {
@@ -115,15 +118,39 @@ fn context_root(app: &AppState) -> Option<PathBuf> {
         .cloned()
 }
 
-fn copy_root_path(state: &State<AppState>, clipboard: &dyn Clipboard, relative: bool) {
-    let Some(root) = context_root(&state.get()) else {
-        state.update(|app| app.show_toast("No workspace folder is open."));
-        return;
-    };
+fn context_target(app: &AppState) -> Option<PathBuf> {
+    app.context_menu_target
+        .clone()
+        .or_else(|| context_root(app))
+}
+
+fn workspace_root_for_path(app: &AppState, path: &Path) -> Option<PathBuf> {
+    app.workspace_folders
+        .iter()
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count())
+        .cloned()
+}
+
+fn copy_target_path(
+    state: &State<AppState>,
+    clipboard: &dyn Clipboard,
+    target: &Path,
+    relative: bool,
+) {
     let value = if relative {
-        ".".to_owned()
+        let Some(root) = workspace_root_for_path(&state.get(), target) else {
+            state.update(|app| app.show_toast("Path is outside the workspace."));
+            return;
+        };
+        let relative = target.strip_prefix(root).unwrap_or(target);
+        if relative.as_os_str().is_empty() {
+            ".".to_owned()
+        } else {
+            clipboard_path(relative)
+        }
     } else {
-        clipboard_path(&root)
+        clipboard_path(target)
     };
     let label = if relative { "relative path" } else { "path" };
     match clipboard.write_text(&value) {
@@ -149,12 +176,8 @@ fn clipboard_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn reveal_root(state: &State<AppState>) {
-    let Some(root) = context_root(&state.get()) else {
-        state.update(|app| app.show_toast("No workspace folder is open."));
-        return;
-    };
-    match reveal_in_file_manager(&root) {
+fn reveal_target(state: &State<AppState>, target: &Path) {
+    match reveal_in_file_manager(target) {
         Ok(()) => {}
         Err(error) => state.update(move |app| {
             app.show_toast(format!("Could not reveal folder: {error}"));
@@ -196,6 +219,10 @@ pub fn render(
     terminal_tabs: State<TerminalTabs>,
 ) -> Element {
     let s = state.get();
+    let target = context_target(&s);
+    let can_remove = target
+        .as_ref()
+        .is_some_and(|path| s.workspace_folders.contains(path));
 
     // Size the menu to its widest entry (label + optional shortcut).
     let content_w = ENTRIES
@@ -248,6 +275,7 @@ pub fn render(
             if !card.contains(p.point) {
                 st_close.update(move |app| {
                     app.context_menu = None;
+                    app.context_menu_target = None;
                     app.context_menu_hover = None;
                 });
             }
@@ -297,7 +325,7 @@ pub fn render(
                 shortcut,
                 action,
             } => {
-                let enabled = action_enabled(*action, !s.workspace_folders.is_empty());
+                let enabled = action_enabled(*action, target.is_some(), can_remove);
                 let item_rect = UiRect::new(
                     card.left + MENU_BORDER,
                     y,
@@ -312,6 +340,7 @@ pub fn render(
                 let st_hover = state.clone();
                 let st_click = state.clone();
                 let terminal_tabs_click = terminal_tabs.clone();
+                let action_target = target.clone();
                 let mut item = panel(
                     item_rect,
                     if hovered {
@@ -347,11 +376,12 @@ pub fn render(
                     }
                     st_click.update(move |app| {
                         app.context_menu = None;
+                        app.context_menu_target = None;
                         app.context_menu_hover = None;
                     });
                     match action {
                         MenuAction::NewFile | MenuAction::NewFolder => {
-                            if let Some(parent) = context_root(&st_click.get()) {
+                            if let Some(parent) = action_target.clone() {
                                 let kind = if matches!(action, MenuAction::NewFile) {
                                     ExplorerCreateKind::File
                                 } else {
@@ -361,7 +391,7 @@ pub fn render(
                             }
                         }
                         MenuAction::OpenTerminal => {
-                            if let Some(cwd) = context_root(&st_click.get()) {
+                            if let Some(cwd) = action_target.clone() {
                                 terminal_tabs_click.update(move |tabs| {
                                     tabs.add_at(ShellKind::default(), Some(cwd));
                                 });
@@ -371,21 +401,38 @@ pub fn render(
                                 });
                             }
                         }
-                        MenuAction::None => {}
                         MenuAction::AddFolder => {
                             workspace_actions::choose_folder_to_add(&st_click);
                         }
                         MenuAction::RemoveFolder => {
-                            if let Some(root) = context_root(&st_click.get()) {
+                            if let Some(root) = action_target.clone() {
                                 workspace_actions::remove_folder_from_workspace(&st_click, root);
                             }
                         }
-                        MenuAction::RevealInFileExplorer => reveal_root(&st_click),
+                        MenuAction::RevealInFileExplorer => {
+                            if let Some(target) = action_target.as_deref() {
+                                reveal_target(&st_click, target);
+                            }
+                        }
                         MenuAction::CopyPath => {
-                            copy_root_path(&st_click, cx.application().clipboard().as_ref(), false);
+                            if let Some(target) = action_target.as_deref() {
+                                copy_target_path(
+                                    &st_click,
+                                    cx.application().clipboard().as_ref(),
+                                    target,
+                                    false,
+                                );
+                            }
                         }
                         MenuAction::CopyRelativePath => {
-                            copy_root_path(&st_click, cx.application().clipboard().as_ref(), true);
+                            if let Some(target) = action_target.as_deref() {
+                                copy_target_path(
+                                    &st_click,
+                                    cx.application().clipboard().as_ref(),
+                                    target,
+                                    true,
+                                );
+                            }
                         }
                     }
                 });
@@ -463,15 +510,36 @@ mod tests {
 
     #[test]
     fn only_add_folder_is_enabled_without_a_workspace() {
-        assert!(action_enabled(MenuAction::AddFolder, false));
-        assert!(!action_enabled(MenuAction::RevealInFileExplorer, false));
-        assert!(!action_enabled(MenuAction::CopyPath, false));
-        assert!(!action_enabled(MenuAction::CopyRelativePath, false));
-        assert!(!action_enabled(MenuAction::NewFile, false));
-        assert!(!action_enabled(MenuAction::NewFolder, false));
-        assert!(!action_enabled(MenuAction::OpenTerminal, false));
-        assert!(!action_enabled(MenuAction::None, false));
-        assert!(action_enabled(MenuAction::None, true));
+        assert!(action_enabled(MenuAction::AddFolder, false, false));
+        assert!(!action_enabled(
+            MenuAction::RevealInFileExplorer,
+            false,
+            false
+        ));
+        assert!(!action_enabled(MenuAction::CopyPath, false, false));
+        assert!(!action_enabled(
+            MenuAction::CopyRelativePath,
+            false,
+            false
+        ));
+        assert!(!action_enabled(MenuAction::NewFile, false, false));
+        assert!(!action_enabled(MenuAction::NewFolder, false, false));
+        assert!(!action_enabled(MenuAction::OpenTerminal, false, false));
+        assert!(!action_enabled(MenuAction::RemoveFolder, true, false));
+        assert!(action_enabled(MenuAction::RemoveFolder, true, true));
+    }
+
+    #[test]
+    fn an_explicit_directory_target_takes_priority_over_the_background_root() {
+        let mut app = AppState::new();
+        app.workspace_folders = vec![PathBuf::from("workspace")];
+        app.context_menu_target = Some(PathBuf::from("workspace/src"));
+
+        assert_eq!(context_target(&app), Some(PathBuf::from("workspace/src")));
+        assert_eq!(
+            workspace_root_for_path(&app, Path::new("workspace/src")),
+            Some(PathBuf::from("workspace"))
+        );
     }
 
     #[test]

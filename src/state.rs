@@ -69,6 +69,8 @@ pub struct AppState {
     pub tree_hovered_path: Option<String>,
     /// Empty-space context menu anchor (screen coords) when open.
     pub context_menu: Option<(f32, f32)>,
+    /// Directory targeted by the context menu. `None` means drawer background.
+    pub context_menu_target: Option<PathBuf>,
     /// Index of the context-menu item currently hovered, if any.
     pub context_menu_hover: Option<usize>,
     /// Inline New File/New Folder editor currently shown in the file tree.
@@ -154,6 +156,7 @@ impl AppState {
             sidebar_hovered: false,
             tree_hovered_path: None,
             context_menu: None,
+            context_menu_target: None,
             context_menu_hover: None,
             explorer_create: None,
             explorer_create_input: InputState::default(),
