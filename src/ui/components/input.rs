@@ -106,10 +106,13 @@ pub struct InputStyle {
     pub selection: Color,
 }
 
-pub struct InputOptions {
+pub struct InputOptions<T> {
     pub label: &'static str,
     pub placeholder: &'static str,
     pub style: InputStyle,
+    pub on_submit: Option<fn(&State<T>)>,
+    pub on_cancel: Option<fn(&State<T>)>,
+    pub on_blur: Option<fn(&State<T>)>,
 }
 
 pub fn render<T>(
@@ -117,7 +120,7 @@ pub fn render<T>(
     id: UiId,
     focus: UiFocusHandle,
     binding: InputBinding<T>,
-    options: InputOptions,
+    options: InputOptions<T>,
 ) -> Element
 where
     T: Clone + Send + 'static,
@@ -126,6 +129,11 @@ where
     let style = options.style;
     let label = options.label;
     let placeholder = options.placeholder;
+    let on_submit = options.on_submit;
+    let on_cancel = options.on_cancel;
+    let on_blur = options.on_blur;
+    let action_state = binding.state.clone();
+    let blur_action_state = binding.state.clone();
     let content = UiRect::new(
         rect.left + TEXT_INSET,
         rect.top,
@@ -160,7 +168,11 @@ where
     );
     let caret_x = (content.left + base_caret + preedit_caret - scroll)
         .clamp(content.left, content.right);
-    let caret_rect = UiRect::new(caret_x, rect.top + 10.0, caret_x + 1.0, rect.bottom - 9.0);
+    let caret_height = (style.text.height + 4.0)
+        .min((rect.height() - 4.0).max(1.0))
+        .max(1.0);
+    let caret_top = rect.top + (rect.height() - caret_height) / 2.0;
+    let caret_rect = UiRect::new(caret_x, caret_top, caret_x + 1.0, caret_top + caret_height);
     let mut semantics = Semantics::new(SemanticRole::TextInput)
         .name(label)
         .value(snapshot.text().to_owned());
@@ -262,6 +274,17 @@ where
             return;
         };
         if command == Command::Enter {
+            if let Some(on_submit) = on_submit {
+                on_submit(&action_state);
+            }
+            cx.prevent_default();
+            cx.stop_propagation();
+            return;
+        }
+        if command == Command::Escape
+            && let Some(on_cancel) = on_cancel
+        {
+            on_cancel(&action_state);
             cx.prevent_default();
             cx.stop_propagation();
             return;
@@ -286,6 +309,9 @@ where
             input.preedit_cursor = None;
             input.buffer.break_undo_group();
         });
+        if let Some(on_blur) = on_blur {
+            on_blur(&blur_action_state);
+        }
     });
 
     let mut content_group = group(text_bounds);
@@ -473,6 +499,9 @@ mod tests {
                         caret: Color::WHITE,
                         selection: Color::WHITE,
                     },
+                    on_submit: None,
+                    on_cancel: None,
+                    on_blur: None,
                 },
             )
         });
@@ -524,6 +553,7 @@ mod tests {
             ascii_caret.left > TEXT_INSET,
             "ASCII caret did not advance: {ascii_caret:?}"
         );
+        assert_eq!(ascii_caret.height(), 14.0);
 
         send(
             &mut session,

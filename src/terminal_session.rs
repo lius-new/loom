@@ -136,6 +136,7 @@ pub struct TerminalController {
 pub struct TerminalTab {
     pub id: u64,
     pub controller: TerminalController,
+    pub cwd: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -201,11 +202,16 @@ impl TerminalTabs {
     }
 
     pub fn add(&mut self, shell: ShellKind) -> u64 {
+        self.add_at(shell, None)
+    }
+
+    pub fn add_at(&mut self, shell: ShellKind, cwd: Option<PathBuf>) -> u64 {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         self.tabs.push(TerminalTab {
             id,
             controller: TerminalController::with_shell(shell),
+            cwd,
         });
         self.active_id = Some(id);
         id
@@ -908,6 +914,16 @@ mod tests {
         tabs.close(second);
         assert!(tabs.is_empty());
         assert_eq!(tabs.active_id(), None);
+    }
+
+    #[test]
+    fn terminal_tab_can_request_its_own_working_directory() {
+        let mut tabs = TerminalTabs::restored(Vec::new(), None);
+        let cwd = PathBuf::from("workspace").join("nested");
+
+        tabs.add_at(ShellKind::default(), Some(cwd.clone()));
+
+        assert_eq!(tabs.active().and_then(|tab| tab.cwd.as_ref()), Some(&cwd));
     }
 
     #[test]

@@ -1,13 +1,13 @@
 //! Shared workspace commands used by the welcome screen and editor chrome.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::thread;
 
 use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
 use lgui::prelude::State;
 
-use crate::state::{AppState, DirEntry};
+use crate::state::{AppState, DirEntry, ExplorerCreateKind, ExplorerCreateRequest};
 use crate::workspace_persistence::{self, MAX_RECENT_FOLDERS};
 
 const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -63,6 +63,236 @@ pub fn choose_folder_to_add(state: &State<AppState>) -> bool {
 
     state.update(move |app| add_folder(app, path));
     true
+}
+
+pub fn begin_explorer_create(state: &State<AppState>, parent: PathBuf, kind: ExplorerCreateKind) {
+    state.update(move |app| {
+        let key = parent.to_string_lossy().into_owned();
+        app.expanded.insert(key);
+        app.explorer_create = Some(ExplorerCreateRequest { kind, parent });
+        app.explorer_create_input.clear();
+        app.explorer_create_error = None;
+    });
+}
+
+pub fn cancel_explorer_create(state: &State<AppState>) {
+    state.update(|app| {
+        app.explorer_create = None;
+        app.explorer_create_input.clear();
+        app.explorer_create_error = None;
+    });
+}
+
+/// Remove a root from the current workspace without touching it on disk.
+pub fn remove_folder_from_workspace(state: &State<AppState>, root: PathBuf) {
+    let display = root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| root.display().to_string());
+    state.update(move |app| {
+        if remove_folder_state(app, &root) {
+            persist_workspace(app);
+            app.show_toast(format!("Removed {display} from workspace."));
+        }
+    });
+}
+
+fn remove_folder_state(app: &mut AppState, root: &Path) -> bool {
+    let original_len = app.workspace_folders.len();
+    app.workspace_folders.retain(|folder| folder != root);
+    if app.workspace_folders.len() == original_len {
+        return false;
+    }
+
+    app.dir_entries
+        .retain(|path, _| !Path::new(path).starts_with(root));
+    app.expanded
+        .retain(|path| !Path::new(path).starts_with(root));
+    if app
+        .tree_hovered_path
+        .as_deref()
+        .is_some_and(|path| Path::new(path).starts_with(root))
+    {
+        app.tree_hovered_path = None;
+    }
+    if app
+        .explorer_create
+        .as_ref()
+        .is_some_and(|request| request.parent.starts_with(root))
+    {
+        app.explorer_create = None;
+        app.explorer_create_input.clear();
+        app.explorer_create_error = None;
+    }
+    app.tree_scroll = 0.0;
+    app.tree_scroll_x = 0.0;
+    true
+}
+
+pub fn finish_explorer_create(state: &State<AppState>) {
+    let snapshot = state.get();
+    let Some(request) = snapshot.explorer_create.clone() else {
+        return;
+    };
+    let raw_name = snapshot.explorer_create_input.text().to_owned();
+    drop(snapshot);
+
+    let force_folder = raw_name.ends_with(['/', '\\']);
+    let relative = match validate_create_path(&request.parent, &raw_name) {
+        Ok(relative) => relative,
+        Err(message) => {
+            state.update(move |app| {
+                app.explorer_create_error = Some(message.clone());
+                app.show_toast(message);
+            });
+            return;
+        }
+    };
+    let target = request.parent.join(relative);
+    let kind = if force_folder {
+        ExplorerCreateKind::Folder
+    } else {
+        request.kind
+    };
+    let result = match kind {
+        ExplorerCreateKind::File => target
+            .parent()
+            .map(fs::create_dir_all)
+            .transpose()
+            .and_then(|_| {
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&target)
+                    .map(|_| ())
+            }),
+        ExplorerCreateKind::Folder => fs::create_dir_all(&target),
+    };
+    if let Err(error) = result {
+        let message = format!("Could not create {}: {error}", target.display());
+        state.update(move |app| {
+            app.explorer_create_error = Some(message.clone());
+            app.show_toast(message);
+        });
+        return;
+    }
+
+    state.update(move |app| {
+        refresh_created_path(app, &request.parent, &target, kind);
+        if kind == ExplorerCreateKind::File {
+            app.workspace.open_path(target, String::new());
+        }
+        app.explorer_create = None;
+        app.explorer_create_input.clear();
+        app.explorer_create_error = None;
+        app.toast = None;
+    });
+}
+
+fn validate_create_path(parent: &Path, raw_name: &str) -> Result<PathBuf, String> {
+    let name = raw_name.trim_matches('\t').trim_end_matches(['/', '\\']);
+    if name.is_empty() || name.chars().all(char::is_whitespace) {
+        return Err("A file or folder name must be provided.".to_owned());
+    }
+    if name.starts_with(['/', '\\']) || Path::new(name).is_absolute() {
+        return Err("A file or folder name cannot start with a slash or drive prefix.".to_owned());
+    }
+
+    let mut relative = PathBuf::new();
+    for segment in name
+        .split(['/', '\\'])
+        .filter(|segment| !segment.is_empty())
+    {
+        if matches!(segment, "." | "..") {
+            return Err("Relative path segments '.' and '..' are not allowed.".to_owned());
+        }
+        if segment.trim() != segment {
+            return Err("Leading or trailing whitespace is not allowed in a name.".to_owned());
+        }
+        if invalid_file_name_segment(segment) {
+            return Err(format!("The name '{segment}' is not valid."));
+        }
+        relative.push(segment);
+    }
+    if relative.as_os_str().is_empty() {
+        return Err("A file or folder name must be provided.".to_owned());
+    }
+    let target = parent.join(&relative);
+    if target.exists() {
+        return Err(format!("{} already exists.", target.display()));
+    }
+    Ok(relative)
+}
+
+fn invalid_file_name_segment(segment: &str) -> bool {
+    if segment.len() > 255 || segment.chars().any(|character| character == '\0') {
+        return true;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if segment
+            .chars()
+            .any(|character| character.is_control() || r#"<>:"|?*"#.contains(character))
+            || segment.ends_with(['.', ' '])
+        {
+            return true;
+        }
+        let device_name = segment
+            .split('.')
+            .next()
+            .unwrap_or(segment)
+            .to_ascii_uppercase();
+        if matches!(
+            device_name.as_str(),
+            "CON"
+                | "PRN"
+                | "AUX"
+                | "NUL"
+                | "COM1"
+                | "COM2"
+                | "COM3"
+                | "COM4"
+                | "COM5"
+                | "COM6"
+                | "COM7"
+                | "COM8"
+                | "COM9"
+                | "LPT1"
+                | "LPT2"
+                | "LPT3"
+                | "LPT4"
+                | "LPT5"
+                | "LPT6"
+                | "LPT7"
+                | "LPT8"
+                | "LPT9"
+        ) {
+            return true;
+        }
+    }
+    false
+}
+
+fn refresh_created_path(app: &mut AppState, root: &Path, target: &Path, kind: ExplorerCreateKind) {
+    let refresh_until = if kind == ExplorerCreateKind::Folder {
+        target
+    } else {
+        target.parent().unwrap_or(root)
+    };
+    let mut directory = root.to_path_buf();
+    let key = directory.to_string_lossy().into_owned();
+    app.dir_entries
+        .insert(key.clone(), read_entries(&directory));
+    app.expanded.insert(key);
+    if let Ok(relative) = refresh_until.strip_prefix(root) {
+        for component in relative.components() {
+            directory.push(component.as_os_str());
+            let key = directory.to_string_lossy().into_owned();
+            app.dir_entries
+                .insert(key.clone(), read_entries(&directory));
+            app.expanded.insert(key);
+        }
+    }
 }
 
 /// Reopen a folder selected from the welcome screen's recent-workspace list.
@@ -408,6 +638,52 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_workspace_folder_keeps_disk_documents_and_clears_tree_state() {
+        let mut app = AppState::new();
+        let removed = PathBuf::from("first-workspace");
+        let child = removed.join("src");
+        let kept = PathBuf::from("second-workspace");
+        let open_file = child.join("main.rs");
+        app.workspace_folders = vec![removed.clone(), kept.clone()];
+        app.recent_folders = vec![removed.clone(), kept.clone()];
+        app.dir_entries
+            .insert(removed.to_string_lossy().into_owned(), Vec::new());
+        app.dir_entries
+            .insert(child.to_string_lossy().into_owned(), Vec::new());
+        app.dir_entries
+            .insert(kept.to_string_lossy().into_owned(), Vec::new());
+        app.expanded.insert(removed.to_string_lossy().into_owned());
+        app.expanded.insert(child.to_string_lossy().into_owned());
+        app.expanded.insert(kept.to_string_lossy().into_owned());
+        app.tree_hovered_path = Some(open_file.to_string_lossy().into_owned());
+        app.explorer_create = Some(ExplorerCreateRequest {
+            kind: ExplorerCreateKind::File,
+            parent: child.clone(),
+        });
+        app.workspace.open_path(open_file.clone(), String::new());
+
+        assert!(remove_folder_state(&mut app, &removed));
+
+        assert_eq!(app.workspace_folders, vec![kept.clone()]);
+        assert_eq!(app.recent_folders, vec![removed.clone(), kept.clone()]);
+        assert!(
+            app.dir_entries
+                .keys()
+                .all(|path| !Path::new(path).starts_with(&removed))
+        );
+        assert!(
+            app.expanded
+                .iter()
+                .all(|path| !Path::new(path).starts_with(&removed))
+        );
+        assert!(app.dir_entries.contains_key(&kept.to_string_lossy().into_owned()));
+        assert!(app.expanded.contains(&kept.to_string_lossy().into_owned()));
+        assert!(app.tree_hovered_path.is_none());
+        assert!(app.explorer_create.is_none());
+        assert_eq!(app.workspace.active_path(), Some(open_file.as_path()));
+    }
+
+    #[test]
     fn recent_folders_are_mru_ordered_and_bounded() {
         let mut app = AppState::new();
 
@@ -457,5 +733,39 @@ mod tests {
 
         assert_eq!(app.workspace.open_paths(), vec![first.clone(), second]);
         assert_eq!(app.workspace.active_path(), Some(first.as_path()));
+    }
+
+    #[test]
+    fn create_path_validation_accepts_nested_relative_names() {
+        let parent = PathBuf::from("workspace");
+
+        assert_eq!(
+            validate_create_path(&parent, "src/components/button.rs").unwrap(),
+            PathBuf::from("src").join("components").join("button.rs")
+        );
+        assert_eq!(
+            validate_create_path(&parent, "assets\\icons\\").unwrap(),
+            PathBuf::from("assets").join("icons")
+        );
+    }
+
+    #[test]
+    fn create_path_validation_rejects_empty_absolute_and_parent_names() {
+        let parent = PathBuf::from("workspace");
+
+        assert!(validate_create_path(&parent, "   ").is_err());
+        assert!(validate_create_path(&parent, "/absolute").is_err());
+        assert!(validate_create_path(&parent, "../outside").is_err());
+        assert!(validate_create_path(&parent, "src/../outside").is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn create_path_validation_rejects_windows_device_and_invalid_names() {
+        let parent = PathBuf::from("workspace");
+
+        assert!(validate_create_path(&parent, "CON.txt").is_err());
+        assert!(validate_create_path(&parent, "bad?.txt").is_err());
+        assert!(validate_create_path(&parent, "trailing.").is_err());
     }
 }

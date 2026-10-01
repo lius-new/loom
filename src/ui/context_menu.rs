@@ -4,11 +4,17 @@
 //! actions that make sense in that context: create new items, open a terminal,
 //! or add folders to the project. Items are grouped by hairline separators.
 
-use lgui::core::{EventPolicy, UiEventKind};
-use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
-use lgui::text::measure_width;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use crate::state::AppState;
+use lgui::core::{CursorIcon, EventPolicy, UiEventKind};
+use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
+use lgui::services::{Clipboard, ServicesContextExt};
+use lgui::text::measure_width;
+use unicode_width::UnicodeWidthStr;
+
+use crate::state::{AppState, ExplorerCreateKind};
+use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
 use crate::workspace_actions;
 
@@ -23,8 +29,19 @@ const MENU_BORDER: f32 = 1.0; // menu border width
 /// One row of the menu; `Separator` renders a hairline divider.
 #[derive(Clone, Copy)]
 enum MenuAction {
+    NewFile,
+    NewFolder,
+    OpenTerminal,
     None,
     AddFolder,
+    RemoveFolder,
+    RevealInFileExplorer,
+    CopyPath,
+    CopyRelativePath,
+}
+
+fn action_enabled(action: MenuAction, has_workspace: bool) -> bool {
+    has_workspace || matches!(action, MenuAction::AddFolder)
 }
 
 enum Entry {
@@ -40,39 +57,144 @@ const ENTRIES: &[Entry] = &[
     Entry::Item {
         label: "New File",
         shortcut: None,
-        action: MenuAction::None,
+        action: MenuAction::NewFile,
     },
     Entry::Item {
         label: "New Folder",
         shortcut: None,
-        action: MenuAction::None,
+        action: MenuAction::NewFolder,
     },
     Entry::Separator,
+    Entry::Item {
+        label: "Reveal in File Explorer",
+        shortcut: None,
+        action: MenuAction::RevealInFileExplorer,
+    },
     Entry::Item {
         label: "Open in Terminal",
         shortcut: None,
-        action: MenuAction::None,
+        action: MenuAction::OpenTerminal,
     },
     Entry::Separator,
     Entry::Item {
-        label: "Add Folders to Project",
+        label: "Add Folder From Workspace",
         shortcut: None,
         action: MenuAction::AddFolder,
     },
+    Entry::Item {
+        label: "Remove Folder From Workspace",
+        shortcut: None,
+        action: MenuAction::RemoveFolder,
+    },
+    Entry::Separator,
+    Entry::Item {
+        label: "Copy Path",
+        shortcut: None,
+        action: MenuAction::CopyPath,
+    },
+    Entry::Item {
+        label: "Copy Relative Path",
+        shortcut: None,
+        action: MenuAction::CopyRelativePath,
+    },
 ];
 
-/// Natural width of `s` at the menu text size, using the renderer's own text
-/// system. Falls back to a per-character estimate when unavailable.
+/// The empty-space menu acts on the root containing the active file. Falling
+/// back to the first root keeps its behavior deterministic before a file is
+/// opened. The longest match wins when workspace roots are nested.
+fn context_root(app: &AppState) -> Option<PathBuf> {
+    app.workspace
+        .active_path()
+        .and_then(|active| {
+            app.workspace_folders
+                .iter()
+                .filter(|root| active.starts_with(root))
+                .max_by_key(|root| root.components().count())
+        })
+        .or_else(|| app.workspace_folders.first())
+        .cloned()
+}
+
+fn copy_root_path(state: &State<AppState>, clipboard: &dyn Clipboard, relative: bool) {
+    let Some(root) = context_root(&state.get()) else {
+        state.update(|app| app.show_toast("No workspace folder is open."));
+        return;
+    };
+    let value = if relative {
+        ".".to_owned()
+    } else {
+        clipboard_path(&root)
+    };
+    let label = if relative { "relative path" } else { "path" };
+    match clipboard.write_text(&value) {
+        Ok(()) => state.update(move |app| app.show_toast(format!("Copied {label}."))),
+        Err(error) => state.update(move |app| app.show_toast(format!("Clipboard: {error}"))),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn clipboard_path(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else if let Some(local) = value.strip_prefix(r"\\?\") {
+        local.to_owned()
+    } else {
+        value.into_owned()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn clipboard_path(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn reveal_root(state: &State<AppState>) {
+    let Some(root) = context_root(&state.get()) else {
+        state.update(|app| app.show_toast("No workspace folder is open."));
+        return;
+    };
+    match reveal_in_file_manager(&root) {
+        Ok(()) => {}
+        Err(error) => state.update(move |app| {
+            app.show_toast(format!("Could not reveal folder: {error}"));
+        }),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn reveal_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
+    Command::new("explorer.exe").arg(path).spawn().map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn reveal_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
+    Command::new("open").arg(path).spawn().map(|_| ())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn reveal_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
+    Command::new("xdg-open").arg(path).spawn().map(|_| ())
+}
+
+/// Natural width of `s` at the menu text size. The renderer's generic text
+/// measurement does not select the menu's monospace family, so keep the
+/// monospace column width as a floor to avoid clipping long labels.
 fn measure(s: &str) -> f32 {
     let bounds = UiRect::new(0.0, 0.0, 10_000.0, theme::UI_SIZE);
-    measure_width(s, bounds, theme::UI_SIZE, 400).unwrap_or_else(|| {
-        s.chars().count() as f32 * theme::CHAR_W * (theme::UI_SIZE / theme::CODE_SIZE)
-    })
+    let mono_width =
+        UnicodeWidthStr::width(s) as f32 * theme::CHAR_W * (theme::UI_SIZE / theme::CODE_SIZE);
+    measure_width(s, bounds, theme::UI_SIZE, 400).map_or(mono_width, |width| width.max(mono_width))
 }
 
 /// Renders the right-click menu anchored at `pos` (screen coords), flipped and
 /// clamped so it stays inside `rect` (the viewport).
-pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element {
+pub fn render(
+    rect: UiRect,
+    pos: (f32, f32),
+    state: State<AppState>,
+    terminal_tabs: State<TerminalTabs>,
+) -> Element {
     let s = state.get();
 
     // Size the menu to its widest entry (label + optional shortcut).
@@ -175,19 +297,21 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
                 shortcut,
                 action,
             } => {
+                let enabled = action_enabled(*action, !s.workspace_folders.is_empty());
                 let item_rect = UiRect::new(
                     card.left + MENU_BORDER,
                     y,
                     card.right - MENU_BORDER,
                     y + ITEM_H,
                 );
-                let hovered = s.context_menu_hover == Some(index);
+                let hovered = enabled && s.context_menu_hover == Some(index);
                 let idx = index;
                 let label = *label;
                 let action = *action;
 
                 let st_hover = state.clone();
                 let st_click = state.clone();
+                let terminal_tabs_click = terminal_tabs.clone();
                 let mut item = panel(
                     item_rect,
                     if hovered {
@@ -197,22 +321,72 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
                     },
                 )
                 .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(if enabled {
+                    CursorIcon::Pointer
+                } else {
+                    CursorIcon::Default
+                })
                 .on_event(UiEventKind::PointerMove, move |_cx, _p| {
                     st_hover.try_update(move |app| {
-                        let changed = app.context_menu_hover != Some(idx);
-                        if changed {
+                        let changed = if enabled {
+                            app.context_menu_hover != Some(idx)
+                        } else {
+                            app.context_menu_hover.is_some()
+                        };
+                        if enabled {
                             app.context_menu_hover = Some(idx);
+                        } else {
+                            app.context_menu_hover = None;
                         }
                         changed
                     });
                 })
-                .on_click(move || {
+                .on_click(move |cx: &mut lgui::core::UiEventContext| {
+                    if !enabled {
+                        return;
+                    }
                     st_click.update(move |app| {
                         app.context_menu = None;
                         app.context_menu_hover = None;
                     });
-                    if matches!(action, MenuAction::AddFolder) {
-                        workspace_actions::choose_folder_to_add(&st_click);
+                    match action {
+                        MenuAction::NewFile | MenuAction::NewFolder => {
+                            if let Some(parent) = context_root(&st_click.get()) {
+                                let kind = if matches!(action, MenuAction::NewFile) {
+                                    ExplorerCreateKind::File
+                                } else {
+                                    ExplorerCreateKind::Folder
+                                };
+                                workspace_actions::begin_explorer_create(&st_click, parent, kind);
+                            }
+                        }
+                        MenuAction::OpenTerminal => {
+                            if let Some(cwd) = context_root(&st_click.get()) {
+                                terminal_tabs_click.update(move |tabs| {
+                                    tabs.add_at(ShellKind::default(), Some(cwd));
+                                });
+                                st_click.update(|app| {
+                                    app.show_terminal = true;
+                                    app.terminal_shell_menu = false;
+                                });
+                            }
+                        }
+                        MenuAction::None => {}
+                        MenuAction::AddFolder => {
+                            workspace_actions::choose_folder_to_add(&st_click);
+                        }
+                        MenuAction::RemoveFolder => {
+                            if let Some(root) = context_root(&st_click.get()) {
+                                workspace_actions::remove_folder_from_workspace(&st_click, root);
+                            }
+                        }
+                        MenuAction::RevealInFileExplorer => reveal_root(&st_click),
+                        MenuAction::CopyPath => {
+                            copy_root_path(&st_click, cx.application().clipboard().as_ref(), false);
+                        }
+                        MenuAction::CopyRelativePath => {
+                            copy_root_path(&st_click, cx.application().clipboard().as_ref(), true);
+                        }
                     }
                 });
 
@@ -225,6 +399,8 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
                 );
                 let label_color = if hovered {
                     theme::ZINC_100
+                } else if !enabled {
+                    theme::ZINC_500
                 } else {
                     theme::ZINC_300
                 };
@@ -258,4 +434,70 @@ pub fn render(rect: UiRect, pos: (f32, f32), state: State<AppState>) -> Element 
     }
 
     overlay.child(surface)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_root_falls_back_to_the_first_workspace_folder() {
+        let mut app = AppState::new();
+        app.workspace_folders = vec![PathBuf::from("first"), PathBuf::from("second")];
+
+        assert_eq!(context_root(&app), Some(PathBuf::from("first")));
+    }
+
+    #[test]
+    fn context_root_prefers_the_deepest_root_containing_the_active_file() {
+        let mut app = AppState::new();
+        app.workspace_folders = vec![
+            PathBuf::from("workspace"),
+            PathBuf::from("workspace/nested"),
+        ];
+        app.workspace
+            .open_path(PathBuf::from("workspace/nested/src/main.rs"), String::new());
+
+        assert_eq!(context_root(&app), Some(PathBuf::from("workspace/nested")));
+    }
+
+    #[test]
+    fn only_add_folder_is_enabled_without_a_workspace() {
+        assert!(action_enabled(MenuAction::AddFolder, false));
+        assert!(!action_enabled(MenuAction::RevealInFileExplorer, false));
+        assert!(!action_enabled(MenuAction::CopyPath, false));
+        assert!(!action_enabled(MenuAction::CopyRelativePath, false));
+        assert!(!action_enabled(MenuAction::NewFile, false));
+        assert!(!action_enabled(MenuAction::NewFolder, false));
+        assert!(!action_enabled(MenuAction::OpenTerminal, false));
+        assert!(!action_enabled(MenuAction::None, false));
+        assert!(action_enabled(MenuAction::None, true));
+    }
+
+    #[test]
+    fn long_menu_labels_reserve_at_least_their_monospace_width() {
+        let label = "Remove Folder From Workspace";
+        let mono_width = UnicodeWidthStr::width(label) as f32
+            * theme::CHAR_W
+            * (theme::UI_SIZE / theme::CODE_SIZE);
+
+        assert!(measure(label) >= mono_width);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn copied_windows_paths_hide_the_verbatim_prefix() {
+        assert_eq!(
+            clipboard_path(Path::new(r"\\?\D:\Documents\project")),
+            r"D:\Documents\project"
+        );
+        assert_eq!(
+            clipboard_path(Path::new(r"\\?\UNC\server\share\project")),
+            r"\\server\share\project"
+        );
+        assert_eq!(
+            clipboard_path(Path::new(r"D:\Documents\project")),
+            r"D:\Documents\project"
+        );
+    }
 }

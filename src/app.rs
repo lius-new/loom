@@ -37,6 +37,9 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let active_terminal_id = terminal_tab_snapshot.active_id();
     let terminal_shells = terminal_tab_snapshot.shells();
     let active_terminal_index = terminal_tab_snapshot.active_index();
+    let active_terminal_cwd = terminal_tab_snapshot
+        .active()
+        .and_then(|tab| tab.cwd.clone());
     let terminal_controller = terminal_tab_snapshot
         .active()
         .map(|tab| tab.controller.clone());
@@ -47,6 +50,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_focus = cx.focus_handle(terminal_id.clone());
     let clone_input_id = cx.use_stable_id();
     let clone_input_focus = cx.focus_handle(clone_input_id.clone());
+    let explorer_create_input_id = cx.use_stable_id();
+    let explorer_create_input_focus = cx.focus_handle(explorer_create_input_id.clone());
     let commit_input_id = cx.use_stable_id();
     let commit_input_focus = cx.focus_handle(commit_input_id.clone());
     let vp = cx.viewport();
@@ -147,6 +152,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let show_palette = s.show_palette;
     let show_clone_dialog = s.show_clone_dialog;
+    let creating_explorer_entry = s.explorer_create.is_some();
 
     // ---- Region layout ------------------------------------------------
     let titlebar_rect = UiRect::new(0.0, 0.0, w, theme::TITLEBAR_H);
@@ -221,11 +227,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         }
     });
-    let terminal_cwd = s
-        .workspace_folders
-        .first()
-        .cloned()
-        .or_else(|| std::env::current_dir().ok());
+    let terminal_cwd = active_terminal_cwd.or_else(|| {
+        s.workspace_folders
+            .first()
+            .cloned()
+            .or_else(|| std::env::current_dir().ok())
+    });
 
     let terminal_start = terminal_controller.clone();
     let terminal_start_application = application.clone();
@@ -248,7 +255,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         },
     );
     let mounted_terminal_focus = terminal_focus.clone();
-    cx.use_effect(show_term, move || {
+    cx.use_effect((show_term, active_terminal_id), move || {
         if show_term {
             mounted_terminal_focus.focus();
         }
@@ -257,6 +264,15 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     cx.use_effect(show_clone_dialog, move || {
         if show_clone_dialog {
             mounted_clone_focus.focus();
+        }
+    });
+    let mounted_create_focus = explorer_create_input_focus.clone();
+    let finished_create_focus = editor_focus.clone();
+    cx.use_effect(creating_explorer_entry, move || {
+        if creating_explorer_entry {
+            mounted_create_focus.focus();
+        } else {
+            finished_create_focus.focus();
         }
     });
     let blink_focused = s.terminal_focused;
@@ -462,6 +478,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             state.clone(),
             git_store.clone(),
             editor_focus.clone(),
+            explorer_create_input_focus,
+            explorer_create_input_id,
         ));
     }
 
@@ -486,7 +504,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         git_store.clone(),
         editor_focus.clone(),
         terminal_focus,
-        terminal_tabs,
+        terminal_tabs.clone(),
     ));
 
     // ---- Overlays ------------------------------------------------------
@@ -503,7 +521,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         root = root.child(command_palette::render(vp, state.clone(), editor_focus));
     }
     if let Some(pos) = s.context_menu {
-        root = root.child(context_menu::render(vp, pos, state.clone()));
+        root = root.child(context_menu::render(
+            vp,
+            pos,
+            state.clone(),
+            terminal_tabs.clone(),
+        ));
     }
     if show_clone_dialog {
         root = root.child(clone_repository::render(

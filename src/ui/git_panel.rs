@@ -367,6 +367,9 @@ fn commit_input(
                 caret: theme::ZINC_600,
                 selection: theme::ACCENT,
             },
+            on_submit: None,
+            on_cancel: None,
+            on_blur: None,
         },
     )
 }

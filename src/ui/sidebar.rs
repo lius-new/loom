@@ -17,12 +17,14 @@ use lgui::core::{
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
 use crate::git::GitStoreSnapshot;
-use crate::state::{AppState, DirEntry};
+use crate::state::{AppState, DirEntry, ExplorerCreateKind};
 use crate::theme;
+use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::workspace_actions;
 
 const HEADER_H: f32 = theme::TABS_H;
 const ROW_H: f32 = 20.0;
+const CREATE_ROW_H: f32 = 28.0;
 const INDENT: f32 = 12.0;
 const TREE_ICON_SIZE: f32 = 16.0;
 const TREE_ICON_GAP: f32 = 4.0;
@@ -56,6 +58,8 @@ pub fn render(
     state: State<AppState>,
     git_store: State<GitStoreSnapshot>,
     editor_focus: UiFocusHandle,
+    create_input_focus: UiFocusHandle,
+    create_input_id: UiId,
 ) -> Element {
     let s = state.get();
     let git = git_store.get();
@@ -101,12 +105,12 @@ pub fn render(
                     .file_name()
                     .map(|value| value.to_string_lossy().into_owned())
                     .unwrap_or_else(|| key.clone());
-                (key, name)
+                (dir.clone(), key, name)
             })
             .collect::<Vec<_>>();
         let content_right = roots
             .iter()
-            .map(|(key, name)| tree_content_right(key, name, &s, content_rect.left))
+            .map(|(_, key, name)| tree_content_right(key, name, &s, content_rect.left))
             .fold(content_rect.right, f32::max);
         let max_scroll_x = (content_right - content_rect.right).max(0.0);
         let scroll_x = s.tree_scroll_x.clamp(0.0, max_scroll_x);
@@ -119,7 +123,7 @@ pub fn render(
         // Collect every root and its descendants into one scrollable list.
         // Each root starts a fresh sticky ancestry so adjacent workspaces push
         // one another out at the top edge instead of nesting visually.
-        for (key, root_name) in roots {
+        for (root_path, key, root_name) in roots {
             let is_expanded = s.expanded.contains(&key);
             let root = StickyDirectory {
                 key: key.clone(),
@@ -148,6 +152,20 @@ pub fn render(
                 &state,
             ));
             y += ROW_H;
+
+            if s.explorer_create
+                .as_ref()
+                .is_some_and(|request| request.parent == root_path)
+            {
+                tree_els.push(create_row(
+                    content_rect,
+                    y,
+                    state.clone(),
+                    create_input_focus.clone(),
+                    create_input_id.clone(),
+                ));
+                y += CREATE_ROW_H;
+            }
 
             if is_expanded {
                 let children_top = y;
@@ -531,6 +549,95 @@ fn read_text_file(path: &Path) -> Result<String, String> {
         return Err(format!("Could not open {name}: file is larger than 4 MiB"));
     }
     fs::read_to_string(path).map_err(|error| format!("Could not open {name} as UTF-8: {error}"))
+}
+
+fn create_row(
+    rect: UiRect,
+    y: f32,
+    state: State<AppState>,
+    focus: UiFocusHandle,
+    id: UiId,
+) -> Element {
+    let snapshot = state.get();
+    let kind = snapshot
+        .explorer_create
+        .as_ref()
+        .map_or(ExplorerCreateKind::File, |request| request.kind);
+    let border = if snapshot.explorer_create_error.is_some() {
+        theme::DIFF_DEL_BORDER
+    } else if snapshot.explorer_create_input.focused {
+        theme::ACCENT
+    } else {
+        theme::BORDER
+    };
+    let icon = if kind == ExplorerCreateKind::Folder {
+        crate::file_icons::FOLDER_ICON
+    } else {
+        crate::file_icons::DEFAULT_FILE_ICON
+    };
+    let input_rect = UiRect::new(
+        rect.left + INDENT + TREE_LABEL_OFFSET,
+        y + 2.0,
+        rect.right - 8.0,
+        y + CREATE_ROW_H - 2.0,
+    );
+    let field_rect = UiRect::new(
+        input_rect.left + 1.0,
+        input_rect.top + 1.0,
+        input_rect.right - 1.0,
+        input_rect.bottom - 1.0,
+    );
+    let input = input::render(
+        field_rect,
+        id,
+        focus,
+        InputBinding::new(state, explorer_create_input, explorer_create_input_mut),
+        InputOptions {
+            label: if kind == ExplorerCreateKind::Folder {
+                "New folder name"
+            } else {
+                "New file name"
+            },
+            placeholder: "",
+            style: InputStyle {
+                text: theme::mono(theme::ZINC_200, theme::UI_SIZE),
+                placeholder: theme::mono(theme::ZINC_600, theme::UI_SIZE),
+                caret: theme::ZINC_200,
+                selection: theme::ACCENT,
+            },
+            on_submit: Some(workspace_actions::finish_explorer_create),
+            on_cancel: Some(workspace_actions::cancel_explorer_create),
+            on_blur: Some(workspace_actions::cancel_explorer_create),
+        },
+    );
+
+    panel(
+        UiRect::new(rect.left, y, rect.right, y + CREATE_ROW_H),
+        VisualStyle::filled(theme::SURFACE),
+    )
+    .child(precompiled(
+        UiElement::icon(
+            UiId::owned("tree-create-icon"),
+            UiRect::new(
+                rect.left + INDENT,
+                y + 6.0,
+                rect.left + INDENT + TREE_ICON_SIZE,
+                y + 6.0 + TREE_ICON_SIZE,
+            ),
+            icon,
+        )
+        .icon_style(IconStyle::new(theme::ZINC_400)),
+    ))
+    .child(theme::bordered(input_rect, theme::BG, border, 3.0, 1.0))
+    .child(input)
+}
+
+fn explorer_create_input(app: &AppState) -> &InputState {
+    &app.explorer_create_input
+}
+
+fn explorer_create_input_mut(app: &mut AppState) -> &mut InputState {
+    &mut app.explorer_create_input
 }
 
 /// A directory node row: icon (folder/folder-open), name, and a click handler

@@ -15,6 +15,18 @@ pub struct DirEntry {
     pub is_dir: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExplorerCreateKind {
+    File,
+    Folder,
+}
+
+#[derive(Clone)]
+pub struct ExplorerCreateRequest {
+    pub kind: ExplorerCreateKind,
+    pub parent: PathBuf,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub editor: crate::editor::interaction::EditorInteraction,
@@ -59,6 +71,10 @@ pub struct AppState {
     pub context_menu: Option<(f32, f32)>,
     /// Index of the context-menu item currently hovered, if any.
     pub context_menu_hover: Option<usize>,
+    /// Inline New File/New Folder editor currently shown in the file tree.
+    pub explorer_create: Option<ExplorerCreateRequest>,
+    pub explorer_create_input: InputState,
+    pub explorer_create_error: Option<String>,
     /// Root folders currently browsed in the file tree, in display order.
     pub workspace_folders: Vec<PathBuf>,
     /// Previously opened workspace folders, most recently used first.
@@ -139,6 +155,9 @@ impl AppState {
             tree_hovered_path: None,
             context_menu: None,
             context_menu_hover: None,
+            explorer_create: None,
+            explorer_create_input: InputState::default(),
+            explorer_create_error: None,
             workspace_folders: Vec::new(),
             recent_folders: Vec::new(),
             tree_scroll: 0.0,
