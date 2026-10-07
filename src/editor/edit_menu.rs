@@ -1,5 +1,7 @@
 //! Context menu shares the same commands and clipboard path as keyboard editing.
 use super::{commands::Command, editor_view::execute_command};
+use crate::input::action::Action;
+use crate::key_actions;
 use crate::{state::AppState, theme};
 use lgui::core::UiFocusHandle;
 use lgui::core::{CursorIcon, EventPolicy};
@@ -14,12 +16,12 @@ pub fn render(
     focus: UiFocusHandle,
 ) -> Element {
     let items = [
-        ("Undo", "Ctrl+Z", Command::Undo),
-        ("Redo", "Ctrl+Y", Command::Redo),
-        ("Cut", "Ctrl+X", Command::Cut),
-        ("Copy", "Ctrl+C", Command::Copy),
-        ("Paste", "Ctrl+V", Command::Paste),
-        ("Select All", "Ctrl+A", Command::SelectAll),
+        ("Undo", Command::Undo),
+        ("Redo", Command::Redo),
+        ("Cut", Command::Cut),
+        ("Copy", Command::Copy),
+        ("Paste", Command::Paste),
+        ("Select All", Command::SelectAll),
     ];
     let s = state.get();
     let width = 230.0;
@@ -49,7 +51,11 @@ pub fn render(
         });
     let mut menu =
         theme::bordered(card, theme::c().surface, theme::c().border, 5.0, 1.0).event_policy(policy);
-    for (i, (label, shortcut, command)) in items.into_iter().enumerate() {
+    for (i, (label, command)) in items.into_iter().enumerate() {
+        // Labels come from the keymap so they follow user rebindings.
+        let shortcut = Action::for_editor_command(command)
+            .and_then(|action| key_actions::editor_shortcut_label(&s, action))
+            .unwrap_or_default();
         let enabled = s.workspace.active_buffer().is_some_and(|b| match command {
             Command::Undo => b.can_undo(),
             Command::Redo => b.can_redo(),
@@ -105,7 +111,7 @@ pub fn render(
             theme::sans(color, theme::UI_SIZE),
         ))
         .child(text(
-            UiRect::new(r.right - 80.0, r.top, r.right - 4.0, r.bottom),
+            UiRect::new(r.right - 110.0, r.top, r.right - 4.0, r.bottom),
             shortcut,
             theme::mono(color, theme::SMALL),
         ));

@@ -1,0 +1,128 @@
+// Loom's built-in key bindings.
+//
+// Contexts, from the root to the focused element:
+//   Workspace os=… surface=editor|diff|settings|home|welcome
+//     Editor extension=…   the code editor has focus
+//     Terminal             the terminal has focus
+//     Input                a single-line text field has focus
+//     Menu                 an editor, Explorer or tab menu is open (deepest)
+//   Dialog CloseConfirmation | Dialog CloneRepository   (modal, separate roots)
+//
+// Users override these in keymap.json: open the Keymap page
+// (workspace::OpenKeymap) and choose "Edit keymap.json".
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "secondary-b": "workspace::ToggleDrawer",
+      "secondary-shift-g": "workspace::OpenSourceControl",
+      "secondary-`": "workspace::ToggleTerminal",
+      "secondary-,": "workspace::OpenSettings",
+      "secondary-k secondary-s": "workspace::OpenKeymap",
+      "escape": "workspace::CloseOverlay",
+      "secondary-w": "pane::CloseActiveItem",
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePrevItem",
+      "secondary-1": ["pane::ActivateItem", 0],
+      "secondary-2": ["pane::ActivateItem", 1],
+      "secondary-3": ["pane::ActivateItem", 2],
+      "secondary-4": ["pane::ActivateItem", 3],
+      "secondary-5": ["pane::ActivateItem", 4],
+      "secondary-6": ["pane::ActivateItem", 5],
+      "secondary-7": ["pane::ActivateItem", 6],
+      "secondary-8": ["pane::ActivateItem", 7],
+      "secondary-9": "pane::ActivateLastItem"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "secondary-s": "editor::Save",
+      "secondary-z": "editor::Undo",
+      "secondary-shift-z": "editor::Redo",
+      "secondary-y": "editor::Redo",
+      "secondary-a": "editor::SelectAll",
+      "secondary-c": "editor::Copy",
+      "secondary-x": "editor::Cut",
+      "secondary-v": "editor::Paste",
+      "escape": "editor::Cancel",
+      "left": "editor::MoveLeft",
+      "right": "editor::MoveRight",
+      "up": "editor::MoveUp",
+      "down": "editor::MoveDown",
+      "shift-left": "editor::SelectLeft",
+      "shift-right": "editor::SelectRight",
+      "shift-up": "editor::SelectUp",
+      "shift-down": "editor::SelectDown",
+      "secondary-left": "editor::MoveToPreviousWordStart",
+      "secondary-right": "editor::MoveToNextWordEnd",
+      "secondary-shift-left": "editor::SelectToPreviousWordStart",
+      "secondary-shift-right": "editor::SelectToNextWordEnd",
+      "home": "editor::MoveToBeginningOfLine",
+      "end": "editor::MoveToEndOfLine",
+      "shift-home": "editor::SelectToBeginningOfLine",
+      "shift-end": "editor::SelectToEndOfLine",
+      "secondary-home": "editor::MoveToBeginning",
+      "secondary-end": "editor::MoveToEnd",
+      "secondary-shift-home": "editor::SelectToBeginning",
+      "secondary-shift-end": "editor::SelectToEnd",
+      "pageup": "editor::MovePageUp",
+      "pagedown": "editor::MovePageDown",
+      "shift-pageup": "editor::SelectPageUp",
+      "shift-pagedown": "editor::SelectPageDown",
+      "backspace": "editor::Backspace",
+      "shift-backspace": "editor::Backspace",
+      "delete": "editor::Delete",
+      "shift-delete": "editor::Delete",
+      "secondary-backspace": "editor::DeleteToPreviousWordStart",
+      "secondary-delete": "editor::DeleteToNextWordEnd",
+      "enter": "editor::Newline",
+      "shift-enter": "editor::Newline",
+      "tab": "editor::Tab",
+      "shift-tab": "editor::Backtab"
+    }
+  },
+  {
+    "context": "Terminal",
+    "bindings": {
+      "ctrl-c": "terminal::CopyOrInterrupt",
+      "ctrl-shift-c": "terminal::Copy",
+      "ctrl-v": "terminal::Paste",
+      "shift-insert": "terminal::Paste",
+      // These keys belong to the shell while the terminal has focus.
+      "ctrl-w": null,
+      "escape": null,
+      "ctrl-tab": null,
+      "ctrl-shift-tab": null,
+      "secondary-k secondary-s": null
+    }
+  },
+  {
+    "context": "Input",
+    "bindings": {
+      // Text fields cancel their own edit on Escape.
+      "escape": null
+    }
+  },
+  {
+    "context": "Menu",
+    "bindings": {
+      "escape": "menu::Cancel"
+    }
+  },
+  {
+    "context": "CloseConfirmation",
+    "bindings": {
+      "enter": "dialog::Confirm",
+      "escape": "dialog::Cancel",
+      "secondary-d": "dialog::Secondary"
+    }
+  },
+  {
+    "context": "CloneRepository",
+    "bindings": {
+      "enter": "dialog::Confirm",
+      "escape": "dialog::Cancel"
+    }
+  }
+]

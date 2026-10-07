@@ -25,6 +25,7 @@ mod file_watcher;
 mod git;
 mod git_actions;
 mod input;
+mod key_actions;
 mod launch;
 mod model;
 mod settings_persistence;
@@ -76,6 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_icon("explorer", icondata::LuLayers)
                 .with_icon("chevron-right", icondata::LuChevronRight)
                 .with_icon("settings", icondata::LuSettings)
+                .with_icon("keyboard", icondata::LuKeyboard)
                 // X strokes: a 1px round cap (radius 0.5px) lands between pixel centers,
                 // leaving the tips faint. Use butt caps and extend the endpoints outward
                 // so each diagonal terminates on a solid pixel.

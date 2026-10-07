@@ -1,11 +1,13 @@
 //! Modal confirmation shown before closing dirty editor tabs.
 
 use lgui::core::{
-    CursorIcon, EventPolicy, KeyState, LogicalKey, NamedKey, SemanticRole, Semantics, UiElement,
-    UiEventContext, UiFocusHandle, UiId,
+    CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiEventContext, UiFocusHandle,
+    UiId,
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
+use lgui::window::WindowManager;
 
+use crate::input::action::Action;
 use crate::state::{AppState, CloseContinuation};
 use crate::theme;
 use crate::workspace_actions;
@@ -53,36 +55,15 @@ pub fn render(
     // The overlay owns keyboard focus while it is open (see `app.rs`), so
     // Enter/Esc never reach the editor underneath. Every key stops here to keep
     // the dialog modal.
-    let key_state = state.clone();
-    let key_focus = editor_focus.clone();
     let overlay_style = VisualStyle::filled(theme::c().bg).alpha(214);
     let mut root = Element::new(move |cx| {
         UiElement::panel(dialog_id.clone(), viewport, overlay_style).children(cx.children)
     })
     .event_policy(EventPolicy::INTERACTIVE)
     .semantics(Semantics::new(SemanticRole::Dialog).name("Save your changes?"))
-    .on_key_down(move |cx, event| {
-        if event.state != KeyState::Down {
-            return;
-        }
-        let cmd = event.modifiers.ctrl() || event.modifiers.meta();
-        let resolved = match &event.key {
-            LogicalKey::Named(NamedKey::Escape) => {
-                workspace_actions::cancel_close_request(&key_state);
-                Some(None)
-            }
-            LogicalKey::Named(NamedKey::Enter) => {
-                Some(workspace_actions::save_close_request(&key_state))
-            }
-            // Cmd/Ctrl+D is the platform shortcut for "Don't Save".
-            LogicalKey::Character(value) if cmd && value.eq_ignore_ascii_case("d") => {
-                Some(workspace_actions::discard_close_request(&key_state))
-            }
-            _ => None,
-        };
-        if let Some(continuation) = resolved {
-            finish(cx, &key_state, &key_focus, continuation);
-        }
+    // Enter, Esc and Cmd/Ctrl+D arrive as `dialog::` actions (see `perform`);
+    // the dialog swallows every other key.
+    .on_key_down(move |cx, _event| {
         cx.prevent_default();
         cx.stop_propagation();
     })
@@ -213,6 +194,31 @@ fn finish(
     } else if state.get().close_request.is_none() {
         editor_focus.focus();
     }
+}
+
+/// Perform a `dialog::` action from the keymap: Confirm saves, Secondary
+/// discards ("Don't Save") and Cancel keeps the files open.
+pub fn perform(
+    state: &State<AppState>,
+    editor_focus: &UiFocusHandle,
+    windows: &WindowManager,
+    action: Action,
+) -> bool {
+    let continuation = match action {
+        Action::DialogConfirm => workspace_actions::save_close_request(state),
+        Action::DialogSecondary => workspace_actions::discard_close_request(state),
+        Action::DialogCancel => {
+            workspace_actions::cancel_close_request(state);
+            None
+        }
+        _ => return false,
+    };
+    if continuation == Some(CloseContinuation::ExitApplication) {
+        windows.close("loom");
+    } else if state.get().close_request.is_none() {
+        editor_focus.focus();
+    }
+    true
 }
 
 fn centered(mut style: lgui::prelude::TextStyle) -> lgui::prelude::TextStyle {

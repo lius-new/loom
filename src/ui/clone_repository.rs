@@ -6,6 +6,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
+use crate::input::action::Action;
 use crate::state::AppState;
 use crate::theme;
 use crate::workspace_actions;
@@ -180,34 +181,16 @@ pub fn render(
         if event.state != KeyState::Down {
             return;
         }
-        match &event.key {
-            LogicalKey::Named(NamedKey::Backspace) => {
-                key_state.update(|app| {
-                    if !app.cloning_repository {
-                        app.clone_repository_url.pop();
-                        app.clone_repository_error = None;
-                    }
-                });
-                cx.prevent_default();
-                cx.stop_propagation();
-            }
-            LogicalKey::Named(NamedKey::Enter) => {
-                workspace_actions::clone_repository(&key_state);
-                cx.prevent_default();
-                cx.stop_propagation();
-            }
-            LogicalKey::Named(NamedKey::Escape) => {
-                key_state.update(|app| {
-                    if !app.cloning_repository {
-                        app.show_clone_dialog = false;
-                        app.clone_input_focused = false;
-                        app.clone_repository_error = None;
-                    }
-                });
-                cx.prevent_default();
-                cx.stop_propagation();
-            }
-            _ => {}
+        // Enter and Esc arrive as `dialog::` actions (see `perform`).
+        if event.key == LogicalKey::Named(NamedKey::Backspace) {
+            key_state.update(|app| {
+                if !app.cloning_repository {
+                    app.clone_repository_url.pop();
+                    app.clone_repository_error = None;
+                }
+            });
+            cx.prevent_default();
+            cx.stop_propagation();
         }
     })
     .on_focus(move |_cx| focus_state.update(|app| app.clone_input_focused = true))
@@ -355,6 +338,25 @@ pub fn render(
             centered(theme::sans_semibold(theme::c().text_bright, theme::UI_SIZE)),
         )),
     )
+}
+
+/// Perform a `dialog::` action from the keymap: Confirm starts the clone,
+/// Cancel closes the dialog unless a clone is already running.
+pub fn perform(state: &State<AppState>, action: Action) -> bool {
+    match action {
+        Action::DialogConfirm => {
+            workspace_actions::clone_repository(state);
+        }
+        Action::DialogCancel => state.update(|app| {
+            if !app.cloning_repository {
+                app.show_clone_dialog = false;
+                app.clone_input_focused = false;
+                app.clone_repository_error = None;
+            }
+        }),
+        _ => return false,
+    }
+    true
 }
 
 fn centered(mut style: lgui::prelude::TextStyle) -> lgui::prelude::TextStyle {

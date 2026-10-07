@@ -80,6 +80,16 @@ pub fn render(
     // Right-aligned items. Without an active file, only the editor-wide
     // settings are shown (no Ln/Col position, no language badge).
     let mut items: Vec<(String, TextStyle)> = Vec::new();
+    // A key sequence waiting for its next keystroke, e.g. `Ctrl+K …`.
+    if !s.pending_keystrokes.is_empty() {
+        items.push((
+            format!(
+                "{} …",
+                crate::input::keystroke::Keystroke::sequence_label(&s.pending_keystrokes)
+            ),
+            theme::mono_bold(theme::c().accent, theme::SMALL),
+        ));
+    }
     if let Some(id) = s.workspace.active() {
         let m = s
             .workspace

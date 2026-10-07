@@ -7,21 +7,21 @@ use std::thread;
 use std::time::Duration;
 
 use lgui::ApplicationHandle;
-use lgui::core::{KeyboardEvent, UiEventKind, UiEventPayload};
+use lgui::core::{UiEventKind, UiEventPayload};
 use lgui::prelude::{Element, RenderCx, UiRect, group};
-use lgui::services::ServicesContextExt;
 use lgui::window::WindowFocusChanged;
 
 use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
-use crate::input::keymap;
+use crate::key_actions::{self, KeyEnv, TerminalEnv};
 use crate::settings_persistence::{self, Settings};
 use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::{
-    clone_repository, close_confirmation, context_menu, diff_editor, git_panel, settings, sidebar,
-    statusbar, tab_context_menu, tabs, terminal, titlebar, toast, welcome, workspace_home,
+    clone_repository, close_confirmation, context_menu, diff_editor, git_panel, keymap_page,
+    settings, sidebar, statusbar, tab_context_menu, tabs, terminal, titlebar, toast, welcome,
+    workspace_home,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -62,6 +62,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let commit_input_focus = cx.focus_handle(commit_input_id.clone());
     let close_dialog_id = cx.use_stable_id();
     let close_dialog_focus = cx.focus_handle(close_dialog_id.clone());
+    let keymap_search_id = cx.use_stable_id();
+    let keymap_search_focus = cx.focus_handle(keymap_search_id.clone());
     let vp = cx.viewport();
     let w = vp.width();
     let h = vp.height();
@@ -73,7 +75,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             window_geometry::handle_focus_change(event.focused);
             if !event.focused {
                 window_focus_state.try_update(|app| {
-                    editor_view::finish_scrollbar_drag(app) | tabs::cancel_pointer_interaction(app)
+                    // A key sequence does not survive leaving the window.
+                    let had_pending = !app.pending_keystrokes.is_empty();
+                    app.pending_keystrokes.clear();
+                    editor_view::finish_scrollbar_drag(app)
+                        | tabs::cancel_pointer_interaction(app)
+                        | had_pending
                 });
             } else {
                 window_focus_state.update(|app| {
@@ -401,6 +408,35 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         }
     });
+    let key_env = KeyEnv {
+        state: state.clone(),
+        application: application_context.clone(),
+        editor_focus: editor_focus.clone(),
+        editor_rect: code_rect,
+        terminal: Some(TerminalEnv {
+            tabs: terminal_tabs.clone(),
+            focus: terminal_focus.clone(),
+            controller: terminal_controller.clone(),
+        }),
+    };
+    // A key sequence waiting for its next keystroke times out after a pause;
+    // each new keystroke bumps the sequence number and restarts the timer.
+    let pending_timer = (!s.pending_keystrokes.is_empty()).then_some(s.pending_keystrokes_seq);
+    let pending_env = key_env.clone();
+    cx.use_effect(pending_timer, move || {
+        let stop = pending_timer.map(|seq| key_actions::start_pending_timer(pending_env, seq));
+        move || {
+            if let Some(stop) = stop {
+                stop();
+            }
+        }
+    });
+    let keymap_state = state.clone();
+    cx.use_effect((), move || {
+        key_actions::reload_user_keymap(&keymap_state);
+        let watcher = key_actions::watch_user_keymap(keymap_state);
+        move || drop(watcher)
+    });
     let blink_focused = s.terminal_focused && s.terminal_cursor_blink;
     let blink_state = terminal_cursor_blink.clone();
     cx.use_effect((show_term, blink_focused, active_terminal_id), move || {
@@ -452,47 +488,9 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         });
     }
-    let interrupt_state = state.clone();
-    let interrupt_controller = terminal_controller.clone();
-    let interrupt_application = application.clone();
-    root = root.on_event_capture(UiEventKind::KeyDown, move |ctx, payload| {
-        let UiEventPayload::Keyboard { event } = payload else {
-            return;
-        };
-        // Clipboard keys are captured here so editor-wide shortcuts never see them.
-        if interrupt_state.get().terminal_focused
-            && let Some(controller) = interrupt_controller.as_ref()
-            && let Some(result) = terminal::handle_clipboard_shortcut(
-                controller,
-                event,
-                ctx.application().clipboard().as_ref(),
-            )
-        {
-            terminal::report_clipboard_error(&interrupt_state, result);
-            interrupt_application.request_frame();
-            ctx.prevent_default();
-            ctx.stop_propagation();
-        }
-    });
-    let st = state.clone();
-    let global_editor_focus = editor_focus.clone();
-    let global_terminal_focus = terminal_focus.clone();
-    let global_terminal_tabs = terminal_tabs.clone();
-    root = root.on_key_down(move |ctx, ev: &KeyboardEvent| {
-        if let Some(action) = keymap::action_for(ev) {
-            ctx.prevent_default();
-            if action == keymap::Action::ToggleTerminal {
-                terminal::toggle_panel(
-                    &st,
-                    &global_terminal_tabs,
-                    &global_editor_focus,
-                    &global_terminal_focus,
-                );
-                return;
-            }
-            st.update(move |app| app.apply(action));
-        }
-    });
+    // Every bound key resolves here, in the capture phase, before the focused
+    // element sees it (see `key_actions`).
+    root = key_actions::attach(root, key_env.clone());
 
     // Track the pointer against the whole drawer rather than individual tree
     // rows. Capturing at the root also observes moves into sibling regions and
@@ -592,6 +590,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.child(tabs::render(tabs_rect, state.clone(), editor_focus.clone()));
     root = root.child(match s.main_surface() {
         MainSurface::Settings => settings::render(code_rect, state.clone()),
+        MainSurface::Keymap => keymap_page::render(
+            code_rect,
+            state.clone(),
+            keymap_search_id,
+            keymap_search_focus,
+        ),
         MainSurface::Diff => diff_editor::render(code_rect, state.clone(), editor_focus.clone()),
         MainSurface::Editor => editor_view::render(
             code_rect,

@@ -6,6 +6,7 @@
 use lgui::core::{CursorIcon, EventPolicy, WheelUnit, clip};
 use lgui::prelude::{Color, Element, State, TextAlign, UiRect, VisualStyle, group, panel, text};
 
+use crate::input::action::Action;
 use crate::state::AppState;
 use crate::terminal_session::ShellKind;
 use crate::theme::{self, ThemeId};
@@ -111,7 +112,12 @@ fn content_height() -> f32 {
         .flat_map(|(_, settings)| settings.iter())
         .map(|setting| setting.height())
         .sum();
-    PAGE_PAD_TOP + HEADER_H + SECTIONS.len() as f32 * (SECTION_TITLE_H + SECTION_GAP) + rows
+    // The trailing KEYBOARD section holds a single link row.
+    PAGE_PAD_TOP
+        + HEADER_H
+        + (SECTIONS.len() + 1) as f32 * (SECTION_TITLE_H + SECTION_GAP)
+        + rows
+        + ROW_H
 }
 
 pub fn render(rect: UiRect, state: State<AppState>) -> Element {
@@ -160,16 +166,8 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     top += HEADER_H;
 
     for (title, settings) in SECTIONS {
-        content = content.child(text(
-            UiRect::new(page_left, top, page_right, top + SECTION_TITLE_H),
-            title,
-            theme::mono(theme::c().text_dim, theme::SMALL).tracking(0.8),
-        ));
+        content = content.child(section_title(page_left, page_right, top, title));
         top += SECTION_TITLE_H;
-        content = content.child(panel(
-            UiRect::new(page_left, top - 1.0, page_right, top),
-            VisualStyle::filled(theme::c().border),
-        ));
         for &setting in settings {
             let row = UiRect::new(page_left, top, page_right, top + setting.height());
             content = content.child(setting_row(row, setting, &app, state.clone()));
@@ -178,8 +176,71 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         top += SECTION_GAP;
     }
 
+    content = content.child(section_title(page_left, page_right, top, "KEYBOARD"));
+    top += SECTION_TITLE_H;
+    content = content.child(keymap_link_row(
+        UiRect::new(page_left, top, page_right, top + ROW_H),
+        state.clone(),
+    ));
+
     page = page.child(content);
     clip(rect, 0.0, 0.0).child(page)
+}
+
+fn section_title(left: f32, right: f32, top: f32, title: &'static str) -> Element {
+    group(UiRect::new(left, top - 1.0, right, top + SECTION_TITLE_H))
+        .child(text(
+            UiRect::new(left, top, right, top + SECTION_TITLE_H),
+            title,
+            theme::mono(theme::c().text_dim, theme::SMALL).tracking(0.8),
+        ))
+        .child(panel(
+            UiRect::new(
+                left,
+                top + SECTION_TITLE_H - 1.0,
+                right,
+                top + SECTION_TITLE_H,
+            ),
+            VisualStyle::filled(theme::c().border),
+        ))
+}
+
+/// Key bindings live on their own Keymap page; Settings links to it.
+fn keymap_link_row(row: UiRect, state: State<AppState>) -> Element {
+    let link = "Open Keymap";
+    let link_w = measure(link, theme::UI_SIZE, 400) + TEXT_MARGIN;
+    let text_right = (row.right - link_w - CONTROL_GAP).max(row.left);
+    let mut link_style = theme::sans(theme::c().accent, theme::UI_SIZE);
+    link_style.align = TextAlign::Right;
+    panel(row, VisualStyle::default())
+        .key("settings-open-keymap")
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .on_click(move || state.update(|app| app.apply(Action::OpenKeymap)))
+        .child(text(
+            UiRect::new(row.left, row.top + 11.0, text_right, row.top + 29.0),
+            "Keyboard shortcuts",
+            theme::sans(theme::c().text, theme::UI_SIZE),
+        ))
+        .child(text(
+            UiRect::new(row.left, row.top + 30.0, text_right, row.top + 48.0),
+            "View every action and its key binding, and customize them in keymap.json.",
+            theme::sans(theme::c().text_dim, theme::SMALL + 1.0),
+        ))
+        .child(text(
+            UiRect::new(
+                row.right - link_w,
+                row.top + 11.0,
+                row.right,
+                row.top + 29.0,
+            ),
+            link,
+            link_style,
+        ))
+        .child(panel(
+            UiRect::new(row.left, row.bottom - 1.0, row.right, row.bottom),
+            VisualStyle::filled(theme::c().active_line),
+        ))
 }
 
 fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppState>) -> Element {

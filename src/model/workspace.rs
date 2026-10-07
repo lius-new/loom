@@ -9,6 +9,23 @@ use crate::model::diff_document::DiffDocument;
 use crate::model::document::{DiskState, FileId, FileMeta};
 
 pub const SETTINGS_TITLE: &str = "Settings";
+pub const KEYMAP_TITLE: &str = "Keymap";
+
+/// Built-in pages that open in a tab instead of a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppPage {
+    Settings,
+    Keymap,
+}
+
+impl AppPage {
+    pub fn title(self) -> &'static str {
+        match self {
+            AppPage::Settings => SETTINGS_TITLE,
+            AppPage::Keymap => KEYMAP_TITLE,
+        }
+    }
+}
 
 #[derive(Clone)]
 struct OpenDocument {
@@ -16,8 +33,8 @@ struct OpenDocument {
     buffer: TextBuffer,
     saved_text: String,
     diff: Option<DiffDocument>,
-    /// The application settings page rather than a file.
-    settings: bool,
+    /// A built-in page (Settings, Keymap) rather than a file.
+    page: Option<AppPage>,
     scroll_x: f32,
     scroll_y: f32,
     disk_state: DiskState,
@@ -28,7 +45,7 @@ struct OpenDocument {
 impl OpenDocument {
     /// Whether this tab edits a file on disk (not a diff or the settings page).
     fn is_text(&self) -> bool {
-        self.diff.is_none() && !self.settings
+        self.diff.is_none() && self.page.is_none()
     }
 }
 
@@ -188,9 +205,9 @@ impl Workspace {
         self.active.and_then(|id| self.meta(id))
     }
 
-    /// Path of the active file or diff; the settings page has none.
+    /// Path of the active file or diff; built-in pages have none.
     pub fn active_path(&self) -> Option<&Path> {
-        if self.active_is_settings() {
+        if self.active_page().is_some() {
             return None;
         }
         self.active_meta().map(|meta| meta.path.as_path())
@@ -361,7 +378,7 @@ impl Workspace {
                 buffer: TextBuffer::new(contents),
                 saved_text,
                 diff: None,
-                settings: false,
+                page: None,
                 scroll_x: 0.0,
                 scroll_y: 0.0,
                 disk_state,
@@ -409,7 +426,7 @@ impl Workspace {
                 buffer: TextBuffer::new(String::new()),
                 saved_text: String::new(),
                 diff: Some(diff),
-                settings: false,
+                page: None,
                 scroll_x: 0.0,
                 scroll_y: 0.0,
                 disk_state: DiskState::capture(&absolute_path, ""),
@@ -424,16 +441,26 @@ impl Workspace {
 
     /// Open the settings page, or focus it if it is already open.
     pub fn open_settings(&mut self) -> FileId {
-        if let Some(id) = self.settings_id() {
+        self.open_page(AppPage::Settings)
+    }
+
+    /// Open the keymap page, or focus it if it is already open.
+    pub fn open_keymap(&mut self) -> FileId {
+        self.open_page(AppPage::Keymap)
+    }
+
+    /// Open a built-in page; each page has at most one tab.
+    pub fn open_page(&mut self, page: AppPage) -> FileId {
+        if let Some(id) = self.page_id(page) {
             self.active = Some(id);
             return id;
         }
 
         let id = FileId::new(self.next_file_id);
         self.next_file_id += 1;
-        let path = PathBuf::from(SETTINGS_TITLE);
+        let path = PathBuf::from(page.title());
         let mut meta = FileMeta::from_path(path.clone());
-        meta.name = SETTINGS_TITLE.to_owned();
+        meta.name = page.title().to_owned();
         self.documents.insert(
             id,
             OpenDocument {
@@ -441,7 +468,7 @@ impl Workspace {
                 buffer: TextBuffer::new(String::new()),
                 saved_text: String::new(),
                 diff: None,
-                settings: true,
+                page: Some(page),
                 scroll_x: 0.0,
                 scroll_y: 0.0,
                 disk_state: DiskState::capture(&path, ""),
@@ -454,18 +481,32 @@ impl Workspace {
         id
     }
 
+    pub fn page_id(&self, page: AppPage) -> Option<FileId> {
+        self.open
+            .iter()
+            .copied()
+            .find(|id| self.page(*id) == Some(page))
+    }
+
+    /// The built-in page a tab shows, if it is not a file or diff.
+    pub fn page(&self, id: FileId) -> Option<AppPage> {
+        self.documents.get(&id).and_then(|document| document.page)
+    }
+
+    pub fn active_page(&self) -> Option<AppPage> {
+        self.active.and_then(|id| self.page(id))
+    }
+
     pub fn settings_id(&self) -> Option<FileId> {
-        self.open.iter().copied().find(|id| self.is_settings(*id))
+        self.page_id(AppPage::Settings)
     }
 
     pub fn is_settings(&self, id: FileId) -> bool {
-        self.documents
-            .get(&id)
-            .is_some_and(|document| document.settings)
+        self.page(id) == Some(AppPage::Settings)
     }
 
     pub fn active_is_settings(&self) -> bool {
-        self.active.is_some_and(|id| self.is_settings(id))
+        self.active_page() == Some(AppPage::Settings)
     }
 
     /// Whether a tab is backed by a file (rather than a diff or settings).
@@ -782,6 +823,20 @@ mod tests {
         workspace.close(settings);
         assert_eq!(workspace.settings_id(), None);
         assert_eq!(workspace.active(), Some(file));
+    }
+
+    #[test]
+    fn keymap_page_is_its_own_unique_tab() {
+        let mut workspace = Workspace::new();
+        let settings = workspace.open_settings();
+        let keymap = workspace.open_keymap();
+        assert_ne!(keymap, settings);
+        assert_eq!(workspace.open_keymap(), keymap);
+        assert_eq!(workspace.active_page(), Some(AppPage::Keymap));
+        assert!(!workspace.active_is_settings());
+        assert!(!workspace.is_file(keymap));
+        assert_eq!(workspace.active_path(), None);
+        assert!(workspace.open_paths().is_empty());
     }
 
     #[test]

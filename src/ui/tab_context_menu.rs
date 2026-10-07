@@ -73,8 +73,8 @@ fn action_enabled(app: &AppState, target: FileId, action: Action) -> bool {
     if let Some(scope) = close_scope(action) {
         return !workspace_actions::tab_close_targets(app, target, scope).is_empty();
     }
-    // The settings page has no path to copy or reveal.
-    if app.workspace.is_settings(target) {
+    // Built-in pages have no path to copy or reveal.
+    if app.workspace.page(target).is_some() {
         return false;
     }
     match action {

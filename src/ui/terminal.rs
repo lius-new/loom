@@ -599,43 +599,21 @@ fn cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u16) {
     (row as u16, col as u16)
 }
 
+/// The terminal's clipboard actions (`terminal::Copy` and friends).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ClipboardShortcut {
+pub enum ClipboardShortcut {
     Copy,
+    /// Copy when text is selected and otherwise interrupt, matching Windows Terminal.
     CopyOrInterrupt,
     Paste,
 }
 
-fn clipboard_shortcut_for(event: &KeyboardEvent) -> Option<ClipboardShortcut> {
-    if event.state != KeyState::Down || event.modifiers.alt() {
-        return None;
-    }
-    let ctrl = event.modifiers.ctrl();
-    let shift = event.modifiers.shift();
-    match &event.key {
-        LogicalKey::Character(value) if ctrl && value.eq_ignore_ascii_case("c") => Some(if shift {
-            ClipboardShortcut::Copy
-        } else {
-            ClipboardShortcut::CopyOrInterrupt
-        }),
-        LogicalKey::Character(value) if ctrl && value.eq_ignore_ascii_case("v") => {
-            Some(ClipboardShortcut::Paste)
-        }
-        LogicalKey::Named(NamedKey::Insert) if shift && !ctrl => Some(ClipboardShortcut::Paste),
-        _ => None,
-    }
-}
-
-/// Handles the terminal's copy/paste keys. Ctrl+C copies when text is
-/// selected and otherwise interrupts, matching Windows Terminal.
-///
-/// Returns `None` when the event is not a clipboard shortcut.
-pub fn handle_clipboard_shortcut(
+pub fn run_clipboard_shortcut(
     controller: &TerminalController,
-    event: &KeyboardEvent,
+    shortcut: ClipboardShortcut,
     clipboard: &dyn Clipboard,
-) -> Option<Result<(), ClipboardError>> {
-    Some(match clipboard_shortcut_for(event)? {
+) -> Result<(), ClipboardError> {
+    match shortcut {
         ClipboardShortcut::Copy => copy_selection(controller, clipboard).map(|_| ()),
         ClipboardShortcut::CopyOrInterrupt => copy_selection(controller, clipboard).map(|copied| {
             if !copied {
@@ -643,7 +621,12 @@ pub fn handle_clipboard_shortcut(
             }
         }),
         ClipboardShortcut::Paste => paste_clipboard(controller, clipboard),
-    })
+    }
+}
+
+/// Type replayed text from an abandoned key sequence into the shell.
+pub fn write_text(controller: &TerminalController, text: &str) {
+    controller.write(text.as_bytes());
 }
 
 fn copy_selection(
@@ -842,35 +825,6 @@ mod tests {
             modifiers,
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn clipboard_shortcuts_follow_windows_terminal_conventions() {
-        use lgui::core::KeyModifiers;
-        let ctrl = KeyModifiers::CONTROL;
-        let ctrl_shift = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
-        let character = |value: &str| LogicalKey::Character(value.into());
-
-        assert_eq!(
-            clipboard_shortcut_for(&key(character("c"), ctrl)),
-            Some(ClipboardShortcut::CopyOrInterrupt)
-        );
-        assert_eq!(
-            clipboard_shortcut_for(&key(character("C"), ctrl_shift)),
-            Some(ClipboardShortcut::Copy)
-        );
-        assert_eq!(
-            clipboard_shortcut_for(&key(character("v"), ctrl)),
-            Some(ClipboardShortcut::Paste)
-        );
-        assert_eq!(
-            clipboard_shortcut_for(&key(
-                LogicalKey::Named(NamedKey::Insert),
-                KeyModifiers::SHIFT
-            )),
-            Some(ClipboardShortcut::Paste)
-        );
-        assert_eq!(clipboard_shortcut_for(&key(character("d"), ctrl)), None);
     }
 
     #[test]

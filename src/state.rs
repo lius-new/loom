@@ -3,9 +3,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::input::keymap::Action;
+use crate::input::action::Action;
+use crate::input::keystroke::Keystroke;
 use crate::model::document::FileId;
-use crate::model::workspace::Workspace;
+use crate::model::workspace::{AppPage, Workspace};
 use crate::terminal_session::ShellKind;
 use crate::theme::ThemeId;
 use crate::ui::components::input::InputState;
@@ -110,6 +111,7 @@ pub enum MainSurface {
     Editor,
     Diff,
     Settings,
+    Keymap,
 }
 
 #[derive(Clone)]
@@ -241,6 +243,14 @@ pub struct AppState {
     pub git_tree_view: bool,
     pub git_split_diff: bool,
     pub git_inline_blame: bool,
+    /// Keystrokes of a key sequence waiting for its next key.
+    pub pending_keystrokes: Vec<Keystroke>,
+    /// Bumped whenever `pending_keystrokes` changes, restarting its timeout.
+    pub pending_keystrokes_seq: u64,
+    /// Bumped whenever the active keymap is replaced, so shortcut labels re-render.
+    pub keymap_version: u64,
+    /// Filter typed into the Keymap page.
+    pub keymap_search: InputState,
 }
 
 impl AppState {
@@ -318,6 +328,10 @@ impl AppState {
             git_tree_view: false,
             git_split_diff: false,
             git_inline_blame: false,
+            pending_keystrokes: Vec::new(),
+            pending_keystrokes_seq: 0,
+            keymap_version: 0,
+            keymap_search: InputState::default(),
         }
     }
 
@@ -349,6 +363,8 @@ impl AppState {
         app
     }
 
+    /// Apply a `workspace::`, `pane::` or `menu::` action. Actions that need a
+    /// view or a platform service are performed by `key_actions` instead.
     pub fn apply(&mut self, action: Action) {
         match action {
             Action::CloneRepository => {
@@ -371,11 +387,7 @@ impl AppState {
             }
             Action::ToggleTerminal => self.show_terminal = !self.show_terminal,
             Action::CloseOverlay => {
-                self.editor.menu = None;
-                self.context_menu = None;
-                self.context_menu_target = None;
-                self.context_menu_hover = None;
-                self.tab_context_menu = None;
+                self.close_menus();
                 self.close_request = None;
                 self.tab_drag = None;
                 self.tab_scrollbar_dragging = false;
@@ -384,18 +396,22 @@ impl AppState {
                     self.clone_input_focused = false;
                 }
             }
-            Action::NextFile => self.workspace.next(),
-            Action::PrevFile => self.workspace.prev(),
-            Action::SelectFile(index) => {
+            Action::MenuCancel => self.close_menus(),
+            Action::ActivateNextItem => self.workspace.next(),
+            Action::ActivatePrevItem => self.workspace.prev(),
+            Action::ActivateItem(index) => {
                 self.workspace.activate_at(index);
             }
-            Action::SelectLastFile => {
+            Action::ActivateLastItem => {
                 self.workspace.activate_last();
             }
             Action::OpenSettings => {
                 self.workspace.open_settings();
             }
-            Action::CloseActiveFile => {
+            Action::OpenKeymap => {
+                self.workspace.open_keymap();
+            }
+            Action::CloseActiveItem => {
                 // A pending (possibly batch) request must be resolved first.
                 if self.close_request.is_none()
                     && let Some(id) = self.workspace.active()
@@ -403,12 +419,24 @@ impl AppState {
                     crate::workspace_actions::request_close_tab_in(self, id);
                 }
             }
+            _ => {}
         }
     }
 
+    fn close_menus(&mut self) {
+        self.editor.menu = None;
+        self.context_menu = None;
+        self.context_menu_target = None;
+        self.context_menu_hover = None;
+        self.tab_context_menu = None;
+    }
+
     pub fn main_surface(&self) -> MainSurface {
-        if self.workspace.active_is_settings() {
-            MainSurface::Settings
+        if let Some(page) = self.workspace.active_page() {
+            match page {
+                AppPage::Settings => MainSurface::Settings,
+                AppPage::Keymap => MainSurface::Keymap,
+            }
         } else if self.workspace.active_diff().is_some() {
             MainSurface::Diff
         } else if self.workspace.active_buffer().is_some() {

@@ -52,7 +52,40 @@ Indentation uses two spaces; existing tabs display at four-column tab stops.
 Typing replaces the selection. Consecutive typing/deletion is grouped for undo;
 movement, paste, indentation, saving and focus changes separate undo groups.
 Editor shortcuts apply while the editor has focus; the terminal keeps its own
-keyboard handling. Command is also accepted in place of Ctrl.
+keyboard handling. On macOS, Command takes the place of Ctrl.
+
+### Customizing key bindings
+
+Shortcuts come from a Zed-style keymap. The **Keymap** page (Ctrl + K Ctrl + S,
+or Settings → Keyboard → Open Keymap) opens in its own tab and lists every
+action with its bindings; filter it by action, keystroke or context. Its
+**Edit keymap.json** button opens your `keymap.json` (`%APPDATA%\Loom` on
+Windows). Saved changes apply immediately; entries with mistakes are reported
+and skipped.
+
+```jsonc
+[
+  {
+    "context": "Editor",                     // where the bindings apply
+    "bindings": {
+      "alt-up": "editor::MoveToBeginning",   // keystrokes → action
+      "secondary-y": null,                   // null disables a default binding
+      "secondary-k secondary-d": ["pane::ActivateItem", 0] // sequences, arguments
+    }
+  }
+]
+```
+
+- **Keystrokes** join modifiers with `-`: `ctrl`, `alt`, `shift`, `cmd`, and
+  `secondary` (Command on macOS, Ctrl elsewhere). Separate a sequence with spaces.
+- **Contexts**: `Workspace` (always), `Editor`, `Terminal`, `Input`, `Menu`,
+  `CloseConfirmation`, `CloneRepository`. Combine them with `&&`, `||`, `!` and
+  `>` (ancestor), and test attributes such as `extension == rs` or `os == windows`.
+- **Precedence**: a binding in a more specific context wins (Editor over
+  Workspace); within one context, later bindings — yours — win.
+
+`LOOM_LOG_KEYS=1` in a debug build prints how each keystroke resolved. The design
+is documented in [KEYMAP_PLAN.md](KEYMAP_PLAN.md).
 
 ## File icons
 

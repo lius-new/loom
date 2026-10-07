@@ -6,7 +6,7 @@
 use lgui::core::{Color, IconStyle, UiElement, UiEventContext, UiId, precompiled};
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
 
-use crate::input::keymap::Action;
+use crate::input::action::Action;
 use crate::state::AppState;
 use crate::theme;
 

@@ -12,6 +12,7 @@ use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text}
 use lgui::text::{self, TextLayoutRequest};
 
 use crate::model::document::{FileId, FileMeta};
+use crate::model::workspace::AppPage;
 use crate::state::{AppState, MainSurface, TabContextMenuState, TabDragState};
 use crate::theme;
 use crate::ui::tab_layout::{self, TabLayoutInput, TabLayoutResult};
@@ -214,8 +215,12 @@ impl TabBadge {
 }
 
 fn tab_badge(app: &AppState, id: FileId, meta: &FileMeta) -> TabBadge {
-    if app.workspace.is_settings(id) {
-        TabBadge::Icon("settings", theme::c().text_muted)
+    if let Some(page) = app.workspace.page(id) {
+        let icon = match page {
+            AppPage::Settings => "settings",
+            AppPage::Keymap => "keyboard",
+        };
+        TabBadge::Icon(icon, theme::c().text_muted)
     } else if app.workspace.is_diff(id) {
         TabBadge::Text("Δ", theme::c().badge.diff)
     } else {

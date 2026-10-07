@@ -1259,12 +1259,18 @@ mod tests {
             vec![PathBuf::from("previous-workspace")]
         );
         assert!(app.workspace.open_files().is_empty());
-        assert!(app.toast.as_ref().unwrap().message.ends_with("(and 1 more)"));
+        assert!(
+            app.toast
+                .as_ref()
+                .unwrap()
+                .message
+                .ends_with("(and 1 more)")
+        );
     }
 
     #[test]
     fn keyboard_close_uses_the_guarded_request_for_the_active_tab() {
-        use crate::input::keymap::Action;
+        use crate::input::action::Action;
 
         let mut app = AppState::new();
         let clean = app
@@ -1275,7 +1281,7 @@ mod tests {
             .open_path(PathBuf::from("workspace/dirty.rs"), String::new());
         app.workspace.active_buffer_mut().unwrap().insert("changed");
 
-        app.apply(Action::CloseActiveFile);
+        app.apply(Action::CloseActiveItem);
         assert!(app.workspace.meta(dirty).is_some());
         assert_eq!(
             app.close_request
@@ -1286,7 +1292,7 @@ mod tests {
 
         // A pending request is never replaced by another keyboard close.
         app.workspace.set_active(clean);
-        app.apply(Action::CloseActiveFile);
+        app.apply(Action::CloseActiveItem);
         assert!(app.workspace.meta(clean).is_some());
         assert_eq!(
             app.close_request
@@ -1296,7 +1302,7 @@ mod tests {
         );
 
         app.close_request = None;
-        app.apply(Action::CloseActiveFile);
+        app.apply(Action::CloseActiveItem);
         assert!(app.workspace.meta(clean).is_none());
         assert!(app.close_request.is_none());
     }

@@ -7,8 +7,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use lgui::core::{
-    CursorIcon, EventPolicy, KeyState, KeyboardEvent, LogicalKey, PointerButton, SemanticRole,
-    Semantics, UiElement, UiFocusHandle, UiId, WheelUnit, clip,
+    CursorIcon, EventPolicy, KeyState, PointerButton, SemanticRole, Semantics, UiElement,
+    UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel, text};
 use lgui::text::{self, TextLayout, TextLayoutRequest};
@@ -21,7 +21,6 @@ use crate::git::{GitStoreSnapshot, LineChange};
 use crate::model::buffer::TextBuffer;
 use crate::state::AppState;
 use crate::theme;
-use lgui::services::ServicesContextExt;
 
 const SCROLLBAR_SIZE: f32 = 12.0;
 const SCROLLBAR_INSET: f32 = 2.0;
@@ -378,26 +377,7 @@ pub fn render(
     let st_input = state.clone();
     root = root.on_input(move |ctx, input| {
         let input = input.to_string();
-        st_input.update(move |app| {
-            app.editor.drag = None;
-            if !input.is_empty() {
-                app.workspace.promote_active_preview();
-            }
-            if let Some(buffer) = app.workspace.active_buffer_mut() {
-                if app.editor.ime_pending {
-                    buffer.break_undo_group();
-                }
-                buffer.insert(&input);
-                if app.editor.ime_pending {
-                    buffer.break_undo_group();
-                }
-            }
-            app.editor.ime_pending = false;
-            app.editor.preedit.clear();
-            app.editor.preedit_cursor = None;
-            app.editor.menu = None;
-            reveal_cursor(app, rect);
-        });
+        st_input.update(move |app| insert_text(app, &input, rect));
         ctx.stop_propagation();
     });
 
@@ -420,24 +400,13 @@ pub fn render(
         })
     });
 
-    let st_key = state.clone();
+    // Bound keys are dispatched from the keymap (`key_actions`) before they
+    // reach the editor. Unbound shortcut chords must still not type text.
     root = root.on_key_down(move |ctx, event| {
-        if !st_key.get().editor.preedit.is_empty() {
-            return;
-        }
-        if is_save_shortcut(event) {
-            save_active_document(&st_key);
-            ctx.prevent_default();
-            ctx.stop_propagation();
-        } else if let Some(command) = commands::command_for(
-            event,
-            (rect.height() / theme::LINE_H).floor().max(1.0) as usize,
-        ) {
-            execute_command(&st_key, command, rect, ctx.application().clipboard());
-            ctx.prevent_default();
-            ctx.stop_propagation();
-        } else if (event.modifiers.ctrl() || event.modifiers.meta()) && !event.modifiers.alt() {
-            // Let editor-wide shortcuts bubble, while suppressing printable key text.
+        if event.state == KeyState::Down
+            && (event.modifiers.ctrl() || event.modifiers.meta())
+            && !event.modifiers.alt()
+        {
             ctx.prevent_default();
         }
     });
@@ -1198,23 +1167,37 @@ pub fn drag_scroll_tick(app: &mut AppState, rect: UiRect) -> bool {
     true
 }
 
-fn is_save_shortcut(event: &KeyboardEvent) -> bool {
-    event.state == KeyState::Down
-        && (event.modifiers.ctrl() || event.modifiers.meta())
-        && matches!(
-            &event.key,
-            LogicalKey::Character(value) if value.eq_ignore_ascii_case("s")
-        )
+/// Insert typed (or replayed) text at the cursor of the active document.
+pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
+    app.editor.drag = None;
+    if !input.is_empty() {
+        app.workspace.promote_active_preview();
+    }
+    if let Some(buffer) = app.workspace.active_buffer_mut() {
+        if app.editor.ime_pending {
+            buffer.break_undo_group();
+        }
+        buffer.insert(input);
+        if app.editor.ime_pending {
+            buffer.break_undo_group();
+        }
+    }
+    app.editor.ime_pending = false;
+    app.editor.preedit.clear();
+    app.editor.preedit_cursor = None;
+    app.editor.menu = None;
+    reveal_cursor(app, rect);
 }
 
-fn save_active_document(state: &State<AppState>) {
-    crate::workspace_actions::save_active_document(state);
+/// Lines in one page of an editor of this size, for page movements.
+pub fn page_lines(rect: UiRect) -> usize {
+    (rect.height() / theme::LINE_H).floor().max(1.0) as usize
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lgui::core::KeyModifiers;
+    use lgui::core::{KeyModifiers, KeyboardEvent, LogicalKey};
     use lgui::services::{Clipboard, ClipboardError};
     use std::sync::Mutex;
 
@@ -1258,18 +1241,30 @@ mod tests {
         let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
+        let app = ApplicationContext::empty(Default::default());
+        let view_app = app.clone();
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state(document("hello world\nsecond"));
             let git_store = cx.state(GitStoreSnapshot::default());
             *output.lock().unwrap() = Some(state.clone());
             let id = cx.use_stable_id();
             let focus = cx.focus_handle(id.clone());
-            render(viewport, state, git_store, id, focus)
+            // Shortcuts reach the editor through the keymap, as in the app root.
+            let env = crate::key_actions::KeyEnv {
+                state: state.clone(),
+                application: view_app.clone(),
+                editor_focus: focus.clone(),
+                editor_rect: viewport,
+                terminal: None,
+            };
+            crate::key_actions::attach(
+                group(viewport).child(render(viewport, state, git_store, id, focus)),
+                env,
+            )
         });
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
         let state = exposed.lock().unwrap().clone().unwrap();
-        let app = ApplicationContext::empty(Default::default());
         let mut send = |input| {
             let events = session.handle_input(input);
             let mut prevented = false;
@@ -1690,19 +1685,5 @@ mod tests {
         );
         assert_eq!(line_index_from_point(50.0, 100.0, 0.0, 10), 0);
         assert_eq!(line_index_from_point(900.0, 100.0, 0.0, 10), 9);
-    }
-
-    #[test]
-    fn save_shortcut_accepts_control_or_command_s() {
-        let event = |modifiers| KeyboardEvent {
-            state: KeyState::Down,
-            key: LogicalKey::Character("s".into()),
-            modifiers,
-            ..Default::default()
-        };
-
-        assert!(is_save_shortcut(&event(KeyModifiers::CONTROL)));
-        assert!(is_save_shortcut(&event(KeyModifiers::META)));
-        assert!(!is_save_shortcut(&event(KeyModifiers::SHIFT)));
     }
 }
