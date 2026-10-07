@@ -108,7 +108,11 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // Snapshot toggles for this frame.
     let s = state.get();
     theme::set(s.theme);
-    let open_tab_paths = s.workspace.open_paths();
+    let open_tab_paths = s.workspace.persistent_open_paths();
+    let persistent_active_tab_path = s
+        .workspace
+        .persistent_active_path()
+        .map(std::path::Path::to_path_buf);
     let active_tab_path = s.workspace.active_path().map(std::path::Path::to_path_buf);
     let git_roots = s.workspace_folders.clone();
     let git_active_path = active_tab_path.clone();
@@ -127,10 +131,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         move || drop(handle)
     });
     cx.use_effect(
-        (open_tab_paths.clone(), active_tab_path.clone()),
+        (open_tab_paths.clone(), persistent_active_tab_path.clone()),
         move || {
-            let _ =
-                workspace_persistence::save_file_tabs(&open_tab_paths, active_tab_path.as_deref());
+            let _ = workspace_persistence::save_file_tabs(
+                &open_tab_paths,
+                persistent_active_tab_path.as_deref(),
+            );
             || {}
         },
     );

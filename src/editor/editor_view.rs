@@ -380,6 +380,9 @@ pub fn render(
         let input = input.to_string();
         st_input.update(move |app| {
             app.editor.drag = None;
+            if !input.is_empty() {
+                app.workspace.promote_active_preview();
+            }
             if let Some(buffer) = app.workspace.active_buffer_mut() {
                 if app.editor.ime_pending {
                     buffer.break_undo_group();
@@ -1006,27 +1009,74 @@ fn apply_command(
     command: Command,
     clipboard: &dyn lgui::services::Clipboard,
 ) -> Result<(), lgui::services::ClipboardError> {
-    let Some(buffer) = app.workspace.active_buffer_mut() else {
+    if app.workspace.active_buffer().is_none() {
         return Ok(());
-    };
+    }
     match command {
         Command::Copy | Command::Cut => {
-            if let Some(value) = buffer.selected_text() {
+            let selected = app
+                .workspace
+                .active_buffer()
+                .and_then(|buffer| buffer.selected_text())
+                .map(str::to_owned);
+            if let Some(value) = selected {
                 // A failed copy must leave the source text and selection untouched.
-                clipboard.write_text(value)?;
-                buffer.break_undo_group();
+                clipboard.write_text(&value)?;
                 if command == Command::Cut {
-                    buffer.backspace();
+                    app.workspace.promote_active_preview();
+                }
+                if let Some(buffer) = app.workspace.active_buffer_mut() {
                     buffer.break_undo_group();
+                    if command == Command::Cut {
+                        buffer.backspace();
+                        buffer.break_undo_group();
+                    }
                 }
             }
         }
         Command::Paste => {
             if let Some(value) = clipboard.read_text()? {
-                buffer.paste(&value);
+                let changes_text = !value.is_empty()
+                    || app
+                        .workspace
+                        .active_buffer()
+                        .is_some_and(|buffer| buffer.selection().is_some());
+                if changes_text {
+                    app.workspace.promote_active_preview();
+                }
+                if let Some(buffer) = app.workspace.active_buffer_mut() {
+                    buffer.paste(&value);
+                }
             }
         }
-        _ => commands::apply(buffer, command),
+        Command::Delete(..)
+        | Command::Enter
+        | Command::Indent(..)
+        | Command::Undo
+        | Command::Redo => {
+            let changes_text = match command {
+                Command::Undo => app
+                    .workspace
+                    .active_buffer()
+                    .is_some_and(TextBuffer::can_undo),
+                Command::Redo => app
+                    .workspace
+                    .active_buffer()
+                    .is_some_and(TextBuffer::can_redo),
+                _ => true,
+            };
+            if changes_text {
+                app.workspace.promote_active_preview();
+            }
+            if let Some(buffer) = app.workspace.active_buffer_mut() {
+                commands::apply(buffer, command);
+            }
+        }
+        _ => {
+            if let Some(buffer) = app.workspace.active_buffer_mut() {
+                commands::apply(buffer, command);
+            }
+        }
     }
     Ok(())
 }
@@ -1426,6 +1476,47 @@ mod tests {
             Some("keep this")
         );
         assert!(!app.workspace.active_buffer().unwrap().can_undo());
+    }
+
+    #[test]
+    fn editing_commands_promote_a_preview_while_navigation_does_not() {
+        let mut app = AppState::new();
+        let preview = app
+            .workspace
+            .preview_path("preview.txt".into(), "hello".into());
+        let clipboard = TestClipboard::default();
+
+        apply_command(
+            &mut app,
+            Command::Move(crate::model::buffer::Movement::Right, false),
+            &clipboard,
+        )
+        .unwrap();
+        assert!(app.workspace.is_preview(preview));
+        apply_command(&mut app, Command::Undo, &clipboard).unwrap();
+        assert!(app.workspace.is_preview(preview));
+
+        clipboard.write_text("!").unwrap();
+        apply_command(&mut app, Command::Paste, &clipboard).unwrap();
+        assert!(!app.workspace.is_preview(preview));
+        assert_eq!(app.workspace.active_buffer().unwrap().text(), "h!ello");
+    }
+
+    #[test]
+    fn a_failed_cut_does_not_promote_or_modify_a_preview() {
+        let mut app = AppState::new();
+        let preview = app
+            .workspace
+            .preview_path("preview.txt".into(), "hello".into());
+        app.workspace.active_buffer_mut().unwrap().select_all();
+        let unavailable = TestClipboard {
+            fail: true,
+            ..Default::default()
+        };
+
+        assert!(apply_command(&mut app, Command::Cut, &unavailable).is_err());
+        assert!(app.workspace.is_preview(preview));
+        assert_eq!(app.workspace.active_buffer().unwrap().text(), "hello");
     }
 
     #[test]

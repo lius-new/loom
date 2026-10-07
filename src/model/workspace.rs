@@ -41,10 +41,18 @@ pub enum ReconcileResult {
     Failed(PathBuf, String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenMode {
+    Preview,
+    Permanent,
+}
+
 #[derive(Clone)]
 pub struct Workspace {
     open: Vec<FileId>,
     active: Option<FileId>,
+    /// The one replaceable editor tab in this workspace.
+    preview: Option<FileId>,
     documents: HashMap<FileId, OpenDocument>,
     paths: HashMap<PathBuf, FileId>,
     next_file_id: u64,
@@ -55,6 +63,7 @@ impl Workspace {
         Self {
             open: Vec::new(),
             active: None,
+            preview: None,
             documents: HashMap::new(),
             paths: HashMap::new(),
             next_file_id: 1,
@@ -72,6 +81,27 @@ impl Workspace {
             .filter(|document| document.is_text())
             .map(|document| document.meta.path.clone())
             .collect()
+    }
+
+    /// Disk-backed tabs worth restoring in a later session. Preview tabs are
+    /// browsing state, so they intentionally do not survive a restart.
+    pub fn persistent_open_paths(&self) -> Vec<PathBuf> {
+        self.open
+            .iter()
+            .filter(|id| self.preview != Some(**id))
+            .filter_map(|id| self.documents.get(id))
+            .filter(|document| document.is_text())
+            .map(|document| document.meta.path.clone())
+            .collect()
+    }
+
+    /// The active path is persisted only when that same tab is restorable.
+    pub fn persistent_active_path(&self) -> Option<&Path> {
+        let id = self.active?;
+        if self.preview == Some(id) || !self.is_file(id) {
+            return None;
+        }
+        self.meta(id).map(|meta| meta.path.as_path())
     }
 
     /// Labels for open tabs. Duplicate file names receive the shortest parent
@@ -127,6 +157,27 @@ impl Workspace {
 
     pub fn active(&self) -> Option<FileId> {
         self.active
+    }
+
+    pub fn preview(&self) -> Option<FileId> {
+        self.preview
+    }
+
+    pub fn is_preview(&self, id: FileId) -> bool {
+        self.preview == Some(id)
+    }
+
+    pub fn promote_preview(&mut self, id: FileId) -> bool {
+        if self.preview == Some(id) {
+            self.preview = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn promote_active_preview(&mut self) -> bool {
+        self.active.is_some_and(|id| self.promote_preview(id))
     }
 
     pub fn meta(&self, id: FileId) -> Option<&FileMeta> {
@@ -264,9 +315,39 @@ impl Workspace {
     }
 
     pub fn open_path(&mut self, path: PathBuf, contents: String) -> FileId {
+        self.open_path_with_mode(path, contents, OpenMode::Permanent)
+    }
+
+    pub fn preview_path(&mut self, path: PathBuf, contents: String) -> FileId {
+        self.open_path_with_mode(path, contents, OpenMode::Preview)
+    }
+
+    fn open_path_with_mode(&mut self, path: PathBuf, contents: String, mode: OpenMode) -> FileId {
         if let Some(id) = self.file_id_for_path(&path) {
             self.active = Some(id);
+            if mode == OpenMode::Permanent {
+                self.promote_preview(id);
+            }
             return id;
+        }
+
+        let replacement_index = if mode == OpenMode::Preview {
+            self.preview.and_then(|preview| {
+                if self.is_dirty(preview) {
+                    // Defensive promotion: UI edit paths promote eagerly, but
+                    // no missed path may allow a dirty preview to be replaced.
+                    self.preview = None;
+                    None
+                } else {
+                    self.open.iter().position(|id| *id == preview)
+                }
+            })
+        } else {
+            None
+        };
+
+        if let Some(preview) = self.preview.filter(|_| replacement_index.is_some()) {
+            self.close(preview);
         }
 
         let id = FileId::new(self.next_file_id);
@@ -289,8 +370,15 @@ impl Workspace {
             },
         );
         self.paths.insert(path, id);
-        self.open.push(id);
+        if let Some(index) = replacement_index {
+            self.open.insert(index.min(self.open.len()), id);
+        } else {
+            self.open.push(id);
+        }
         self.active = Some(id);
+        if mode == OpenMode::Preview {
+            self.preview = Some(id);
+        }
         id
     }
 
@@ -441,6 +529,9 @@ impl Workspace {
     }
 
     pub fn close(&mut self, id: FileId) {
+        if self.preview == Some(id) {
+            self.preview = None;
+        }
         if let Some(pos) = self.open.iter().position(|&file| file == id) {
             self.open.remove(pos);
             if let Some(document) = self.documents.remove(&id) {
@@ -664,6 +755,96 @@ mod tests {
             vec![PathBuf::from("src/main.rs"), PathBuf::from("README.md")]
         );
         assert_eq!(workspace.active_buffer().unwrap().text(), "fn main() {}");
+    }
+
+    #[test]
+    fn a_new_preview_replaces_the_clean_preview_at_the_same_index() {
+        let mut workspace = Workspace::new();
+        let permanent = workspace.open_path(PathBuf::from("permanent.rs"), String::new());
+        let first = workspace.preview_path(PathBuf::from("first.rs"), "first".into());
+        let trailing = workspace.open_path(PathBuf::from("trailing.rs"), String::new());
+        workspace.set_active(first);
+
+        let second = workspace.preview_path(PathBuf::from("second.rs"), "second".into());
+
+        assert_eq!(workspace.open_files(), &[permanent, second, trailing]);
+        assert_eq!(workspace.preview(), Some(second));
+        assert_eq!(workspace.active(), Some(second));
+        assert_eq!(workspace.file_id_for_path(Path::new("first.rs")), None);
+    }
+
+    #[test]
+    fn editing_a_preview_defensively_preserves_it_before_the_next_preview() {
+        let mut workspace = Workspace::new();
+        let first = workspace.preview_path(PathBuf::from("first.rs"), String::new());
+        workspace.active_buffer_mut().unwrap().insert("changed");
+
+        let second = workspace.preview_path(PathBuf::from("second.rs"), String::new());
+
+        assert_eq!(workspace.open_files(), &[first, second]);
+        assert!(!workspace.is_preview(first));
+        assert!(workspace.is_preview(second));
+        assert!(workspace.is_dirty(first));
+    }
+
+    #[test]
+    fn permanently_reopening_a_preview_promotes_without_duplication() {
+        let mut workspace = Workspace::new();
+        let path = PathBuf::from("main.rs");
+        let preview = workspace.preview_path(path.clone(), "original".into());
+
+        let reopened = workspace.open_path(path, "ignored".into());
+
+        assert_eq!(reopened, preview);
+        assert_eq!(workspace.open_files(), &[preview]);
+        assert_eq!(workspace.preview(), None);
+        assert_eq!(workspace.active_buffer().unwrap().text(), "original");
+    }
+
+    #[test]
+    fn activating_an_existing_permanent_tab_keeps_the_preview_slot() {
+        let mut workspace = Workspace::new();
+        let permanent = workspace.open_path(PathBuf::from("permanent.rs"), String::new());
+        let preview = workspace.preview_path(PathBuf::from("preview.rs"), String::new());
+
+        let reopened = workspace.preview_path(PathBuf::from("permanent.rs"), "ignored".into());
+
+        assert_eq!(reopened, permanent);
+        assert_eq!(workspace.active(), Some(permanent));
+        assert_eq!(workspace.preview(), Some(preview));
+        assert_eq!(workspace.open_files(), &[permanent, preview]);
+    }
+
+    #[test]
+    fn preview_tabs_are_excluded_from_session_state() {
+        let mut workspace = Workspace::new();
+        let permanent_path = PathBuf::from("permanent.rs");
+        let preview_path = PathBuf::from("preview.rs");
+        let permanent = workspace.open_path(permanent_path.clone(), String::new());
+        workspace.preview_path(preview_path, String::new());
+
+        assert_eq!(
+            workspace.persistent_open_paths(),
+            vec![permanent_path.clone()]
+        );
+        assert_eq!(workspace.persistent_active_path(), None);
+
+        workspace.set_active(permanent);
+        assert_eq!(
+            workspace.persistent_active_path(),
+            Some(permanent_path.as_path())
+        );
+    }
+
+    #[test]
+    fn closing_a_preview_clears_the_preview_slot() {
+        let mut workspace = Workspace::new();
+        let preview = workspace.preview_path(PathBuf::from("preview.rs"), String::new());
+
+        workspace.close(preview);
+
+        assert_eq!(workspace.preview(), None);
+        assert!(workspace.open_files().is_empty());
     }
 
     #[test]

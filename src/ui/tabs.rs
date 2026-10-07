@@ -8,7 +8,7 @@ use lgui::core::{
     Color, EventPolicy, IconStyle, PointerButton, UiElement, UiFocusHandle, UiId, WheelUnit, clip,
     precompiled,
 };
-use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text};
 use lgui::text::{self, TextLayoutRequest};
 
 use crate::model::document::{FileId, FileMeta};
@@ -220,6 +220,15 @@ fn tab_badge(app: &AppState, id: FileId, meta: &FileMeta) -> TabBadge {
     } else {
         TabBadge::Text(meta.lang.badge(), meta.lang.badge_color())
     }
+}
+
+fn tab_name_style(active: bool, preview: bool) -> TextStyle {
+    let style = if active {
+        theme::mono(theme::c().text_bright, theme::UI_SIZE)
+    } else {
+        theme::mono(theme::c().text_muted, theme::UI_SIZE)
+    };
+    if preview { style.italic() } else { style }
 }
 
 fn natural_tab_widths(app: &AppState) -> Vec<f32> {
@@ -568,11 +577,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             x + tab_w,
             rect.bottom - PILL_INSET,
         );
-        let name_style = if Some(id) == active {
-            theme::mono(theme::c().text_bright, theme::UI_SIZE)
-        } else {
-            theme::mono(theme::c().text_muted, theme::UI_SIZE)
-        };
+        let name_style = tab_name_style(Some(id) == active, s.workspace.is_preview(id));
 
         let badge_left = pill.left + PAD;
         let name_left = badge_left + badge_w + GAP;
@@ -611,15 +616,22 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             match button {
                 PointerButton::Left => {
                     let pointer_x = pointer.point.x;
+                    let pointer_y = pointer.point.y;
                     st.update(move |app| {
+                        let clicks = app.editor.tab_click_count(id, pointer_x, pointer_y);
                         app.workspace.set_active(id);
                         app.tab_context_menu = None;
-                        app.tab_drag = Some(TabDragState {
-                            source: id,
-                            pointer_origin_x: pointer_x,
-                            target_index: index,
-                            active: false,
-                        });
+                        if clicks > 1 {
+                            app.workspace.promote_preview(id);
+                            app.tab_drag = None;
+                        } else {
+                            app.tab_drag = Some(TabDragState {
+                                source: id,
+                                pointer_origin_x: pointer_x,
+                                target_index: index,
+                                active: false,
+                            });
+                        }
                     });
                     focus.focus();
                 }
@@ -857,7 +869,17 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lgui::text::TextFontSlant;
     use std::path::PathBuf;
+
+    #[test]
+    fn preview_tab_names_are_italic() {
+        assert_eq!(tab_name_style(true, true).font_slant, TextFontSlant::Italic);
+        assert_eq!(
+            tab_name_style(true, false).font_slant,
+            TextFontSlant::Upright
+        );
+    }
 
     #[test]
     fn long_file_names_preserve_the_extension_and_fit_the_budget() {

@@ -17,6 +17,7 @@ const SEP_H: f32 = 5.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
+    KeepOpen,
     Close,
     CloseOthers,
     CloseRight,
@@ -34,6 +35,8 @@ enum Entry {
 }
 
 const ENTRIES: &[Entry] = &[
+    Entry::Item("Keep Open", Action::KeepOpen),
+    Entry::Separator,
     Entry::Item("Close", Action::Close),
     Entry::Item("Close Others", Action::CloseOthers),
     Entry::Item("Close to the Right", Action::CloseRight),
@@ -70,6 +73,7 @@ fn action_enabled(app: &AppState, target: FileId, action: Action) -> bool {
         return false;
     }
     match action {
+        Action::KeepOpen => app.workspace.is_preview(target),
         Action::CopyPath => true,
         Action::CopyRelativePath => {
             super::context_menu::workspace_root_for_path(app, &meta.path).is_some()
@@ -208,6 +212,11 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                         return;
                     }
                     match action {
+                        Action::KeepOpen => {
+                            click_state.update(|app| {
+                                app.workspace.promote_preview(target);
+                            });
+                        }
                         Action::CopyPath | Action::CopyRelativePath => {
                             super::context_menu::copy_target_path(
                                 &click_state,
@@ -277,6 +286,20 @@ mod tests {
         assert!(!action_enabled(&app, only, Action::CloseRight));
         assert!(action_enabled(&app, only, Action::CloseSaved));
         assert!(action_enabled(&app, only, Action::CloseAll));
+    }
+
+    #[test]
+    fn keep_open_is_available_only_for_the_preview_tab() {
+        let mut app = AppState::new();
+        let permanent = app
+            .workspace
+            .open_path(PathBuf::from("workspace/permanent.rs"), String::new());
+        let preview = app
+            .workspace
+            .preview_path(PathBuf::from("workspace/preview.rs"), String::new());
+
+        assert!(!action_enabled(&app, permanent, Action::KeepOpen));
+        assert!(action_enabled(&app, preview, Action::KeepOpen));
     }
 
     #[test]

@@ -26,6 +26,7 @@ impl SingleLineText {
             style.height,
             style.weight,
         );
+        request.font_slant = style.font_slant;
         request.font_families = style.font_families;
         request.tracking = style.tracking;
         request.align = style.align;

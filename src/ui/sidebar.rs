@@ -989,8 +989,46 @@ fn build_tree(
                     .on_pointer_down_with_button(move |cx, pointer, button| {
                         match button {
                             PointerButton::Left => {
+                                let x = pointer.point.x;
+                                let y = pointer.point.y;
                                 if let Some(id) = open_id {
-                                    st.update(move |app| app.workspace.set_active(id));
+                                    let path = action_path.clone();
+                                    st.update(move |app| {
+                                        let clicks = app.editor.tree_click_count(&path, x, y);
+                                        app.workspace.set_active(id);
+                                        if clicks > 1 {
+                                            app.workspace.promote_preview(id);
+                                        }
+                                    });
+                                    focus.focus();
+                                } else {
+                                    let path = action_path.clone();
+                                    match read_text_file(&path) {
+                                        Ok(contents) => {
+                                            st.update(move |app| {
+                                                let clicks =
+                                                    app.editor.tree_click_count(&path, x, y);
+                                                if clicks > 1 {
+                                                    app.workspace.open_path(path, contents);
+                                                } else {
+                                                    app.workspace.preview_path(path, contents);
+                                                }
+                                                app.toast = None;
+                                            });
+                                            focus.focus();
+                                        }
+                                        Err(message) => {
+                                            st.update(move |app| app.show_error(message));
+                                        }
+                                    }
+                                }
+                            }
+                            PointerButton::Middle => {
+                                if let Some(id) = open_id {
+                                    st.update(move |app| {
+                                        app.workspace.set_active(id);
+                                        app.workspace.promote_preview(id);
+                                    });
                                     focus.focus();
                                 } else {
                                     let path = action_path.clone();
