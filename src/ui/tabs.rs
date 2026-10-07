@@ -660,7 +660,6 @@ pub fn render(
 ) -> Element {
     let s = state.get();
     let active = pane_active(&s, pane);
-    let focused_pane = s.workspace.active_pane() == pane;
     let labels = s.workspace.tab_labels(pane);
 
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar))
@@ -1053,14 +1052,6 @@ pub fn render(
                 theme::c().text_muted,
             )),
         );
-    }
-
-    // With several panes, an accent line marks the focused one.
-    if focused_pane && s.workspace.pane_count() > 1 {
-        bar = bar.child(panel(
-            UiRect::new(rect.left, rect.top, rect.right, rect.top + 1.0),
-            VisualStyle::filled(theme::c().accent),
-        ));
     }
 
     // Hairline bottom border (matches the title bar).
