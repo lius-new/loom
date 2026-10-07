@@ -8,21 +8,20 @@ use std::time::Duration;
 
 use lgui::ApplicationHandle;
 use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
-use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, group, panel};
+use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, group};
 use lgui::window::WindowFocusChanged;
 
 use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
-use crate::model::pane_layout::Axis;
 use crate::settings_persistence::{self, Settings};
-use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface};
+use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::{
     clone_repository, close_confirmation, context_menu, diff_editor, git_panel, keymap_page,
-    settings, sidebar, statusbar, tab_context_menu, tabs, terminal, titlebar, toast, welcome,
-    workspace_home,
+    pane_sash, settings, sidebar, statusbar, tab_context_menu, tabs, terminal, titlebar, toast,
+    welcome, workspace_home,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -261,6 +260,14 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let bodies = pane_rects
         .iter()
         .map(|(pane, rect)| (*pane, pane_body_rect(*rect)))
+        .collect::<Vec<_>>();
+    let regions = pane_rects
+        .iter()
+        .map(|(pane, rect)| tabs::PaneRegion {
+            pane: *pane,
+            strip: pane_strip_rect(*rect),
+            body: pane_body_rect(*rect),
+        })
         .collect::<Vec<_>>();
     let focused_rect = pane_rects
         .iter()
@@ -595,13 +602,13 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     let st_tabs_pointer = state.clone();
-    let pointer_strips = strips.clone();
+    let pointer_regions = regions.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
             st_tabs_pointer.try_update(|app| {
                 tabs::update_pointer(
                     app,
-                    &pointer_strips,
+                    &pointer_regions,
                     pointer.point.x,
                     pointer.point.y,
                     false,
@@ -611,11 +618,11 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     let st_tabs_drag = state.clone();
-    let drag_strips = strips.clone();
+    let drag_regions = regions.clone();
     root = root.on_event_capture(UiEventKind::PointerDrag, move |_ctx, payload| {
         if let UiEventPayload::PointerDrag { pointer } = payload {
             st_tabs_drag.try_update(|app| {
-                tabs::update_pointer(app, &drag_strips, pointer.point.x, pointer.point.y, true)
+                tabs::update_pointer(app, &drag_regions, pointer.point.x, pointer.point.y, true)
             });
         }
     });
@@ -694,21 +701,20 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         });
     }
     for sash in s.workspace.layout().sashes(editor_area) {
-        let line = match sash.axis {
-            Axis::Horizontal => UiRect::new(
-                sash.position - 0.5,
-                sash.span.0,
-                sash.position + 0.5,
-                sash.span.1,
-            ),
-            Axis::Vertical => UiRect::new(
-                sash.span.0,
-                sash.position - 0.5,
-                sash.span.1,
-                sash.position + 0.5,
-            ),
-        };
-        root = root.child(panel(line, VisualStyle::filled(theme::c().border)));
+        root = root.child(pane_sash::render(sash, state.clone()));
+    }
+    // Preview where a dragged tab would land on a pane surface.
+    if let Some(TabDrop::Pane { pane, split }) = s
+        .tab_drag
+        .as_ref()
+        .filter(|drag| drag.active)
+        .and_then(|drag| drag.drop)
+        && let Some(region) = regions.iter().find(|region| region.pane == pane)
+    {
+        root = root.child(lgui::prelude::panel(
+            tabs::drop_preview(region.body, split),
+            VisualStyle::filled(theme::c().accent).alpha(40),
+        ));
     }
 
     if source_control_left {

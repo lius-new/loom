@@ -473,15 +473,25 @@ mod tests {
     fn verbatim_workspace_paths_match_the_git_root() {
         let repository = RepositorySnapshot {
             worktree_root: PathBuf::from("D:/work/loom"),
-            ..snapshot(&[("src/main.rs", worktree(ChangeKind::Modified))], &["target"])
+            ..snapshot(
+                &[("src/main.rs", worktree(ChangeKind::Modified))],
+                &["target"],
+            )
         };
         let tree = Path::new(r"\\?\D:\work\loom");
         assert_eq!(
             repository.decoration_for_absolute_path(&tree.join("target")),
             Some(PathDecoration::Ignored)
         );
-        assert!(repository.state_for_absolute_path(&tree.join(r"src\main.rs")).is_some());
-        assert_eq!(repository.relative_path(Path::new(r"\\?\D:\work\other")), None);
+        assert!(
+            repository
+                .state_for_absolute_path(&tree.join(r"src\main.rs"))
+                .is_some()
+        );
+        assert_eq!(
+            repository.relative_path(Path::new(r"\\?\D:\work\other")),
+            None
+        );
     }
 
     #[test]

@@ -12,9 +12,9 @@ use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text}
 use lgui::text::{self, TextLayoutRequest};
 
 use crate::model::document::{FileId, FileMeta};
-use crate::model::pane_layout::PaneId;
+use crate::model::pane_layout::{Direction, PaneId};
 use crate::model::workspace::AppPage;
-use crate::state::{AppState, MainSurface, TabContextMenuState, TabDragState};
+use crate::state::{AppState, MainSurface, TabContextMenuState, TabDragState, TabDrop};
 use crate::theme;
 use crate::ui::tab_layout::{self, TabLayoutInput, TabLayoutResult};
 
@@ -376,69 +376,110 @@ fn point_inside(rect: UiRect, x: f32, y: f32) -> bool {
     x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
 }
 
+/// A pane's tab strip and the surface below it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaneRegion {
+    pub pane: PaneId,
+    pub strip: UiRect,
+    pub body: UiRect,
+}
+
+/// Which side of a pane surface a dropped tab splits, or `None` to merge.
+/// Mirrors VSCode: the centre merges; near an edge, the outer thirds of the
+/// width split left/right and the middle third splits up/down.
+pub fn drop_zone(body: UiRect, x: f32, y: f32) -> Option<Direction> {
+    const EDGE: f32 = 0.2;
+    let edge_x = body.width() * EDGE;
+    let edge_y = body.height() * EDGE;
+    let central = x > body.left + edge_x
+        && x < body.right - edge_x
+        && y > body.top + edge_y
+        && y < body.bottom - edge_y;
+    if central {
+        return None;
+    }
+    let third = body.width() / 3.0;
+    Some(if x < body.left + third {
+        Direction::Left
+    } else if x > body.right - third {
+        Direction::Right
+    } else if y < body.top + body.height() / 2.0 {
+        Direction::Up
+    } else {
+        Direction::Down
+    })
+}
+
+/// The rectangle a drop would fill, for the drag overlay.
+pub fn drop_preview(body: UiRect, split: Option<Direction>) -> UiRect {
+    let mid_x = body.left + body.width() / 2.0;
+    let mid_y = body.top + body.height() / 2.0;
+    match split {
+        None => body,
+        Some(Direction::Left) => UiRect::new(body.left, body.top, mid_x, body.bottom),
+        Some(Direction::Right) => UiRect::new(mid_x, body.top, body.right, body.bottom),
+        Some(Direction::Up) => UiRect::new(body.left, body.top, body.right, mid_y),
+        Some(Direction::Down) => UiRect::new(body.left, mid_y, body.right, body.bottom),
+    }
+}
+
+/// Insertion index for a tab dropped at `content_x` into a foreign strip.
+fn insertion_index(layout: &TabLayoutResult, content_x: f32) -> usize {
+    layout
+        .items
+        .iter()
+        .find(|item| content_x < (item.left + item.right) / 2.0)
+        .map_or(layout.items.len(), |item| item.index)
+}
+
 /// Track tab hover across every pane's strip and, only for an actual
-/// `PointerDrag`, advance scrollbar or tab reorder gestures. Ordinary hover
+/// `PointerDrag`, advance scrollbar or tab drag gestures. Ordinary hover
 /// movement must never promote a pending click into a drag.
 pub fn update_pointer(
     app: &mut AppState,
-    strips: &[(PaneId, UiRect)],
+    regions: &[PaneRegion],
     pointer_x: f32,
     pointer_y: f32,
     is_pointer_drag: bool,
 ) -> bool {
-    let inside = strips
+    let inside = regions
         .iter()
-        .find(|(_, rect)| point_inside(*rect, pointer_x, pointer_y))
-        .map(|(pane, _)| *pane);
+        .find(|region| point_inside(region.strip, pointer_x, pointer_y))
+        .map(|region| region.pane);
     let mut changed = app.tab_strip_hovered != inside;
     app.tab_strip_hovered = inside;
 
-    let mut hovered = None;
-    for &(pane, rect) in strips {
-        let mut layout = tab_layout(rect, app, pane, false);
-        if is_pointer_drag {
-            if app.tab_scrollbar_dragging == Some(pane)
-                && let Some(geometry) = scrollbar_geometry(rect, &layout)
-            {
-                let next = scroll_from_pointer(pointer_x, app.tab_scrollbar_drag_offset, geometry);
-                if set_tab_scroll_x(app, pane, next) {
-                    changed = true;
-                    layout = tab_layout(rect, app, pane, false);
-                }
-            }
-            if let Some(mut drag) = app.tab_drag.take_if(|drag| drag.pane == pane) {
-                if !drag.active && (pointer_x - drag.pointer_origin_x).abs() >= DRAG_THRESHOLD {
-                    drag.active = true;
-                    changed = true;
-                }
-                if drag.active {
-                    let viewport_left = rect.left;
-                    let viewport_right = rect.left + layout.viewport_width;
-                    let scroll = tab_scroll_x(app, pane);
-                    let next = if pointer_x <= viewport_left + DRAG_EDGE_W {
-                        (scroll - DRAG_SCROLL_STEP).max(0.0)
-                    } else if pointer_x >= viewport_right - DRAG_EDGE_W {
-                        (scroll + DRAG_SCROLL_STEP).min(layout.max_scroll_x)
-                    } else {
-                        scroll
-                    };
-                    if set_tab_scroll_x(app, pane, next) {
-                        changed = true;
-                        layout = tab_layout(rect, app, pane, false);
-                    }
-
-                    let content_x = pointer_x - rect.left + layout.scroll_x;
-                    if let Some(target_index) = tab_layout::reorder_target(&layout.items, content_x)
-                        && target_index != drag.target_index
-                    {
-                        drag.target_index = target_index;
-                        changed = true;
-                    }
-                }
-                app.tab_drag = Some(drag);
+    if is_pointer_drag && let Some(mut drag) = app.tab_drag.take() {
+        let moved = (pointer_x - drag.pointer_origin_x).hypot(pointer_y - drag.pointer_origin_y);
+        if !drag.active && moved >= DRAG_THRESHOLD {
+            drag.active = true;
+            changed = true;
+        }
+        if drag.active {
+            let drop =
+                drag_drop_target(app, regions, &mut drag, pointer_x, pointer_y, &mut changed);
+            if drag.drop != drop {
+                drag.drop = drop;
+                changed = true;
             }
         }
+        app.tab_drag = Some(drag);
+    }
 
+    let mut hovered = None;
+    for region in regions {
+        let (pane, rect) = (region.pane, region.strip);
+        let mut layout = tab_layout(rect, app, pane, false);
+        if is_pointer_drag
+            && app.tab_scrollbar_dragging == Some(pane)
+            && let Some(geometry) = scrollbar_geometry(rect, &layout)
+        {
+            let next = scroll_from_pointer(pointer_x, app.tab_scrollbar_drag_offset, geometry);
+            if set_tab_scroll_x(app, pane, next) {
+                changed = true;
+                layout = tab_layout(rect, app, pane, false);
+            }
+        }
         let viewport_right = rect.left + layout.viewport_width;
         if inside == Some(pane) && pointer_x <= viewport_right {
             let content_x = pointer_x - rect.left + layout.scroll_x;
@@ -458,16 +499,103 @@ pub fn update_pointer(
     changed
 }
 
-/// Commit a completed reorder and release all tab pointer state.
+/// Resolve where an active tab drag would land, auto-scrolling the strip
+/// under the pointer near its edges.
+fn drag_drop_target(
+    app: &mut AppState,
+    regions: &[PaneRegion],
+    drag: &mut TabDragState,
+    pointer_x: f32,
+    pointer_y: f32,
+    changed: &mut bool,
+) -> Option<TabDrop> {
+    if let Some(region) = regions
+        .iter()
+        .find(|region| point_inside(region.strip, pointer_x, pointer_y))
+    {
+        let (pane, rect) = (region.pane, region.strip);
+        let mut layout = tab_layout(rect, app, pane, false);
+        let viewport_right = rect.left + layout.viewport_width;
+        let scroll = tab_scroll_x(app, pane);
+        let next = if pointer_x <= rect.left + DRAG_EDGE_W {
+            (scroll - DRAG_SCROLL_STEP).max(0.0)
+        } else if pointer_x >= viewport_right - DRAG_EDGE_W {
+            (scroll + DRAG_SCROLL_STEP).min(layout.max_scroll_x)
+        } else {
+            scroll
+        };
+        if set_tab_scroll_x(app, pane, next) {
+            *changed = true;
+            layout = tab_layout(rect, app, pane, false);
+        }
+        let content_x = pointer_x - rect.left + layout.scroll_x;
+        if pane == drag.pane {
+            if let Some(target_index) = tab_layout::reorder_target(&layout.items, content_x)
+                && target_index != drag.target_index
+            {
+                drag.target_index = target_index;
+                *changed = true;
+            }
+            return None;
+        }
+        return Some(TabDrop::Insert {
+            pane,
+            index: insertion_index(&layout, content_x),
+        });
+    }
+    regions
+        .iter()
+        .find(|region| point_inside(region.body, pointer_x, pointer_y))
+        .map(|region| TabDrop::Pane {
+            pane: region.pane,
+            split: drop_zone(region.body, pointer_x, pointer_y),
+        })
+}
+
+/// Commit a completed tab drag and release all tab pointer state. Holding
+/// Ctrl (Alt on macOS) copies a file into the target pane instead of moving.
 pub fn finish_pointer_interaction(app: &mut AppState) -> bool {
     let mut changed = app.tab_scrollbar_dragging.is_some();
     app.tab_scrollbar_dragging = None;
-    if let Some(drag) = app.tab_drag.take() {
-        changed = true;
-        if drag.active {
-            changed |= app
-                .workspace
-                .move_tab(drag.pane, drag.source, drag.target_index);
+    let Some(drag) = app.tab_drag.take() else {
+        return changed;
+    };
+    changed = true;
+    if !drag.active {
+        return changed;
+    }
+    let copy = if cfg!(target_os = "macos") {
+        app.editor.modifiers.alt()
+    } else {
+        app.editor.modifiers.ctrl()
+    };
+    let (from, id) = (drag.pane, drag.source);
+    let workspace = &mut app.workspace;
+    match drag.drop {
+        None => {
+            workspace.move_tab(from, id, drag.target_index);
+        }
+        Some(TabDrop::Insert { pane, index }) => {
+            if copy {
+                workspace.copy_item(from, id, pane, index);
+            } else {
+                workspace.move_item(from, id, pane, index);
+            }
+        }
+        Some(TabDrop::Pane { pane, split: None }) => {
+            if pane != from {
+                if copy {
+                    workspace.copy_item(from, id, pane, usize::MAX);
+                } else {
+                    workspace.move_item(from, id, pane, usize::MAX);
+                }
+            }
+        }
+        Some(TabDrop::Pane {
+            pane,
+            split: Some(direction),
+        }) => {
+            workspace.split_with_item(from, id, pane, direction, copy);
         }
     }
     changed
@@ -683,8 +811,10 @@ pub fn render(
                                 pane,
                                 source: id,
                                 pointer_origin_x: pointer_x,
+                                pointer_origin_y: pointer_y,
                                 target_index: index,
                                 active: false,
+                                drop: None,
                             });
                         }
                     });
@@ -773,16 +903,32 @@ pub fn render(
 
     bar = bar.child(tab_layer);
 
-    if let Some(drag) = s.tab_drag.as_ref().filter(|drag| drag.active)
-        && let Some(source_index) = open_files.iter().position(|id| *id == drag.source)
-        && drag.target_index != source_index
-        && let Some(target) = layout.items.get(drag.target_index)
-    {
-        let content_x = if drag.target_index < source_index {
-            target.left
-        } else {
-            target.right
-        };
+    // Insertion marker: a reorder within this strip, or a tab dragged in
+    // from another pane.
+    let marker = s
+        .tab_drag
+        .as_ref()
+        .filter(|drag| drag.active)
+        .and_then(|drag| match drag.drop {
+            None if drag.pane == pane => {
+                let source_index = open_files.iter().position(|id| *id == drag.source)?;
+                let target = layout.items.get(drag.target_index)?;
+                (drag.target_index != source_index).then_some(if drag.target_index < source_index {
+                    target.left
+                } else {
+                    target.right
+                })
+            }
+            Some(TabDrop::Insert {
+                pane: target,
+                index,
+            }) if target == pane => Some(layout.items.get(index).map_or_else(
+                || layout.items.last().map_or(TABS_PAD, |item| item.right),
+                |item| item.left,
+            )),
+            _ => None,
+        });
+    if let Some(content_x) = marker {
         let screen_x = rect.left + content_x - layout.scroll_x;
         if screen_x >= tab_viewport.left && screen_x <= tab_viewport.right {
             bar = bar.child(panel(
@@ -929,6 +1075,14 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn region(pane: PaneId, strip: UiRect) -> PaneRegion {
+        PaneRegion {
+            pane,
+            strip,
+            body: UiRect::new(strip.left, strip.bottom, strip.right, strip.bottom + 400.0),
+        }
+    }
     use lgui::text::TextFontSlant;
     use std::path::PathBuf;
 
@@ -993,13 +1147,21 @@ mod tests {
             pane: app.workspace.active_pane(),
             source: first,
             pointer_origin_x: 20.0,
+            pointer_origin_y: 10.0,
             target_index: 0,
             active: false,
+            drop: None,
         });
         let rect = UiRect::new(0.0, 0.0, 700.0, theme::TABS_H);
         let pane = app.workspace.active_pane();
 
-        assert!(update_pointer(&mut app, &[(pane, rect)], 22.0, 10.0, true));
+        assert!(update_pointer(
+            &mut app,
+            &[region(pane, rect)],
+            22.0,
+            10.0,
+            true
+        ));
         assert!(!app.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
         assert_eq!(app.workspace.active_items(), &[first, second, third]);
@@ -1008,10 +1170,18 @@ mod tests {
             pane: app.workspace.active_pane(),
             source: first,
             pointer_origin_x: 20.0,
+            pointer_origin_y: 10.0,
             target_index: 0,
             active: false,
+            drop: None,
         });
-        assert!(update_pointer(&mut app, &[(pane, rect)], 650.0, 10.0, true));
+        assert!(update_pointer(
+            &mut app,
+            &[region(pane, rect)],
+            650.0,
+            10.0,
+            true
+        ));
         assert!(app.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
         assert_eq!(app.workspace.active_items(), &[second, third, first]);
@@ -1034,7 +1204,13 @@ mod tests {
             let pane = app.workspace.active_pane();
             let started = std::time::Instant::now();
             for step in 0..200 {
-                update_pointer(&mut app, &[(pane, rect)], (step * 5) as f32, 10.0, false);
+                update_pointer(
+                    &mut app,
+                    &[region(pane, rect)],
+                    (step * 5) as f32,
+                    10.0,
+                    false,
+                );
             }
             println!(
                 "{count} tabs: {:?} per pointer update",
@@ -1057,15 +1233,17 @@ mod tests {
             pane: app.workspace.active_pane(),
             source: first,
             pointer_origin_x: 20.0,
+            pointer_origin_y: 10.0,
             target_index: 0,
             active: false,
+            drop: None,
         });
         let rect = UiRect::new(0.0, 0.0, 700.0, theme::TABS_H);
         let pane = app.workspace.active_pane();
 
         assert!(update_pointer(
             &mut app,
-            &[(pane, rect)],
+            &[region(pane, rect)],
             500.0,
             10.0,
             false
@@ -1073,5 +1251,109 @@ mod tests {
         assert!(!app.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
         assert_eq!(app.workspace.active_items(), &[first, second]);
+    }
+
+    #[test]
+    fn drop_zones_merge_in_the_centre_and_split_near_edges() {
+        let body = UiRect::new(0.0, 0.0, 900.0, 600.0);
+        assert_eq!(drop_zone(body, 450.0, 300.0), None);
+        assert_eq!(drop_zone(body, 20.0, 300.0), Some(Direction::Left));
+        assert_eq!(drop_zone(body, 880.0, 300.0), Some(Direction::Right));
+        assert_eq!(drop_zone(body, 450.0, 20.0), Some(Direction::Up));
+        assert_eq!(drop_zone(body, 450.0, 590.0), Some(Direction::Down));
+        assert_eq!(
+            drop_preview(body, Some(Direction::Right)),
+            UiRect::new(450.0, 0.0, 900.0, 600.0)
+        );
+    }
+
+    fn drag_from(app: &mut AppState, pane: PaneId, source: FileId, x: f32, y: f32) {
+        app.tab_drag = Some(TabDragState {
+            pane,
+            source,
+            pointer_origin_x: x,
+            pointer_origin_y: y,
+            target_index: 0,
+            active: false,
+            drop: None,
+        });
+    }
+
+    #[test]
+    fn dragging_a_tab_onto_another_strip_moves_it_there() {
+        let mut app = AppState::new();
+        let left = app.workspace.active_pane();
+        let keep = app
+            .workspace
+            .open_path(PathBuf::from("keep.rs"), String::new());
+        let moved = app
+            .workspace
+            .open_path(PathBuf::from("moved.rs"), String::new());
+        let right = app.workspace.split(left, Direction::Right).unwrap();
+        let regions = [
+            region(left, UiRect::new(0.0, 0.0, 600.0, theme::TABS_H)),
+            region(right, UiRect::new(600.0, 0.0, 1200.0, theme::TABS_H)),
+        ];
+        drag_from(&mut app, left, keep, 20.0, 10.0);
+
+        assert!(update_pointer(&mut app, &regions, 1150.0, 10.0, true));
+        assert_eq!(
+            app.tab_drag.as_ref().unwrap().drop,
+            Some(TabDrop::Insert {
+                pane: right,
+                index: 1
+            })
+        );
+        assert!(finish_pointer_interaction(&mut app));
+
+        assert_eq!(app.workspace.pane(left).unwrap().items(), &[moved]);
+        assert_eq!(app.workspace.pane(right).unwrap().items(), &[moved, keep]);
+        assert_eq!(app.workspace.active_pane(), right);
+    }
+
+    #[test]
+    fn dragging_a_tab_to_a_surface_edge_splits_that_pane() {
+        let mut app = AppState::new();
+        let pane = app.workspace.active_pane();
+        let first = app
+            .workspace
+            .open_path(PathBuf::from("first.rs"), String::new());
+        let second = app
+            .workspace
+            .open_path(PathBuf::from("second.rs"), String::new());
+        let regions = [region(pane, UiRect::new(0.0, 0.0, 900.0, theme::TABS_H))];
+        drag_from(&mut app, pane, second, 200.0, 10.0);
+
+        update_pointer(&mut app, &regions, 880.0, 200.0, true);
+        assert_eq!(
+            app.tab_drag.as_ref().unwrap().drop,
+            Some(TabDrop::Pane {
+                pane,
+                split: Some(Direction::Right)
+            })
+        );
+        finish_pointer_interaction(&mut app);
+
+        let panes = app.workspace.pane_ids();
+        assert_eq!(panes.len(), 2);
+        assert_eq!(app.workspace.pane(panes[0]).unwrap().items(), &[first]);
+        assert_eq!(app.workspace.pane(panes[1]).unwrap().items(), &[second]);
+    }
+
+    #[test]
+    fn splitting_a_pane_with_its_only_tab_is_a_no_op() {
+        let mut app = AppState::new();
+        let pane = app.workspace.active_pane();
+        let only = app
+            .workspace
+            .open_path(PathBuf::from("only.rs"), String::new());
+        let regions = [region(pane, UiRect::new(0.0, 0.0, 900.0, theme::TABS_H))];
+        drag_from(&mut app, pane, only, 40.0, 10.0);
+
+        update_pointer(&mut app, &regions, 20.0, 200.0, true);
+        finish_pointer_interaction(&mut app);
+
+        assert_eq!(app.workspace.pane_ids(), vec![pane]);
+        assert_eq!(app.workspace.active_items(), &[only]);
     }
 }

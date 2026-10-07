@@ -958,12 +958,9 @@ impl CliGitBackend {
             args.push(OsString::from("--cached"));
         }
         args.push(OsString::from("--"));
-        let output = self.runner.run(
-            GitCommand::new()
-                .cwd(repository)
-                .args(args)
-                .read_only(),
-        )?;
+        let output = self
+            .runner
+            .run(GitCommand::new().cwd(repository).args(args).read_only())?;
         parse_numstat(&output.stdout)
     }
 }

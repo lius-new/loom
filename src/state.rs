@@ -63,13 +63,29 @@ pub struct CloseRequest {
     pub continuation: CloseContinuation,
 }
 
+/// Where a dragged tab lands outside its own strip.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TabDrop {
+    /// Into another pane's strip, before `index` (the tab count appends).
+    Insert { pane: PaneId, index: usize },
+    /// Onto a pane's surface: merge into it, or split it on one side.
+    Pane {
+        pane: PaneId,
+        split: Option<Direction>,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabDragState {
     pub pane: PaneId,
     pub source: FileId,
     pub pointer_origin_x: f32,
+    pub pointer_origin_y: f32,
+    /// Final index while reordering within the source strip.
     pub target_index: usize,
     pub active: bool,
+    /// Set while the pointer is outside the source strip over a drop target.
+    pub drop: Option<TabDrop>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -172,6 +188,8 @@ pub struct AppState {
     pub expanded: HashSet<String>,
     pub sidebar_w: f32,
     pub resizing_sidebar: bool,
+    /// The pane divider being dragged.
+    pub sash_drag: Option<crate::model::pane_layout::Sash>,
     /// Width and drag state for the independent left Source Control drawer.
     pub git_sidebar_w: f32,
     pub resizing_git_sidebar: bool,
@@ -290,6 +308,7 @@ impl AppState {
             expanded: HashSet::new(),
             sidebar_w: crate::theme::SIDEBAR_W,
             resizing_sidebar: false,
+            sash_drag: None,
             git_sidebar_w: crate::theme::SIDEBAR_W,
             resizing_git_sidebar: false,
             git_scroll: 0.0,
@@ -396,6 +415,7 @@ impl AppState {
                 self.close_menus();
                 self.close_request = None;
                 self.tab_drag = None;
+                self.sash_drag = None;
                 self.tab_scrollbar_dragging = None;
                 if !self.cloning_repository {
                     self.show_clone_dialog = false;

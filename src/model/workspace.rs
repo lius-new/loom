@@ -421,6 +421,38 @@ impl Workspace {
         target.items.insert(index.min(target.items.len()), id);
     }
 
+    /// Put a tab into a new pane on `direction`'s side of `target`, moving it
+    /// (or copying a file when `copy`). Splitting a pane with its only tab is
+    /// a no-op, like VSCode.
+    pub fn split_with_item(
+        &mut self,
+        from: PaneId,
+        id: FileId,
+        target: PaneId,
+        direction: Direction,
+        copy: bool,
+    ) -> bool {
+        if !self.panes.get(&from).is_some_and(|p| p.contains(id)) {
+            return false;
+        }
+        let copy = copy
+            && self
+                .documents
+                .get(&id)
+                .is_some_and(OpenDocument::is_shareable);
+        if !copy && from == target && self.panes[&from].items.len() == 1 {
+            return false;
+        }
+        let Some(new) = self.add_pane(target, direction) else {
+            return false;
+        };
+        if copy {
+            self.copy_item(from, id, new, 0)
+        } else {
+            self.move_item(from, id, new, 0)
+        }
+    }
+
     /// Move a tab to another pane (or reorder within one) at `index`, and
     /// activate it there. A pane left empty is removed.
     pub fn move_item(&mut self, from: PaneId, id: FileId, to: PaneId, index: usize) -> bool {

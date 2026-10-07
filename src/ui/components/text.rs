@@ -20,12 +20,8 @@ pub struct SingleLineText {
 impl SingleLineText {
     pub fn new(value: impl Into<String>, bounds: UiRect, style: TextStyle) -> Self {
         let value = value.into();
-        let mut request = TextLayoutRequest::single_line(
-            &value,
-            bounds,
-            style.height,
-            style.weight,
-        );
+        let mut request =
+            TextLayoutRequest::single_line(&value, bounds, style.height, style.weight);
         request.font_slant = style.font_slant;
         request.font_families = style.font_families;
         request.tracking = style.tracking;
@@ -54,16 +50,17 @@ impl SingleLineText {
     }
 
     pub fn caret_x(&self, byte_offset: usize) -> f32 {
-        let char_index = self.value[..self.byte_boundary(byte_offset)].chars().count();
+        let char_index = self.value[..self.byte_boundary(byte_offset)]
+            .chars()
+            .count();
         self.layout
             .as_ref()
             .and_then(|layout| layout.caret_rect(char_index))
             .map_or_else(
                 || {
                     self.bounds.left
-                        + UnicodeWidthStr::width(
-                            &self.value[..self.byte_boundary(byte_offset)],
-                        ) as f32
+                        + UnicodeWidthStr::width(&self.value[..self.byte_boundary(byte_offset)])
+                            as f32
                             * self.style.height
                             * 0.6
                 },
@@ -89,7 +86,9 @@ impl SingleLineText {
     }
 
     pub fn selection_rects(&self, range: Range<usize>) -> Vec<UiRect> {
-        let start = self.value[..self.byte_boundary(range.start)].chars().count();
+        let start = self.value[..self.byte_boundary(range.start)]
+            .chars()
+            .count();
         let end = self.value[..self.byte_boundary(range.end)].chars().count();
         self.layout
             .as_ref()

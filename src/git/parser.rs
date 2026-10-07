@@ -117,9 +117,7 @@ pub fn parse_numstat(input: &[u8]) -> GitResult<BTreeMap<PathBuf, DiffStat>> {
         if record.is_empty() {
             continue;
         }
-        let fields = record
-            .splitn(3, |byte| *byte == b'\t')
-            .collect::<Vec<_>>();
+        let fields = record.splitn(3, |byte| *byte == b'\t').collect::<Vec<_>>();
         if fields.len() != 3 {
             return Err(invalid(record));
         }
