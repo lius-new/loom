@@ -30,6 +30,19 @@ pub struct ExplorerCreateRequest {
 #[derive(Clone)]
 pub struct ExplorerRenameRequest {
     pub path: PathBuf,
+    pub kind: ExplorerTargetKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExplorerTargetKind {
+    File,
+    Directory,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExplorerContextTarget {
+    pub path: PathBuf,
+    pub kind: ExplorerTargetKind,
 }
 
 #[derive(Clone)]
@@ -74,8 +87,8 @@ pub struct AppState {
     pub tree_hovered_path: Option<String>,
     /// Empty-space context menu anchor (screen coords) when open.
     pub context_menu: Option<(f32, f32)>,
-    /// Directory targeted by the context menu. `None` means drawer background.
-    pub context_menu_target: Option<PathBuf>,
+    /// File-tree item targeted by the context menu. `None` means drawer background.
+    pub context_menu_target: Option<ExplorerContextTarget>,
     /// Index of the context-menu item currently hovered, if any.
     pub context_menu_hover: Option<usize>,
     /// Inline New File/New Folder editor currently shown in the file tree.

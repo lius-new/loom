@@ -9,6 +9,7 @@ use lgui::prelude::State;
 
 use crate::state::{
     AppState, DirEntry, ExplorerCreateKind, ExplorerCreateRequest, ExplorerRenameRequest,
+    ExplorerTargetKind,
 };
 use crate::workspace_persistence::{self, MAX_RECENT_FOLDERS};
 
@@ -87,9 +88,9 @@ pub fn cancel_explorer_create(state: &State<AppState>) {
     });
 }
 
-pub fn copy_directory(state: &State<AppState>, path: &Path, cut: bool) {
+pub fn copy_explorer_item(state: &State<AppState>, path: &Path, cut: bool) {
     let action = if cut { "Cut" } else { "Copied" };
-    match set_directory_clipboard(path, cut) {
+    match set_file_clipboard(path, cut) {
         Ok(()) => {
             let name = path
                 .file_name()
@@ -102,7 +103,7 @@ pub fn copy_directory(state: &State<AppState>, path: &Path, cut: bool) {
 }
 
 #[cfg(target_os = "windows")]
-fn set_directory_clipboard(path: &Path, cut: bool) -> Result<(), String> {
+fn set_file_clipboard(path: &Path, cut: bool) -> Result<(), String> {
     let path = windows_shell_path(path);
     let _clipboard = clipboard_win::Clipboard::new_attempts(10)
         .map_err(|error| format!("Could not open the clipboard: {error}"))?;
@@ -118,19 +119,19 @@ fn set_directory_clipboard(path: &Path, cut: bool) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn set_directory_clipboard(_path: &Path, _cut: bool) -> Result<(), String> {
-    Err("Copying folders is not supported on this platform yet.".to_owned())
+fn set_file_clipboard(_path: &Path, _cut: bool) -> Result<(), String> {
+    Err("Copying file-system items is not supported on this platform yet.".to_owned())
 }
 
-pub fn begin_explorer_rename(state: &State<AppState>, path: PathBuf) {
+pub fn begin_explorer_rename(state: &State<AppState>, path: PathBuf, kind: ExplorerTargetKind) {
     let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-        state.update(|app| app.show_toast("This folder name cannot be edited as text."));
+        state.update(|app| app.show_toast("This name cannot be edited as text."));
         return;
     };
     let name = name.to_owned();
     state.update(move |app| {
         app.explorer_create = None;
-        app.explorer_rename = Some(ExplorerRenameRequest { path });
+        app.explorer_rename = Some(ExplorerRenameRequest { path, kind });
         app.explorer_create_input.set_text(name);
         app.explorer_create_error = None;
     });
@@ -167,20 +168,20 @@ pub fn finish_explorer_rename(state: &State<AppState>) {
         return;
     }
 
-    state.update(move |app| apply_renamed_directory_state(app, &request.path, &target));
+    state.update(move |app| apply_renamed_path_state(app, &request.path, &target));
 }
 
 fn validate_rename_path(path: &Path, raw_name: &str) -> Result<PathBuf, String> {
     let name = raw_name.trim_matches('\t');
     if name.is_empty() || name.chars().all(char::is_whitespace) {
-        return Err("A folder name must be provided.".to_owned());
+        return Err("A name must be provided.".to_owned());
     }
     if name.contains(['/', '\\']) || matches!(name, "." | "..") || invalid_file_name_segment(name) {
         return Err(format!("The name '{name}' is not valid."));
     }
     let parent = path
         .parent()
-        .ok_or_else(|| "The workspace root cannot be renamed.".to_owned())?;
+        .ok_or_else(|| "This item cannot be renamed.".to_owned())?;
     let target = parent.join(name);
     if target == path {
         return Ok(target);
@@ -191,7 +192,7 @@ fn validate_rename_path(path: &Path, raw_name: &str) -> Result<PathBuf, String> 
     Ok(target)
 }
 
-fn apply_renamed_directory_state(app: &mut AppState, old_path: &Path, new_path: &Path) {
+fn apply_renamed_path_state(app: &mut AppState, old_path: &Path, new_path: &Path) {
     let was_expanded = app.expanded.iter().any(|path| Path::new(path) == old_path);
     app.workspace.move_open_paths_under(old_path, new_path);
 
@@ -212,7 +213,10 @@ fn apply_renamed_directory_state(app: &mut AppState, old_path: &Path, new_path: 
     app.expanded
         .retain(|path| !Path::new(path).starts_with(old_path));
     if let Some(parent) = new_path.parent()
-        && app.workspace_folders.iter().any(|root| parent.starts_with(root))
+        && app
+            .workspace_folders
+            .iter()
+            .any(|root| parent.starts_with(root))
     {
         app.dir_entries
             .insert(parent.to_string_lossy().into_owned(), read_entries(parent));
@@ -232,20 +236,22 @@ fn apply_renamed_directory_state(app: &mut AppState, old_path: &Path, new_path: 
     }
 }
 
-pub fn delete_directory(state: &State<AppState>, path: PathBuf) {
+pub fn delete_explorer_item(state: &State<AppState>, path: PathBuf) {
     if state.get().workspace.has_dirty_paths_under(&path) {
-        state.update(|app| app.show_toast("Save or close modified files in this folder first."));
+        state.update(|app| {
+            app.show_toast("Save or close modified files before deleting this item.")
+        });
         return;
     }
-    match move_directory_to_trash(&path) {
+    match move_path_to_trash(&path) {
         Ok(false) => {}
-        Ok(true) => state.update(move |app| apply_deleted_directory_state(app, &path)),
+        Ok(true) => state.update(move |app| apply_deleted_path_state(app, &path)),
         Err(error) => state.update(move |app| app.show_toast(error)),
     }
 }
 
 #[cfg(target_os = "windows")]
-fn move_directory_to_trash(path: &Path) -> Result<bool, String> {
+fn move_path_to_trash(path: &Path) -> Result<bool, String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::Shell::{
         FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_WANTNUKEWARNING, SHFILEOPSTRUCTW,
@@ -268,14 +274,14 @@ fn move_directory_to_trash(path: &Path) -> Result<bool, String> {
     let result = unsafe { SHFileOperationW(&mut operation) };
     if result != 0 {
         return Err(format!(
-            "Could not move the folder to the Recycle Bin (shell error {result})."
+            "Could not move the item to the Recycle Bin (shell error {result})."
         ));
     }
     Ok(operation.fAnyOperationsAborted == 0)
 }
 
 #[cfg(target_os = "macos")]
-fn move_directory_to_trash(path: &Path) -> Result<bool, String> {
+fn move_path_to_trash(path: &Path) -> Result<bool, String> {
     let status = std::process::Command::new("osascript")
         .args([
             "-e",
@@ -292,12 +298,12 @@ fn move_directory_to_trash(path: &Path) -> Result<bool, String> {
     if status.success() {
         Ok(true)
     } else {
-        Err("Could not move the folder to Trash.".to_owned())
+        Err("Could not move the item to Trash.".to_owned())
     }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn move_directory_to_trash(path: &Path) -> Result<bool, String> {
+fn move_path_to_trash(path: &Path) -> Result<bool, String> {
     let status = std::process::Command::new("gio")
         .args(["trash", "--"])
         .arg(path)
@@ -306,7 +312,7 @@ fn move_directory_to_trash(path: &Path) -> Result<bool, String> {
     if status.success() {
         Ok(true)
     } else {
-        Err("Could not move the folder to Trash.".to_owned())
+        Err("Could not move the item to Trash.".to_owned())
     }
 }
 
@@ -322,7 +328,7 @@ fn windows_shell_path(path: &Path) -> String {
     }
 }
 
-fn apply_deleted_directory_state(app: &mut AppState, path: &Path) {
+fn apply_deleted_path_state(app: &mut AppState, path: &Path) {
     app.workspace.close_paths_under(path);
     let original_root_count = app.workspace_folders.len();
     let original_recent_count = app.recent_folders.len();
@@ -334,7 +340,10 @@ fn apply_deleted_directory_state(app: &mut AppState, path: &Path) {
     app.expanded
         .retain(|expanded| !Path::new(expanded).starts_with(path));
     if let Some(parent) = path.parent()
-        && app.workspace_folders.iter().any(|root| parent.starts_with(root))
+        && app
+            .workspace_folders
+            .iter()
+            .any(|root| parent.starts_with(root))
     {
         app.dir_entries
             .insert(parent.to_string_lossy().into_owned(), read_entries(parent));
@@ -344,7 +353,7 @@ fn apply_deleted_directory_state(app: &mut AppState, path: &Path) {
     app.explorer_rename = None;
     app.explorer_create_input.clear();
     app.explorer_create_error = None;
-    app.show_toast("Moved folder to Trash.");
+    app.show_toast("Moved item to Trash.");
     if app.workspace_folders.len() != original_root_count
         || app.recent_folders.len() != original_recent_count
     {
@@ -954,7 +963,10 @@ mod tests {
                 .iter()
                 .all(|path| !Path::new(path).starts_with(&removed))
         );
-        assert!(app.dir_entries.contains_key(&kept.to_string_lossy().into_owned()));
+        assert!(
+            app.dir_entries
+                .contains_key(&kept.to_string_lossy().into_owned())
+        );
         assert!(app.expanded.contains(&kept.to_string_lossy().into_owned()));
         assert!(app.tree_hovered_path.is_none());
         assert!(app.explorer_create.is_none());
@@ -1064,7 +1076,7 @@ mod tests {
         app.expanded.insert(old_path.to_string_lossy().into_owned());
         app.workspace.open_path(old_file, String::new());
 
-        apply_renamed_directory_state(&mut app, &old_path, &new_path);
+        apply_renamed_path_state(&mut app, &old_path, &new_path);
 
         assert_eq!(app.workspace.active_path(), Some(new_file.as_path()));
         assert!(
@@ -1077,6 +1089,35 @@ mod tests {
                 .contains(&new_path.to_string_lossy().into_owned())
         );
         assert!(app.explorer_rename.is_none());
+    }
+
+    #[test]
+    fn renamed_file_retargets_its_open_editor_tab() {
+        let mut app = AppState::new();
+        let root = PathBuf::from("workspace");
+        let old_path = root.join("before.rs");
+        let new_path = root.join("after.rs");
+        app.workspace_folders = vec![root];
+        app.workspace.open_path(old_path.clone(), String::new());
+
+        apply_renamed_path_state(&mut app, &old_path, &new_path);
+
+        assert_eq!(app.workspace.active_path(), Some(new_path.as_path()));
+        assert_eq!(app.workspace.file_id_for_path(&old_path), None);
+    }
+
+    #[test]
+    fn deleted_file_closes_its_open_editor_tab() {
+        let mut app = AppState::new();
+        let root = PathBuf::from("workspace");
+        let path = root.join("deleted.rs");
+        app.workspace_folders = vec![root];
+        app.workspace.open_path(path.clone(), String::new());
+
+        apply_deleted_path_state(&mut app, &path);
+
+        assert_eq!(app.workspace.file_id_for_path(&path), None);
+        assert_eq!(app.workspace.active_path(), None);
     }
 
     #[cfg(target_os = "windows")]

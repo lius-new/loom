@@ -12,7 +12,7 @@ use lgui::services::{Clipboard, ServicesContextExt};
 use lgui::text::measure_width;
 use unicode_width::UnicodeWidthStr;
 
-use crate::state::{AppState, ExplorerCreateKind};
+use crate::state::{AppState, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
 use crate::workspace_actions;
@@ -45,14 +45,14 @@ enum MenuAction {
 fn action_enabled(
     action: MenuAction,
     has_target: bool,
-    has_directory_target: bool,
+    has_item_target: bool,
     can_remove: bool,
 ) -> bool {
     match action {
         MenuAction::AddFolder => true,
         MenuAction::RemoveFolder => can_remove,
         MenuAction::Cut | MenuAction::Copy | MenuAction::Rename | MenuAction::Delete => {
-            has_directory_target
+            has_item_target
         }
         _ => has_target,
     }
@@ -67,7 +67,7 @@ enum Entry {
     Separator,
 }
 
-const ENTRIES: &[Entry] = &[
+const DIRECTORY_ENTRIES: &[Entry] = &[
     Entry::Item {
         label: "New File",
         shortcut: None,
@@ -135,6 +135,52 @@ const ENTRIES: &[Entry] = &[
     },
 ];
 
+const FILE_ENTRIES: &[Entry] = &[
+    Entry::Item {
+        label: "Reveal in File Explorer",
+        shortcut: None,
+        action: MenuAction::RevealInFileExplorer,
+    },
+    Entry::Item {
+        label: "Open in Terminal",
+        shortcut: None,
+        action: MenuAction::OpenTerminal,
+    },
+    Entry::Separator,
+    Entry::Item {
+        label: "Cut",
+        shortcut: None,
+        action: MenuAction::Cut,
+    },
+    Entry::Item {
+        label: "Copy",
+        shortcut: None,
+        action: MenuAction::Copy,
+    },
+    Entry::Separator,
+    Entry::Item {
+        label: "Copy Path",
+        shortcut: None,
+        action: MenuAction::CopyPath,
+    },
+    Entry::Item {
+        label: "Copy Relative Path",
+        shortcut: None,
+        action: MenuAction::CopyRelativePath,
+    },
+    Entry::Separator,
+    Entry::Item {
+        label: "Rename",
+        shortcut: None,
+        action: MenuAction::Rename,
+    },
+    Entry::Item {
+        label: "Delete",
+        shortcut: None,
+        action: MenuAction::Delete,
+    },
+];
+
 /// The empty-space menu acts on the root containing the active file. Falling
 /// back to the first root keeps its behavior deterministic before a file is
 /// opened. The longest match wins when workspace roots are nested.
@@ -151,10 +197,13 @@ fn context_root(app: &AppState) -> Option<PathBuf> {
         .cloned()
 }
 
-fn context_target(app: &AppState) -> Option<PathBuf> {
-    app.context_menu_target
-        .clone()
-        .or_else(|| context_root(app))
+fn context_target(app: &AppState) -> Option<ExplorerContextTarget> {
+    app.context_menu_target.clone().or_else(|| {
+        context_root(app).map(|path| ExplorerContextTarget {
+            path,
+            kind: ExplorerTargetKind::Directory,
+        })
+    })
 }
 
 fn workspace_root_for_path(app: &AppState, path: &Path) -> Option<PathBuf> {
@@ -209,28 +258,43 @@ fn clipboard_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn reveal_target(state: &State<AppState>, target: &Path) {
-    match reveal_in_file_manager(target) {
+fn reveal_target(state: &State<AppState>, target: &ExplorerContextTarget) {
+    match reveal_in_file_manager(&target.path, target.kind) {
         Ok(()) => {}
         Err(error) => state.update(move |app| {
-            app.show_toast(format!("Could not reveal folder: {error}"));
+            app.show_toast(format!("Could not reveal item: {error}"));
         }),
     }
 }
 
 #[cfg(target_os = "windows")]
-fn reveal_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
-    Command::new("explorer.exe").arg(path).spawn().map(|_| ())
+fn reveal_in_file_manager(path: &Path, kind: ExplorerTargetKind) -> std::io::Result<()> {
+    let mut command = Command::new("explorer.exe");
+    if kind == ExplorerTargetKind::File {
+        command.arg(format!("/select,{}", clipboard_path(path)));
+    } else {
+        command.arg(clipboard_path(path));
+    }
+    command.spawn().map(|_| ())
 }
 
 #[cfg(target_os = "macos")]
-fn reveal_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
-    Command::new("open").arg(path).spawn().map(|_| ())
+fn reveal_in_file_manager(path: &Path, kind: ExplorerTargetKind) -> std::io::Result<()> {
+    let mut command = Command::new("open");
+    if kind == ExplorerTargetKind::File {
+        command.arg("-R");
+    }
+    command.arg(path).spawn().map(|_| ())
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn reveal_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
-    Command::new("xdg-open").arg(path).spawn().map(|_| ())
+fn reveal_in_file_manager(path: &Path, kind: ExplorerTargetKind) -> std::io::Result<()> {
+    let target = if kind == ExplorerTargetKind::File {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    Command::new("xdg-open").arg(target).spawn().map(|_| ())
 }
 
 /// Natural width of `s` at the menu text size. The renderer's generic text
@@ -253,13 +317,21 @@ pub fn render(
 ) -> Element {
     let s = state.get();
     let target = context_target(&s);
-    let has_directory_target = s.context_menu_target.is_some();
-    let can_remove = target
+    let has_item_target = s.context_menu_target.is_some();
+    let entries = if target
         .as_ref()
-        .is_some_and(|path| s.workspace_folders.contains(path));
+        .is_some_and(|target| target.kind == ExplorerTargetKind::File)
+    {
+        FILE_ENTRIES
+    } else {
+        DIRECTORY_ENTRIES
+    };
+    let can_remove = target.as_ref().is_some_and(|target| {
+        target.kind == ExplorerTargetKind::Directory && s.workspace_folders.contains(&target.path)
+    });
 
     // Size the menu to its widest entry (label + optional shortcut).
-    let content_w = ENTRIES
+    let content_w = entries
         .iter()
         .map(|e| match e {
             Entry::Item {
@@ -277,7 +349,7 @@ pub fn render(
     let menu_w = content_w + ITEM_PAD_X * 2.0 + TEXT_MARGIN;
 
     let menu_h = MENU_PAD * 2.0
-        + ENTRIES
+        + entries
             .iter()
             .map(|e| match e {
                 Entry::Item { .. } => ITEM_H,
@@ -339,7 +411,7 @@ pub fn render(
     // Rows.
     let mut y = card.top + MENU_PAD;
     let mut index = 0usize;
-    for entry in ENTRIES {
+    for entry in entries {
         match entry {
             Entry::Separator => {
                 let line_y = y + (SEP_H - 1.0) / 2.0;
@@ -360,7 +432,7 @@ pub fn render(
                 action,
             } => {
                 let enabled =
-                    action_enabled(*action, target.is_some(), has_directory_target, can_remove);
+                    action_enabled(*action, target.is_some(), has_item_target, can_remove);
                 let item_rect = UiRect::new(
                     card.left + MENU_BORDER,
                     y,
@@ -416,7 +488,9 @@ pub fn render(
                     });
                     match action {
                         MenuAction::NewFile | MenuAction::NewFolder => {
-                            if let Some(parent) = action_target.clone() {
+                            if let Some(parent) =
+                                action_target.as_ref().map(|target| target.path.clone())
+                            {
                                 let kind = if matches!(action, MenuAction::NewFile) {
                                     ExplorerCreateKind::File
                                 } else {
@@ -426,7 +500,13 @@ pub fn render(
                             }
                         }
                         MenuAction::OpenTerminal => {
-                            if let Some(cwd) = action_target.clone() {
+                            let cwd = action_target.as_ref().and_then(|target| match target.kind {
+                                ExplorerTargetKind::File => {
+                                    target.path.parent().map(Path::to_path_buf)
+                                }
+                                ExplorerTargetKind::Directory => Some(target.path.clone()),
+                            });
+                            if let Some(cwd) = cwd {
                                 terminal_tabs_click.update(move |tabs| {
                                     tabs.add_at(ShellKind::default(), Some(cwd));
                                 });
@@ -437,22 +517,26 @@ pub fn render(
                             }
                         }
                         MenuAction::Cut | MenuAction::Copy => {
-                            if let Some(target) = action_target.as_deref() {
-                                workspace_actions::copy_directory(
+                            if let Some(target) = action_target.as_ref() {
+                                workspace_actions::copy_explorer_item(
                                     &st_click,
-                                    target,
+                                    &target.path,
                                     matches!(action, MenuAction::Cut),
                                 );
                             }
                         }
                         MenuAction::Rename => {
                             if let Some(target) = action_target.clone() {
-                                workspace_actions::begin_explorer_rename(&st_click, target);
+                                workspace_actions::begin_explorer_rename(
+                                    &st_click,
+                                    target.path,
+                                    target.kind,
+                                );
                             }
                         }
                         MenuAction::Delete => {
                             if let Some(target) = action_target.clone() {
-                                workspace_actions::delete_directory(&st_click, target);
+                                workspace_actions::delete_explorer_item(&st_click, target.path);
                             }
                         }
                         MenuAction::AddFolder => {
@@ -460,30 +544,32 @@ pub fn render(
                         }
                         MenuAction::RemoveFolder => {
                             if let Some(root) = action_target.clone() {
-                                workspace_actions::remove_folder_from_workspace(&st_click, root);
+                                workspace_actions::remove_folder_from_workspace(
+                                    &st_click, root.path,
+                                );
                             }
                         }
                         MenuAction::RevealInFileExplorer => {
-                            if let Some(target) = action_target.as_deref() {
+                            if let Some(target) = action_target.as_ref() {
                                 reveal_target(&st_click, target);
                             }
                         }
                         MenuAction::CopyPath => {
-                            if let Some(target) = action_target.as_deref() {
+                            if let Some(target) = action_target.as_ref() {
                                 copy_target_path(
                                     &st_click,
                                     cx.application().clipboard().as_ref(),
-                                    target,
+                                    &target.path,
                                     false,
                                 );
                             }
                         }
                         MenuAction::CopyRelativePath => {
-                            if let Some(target) = action_target.as_deref() {
+                            if let Some(target) = action_target.as_ref() {
                                 copy_target_path(
                                     &st_click,
                                     cx.application().clipboard().as_ref(),
-                                    target,
+                                    &target.path,
                                     true,
                                 );
                             }
@@ -601,13 +687,42 @@ mod tests {
     fn an_explicit_directory_target_takes_priority_over_the_background_root() {
         let mut app = AppState::new();
         app.workspace_folders = vec![PathBuf::from("workspace")];
-        app.context_menu_target = Some(PathBuf::from("workspace/src"));
+        app.context_menu_target = Some(ExplorerContextTarget {
+            path: PathBuf::from("workspace/src"),
+            kind: ExplorerTargetKind::Directory,
+        });
 
-        assert_eq!(context_target(&app), Some(PathBuf::from("workspace/src")));
+        assert_eq!(
+            context_target(&app),
+            Some(ExplorerContextTarget {
+                path: PathBuf::from("workspace/src"),
+                kind: ExplorerTargetKind::Directory,
+            })
+        );
         assert_eq!(
             workspace_root_for_path(&app, Path::new("workspace/src")),
             Some(PathBuf::from("workspace"))
         );
+    }
+
+    #[test]
+    fn file_menu_contains_only_file_actions() {
+        let labels = FILE_ENTRIES
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Item { label, .. } => Some(*label),
+                Entry::Separator => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert!(labels.contains(&"Reveal in File Explorer"));
+        assert!(labels.contains(&"Cut"));
+        assert!(labels.contains(&"Copy"));
+        assert!(labels.contains(&"Rename"));
+        assert!(labels.contains(&"Delete"));
+        assert!(!labels.contains(&"New File"));
+        assert!(!labels.contains(&"Add Folder From Workspace"));
+        assert!(!labels.contains(&"Remove Folder From Workspace"));
     }
 
     #[test]

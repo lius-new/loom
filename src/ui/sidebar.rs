@@ -17,7 +17,9 @@ use lgui::core::{
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
 use crate::git::GitStoreSnapshot;
-use crate::state::{AppState, DirEntry, ExplorerCreateKind};
+use crate::state::{
+    AppState, DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind,
+};
 use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::workspace_actions;
@@ -683,13 +685,36 @@ fn rename_row(
         input_rect.right - 1.0,
         input_rect.bottom - 1.0,
     );
+    let (label, icon) = match snapshot
+        .explorer_rename
+        .as_ref()
+        .map(|request| request.kind)
+    {
+        Some(ExplorerTargetKind::File) => {
+            let icon = snapshot
+                .explorer_rename
+                .as_ref()
+                .and_then(|request| request.path.file_name())
+                .map(|name| crate::file_icons::icon_for_file(&name.to_string_lossy()))
+                .unwrap_or(crate::file_icons::DEFAULT_FILE_ICON);
+            ("Rename file", icon)
+        }
+        _ => (
+            "Rename folder",
+            if is_expanded {
+                crate::file_icons::FOLDER_OPEN_ICON
+            } else {
+                crate::file_icons::FOLDER_ICON
+            },
+        ),
+    };
     let input = input::render(
         field_rect,
         id,
         focus,
         InputBinding::new(state, explorer_create_input, explorer_create_input_mut),
         InputOptions {
-            label: "Rename folder",
+            label,
             placeholder: "",
             style: InputStyle {
                 text: theme::mono(theme::ZINC_200, theme::UI_SIZE),
@@ -702,12 +727,6 @@ fn rename_row(
             on_blur: Some(workspace_actions::cancel_explorer_create),
         },
     );
-    let icon = if is_expanded {
-        crate::file_icons::FOLDER_OPEN_ICON
-    } else {
-        crate::file_icons::FOLDER_ICON
-    };
-
     panel(
         UiRect::new(rect.left, y, rect.right, y + ROW_H),
         VisualStyle::filled(theme::SURFACE),
@@ -810,7 +829,10 @@ fn dir_row(
             PointerButton::Right => {
                 click_state.update(move |app| {
                     app.context_menu = Some((pointer.point.x, pointer.point.y));
-                    app.context_menu_target = Some(PathBuf::from(key));
+                    app.context_menu_target = Some(ExplorerContextTarget {
+                        path: PathBuf::from(key),
+                        kind: ExplorerTargetKind::Directory,
+                    });
                     app.context_menu_hover = None;
                 });
             }
@@ -918,87 +940,121 @@ fn build_tree(
             let row_rect = UiRect::new(rect.left, *y, content_right, *y + ROW_H);
             let icon_id = UiId::owned(format!("tree-file-icon-{key}"));
             let icon = crate::file_icons::icon_for_file(&name);
-            let file_path = entry.path.clone();
-            let open_id = s.workspace.file_id_for_path(&file_path);
-            let git_indicator = git
-                .repository_for_path(&file_path)
-                .and_then(|repository| repository.state_for_absolute_path(&file_path))
-                .map(|state| state.display_kind().indicator())
-                .unwrap_or_default();
-            let row_style = if s.workspace.active_path() == Some(file_path.as_path()) {
-                VisualStyle::filled(theme::ACTIVE_LINE)
-            } else if s.tree_hovered_path.as_deref() == Some(key.as_str()) {
-                VisualStyle::filled(theme::SURFACE)
-            } else {
-                VisualStyle::default()
-            };
-            let hover_state = state.clone();
-            let hover_key = key.clone();
-            let st = state.clone();
-            let focus = editor_focus.clone();
-            let row = panel(row_rect, row_style)
-                .event_policy(EventPolicy::INTERACTIVE)
-                .on_pointer_move(move |_cx, _pointer| {
-                    let key = hover_key.clone();
-                    hover_state.try_update(move |app| {
-                        let changed = app.tree_hovered_path.as_deref() != Some(key.as_str());
-                        app.tree_hovered_path = Some(key);
-                        changed
-                    });
-                })
-                .on_click(move || {
-                    if let Some(id) = open_id {
-                        st.update(move |app| app.workspace.set_active(id));
-                        focus.focus();
-                        return;
-                    }
-
-                    let path = file_path.clone();
-                    match read_text_file(&path) {
-                        Ok(contents) => {
-                            st.update(move |app| {
-                                app.workspace.open_path(path, contents);
-                                app.toast = None;
-                            });
-                            focus.focus();
-                        }
-                        Err(message) => st.update(move |app| app.show_toast(message)),
-                    }
-                })
-                .child(precompiled(
-                    UiElement::icon(
-                        icon_id,
-                        UiRect::new(
-                            indent,
-                            *y + 2.0,
-                            indent + TREE_ICON_SIZE,
-                            *y + 2.0 + TREE_ICON_SIZE,
-                        ),
-                        icon,
-                    )
-                    .icon_style(IconStyle::new(theme::ZINC_400)),
-                ))
-                .child(text(
-                    UiRect::new(
-                        indent + TREE_LABEL_OFFSET,
-                        *y + 2.0,
-                        content_right - 30.0,
-                        *y + 18.0,
-                    ),
-                    name,
-                    theme::mono(theme::ZINC_400, theme::UI_SIZE),
-                ))
-                .child(text(
-                    UiRect::new(
-                        content_right - 25.0,
-                        *y + 2.0,
-                        content_right - 8.0,
-                        *y + 18.0,
-                    ),
-                    git_indicator,
-                    theme::mono(theme::ACCENT, theme::SMALL),
+            if s.explorer_rename
+                .as_ref()
+                .is_some_and(|request| request.path == entry.path)
+            {
+                els.push(rename_row(
+                    rect,
+                    *y,
+                    indent,
+                    false,
+                    state.clone(),
+                    create_input_focus.clone(),
+                    create_input_id.clone(),
                 ));
-            els.push(row);
+            } else {
+                let file_path = entry.path.clone();
+                let open_id = s.workspace.file_id_for_path(&file_path);
+                let git_indicator = git
+                    .repository_for_path(&file_path)
+                    .and_then(|repository| repository.state_for_absolute_path(&file_path))
+                    .map(|state| state.display_kind().indicator())
+                    .unwrap_or_default();
+                let row_style = if s.workspace.active_path() == Some(file_path.as_path()) {
+                    VisualStyle::filled(theme::ACTIVE_LINE)
+                } else if s.tree_hovered_path.as_deref() == Some(key.as_str()) {
+                    VisualStyle::filled(theme::SURFACE)
+                } else {
+                    VisualStyle::default()
+                };
+                let hover_state = state.clone();
+                let hover_key = key.clone();
+                let st = state.clone();
+                let focus = editor_focus.clone();
+                let action_path = file_path.clone();
+                let row = panel(row_rect, row_style)
+                    .event_policy(EventPolicy::INTERACTIVE)
+                    .on_pointer_move(move |_cx, _pointer| {
+                        let key = hover_key.clone();
+                        hover_state.try_update(move |app| {
+                            let changed = app.tree_hovered_path.as_deref() != Some(key.as_str());
+                            app.tree_hovered_path = Some(key);
+                            changed
+                        });
+                    })
+                    .on_pointer_down_with_button(move |cx, pointer, button| {
+                        match button {
+                            PointerButton::Left => {
+                                if let Some(id) = open_id {
+                                    st.update(move |app| app.workspace.set_active(id));
+                                    focus.focus();
+                                } else {
+                                    let path = action_path.clone();
+                                    match read_text_file(&path) {
+                                        Ok(contents) => {
+                                            st.update(move |app| {
+                                                app.workspace.open_path(path, contents);
+                                                app.toast = None;
+                                            });
+                                            focus.focus();
+                                        }
+                                        Err(message) => {
+                                            st.update(move |app| app.show_toast(message));
+                                        }
+                                    }
+                                }
+                            }
+                            PointerButton::Right => {
+                                let path = action_path.clone();
+                                st.update(move |app| {
+                                    app.context_menu = Some((pointer.point.x, pointer.point.y));
+                                    app.context_menu_target = Some(ExplorerContextTarget {
+                                        path,
+                                        kind: ExplorerTargetKind::File,
+                                    });
+                                    app.context_menu_hover = None;
+                                });
+                            }
+                            _ => return,
+                        }
+                        cx.stop_propagation();
+                    })
+                    .child(precompiled(
+                        UiElement::icon(
+                            icon_id,
+                            UiRect::new(
+                                indent,
+                                *y + 2.0,
+                                indent + TREE_ICON_SIZE,
+                                *y + 2.0 + TREE_ICON_SIZE,
+                            ),
+                            icon,
+                        )
+                        .icon_style(IconStyle::new(theme::ZINC_400)),
+                    ))
+                    .child(text(
+                        UiRect::new(
+                            indent + TREE_LABEL_OFFSET,
+                            *y + 2.0,
+                            content_right - 30.0,
+                            *y + 18.0,
+                        ),
+                        name,
+                        theme::mono(theme::ZINC_400, theme::UI_SIZE),
+                    ))
+                    .child(text(
+                        UiRect::new(
+                            content_right - 25.0,
+                            *y + 2.0,
+                            content_right - 8.0,
+                            *y + 18.0,
+                        ),
+                        git_indicator,
+                        theme::mono(theme::ACCENT, theme::SMALL),
+                    ));
+                els.push(row);
+            }
         }
 
         *y += ROW_H;
