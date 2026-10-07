@@ -593,7 +593,7 @@ fn configure_std_command(
         }
     }
     if let Some(cwd) = cwd {
-        command.current_dir(cwd);
+        command.current_dir(shell_friendly_path(cwd));
     }
     // conpty builds an explicit environment block when any override exists,
     // so copy the inherited environment before adding terminal capabilities.
@@ -601,6 +601,25 @@ fn configure_std_command(
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("TERM_PROGRAM", "loom");
+}
+
+/// `fs::canonicalize` yields verbatim paths (`\\?\D:\dir`). Shells keep that
+/// form as their location, so PowerShell would prompt with
+/// `Microsoft.PowerShell.Core\FileSystem::\\?\D:\dir`; drop the prefix.
+#[cfg(windows)]
+fn shell_friendly_path(path: &Path) -> PathBuf {
+    let Some(value) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{unc}"))
+    } else if let Some(local) = value.strip_prefix(r"\\?\")
+        && local.as_bytes().get(1) == Some(&b':')
+    {
+        PathBuf::from(local)
+    } else {
+        path.to_path_buf()
+    }
 }
 
 #[cfg(not(windows))]
@@ -1088,6 +1107,27 @@ mod tests {
         assert_eq!(paste_bytes("a\r\nb\nc", false), b"a\rb\rc");
         assert_eq!(paste_bytes("ls", true), b"\x1b[200~ls\x1b[201~");
         assert_eq!(paste_bytes("x\x1b[201~y", true), b"\x1b[200~xy\x1b[201~");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shell_cwd_drops_the_verbatim_prefix() {
+        assert_eq!(
+            shell_friendly_path(Path::new(r"\\?\D:\Documents\loom")),
+            PathBuf::from(r"D:\Documents\loom")
+        );
+        assert_eq!(
+            shell_friendly_path(Path::new(r"\\?\UNC\server\share\dir")),
+            PathBuf::from(r"\\server\share\dir")
+        );
+        assert_eq!(
+            shell_friendly_path(Path::new(r"D:\plain")),
+            PathBuf::from(r"D:\plain")
+        );
+        assert_eq!(
+            shell_friendly_path(Path::new(r"\\?\Volume{abc}\dir")),
+            PathBuf::from(r"\\?\Volume{abc}\dir")
+        );
     }
 
     #[test]
