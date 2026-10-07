@@ -14,10 +14,10 @@ use lgui::core::{
     CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiEventKind, UiEventPayload,
     UiFocusHandle, UiId, WheelUnit, clip, precompiled,
 };
-use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Color, Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
 use crate::file_tree::read_directory;
-use crate::git::GitStoreSnapshot;
+use crate::git::{GitStoreSnapshot, PathDecoration};
 use crate::state::{
     AppState, DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind,
 };
@@ -170,6 +170,7 @@ pub fn render(
                     is_expanded,
                     false,
                     s.tree_hovered_path.as_deref() == Some(key.as_str()),
+                    theme::c().text_soft,
                     &state,
                 ));
             }
@@ -247,6 +248,12 @@ pub fn render(
         {
             let directory = sticky.directory;
             let indent = content_rect.left + INDENT + directory.depth as f32 * INDENT;
+            // The workspace root keeps its plain color, as in the tree itself.
+            let label_color = if directory.depth == 0 {
+                theme::c().text_soft
+            } else {
+                tree_label_color(&git, Path::new(&directory.key), theme::c().text_soft)
+            };
             bar = bar.child(dir_row(
                 &directory.key,
                 &directory.name,
@@ -258,6 +265,7 @@ pub fn render(
                 directory.is_expanded,
                 true,
                 false,
+                label_color,
                 &state,
             ));
         }
@@ -742,6 +750,22 @@ fn explorer_create_input_mut(app: &mut AppState) -> &mut InputState {
     &mut app.explorer_create_input
 }
 
+/// Explorer label color for `path`: git changes and ignored paths override
+/// `default`, using the same precedence as Zed's project panel.
+fn tree_label_color(git: &GitStoreSnapshot, path: &Path, default: Color) -> Color {
+    let colors = theme::c().git;
+    match git
+        .repository_for_path(path)
+        .and_then(|repository| repository.decoration_for_absolute_path(path))
+    {
+        Some(PathDecoration::Conflict | PathDecoration::Deleted) => colors.deleted,
+        Some(PathDecoration::Modified) => colors.modified,
+        Some(PathDecoration::Created) => colors.added,
+        Some(PathDecoration::Ignored) => colors.ignored,
+        None => default,
+    }
+}
+
 /// A directory node row: left-click toggles expansion; right-click opens the
 /// context menu for this directory.
 fn dir_row(
@@ -755,6 +779,7 @@ fn dir_row(
     is_expanded: bool,
     sticky: bool,
     hovered: bool,
+    label_color: Color,
     state: &State<AppState>,
 ) -> Element {
     let row_right = if sticky { rect.right } else { content_right };
@@ -843,7 +868,7 @@ fn dir_row(
     .child(text(
         UiRect::new(indent + TREE_LABEL_OFFSET, y + 2.0, text_right, y + 18.0),
         name.to_string(),
-        theme::mono(theme::c().text_soft, theme::UI_SIZE),
+        theme::mono(label_color, theme::UI_SIZE),
     ))
 }
 
@@ -915,6 +940,7 @@ fn build_tree(
                     is_expanded,
                     false,
                     s.tree_hovered_path.as_deref() == Some(key.as_str()),
+                    tree_label_color(git, &entry.path, theme::c().text_soft),
                     state,
                 ));
             }
@@ -948,6 +974,7 @@ fn build_tree(
                     .and_then(|repository| repository.state_for_absolute_path(&file_path))
                     .map(|state| state.display_kind().indicator())
                     .unwrap_or_default();
+                let label_color = tree_label_color(git, &file_path, theme::c().text_muted);
                 let row_style = if s.workspace.active_path() == Some(file_path.as_path()) {
                     VisualStyle::filled(theme::c().active_line)
                 } else if s.tree_hovered_path.as_deref() == Some(key.as_str()) {
@@ -1067,7 +1094,7 @@ fn build_tree(
                             *y + 18.0,
                         ),
                         name,
-                        theme::mono(theme::c().text_muted, theme::UI_SIZE),
+                        theme::mono(label_color, theme::UI_SIZE),
                     ))
                     .child(text(
                         UiRect::new(

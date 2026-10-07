@@ -1,5 +1,7 @@
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -40,7 +42,6 @@ pub enum ChangeKind {
     Copied,
     TypeChanged,
     Untracked,
-    Ignored,
     Unmerged,
 }
 
@@ -68,7 +69,6 @@ impl ChangeKind {
             Self::Copied => "C",
             Self::TypeChanged => "T",
             Self::Untracked => "?",
-            Self::Ignored => "!",
             Self::Unmerged => "U",
         }
     }
@@ -193,6 +193,9 @@ pub struct RepositorySnapshot {
     pub ahead: u32,
     pub behind: u32,
     pub files: BTreeMap<PathBuf, FileState>,
+    /// Paths that match an ignore rule, relative to the worktree root. An
+    /// ignored directory is listed once and covers everything below it.
+    pub ignored: BTreeSet<PathBuf>,
     pub repository_state: RepositoryState,
     pub features: RepositoryFeatures,
     pub generation: u64,
@@ -221,10 +224,109 @@ impl RepositorySnapshot {
             .count()
     }
 
-    pub fn state_for_absolute_path(&self, path: &std::path::Path) -> Option<&FileState> {
-        path.strip_prefix(&self.worktree_root)
+    /// `path` relative to the worktree root, or `None` outside it. Workspace
+    /// folders may be verbatim (`\\?\D:\dir`, from `fs::canonicalize`) while
+    /// Git reports `D:/dir`, so both sides drop that prefix first.
+    pub fn relative_path(&self, path: &Path) -> Option<PathBuf> {
+        comparable_path(path)
+            .strip_prefix(comparable_path(&self.worktree_root))
             .ok()
-            .and_then(|path| self.files.get(path))
+            .map(Path::to_path_buf)
+    }
+
+    pub fn state_for_absolute_path(&self, path: &Path) -> Option<&FileState> {
+        self.files.get(&self.relative_path(path)?)
+    }
+
+    /// How a file tree row colors its label, following Zed: the strongest
+    /// change at or below `path` wins, then an untracked or ignored ancestor.
+    /// Directories summarize their descendants.
+    pub fn decoration_for_absolute_path(&self, path: &Path) -> Option<PathDecoration> {
+        let relative = self.relative_path(path)?;
+        let relative = relative.as_path();
+        if relative.as_os_str().is_empty() {
+            return None;
+        }
+        let strongest = self
+            .files
+            .range::<Path, _>((Bound::Included(relative), Bound::Unbounded))
+            .take_while(|(file, _)| file.starts_with(relative))
+            .filter_map(|(_, state)| PathDecoration::for_state(state))
+            .min();
+        if strongest.is_some() {
+            return strongest;
+        }
+        // Status lists an untracked or ignored directory as one entry, so rows
+        // below it inherit from the nearest listed ancestor.
+        relative
+            .ancestors()
+            .filter(|ancestor| !ancestor.as_os_str().is_empty())
+            .find_map(|ancestor| {
+                if self
+                    .files
+                    .get(ancestor)
+                    .is_some_and(|state| state.worktree == ChangeKind::Untracked)
+                {
+                    Some(PathDecoration::Created)
+                } else if self.ignored.contains(ancestor) {
+                    Some(PathDecoration::Ignored)
+                } else {
+                    None
+                }
+            })
+    }
+}
+
+#[cfg(windows)]
+fn comparable_path(path: &Path) -> Cow<'_, Path> {
+    let Some(value) = path.to_str() else {
+        return Cow::Borrowed(path);
+    };
+    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+        Cow::Owned(PathBuf::from(format!(r"\\{unc}")))
+    } else if let Some(local) = value.strip_prefix(r"\\?\")
+        && local.as_bytes().get(1) == Some(&b':')
+    {
+        Cow::Borrowed(Path::new(local))
+    } else {
+        Cow::Borrowed(path)
+    }
+}
+
+#[cfg(not(windows))]
+fn comparable_path(path: &Path) -> Cow<'_, Path> {
+    Cow::Borrowed(path)
+}
+
+/// Label color class for a file tree row, strongest first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PathDecoration {
+    Conflict,
+    Deleted,
+    Modified,
+    Created,
+    Ignored,
+}
+
+impl PathDecoration {
+    fn for_state(state: &FileState) -> Option<Self> {
+        if state.conflict.is_some() {
+            return Some(Self::Conflict);
+        }
+        [state.index, state.worktree]
+            .into_iter()
+            .filter_map(|kind| match kind {
+                ChangeKind::Unmerged => Some(Self::Conflict),
+                ChangeKind::Deleted => Some(Self::Deleted),
+                ChangeKind::Modified | ChangeKind::Renamed | ChangeKind::TypeChanged => {
+                    Some(Self::Modified)
+                }
+                ChangeKind::Added | ChangeKind::Copied | ChangeKind::Untracked => {
+                    Some(Self::Created)
+                }
+                ChangeKind::Unmodified => None,
+            })
+            .min()
     }
 }
 
@@ -302,4 +404,112 @@ pub enum LineChange {
     Added,
     Modified,
     Deleted,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot(files: &[(&str, FileState)], ignored: &[&str]) -> RepositorySnapshot {
+        RepositorySnapshot {
+            id: RepositoryId(1),
+            worktree_root: PathBuf::from("/repo"),
+            git_dir: PathBuf::new(),
+            common_dir: PathBuf::new(),
+            head: HeadState::default(),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            files: files
+                .iter()
+                .map(|(path, state)| (PathBuf::from(path), state.clone()))
+                .collect(),
+            ignored: ignored.iter().map(PathBuf::from).collect(),
+            repository_state: RepositoryState::Normal,
+            features: RepositoryFeatures::default(),
+            generation: 1,
+        }
+    }
+
+    fn worktree(kind: ChangeKind) -> FileState {
+        FileState {
+            worktree: kind,
+            ..FileState::default()
+        }
+    }
+
+    fn decoration(repository: &RepositorySnapshot, path: &str) -> Option<PathDecoration> {
+        repository.decoration_for_absolute_path(&Path::new("/repo").join(path))
+    }
+
+    #[test]
+    fn directories_take_the_strongest_descendant_change() {
+        let repository = snapshot(
+            &[
+                ("src/new.rs", worktree(ChangeKind::Untracked)),
+                ("src/ui/main.rs", worktree(ChangeKind::Modified)),
+                ("src.txt", worktree(ChangeKind::Deleted)),
+            ],
+            &[],
+        );
+        assert_eq!(
+            decoration(&repository, "src"),
+            Some(PathDecoration::Modified)
+        );
+        assert_eq!(
+            decoration(&repository, "src/ui"),
+            Some(PathDecoration::Modified)
+        );
+        assert_eq!(
+            decoration(&repository, "src/new.rs"),
+            Some(PathDecoration::Created)
+        );
+        assert_eq!(decoration(&repository, "docs"), None);
+        assert_eq!(decoration(&repository, ""), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_workspace_paths_match_the_git_root() {
+        let repository = RepositorySnapshot {
+            worktree_root: PathBuf::from("D:/work/loom"),
+            ..snapshot(&[("src/main.rs", worktree(ChangeKind::Modified))], &["target"])
+        };
+        let tree = Path::new(r"\\?\D:\work\loom");
+        assert_eq!(
+            repository.decoration_for_absolute_path(&tree.join("target")),
+            Some(PathDecoration::Ignored)
+        );
+        assert!(repository.state_for_absolute_path(&tree.join(r"src\main.rs")).is_some());
+        assert_eq!(repository.relative_path(Path::new(r"\\?\D:\work\other")), None);
+    }
+
+    #[test]
+    fn rows_inherit_from_untracked_or_ignored_ancestors() {
+        let repository = snapshot(
+            &[
+                ("newdir", worktree(ChangeKind::Untracked)),
+                ("target/keep.txt", worktree(ChangeKind::Modified)),
+            ],
+            &["target", "src/a.log"],
+        );
+        assert_eq!(
+            decoration(&repository, "newdir/a/b.rs"),
+            Some(PathDecoration::Created)
+        );
+        assert_eq!(
+            decoration(&repository, "target/debug/x"),
+            Some(PathDecoration::Ignored)
+        );
+        assert_eq!(
+            decoration(&repository, "src/a.log"),
+            Some(PathDecoration::Ignored)
+        );
+        assert_eq!(decoration(&repository, "src"), None);
+        // A force-added change inside an ignored directory still wins.
+        assert_eq!(
+            decoration(&repository, "target"),
+            Some(PathDecoration::Modified)
+        );
+    }
 }

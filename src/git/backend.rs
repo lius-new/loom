@@ -887,16 +887,22 @@ impl CliGitBackend {
         generation: u64,
         untracked: &str,
     ) -> GitResult<RepositorySnapshot> {
+        let mut args = vec![
+            OsString::from("status"),
+            OsString::from("--porcelain=v2"),
+            OsString::from("--branch"),
+            OsString::from("-z"),
+            OsString::from(format!("--untracked-files={untracked}")),
+        ];
+        // `matching` lists an ignored directory once without walking it, which
+        // keeps `target/` or `node_modules/` cheap. Git rejects it with `no`.
+        if untracked != "no" {
+            args.push(OsString::from("--ignored=matching"));
+        }
         let output = self.runner.run(
             GitCommand::new()
                 .cwd(&repository.worktree_root)
-                .args([
-                    OsString::from("status"),
-                    OsString::from("--porcelain=v2"),
-                    OsString::from("--branch"),
-                    OsString::from("-z"),
-                    OsString::from(format!("--untracked-files={untracked}")),
-                ])
+                .args(args)
                 .read_only(),
         )?;
         let mut parsed = parse_porcelain_v2(&output.stdout)?;
@@ -930,6 +936,7 @@ impl CliGitBackend {
             ahead: parsed.ahead,
             behind: parsed.behind,
             files: parsed.files,
+            ignored: parsed.ignored,
             repository_state,
             features,
             generation,
@@ -1203,6 +1210,9 @@ mod tests {
         backend.commit(&root, "initial", false, false).unwrap();
         std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
         std::fs::write(root.join("untracked.txt"), "new\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "build/\n").unwrap();
+        std::fs::create_dir_all(root.join("build/out")).unwrap();
+        std::fs::write(root.join("build/out/app"), "bin\n").unwrap();
 
         let discovered = backend.discover(std::slice::from_ref(&root)).unwrap();
         let status = backend.status(&discovered[0], RepositoryId(1), 7).unwrap();
@@ -1215,6 +1225,8 @@ mod tests {
             status.files[&PathBuf::from("untracked.txt")].worktree,
             ChangeKind::Untracked
         );
+        assert!(status.ignored.contains(&PathBuf::from("build")));
+        assert!(!status.files.contains_key(&PathBuf::from("build")));
         assert!(
             backend
                 .diff(&root, DiffTarget::IndexToWorktree, &[])

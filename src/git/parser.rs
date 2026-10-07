@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use super::error::{GitError, GitErrorKind, GitResult};
@@ -11,6 +11,7 @@ pub struct ParsedStatus {
     pub ahead: u32,
     pub behind: u32,
     pub files: BTreeMap<PathBuf, FileState>,
+    pub ignored: BTreeSet<PathBuf>,
 }
 
 pub fn parse_porcelain_v2(input: &[u8]) -> GitResult<ParsedStatus> {
@@ -74,15 +75,17 @@ pub fn parse_porcelain_v2(input: &[u8]) -> GitResult<ParsedStatus> {
                 if record.len() < 3 || record[1] != b' ' {
                     return Err(invalid(record));
                 }
-                let kind = if record[0] == b'?' {
-                    ChangeKind::Untracked
-                } else {
-                    ChangeKind::Ignored
-                };
+                let path = bytes_to_path(&record[2..]);
+                if record[0] == b'!' {
+                    // Ignored paths are not changes. Keeping them out of
+                    // `files` keeps dirty counts and Source Control unaware.
+                    status.ignored.insert(path);
+                    continue;
+                }
                 status.files.insert(
-                    bytes_to_path(&record[2..]),
+                    path,
                     FileState {
-                        worktree: kind,
+                        worktree: ChangeKind::Untracked,
                         ..FileState::default()
                     },
                 );
@@ -294,6 +297,7 @@ pub fn parse_branches(input: &[u8]) -> GitResult<Vec<BranchInfo>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn parses_headers_xy_rename_conflict_and_special_paths() {
@@ -335,5 +339,13 @@ u UU N... 100644 100644 100644 100644 a b c file conflict.rs\0\
                 .head,
             HeadState::Detached("abc123".into())
         );
+    }
+
+    #[test]
+    fn ignored_paths_stay_out_of_changed_files() {
+        let parsed = parse_porcelain_v2(b"? newdir/\0! target/\0! src/a.log\0").unwrap();
+        assert_eq!(parsed.files.len(), 1);
+        assert!(parsed.ignored.contains(Path::new("target")));
+        assert!(parsed.ignored.contains(Path::new("src/a.log")));
     }
 }

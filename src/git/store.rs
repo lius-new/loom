@@ -50,7 +50,7 @@ impl GitStoreSnapshot {
     pub fn repository_for_path(&self, path: &Path) -> Option<&RepositorySnapshot> {
         self.repositories
             .values()
-            .filter(|repository| path.starts_with(&repository.worktree_root))
+            .filter(|repository| repository.relative_path(path).is_some())
             .max_by_key(|repository| repository.worktree_root.components().count())
     }
 
@@ -148,14 +148,14 @@ impl GitService {
         if mode == RefreshMode::Detailed
             && let Some(path) = active_path
             && let Some(repository) = snapshot.repository_for_path(path)
-            && let Ok(relative) = path.strip_prefix(&repository.worktree_root)
+            && let Some(relative) = repository.relative_path(path)
         {
             let mut changes = BTreeMap::new();
             for target in [DiffTarget::HeadToIndex, DiffTarget::IndexToWorktree] {
                 if let Ok(diff) = self.backend.parsed_diff(
                     &repository.worktree_root,
                     target,
-                    &[relative.to_path_buf()],
+                    std::slice::from_ref(&relative),
                 ) {
                     collect_line_changes(&diff, &mut changes);
                 }
@@ -359,6 +359,7 @@ fn snapshot_fingerprint(snapshot: &GitStoreSnapshot) -> u64 {
             path.hash(&mut hasher);
             format!("{state:?}").hash(&mut hasher);
         }
+        repository.ignored.hash(&mut hasher);
     }
     for (path, changes) in &snapshot.line_changes {
         path.hash(&mut hasher);
@@ -391,6 +392,7 @@ mod tests {
             ahead: 0,
             behind: 0,
             files: BTreeMap::new(),
+            ignored: Default::default(),
             repository_state: RepositoryState::Normal,
             features: RepositoryFeatures::default(),
             generation: 1,

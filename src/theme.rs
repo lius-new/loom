@@ -72,13 +72,15 @@ pub struct DiffColors {
     pub mod_mark: Color,
 }
 
-/// Change-kind letters in the Source Control panel.
+/// Change-kind letters in Source Control and Explorer label colors.
 #[derive(Clone, Copy, Debug)]
 pub struct GitColors {
     pub added: Color,
     pub modified: Color,
     pub deleted: Color,
     pub staged: Color,
+    /// Labels of git-ignored paths in the Explorer.
+    pub ignored: Color,
 }
 
 /// Tab badges.
@@ -169,6 +171,7 @@ const AURA_DARK: Palette = Palette {
         modified: Color(0xeab308),
         deleted: Color(0xf43f5e),
         staged: Color(0x34d399),
+        ignored: Color(0x5f5f68),
     },
     badge: BadgeColors {
         csharp: Color(0xc084fc),
@@ -231,6 +234,7 @@ const AURA_LIGHT: Palette = Palette {
         modified: Color(0xa16207),
         deleted: Color(0xe11d48),
         staged: Color(0x059669),
+        ignored: Color(0xa1a1aa),
     },
     badge: BadgeColors {
         csharp: Color(0x9333ea),
@@ -294,6 +298,7 @@ const EMBER: Palette = Palette {
         modified: Color(0xfacc15),
         deleted: Color(0xf87171),
         staged: Color(0xa3e635),
+        ignored: Color(0x67615c),
     },
     badge: BadgeColors {
         csharp: Color(0xc4b5fd),
@@ -357,6 +362,7 @@ const HIGH_CONTRAST: Palette = Palette {
         modified: Color(0xffd60a),
         deleted: Color(0xff6b6b),
         staged: Color(0x7dff8a),
+        ignored: Color(0x8a8a8a),
     },
     badge: BadgeColors {
         csharp: Color(0xd2a8ff),
