@@ -4,8 +4,10 @@
 //! (the buttons) are excluded automatically by hit testing.
 
 use lgui::core::{Color, IconStyle, UiElement, UiEventContext, UiId, precompiled};
-use lgui::prelude::{Element, UiRect, VisualStyle, panel};
+use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
 
+use crate::input::keymap::Action;
+use crate::state::AppState;
 use crate::theme;
 
 /// A color-tinted, resolution-independent SVG icon (rasterized at physical pixels).
@@ -13,11 +15,35 @@ fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Elem
     precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
 }
 
-pub fn render(rect: UiRect) -> Element {
+pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR)).window_drag_region();
 
     // ---- Right cluster (anchored to the window controls) --------------
     let right = rect.right - 4.0;
+
+    // Settings, just left of the window controls.
+    let settings_r = UiRect::new(right - 148.0, rect.top, right - 116.0, rect.bottom);
+    let settings_open = state.get().workspace.active_is_settings();
+    let settings_btn = panel(settings_r, VisualStyle::default())
+        .event_policy(lgui::core::EventPolicy::INTERACTIVE)
+        .cursor(lgui::core::CursorIcon::Pointer)
+        .on_click(move || state.update(|app| app.apply(Action::OpenSettings)))
+        .child(icon(
+            "titlebar.settings",
+            "settings",
+            UiRect::new(
+                settings_r.left + 9.0,
+                rect.top + 9.0,
+                settings_r.right - 9.0,
+                rect.top + 23.0,
+            ),
+            if settings_open {
+                theme::ACCENT
+            } else {
+                theme::ZINC_400
+            },
+        ));
+    bar = bar.child(settings_btn);
 
     // ---- Window controls (far right) ----------------------------------
     let min_r = UiRect::new(right - 108.0, rect.top, right - 72.0, rect.bottom);

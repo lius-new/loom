@@ -22,7 +22,7 @@ pub struct WindowGeometry {
     pub maximized: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WorkspaceSession {
     #[serde(default)]
     pub open_folders: Vec<PathBuf>,
@@ -50,6 +50,36 @@ pub struct WorkspaceSession {
     pub git_split_diff: bool,
     #[serde(default)]
     pub git_inline_blame: bool,
+    #[serde(default)]
+    pub default_shell: ShellKind,
+    #[serde(default = "default_true")]
+    pub terminal_cursor_blink: bool,
+}
+
+impl Default for WorkspaceSession {
+    fn default() -> Self {
+        Self {
+            open_folders: Vec::new(),
+            recent_folders: Vec::new(),
+            window: None,
+            open_files: Vec::new(),
+            active_file: None,
+            terminal_tabs: Vec::new(),
+            active_terminal: None,
+            show_terminal: false,
+            terminal_height: None,
+            source_control_open: false,
+            git_tree_view: false,
+            git_split_diff: false,
+            git_inline_blame: false,
+            default_shell: ShellKind::default(),
+            terminal_cursor_blink: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub fn load() -> WorkspaceSession {
@@ -112,6 +142,16 @@ pub fn save_git_ui(
         session.git_tree_view = git_tree_view;
         session.git_split_diff = git_split_diff;
         session.git_inline_blame = git_inline_blame;
+    })
+}
+
+pub fn save_terminal_preferences(
+    default_shell: ShellKind,
+    terminal_cursor_blink: bool,
+) -> io::Result<()> {
+    update(|session| {
+        session.default_shell = default_shell;
+        session.terminal_cursor_blink = terminal_cursor_blink;
     })
 }
 
@@ -198,6 +238,8 @@ mod tests {
             git_tree_view: true,
             git_split_diff: true,
             git_inline_blame: true,
+            default_shell: ShellKind::Bash,
+            terminal_cursor_blink: false,
         };
 
         let json = serde_json::to_string(&session).unwrap();

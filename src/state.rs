@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::input::keymap::Action;
 use crate::model::document::FileId;
 use crate::model::workspace::Workspace;
+use crate::terminal_session::ShellKind;
 use crate::ui::components::input::InputState;
 
 /// One entry in a loaded directory listing.
@@ -92,6 +93,9 @@ pub struct AppState {
     pub terminal_focused: bool,
     /// Whether the terminal shell selector is expanded.
     pub terminal_shell_menu: bool,
+    /// Shell used for terminals that are not opened from the shell selector.
+    pub default_shell: ShellKind,
+    pub terminal_cursor_blink: bool,
     /// Horizontal scroll offset of the editor tab strip, in logical pixels.
     pub tab_scroll_x: f32,
     /// Open tab currently under the pointer.
@@ -206,6 +210,8 @@ impl AppState {
             selecting_terminal: false,
             terminal_focused: false,
             terminal_shell_menu: false,
+            default_shell: ShellKind::default(),
+            terminal_cursor_blink: true,
             tab_scroll_x: 0.0,
             tab_hovered: None,
             tab_strip_hovered: false,
@@ -278,6 +284,8 @@ impl AppState {
         app.git_tree_view = session.git_tree_view;
         app.git_split_diff = session.git_split_diff;
         app.git_inline_blame = session.git_inline_blame;
+        app.default_shell = session.default_shell;
+        app.terminal_cursor_blink = session.terminal_cursor_blink;
         crate::workspace_actions::hydrate_workspace_folders(&mut app);
         crate::workspace_actions::hydrate_file_tabs(
             &mut app,
@@ -330,6 +338,9 @@ impl AppState {
             }
             Action::SelectLastFile => {
                 self.workspace.activate_last();
+            }
+            Action::OpenSettings => {
+                self.workspace.open_settings();
             }
             Action::CloseActiveFile => {
                 // A pending (possibly batch) request must be resolved first.

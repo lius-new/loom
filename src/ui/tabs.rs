@@ -11,6 +11,7 @@ use lgui::core::{
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 use lgui::text::{self, TextLayoutRequest};
 
+use crate::model::document::{FileId, FileMeta};
 use crate::state::{AppState, TabContextMenuState, TabDragState};
 use crate::theme;
 use crate::ui::tab_layout::{self, TabLayoutInput, TabLayoutResult};
@@ -167,6 +168,60 @@ fn controls_left(rect: UiRect, app: &AppState) -> f32 {
     }
 }
 
+/// Size of an SVG tab badge, matched to the cap height of the text badges.
+const BADGE_ICON: f32 = 12.0;
+
+/// Leading tab marker: a language/diff label, or an SVG icon.
+#[derive(Clone, Copy)]
+enum TabBadge {
+    Text(&'static str, Color),
+    Icon(&'static str, Color),
+}
+
+impl TabBadge {
+    fn width(self) -> f32 {
+        match self {
+            Self::Text(label, _) => measure(label, theme::SMALL, 700),
+            Self::Icon(..) => BADGE_ICON,
+        }
+    }
+
+    fn render(self, left: f32, pill: UiRect) -> Element {
+        match self {
+            Self::Text(label, color) => text(
+                UiRect::new(
+                    left,
+                    pill.top,
+                    left + self.width() + TEXT_MARGIN,
+                    pill.bottom,
+                ),
+                label,
+                theme::mono_bold(color, theme::SMALL),
+            )
+            .into(),
+            Self::Icon(key, color) => {
+                let top = pill.top + (pill.height() - BADGE_ICON) / 2.0;
+                icon(
+                    "tabs.badge",
+                    key,
+                    UiRect::new(left, top, left + BADGE_ICON, top + BADGE_ICON),
+                    color,
+                )
+            }
+        }
+    }
+}
+
+fn tab_badge(app: &AppState, id: FileId, meta: &FileMeta) -> TabBadge {
+    if app.workspace.is_settings(id) {
+        TabBadge::Icon("settings", theme::ZINC_400)
+    } else if app.workspace.is_diff(id) {
+        TabBadge::Text("Δ", theme::PURPLE_400)
+    } else {
+        TabBadge::Text(meta.lang.badge(), meta.lang.badge_color())
+    }
+}
+
 fn natural_tab_widths(app: &AppState) -> Vec<f32> {
     let labels = app.workspace.tab_labels();
     app.workspace
@@ -174,18 +229,14 @@ fn natural_tab_widths(app: &AppState) -> Vec<f32> {
         .iter()
         .filter_map(|id| {
             let meta = app.workspace.meta(*id)?;
-            let badge = if app.workspace.is_diff(*id) {
-                "Δ"
-            } else {
-                meta.lang.badge()
-            };
+            let badge = tab_badge(app, *id, meta);
             let dirty_slot = if app.workspace.is_dirty(*id) {
                 measure(DIRTY_MARK, theme::SMALL, 400) + GAP
             } else {
                 0.0
             };
             let fixed_width = PAD
-                + measure(badge, theme::SMALL, 700)
+                + badge.width()
                 + GAP
                 + GAP
                 + dirty_slot
@@ -509,14 +560,8 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         let Some(layout_item) = layout.items.get(index) else {
             continue;
         };
-        let is_diff = s.workspace.is_diff(id);
-        let badge = if is_diff { "Δ" } else { m.lang.badge() };
-        let badge_color = if is_diff {
-            theme::PURPLE_400
-        } else {
-            m.lang.badge_color()
-        };
-        let badge_w = measure(badge, theme::SMALL, 700);
+        let badge = tab_badge(&s, id, m);
+        let badge_w = badge.width();
         let dirty = s.workspace.is_dirty(id);
         let dirty_w = if dirty {
             measure(DIRTY_MARK, theme::SMALL, 400)
@@ -612,16 +657,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             cx.stop_propagation();
         });
 
-        tab_el = tab_el.child(text(
-            UiRect::new(
-                badge_left,
-                pill.top,
-                badge_left + badge_w + TEXT_MARGIN,
-                pill.bottom,
-            ),
-            badge,
-            theme::mono_bold(badge_color, theme::SMALL),
-        ));
+        tab_el = tab_el.child(badge.render(badge_left, pill));
         tab_el = tab_el.child(text(
             UiRect::new(name_left, pill.top, name_left + name_slot_w, pill.bottom),
             display_name,

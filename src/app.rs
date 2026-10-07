@@ -16,11 +16,11 @@ use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
 use crate::input::keymap;
 use crate::state::{AppState, CloseContinuation, CloseRequest};
-use crate::terminal_session::{ShellKind, TerminalTabs};
+use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::{
-    clone_repository, close_confirmation, context_menu, diff_editor, git_panel, sidebar, statusbar,
-    tab_context_menu, tabs, terminal, titlebar, toast,
+    clone_repository, close_confirmation, context_menu, diff_editor, git_panel, settings, sidebar,
+    statusbar, tab_context_menu, tabs, terminal, titlebar, toast,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -171,6 +171,14 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             git_ui_preferences.1,
             git_ui_preferences.2,
             git_ui_preferences.3,
+        );
+        || {}
+    });
+    let terminal_preferences = (s.default_shell, s.terminal_cursor_blink);
+    cx.use_effect(terminal_preferences, move || {
+        let _ = workspace_persistence::save_terminal_preferences(
+            terminal_preferences.0,
+            terminal_preferences.1,
         );
         || {}
     });
@@ -335,7 +343,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             finished_create_focus.focus();
         }
     });
-    let blink_focused = s.terminal_focused;
+    let blink_focused = s.terminal_focused && s.terminal_cursor_blink;
     let blink_state = terminal_cursor_blink.clone();
     cx.use_effect((show_term, blink_focused, active_terminal_id), move || {
         blink_state.set(true);
@@ -418,8 +426,9 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             if action == keymap::Action::ToggleTerminal {
                 let opening = !st.get().show_terminal;
                 if opening && global_terminal_tabs.get().is_empty() {
-                    global_terminal_tabs.update(|tabs| {
-                        tabs.add(ShellKind::default());
+                    let shell = st.get().default_shell;
+                    global_terminal_tabs.update(move |tabs| {
+                        tabs.add(shell);
                     });
                 }
                 st.update(move |app| app.apply(action));
@@ -525,10 +534,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     // ---- Compose chrome (back-to-front) -------------------------------
-    root = root.child(titlebar::render(titlebar_rect));
+    root = root.child(titlebar::render(titlebar_rect, state.clone()));
 
     root = root.child(tabs::render(tabs_rect, state.clone(), editor_focus.clone()));
-    if s.workspace.active_diff().is_some() {
+    if s.workspace.active_is_settings() {
+        root = root.child(settings::render(code_rect, state.clone()));
+    } else if s.workspace.active_diff().is_some() {
         root = root.child(diff_editor::render(
             code_rect,
             state.clone(),

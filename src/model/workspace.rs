@@ -8,17 +8,28 @@ use crate::model::buffer::TextBuffer;
 use crate::model::diff_document::DiffDocument;
 use crate::model::document::{DiskState, FileId, FileMeta};
 
+pub const SETTINGS_TITLE: &str = "Settings";
+
 #[derive(Clone)]
 struct OpenDocument {
     meta: FileMeta,
     buffer: TextBuffer,
     saved_text: String,
     diff: Option<DiffDocument>,
+    /// The application settings page rather than a file.
+    settings: bool,
     scroll_x: f32,
     scroll_y: f32,
     disk_state: DiskState,
     disk_conflict: bool,
     missing_on_disk: bool,
+}
+
+impl OpenDocument {
+    /// Whether this tab edits a file on disk (not a diff or the settings page).
+    fn is_text(&self) -> bool {
+        self.diff.is_none() && !self.settings
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,7 +69,7 @@ impl Workspace {
         self.open
             .iter()
             .filter_map(|id| self.documents.get(id))
-            .filter(|document| document.diff.is_none())
+            .filter(|document| document.is_text())
             .map(|document| document.meta.path.clone())
             .collect()
     }
@@ -126,7 +137,11 @@ impl Workspace {
         self.active.and_then(|id| self.meta(id))
     }
 
+    /// Path of the active file or diff; the settings page has none.
     pub fn active_path(&self) -> Option<&Path> {
+        if self.active_is_settings() {
+            return None;
+        }
         self.active_meta().map(|meta| meta.path.as_path())
     }
 
@@ -149,20 +164,20 @@ impl Workspace {
     pub fn active_buffer(&self) -> Option<&TextBuffer> {
         self.active
             .and_then(|id| self.documents.get(&id))
-            .filter(|document| document.diff.is_none())
+            .filter(|document| document.is_text())
             .map(|document| &document.buffer)
     }
 
     pub fn active_buffer_mut(&mut self) -> Option<&mut TextBuffer> {
         self.active
             .and_then(|id| self.documents.get_mut(&id))
-            .filter(|document| document.diff.is_none())
+            .filter(|document| document.is_text())
             .map(|document| &mut document.buffer)
     }
 
     pub fn is_dirty(&self, id: FileId) -> bool {
         self.documents.get(&id).is_some_and(|document| {
-            document.diff.is_none() && document.buffer.text() != document.saved_text
+            document.is_text() && document.buffer.text() != document.saved_text
         })
     }
 
@@ -192,13 +207,13 @@ impl Workspace {
     pub fn has_disk_conflict(&self, id: FileId) -> bool {
         self.documents
             .get(&id)
-            .is_some_and(|document| document.diff.is_none() && document.disk_conflict)
+            .is_some_and(|document| document.is_text() && document.disk_conflict)
     }
 
     pub fn is_missing_on_disk(&self, id: FileId) -> bool {
         self.documents
             .get(&id)
-            .is_some_and(|document| document.diff.is_none() && document.missing_on_disk)
+            .is_some_and(|document| document.is_text() && document.missing_on_disk)
     }
 
     pub fn active_save_snapshot(&self) -> Option<(FileId, PathBuf, String)> {
@@ -208,7 +223,7 @@ impl Workspace {
 
     pub fn save_snapshot(&self, id: FileId) -> Option<(FileId, PathBuf, String)> {
         let document = self.documents.get(&id)?;
-        if document.diff.is_some() {
+        if !document.is_text() {
             return None;
         }
         Some((
@@ -222,7 +237,7 @@ impl Workspace {
         let Some(document) = self.documents.get_mut(&id) else {
             return false;
         };
-        if document.diff.is_some() {
+        if !document.is_text() {
             return false;
         }
         document.saved_text = document.buffer.text().to_owned();
@@ -265,6 +280,7 @@ impl Workspace {
                 buffer: TextBuffer::new(contents),
                 saved_text,
                 diff: None,
+                settings: false,
                 scroll_x: 0.0,
                 scroll_y: 0.0,
                 disk_state,
@@ -305,6 +321,7 @@ impl Workspace {
                 buffer: TextBuffer::new(String::new()),
                 saved_text: String::new(),
                 diff: Some(diff),
+                settings: false,
                 scroll_x: 0.0,
                 scroll_y: 0.0,
                 disk_state: DiskState::capture(&absolute_path, ""),
@@ -315,6 +332,57 @@ impl Workspace {
         self.open.push(id);
         self.active = Some(id);
         id
+    }
+
+    /// Open the settings page, or focus it if it is already open.
+    pub fn open_settings(&mut self) -> FileId {
+        if let Some(id) = self.settings_id() {
+            self.active = Some(id);
+            return id;
+        }
+
+        let id = FileId::new(self.next_file_id);
+        self.next_file_id += 1;
+        let path = PathBuf::from(SETTINGS_TITLE);
+        let mut meta = FileMeta::from_path(path.clone());
+        meta.name = SETTINGS_TITLE.to_owned();
+        self.documents.insert(
+            id,
+            OpenDocument {
+                meta,
+                buffer: TextBuffer::new(String::new()),
+                saved_text: String::new(),
+                diff: None,
+                settings: true,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                disk_state: DiskState::capture(&path, ""),
+                disk_conflict: false,
+                missing_on_disk: false,
+            },
+        );
+        self.open.push(id);
+        self.active = Some(id);
+        id
+    }
+
+    pub fn settings_id(&self) -> Option<FileId> {
+        self.open.iter().copied().find(|id| self.is_settings(*id))
+    }
+
+    pub fn is_settings(&self, id: FileId) -> bool {
+        self.documents
+            .get(&id)
+            .is_some_and(|document| document.settings)
+    }
+
+    pub fn active_is_settings(&self) -> bool {
+        self.active.is_some_and(|id| self.is_settings(id))
+    }
+
+    /// Whether a tab is backed by a file (rather than a diff or settings).
+    pub fn is_file(&self, id: FileId) -> bool {
+        self.documents.get(&id).is_some_and(OpenDocument::is_text)
     }
 
     pub fn diff_id_for(
@@ -376,7 +444,7 @@ impl Workspace {
         if let Some(pos) = self.open.iter().position(|&file| file == id) {
             self.open.remove(pos);
             if let Some(document) = self.documents.remove(&id) {
-                if document.diff.is_none() {
+                if document.is_text() {
                     self.paths.remove(&document.meta.path);
                 }
             }
@@ -420,7 +488,7 @@ impl Workspace {
             return ReconcileResult::Failed(PathBuf::new(), "Document is not open.".into());
         };
         let path = document.meta.path.clone();
-        if document.diff.is_some() {
+        if !document.is_text() {
             return ReconcileResult::Unchanged(path);
         }
         let dirty = document.buffer.text() != document.saved_text;
@@ -462,7 +530,7 @@ impl Workspace {
             .documents
             .get_mut(&id)
             .ok_or_else(|| "Document is not open.".to_owned())?;
-        if document.diff.is_some() {
+        if !document.is_text() {
             return Err("Diff documents are read-only.".to_owned());
         }
         let contents = std::fs::read_to_string(&document.meta.path).map_err(|error| {
@@ -480,7 +548,7 @@ impl Workspace {
         let Some(document) = self.documents.get_mut(&id) else {
             return false;
         };
-        if document.diff.is_some() {
+        if !document.is_text() {
             return false;
         }
         if let Ok(contents) = std::fs::read_to_string(&document.meta.path) {
@@ -558,6 +626,28 @@ fn parent_suffix(parts: &[String], depth: usize) -> String {
 mod tests {
     use super::*;
     use crate::git::diff::UnifiedDiff;
+
+    #[test]
+    fn settings_tab_is_unique_and_never_treated_as_a_file() {
+        let mut workspace = Workspace::new();
+        let file = workspace.open_path(PathBuf::from("src/main.rs"), "fn main() {}".into());
+        let settings = workspace.open_settings();
+        workspace.set_active(file);
+        assert_eq!(workspace.open_settings(), settings);
+
+        assert_eq!(workspace.active(), Some(settings));
+        assert!(workspace.active_is_settings());
+        assert_eq!(workspace.active_path(), None);
+        assert!(workspace.active_buffer().is_none());
+        assert!(workspace.save_snapshot(settings).is_none());
+        assert!(!workspace.is_dirty(settings));
+        assert!(!workspace.is_file(settings));
+        assert_eq!(workspace.open_paths(), vec![PathBuf::from("src/main.rs")]);
+
+        workspace.close(settings);
+        assert_eq!(workspace.settings_id(), None);
+        assert_eq!(workspace.active(), Some(file));
+    }
 
     #[test]
     fn opens_disk_files_once_and_reactivates_existing_document() {

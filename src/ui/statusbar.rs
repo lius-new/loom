@@ -14,7 +14,7 @@ use lgui::text::measure_width;
 
 use crate::git::GitStoreSnapshot;
 use crate::state::AppState;
-use crate::terminal_session::{ShellKind, TerminalTabs};
+use crate::terminal_session::TerminalTabs;
 use crate::theme;
 
 /// Padding between the bar's right edge and the last item.
@@ -67,8 +67,9 @@ pub fn render(
         .on_click(move || {
             let opening = !st.get().show_terminal;
             if opening && terminal_sessions.get().is_empty() {
-                terminal_sessions.update(|tabs| {
-                    tabs.add(ShellKind::default());
+                let shell = st.get().default_shell;
+                terminal_sessions.update(move |tabs| {
+                    tabs.add(shell);
                 });
             }
             st.update(|app| app.show_terminal = !app.show_terminal);
@@ -105,16 +106,18 @@ pub fn render(
                 "UTF-8".to_string(),
                 theme::mono(theme::ZINC_500, theme::SMALL),
             ));
-        } else {
+        } else if s.workspace.is_diff(id) {
             items.push((
                 "Text Diff".to_string(),
                 theme::mono(theme::ZINC_500, theme::SMALL),
             ));
         }
-        items.push((
-            m.lang.badge().to_string(),
-            theme::mono_bold(m.lang.badge_color(), theme::SMALL),
-        ));
+        if s.workspace.is_file(id) || s.workspace.is_diff(id) {
+            items.push((
+                m.lang.badge().to_string(),
+                theme::mono_bold(m.lang.badge_color(), theme::SMALL),
+            ));
+        }
     } else {
         items.push((
             "Spaces: 2".to_string(),

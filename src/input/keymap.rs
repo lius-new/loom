@@ -18,6 +18,7 @@ pub enum Action {
     SelectFile(usize),
     SelectLastFile,
     CloseActiveFile,
+    OpenSettings,
 }
 
 /// Convert a key event into an action, or `None` if it is not a shortcut.
@@ -26,6 +27,7 @@ pub enum Action {
 /// * Cmd/Ctrl+Shift+G — source control
 /// * Cmd/Ctrl+B — toggle file drawer
 /// * Cmd/Ctrl+W — close the active tab (dirty files ask first)
+/// * Cmd/Ctrl+, — open settings
 /// * Cmd/Ctrl+1..8, Cmd/Ctrl+9 — select a tab by position, or the last tab
 /// * Esc         — close overlays
 pub fn action_for(ev: &KeyboardEvent) -> Option<Action> {
@@ -48,6 +50,7 @@ pub fn action_for(ev: &KeyboardEvent) -> Option<Action> {
                 "g" | "G" if ev.modifiers.shift() => Some(Action::OpenSourceControl),
                 "`" => Some(Action::ToggleTerminal),
                 "w" | "W" => Some(Action::CloseActiveFile),
+                "," => Some(Action::OpenSettings),
                 "1" => Some(Action::SelectFile(0)),
                 "2" => Some(Action::SelectFile(1)),
                 "3" => Some(Action::SelectFile(2)),
@@ -95,6 +98,11 @@ mod tests {
     fn control_w_closes_the_active_tab() {
         assert_eq!(action_for(&event("w")), Some(Action::CloseActiveFile));
         assert_eq!(action_for(&event("W")), Some(Action::CloseActiveFile));
+    }
+
+    #[test]
+    fn control_comma_opens_settings() {
+        assert_eq!(action_for(&event(",")), Some(Action::OpenSettings));
     }
 
     #[test]

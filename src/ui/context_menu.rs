@@ -13,7 +13,7 @@ use lgui::text::measure_width;
 use unicode_width::UnicodeWidthStr;
 
 use crate::state::{AppState, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
-use crate::terminal_session::{ShellKind, TerminalTabs};
+use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::workspace_actions;
 
@@ -507,8 +507,9 @@ pub fn render(
                                 ExplorerTargetKind::Directory => Some(target.path.clone()),
                             });
                             if let Some(cwd) = cwd {
+                                let shell = st_click.get().default_shell;
                                 terminal_tabs_click.update(move |tabs| {
-                                    tabs.add_at(ShellKind::default(), Some(cwd));
+                                    tabs.add_at(shell, Some(cwd));
                                 });
                                 st_click.update(|app| {
                                     app.show_terminal = true;

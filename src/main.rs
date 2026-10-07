@@ -72,6 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_icon("square", icondata::LuSquare)
                 .with_icon("explorer", icondata::LuLayers)
                 .with_icon("chevron-right", icondata::LuChevronRight)
+                .with_icon("settings", icondata::LuSettings)
                 // X strokes: a 1px round cap (radius 0.5px) lands between pixel centers,
                 // leaving the tips faint. Use butt caps and extend the endpoints outward
                 // so each diagonal terminates on a solid pixel.
