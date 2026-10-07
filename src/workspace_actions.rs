@@ -291,6 +291,7 @@ pub fn choose_file(state: &State<AppState>) -> bool {
                 app.workspace.open_path(path, contents);
                 app.toast = None;
                 app.welcome_hover = None;
+                app.workspace_home_hover = None;
             });
             true
         }

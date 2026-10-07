@@ -373,12 +373,6 @@ pub fn render(
                 state.clone(),
             ));
         }
-    } else {
-        root = root.child(crate::ui::welcome::render(
-            rect,
-            state.clone(),
-            editor_focus.clone(),
-        ));
     }
 
     let st_input = state.clone();

@@ -20,6 +20,7 @@ pub mod terminal;
 pub mod titlebar;
 pub mod toast;
 pub mod welcome;
+pub mod workspace_home;
 
 /// A path as shown to or copied by the user. `fs::canonicalize` yields
 /// verbatim paths on Windows (`\\?\D:\dir`), so drop that prefix.

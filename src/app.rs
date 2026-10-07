@@ -16,12 +16,12 @@ use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
 use crate::input::keymap;
 use crate::settings_persistence::{self, Settings};
-use crate::state::{AppState, CloseContinuation, CloseRequest};
+use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::{
     clone_repository, close_confirmation, context_menu, diff_editor, git_panel, settings, sidebar,
-    statusbar, tab_context_menu, tabs, terminal, titlebar, toast,
+    statusbar, tab_context_menu, tabs, terminal, titlebar, toast, welcome, workspace_home,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -48,8 +48,10 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let application_context = cx.application();
     let application = application_context.resource::<ApplicationHandle>();
     let window_manager = application_context.windows();
-    let editor_id = cx.use_stable_id();
-    let editor_focus = cx.focus_handle(editor_id.clone());
+    // Welcome, Workspace Home and the editor share one stable identity so
+    // focus survives transitions between central surfaces.
+    let main_surface_id = cx.use_stable_id();
+    let editor_focus = cx.focus_handle(main_surface_id.clone());
     let terminal_id = cx.use_stable_id();
     let terminal_focus = cx.focus_handle(terminal_id.clone());
     let clone_input_id = cx.use_stable_id();
@@ -445,19 +447,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         if let Some(action) = keymap::action_for(ev) {
             ctx.prevent_default();
             if action == keymap::Action::ToggleTerminal {
-                let opening = !st.get().show_terminal;
-                if opening && global_terminal_tabs.get().is_empty() {
-                    let shell = st.get().default_shell;
-                    global_terminal_tabs.update(move |tabs| {
-                        tabs.add(shell);
-                    });
-                }
-                st.update(move |app| app.apply(action));
-                if opening {
-                    global_terminal_focus.focus();
-                } else {
-                    global_editor_focus.focus();
-                }
+                terminal::toggle_panel(
+                    &st,
+                    &global_terminal_tabs,
+                    &global_editor_focus,
+                    &global_terminal_focus,
+                );
                 return;
             }
             st.update(move |app| app.apply(action));
@@ -504,11 +499,13 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         if let UiEventPayload::PointerMove { pointer } = payload {
             let hovered = code_rect.contains(pointer.point);
             st_editor_hover.try_update(move |app| {
-                let changed =
-                    app.editor_hovered != hovered || (!hovered && app.welcome_hover.is_some());
+                let changed = app.editor_hovered != hovered
+                    || (!hovered
+                        && (app.welcome_hover.is_some() || app.workspace_home_hover.is_some()));
                 app.editor_hovered = hovered;
                 if !hovered {
                     app.welcome_hover = None;
+                    app.workspace_home_hover = None;
                 }
                 changed
             });
@@ -558,23 +555,31 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.child(titlebar::render(titlebar_rect, state.clone()));
 
     root = root.child(tabs::render(tabs_rect, state.clone(), editor_focus.clone()));
-    if s.workspace.active_is_settings() {
-        root = root.child(settings::render(code_rect, state.clone()));
-    } else if s.workspace.active_diff().is_some() {
-        root = root.child(diff_editor::render(
-            code_rect,
-            state.clone(),
-            editor_focus.clone(),
-        ));
-    } else {
-        root = root.child(editor_view::render(
+    root = root.child(match s.main_surface() {
+        MainSurface::Settings => settings::render(code_rect, state.clone()),
+        MainSurface::Diff => diff_editor::render(code_rect, state.clone(), editor_focus.clone()),
+        MainSurface::Editor => editor_view::render(
             code_rect,
             state.clone(),
             git_store.clone(),
-            editor_id,
+            main_surface_id.clone(),
             editor_focus.clone(),
-        ));
-    }
+        ),
+        MainSurface::WorkspaceHome => workspace_home::render(
+            code_rect,
+            state.clone(),
+            main_surface_id.clone(),
+            editor_focus.clone(),
+            terminal_focus.clone(),
+            terminal_tabs.clone(),
+        ),
+        MainSurface::Welcome => welcome::render(
+            code_rect,
+            state.clone(),
+            main_surface_id.clone(),
+            editor_focus.clone(),
+        ),
+    });
 
     if source_control_left {
         root = root.child(git_panel::render(

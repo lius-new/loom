@@ -32,6 +32,29 @@ const RESIZE_HIT_H: f32 = 8.0;
 const SHELL_MENU_W: f32 = 172.0;
 const SHELL_MENU_ROW_H: f32 = 28.0;
 
+/// Toggle the shared terminal panel, creating its first session on demand and
+/// transferring focus to the surface that becomes active.
+pub fn toggle_panel(
+    state: &State<AppState>,
+    terminal_tabs: &State<TerminalTabs>,
+    editor_focus: &UiFocusHandle,
+    terminal_focus: &UiFocusHandle,
+) {
+    let opening = !state.get().show_terminal;
+    if opening && terminal_tabs.get().is_empty() {
+        let shell = state.get().default_shell;
+        terminal_tabs.update(move |tabs| {
+            tabs.add(shell);
+        });
+    }
+    state.update(|app| app.show_terminal = !app.show_terminal);
+    if opening {
+        terminal_focus.focus();
+    } else {
+        editor_focus.focus();
+    }
+}
+
 fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Element {
     precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
 }

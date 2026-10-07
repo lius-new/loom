@@ -99,6 +99,19 @@ pub struct Toast {
     pub message: String,
 }
 
+/// Top-level content shown in the editor region.
+///
+/// This is derived from the workspace rather than persisted, so opening or
+/// closing a project/document cannot leave the chrome and content out of sync.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MainSurface {
+    Welcome,
+    WorkspaceHome,
+    Editor,
+    Diff,
+    Settings,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub editor: crate::editor::interaction::EditorInteraction,
@@ -203,6 +216,8 @@ pub struct AppState {
     pub editor_horizontal_scrollbar_drag_offset: f32,
     /// Welcome-page row currently under the pointer.
     pub welcome_hover: Option<usize>,
+    /// Workspace Home action currently under the pointer.
+    pub workspace_home_hover: Option<usize>,
     /// Whether the repository-clone dialog is visible.
     pub show_clone_dialog: bool,
     /// Repository URL entered in the clone dialog.
@@ -286,6 +301,7 @@ impl AppState {
             editor_horizontal_scrollbar_dragging: false,
             editor_horizontal_scrollbar_drag_offset: 0.0,
             welcome_hover: None,
+            workspace_home_hover: None,
             show_clone_dialog: false,
             clone_repository_url: String::new(),
             cloning_repository: false,
@@ -387,6 +403,20 @@ impl AppState {
         }
     }
 
+    pub fn main_surface(&self) -> MainSurface {
+        if self.workspace.active_is_settings() {
+            MainSurface::Settings
+        } else if self.workspace.active_diff().is_some() {
+            MainSurface::Diff
+        } else if self.workspace.active_buffer().is_some() {
+            MainSurface::Editor
+        } else if self.workspace_folders.is_empty() {
+            MainSurface::Welcome
+        } else {
+            MainSurface::WorkspaceHome
+        }
+    }
+
     /// Neutral guidance, e.g. a missing commit message.
     pub fn show_toast(&mut self, msg: impl Into<String>) {
         self.push_toast(ToastKind::Info, msg.into());
@@ -425,6 +455,57 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::{DiffTarget, diff::UnifiedDiff};
+    use crate::model::diff_document::DiffDocument;
+    use std::path::PathBuf;
+
+    #[test]
+    fn main_surface_is_derived_from_projects_and_documents() {
+        let mut app = AppState::new();
+        assert_eq!(app.main_surface(), MainSurface::Welcome);
+
+        app.workspace_folders.push(PathBuf::from("project"));
+        assert_eq!(app.main_surface(), MainSurface::WorkspaceHome);
+
+        let file = app
+            .workspace
+            .open_path(PathBuf::from("project/main.rs"), String::new());
+        assert_eq!(app.main_surface(), MainSurface::Editor);
+
+        app.workspace.close(file);
+        assert_eq!(app.main_surface(), MainSurface::WorkspaceHome);
+
+        app.workspace.open_settings();
+        assert_eq!(app.main_surface(), MainSurface::Settings);
+
+        let settings = app.workspace.active().unwrap();
+        app.workspace.close(settings);
+        assert_eq!(app.main_surface(), MainSurface::WorkspaceHome);
+
+        let diff = app.workspace.open_diff(DiffDocument::from_unified(
+            PathBuf::from("project"),
+            PathBuf::from("main.rs"),
+            DiffTarget::IndexToWorktree,
+            UnifiedDiff::default(),
+        ));
+        assert_eq!(app.main_surface(), MainSurface::Diff);
+
+        app.workspace.close(diff);
+        app.workspace_folders.clear();
+        assert_eq!(app.main_surface(), MainSurface::Welcome);
+    }
+
+    #[test]
+    fn standalone_file_uses_editor_then_returns_to_welcome() {
+        let mut app = AppState::new();
+        let file = app
+            .workspace
+            .open_path(PathBuf::from("notes.txt"), String::new());
+        assert_eq!(app.main_surface(), MainSurface::Editor);
+
+        app.workspace.close(file);
+        assert_eq!(app.main_surface(), MainSurface::Welcome);
+    }
 
     #[test]
     fn stale_toast_timer_does_not_dismiss_a_newer_toast() {

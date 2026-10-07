@@ -65,19 +65,12 @@ pub fn render(
         )
         .event_policy(EventPolicy::INTERACTIVE)
         .on_click(move || {
-            let opening = !st.get().show_terminal;
-            if opening && terminal_sessions.get().is_empty() {
-                let shell = st.get().default_shell;
-                terminal_sessions.update(move |tabs| {
-                    tabs.add(shell);
-                });
-            }
-            st.update(|app| app.show_terminal = !app.show_terminal);
-            if opening {
-                terminal_target.focus();
-            } else {
-                editor_target.focus();
-            }
+            super::terminal::toggle_panel(
+                &st,
+                &terminal_sessions,
+                &editor_target,
+                &terminal_target,
+            );
         })
         .child(precompiled(
             UiElement::icon(UiId::new("statusbar.terminal"), icon_r, "terminal")

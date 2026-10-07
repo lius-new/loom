@@ -12,7 +12,7 @@ use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 use lgui::text::{self, TextLayoutRequest};
 
 use crate::model::document::{FileId, FileMeta};
-use crate::state::{AppState, TabContextMenuState, TabDragState};
+use crate::state::{AppState, MainSurface, TabContextMenuState, TabDragState};
 use crate::theme;
 use crate::ui::tab_layout::{self, TabLayoutInput, TabLayoutResult};
 
@@ -507,7 +507,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     // Tabs are content-sized rounded pills, inset PILL_INSET vertically,
     // separated by TAB_GAP. The strip has no padding; this cluster's left
     // padding is TABS_PAD.
-    if s.workspace.open_files().is_empty() {
+    if s.main_surface() == MainSurface::Welcome {
         let label = "welcome";
         let label_w = measure(label, theme::UI_SIZE, 400);
         let tab_w = (PAD * 2.0 + label_w + TEXT_MARGIN).clamp(MIN_TAB_W, MAX_TAB_W);

@@ -1,6 +1,9 @@
-//! Welcome canvas shown when the workspace has no active document.
+//! Welcome canvas shown when no project or document is open.
 
-use lgui::core::{CursorIcon, EventPolicy, UiEventKind, UiFocusHandle, clip};
+use lgui::core::{
+    CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiEventKind, UiFocusHandle, UiId,
+    clip,
+};
 use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel, text};
 
 use crate::state::AppState;
@@ -31,7 +34,12 @@ const ACTIONS: [(StartAction, &str); 2] = [
     (StartAction::OpenFolder, "Open Folder..."),
 ];
 
-pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
+pub fn render(
+    rect: UiRect,
+    state: State<AppState>,
+    surface_id: UiId,
+    editor_focus: UiFocusHandle,
+) -> Element {
     let snapshot = state.get();
     let page_w = (rect.width() - PAGE_PAD_X * 2.0).clamp(0.0, MAX_PAGE_W);
     let page_left = rect.left + (rect.width() - page_w) / 2.0;
@@ -39,15 +47,19 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     let page_top = rect.top + if rect.height() >= 420.0 { 42.0 } else { 24.0 };
 
     let clear_hover = state.clone();
-    let mut welcome = panel(rect, VisualStyle::default())
-        .event_policy(EventPolicy::INTERACTIVE)
-        .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
-            clear_hover.try_update(|app| {
-                let changed = app.welcome_hover.is_some();
-                app.welcome_hover = None;
-                changed
-            });
+    let mut welcome = Element::new(move |cx| {
+        UiElement::panel(surface_id, rect, VisualStyle::filled(theme::c().bg))
+            .semantics(Semantics::new(SemanticRole::Group).name("Welcome"))
+            .children(cx.children)
+    })
+    .event_policy(EventPolicy::INTERACTIVE)
+    .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
+        clear_hover.try_update(|app| {
+            let changed = app.welcome_hover.is_some();
+            app.welcome_hover = None;
+            changed
         });
+    });
 
     let title_w = measure("Loom", 18.0, 700);
     welcome = welcome.child(text(
