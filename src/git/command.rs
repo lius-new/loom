@@ -161,6 +161,8 @@ impl GitCommandRunner {
                 self.runtime.root.join("bin"),
                 self.runtime.root.join("cmd"),
                 self.runtime.root.join("mingw64").join("bin"),
+                // Newer MinGit releases ship UCRT builds under `ucrt64`.
+                self.runtime.root.join("ucrt64").join("bin"),
                 self.runtime.root.join("usr").join("bin"),
             ];
             if let Some(existing) = std::env::var_os("PATH") {

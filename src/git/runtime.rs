@@ -93,7 +93,12 @@ fn managed_candidates() -> Vec<(PathBuf, GitRuntimeSource)> {
     {
         roots.push(root.to_path_buf());
     }
-    if let Ok(root) = env::current_dir() {
+    // Only development builds look in the working directory: a release build
+    // started from a terminal inside an untrusted repository must never run a
+    // `runtime/git` that the repository provides.
+    if cfg!(debug_assertions)
+        && let Ok(root) = env::current_dir()
+    {
         roots.push(root);
     }
     roots
