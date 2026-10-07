@@ -47,7 +47,7 @@ pub fn save_document(state: &State<AppState>, id: FileId) -> bool {
         }
         Err(error) => {
             state.update(move |app| {
-                app.show_toast(format!("Could not save {}: {error}", path.display()));
+                app.show_error(format!("Could not save {}: {error}", path.display()));
             });
             false
         }
@@ -142,7 +142,7 @@ pub fn save_close_request(state: &State<AppState>) -> Option<CloseContinuation> 
             continuation
         }
         Err(error) => {
-            next.show_toast(error);
+            next.show_error(error);
             state.set(next);
             None
         }
@@ -295,7 +295,7 @@ pub fn choose_file(state: &State<AppState>) -> bool {
             true
         }
         Err(message) => {
-            state.update(move |app| app.show_toast(message));
+            state.update(move |app| app.show_error(message));
             false
         }
     }
@@ -357,9 +357,9 @@ pub fn copy_explorer_item(state: &State<AppState>, path: &Path, cut: bool) {
                 .file_name()
                 .map(|value| value.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.display().to_string());
-            state.update(move |app| app.show_toast(format!("{action} {name}.")));
+            state.update(move |app| app.show_success(format!("{action} {name}.")));
         }
-        Err(error) => state.update(move |app| app.show_toast(error)),
+        Err(error) => state.update(move |app| app.show_error(error)),
     }
 }
 
@@ -411,7 +411,7 @@ pub fn finish_explorer_rename(state: &State<AppState>) {
         Err(message) => {
             state.update(move |app| {
                 app.explorer_create_error = Some(message.clone());
-                app.show_toast(message);
+                app.show_error(message);
             });
             return;
         }
@@ -424,7 +424,7 @@ pub fn finish_explorer_rename(state: &State<AppState>) {
         let message = format!("Could not rename {}: {error}", request.path.display());
         state.update(move |app| {
             app.explorer_create_error = Some(message.clone());
-            app.show_toast(message);
+            app.show_error(message);
         });
         return;
     }
@@ -507,7 +507,7 @@ pub fn delete_explorer_item(state: &State<AppState>, path: PathBuf) {
     match move_path_to_trash(&path) {
         Ok(false) => {}
         Ok(true) => state.update(move |app| apply_deleted_path_state(app, &path)),
-        Err(error) => state.update(move |app| app.show_toast(error)),
+        Err(error) => state.update(move |app| app.show_error(error)),
     }
 }
 
@@ -614,7 +614,7 @@ fn apply_deleted_path_state(app: &mut AppState, path: &Path) {
     app.explorer_rename = None;
     app.explorer_create_input.clear();
     app.explorer_create_error = None;
-    app.show_toast("Moved item to Trash.");
+    app.show_success("Moved item to Trash.");
     if app.workspace_folders.len() != original_root_count
         || app.recent_folders.len() != original_recent_count
     {
@@ -631,7 +631,7 @@ pub fn remove_folder_from_workspace(state: &State<AppState>, root: PathBuf) {
     state.update(move |app| {
         if remove_folder_state(app, &root) {
             persist_workspace(app);
-            app.show_toast(format!("Removed {display} from workspace."));
+            app.show_success(format!("Removed {display} from workspace."));
         }
     });
 }
@@ -691,7 +691,7 @@ pub fn finish_explorer_create(state: &State<AppState>) {
         Err(message) => {
             state.update(move |app| {
                 app.explorer_create_error = Some(message.clone());
-                app.show_toast(message);
+                app.show_error(message);
             });
             return;
         }
@@ -720,7 +720,7 @@ pub fn finish_explorer_create(state: &State<AppState>) {
         let message = format!("Could not create {}: {error}", target.display());
         state.update(move |app| {
             app.explorer_create_error = Some(message.clone());
-            app.show_toast(message);
+            app.show_error(message);
         });
         return;
     }
@@ -850,7 +850,7 @@ pub fn open_recent_folder(state: &State<AppState>, path: PathBuf) -> bool {
         state.update(move |app| {
             app.recent_folders.retain(|recent| recent != &path);
             persist_workspace(app);
-            app.show_toast(format!(
+            app.show_error(format!(
                 "Workspace folder is no longer available: {display}"
             ));
         });
@@ -1059,7 +1059,7 @@ fn open_launch_paths_with(
             1 => first.clone(),
             count => format!("{first} (and {} more)", count - 1),
         };
-        app.show_toast(message);
+        app.show_error(message);
     }
     replaced_workspace
 }
@@ -1149,7 +1149,7 @@ fn include_workspace_folders_in_recents(app: &mut AppState) {
 
 fn persist_workspace(app: &mut AppState) {
     if let Err(error) = workspace_persistence::save(&app.workspace_folders, &app.recent_folders) {
-        app.show_toast(format!("Could not remember workspace folders: {error}"));
+        app.show_error(format!("Could not remember workspace folders: {error}"));
     }
 }
 
@@ -1268,7 +1268,7 @@ mod tests {
             vec![PathBuf::from("previous-workspace")]
         );
         assert!(app.workspace.open_files().is_empty());
-        assert!(app.toast.as_deref().unwrap().ends_with("(and 1 more)"));
+        assert!(app.toast.as_ref().unwrap().message.ends_with("(and 1 more)"));
     }
 
     #[test]

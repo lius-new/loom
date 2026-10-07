@@ -236,8 +236,8 @@ pub(crate) fn copy_target_path(
     };
     let label = if relative { "relative path" } else { "path" };
     match clipboard.write_text(&value) {
-        Ok(()) => state.update(move |app| app.show_toast(format!("Copied {label}."))),
-        Err(error) => state.update(move |app| app.show_toast(format!("Clipboard: {error}"))),
+        Ok(()) => state.update(move |app| app.show_success(format!("Copied {label}."))),
+        Err(error) => state.update(move |app| app.show_error(format!("Clipboard: {error}"))),
     }
 }
 
@@ -245,7 +245,7 @@ pub(crate) fn reveal_target(state: &State<AppState>, target: &ExplorerContextTar
     match reveal_in_file_manager(&target.path, target.kind) {
         Ok(()) => {}
         Err(error) => state.update(move |app| {
-            app.show_toast(format!("Could not reveal item: {error}"));
+            app.show_error(format!("Could not reveal item: {error}"));
         }),
     }
 }

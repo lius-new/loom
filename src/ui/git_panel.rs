@@ -507,7 +507,7 @@ fn file_row(
                             ),
                             Err(error) => {
                                 open_state.update(move |app| {
-                                    app.show_toast(format!("Could not open diff: {error}"));
+                                    app.show_error(format!("Could not open diff: {error}"));
                                 });
                                 return;
                             }
@@ -527,7 +527,7 @@ fn file_row(
             }
             Err(error) => {
                 open_state.update(move |app| {
-                    app.show_toast(error.user_message());
+                    app.show_error(error.user_message());
                 });
             }
         }

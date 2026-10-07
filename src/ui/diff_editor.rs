@@ -199,7 +199,7 @@ fn toolbar(
                     editor_focus.focus();
                 }
                 Err(error) => open_state.update(move |app| {
-                    app.show_toast(format!("Could not open file: {error}"));
+                    app.show_error(format!("Could not open file: {error}"));
                 }),
             },
         ),

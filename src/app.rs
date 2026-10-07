@@ -339,6 +339,31 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             finished_create_focus.focus();
         }
     });
+    // Each toast id gets its own timer; a newer toast restarts it, and
+    // `dismiss_toast` ignores a timer that outlived its toast.
+    let toast_timer = s.toast.as_ref().map(|toast| (toast.id, toast.kind));
+    let toast_state = state.clone();
+    cx.use_effect(toast_timer, move || {
+        let (stop_sender, stop_receiver) = mpsc::channel::<()>();
+        let worker = toast_timer.and_then(|(id, kind)| {
+            thread::Builder::new()
+                .name("loom-toast-timer".to_string())
+                .spawn(move || {
+                    if let Err(RecvTimeoutError::Timeout) =
+                        stop_receiver.recv_timeout(kind.duration())
+                    {
+                        toast_state.try_update(|app| app.dismiss_toast(id));
+                    }
+                })
+                .ok()
+        });
+        move || {
+            let _ = stop_sender.send(());
+            if let Some(worker) = worker {
+                let _ = worker.join();
+            }
+        }
+    });
     let blink_focused = s.terminal_focused && s.terminal_cursor_blink;
     let blink_state = terminal_cursor_blink.clone();
     cx.use_effect((show_term, blink_focused, active_terminal_id), move || {

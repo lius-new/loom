@@ -75,6 +75,30 @@ pub struct TabContextMenuState {
     pub hovered: Option<usize>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToastKind {
+    Info,
+    Success,
+    Error,
+}
+
+impl ToastKind {
+    /// How long the toast stays up; errors linger so they can be read.
+    pub fn duration(self) -> std::time::Duration {
+        std::time::Duration::from_millis(match self {
+            Self::Info | Self::Success => 3_000,
+            Self::Error => 6_000,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Toast {
+    pub id: u64,
+    pub kind: ToastKind,
+    pub message: String,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub editor: crate::editor::interaction::EditorInteraction,
@@ -115,7 +139,10 @@ pub struct AppState {
     pub tab_context_menu: Option<TabContextMenuState>,
     /// Pending close operation waiting for the user to resolve dirty files.
     pub close_request: Option<CloseRequest>,
-    pub toast: Option<String>,
+    /// Notification above the status bar; cleared by its timer or close button.
+    pub toast: Option<Toast>,
+    /// Source of `Toast::id`, so a replacement restarts the dismiss timer.
+    pub toast_seq: u64,
     /// Cached entries per loaded directory (key = directory path string).
     /// Renders read from this cache; the filesystem is only hit on open and
     /// on first expand.
@@ -225,6 +252,7 @@ impl AppState {
             tab_context_menu: None,
             close_request: None,
             toast: None,
+            toast_seq: 0,
             dir_entries: HashMap::new(),
             expanded: HashSet::new(),
             sidebar_w: crate::theme::SIDEBAR_W,
@@ -359,11 +387,57 @@ impl AppState {
         }
     }
 
+    /// Neutral guidance, e.g. a missing commit message.
     pub fn show_toast(&mut self, msg: impl Into<String>) {
-        self.toast = Some(msg.into());
+        self.push_toast(ToastKind::Info, msg.into());
     }
 
-    pub fn clear_toast(&mut self) {
-        self.toast = None;
+    /// Confirms a completed action, e.g. a copied path.
+    pub fn show_success(&mut self, msg: impl Into<String>) {
+        self.push_toast(ToastKind::Success, msg.into());
+    }
+
+    /// Reports a failed operation.
+    pub fn show_error(&mut self, msg: impl Into<String>) {
+        self.push_toast(ToastKind::Error, msg.into());
+    }
+
+    fn push_toast(&mut self, kind: ToastKind, message: String) {
+        self.toast_seq += 1;
+        self.toast = Some(Toast {
+            id: self.toast_seq,
+            kind,
+            message,
+        });
+    }
+
+    /// Clears the toast only if it is still `id`, so a stale timer cannot
+    /// dismiss a newer message. Returns whether anything changed.
+    pub fn dismiss_toast(&mut self, id: u64) -> bool {
+        let matches = self.toast.as_ref().is_some_and(|toast| toast.id == id);
+        if matches {
+            self.toast = None;
+        }
+        matches
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_toast_timer_does_not_dismiss_a_newer_toast() {
+        let mut app = AppState::new();
+        app.show_success("Copied path.");
+        let first = app.toast.as_ref().unwrap().id;
+        app.show_error("Could not save.");
+
+        assert!(!app.dismiss_toast(first));
+        assert_eq!(app.toast.as_ref().unwrap().kind, ToastKind::Error);
+
+        let second = app.toast.as_ref().unwrap().id;
+        assert!(app.dismiss_toast(second));
+        assert!(app.toast.is_none());
     }
 }

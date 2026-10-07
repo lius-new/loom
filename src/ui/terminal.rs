@@ -648,7 +648,7 @@ fn paste_clipboard(
 
 pub fn report_clipboard_error(state: &State<AppState>, result: Result<(), ClipboardError>) {
     if let Err(error) = result {
-        state.update(|app| app.show_toast(format!("Clipboard: {error}")));
+        state.update(|app| app.show_error(format!("Clipboard: {error}")));
     }
 }
 

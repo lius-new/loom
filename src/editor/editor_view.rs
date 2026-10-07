@@ -1001,7 +1001,7 @@ pub fn execute_command(
         app.editor.menu = None;
         app.editor.drag = None;
         if let Err(error) = apply_command(app, command, clipboard.as_ref()) {
-            app.show_toast(format!("Clipboard: {error}"));
+            app.show_error(format!("Clipboard: {error}"));
         }
         reveal_cursor(app, rect);
     });

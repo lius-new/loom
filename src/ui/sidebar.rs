@@ -1003,7 +1003,7 @@ fn build_tree(
                                             focus.focus();
                                         }
                                         Err(message) => {
-                                            st.update(move |app| app.show_toast(message));
+                                            st.update(move |app| app.show_error(message));
                                         }
                                     }
                                 }

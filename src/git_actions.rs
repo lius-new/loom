@@ -209,7 +209,7 @@ fn run(
         return false;
     }
     let Ok(service) = crate::git::service() else {
-        state.update(|app| app.show_toast("No usable Git runtime is available."));
+        state.update(|app| app.show_error("No usable Git runtime is available."));
         return false;
     };
     let roots = state.get().workspace_folders.clone();
@@ -253,7 +253,7 @@ fn run(
                 }
                 Err(error) => {
                     let message = error.user_message();
-                    state.update(move |app| app.show_toast(message));
+                    state.update(move |app| app.show_error(message));
                     store.update(move |snapshot| {
                         snapshot.operation = None;
                         snapshot.last_error = Some(error);
