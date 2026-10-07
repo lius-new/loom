@@ -16,6 +16,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
+use crate::file_tree::read_directory;
 use crate::git::GitStoreSnapshot;
 use crate::state::{
     AppState, DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind,
@@ -544,23 +545,6 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
     ]
 }
 
-/// Read and sort one directory's entries (directories first, then name).
-fn read_entries(dir: &Path) -> Vec<DirEntry> {
-    let mut v: Vec<DirEntry> = match fs::read_dir(dir) {
-        Ok(iter) => iter
-            .flatten()
-            .map(|e| DirEntry {
-                is_dir: e.file_type().map(|t| t.is_dir()).unwrap_or(false),
-                name: e.file_name().to_string_lossy().into_owned(),
-                path: e.path(),
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    };
-    v.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
-    v
-}
-
 fn read_text_file(path: &Path) -> Result<String, String> {
     let name = path
         .file_name()
@@ -822,7 +806,7 @@ fn dir_row(
                     } else {
                         app.expanded.insert(key.clone());
                         if !app.dir_entries.contains_key(&key) {
-                            let entries = read_entries(Path::new(&key));
+                            let entries = read_directory(Path::new(&key));
                             app.dir_entries.insert(key.clone(), entries);
                         }
                     }

@@ -11,7 +11,7 @@ use crate::theme::ThemeId;
 use crate::ui::components::input::InputState;
 
 /// One entry in a loaded directory listing.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirEntry {
     pub name: String,
     pub path: PathBuf,
@@ -186,6 +186,8 @@ pub struct AppState {
     pub explorer_create: Option<ExplorerCreateRequest>,
     /// Inline directory rename editor currently shown in the file tree.
     pub explorer_rename: Option<ExplorerRenameRequest>,
+    /// A disk refresh that is deferred until an inline Explorer edit ends.
+    pub pending_file_tree_refresh: bool,
     pub explorer_create_input: InputState,
     pub explorer_create_error: Option<String>,
     /// Root folders currently browsed in the file tree, in display order.
@@ -285,6 +287,7 @@ impl AppState {
             context_menu_hover: None,
             explorer_create: None,
             explorer_rename: None,
+            pending_file_tree_refresh: false,
             explorer_create_input: InputState::default(),
             explorer_create_error: None,
             workspace_folders: Vec::new(),

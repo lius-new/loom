@@ -574,6 +574,33 @@ impl Workspace {
             .collect()
     }
 
+    /// Reconcile open documents touched by a watcher batch. A directory-level
+    /// event also covers open descendants; a rescan checks everything.
+    pub fn reconcile_changed_paths(
+        &mut self,
+        changed_paths: &[PathBuf],
+        full_rescan: bool,
+    ) -> Vec<ReconcileResult> {
+        let ids = self
+            .open
+            .iter()
+            .copied()
+            .filter(|id| {
+                full_rescan
+                    || self.documents.get(id).is_some_and(|document| {
+                        document.is_text()
+                            && changed_paths.iter().any(|changed| {
+                                document.meta.path == *changed
+                                    || document.meta.path.starts_with(changed)
+                            })
+                    })
+            })
+            .collect::<Vec<_>>();
+        ids.into_iter()
+            .map(|id| self.reconcile_document(id))
+            .collect()
+    }
+
     pub fn reconcile_document(&mut self, id: FileId) -> ReconcileResult {
         let Some(document) = self.documents.get(&id) else {
             return ReconcileResult::Failed(PathBuf::new(), "Document is not open.".into());
@@ -599,6 +626,8 @@ impl Workspace {
         if previous.content_hash == current.content_hash && previous.size == current.size {
             if let Some(document) = self.documents.get_mut(&id) {
                 document.disk_state = current;
+                document.missing_on_disk = false;
+                document.disk_conflict = false;
             }
             return ReconcileResult::Unchanged(path);
         }
@@ -608,7 +637,7 @@ impl Workspace {
             document.disk_conflict = true;
             ReconcileResult::Conflict(path)
         } else {
-            document.buffer = TextBuffer::new(contents.clone());
+            replace_buffer_from_disk(&mut document.buffer, contents.clone());
             document.saved_text = contents;
             document.disk_state = current;
             document.disk_conflict = false;
@@ -627,7 +656,7 @@ impl Workspace {
         let contents = std::fs::read_to_string(&document.meta.path).map_err(|error| {
             format!("Could not reload {}: {error}", document.meta.path.display())
         })?;
-        document.buffer = TextBuffer::new(contents.clone());
+        replace_buffer_from_disk(&mut document.buffer, contents.clone());
         document.saved_text = contents;
         document.disk_state = DiskState::capture(&document.meta.path, &document.saved_text);
         document.disk_conflict = false;
@@ -695,6 +724,21 @@ impl Workspace {
         }
         count
     }
+}
+
+/// External reloads reset edit history but retain the caret/selection as far
+/// as the new document length permits. Per-document scroll lives outside the
+/// buffer and is therefore preserved as well.
+fn replace_buffer_from_disk(buffer: &mut TextBuffer, contents: String) {
+    let cursor = buffer.cursor();
+    let selection = buffer.selection();
+    let mut replacement = TextBuffer::new(contents);
+    if let Some(selection) = selection {
+        replacement.select_range(selection.start..selection.end);
+    } else {
+        replacement.set_cursor(cursor);
+    }
+    *buffer = replacement;
 }
 
 fn parent_components(path: &Path) -> Vec<String> {
@@ -1042,6 +1086,117 @@ mod tests {
             "disk one + editor"
         );
         assert!(workspace.has_disk_conflict(id));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clean_document_reload_preserves_cursor_and_scroll() {
+        let root = std::env::temp_dir().join(format!(
+            "loom-reload-clean-{}-{}",
+            std::process::id(),
+            crate::model::document::content_hash(module_path!())
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("note.txt");
+        std::fs::write(&path, "before").unwrap();
+        let mut workspace = Workspace::new();
+        let id = workspace.open_path(path.clone(), "before".into());
+        workspace.active_buffer_mut().unwrap().select_range(2..4);
+        workspace.set_active_scroll(12.0, 34.0);
+        std::fs::write(&path, "after and longer").unwrap();
+
+        assert_eq!(
+            workspace.reconcile_document(id),
+            ReconcileResult::Reloaded(path.clone())
+        );
+        assert_eq!(
+            workspace.active_buffer().unwrap().text(),
+            "after and longer"
+        );
+        assert_eq!(workspace.active_buffer().unwrap().cursor(), 4);
+        assert_eq!(workspace.active_buffer().unwrap().selection(), Some(2..4));
+        assert_eq!(workspace.active_scroll(), (12.0, 34.0));
+        assert!(!workspace.is_dirty(id));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deleted_document_remains_open_and_is_marked_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "loom-reload-missing-{}-{}",
+            std::process::id(),
+            crate::model::document::content_hash(module_path!())
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("note.txt");
+        std::fs::write(&path, "contents").unwrap();
+        let mut workspace = Workspace::new();
+        let id = workspace.open_path(path.clone(), "contents".into());
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            workspace.reconcile_document(id),
+            ReconcileResult::Missing(path.clone())
+        );
+        assert_eq!(workspace.active_buffer().unwrap().text(), "contents");
+        assert!(workspace.is_missing_on_disk(id));
+        assert!(!workspace.has_disk_conflict(id));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recreating_a_missing_file_with_saved_contents_clears_missing_state() {
+        let root = std::env::temp_dir().join(format!(
+            "loom-reload-recreated-{}-{}",
+            std::process::id(),
+            crate::model::document::content_hash(module_path!())
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("note.txt");
+        std::fs::write(&path, "contents").unwrap();
+        let mut workspace = Workspace::new();
+        let id = workspace.open_path(path.clone(), "contents".into());
+        std::fs::remove_file(&path).unwrap();
+        workspace.reconcile_document(id);
+        assert!(workspace.is_missing_on_disk(id));
+
+        std::fs::write(&path, "contents").unwrap();
+        assert_eq!(
+            workspace.reconcile_document(id),
+            ReconcileResult::Unchanged(path)
+        );
+        assert!(!workspace.is_missing_on_disk(id));
+        assert!(!workspace.has_disk_conflict(id));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_echo_does_not_create_a_disk_conflict() {
+        let root = std::env::temp_dir().join(format!(
+            "loom-save-echo-{}-{}",
+            std::process::id(),
+            crate::model::document::content_hash(module_path!())
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("note.txt");
+        std::fs::write(&path, "before").unwrap();
+        let mut workspace = Workspace::new();
+        let id = workspace.open_path(path.clone(), "before".into());
+        workspace.active_buffer_mut().unwrap().move_end();
+        workspace.active_buffer_mut().unwrap().insert(" saved");
+        std::fs::write(&path, "before saved").unwrap();
+        assert!(workspace.mark_saved(id));
+
+        assert_eq!(
+            workspace.reconcile_document(id),
+            ReconcileResult::Unchanged(path)
+        );
+        assert!(!workspace.has_disk_conflict(id));
+        assert!(!workspace.is_missing_on_disk(id));
+
         let _ = std::fs::remove_dir_all(root);
     }
 }

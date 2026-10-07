@@ -38,6 +38,7 @@ const EDITOR_MIN_TAB_W: f32 = 120.0;
 const CLUSTER_PAD: f32 = 8.0;
 const ICON: f32 = 14.0;
 const DIRTY_MARK: &str = "●";
+const DISK_STATE_MARK: &str = "!";
 const FADE_W: f32 = 16.0;
 const DRAG_THRESHOLD: f32 = 5.0;
 const DRAG_EDGE_W: f32 = 28.0;
@@ -231,6 +232,18 @@ fn tab_name_style(active: bool, preview: bool) -> TextStyle {
     if preview { style.italic() } else { style }
 }
 
+fn tab_state_mark(app: &AppState, id: FileId) -> Option<(&'static str, Color)> {
+    if app.workspace.is_missing_on_disk(id) {
+        Some((DISK_STATE_MARK, theme::c().error))
+    } else if app.workspace.has_disk_conflict(id) {
+        Some((DISK_STATE_MARK, theme::c().warning))
+    } else if app.workspace.is_dirty(id) {
+        Some((DIRTY_MARK, theme::c().accent))
+    } else {
+        None
+    }
+}
+
 fn natural_tab_widths(app: &AppState) -> Vec<f32> {
     let labels = app.workspace.tab_labels();
     app.workspace
@@ -239,8 +252,8 @@ fn natural_tab_widths(app: &AppState) -> Vec<f32> {
         .filter_map(|id| {
             let meta = app.workspace.meta(*id)?;
             let badge = tab_badge(app, *id, meta);
-            let dirty_slot = if app.workspace.is_dirty(*id) {
-                measure(DIRTY_MARK, theme::SMALL, 400) + GAP
+            let state_slot = if let Some((mark, _)) = tab_state_mark(app, *id) {
+                measure(mark, theme::SMALL, 400) + GAP
             } else {
                 0.0
             };
@@ -248,7 +261,7 @@ fn natural_tab_widths(app: &AppState) -> Vec<f32> {
                 + badge.width()
                 + GAP
                 + GAP
-                + dirty_slot
+                + state_slot
                 + measure("✕", theme::SMALL, 400)
                 + PAD;
             let label = labels.get(id).map(String::as_str).unwrap_or(&meta.name);
@@ -561,12 +574,8 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         };
         let badge = tab_badge(&s, id, m);
         let badge_w = badge.width();
-        let dirty = s.workspace.is_dirty(id);
-        let dirty_w = if dirty {
-            measure(DIRTY_MARK, theme::SMALL, 400)
-        } else {
-            0.0
-        };
+        let state_mark = tab_state_mark(&s, id);
+        let state_mark_w = state_mark.map_or(0.0, |(mark, _)| measure(mark, theme::SMALL, 400));
         let close_w = measure("✕", theme::SMALL, 400);
         let tab_w = layout_item.width;
         let x = rect.left + layout_item.left;
@@ -582,9 +591,9 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         let badge_left = pill.left + PAD;
         let name_left = badge_left + badge_w + GAP;
         let close_left = pill.right - PAD - close_w;
-        let dirty_left = close_left - GAP - dirty_w;
-        let name_right = if dirty {
-            dirty_left - GAP
+        let state_mark_left = close_left - GAP - state_mark_w;
+        let name_right = if state_mark.is_some() {
+            state_mark_left - GAP
         } else {
             close_left - GAP
         };
@@ -665,16 +674,16 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             display_name,
             name_style,
         ));
-        if dirty {
+        if let Some((mark, color)) = state_mark {
             tab_el = tab_el.child(text(
                 UiRect::new(
-                    dirty_left,
+                    state_mark_left,
                     pill.top,
-                    dirty_left + dirty_w + TEXT_MARGIN,
+                    state_mark_left + state_mark_w + TEXT_MARGIN,
                     pill.bottom,
                 ),
-                DIRTY_MARK,
-                theme::mono(theme::c().accent, theme::SMALL),
+                mark,
+                theme::mono_bold(color, theme::SMALL),
             ));
         }
 

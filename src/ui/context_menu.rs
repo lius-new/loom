@@ -30,6 +30,7 @@ const MENU_BORDER: f32 = 1.0; // menu border width
 enum MenuAction {
     NewFile,
     NewFolder,
+    RefreshExplorer,
     OpenTerminal,
     Cut,
     Copy,
@@ -77,6 +78,11 @@ const DIRECTORY_ENTRIES: &[Entry] = &[
         label: "New Folder",
         shortcut: None,
         action: MenuAction::NewFolder,
+    },
+    Entry::Item {
+        label: "Refresh Explorer",
+        shortcut: None,
+        action: MenuAction::RefreshExplorer,
     },
     Entry::Separator,
     Entry::Item {
@@ -487,6 +493,12 @@ pub fn render(
                                 };
                                 workspace_actions::begin_explorer_create(&st_click, parent, kind);
                             }
+                        }
+                        MenuAction::RefreshExplorer => {
+                            st_click.update(|app| {
+                                crate::file_tree::refresh_all_loaded_directories(app);
+                                app.workspace.reconcile_disk();
+                            });
                         }
                         MenuAction::OpenTerminal => {
                             let cwd = action_target.as_ref().and_then(|target| match target.kind {

@@ -85,6 +85,17 @@ pub fn render(
             .workspace
             .meta(id)
             .expect("active document metadata exists");
+        if s.workspace.is_missing_on_disk(id) {
+            items.push((
+                "Deleted on Disk — Save Recreates".to_string(),
+                theme::mono_bold(theme::c().error, theme::SMALL),
+            ));
+        } else if s.workspace.has_disk_conflict(id) {
+            items.push((
+                "Changed on Disk".to_string(),
+                theme::mono_bold(theme::c().warning, theme::SMALL),
+            ));
+        }
         if let Some(buffer) = s.workspace.active_buffer() {
             let (line, col) = buffer.line_col();
             items.push((

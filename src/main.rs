@@ -20,6 +20,8 @@
 mod app;
 mod editor;
 mod file_icons;
+mod file_tree;
+mod file_watcher;
 mod git;
 mod git_actions;
 mod input;

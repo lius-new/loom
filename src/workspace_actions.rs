@@ -7,9 +7,10 @@ use std::thread;
 use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
 use lgui::prelude::State;
 
+use crate::file_tree::read_directory;
 use crate::model::document::FileId;
 use crate::state::{
-    AppState, CloseContinuation, CloseRequest, DirEntry, ExplorerCreateKind, ExplorerCreateRequest,
+    AppState, CloseContinuation, CloseRequest, ExplorerCreateKind, ExplorerCreateRequest,
     ExplorerRenameRequest, ExplorerTargetKind,
 };
 use crate::workspace_persistence::{self, MAX_RECENT_FOLDERS};
@@ -205,7 +206,7 @@ pub fn reveal_file_in_tree(state: &State<AppState>, id: FileId) {
         for directory in directories {
             let key = directory.to_string_lossy().into_owned();
             app.dir_entries
-                .insert(key.clone(), read_entries(&directory));
+                .insert(key.clone(), read_directory(&directory));
             app.expanded.insert(key);
         }
         if let Some(index) = visible_tree_row_index(app, &path) {
@@ -480,12 +481,15 @@ fn apply_renamed_path_state(app: &mut AppState, old_path: &Path, new_path: &Path
             .iter()
             .any(|root| parent.starts_with(root))
     {
-        app.dir_entries
-            .insert(parent.to_string_lossy().into_owned(), read_entries(parent));
+        app.dir_entries.insert(
+            parent.to_string_lossy().into_owned(),
+            read_directory(parent),
+        );
     }
     if was_expanded || app.workspace_folders.iter().any(|root| root == new_path) {
         let key = new_path.to_string_lossy().into_owned();
-        app.dir_entries.insert(key.clone(), read_entries(new_path));
+        app.dir_entries
+            .insert(key.clone(), read_directory(new_path));
         app.expanded.insert(key);
     }
     app.tree_hovered_path = None;
@@ -607,8 +611,10 @@ fn apply_deleted_path_state(app: &mut AppState, path: &Path) {
             .iter()
             .any(|root| parent.starts_with(root))
     {
-        app.dir_entries
-            .insert(parent.to_string_lossy().into_owned(), read_entries(parent));
+        app.dir_entries.insert(
+            parent.to_string_lossy().into_owned(),
+            read_directory(parent),
+        );
     }
     app.tree_hovered_path = None;
     app.explorer_create = None;
@@ -831,14 +837,14 @@ fn refresh_created_path(app: &mut AppState, root: &Path, target: &Path, kind: Ex
     let mut directory = root.to_path_buf();
     let key = directory.to_string_lossy().into_owned();
     app.dir_entries
-        .insert(key.clone(), read_entries(&directory));
+        .insert(key.clone(), read_directory(&directory));
     app.expanded.insert(key);
     if let Ok(relative) = refresh_until.strip_prefix(root) {
         for component in relative.components() {
             directory.push(component.as_os_str());
             let key = directory.to_string_lossy().into_owned();
             app.dir_entries
-                .insert(key.clone(), read_entries(&directory));
+                .insert(key.clone(), read_directory(&directory));
             app.expanded.insert(key);
         }
     }
@@ -971,7 +977,7 @@ fn load_folder(app: &mut AppState, path: PathBuf) {
 
 fn replace_folder_state(app: &mut AppState, path: PathBuf) {
     let key = path.to_string_lossy().into_owned();
-    let entries = read_entries(&path);
+    let entries = read_directory(&path);
     app.workspace_folders.clear();
     app.workspace_folders.push(path.clone());
     app.dir_entries.clear();
@@ -999,7 +1005,7 @@ fn add_folder_state(app: &mut AppState, path: PathBuf) -> bool {
     }
 
     let key = path.to_string_lossy().into_owned();
-    let entries = read_entries(&path);
+    let entries = read_directory(&path);
     let was_empty = app.workspace_folders.is_empty();
     app.workspace_folders.push(path.clone());
     app.dir_entries.insert(key.clone(), entries);
@@ -1073,7 +1079,7 @@ pub(crate) fn hydrate_workspace_folders(app: &mut AppState) {
 
     for path in &app.workspace_folders {
         let key = path.to_string_lossy().into_owned();
-        app.dir_entries.insert(key.clone(), read_entries(path));
+        app.dir_entries.insert(key.clone(), read_directory(path));
         app.expanded.insert(key);
     }
 
@@ -1152,22 +1158,6 @@ fn persist_workspace(app: &mut AppState) {
     if let Err(error) = workspace_persistence::save(&app.workspace_folders, &app.recent_folders) {
         app.show_error(format!("Could not remember workspace folders: {error}"));
     }
-}
-
-fn read_entries(dir: &Path) -> Vec<DirEntry> {
-    let mut entries = match fs::read_dir(dir) {
-        Ok(iter) => iter
-            .flatten()
-            .map(|entry| DirEntry {
-                is_dir: entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false),
-                name: entry.file_name().to_string_lossy().into_owned(),
-                path: entry.path(),
-            })
-            .collect::<Vec<_>>(),
-        Err(_) => Vec::new(),
-    };
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
-    entries
 }
 
 fn read_text_file(path: &Path) -> Result<String, String> {

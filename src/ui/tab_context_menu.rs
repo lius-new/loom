@@ -18,6 +18,8 @@ const SEP_H: f32 = 5.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     KeepOpen,
+    ReloadFromDisk,
+    KeepEditorVersion,
     Close,
     CloseOthers,
     CloseRight,
@@ -36,6 +38,9 @@ enum Entry {
 
 const ENTRIES: &[Entry] = &[
     Entry::Item("Keep Open", Action::KeepOpen),
+    Entry::Separator,
+    Entry::Item("Reload from Disk", Action::ReloadFromDisk),
+    Entry::Item("Keep Editor Version", Action::KeepEditorVersion),
     Entry::Separator,
     Entry::Item("Close", Action::Close),
     Entry::Item("Close Others", Action::CloseOthers),
@@ -74,6 +79,10 @@ fn action_enabled(app: &AppState, target: FileId, action: Action) -> bool {
     }
     match action {
         Action::KeepOpen => app.workspace.is_preview(target),
+        Action::ReloadFromDisk => {
+            app.workspace.has_disk_conflict(target) && !app.workspace.is_missing_on_disk(target)
+        }
+        Action::KeepEditorVersion => app.workspace.has_disk_conflict(target),
         Action::CopyPath => true,
         Action::CopyRelativePath => {
             super::context_menu::workspace_root_for_path(app, &meta.path).is_some()
@@ -217,6 +226,18 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                                 app.workspace.promote_preview(target);
                             });
                         }
+                        Action::ReloadFromDisk => {
+                            click_state.update(|app| {
+                                if let Err(error) = app.workspace.accept_disk_version(target) {
+                                    app.show_error(error);
+                                }
+                            });
+                        }
+                        Action::KeepEditorVersion => {
+                            click_state.update(|app| {
+                                app.workspace.keep_editor_version(target);
+                            });
+                        }
                         Action::CopyPath | Action::CopyRelativePath => {
                             super::context_menu::copy_target_path(
                                 &click_state,
@@ -315,6 +336,27 @@ mod tests {
         app.workspace_folders.push(PathBuf::from("workspace"));
         assert!(action_enabled(&app, file, Action::CopyRelativePath));
         assert!(action_enabled(&app, file, Action::RevealInTree));
+    }
+
+    #[test]
+    fn disk_resolution_actions_enable_only_for_a_conflict() {
+        let root = std::env::temp_dir().join(format!("loom-tab-conflict-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("note.txt");
+        std::fs::write(&path, "before").unwrap();
+        let mut app = AppState::new();
+        let target = app.workspace.open_path(path.clone(), "before".into());
+        assert!(!action_enabled(&app, target, Action::ReloadFromDisk));
+        assert!(!action_enabled(&app, target, Action::KeepEditorVersion));
+
+        app.workspace.active_buffer_mut().unwrap().move_end();
+        app.workspace.active_buffer_mut().unwrap().insert(" editor");
+        std::fs::write(&path, "after and longer").unwrap();
+        app.workspace.reconcile_document(target);
+        assert!(action_enabled(&app, target, Action::ReloadFromDisk));
+        assert!(action_enabled(&app, target, Action::KeepEditorVersion));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

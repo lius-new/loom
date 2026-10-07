@@ -77,6 +77,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
                 });
             } else {
                 window_focus_state.update(|app| {
+                    crate::file_tree::refresh_all_loaded_directories(app);
                     app.workspace.reconcile_disk();
                 });
                 crate::git_actions::refresh(&window_focus_state, &window_focus_git_store);
@@ -116,6 +117,30 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let active_tab_path = s.workspace.active_path().map(std::path::Path::to_path_buf);
     let git_roots = s.workspace_folders.clone();
     let git_active_path = active_tab_path.clone();
+    let file_watch_state = state.clone();
+    let file_watch_roots = git_roots.clone();
+    cx.use_effect(file_watch_roots.clone(), move || {
+        let handle = if file_watch_roots.is_empty() {
+            None
+        } else {
+            let batch_state = file_watch_state.clone();
+            match crate::file_watcher::start(file_watch_roots, move |batch| {
+                batch_state
+                    .try_update(move |app| crate::file_watcher::apply_batch(app, &batch));
+            }) {
+                Ok(handle) => Some(handle),
+                Err(error) => {
+                    file_watch_state.update(move |app| {
+                        app.show_error(format!(
+                            "File watching is unavailable; Explorer will refresh when Loom regains focus: {error}"
+                        ));
+                    });
+                    None
+                }
+            }
+        };
+        move || drop(handle)
+    });
     let polling_store = git_store.clone();
     cx.use_effect((git_roots.clone(), git_active_path.clone()), move || {
         let handle = crate::git::start_polling_async(
@@ -229,6 +254,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
                     meta.name.clone(),
                     s.workspace.is_dirty(*id),
                     s.workspace.is_diff(*id),
+                    s.workspace.has_disk_conflict(*id),
+                    s.workspace.is_missing_on_disk(*id),
                 )
             })
         })
@@ -340,10 +367,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let mounted_create_focus = explorer_create_input_focus.clone();
     let finished_create_focus = editor_focus.clone();
+    let pending_tree_state = state.clone();
     cx.use_effect(editing_explorer_entry, move || {
         if editing_explorer_entry {
             mounted_create_focus.focus();
         } else {
+            pending_tree_state.try_update(crate::file_tree::apply_pending_refresh);
             finished_create_focus.focus();
         }
     });
