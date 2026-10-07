@@ -1487,13 +1487,13 @@ mod tests {
             &clipboard,
         )
         .unwrap();
-        assert!(app.workspace.is_preview(preview));
+        assert_eq!(app.workspace.preview(), Some(preview));
         apply_command(&mut app, Command::Undo, &clipboard).unwrap();
-        assert!(app.workspace.is_preview(preview));
+        assert_eq!(app.workspace.preview(), Some(preview));
 
         clipboard.write_text("!").unwrap();
         apply_command(&mut app, Command::Paste, &clipboard).unwrap();
-        assert!(!app.workspace.is_preview(preview));
+        assert_ne!(app.workspace.preview(), Some(preview));
         assert_eq!(app.workspace.active_editor().unwrap().text(), "h!ello");
     }
 
@@ -1510,7 +1510,7 @@ mod tests {
         };
 
         assert!(apply_command(&mut app, Command::Cut, &unavailable).is_err());
-        assert!(app.workspace.is_preview(preview));
+        assert_eq!(app.workspace.preview(), Some(preview));
         assert_eq!(app.workspace.active_editor().unwrap().text(), "hello");
     }
 

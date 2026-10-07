@@ -93,7 +93,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let close_state = state.clone();
     cx.use_event_once::<window_geometry::AppCloseRequested>(move |_| {
-        let dirty_targets = close_state.get().workspace.dirty_file_ids();
+        let workspace = close_state.get().workspace;
+        let dirty_targets = workspace
+            .dirty_file_ids()
+            .into_iter()
+            .flat_map(|id| workspace.tabs_of(id))
+            .collect::<Vec<_>>();
         if dirty_targets.is_empty() {
             window_manager.close("loom");
         } else {
@@ -249,10 +254,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         tabs_right,
         theme::TITLEBAR_H + theme::TABS_H,
     );
+    let focused_pane = s.workspace.active_pane();
     let tab_visibility_state = state.clone();
     let tab_visibility_items = s
         .workspace
-        .open_files()
+        .pane(focused_pane)
+        .map_or(&[][..], |pane| pane.items())
         .iter()
         .filter_map(|id| {
             s.workspace.meta(*id).map(|meta| {
@@ -274,7 +281,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         s.show_drawer,
     );
     cx.use_effect(tab_visibility_key, move || {
-        let desired = tabs::active_visible_scroll(tabs_rect, &tab_visibility_state.get());
+        let desired =
+            tabs::active_visible_scroll(tabs_rect, &tab_visibility_state.get(), focused_pane);
         tab_visibility_state.try_update(move |app| {
             if (app.tab_scroll_x - desired).abs() <= f32::EPSILON {
                 return false;
@@ -549,7 +557,14 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
             st_tabs_pointer.try_update(|app| {
-                tabs::update_pointer(app, tabs_rect, pointer.point.x, pointer.point.y, false)
+                tabs::update_pointer(
+                    app,
+                    focused_pane,
+                    tabs_rect,
+                    pointer.point.x,
+                    pointer.point.y,
+                    false,
+                )
             });
         }
     });
@@ -558,7 +573,14 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.on_event_capture(UiEventKind::PointerDrag, move |_ctx, payload| {
         if let UiEventPayload::PointerDrag { pointer } = payload {
             st_tabs_drag.try_update(|app| {
-                tabs::update_pointer(app, tabs_rect, pointer.point.x, pointer.point.y, true)
+                tabs::update_pointer(
+                    app,
+                    focused_pane,
+                    tabs_rect,
+                    pointer.point.x,
+                    pointer.point.y,
+                    true,
+                )
             });
         }
     });
@@ -587,7 +609,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Compose chrome (back-to-front) -------------------------------
     root = root.child(titlebar::render(titlebar_rect, state.clone()));
 
-    root = root.child(tabs::render(tabs_rect, state.clone(), editor_focus.clone()));
+    root = root.child(tabs::render(
+        focused_pane,
+        tabs_rect,
+        state.clone(),
+        editor_focus.clone(),
+    ));
     root = root.child(match s.main_surface() {
         MainSurface::Settings => settings::render(code_rect, state.clone()),
         MainSurface::Keymap => keymap_page::render(
@@ -669,7 +696,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         && s.tab_context_menu.is_none()
         && !show_clone_dialog
         && s.close_request.is_none()
-        && let Some(tooltip) = tabs::render_tooltip(vp, tabs_rect, &s)
+        && let Some(tooltip) = tabs::render_tooltip(vp, tabs_rect, &s, focused_pane)
     {
         root = root.child(tooltip);
     }

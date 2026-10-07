@@ -1008,7 +1008,7 @@ fn build_tree(
                                         let clicks = app.editor.tree_click_count(&path, x, y);
                                         app.workspace.set_active(id);
                                         if clicks > 1 {
-                                            app.workspace.promote_preview(id);
+                                            app.workspace.promote_active_preview();
                                         }
                                     });
                                     focus.focus();
@@ -1038,7 +1038,7 @@ fn build_tree(
                                 if let Some(id) = open_id {
                                     st.update(move |app| {
                                         app.workspace.set_active(id);
-                                        app.workspace.promote_preview(id);
+                                        app.workspace.promote_active_preview();
                                     });
                                     focus.focus();
                                 } else {

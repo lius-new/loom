@@ -5,6 +5,7 @@ use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, pan
 use lgui::services::ServicesContextExt;
 
 use crate::model::document::FileId;
+use crate::model::pane_layout::PaneId;
 use crate::state::{AppState, ExplorerContextTarget, ExplorerTargetKind};
 use crate::theme;
 use crate::workspace_actions::{self, TabCloseScope};
@@ -66,19 +67,22 @@ fn close_scope(action: Action) -> Option<TabCloseScope> {
     }
 }
 
-fn action_enabled(app: &AppState, target: FileId, action: Action) -> bool {
+fn action_enabled(app: &AppState, pane: PaneId, target: FileId, action: Action) -> bool {
     let Some(meta) = app.workspace.meta(target) else {
         return false;
     };
     if let Some(scope) = close_scope(action) {
-        return !workspace_actions::tab_close_targets(app, target, scope).is_empty();
+        return !workspace_actions::tab_close_targets(app, pane, target, scope).is_empty();
     }
     // Built-in pages have no path to copy or reveal.
     if app.workspace.page(target).is_some() {
         return false;
     }
     match action {
-        Action::KeepOpen => app.workspace.is_preview(target),
+        Action::KeepOpen => app
+            .workspace
+            .pane(pane)
+            .is_some_and(|pane| pane.is_preview(target)),
         Action::ReloadFromDisk => {
             app.workspace.has_disk_conflict(target) && !app.workspace.is_missing_on_disk(target)
         }
@@ -102,6 +106,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
         return panel(viewport, VisualStyle::default());
     };
     let target = menu.target;
+    let pane = menu.pane;
     let Some(path) = snapshot
         .workspace
         .meta(target)
@@ -178,7 +183,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                 row_top += SEP_H;
             }
             Entry::Item(label, action) => {
-                let enabled = action_enabled(&snapshot, target, *action);
+                let enabled = action_enabled(&snapshot, pane, target, *action);
                 let hovered = enabled && menu.hovered == Some(item_index);
                 let row = UiRect::new(card.left + 1.0, row_top, card.right - 1.0, row_top + ITEM_H);
                 let hover_state = state.clone();
@@ -217,13 +222,13 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                     }
                     click_state.update(|app| app.tab_context_menu = None);
                     if let Some(scope) = close_scope(action) {
-                        workspace_actions::request_close_tabs(&click_state, target, scope);
+                        workspace_actions::request_close_tabs(&click_state, pane, target, scope);
                         return;
                     }
                     match action {
                         Action::KeepOpen => {
                             click_state.update(|app| {
-                                app.workspace.promote_preview(target);
+                                app.workspace.promote_preview(pane, target);
                             });
                         }
                         Action::ReloadFromDisk => {
@@ -302,11 +307,36 @@ mod tests {
             .workspace
             .open_path(PathBuf::from("workspace/only.rs"), String::new());
 
-        assert!(action_enabled(&app, only, Action::Close));
-        assert!(!action_enabled(&app, only, Action::CloseOthers));
-        assert!(!action_enabled(&app, only, Action::CloseRight));
-        assert!(action_enabled(&app, only, Action::CloseSaved));
-        assert!(action_enabled(&app, only, Action::CloseAll));
+        assert!(action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            only,
+            Action::Close
+        ));
+        assert!(!action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            only,
+            Action::CloseOthers
+        ));
+        assert!(!action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            only,
+            Action::CloseRight
+        ));
+        assert!(action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            only,
+            Action::CloseSaved
+        ));
+        assert!(action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            only,
+            Action::CloseAll
+        ));
     }
 
     #[test]
@@ -319,8 +349,18 @@ mod tests {
             .workspace
             .preview_path(PathBuf::from("workspace/preview.rs"), String::new());
 
-        assert!(!action_enabled(&app, permanent, Action::KeepOpen));
-        assert!(action_enabled(&app, preview, Action::KeepOpen));
+        assert!(!action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            permanent,
+            Action::KeepOpen
+        ));
+        assert!(action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            preview,
+            Action::KeepOpen
+        ));
     }
 
     #[test]
@@ -330,12 +370,32 @@ mod tests {
             .workspace
             .open_path(PathBuf::from("workspace/src/main.rs"), String::new());
 
-        assert!(!action_enabled(&app, file, Action::CopyRelativePath));
-        assert!(!action_enabled(&app, file, Action::RevealInTree));
+        assert!(!action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            file,
+            Action::CopyRelativePath
+        ));
+        assert!(!action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            file,
+            Action::RevealInTree
+        ));
 
         app.workspace_folders.push(PathBuf::from("workspace"));
-        assert!(action_enabled(&app, file, Action::CopyRelativePath));
-        assert!(action_enabled(&app, file, Action::RevealInTree));
+        assert!(action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            file,
+            Action::CopyRelativePath
+        ));
+        assert!(action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            file,
+            Action::RevealInTree
+        ));
     }
 
     #[test]
@@ -346,15 +406,35 @@ mod tests {
         std::fs::write(&path, "before").unwrap();
         let mut app = AppState::new();
         let target = app.workspace.open_path(path.clone(), "before".into());
-        assert!(!action_enabled(&app, target, Action::ReloadFromDisk));
-        assert!(!action_enabled(&app, target, Action::KeepEditorVersion));
+        assert!(!action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            target,
+            Action::ReloadFromDisk
+        ));
+        assert!(!action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            target,
+            Action::KeepEditorVersion
+        ));
 
         app.workspace.active_editor_mut().unwrap().move_end();
         app.workspace.active_editor_mut().unwrap().insert(" editor");
         std::fs::write(&path, "after and longer").unwrap();
         app.workspace.reconcile_document(target);
-        assert!(action_enabled(&app, target, Action::ReloadFromDisk));
-        assert!(action_enabled(&app, target, Action::KeepEditorVersion));
+        assert!(action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            target,
+            Action::ReloadFromDisk
+        ));
+        assert!(action_enabled(
+            &app,
+            app.workspace.active_pane(),
+            target,
+            Action::KeepEditorVersion
+        ));
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -380,7 +460,10 @@ mod tests {
             Action::RevealInTree,
             Action::RevealInFileExplorer,
         ] {
-            assert!(action_enabled(&app, target, action), "{action:?}");
+            assert!(
+                action_enabled(&app, app.workspace.active_pane(), target, action),
+                "{action:?}"
+            );
         }
     }
 }

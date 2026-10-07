@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::input::action::Action;
 use crate::input::keystroke::Keystroke;
 use crate::model::document::FileId;
+use crate::model::pane_layout::PaneId;
 use crate::model::workspace::{AppPage, Workspace};
 use crate::terminal_session::ShellKind;
 use crate::theme::ThemeId;
@@ -57,12 +58,14 @@ pub enum CloseContinuation {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CloseRequest {
-    pub targets: Vec<FileId>,
+    /// Tabs to close, as (pane, document).
+    pub targets: Vec<(PaneId, FileId)>,
     pub continuation: CloseContinuation,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabDragState {
+    pub pane: PaneId,
     pub source: FileId,
     pub pointer_origin_x: f32,
     pub target_index: usize,
@@ -72,6 +75,7 @@ pub struct TabDragState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabContextMenuState {
     pub position: (f32, f32),
+    pub pane: PaneId,
     pub target: FileId,
     pub hovered: Option<usize>,
 }
@@ -416,7 +420,8 @@ impl AppState {
                 if self.close_request.is_none()
                     && let Some(id) = self.workspace.active()
                 {
-                    crate::workspace_actions::request_close_tab_in(self, id);
+                    let pane = self.workspace.active_pane();
+                    crate::workspace_actions::request_close_tab_in(self, pane, id);
                 }
             }
             _ => {}

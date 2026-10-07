@@ -25,10 +25,10 @@ pub fn render(
     let Some(request) = snapshot.close_request.as_ref() else {
         return panel(viewport, VisualStyle::default());
     };
-    let dirty_targets = request
-        .targets
-        .iter()
-        .copied()
+    let dirty_targets = snapshot
+        .workspace
+        .released_by(&request.targets)
+        .into_iter()
         .filter(|id| snapshot.workspace.is_dirty(*id))
         .collect::<Vec<_>>();
     let dirty_count = dirty_targets.len();

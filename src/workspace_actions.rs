@@ -9,6 +9,7 @@ use lgui::prelude::State;
 
 use crate::file_tree::read_directory;
 use crate::model::document::FileId;
+use crate::model::pane_layout::PaneId;
 use crate::state::{
     AppState, CloseContinuation, CloseRequest, ExplorerCreateKind, ExplorerCreateRequest,
     ExplorerRenameRequest, ExplorerTargetKind,
@@ -55,20 +56,27 @@ pub fn save_document(state: &State<AppState>, id: FileId) -> bool {
     }
 }
 
-pub fn request_close_tab(state: &State<AppState>, id: FileId) {
-    state.update(move |app| request_close_tab_in(app, id));
+pub fn request_close_tab(state: &State<AppState>, pane: PaneId, id: FileId) {
+    state.update(move |app| request_close_tab_in(app, pane, id));
 }
 
-pub(crate) fn request_close_tab_in(app: &mut AppState, id: FileId) {
-    request_close_tabs_in(app, vec![id]);
+pub(crate) fn request_close_tab_in(app: &mut AppState, pane: PaneId, id: FileId) {
+    request_close_tabs_in(app, vec![(pane, id)]);
 }
 
-pub fn tab_close_targets(app: &AppState, target: FileId, scope: TabCloseScope) -> Vec<FileId> {
-    let open = app.workspace.open_files();
+pub fn tab_close_targets(
+    app: &AppState,
+    pane: PaneId,
+    target: FileId,
+    scope: TabCloseScope,
+) -> Vec<(PaneId, FileId)> {
+    let Some(open) = app.workspace.pane(pane).map(|pane| pane.items()) else {
+        return Vec::new();
+    };
     let Some(target_index) = open.iter().position(|id| *id == target) else {
         return Vec::new();
     };
-    match scope {
+    let ids: Vec<FileId> = match scope {
         TabCloseScope::Tab => vec![target],
         TabCloseScope::Others => open.iter().copied().filter(|id| *id != target).collect(),
         TabCloseScope::Right => open.iter().copied().skip(target_index + 1).collect(),
@@ -78,19 +86,27 @@ pub fn tab_close_targets(app: &AppState, target: FileId, scope: TabCloseScope) -
             .filter(|id| !app.workspace.is_dirty(*id))
             .collect(),
         TabCloseScope::All => open.to_vec(),
-    }
+    };
+    ids.into_iter().map(|id| (pane, id)).collect()
 }
 
-pub fn request_close_tabs(state: &State<AppState>, target: FileId, scope: TabCloseScope) {
-    let targets = tab_close_targets(&state.get(), target, scope);
+pub fn request_close_tabs(
+    state: &State<AppState>,
+    pane: PaneId,
+    target: FileId,
+    scope: TabCloseScope,
+) {
+    let targets = tab_close_targets(&state.get(), pane, target, scope);
     state.update(move |app| request_close_tabs_in(app, targets));
 }
 
-fn request_close_tabs_in(app: &mut AppState, targets: Vec<FileId>) {
+fn request_close_tabs_in(app: &mut AppState, targets: Vec<(PaneId, FileId)>) {
     let mut existing = Vec::with_capacity(targets.len());
-    for id in targets {
-        if app.workspace.meta(id).is_some() && !existing.contains(&id) {
-            existing.push(id);
+    for (pane, id) in targets {
+        if app.workspace.pane(pane).is_some_and(|p| p.contains(id))
+            && !existing.contains(&(pane, id))
+        {
+            existing.push((pane, id));
         }
     }
     if existing.is_empty() {
@@ -99,14 +115,20 @@ fn request_close_tabs_in(app: &mut AppState, targets: Vec<FileId>) {
     app.tab_context_menu = None;
     app.tab_drag = None;
     app.editor.menu = None;
-    if existing.iter().any(|id| app.workspace.is_dirty(*id)) {
+    // A dirty document only needs a decision when its last tab closes.
+    if app
+        .workspace
+        .released_by(&existing)
+        .into_iter()
+        .any(|id| app.workspace.is_dirty(id))
+    {
         app.close_request = Some(CloseRequest {
             targets: existing,
             continuation: CloseContinuation::CloseTabs,
         });
     } else {
-        for id in existing {
-            app.workspace.close(id);
+        for (pane, id) in existing {
+            app.workspace.close_item(pane, id);
         }
     }
 }
@@ -129,8 +151,8 @@ pub fn discard_close_request(state: &State<AppState>) -> Option<CloseContinuatio
 
 fn discard_close_request_in(app: &mut AppState) -> Option<CloseContinuation> {
     let request = app.close_request.take()?;
-    for id in request.targets {
-        app.workspace.close(id);
+    for (pane, id) in request.targets {
+        app.workspace.close_item(pane, id);
     }
     Some(request.continuation)
 }
@@ -154,19 +176,19 @@ fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>
     let Some(request) = app.close_request.clone() else {
         return Ok(None);
     };
-    for id in &request.targets {
-        if !app.workspace.is_dirty(*id) {
+    for id in app.workspace.released_by(&request.targets) {
+        if !app.workspace.is_dirty(id) {
             continue;
         }
-        let Some((id, path, contents)) = app.workspace.save_snapshot(*id) else {
+        let Some((id, path, contents)) = app.workspace.save_snapshot(id) else {
             continue;
         };
         fs::write(&path, contents.as_bytes())
             .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
         app.workspace.mark_saved(id);
     }
-    for id in request.targets {
-        app.workspace.close(id);
+    for (pane, id) in request.targets {
+        app.workspace.close_item(pane, id);
     }
     app.close_request = None;
     Ok(Some(request.continuation))
@@ -1179,6 +1201,16 @@ fn read_text_file(path: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    fn tabs(app: &AppState, ids: &[FileId]) -> Vec<(PaneId, FileId)> {
+        let pane = app.workspace.active_pane();
+        ids.iter().map(|id| (pane, *id)).collect()
+    }
+
+    fn close_tab(app: &mut AppState, id: FileId) {
+        let pane = app.workspace.active_pane();
+        request_close_tab_in(app, pane, id);
+    }
+
     #[test]
     fn clean_tab_closes_without_confirmation() {
         let mut app = AppState::new();
@@ -1186,10 +1218,34 @@ mod tests {
             .workspace
             .open_path(PathBuf::from("workspace/clean.rs"), String::new());
 
-        request_close_tab_in(&mut app, id);
+        close_tab(&mut app, id);
 
         assert!(app.workspace.meta(id).is_none());
         assert!(app.close_request.is_none());
+    }
+
+    #[test]
+    fn closing_one_of_two_tabs_of_a_dirty_document_needs_no_confirmation() {
+        let mut app = AppState::new();
+        let left = app.workspace.active_pane();
+        let id = app
+            .workspace
+            .open_path(PathBuf::from("workspace/shared.rs"), String::new());
+        let right = app
+            .workspace
+            .split(left, crate::model::pane_layout::Direction::Right)
+            .unwrap();
+        app.workspace.active_editor_mut().unwrap().insert("changed");
+
+        request_close_tab_in(&mut app, right, id);
+        assert!(app.close_request.is_none());
+        assert!(app.workspace.is_dirty(id));
+
+        request_close_tab_in(&mut app, left, id);
+        assert_eq!(
+            app.close_request.map(|request| request.targets),
+            Some(vec![(left, id)])
+        );
     }
 
     #[test]
@@ -1200,13 +1256,13 @@ mod tests {
             .open_path(PathBuf::from("workspace/dirty.rs"), String::new());
         app.workspace.active_editor_mut().unwrap().insert("changed");
 
-        request_close_tab_in(&mut app, id);
+        close_tab(&mut app, id);
 
         assert!(app.workspace.meta(id).is_some());
         assert_eq!(
             app.close_request,
             Some(CloseRequest {
-                targets: vec![id],
+                targets: tabs(&app, &[id]),
                 continuation: CloseContinuation::CloseTabs,
             })
         );
@@ -1258,7 +1314,7 @@ mod tests {
             app.workspace_folders,
             vec![PathBuf::from("previous-workspace")]
         );
-        assert!(app.workspace.open_files().is_empty());
+        assert!(app.workspace.active_items().is_empty());
         assert!(
             app.toast
                 .as_ref()
@@ -1287,7 +1343,7 @@ mod tests {
             app.close_request
                 .as_ref()
                 .map(|request| request.targets.clone()),
-            Some(vec![dirty])
+            Some(tabs(&app, &[dirty]))
         );
 
         // A pending request is never replaced by another keyboard close.
@@ -1298,7 +1354,7 @@ mod tests {
             app.close_request
                 .as_ref()
                 .map(|request| request.targets.clone()),
-            Some(vec![dirty])
+            Some(tabs(&app, &[dirty]))
         );
 
         app.close_request = None;
@@ -1325,24 +1381,49 @@ mod tests {
             .open_path(PathBuf::from("fourth.rs"), String::new());
 
         assert_eq!(
-            tab_close_targets(&app, second, TabCloseScope::Tab),
-            vec![second]
+            tab_close_targets(
+                &app,
+                app.workspace.active_pane(),
+                second,
+                TabCloseScope::Tab
+            ),
+            tabs(&app, &[second])
         );
         assert_eq!(
-            tab_close_targets(&app, second, TabCloseScope::Others),
-            vec![first, third, fourth]
+            tab_close_targets(
+                &app,
+                app.workspace.active_pane(),
+                second,
+                TabCloseScope::Others
+            ),
+            tabs(&app, &[first, third, fourth])
         );
         assert_eq!(
-            tab_close_targets(&app, second, TabCloseScope::Right),
-            vec![third, fourth]
+            tab_close_targets(
+                &app,
+                app.workspace.active_pane(),
+                second,
+                TabCloseScope::Right
+            ),
+            tabs(&app, &[third, fourth])
         );
         assert_eq!(
-            tab_close_targets(&app, second, TabCloseScope::Saved),
-            vec![first, third, fourth]
+            tab_close_targets(
+                &app,
+                app.workspace.active_pane(),
+                second,
+                TabCloseScope::Saved
+            ),
+            tabs(&app, &[first, third, fourth])
         );
         assert_eq!(
-            tab_close_targets(&app, second, TabCloseScope::All),
-            vec![first, second, third, fourth]
+            tab_close_targets(
+                &app,
+                app.workspace.active_pane(),
+                second,
+                TabCloseScope::All
+            ),
+            tabs(&app, &[first, second, third, fourth])
         );
     }
 
@@ -1357,14 +1438,15 @@ mod tests {
             .open_path(PathBuf::from("dirty.rs"), String::new());
         app.workspace.active_editor_mut().unwrap().insert("dirty");
 
-        request_close_tabs_in(&mut app, vec![clean, dirty]);
+        let targets = tabs(&app, &[clean, dirty]);
+        request_close_tabs_in(&mut app, targets);
 
         assert!(app.workspace.meta(clean).is_some());
         assert!(app.workspace.meta(dirty).is_some());
         assert_eq!(
             app.close_request,
             Some(CloseRequest {
-                targets: vec![clean, dirty],
+                targets: tabs(&app, &[clean, dirty]),
                 continuation: CloseContinuation::CloseTabs,
             })
         );
@@ -1379,7 +1461,7 @@ mod tests {
         let first = dirty_test_file(&mut app, first_path.clone(), "first", " updated");
         let second = dirty_test_file(&mut app, second_path.clone(), "second", " updated");
         app.close_request = Some(CloseRequest {
-            targets: vec![first, second],
+            targets: tabs(&app, &[first, second]),
             continuation: CloseContinuation::ExitApplication,
         });
 
@@ -1408,7 +1490,7 @@ mod tests {
             .unwrap()
             .insert(" updated");
         app.close_request = Some(CloseRequest {
-            targets: vec![first, second],
+            targets: tabs(&app, &[first, second]),
             continuation: CloseContinuation::CloseTabs,
         });
 
@@ -1436,7 +1518,7 @@ mod tests {
             .open_path(PathBuf::from("second.txt"), String::new());
         app.workspace.active_editor_mut().unwrap().insert("second");
         app.close_request = Some(CloseRequest {
-            targets: vec![first, second],
+            targets: tabs(&app, &[first, second]),
             continuation: CloseContinuation::CloseTabs,
         });
 
@@ -1456,7 +1538,7 @@ mod tests {
             .open_path(PathBuf::from("dirty.txt"), String::new());
         app.workspace.active_editor_mut().unwrap().insert("changed");
         app.close_request = Some(CloseRequest {
-            targets: vec![id],
+            targets: tabs(&app, &[id]),
             continuation: CloseContinuation::ExitApplication,
         });
 

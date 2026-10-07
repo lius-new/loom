@@ -12,6 +12,7 @@ use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text}
 use lgui::text::{self, TextLayoutRequest};
 
 use crate::model::document::{FileId, FileMeta};
+use crate::model::pane_layout::PaneId;
 use crate::model::workspace::AppPage;
 use crate::state::{AppState, MainSurface, TabContextMenuState, TabDragState};
 use crate::theme;
@@ -251,10 +252,17 @@ fn tab_state_mark(app: &AppState, id: FileId) -> Option<(&'static str, Color)> {
     }
 }
 
-fn natural_tab_widths(app: &AppState) -> Vec<f32> {
-    let labels = app.workspace.tab_labels();
-    app.workspace
-        .open_files()
+fn pane_items(app: &AppState, pane: PaneId) -> &[FileId] {
+    app.workspace.pane(pane).map_or(&[], |pane| pane.items())
+}
+
+fn pane_active(app: &AppState, pane: PaneId) -> Option<FileId> {
+    app.workspace.pane(pane).and_then(|pane| pane.active())
+}
+
+fn natural_tab_widths(app: &AppState, pane: PaneId) -> Vec<f32> {
+    let labels = app.workspace.tab_labels(pane);
+    pane_items(app, pane)
         .iter()
         .filter_map(|id| {
             let meta = app.workspace.meta(*id)?;
@@ -277,14 +285,10 @@ fn natural_tab_widths(app: &AppState) -> Vec<f32> {
         .collect()
 }
 
-fn tab_layout(rect: UiRect, app: &AppState, reveal_active: bool) -> TabLayoutResult {
-    let widths = natural_tab_widths(app);
-    let active_index = app.workspace.active().and_then(|active| {
-        app.workspace
-            .open_files()
-            .iter()
-            .position(|id| *id == active)
-    });
+fn tab_layout(rect: UiRect, app: &AppState, pane: PaneId, reveal_active: bool) -> TabLayoutResult {
+    let widths = natural_tab_widths(app, pane);
+    let active_index = pane_active(app, pane)
+        .and_then(|active| pane_items(app, pane).iter().position(|id| *id == active));
     let base_viewport_width = (controls_left(rect, app) - rect.left).max(0.0);
     tab_layout::calculate(TabLayoutInput {
         natural_widths: &widths,
@@ -299,8 +303,8 @@ fn tab_layout(rect: UiRect, app: &AppState, reveal_active: bool) -> TabLayoutRes
     })
 }
 
-pub fn active_visible_scroll(rect: UiRect, app: &AppState) -> f32 {
-    tab_layout(rect, app, true).scroll_x
+pub fn active_visible_scroll(rect: UiRect, app: &AppState, pane: PaneId) -> f32 {
+    tab_layout(rect, app, pane, true).scroll_x
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -360,6 +364,7 @@ fn point_inside(rect: UiRect, x: f32, y: f32) -> bool {
 /// click into a drag.
 pub fn update_pointer(
     app: &mut AppState,
+    pane: PaneId,
     rect: UiRect,
     pointer_x: f32,
     pointer_y: f32,
@@ -369,7 +374,7 @@ pub fn update_pointer(
     let mut changed = app.tab_strip_hovered != inside;
     app.tab_strip_hovered = inside;
 
-    let mut layout = tab_layout(rect, app, false);
+    let mut layout = tab_layout(rect, app, pane, false);
     if is_pointer_drag {
         if app.tab_scrollbar_dragging
             && let Some(geometry) = scrollbar_geometry(rect, &layout)
@@ -378,7 +383,7 @@ pub fn update_pointer(
             if (app.tab_scroll_x - next).abs() > f32::EPSILON {
                 app.tab_scroll_x = next;
                 changed = true;
-                layout = tab_layout(rect, app, false);
+                layout = tab_layout(rect, app, pane, false);
             }
         }
 
@@ -399,7 +404,7 @@ pub fn update_pointer(
                 }
                 if (app.tab_scroll_x - previous_scroll).abs() > f32::EPSILON {
                     changed = true;
-                    layout = tab_layout(rect, app, false);
+                    layout = tab_layout(rect, app, pane, false);
                 }
 
                 let content_x = pointer_x - rect.left + layout.scroll_x;
@@ -421,8 +426,7 @@ pub fn update_pointer(
             .items
             .iter()
             .find(|item| content_x >= item.left && content_x <= item.right)
-            .and_then(|item| app.workspace.open_files().get(item.index))
-            .copied()
+            .and_then(|item| pane_items(app, pane).get(item.index).copied())
     } else {
         None
     };
@@ -441,7 +445,9 @@ pub fn finish_pointer_interaction(app: &mut AppState) -> bool {
     if let Some(drag) = app.tab_drag.take() {
         changed = true;
         if drag.active {
-            changed |= app.workspace.move_tab(drag.source, drag.target_index);
+            changed |= app
+                .workspace
+                .move_tab(drag.pane, drag.source, drag.target_index);
         }
     }
     changed
@@ -460,16 +466,17 @@ pub fn cancel_pointer_interaction(app: &mut AppState) -> bool {
     changed
 }
 
-pub fn render_tooltip(viewport: UiRect, rect: UiRect, app: &AppState) -> Option<Element> {
+pub fn render_tooltip(
+    viewport: UiRect,
+    rect: UiRect,
+    app: &AppState,
+    pane: PaneId,
+) -> Option<Element> {
     let hovered = app.tab_hovered?;
     let path = app.workspace.meta(hovered)?.path.clone();
     let path = super::display_path(&path);
-    let index = app
-        .workspace
-        .open_files()
-        .iter()
-        .position(|id| *id == hovered)?;
-    let layout = tab_layout(rect, app, false);
+    let index = pane_items(app, pane).iter().position(|id| *id == hovered)?;
+    let layout = tab_layout(rect, app, pane, false);
     let item = layout.items.get(index)?;
     let natural_width = measure(&path, theme::SMALL, 400) + 20.0;
     let width = natural_width.min((viewport.width() - 16.0).max(80.0));
@@ -497,14 +504,19 @@ pub fn render_tooltip(viewport: UiRect, rect: UiRect, app: &AppState) -> Option<
     )
 }
 
-pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
+pub fn render(
+    pane: PaneId,
+    rect: UiRect,
+    state: State<AppState>,
+    editor_focus: UiFocusHandle,
+) -> Element {
     let s = state.get();
-    let active = s.workspace.active();
-    let labels = s.workspace.tab_labels();
+    let active = pane_active(&s, pane);
+    let labels = s.workspace.tab_labels(pane);
 
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
     let controls_left = controls_left(rect, &s);
-    let layout = tab_layout(rect, &s, false);
+    let layout = tab_layout(rect, &s, pane, false);
     let tab_viewport = UiRect::new(
         rect.left,
         rect.top,
@@ -557,7 +569,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     // Only tabs near the viewport become elements. The drag source is kept
     // even when edge auto-scroll moves it away so its keyed element survives
     // until the gesture ends.
-    let open_files = s.workspace.open_files();
+    let open_files = pane_items(&s, pane);
     let visible = tab_layout::visible_range(
         &layout.items,
         layout.scroll_x,
@@ -593,7 +605,10 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             x + tab_w,
             rect.bottom - PILL_INSET,
         );
-        let name_style = tab_name_style(Some(id) == active, s.workspace.is_preview(id));
+        let name_style = tab_name_style(
+            Some(id) == active,
+            s.workspace.pane(pane).is_some_and(|p| p.is_preview(id)),
+        );
 
         let badge_left = pill.left + PAD;
         let name_left = badge_left + badge_w + GAP;
@@ -635,13 +650,14 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                     let pointer_y = pointer.point.y;
                     st.update(move |app| {
                         let clicks = app.editor.tab_click_count(id, pointer_x, pointer_y);
-                        app.workspace.set_active(id);
+                        app.workspace.activate(pane, id);
                         app.tab_context_menu = None;
                         if clicks > 1 {
-                            app.workspace.promote_preview(id);
+                            app.workspace.promote_preview(pane, id);
                             app.tab_drag = None;
                         } else {
                             app.tab_drag = Some(TabDragState {
+                                pane,
                                 source: id,
                                 pointer_origin_x: pointer_x,
                                 target_index: index,
@@ -652,7 +668,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                     focus.focus();
                 }
                 PointerButton::Middle => {
-                    crate::workspace_actions::request_close_tab(&st, id);
+                    crate::workspace_actions::request_close_tab(&st, pane, id);
                     focus.focus();
                 }
                 PointerButton::Right => {
@@ -665,6 +681,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                         app.context_menu_hover = None;
                         app.tab_context_menu = Some(TabContextMenuState {
                             position,
+                            pane,
                             target: id,
                             hovered: None,
                         });
@@ -712,7 +729,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                     }
                 })
                 .on_click(move || {
-                    crate::workspace_actions::request_close_tab(&st, id);
+                    crate::workspace_actions::request_close_tab(&st, pane, id);
                     focus.focus();
                 })
                 .child(text(
@@ -734,11 +751,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     bar = bar.child(tab_layer);
 
     if let Some(drag) = s.tab_drag.as_ref().filter(|drag| drag.active)
-        && let Some(source_index) = s
-            .workspace
-            .open_files()
-            .iter()
-            .position(|id| *id == drag.source)
+        && let Some(source_index) = open_files.iter().position(|id| *id == drag.source)
         && drag.target_index != source_index
         && let Some(target) = layout.items.get(drag.target_index)
     {
@@ -946,28 +959,31 @@ mod tests {
             .open_path(PathBuf::from("third.rs"), String::new());
         app.workspace.set_active(first);
         app.tab_drag = Some(TabDragState {
+            pane: app.workspace.active_pane(),
             source: first,
             pointer_origin_x: 20.0,
             target_index: 0,
             active: false,
         });
         let rect = UiRect::new(0.0, 0.0, 700.0, theme::TABS_H);
+        let pane = app.workspace.active_pane();
 
-        assert!(update_pointer(&mut app, rect, 22.0, 10.0, true));
+        assert!(update_pointer(&mut app, pane, rect, 22.0, 10.0, true));
         assert!(!app.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
-        assert_eq!(app.workspace.open_files(), &[first, second, third]);
+        assert_eq!(app.workspace.active_items(), &[first, second, third]);
 
         app.tab_drag = Some(TabDragState {
+            pane: app.workspace.active_pane(),
             source: first,
             pointer_origin_x: 20.0,
             target_index: 0,
             active: false,
         });
-        assert!(update_pointer(&mut app, rect, 650.0, 10.0, true));
+        assert!(update_pointer(&mut app, pane, rect, 650.0, 10.0, true));
         assert!(app.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
-        assert_eq!(app.workspace.open_files(), &[second, third, first]);
+        assert_eq!(app.workspace.active_items(), &[second, third, first]);
     }
 
     /// Manual probe for Phase 6: `cargo test --release -- --ignored --nocapture
@@ -984,9 +1000,10 @@ mod tests {
                 );
             }
             let rect = UiRect::new(0.0, 0.0, 1200.0, theme::TABS_H);
+            let pane = app.workspace.active_pane();
             let started = std::time::Instant::now();
             for step in 0..200 {
-                update_pointer(&mut app, rect, (step * 5) as f32, 10.0, false);
+                update_pointer(&mut app, pane, rect, (step * 5) as f32, 10.0, false);
             }
             println!(
                 "{count} tabs: {:?} per pointer update",
@@ -1006,16 +1023,18 @@ mod tests {
             .open_path(PathBuf::from("second.rs"), String::new());
         app.workspace.set_active(first);
         app.tab_drag = Some(TabDragState {
+            pane: app.workspace.active_pane(),
             source: first,
             pointer_origin_x: 20.0,
             target_index: 0,
             active: false,
         });
         let rect = UiRect::new(0.0, 0.0, 700.0, theme::TABS_H);
+        let pane = app.workspace.active_pane();
 
-        assert!(update_pointer(&mut app, rect, 500.0, 10.0, false));
+        assert!(update_pointer(&mut app, pane, rect, 500.0, 10.0, false));
         assert!(!app.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
-        assert_eq!(app.workspace.open_files(), &[first, second]);
+        assert_eq!(app.workspace.active_items(), &[first, second]);
     }
 }
