@@ -64,6 +64,19 @@ pub(crate) fn request_close_tab_in(app: &mut AppState, pane: PaneId, id: FileId)
     request_close_tabs_in(app, vec![(pane, id)]);
 }
 
+/// Close every tab of a pane (asking about dirty files), which then closes
+/// the pane itself; an already empty pane closes directly.
+pub(crate) fn request_close_pane_in(app: &mut AppState, pane: PaneId) {
+    let Some(items) = app.workspace.pane(pane).map(|p| p.items().to_vec()) else {
+        return;
+    };
+    if items.is_empty() {
+        app.workspace.close_pane(pane);
+    } else {
+        request_close_tabs_in(app, items.into_iter().map(|id| (pane, id)).collect());
+    }
+}
+
 pub fn tab_close_targets(
     app: &AppState,
     pane: PaneId,

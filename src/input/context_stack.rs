@@ -35,6 +35,7 @@ fn surface_name(surface: MainSurface) -> &'static str {
         MainSurface::Keymap => "keymap",
         MainSurface::WorkspaceHome => "home",
         MainSurface::Welcome => "welcome",
+        MainSurface::Empty => "empty",
     }
 }
 

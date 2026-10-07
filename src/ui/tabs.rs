@@ -163,8 +163,13 @@ fn icon(id: UiId, key: &'static str, rect: UiRect, color: Color) -> Element {
     precompiled(UiElement::icon(id, rect, key).icon_style(IconStyle::new(color)))
 }
 
-fn controls_left(rect: UiRect, app: &AppState) -> f32 {
-    if app.show_drawer {
+/// The collapsed-drawer toggle sits at the right end of the top-right pane's strip.
+fn shows_drawer_toggle(app: &AppState, pane: PaneId) -> bool {
+    !app.show_drawer && app.workspace.layout().top_right() == pane
+}
+
+fn controls_left(rect: UiRect, app: &AppState, pane: PaneId) -> f32 {
+    if !shows_drawer_toggle(app, pane) {
         rect.right
     } else {
         rect.right - CLUSTER_PAD - ICON - CLUSTER_PAD - 1.0
@@ -289,11 +294,11 @@ fn tab_layout(rect: UiRect, app: &AppState, pane: PaneId, reveal_active: bool) -
     let widths = natural_tab_widths(app, pane);
     let active_index = pane_active(app, pane)
         .and_then(|active| pane_items(app, pane).iter().position(|id| *id == active));
-    let base_viewport_width = (controls_left(rect, app) - rect.left).max(0.0);
+    let base_viewport_width = (controls_left(rect, app, pane) - rect.left).max(0.0);
     tab_layout::calculate(TabLayoutInput {
         natural_widths: &widths,
         viewport_width: base_viewport_width,
-        scroll_x: app.tab_scroll_x,
+        scroll_x: tab_scroll_x(app, pane),
         active_index,
         reveal_active,
         min_tab_width: EDITOR_MIN_TAB_W,
@@ -301,6 +306,18 @@ fn tab_layout(rect: UiRect, app: &AppState, pane: PaneId, reveal_active: bool) -
         gap: TAB_GAP,
         padding: TABS_PAD,
     })
+}
+
+pub fn tab_scroll_x(app: &AppState, pane: PaneId) -> f32 {
+    app.tab_scroll.get(&pane).copied().unwrap_or(0.0)
+}
+
+fn set_tab_scroll_x(app: &mut AppState, pane: PaneId, value: f32) -> bool {
+    if (tab_scroll_x(app, pane) - value).abs() <= f32::EPSILON {
+        return false;
+    }
+    app.tab_scroll.insert(pane, value);
+    true
 }
 
 pub fn active_visible_scroll(rect: UiRect, app: &AppState, pane: PaneId) -> f32 {
@@ -359,77 +376,80 @@ fn point_inside(rect: UiRect, x: f32, y: f32) -> bool {
     x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
 }
 
-/// Track tab hover and, only for an actual `PointerDrag`, advance scrollbar or
-/// tab reorder gestures. Ordinary hover movement must never promote a pending
-/// click into a drag.
+/// Track tab hover across every pane's strip and, only for an actual
+/// `PointerDrag`, advance scrollbar or tab reorder gestures. Ordinary hover
+/// movement must never promote a pending click into a drag.
 pub fn update_pointer(
     app: &mut AppState,
-    pane: PaneId,
-    rect: UiRect,
+    strips: &[(PaneId, UiRect)],
     pointer_x: f32,
     pointer_y: f32,
     is_pointer_drag: bool,
 ) -> bool {
-    let inside = point_inside(rect, pointer_x, pointer_y);
+    let inside = strips
+        .iter()
+        .find(|(_, rect)| point_inside(*rect, pointer_x, pointer_y))
+        .map(|(pane, _)| *pane);
     let mut changed = app.tab_strip_hovered != inside;
     app.tab_strip_hovered = inside;
 
-    let mut layout = tab_layout(rect, app, pane, false);
-    if is_pointer_drag {
-        if app.tab_scrollbar_dragging
-            && let Some(geometry) = scrollbar_geometry(rect, &layout)
-        {
-            let next = scroll_from_pointer(pointer_x, app.tab_scrollbar_drag_offset, geometry);
-            if (app.tab_scroll_x - next).abs() > f32::EPSILON {
-                app.tab_scroll_x = next;
-                changed = true;
-                layout = tab_layout(rect, app, pane, false);
-            }
-        }
-
-        if let Some(mut drag) = app.tab_drag.take() {
-            if !drag.active && (pointer_x - drag.pointer_origin_x).abs() >= DRAG_THRESHOLD {
-                drag.active = true;
-                changed = true;
-            }
-            if drag.active {
-                let viewport_left = rect.left;
-                let viewport_right = rect.left + layout.viewport_width;
-                let previous_scroll = app.tab_scroll_x;
-                if pointer_x <= viewport_left + DRAG_EDGE_W {
-                    app.tab_scroll_x = (app.tab_scroll_x - DRAG_SCROLL_STEP).max(0.0);
-                } else if pointer_x >= viewport_right - DRAG_EDGE_W {
-                    app.tab_scroll_x =
-                        (app.tab_scroll_x + DRAG_SCROLL_STEP).min(layout.max_scroll_x);
-                }
-                if (app.tab_scroll_x - previous_scroll).abs() > f32::EPSILON {
+    let mut hovered = None;
+    for &(pane, rect) in strips {
+        let mut layout = tab_layout(rect, app, pane, false);
+        if is_pointer_drag {
+            if app.tab_scrollbar_dragging == Some(pane)
+                && let Some(geometry) = scrollbar_geometry(rect, &layout)
+            {
+                let next = scroll_from_pointer(pointer_x, app.tab_scrollbar_drag_offset, geometry);
+                if set_tab_scroll_x(app, pane, next) {
                     changed = true;
                     layout = tab_layout(rect, app, pane, false);
                 }
-
-                let content_x = pointer_x - rect.left + layout.scroll_x;
-                if let Some(target_index) = tab_layout::reorder_target(&layout.items, content_x)
-                    && target_index != drag.target_index
-                {
-                    drag.target_index = target_index;
+            }
+            if let Some(mut drag) = app.tab_drag.take_if(|drag| drag.pane == pane) {
+                if !drag.active && (pointer_x - drag.pointer_origin_x).abs() >= DRAG_THRESHOLD {
+                    drag.active = true;
                     changed = true;
                 }
+                if drag.active {
+                    let viewport_left = rect.left;
+                    let viewport_right = rect.left + layout.viewport_width;
+                    let scroll = tab_scroll_x(app, pane);
+                    let next = if pointer_x <= viewport_left + DRAG_EDGE_W {
+                        (scroll - DRAG_SCROLL_STEP).max(0.0)
+                    } else if pointer_x >= viewport_right - DRAG_EDGE_W {
+                        (scroll + DRAG_SCROLL_STEP).min(layout.max_scroll_x)
+                    } else {
+                        scroll
+                    };
+                    if set_tab_scroll_x(app, pane, next) {
+                        changed = true;
+                        layout = tab_layout(rect, app, pane, false);
+                    }
+
+                    let content_x = pointer_x - rect.left + layout.scroll_x;
+                    if let Some(target_index) = tab_layout::reorder_target(&layout.items, content_x)
+                        && target_index != drag.target_index
+                    {
+                        drag.target_index = target_index;
+                        changed = true;
+                    }
+                }
+                app.tab_drag = Some(drag);
             }
-            app.tab_drag = Some(drag);
+        }
+
+        let viewport_right = rect.left + layout.viewport_width;
+        if inside == Some(pane) && pointer_x <= viewport_right {
+            let content_x = pointer_x - rect.left + layout.scroll_x;
+            hovered = layout
+                .items
+                .iter()
+                .find(|item| content_x >= item.left && content_x <= item.right)
+                .and_then(|item| pane_items(app, pane).get(item.index).copied())
+                .map(|id| (pane, id));
         }
     }
-
-    let viewport_right = rect.left + layout.viewport_width;
-    let hovered = if inside && pointer_x <= viewport_right {
-        let content_x = pointer_x - rect.left + layout.scroll_x;
-        layout
-            .items
-            .iter()
-            .find(|item| content_x >= item.left && content_x <= item.right)
-            .and_then(|item| pane_items(app, pane).get(item.index).copied())
-    } else {
-        None
-    };
     if app.tab_hovered != hovered {
         app.tab_hovered = hovered;
         changed = true;
@@ -440,8 +460,8 @@ pub fn update_pointer(
 
 /// Commit a completed reorder and release all tab pointer state.
 pub fn finish_pointer_interaction(app: &mut AppState) -> bool {
-    let mut changed = app.tab_scrollbar_dragging;
-    app.tab_scrollbar_dragging = false;
+    let mut changed = app.tab_scrollbar_dragging.is_some();
+    app.tab_scrollbar_dragging = None;
     if let Some(drag) = app.tab_drag.take() {
         changed = true;
         if drag.active {
@@ -455,24 +475,24 @@ pub fn finish_pointer_interaction(app: &mut AppState) -> bool {
 
 /// Cancel transient pointer state without applying a pending reorder.
 pub fn cancel_pointer_interaction(app: &mut AppState) -> bool {
-    let changed = app.tab_scrollbar_dragging
+    let changed = app.tab_scrollbar_dragging.is_some()
         || app.tab_drag.is_some()
-        || app.tab_strip_hovered
+        || app.tab_strip_hovered.is_some()
         || app.tab_hovered.is_some();
-    app.tab_scrollbar_dragging = false;
+    app.tab_scrollbar_dragging = None;
     app.tab_drag = None;
-    app.tab_strip_hovered = false;
+    app.tab_strip_hovered = None;
     app.tab_hovered = None;
     changed
 }
 
 pub fn render_tooltip(
     viewport: UiRect,
-    rect: UiRect,
+    strips: &[(PaneId, UiRect)],
     app: &AppState,
-    pane: PaneId,
 ) -> Option<Element> {
-    let hovered = app.tab_hovered?;
+    let (pane, hovered) = app.tab_hovered?;
+    let rect = strips.iter().find(|(id, _)| *id == pane)?.1;
     let path = app.workspace.meta(hovered)?.path.clone();
     let path = super::display_path(&path);
     let index = pane_items(app, pane).iter().position(|id| *id == hovered)?;
@@ -512,10 +532,12 @@ pub fn render(
 ) -> Element {
     let s = state.get();
     let active = pane_active(&s, pane);
+    let focused_pane = s.workspace.active_pane() == pane;
     let labels = s.workspace.tab_labels(pane);
 
-    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
-    let controls_left = controls_left(rect, &s);
+    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar))
+        .key(format!("tab-strip-{}", pane.get()));
+    let controls_left = controls_left(rect, &s, pane);
     let layout = tab_layout(rect, &s, pane, false);
     let tab_viewport = UiRect::new(
         rect.left,
@@ -539,7 +561,8 @@ pub fn render(
                 WheelUnit::Pixels => primary_delta,
             };
             wheel_state.update(move |app| {
-                app.tab_scroll_x = (app.tab_scroll_x - step).clamp(0.0, max_scroll_x);
+                let next = (tab_scroll_x(app, pane) - step).clamp(0.0, max_scroll_x);
+                set_tab_scroll_x(app, pane, next);
             });
             cx.stop_propagation();
         });
@@ -548,7 +571,7 @@ pub fn render(
     // Tabs are content-sized rounded pills, inset PILL_INSET vertically,
     // separated by TAB_GAP. The strip has no padding; this cluster's left
     // padding is TABS_PAD.
-    if s.main_surface() == MainSurface::Welcome {
+    if s.pane_surface(pane) == MainSurface::Welcome {
         let label = "welcome";
         let label_w = measure(label, theme::UI_SIZE, 400);
         let tab_w = (PAD * 2.0 + label_w + TEXT_MARGIN).clamp(MIN_TAB_W, MAX_TAB_W);
@@ -641,7 +664,7 @@ pub fn render(
         } else {
             panel(pill, VisualStyle::default().radius(2.0))
         }
-        .key(format!("editor-tab-{id:?}"))
+        .key(format!("editor-tab-{}-{id:?}", pane.get()))
         .event_policy(EventPolicy::INTERACTIVE)
         .on_pointer_down_with_button(move |cx, pointer, button| {
             match button {
@@ -713,7 +736,7 @@ pub fn render(
 
         // The close slot is always reserved by the layout, but the control is
         // only painted and hit-testable for the active or hovered tab.
-        if Some(id) == active || s.tab_hovered == Some(id) {
+        if Some(id) == active || s.tab_hovered == Some((pane, id)) {
             let st = state.clone();
             let focus = editor_focus.clone();
             tab_el = tab_el.child(
@@ -721,7 +744,7 @@ pub fn render(
                     UiRect::new(close_left, pill.top, pill.right - PAD, pill.bottom),
                     VisualStyle::default(),
                 )
-                .key(format!("editor-tab-close-{id:?}"))
+                .key(format!("editor-tab-close-{}-{id:?}", pane.get()))
                 .event_policy(EventPolicy::INTERACTIVE)
                 .on_pointer_down_with_button(move |cx, _pointer, button| {
                     if button == PointerButton::Left {
@@ -796,7 +819,7 @@ pub fn render(
         }
     }
 
-    if (s.tab_strip_hovered || s.tab_scrollbar_dragging)
+    if (s.tab_strip_hovered == Some(pane) || s.tab_scrollbar_dragging == Some(pane))
         && let Some(geometry) = scrollbar_geometry(rect, &layout)
     {
         let visual_track = UiRect::new(
@@ -814,7 +837,7 @@ pub fn render(
         let track_state = state.clone();
         let thumb_state = state.clone();
         let scrollbar = panel(geometry.track, VisualStyle::default())
-            .key("tabs-horizontal-scrollbar")
+            .key(format!("tabs-horizontal-scrollbar-{}", pane.get()))
             .event_policy(EventPolicy::INTERACTIVE)
             .on_pointer_down_with_button(move |cx, pointer, button| {
                 if button != PointerButton::Left {
@@ -823,8 +846,8 @@ pub fn render(
                 let offset = geometry.thumb_width / 2.0;
                 let next = scroll_from_pointer(pointer.point.x, offset, geometry);
                 track_state.update(move |app| {
-                    app.tab_scroll_x = next;
-                    app.tab_scrollbar_dragging = true;
+                    set_tab_scroll_x(app, pane, next);
+                    app.tab_scrollbar_dragging = Some(pane);
                     app.tab_scrollbar_drag_offset = offset;
                     app.tab_drag = None;
                 });
@@ -839,7 +862,7 @@ pub fn render(
                     thumb_rect,
                     VisualStyle::filled(theme::c().text_dim).radius(TAB_SCROLLBAR_H / 2.0),
                 )
-                .key("tabs-horizontal-scrollbar-thumb")
+                .key(format!("tabs-horizontal-scrollbar-thumb-{}", pane.get()))
                 .event_policy(EventPolicy::INTERACTIVE)
                 .on_pointer_down_with_button(move |cx, pointer, button| {
                     if button != PointerButton::Left {
@@ -847,7 +870,7 @@ pub fn render(
                     }
                     let offset = pointer.point.x - geometry.thumb_left;
                     thumb_state.update(move |app| {
-                        app.tab_scrollbar_dragging = true;
+                        app.tab_scrollbar_dragging = Some(pane);
                         app.tab_scrollbar_drag_offset = offset;
                         app.tab_drag = None;
                     });
@@ -858,7 +881,7 @@ pub fn render(
     }
 
     // Show the drawer toggle here only when the drawer is collapsed.
-    if !s.show_drawer {
+    if shows_drawer_toggle(&s, pane) {
         let top = rect.top + (rect.height() - ICON) / 2.0;
         let icon_r = UiRect::new(
             rect.right - CLUSTER_PAD - ICON,
@@ -878,12 +901,20 @@ pub fn render(
             .event_policy(EventPolicy::INTERACTIVE)
             .on_click(move || state.update(|app| app.show_drawer = true))
             .child(icon(
-                UiId::new("tabs.drawer"),
+                UiId::owned(format!("tabs.drawer.{}", pane.get())),
                 "panel-left",
                 icon_r,
                 theme::c().text_muted,
             )),
         );
+    }
+
+    // With several panes, an accent line marks the focused one.
+    if focused_pane && s.workspace.pane_count() > 1 {
+        bar = bar.child(panel(
+            UiRect::new(rect.left, rect.top, rect.right, rect.top + 1.0),
+            VisualStyle::filled(theme::c().accent),
+        ));
     }
 
     // Hairline bottom border (matches the title bar).
@@ -968,7 +999,7 @@ mod tests {
         let rect = UiRect::new(0.0, 0.0, 700.0, theme::TABS_H);
         let pane = app.workspace.active_pane();
 
-        assert!(update_pointer(&mut app, pane, rect, 22.0, 10.0, true));
+        assert!(update_pointer(&mut app, &[(pane, rect)], 22.0, 10.0, true));
         assert!(!app.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
         assert_eq!(app.workspace.active_items(), &[first, second, third]);
@@ -980,7 +1011,7 @@ mod tests {
             target_index: 0,
             active: false,
         });
-        assert!(update_pointer(&mut app, pane, rect, 650.0, 10.0, true));
+        assert!(update_pointer(&mut app, &[(pane, rect)], 650.0, 10.0, true));
         assert!(app.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
         assert_eq!(app.workspace.active_items(), &[second, third, first]);
@@ -1003,7 +1034,7 @@ mod tests {
             let pane = app.workspace.active_pane();
             let started = std::time::Instant::now();
             for step in 0..200 {
-                update_pointer(&mut app, pane, rect, (step * 5) as f32, 10.0, false);
+                update_pointer(&mut app, &[(pane, rect)], (step * 5) as f32, 10.0, false);
             }
             println!(
                 "{count} tabs: {:?} per pointer update",
@@ -1032,7 +1063,13 @@ mod tests {
         let rect = UiRect::new(0.0, 0.0, 700.0, theme::TABS_H);
         let pane = app.workspace.active_pane();
 
-        assert!(update_pointer(&mut app, pane, rect, 500.0, 10.0, false));
+        assert!(update_pointer(
+            &mut app,
+            &[(pane, rect)],
+            500.0,
+            10.0,
+            false
+        ));
         assert!(!app.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
         assert_eq!(app.workspace.active_items(), &[first, second]);

@@ -19,6 +19,7 @@ use crate::editor::gutter;
 use crate::editor::syntax;
 use crate::git::{GitStoreSnapshot, LineChange};
 use crate::model::buffer::TextBuffer;
+use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
 
@@ -44,8 +45,9 @@ struct ThumbGeometry {
     length: f32,
 }
 
-/// Render the active file's editor surface into `rect`.
+/// Render the editor of `pane`'s active file into `rect`.
 pub fn render(
+    pane: PaneId,
     rect: UiRect,
     state: State<AppState>,
     git_store: State<GitStoreSnapshot>,
@@ -54,6 +56,7 @@ pub fn render(
 ) -> Element {
     let s = state.get();
     let git = git_store.get();
+    let focused_pane = s.workspace.active_pane() == pane;
 
     let ime_rect = ime_cursor_rect(&s, rect);
     let mut root = Element::new(move |cx| {
@@ -65,12 +68,12 @@ pub fn render(
     .event_policy(EventPolicy::INTERACTIVE)
     .cursor(CursorIcon::Text);
 
-    if let Some(id) = s.workspace.active() {
+    if let Some(id) = s.workspace.pane(pane).and_then(|p| p.active()) {
         let meta = s
             .workspace
             .meta(id)
             .expect("active document metadata exists");
-        let buffer = s.workspace.active_editor().expect("active buffer exists");
+        let buffer = s.workspace.editor(pane).expect("pane shows a text file");
         let decorations = git
             .line_changes
             .get(&meta.path)
@@ -93,7 +96,7 @@ pub fn render(
         let code_top = rect.top;
         let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
         let metrics = scroll_metrics(rect, code_left, &lines);
-        let (stored_x, stored_y) = s.workspace.active_scroll();
+        let (stored_x, stored_y) = s.workspace.scroll(pane);
         let scroll_x = stored_x.clamp(0.0, metrics.max_x);
         let scroll_y = stored_y.clamp(0.0, metrics.max_y);
         let visible_lines = visible_line_range(scroll_y, metrics.viewport_h, lines.len());
@@ -116,7 +119,8 @@ pub fn render(
 
             pointer_focus.focus();
             st_pointer.update(move |app| {
-                let (scroll_x, scroll_y) = app.workspace.active_scroll();
+                app.workspace.activate_pane(pane);
+                let (scroll_x, scroll_y) = app.workspace.scroll(pane);
                 let cursor = app.workspace.active_editor().map(|buffer| {
                     cursor_offset_from_point(
                         &buffer, rect, code_left, metrics, scroll_x, scroll_y, point.x, point.y,
@@ -203,8 +207,9 @@ pub fn render(
                 } else {
                     (step_x, step_y)
                 };
-                let (x, y) = app.workspace.active_scroll();
-                app.workspace.set_active_scroll(
+                let (x, y) = app.workspace.scroll(pane);
+                app.workspace.set_scroll(
+                    pane,
                     (x - step_x).clamp(0.0, metrics.max_x),
                     (y - step_y).clamp(0.0, metrics.max_y),
                 );
@@ -315,13 +320,13 @@ pub fn render(
                 cursor_x + 2.0,
                 cursor_y + theme::LINE_H - 3.0,
             );
-            let cursor_style = if s.focused {
+            let cursor_style = if s.focused && focused_pane {
                 VisualStyle::filled(theme::c().accent)
             } else {
                 VisualStyle::default().stroked(theme::hairline(theme::c().accent))
             };
             code = code.child(panel(cursor_rect, cursor_style));
-            if !s.editor.preedit.is_empty() && s.focused {
+            if !s.editor.preedit.is_empty() && s.focused && focused_pane {
                 let width = layout_line(&s.editor.preedit, 0.0, 0.0, metrics.content_w)
                     .map_or(80.0, |l| l.width)
                     .max(2.0);
@@ -348,11 +353,13 @@ pub fn render(
 
         root = root.child(clip(code_viewport, -scroll_x, -scroll_y).child(code));
 
-        let emphasized = s.editor_hovered
-            || s.editor_vertical_scrollbar_dragging
-            || s.editor_horizontal_scrollbar_dragging;
+        let emphasized = s.editor_hovered == Some(pane)
+            || (focused_pane
+                && (s.editor_vertical_scrollbar_dragging
+                    || s.editor_horizontal_scrollbar_dragging));
         if has_vertical {
             root = root.child(vertical_scrollbar(
+                pane,
                 rect,
                 metrics,
                 scroll_y,
@@ -363,6 +370,7 @@ pub fn render(
         }
         if has_horizontal {
             root = root.child(horizontal_scrollbar(
+                pane,
                 rect,
                 code_left,
                 metrics,
@@ -432,6 +440,7 @@ pub fn render(
 }
 
 fn vertical_scrollbar(
+    pane: PaneId,
     rect: UiRect,
     metrics: ScrollMetrics,
     scroll: f32,
@@ -460,15 +469,16 @@ fn vertical_scrollbar(
     let st_track_move = state.clone();
     let st_track_up = state.clone();
     let track_hit = panel(track, VisualStyle::default())
-        .key("editor-vertical-scrollbar-track")
+        .key(format!("editor-vertical-scrollbar-track-{}", pane.get()))
         .event_policy(EventPolicy::INTERACTIVE)
         .on_pointer_down(move |_cx, pointer| {
             let offset = geometry.length / 2.0;
             let thumb_start = (pointer.point.y - track.top - offset).clamp(0.0, travel);
             let next = scroll_from_thumb(thumb_start, travel, metrics.max_y);
             st_track_down.update(move |app| {
-                let (x, _) = app.workspace.active_scroll();
-                app.workspace.set_active_scroll(x, next);
+                app.workspace.activate_pane(pane);
+                let (x, _) = app.workspace.scroll(pane);
+                app.workspace.set_scroll(pane, x, next);
                 app.editor_vertical_scrollbar_dragging = true;
                 app.editor_vertical_scrollbar_drag_offset = offset;
             });
@@ -479,8 +489,8 @@ fn vertical_scrollbar(
                     (pointer.point.y - track.top - app.editor_vertical_scrollbar_drag_offset)
                         .clamp(0.0, travel);
                 let next = scroll_from_thumb(thumb_start, travel, metrics.max_y);
-                let (x, _) = app.workspace.active_scroll();
-                app.workspace.set_active_scroll(x, next);
+                let (x, _) = app.workspace.scroll(pane);
+                app.workspace.set_scroll(pane, x, next);
             });
         })
         .on_pointer_up(move |_cx, _pointer| {
@@ -502,10 +512,11 @@ fn vertical_scrollbar(
             .alpha(alpha)
             .radius(2.0),
     )
-    .key("editor-vertical-scrollbar-thumb")
+    .key(format!("editor-vertical-scrollbar-thumb-{}", pane.get()))
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down(move |_cx, pointer| {
         st_thumb_down.update(move |app| {
+            app.workspace.activate_pane(pane);
             app.editor_vertical_scrollbar_dragging = true;
             app.editor_vertical_scrollbar_drag_offset = pointer.point.y - geometry.start;
         });
@@ -516,8 +527,8 @@ fn vertical_scrollbar(
                 (pointer.point.y - track.top - app.editor_vertical_scrollbar_drag_offset)
                     .clamp(0.0, travel);
             let next = scroll_from_thumb(thumb_start, travel, metrics.max_y);
-            let (x, _) = app.workspace.active_scroll();
-            app.workspace.set_active_scroll(x, next);
+            let (x, _) = app.workspace.scroll(pane);
+            app.workspace.set_scroll(pane, x, next);
         });
     })
     .on_pointer_up(move |_cx, _pointer| {
@@ -525,12 +536,14 @@ fn vertical_scrollbar(
     });
 
     group(track)
-        .key("editor-vertical-scrollbar")
+        .key(format!("editor-vertical-scrollbar-{}", pane.get()))
         .child(track_hit)
         .child(thumb)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn horizontal_scrollbar(
+    pane: PaneId,
     rect: UiRect,
     code_left: f32,
     metrics: ScrollMetrics,
@@ -560,15 +573,16 @@ fn horizontal_scrollbar(
     let st_track_move = state.clone();
     let st_track_up = state.clone();
     let track_hit = panel(track, VisualStyle::default())
-        .key("editor-horizontal-scrollbar-track")
+        .key(format!("editor-horizontal-scrollbar-track-{}", pane.get()))
         .event_policy(EventPolicy::INTERACTIVE)
         .on_pointer_down(move |_cx, pointer| {
             let offset = geometry.length / 2.0;
             let thumb_start = (pointer.point.x - track.left - offset).clamp(0.0, travel);
             let next = scroll_from_thumb(thumb_start, travel, metrics.max_x);
             st_track_down.update(move |app| {
-                let (_, y) = app.workspace.active_scroll();
-                app.workspace.set_active_scroll(next, y);
+                app.workspace.activate_pane(pane);
+                let (_, y) = app.workspace.scroll(pane);
+                app.workspace.set_scroll(pane, next, y);
                 app.editor_horizontal_scrollbar_dragging = true;
                 app.editor_horizontal_scrollbar_drag_offset = offset;
             });
@@ -579,8 +593,8 @@ fn horizontal_scrollbar(
                     (pointer.point.x - track.left - app.editor_horizontal_scrollbar_drag_offset)
                         .clamp(0.0, travel);
                 let next = scroll_from_thumb(thumb_start, travel, metrics.max_x);
-                let (_, y) = app.workspace.active_scroll();
-                app.workspace.set_active_scroll(next, y);
+                let (_, y) = app.workspace.scroll(pane);
+                app.workspace.set_scroll(pane, next, y);
             });
         })
         .on_pointer_up(move |_cx, _pointer| {
@@ -602,10 +616,11 @@ fn horizontal_scrollbar(
             .alpha(alpha)
             .radius(2.0),
     )
-    .key("editor-horizontal-scrollbar-thumb")
+    .key(format!("editor-horizontal-scrollbar-thumb-{}", pane.get()))
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down(move |_cx, pointer| {
         st_thumb_down.update(move |app| {
+            app.workspace.activate_pane(pane);
             app.editor_horizontal_scrollbar_dragging = true;
             app.editor_horizontal_scrollbar_drag_offset = pointer.point.x - geometry.start;
         });
@@ -616,8 +631,8 @@ fn horizontal_scrollbar(
                 (pointer.point.x - track.left - app.editor_horizontal_scrollbar_drag_offset)
                     .clamp(0.0, travel);
             let next = scroll_from_thumb(thumb_start, travel, metrics.max_x);
-            let (_, y) = app.workspace.active_scroll();
-            app.workspace.set_active_scroll(next, y);
+            let (_, y) = app.workspace.scroll(pane);
+            app.workspace.set_scroll(pane, next, y);
         });
     })
     .on_pointer_up(move |_cx, _pointer| {
@@ -625,7 +640,7 @@ fn horizontal_scrollbar(
     });
 
     group(track)
-        .key("editor-horizontal-scrollbar")
+        .key(format!("editor-horizontal-scrollbar-{}", pane.get()))
         .child(track_hit)
         .child(thumb)
 }
@@ -1258,7 +1273,14 @@ mod tests {
                 terminal: None,
             };
             crate::key_actions::attach(
-                group(viewport).child(render(viewport, state, git_store, id, focus)),
+                group(viewport).child(render(
+                    PaneId::new(1),
+                    viewport,
+                    state,
+                    git_store,
+                    id,
+                    focus,
+                )),
                 env,
             )
         });
@@ -1390,7 +1412,14 @@ mod tests {
                 .on_event_capture(UiEventKind::PointerUp, move |_cx, _payload| {
                     up_state.try_update(finish_scrollbar_drag);
                 })
-                .child(render(viewport, state, git_store, id, focus))
+                .child(render(
+                    PaneId::new(1),
+                    viewport,
+                    state,
+                    git_store,
+                    id,
+                    focus,
+                ))
         });
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);

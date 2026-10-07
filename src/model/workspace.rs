@@ -12,6 +12,7 @@ use crate::model::buffer::{Editor, EditorMut, Selection, TextBuffer};
 use crate::model::diff_document::DiffDocument;
 use crate::model::document::{DiskState, FileId, FileMeta};
 use crate::model::pane_layout::{Direction, PaneId, PaneNode};
+use lgui::prelude::UiRect;
 
 pub const SETTINGS_TITLE: &str = "Settings";
 pub const KEYMAP_TITLE: &str = "Keymap";
@@ -292,6 +293,68 @@ impl Workspace {
         }
         self.activate_pane(new);
         Some(new)
+    }
+
+    /// Insert an empty pane next to `pane` without focusing it.
+    fn add_pane(&mut self, pane: PaneId, direction: Direction) -> Option<PaneId> {
+        let new = PaneId::new(self.next_pane_id);
+        if !self.panes.contains_key(&pane) || !self.layout.split(pane, new, direction) {
+            return None;
+        }
+        self.next_pane_id += 1;
+        self.panes.insert(new, Pane::default());
+        Some(new)
+    }
+
+    /// The pane next to the active one in `direction`; among several, the
+    /// most recently focused.
+    pub fn neighbor(&self, direction: Direction) -> Option<PaneId> {
+        // Sizes are proportional, so any area gives the same adjacency.
+        const AREA: UiRect = UiRect::new(0.0, 0.0, 10_000.0, 10_000.0);
+        let candidates = self.layout.neighbors(AREA, self.active_pane, direction);
+        self.most_recent_pane(&candidates)
+    }
+
+    /// Focus the neighbouring pane in `direction`.
+    pub fn activate_neighbor(&mut self, direction: Direction) -> bool {
+        self.neighbor(direction)
+            .is_some_and(|pane| self.activate_pane(pane))
+    }
+
+    /// Focus the next (or previous) pane in reading order, wrapping around.
+    pub fn activate_next_pane(&mut self, forward: bool) -> bool {
+        let panes = self.pane_ids();
+        let Some(index) = panes.iter().position(|pane| *pane == self.active_pane) else {
+            return false;
+        };
+        let len = panes.len();
+        let next = if forward {
+            (index + 1) % len
+        } else {
+            (index + len - 1) % len
+        };
+        self.activate_pane(panes[next])
+    }
+
+    /// Move the active tab to the neighbouring pane in `direction`, creating
+    /// that pane when there is none. A pane's only tab stays put when there is
+    /// no neighbour, since splitting would just move the whole pane.
+    pub fn move_active_item(&mut self, direction: Direction) -> bool {
+        let from = self.active_pane;
+        let Some(id) = self.active() else {
+            return false;
+        };
+        let target = match self.neighbor(direction) {
+            Some(pane) => pane,
+            None if self.active_pane_ref().items.len() > 1 => {
+                match self.add_pane(from, direction) {
+                    Some(pane) => pane,
+                    None => return false,
+                }
+            }
+            None => return false,
+        };
+        self.move_item(from, id, target, usize::MAX)
     }
 
     /// Close a pane and all its tabs without prompting; callers resolve dirty
@@ -692,6 +755,18 @@ impl Workspace {
             .get_mut(&id)
             .filter(|d| d.is_text())?
             .editor_mut(pane)
+    }
+
+    /// The diff shown by a pane's active tab.
+    pub fn diff(&self, pane: PaneId) -> Option<&DiffDocument> {
+        let id = self.panes.get(&pane)?.active?;
+        self.documents.get(&id)?.diff.as_ref()
+    }
+
+    /// The built-in page shown by a pane's active tab.
+    pub fn pane_page(&self, pane: PaneId) -> Option<AppPage> {
+        let id = self.panes.get(&pane)?.active?;
+        self.page(id)
     }
 
     pub fn view(&self, pane: PaneId, id: FileId) -> Option<&ViewState> {

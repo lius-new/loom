@@ -5,7 +5,7 @@ use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, pan
 use lgui::services::ServicesContextExt;
 
 use crate::model::document::FileId;
-use crate::model::pane_layout::PaneId;
+use crate::model::pane_layout::{Direction, PaneId};
 use crate::state::{AppState, ExplorerContextTarget, ExplorerTargetKind};
 use crate::theme;
 use crate::workspace_actions::{self, TabCloseScope};
@@ -19,6 +19,8 @@ const SEP_H: f32 = 5.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     KeepOpen,
+    SplitRight,
+    SplitDown,
     ReloadFromDisk,
     KeepEditorVersion,
     Close,
@@ -39,6 +41,9 @@ enum Entry {
 
 const ENTRIES: &[Entry] = &[
     Entry::Item("Keep Open", Action::KeepOpen),
+    Entry::Separator,
+    Entry::Item("Split Right", Action::SplitRight),
+    Entry::Item("Split Down", Action::SplitDown),
     Entry::Separator,
     Entry::Item("Reload from Disk", Action::ReloadFromDisk),
     Entry::Item("Keep Editor Version", Action::KeepEditorVersion),
@@ -79,6 +84,8 @@ fn action_enabled(app: &AppState, pane: PaneId, target: FileId, action: Action) 
         return false;
     }
     match action {
+        // Only files can be shown in two panes at once.
+        Action::SplitRight | Action::SplitDown => app.workspace.is_file(target),
         Action::KeepOpen => app
             .workspace
             .pane(pane)
@@ -229,6 +236,17 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                         Action::KeepOpen => {
                             click_state.update(|app| {
                                 app.workspace.promote_preview(pane, target);
+                            });
+                        }
+                        Action::SplitRight | Action::SplitDown => {
+                            let direction = if action == Action::SplitRight {
+                                Direction::Right
+                            } else {
+                                Direction::Down
+                            };
+                            click_state.update(|app| {
+                                app.workspace.activate(pane, target);
+                                app.workspace.split(pane, direction);
                             });
                         }
                         Action::ReloadFromDisk => {

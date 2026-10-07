@@ -7,13 +7,14 @@ use std::thread;
 use std::time::Duration;
 
 use lgui::ApplicationHandle;
-use lgui::core::{UiEventKind, UiEventPayload};
-use lgui::prelude::{Element, RenderCx, UiRect, group};
+use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
+use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, group, panel};
 use lgui::window::WindowFocusChanged;
 
 use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
+use crate::model::pane_layout::Axis;
 use crate::settings_persistence::{self, Settings};
 use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface};
 use crate::terminal_session::TerminalTabs;
@@ -248,56 +249,69 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // The editor and its overlay scrollbars stop at the drawer's visible edge.
     // This keeps the vertical editor thumb reachable while the drawer is open.
     let tabs_right = if explorer_right { w - s.sidebar_w } else { w };
-    let tabs_rect = UiRect::new(
-        editor_left,
-        theme::TITLEBAR_H,
-        tabs_right,
-        theme::TITLEBAR_H + theme::TABS_H,
-    );
+    // Each pane is a tab strip above its surface; the focused pane's rects
+    // drive the editor-wide handlers (selection auto-scroll, menus, keys).
+    let editor_area = UiRect::new(editor_left, theme::TITLEBAR_H, tabs_right, main_bottom);
     let focused_pane = s.workspace.active_pane();
-    let tab_visibility_state = state.clone();
-    let tab_visibility_items = s
-        .workspace
-        .pane(focused_pane)
-        .map_or(&[][..], |pane| pane.items())
+    let pane_rects = s.workspace.layout().layout(editor_area);
+    let strips = pane_rects
         .iter()
-        .filter_map(|id| {
-            s.workspace.meta(*id).map(|meta| {
-                (
-                    *id,
-                    meta.name.clone(),
-                    s.workspace.is_dirty(*id),
-                    s.workspace.is_diff(*id),
-                    s.workspace.has_disk_conflict(*id),
-                    s.workspace.is_missing_on_disk(*id),
-                )
-            })
+        .map(|(pane, rect)| (*pane, pane_strip_rect(*rect)))
+        .collect::<Vec<_>>();
+    let bodies = pane_rects
+        .iter()
+        .map(|(pane, rect)| (*pane, pane_body_rect(*rect)))
+        .collect::<Vec<_>>();
+    let focused_rect = pane_rects
+        .iter()
+        .find(|(pane, _)| *pane == focused_pane)
+        .map_or(editor_area, |(_, rect)| *rect);
+    let code_rect = pane_body_rect(focused_rect);
+    let tab_visibility_state = state.clone();
+    let tab_visibility_items = strips
+        .iter()
+        .map(|(pane, strip)| {
+            let tabs = s
+                .workspace
+                .pane(*pane)
+                .map_or(&[][..], |pane| pane.items())
+                .iter()
+                .filter_map(|id| {
+                    s.workspace.meta(*id).map(|meta| {
+                        (
+                            *id,
+                            meta.name.clone(),
+                            s.workspace.is_dirty(*id),
+                            s.workspace.is_diff(*id),
+                            s.workspace.has_disk_conflict(*id),
+                            s.workspace.is_missing_on_disk(*id),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            let active = s.workspace.pane(*pane).and_then(|pane| pane.active());
+            (*pane, tabs, active, strip.width())
         })
         .collect::<Vec<_>>();
-    let tab_visibility_key = (
-        tab_visibility_items,
-        s.workspace.active(),
-        tabs_rect.width(),
-        s.show_drawer,
-    );
-    cx.use_effect(tab_visibility_key, move || {
-        let desired =
-            tabs::active_visible_scroll(tabs_rect, &tab_visibility_state.get(), focused_pane);
+    let tab_visibility_strips = strips.clone();
+    cx.use_effect((tab_visibility_items, s.show_drawer), move || {
+        let snapshot = tab_visibility_state.get();
+        let desired = tab_visibility_strips
+            .iter()
+            .map(|(pane, strip)| (*pane, tabs::active_visible_scroll(*strip, &snapshot, *pane)))
+            .collect::<Vec<_>>();
         tab_visibility_state.try_update(move |app| {
-            if (app.tab_scroll_x - desired).abs() <= f32::EPSILON {
-                return false;
+            let mut changed = false;
+            for (pane, scroll) in desired {
+                if (tabs::tab_scroll_x(app, pane) - scroll).abs() > f32::EPSILON {
+                    app.tab_scroll.insert(pane, scroll);
+                    changed = true;
+                }
             }
-            app.tab_scroll_x = desired;
-            true
+            changed
         });
         || {}
     });
-    let code_rect = UiRect::new(
-        editor_left,
-        theme::TITLEBAR_H + theme::TABS_H,
-        tabs_right,
-        main_bottom,
-    );
     let source_control_rect = UiRect::new(0.0, theme::TITLEBAR_H, s.git_sidebar_w, main_bottom);
     let explorer_rect = UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom);
     let terminal_rect = UiRect::new(
@@ -536,15 +550,19 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     let st_editor_hover = state.clone();
+    let hover_bodies = bodies.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
-            let hovered = code_rect.contains(pointer.point);
+            let hovered = hover_bodies
+                .iter()
+                .find(|(_, rect)| rect.contains(pointer.point))
+                .map(|(pane, _)| *pane);
             st_editor_hover.try_update(move |app| {
                 let changed = app.editor_hovered != hovered
-                    || (!hovered
+                    || (hovered.is_none()
                         && (app.welcome_hover.is_some() || app.workspace_home_hover.is_some()));
                 app.editor_hovered = hovered;
-                if !hovered {
+                if hovered.is_none() {
                     app.welcome_hover = None;
                     app.workspace_home_hover = None;
                 }
@@ -553,14 +571,37 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         }
     });
 
+    // Pressing anywhere in a pane focuses it before the pressed element reacts,
+    // so surface handlers can keep acting on the active pane. Open overlays
+    // keep focus where it is: their actions target the pane they opened for.
+    let st_pane_focus = state.clone();
+    let focus_panes = pane_rects.clone();
+    root = root.on_event_capture(UiEventKind::PointerDown, move |_ctx, payload| {
+        if let UiEventPayload::PointerDown { pointer, .. } = payload
+            && let Some(pane) = focus_panes
+                .iter()
+                .find(|(_, rect)| rect.contains(pointer.point))
+                .map(|(pane, _)| *pane)
+        {
+            st_pane_focus.try_update(move |app| {
+                let overlay = app.editor.menu.is_some()
+                    || app.context_menu.is_some()
+                    || app.tab_context_menu.is_some()
+                    || app.close_request.is_some()
+                    || app.show_clone_dialog;
+                !overlay && app.workspace.activate_pane(pane)
+            });
+        }
+    });
+
     let st_tabs_pointer = state.clone();
+    let pointer_strips = strips.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
             st_tabs_pointer.try_update(|app| {
                 tabs::update_pointer(
                     app,
-                    focused_pane,
-                    tabs_rect,
+                    &pointer_strips,
                     pointer.point.x,
                     pointer.point.y,
                     false,
@@ -570,17 +611,11 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     let st_tabs_drag = state.clone();
+    let drag_strips = strips.clone();
     root = root.on_event_capture(UiEventKind::PointerDrag, move |_ctx, payload| {
         if let UiEventPayload::PointerDrag { pointer } = payload {
             st_tabs_drag.try_update(|app| {
-                tabs::update_pointer(
-                    app,
-                    focused_pane,
-                    tabs_rect,
-                    pointer.point.x,
-                    pointer.point.y,
-                    true,
-                )
+                tabs::update_pointer(app, &drag_strips, pointer.point.x, pointer.point.y, true)
             });
         }
     });
@@ -609,43 +644,72 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Compose chrome (back-to-front) -------------------------------
     root = root.child(titlebar::render(titlebar_rect, state.clone()));
 
-    root = root.child(tabs::render(
-        focused_pane,
-        tabs_rect,
-        state.clone(),
-        editor_focus.clone(),
-    ));
-    root = root.child(match s.main_surface() {
-        MainSurface::Settings => settings::render(code_rect, state.clone()),
-        MainSurface::Keymap => keymap_page::render(
-            code_rect,
+    for (&(pane, strip), &(_, body)) in strips.iter().zip(bodies.iter()) {
+        root = root.child(tabs::render(
+            pane,
+            strip,
             state.clone(),
-            keymap_search_id,
-            keymap_search_focus,
-        ),
-        MainSurface::Diff => diff_editor::render(code_rect, state.clone(), editor_focus.clone()),
-        MainSurface::Editor => editor_view::render(
-            code_rect,
-            state.clone(),
-            git_store.clone(),
-            main_surface_id.clone(),
             editor_focus.clone(),
-        ),
-        MainSurface::WorkspaceHome => workspace_home::render(
-            code_rect,
-            state.clone(),
-            main_surface_id.clone(),
-            editor_focus.clone(),
-            terminal_focus.clone(),
-            terminal_tabs.clone(),
-        ),
-        MainSurface::Welcome => welcome::render(
-            code_rect,
-            state.clone(),
-            main_surface_id.clone(),
-            editor_focus.clone(),
-        ),
-    });
+        ));
+        // Only the focused pane's surface carries the focusable id, so
+        // keyboard and IME input always reach the focused pane.
+        let surface_id = if pane == focused_pane {
+            main_surface_id.clone()
+        } else {
+            UiId::owned(format!("pane-surface-{}", pane.get()))
+        };
+        root = root.child(match s.pane_surface(pane) {
+            MainSurface::Settings => settings::render(body, state.clone()),
+            MainSurface::Keymap => keymap_page::render(
+                body,
+                state.clone(),
+                keymap_search_id.clone(),
+                keymap_search_focus.clone(),
+            ),
+            MainSurface::Diff => {
+                diff_editor::render(pane, body, state.clone(), editor_focus.clone())
+            }
+            MainSurface::Editor => editor_view::render(
+                pane,
+                body,
+                state.clone(),
+                git_store.clone(),
+                surface_id,
+                editor_focus.clone(),
+            ),
+            MainSurface::Empty => Element::new(move |_cx| {
+                UiElement::panel(surface_id, body, VisualStyle::filled(theme::c().bg))
+            }),
+            MainSurface::WorkspaceHome => workspace_home::render(
+                body,
+                state.clone(),
+                surface_id,
+                editor_focus.clone(),
+                terminal_focus.clone(),
+                terminal_tabs.clone(),
+            ),
+            MainSurface::Welcome => {
+                welcome::render(body, state.clone(), surface_id, editor_focus.clone())
+            }
+        });
+    }
+    for sash in s.workspace.layout().sashes(editor_area) {
+        let line = match sash.axis {
+            Axis::Horizontal => UiRect::new(
+                sash.position - 0.5,
+                sash.span.0,
+                sash.position + 0.5,
+                sash.span.1,
+            ),
+            Axis::Vertical => UiRect::new(
+                sash.span.0,
+                sash.position - 0.5,
+                sash.span.1,
+                sash.position + 0.5,
+            ),
+        };
+        root = root.child(panel(line, VisualStyle::filled(theme::c().border)));
+    }
 
     if source_control_left {
         root = root.child(git_panel::render(
@@ -696,7 +760,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         && s.tab_context_menu.is_none()
         && !show_clone_dialog
         && s.close_request.is_none()
-        && let Some(tooltip) = tabs::render_tooltip(vp, tabs_rect, &s, focused_pane)
+        && let Some(tooltip) = tabs::render_tooltip(vp, &strips, &s)
     {
         root = root.child(tooltip);
     }
@@ -741,4 +805,14 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.child(toast::render(vp, state.clone()));
 
     root
+}
+
+/// The tab strip across the top of a pane.
+fn pane_strip_rect(pane: UiRect) -> UiRect {
+    UiRect::new(pane.left, pane.top, pane.right, pane.top + theme::TABS_H)
+}
+
+/// A pane's surface below its tab strip.
+fn pane_body_rect(pane: UiRect) -> UiRect {
+    UiRect::new(pane.left, pane.top + theme::TABS_H, pane.right, pane.bottom)
 }

@@ -69,11 +69,26 @@ actions! {
     OpenKeymapFile => "workspace::OpenKeymapFile", "Open the user keymap.json";
     CloneRepository => "workspace::CloneRepository", "Clone a Git repository";
     CloseOverlay => "workspace::CloseOverlay", "Close menus and transient overlays";
+    ActivatePaneLeft => "workspace::ActivatePaneLeft", "Focus the pane to the left";
+    ActivatePaneRight => "workspace::ActivatePaneRight", "Focus the pane to the right";
+    ActivatePaneUp => "workspace::ActivatePaneUp", "Focus the pane above";
+    ActivatePaneDown => "workspace::ActivatePaneDown", "Focus the pane below";
+    ActivateNextPane => "workspace::ActivateNextPane", "Focus the next pane";
+    ActivatePrevPane => "workspace::ActivatePrevPane", "Focus the previous pane";
 
     ActivateNextItem => "pane::ActivateNextItem", "Activate the next tab";
     ActivatePrevItem => "pane::ActivatePrevItem", "Activate the previous tab";
     ActivateLastItem => "pane::ActivateLastItem", "Activate the last tab";
     CloseActiveItem => "pane::CloseActiveItem", "Close the active tab";
+    SplitRight => "pane::SplitRight", "Split the pane, copying the active tab to the right";
+    SplitLeft => "pane::SplitLeft", "Split the pane, copying the active tab to the left";
+    SplitUp => "pane::SplitUp", "Split the pane, copying the active tab above";
+    SplitDown => "pane::SplitDown", "Split the pane, copying the active tab below";
+    MoveItemToPaneLeft => "pane::MoveItemToPaneLeft", "Move the active tab to the pane on the left";
+    MoveItemToPaneRight => "pane::MoveItemToPaneRight", "Move the active tab to the pane on the right";
+    MoveItemToPaneUp => "pane::MoveItemToPaneUp", "Move the active tab to the pane above";
+    MoveItemToPaneDown => "pane::MoveItemToPaneDown", "Move the active tab to the pane below";
+    ClosePane => "pane::ClosePane", "Close the focused pane and its tabs";
 
     Save => "editor::Save", "Save the active file";
     Undo => "editor::Undo", "Undo";

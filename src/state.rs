@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::input::action::Action;
 use crate::input::keystroke::Keystroke;
 use crate::model::document::FileId;
-use crate::model::pane_layout::PaneId;
+use crate::model::pane_layout::{Direction, PaneId};
 use crate::model::workspace::{AppPage, Workspace};
 use crate::terminal_session::ShellKind;
 use crate::theme::ThemeId;
@@ -112,6 +112,8 @@ pub struct Toast {
 pub enum MainSurface {
     Welcome,
     WorkspaceHome,
+    /// An empty pane next to other panes.
+    Empty,
     Editor,
     Diff,
     Settings,
@@ -142,14 +144,14 @@ pub struct AppState {
     pub theme: ThemeId,
     pub default_shell: ShellKind,
     pub terminal_cursor_blink: bool,
-    /// Horizontal scroll offset of the editor tab strip, in logical pixels.
-    pub tab_scroll_x: f32,
+    /// Horizontal scroll offset of each pane's tab strip, in logical pixels.
+    pub tab_scroll: HashMap<PaneId, f32>,
     /// Open tab currently under the pointer.
-    pub tab_hovered: Option<FileId>,
-    /// Whether the pointer is inside the editor tab strip.
-    pub tab_strip_hovered: bool,
-    /// Active horizontal tab scrollbar thumb drag.
-    pub tab_scrollbar_dragging: bool,
+    pub tab_hovered: Option<(PaneId, FileId)>,
+    /// The pane whose tab strip contains the pointer.
+    pub tab_strip_hovered: Option<PaneId>,
+    /// The pane whose tab scrollbar thumb is being dragged.
+    pub tab_scrollbar_dragging: Option<PaneId>,
     /// Pointer x offset from the tab scrollbar thumb's left edge.
     pub tab_scrollbar_drag_offset: f32,
     /// Pending or active left-button tab reorder gesture.
@@ -213,7 +215,7 @@ pub struct AppState {
     /// Pointer x offset from the horizontal thumb's left when dragging began.
     pub horizontal_scrollbar_drag_offset: f32,
     /// Whether the pointer is currently inside the visible code editor.
-    pub editor_hovered: bool,
+    pub editor_hovered: Option<PaneId>,
     /// True while the editor's vertical overlay scrollbar is being dragged.
     pub editor_vertical_scrollbar_dragging: bool,
     /// Pointer y offset from the editor vertical thumb's top.
@@ -274,10 +276,10 @@ impl AppState {
             theme: ThemeId::default(),
             default_shell: ShellKind::default(),
             terminal_cursor_blink: true,
-            tab_scroll_x: 0.0,
+            tab_scroll: HashMap::new(),
             tab_hovered: None,
-            tab_strip_hovered: false,
-            tab_scrollbar_dragging: false,
+            tab_strip_hovered: None,
+            tab_scrollbar_dragging: None,
             tab_scrollbar_drag_offset: 0.0,
             tab_drag: None,
             tab_context_menu: None,
@@ -312,7 +314,7 @@ impl AppState {
             scrollbar_drag_offset: 0.0,
             horizontal_scrollbar_dragging: false,
             horizontal_scrollbar_drag_offset: 0.0,
-            editor_hovered: false,
+            editor_hovered: None,
             editor_vertical_scrollbar_dragging: false,
             editor_vertical_scrollbar_drag_offset: 0.0,
             editor_horizontal_scrollbar_dragging: false,
@@ -394,7 +396,7 @@ impl AppState {
                 self.close_menus();
                 self.close_request = None;
                 self.tab_drag = None;
-                self.tab_scrollbar_dragging = false;
+                self.tab_scrollbar_dragging = None;
                 if !self.cloning_repository {
                     self.show_clone_dialog = false;
                     self.clone_input_focused = false;
@@ -414,6 +416,46 @@ impl AppState {
             }
             Action::OpenKeymap => {
                 self.workspace.open_keymap();
+            }
+            Action::SplitRight => self.split_focused(Direction::Right),
+            Action::SplitLeft => self.split_focused(Direction::Left),
+            Action::SplitUp => self.split_focused(Direction::Up),
+            Action::SplitDown => self.split_focused(Direction::Down),
+            Action::ActivatePaneLeft => {
+                self.workspace.activate_neighbor(Direction::Left);
+            }
+            Action::ActivatePaneRight => {
+                self.workspace.activate_neighbor(Direction::Right);
+            }
+            Action::ActivatePaneUp => {
+                self.workspace.activate_neighbor(Direction::Up);
+            }
+            Action::ActivatePaneDown => {
+                self.workspace.activate_neighbor(Direction::Down);
+            }
+            Action::ActivateNextPane => {
+                self.workspace.activate_next_pane(true);
+            }
+            Action::ActivatePrevPane => {
+                self.workspace.activate_next_pane(false);
+            }
+            Action::MoveItemToPaneLeft => {
+                self.workspace.move_active_item(Direction::Left);
+            }
+            Action::MoveItemToPaneRight => {
+                self.workspace.move_active_item(Direction::Right);
+            }
+            Action::MoveItemToPaneUp => {
+                self.workspace.move_active_item(Direction::Up);
+            }
+            Action::MoveItemToPaneDown => {
+                self.workspace.move_active_item(Direction::Down);
+            }
+            Action::ClosePane => {
+                if self.close_request.is_none() {
+                    let pane = self.workspace.active_pane();
+                    crate::workspace_actions::request_close_pane_in(self, pane);
+                }
             }
             Action::CloseActiveItem => {
                 // A pending (possibly batch) request must be resolved first.
@@ -436,16 +478,35 @@ impl AppState {
         self.tab_context_menu = None;
     }
 
+    /// Split the focused pane, dropping pointer gestures tied to the old layout.
+    fn split_focused(&mut self, direction: Direction) {
+        let pane = self.workspace.active_pane();
+        if self.workspace.split(pane, direction).is_some() {
+            self.tab_drag = None;
+            self.editor.drag = None;
+            self.editor.menu = None;
+        }
+    }
+
+    /// What the focused pane shows.
     pub fn main_surface(&self) -> MainSurface {
-        if let Some(page) = self.workspace.active_page() {
+        self.pane_surface(self.workspace.active_pane())
+    }
+
+    /// What one pane shows. Welcome and Workspace Home fill the editor area
+    /// only while it is a single empty pane.
+    pub fn pane_surface(&self, pane: PaneId) -> MainSurface {
+        if let Some(page) = self.workspace.pane_page(pane) {
             match page {
                 AppPage::Settings => MainSurface::Settings,
                 AppPage::Keymap => MainSurface::Keymap,
             }
-        } else if self.workspace.active_diff().is_some() {
+        } else if self.workspace.diff(pane).is_some() {
             MainSurface::Diff
-        } else if self.workspace.active_editor().is_some() {
+        } else if self.workspace.editor(pane).is_some() {
             MainSurface::Editor
+        } else if self.workspace.pane_count() > 1 {
+            MainSurface::Empty
         } else if self.workspace_folders.is_empty() {
             MainSurface::Welcome
         } else {

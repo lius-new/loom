@@ -300,6 +300,20 @@ impl PaneNode {
         true
     }
 
+    /// The pane in the top-right corner of the layout.
+    pub fn top_right(&self) -> PaneId {
+        match self {
+            Self::Leaf(id) => *id,
+            Self::Split { axis, children } => {
+                let child = match axis {
+                    Axis::Horizontal => children.last(),
+                    Axis::Vertical => children.first(),
+                };
+                child.expect("splits have children").node.top_right()
+            }
+        }
+    }
+
     /// Give every child of every split an equal share.
     pub fn even(&mut self) {
         if let Self::Split { children, .. } = self {

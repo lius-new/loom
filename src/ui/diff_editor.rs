@@ -6,6 +6,7 @@ use lgui::core::{CursorIcon, EventPolicy, UiFocusHandle, WheelUnit, clip};
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
 use crate::model::diff_document::{DiffRow, DiffRowKind, SplitDiffRow};
+use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
 
@@ -18,9 +19,15 @@ const SCROLLBAR_W: f32 = 4.0;
 const BUTTON_H: f32 = 22.0;
 const BUTTON_GAP: f32 = 4.0;
 
-pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
+/// Render the diff shown by `pane` into `rect`.
+pub fn render(
+    pane: PaneId,
+    rect: UiRect,
+    state: State<AppState>,
+    editor_focus: UiFocusHandle,
+) -> Element {
     let app = state.get();
-    let Some(document) = app.workspace.active_diff() else {
+    let Some(document) = app.workspace.diff(pane) else {
         return panel(rect, VisualStyle::filled(theme::c().bg));
     };
 
@@ -31,7 +38,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     let path_label = document.path.display().to_string();
     let additions = document.additions();
     let deletions = document.deletions();
-    let (stored_x, stored_y) = app.workspace.active_scroll();
+    let (stored_x, stored_y) = app.workspace.scroll(pane);
     let current_line = (stored_y / ROW_H).floor() as usize;
     let current_change = current_change_number(&starts, current_line);
 
@@ -73,6 +80,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
 
     let wheel_state = state.clone();
     let mut root = panel(rect, VisualStyle::filled(theme::c().bg))
+        .key(format!("diff-pane-{}", pane.get()))
         .event_policy(EventPolicy::INTERACTIVE)
         .on_wheel(move |cx, delta| {
             let (step_x, step_y) = match delta.unit {
@@ -85,16 +93,26 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                 } else {
                     (step_x, step_y)
                 };
-                let (x, y) = app.workspace.active_scroll();
-                app.workspace.set_active_scroll(
+                let (x, y) = app.workspace.scroll(pane);
+                app.workspace.set_scroll(
+                    pane,
                     (x - step_x).clamp(0.0, max_x),
                     (y - step_y).clamp(0.0, max_y),
                 );
             });
             cx.stop_propagation();
         });
+    let pointer_state = state.clone();
+    let pointer_focus = editor_focus.clone();
+    root = root.on_pointer_down(move |_cx, _pointer| {
+        pointer_state.update(move |app| {
+            app.workspace.activate_pane(pane);
+        });
+        pointer_focus.focus();
+    });
 
     root = root.child(toolbar(
+        pane,
         UiRect::new(rect.left, rect.top, rect.right, rect.top + TOOLBAR_H),
         state.clone(),
         editor_focus,
@@ -165,6 +183,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
 
 #[allow(clippy::too_many_arguments)]
 fn toolbar(
+    pane: PaneId,
     rect: UiRect,
     state: State<AppState>,
     editor_focus: UiFocusHandle,
@@ -212,7 +231,8 @@ fn toolbar(
             move || {
                 split_state.update(|app| {
                     app.git_split_diff = true;
-                    app.workspace.set_active_scroll(0.0, 0.0);
+                    app.workspace.activate_pane(pane);
+                    app.workspace.set_scroll(pane, 0.0, 0.0);
                 });
             },
         ),
@@ -225,7 +245,8 @@ fn toolbar(
             move || {
                 inline_state.update(|app| {
                     app.git_split_diff = false;
-                    app.workspace.set_active_scroll(0.0, 0.0);
+                    app.workspace.activate_pane(pane);
+                    app.workspace.set_scroll(pane, 0.0, 0.0);
                 });
             },
         ),
@@ -235,14 +256,20 @@ fn toolbar(
     let next_state = state.clone();
     let next_starts = starts.clone();
     bar = bar.child(toolbar_button(next_rect, "↓", false).on_click(move || {
-        next_state.update(|app| navigate_change(app, &next_starts, true));
+        next_state.update(|app| {
+            app.workspace.activate_pane(pane);
+            navigate_change(app, &next_starts, true);
+        });
     }));
 
     let prev_rect = take_button_rect(&mut right, button_top, 24.0);
     let prev_state = state;
     let previous_starts = starts.clone();
     bar = bar.child(toolbar_button(prev_rect, "↑", false).on_click(move || {
-        prev_state.update(|app| navigate_change(app, &previous_starts, false));
+        prev_state.update(|app| {
+            app.workspace.activate_pane(pane);
+            navigate_change(app, &previous_starts, false);
+        });
     }));
 
     let position = current_change.map_or_else(

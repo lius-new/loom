@@ -1,7 +1,7 @@
 // Loom's built-in key bindings.
 //
 // Contexts, from the root to the focused element:
-//   Workspace os=… surface=editor|diff|settings|home|welcome
+//   Workspace os=… surface=editor|diff|settings|keymap|home|welcome|empty
 //     Editor extension=…   the code editor has focus
 //     Terminal             the terminal has focus
 //     Input                a single-line text field has focus
@@ -31,7 +31,16 @@
       "secondary-6": ["pane::ActivateItem", 5],
       "secondary-7": ["pane::ActivateItem", 6],
       "secondary-8": ["pane::ActivateItem", 7],
-      "secondary-9": "pane::ActivateLastItem"
+      "secondary-9": "pane::ActivateLastItem",
+      "secondary-\\": "pane::SplitRight",
+      "secondary-k left": "pane::SplitLeft",
+      "secondary-k right": "pane::SplitRight",
+      "secondary-k up": "pane::SplitUp",
+      "secondary-k down": "pane::SplitDown",
+      "secondary-k secondary-left": "workspace::ActivatePaneLeft",
+      "secondary-k secondary-right": "workspace::ActivatePaneRight",
+      "secondary-k secondary-up": "workspace::ActivatePaneUp",
+      "secondary-k secondary-down": "workspace::ActivatePaneDown"
     }
   },
   {
@@ -94,7 +103,16 @@
       "escape": null,
       "ctrl-tab": null,
       "ctrl-shift-tab": null,
-      "secondary-k secondary-s": null
+      "secondary-\\": null,
+      "secondary-k secondary-s": null,
+      "secondary-k left": null,
+      "secondary-k right": null,
+      "secondary-k up": null,
+      "secondary-k down": null,
+      "secondary-k secondary-left": null,
+      "secondary-k secondary-right": null,
+      "secondary-k secondary-up": null,
+      "secondary-k secondary-down": null
     }
   },
   {
