@@ -74,7 +74,7 @@ struct MeasureCache {
 
 /// Natural text width measured with the renderer's text system, falling back
 /// to a per-character estimate when no text system is installed.
-pub(super) fn measure(s: &str, size: f32, weight: i32) -> f32 {
+pub(crate) fn measure(s: &str, size: f32, weight: i32) -> f32 {
     let style = (size.to_bits(), weight);
     let cached = MEASURE_CACHE.with(|cache| {
         cache
@@ -552,6 +552,62 @@ fn drag_drop_target(
         })
 }
 
+/// Where a file dragged from the Explorer would open: a tab strip inserts it,
+/// a pane surface opens it there or splits that pane near an edge.
+pub fn file_drop_target(
+    app: &AppState,
+    regions: &[PaneRegion],
+    pointer_x: f32,
+    pointer_y: f32,
+) -> Option<TabDrop> {
+    if let Some(region) = regions
+        .iter()
+        .find(|region| point_inside(region.strip, pointer_x, pointer_y))
+    {
+        let layout = tab_layout(region.strip, app, region.pane, false);
+        let content_x = pointer_x - region.strip.left + layout.scroll_x;
+        return Some(TabDrop::Insert {
+            pane: region.pane,
+            index: insertion_index(&layout, content_x),
+        });
+    }
+    regions
+        .iter()
+        .find(|region| point_inside(region.body, pointer_x, pointer_y))
+        .map(|region| TabDrop::Pane {
+            pane: region.pane,
+            split: drop_zone(region.body, pointer_x, pointer_y),
+        })
+}
+
+/// Advance a pressed Explorer file into a drag once the pointer has moved
+/// far enough, tracking its drop target.
+pub fn update_file_drag(
+    app: &mut AppState,
+    regions: &[PaneRegion],
+    pointer_x: f32,
+    pointer_y: f32,
+) -> bool {
+    let Some(drag) = app.file_drag.as_ref() else {
+        return false;
+    };
+    let moved = (pointer_x - drag.origin.0).hypot(pointer_y - drag.origin.1);
+    let active = drag.active || moved >= DRAG_THRESHOLD;
+    let drop = if active {
+        file_drop_target(app, regions, pointer_x, pointer_y)
+    } else {
+        None
+    };
+    let drag = app.file_drag.as_mut().expect("checked above");
+    let changed = drag.active != active
+        || drag.drop != drop
+        || (active && drag.point != (pointer_x, pointer_y));
+    drag.active = active;
+    drag.drop = drop;
+    drag.point = (pointer_x, pointer_y);
+    changed
+}
+
 /// Commit a completed tab drag and release all tab pointer state. Holding
 /// Ctrl (Alt on macOS) copies a file into the target pane instead of moving.
 pub fn finish_pointer_interaction(app: &mut AppState) -> bool {
@@ -605,10 +661,12 @@ pub fn finish_pointer_interaction(app: &mut AppState) -> bool {
 pub fn cancel_pointer_interaction(app: &mut AppState) -> bool {
     let changed = app.tab_scrollbar_dragging.is_some()
         || app.tab_drag.is_some()
+        || app.file_drag.is_some()
         || app.tab_strip_hovered.is_some()
         || app.tab_hovered.is_some();
     app.tab_scrollbar_dragging = None;
     app.tab_drag = None;
+    app.file_drag = None;
     app.tab_strip_hovered = None;
     app.tab_hovered = None;
     changed
@@ -904,12 +962,20 @@ pub fn render(
 
     // Insertion marker: a reorder within this strip, or a tab dragged in
     // from another pane.
+    let file_drop = s
+        .file_drag
+        .as_ref()
+        .filter(|drag| drag.active)
+        .and_then(|drag| drag.drop);
     let marker = s
         .tab_drag
         .as_ref()
         .filter(|drag| drag.active)
-        .and_then(|drag| match drag.drop {
-            None if drag.pane == pane => {
+        .map(|drag| (Some(drag), drag.drop))
+        .or(file_drop.map(|drop| (None, Some(drop))))
+        .and_then(|(drag, drop)| match drop {
+            None if drag.is_some_and(|drag| drag.pane == pane) => {
+                let drag = drag?;
                 let source_index = open_files.iter().position(|id| *id == drag.source)?;
                 let target = layout.items.get(drag.target_index)?;
                 (drag.target_index != source_index).then_some(if drag.target_index < source_index {

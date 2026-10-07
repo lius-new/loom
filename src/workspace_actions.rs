@@ -13,7 +13,7 @@ use crate::model::pane_layout::{Axis, Child, PaneId, PaneNode};
 use crate::model::workspace::Workspace;
 use crate::state::{
     AppState, CloseContinuation, CloseRequest, ExplorerCreateKind, ExplorerCreateRequest,
-    ExplorerRenameRequest, ExplorerTargetKind,
+    ExplorerRenameRequest, ExplorerTargetKind, TabDrop,
 };
 use crate::workspace_persistence::{self, MAX_RECENT_FOLDERS};
 use crate::workspace_persistence::{EditorLayout, SavedAxis, SavedChild, SavedPaneNode};
@@ -207,6 +207,104 @@ fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>
     }
     app.close_request = None;
     Ok(Some(request.continuation))
+}
+
+/// Open a file clicked in the Explorer: a single click previews it, a double
+/// click keeps it open. Returns whether the editor should take focus.
+pub(crate) fn open_tree_file(app: &mut AppState, path: PathBuf, clicks: u8) -> bool {
+    open_tree_file_with(app, path, clicks, read_text_file)
+}
+
+fn open_tree_file_with(
+    app: &mut AppState,
+    path: PathBuf,
+    clicks: u8,
+    read: impl FnOnce(&Path) -> Result<String, String>,
+) -> bool {
+    if let Some(id) = app.workspace.file_id_for_path(&path)
+        && app.workspace.active_items().contains(&id)
+    {
+        app.workspace.set_active(id);
+        if clicks > 1 {
+            app.workspace.promote_active_preview();
+        }
+        return true;
+    }
+    match read(&path) {
+        Ok(contents) => {
+            if clicks > 1 {
+                app.workspace.open_path(path, contents);
+            } else {
+                app.workspace.preview_path(path, contents);
+            }
+            app.toast = None;
+            true
+        }
+        Err(message) => {
+            app.show_error(message);
+            false
+        }
+    }
+}
+
+/// Release a pressed Explorer file: open it like a click when it was not
+/// dragged, otherwise open it where it was dropped. Returns whether the
+/// editor should take focus.
+pub(crate) fn finish_file_drag(app: &mut AppState) -> bool {
+    finish_file_drag_with(app, read_text_file)
+}
+
+fn finish_file_drag_with(
+    app: &mut AppState,
+    read: impl FnOnce(&Path) -> Result<String, String>,
+) -> bool {
+    let Some(drag) = app.file_drag.take() else {
+        return false;
+    };
+    if !drag.active {
+        return open_tree_file_with(app, drag.path, drag.clicks, read);
+    }
+    let Some(drop) = drag.drop else {
+        return false;
+    };
+    let contents = match read(&drag.path) {
+        Ok(contents) => contents,
+        Err(message) => {
+            app.show_error(message);
+            return false;
+        }
+    };
+    let workspace = &mut app.workspace;
+    match drop {
+        TabDrop::Insert { pane, index } => {
+            workspace.activate_pane(pane);
+            let id = workspace.open_path(drag.path, contents);
+            // `index` is an insertion point; `move_tab` takes a final index.
+            if let Some(position) = workspace
+                .pane(pane)
+                .and_then(|pane| pane.items().iter().position(|item| *item == id))
+            {
+                let target = if position < index { index - 1 } else { index };
+                workspace.move_tab(pane, id, target);
+            }
+        }
+        TabDrop::Pane { pane, split: None } => {
+            workspace.activate_pane(pane);
+            workspace.open_path(drag.path, contents);
+        }
+        TabDrop::Pane {
+            pane,
+            split: Some(direction),
+        } => {
+            let Some(new) = workspace.split_empty(pane, direction) else {
+                return false;
+            };
+            workspace.activate_pane(new);
+            workspace.open_path(drag.path, contents);
+        }
+    }
+    app.toast = None;
+    true
 }
 
 pub fn reveal_file_in_tree(state: &State<AppState>, id: FileId) {
@@ -1816,6 +1914,114 @@ mod tests {
         include_workspace_folders_in_recents(&mut app);
 
         assert_eq!(app.recent_folders, vec![second, older, first]);
+    }
+
+    fn press_file(app: &mut AppState, path: &str, clicks: u8, drop: Option<TabDrop>) {
+        app.file_drag = Some(crate::state::FileDragState {
+            path: PathBuf::from(path),
+            clicks,
+            origin: (0.0, 0.0),
+            point: (0.0, 0.0),
+            active: drop.is_some(),
+            drop,
+        });
+    }
+
+    fn read_ok(path: &Path) -> Result<String, String> {
+        Ok(format!("// {}", path.display()))
+    }
+
+    #[test]
+    fn releasing_an_undragged_file_opens_it_like_a_click() {
+        let mut app = AppState::new();
+        press_file(&mut app, "a.rs", 1, None);
+        assert!(finish_file_drag_with(&mut app, read_ok));
+        assert!(app.file_drag.is_none());
+        let id = app.workspace.active().unwrap();
+        assert_eq!(app.workspace.preview(), Some(id));
+
+        press_file(&mut app, "a.rs", 2, None);
+        finish_file_drag_with(&mut app, read_ok);
+        assert_eq!(app.workspace.preview(), None);
+        assert_eq!(app.workspace.active_items(), &[id]);
+    }
+
+    #[test]
+    fn dropping_a_file_on_a_strip_inserts_it_at_the_marker() {
+        let mut app = AppState::new();
+        let pane = app.workspace.active_pane();
+        let first = app
+            .workspace
+            .open_path(PathBuf::from("first.rs"), String::new());
+        let second = app
+            .workspace
+            .open_path(PathBuf::from("second.rs"), String::new());
+        press_file(
+            &mut app,
+            "new.rs",
+            1,
+            Some(TabDrop::Insert { pane, index: 1 }),
+        );
+
+        assert!(finish_file_drag_with(&mut app, read_ok));
+
+        let new = app.workspace.active().unwrap();
+        assert_eq!(app.workspace.active_items(), &[first, new, second]);
+        // A dragged file opens as a permanent tab.
+        assert_eq!(app.workspace.preview(), None);
+    }
+
+    #[test]
+    fn dropping_a_file_near_a_pane_edge_opens_it_in_a_new_split() {
+        let mut app = AppState::new();
+        let pane = app.workspace.active_pane();
+        let first = app
+            .workspace
+            .open_path(PathBuf::from("first.rs"), String::new());
+        press_file(
+            &mut app,
+            "new.rs",
+            1,
+            Some(TabDrop::Pane {
+                pane,
+                split: Some(crate::model::pane_layout::Direction::Down),
+            }),
+        );
+
+        assert!(finish_file_drag_with(&mut app, read_ok));
+
+        let panes = app.workspace.pane_ids();
+        assert_eq!(panes.len(), 2);
+        assert_eq!(app.workspace.pane(panes[0]).unwrap().items(), &[first]);
+        assert_eq!(app.workspace.active_pane(), panes[1]);
+        assert_eq!(app.workspace.active_path(), Some(Path::new("new.rs")));
+    }
+
+    #[test]
+    fn dropping_a_file_on_another_pane_opens_it_there_and_failures_change_nothing() {
+        let mut app = AppState::new();
+        let left = app.workspace.active_pane();
+        app.workspace
+            .open_path(PathBuf::from("first.rs"), String::new());
+        let right = app
+            .workspace
+            .split(left, crate::model::pane_layout::Direction::Right)
+            .unwrap();
+        app.workspace.activate_pane(left);
+        let drop = Some(TabDrop::Pane {
+            pane: right,
+            split: None,
+        });
+
+        press_file(&mut app, "gone.rs", 1, drop);
+        assert!(!finish_file_drag_with(&mut app, |_| Err("gone".to_owned())));
+        assert_eq!(app.workspace.pane_count(), 2);
+        assert_eq!(app.workspace.active_pane(), left);
+
+        press_file(&mut app, "new.rs", 1, drop);
+        assert!(finish_file_drag_with(&mut app, read_ok));
+        assert_eq!(app.workspace.active_pane(), right);
+        assert_eq!(app.workspace.active_path(), Some(Path::new("new.rs")));
     }
 
     fn read_all_but(missing: &'static str) -> impl FnMut(&Path) -> Result<String, String> {

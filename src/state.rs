@@ -88,6 +88,19 @@ pub struct TabDragState {
     pub drop: Option<TabDrop>,
 }
 
+/// A file pressed in the Explorer: a click on release, or a drag into the
+/// editor once the pointer moves far enough.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileDragState {
+    pub path: PathBuf,
+    /// Click count of the press, so a release still opens like a click.
+    pub clicks: u8,
+    pub origin: (f32, f32),
+    pub point: (f32, f32),
+    pub active: bool,
+    pub drop: Option<TabDrop>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabContextMenuState {
     pub position: (f32, f32),
@@ -172,6 +185,8 @@ pub struct AppState {
     pub tab_scrollbar_drag_offset: f32,
     /// Pending or active left-button tab reorder gesture.
     pub tab_drag: Option<TabDragState>,
+    /// Pending click or active drag of an Explorer file.
+    pub file_drag: Option<FileDragState>,
     /// Context menu opened for one editor tab.
     pub tab_context_menu: Option<TabContextMenuState>,
     /// Pending close operation waiting for the user to resolve dirty files.
@@ -300,6 +315,7 @@ impl AppState {
             tab_scrollbar_dragging: None,
             tab_scrollbar_drag_offset: 0.0,
             tab_drag: None,
+            file_drag: None,
             tab_context_menu: None,
             close_request: None,
             toast: None,
@@ -411,6 +427,7 @@ impl AppState {
                 self.close_menus();
                 self.close_request = None;
                 self.tab_drag = None;
+                self.file_drag = None;
                 self.sash_drag = None;
                 self.tab_scrollbar_dragging = None;
                 if !self.cloning_repository {

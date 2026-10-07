@@ -319,6 +319,11 @@ impl Workspace {
         ids
     }
 
+    /// Split `pane`, leaving the new pane empty and unfocused.
+    pub fn split_empty(&mut self, pane: PaneId, direction: Direction) -> Option<PaneId> {
+        self.add_pane(pane, direction)
+    }
+
     /// Insert an empty pane next to `pane` without focusing it.
     fn add_pane(&mut self, pane: PaneId, direction: Direction) -> Option<PaneId> {
         let new = PaneId::new(self.next_pane_id);

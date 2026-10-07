@@ -622,6 +622,33 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         st_tabs_pointer_up.try_update(tabs::finish_pointer_interaction);
     });
 
+    // An Explorer file press becomes a drag into the editor once it moves;
+    // its release either opens it like a click or drops it on a pane.
+    let st_file_drag = state.clone();
+    let file_drag_regions = regions.clone();
+    root = root.on_event_capture(UiEventKind::PointerDrag, move |_ctx, payload| {
+        if let UiEventPayload::PointerDrag { pointer } = payload {
+            st_file_drag.try_update(|app| {
+                tabs::update_file_drag(app, &file_drag_regions, pointer.point.x, pointer.point.y)
+            });
+        }
+    });
+    let st_file_drop = state.clone();
+    let file_drop_focus = editor_focus.clone();
+    root = root.on_event_capture(UiEventKind::PointerUp, move |_ctx, _payload| {
+        let mut focus = false;
+        st_file_drop.try_update(|app| {
+            if app.file_drag.is_none() {
+                return false;
+            }
+            focus = crate::workspace_actions::finish_file_drag(app);
+            true
+        });
+        if focus {
+            file_drop_focus.focus();
+        }
+    });
+
     // Keep editor scrollbar drags alive while the pointer is anywhere in the
     // window. Relying only on the narrow thumb/track as the drag source makes
     // the interaction fragile once the pointer leaves that hit region.
@@ -693,12 +720,18 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     for sash in s.workspace.layout().sashes(editor_area) {
         root = root.child(pane_sash::render(sash, state.clone()));
     }
-    // Preview where a dragged tab would land on a pane surface.
+    // Preview where a dragged tab or Explorer file would land on a pane.
+    let file_drop = s
+        .file_drag
+        .as_ref()
+        .filter(|drag| drag.active)
+        .and_then(|drag| drag.drop);
     if let Some(TabDrop::Pane { pane, split }) = s
         .tab_drag
         .as_ref()
         .filter(|drag| drag.active)
         .and_then(|drag| drag.drop)
+        .or(file_drop)
         && let Some(region) = regions.iter().find(|region| region.pane == pane)
     {
         root = root.child(lgui::prelude::panel(
@@ -797,6 +830,31 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             close_dialog_id,
             editor_focus.clone(),
         ));
+    }
+    // The dragged Explorer file's name follows the pointer.
+    if let Some(drag) = s.file_drag.as_ref().filter(|drag| drag.active) {
+        let name = drag.path.file_name().map_or_else(
+            || drag.path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let width = tabs::measure(&name, theme::SMALL, 400) + 20.0;
+        let left = (drag.point.0 + 12.0).min(vp.right - width - 4.0);
+        let top = (drag.point.1 + 8.0).min(vp.bottom - 28.0);
+        let label = UiRect::new(left, top, left + width, top + 24.0);
+        root = root.child(
+            theme::bordered(label, theme::c().surface, theme::c().border, 4.0, 1.0).child(
+                lgui::prelude::text(
+                    UiRect::new(
+                        label.left + 9.0,
+                        label.top + 4.0,
+                        label.right - 9.0,
+                        label.bottom - 3.0,
+                    ),
+                    name,
+                    theme::mono(theme::c().text_soft, theme::SMALL),
+                ),
+            ),
+        );
     }
     root = root.child(toast::render(vp, state.clone()));
 

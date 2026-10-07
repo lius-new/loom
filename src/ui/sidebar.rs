@@ -20,6 +20,7 @@ use crate::file_tree::read_directory;
 use crate::git::{GitStoreSnapshot, PathDecoration};
 use crate::state::{
     AppState, DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind,
+    FileDragState,
 };
 use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
@@ -1000,39 +1001,22 @@ fn build_tree(
                     .on_pointer_down_with_button(move |cx, pointer, button| {
                         match button {
                             PointerButton::Left => {
-                                let x = pointer.point.x;
-                                let y = pointer.point.y;
-                                if let Some(id) = open_id {
-                                    let path = action_path.clone();
-                                    st.update(move |app| {
-                                        let clicks = app.editor.tree_click_count(&path, x, y);
-                                        app.workspace.set_active(id);
-                                        if clicks > 1 {
-                                            app.workspace.promote_active_preview();
-                                        }
+                                // Opening waits for the release: a press that moves
+                                // becomes a drag into the editor (see `app.rs`).
+                                let point = (pointer.point.x, pointer.point.y);
+                                let path = action_path.clone();
+                                st.update(move |app| {
+                                    let clicks =
+                                        app.editor.tree_click_count(&path, point.0, point.1);
+                                    app.file_drag = Some(FileDragState {
+                                        path,
+                                        clicks,
+                                        origin: point,
+                                        point,
+                                        active: false,
+                                        drop: None,
                                     });
-                                    focus.focus();
-                                } else {
-                                    let path = action_path.clone();
-                                    match read_text_file(&path) {
-                                        Ok(contents) => {
-                                            st.update(move |app| {
-                                                let clicks =
-                                                    app.editor.tree_click_count(&path, x, y);
-                                                if clicks > 1 {
-                                                    app.workspace.open_path(path, contents);
-                                                } else {
-                                                    app.workspace.preview_path(path, contents);
-                                                }
-                                                app.toast = None;
-                                            });
-                                            focus.focus();
-                                        }
-                                        Err(message) => {
-                                            st.update(move |app| app.show_error(message));
-                                        }
-                                    }
-                                }
+                                });
                             }
                             PointerButton::Middle => {
                                 if let Some(id) = open_id {
