@@ -25,6 +25,7 @@ mod git_actions;
 mod input;
 mod launch;
 mod model;
+mod settings_persistence;
 mod state;
 mod terminal_session;
 mod theme;

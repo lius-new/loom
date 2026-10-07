@@ -15,6 +15,7 @@ use lgui::window::WindowFocusChanged;
 use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
 use crate::input::keymap;
+use crate::settings_persistence::{self, Settings};
 use crate::state::{AppState, CloseContinuation, CloseRequest};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
@@ -159,27 +160,20 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         },
     );
     let show_drawer = s.show_drawer;
-    let git_ui_preferences = (
-        s.show_source_control,
-        s.git_tree_view,
-        s.git_split_diff,
-        s.git_inline_blame,
-    );
-    cx.use_effect(git_ui_preferences, move || {
-        let _ = workspace_persistence::save_git_ui(
-            git_ui_preferences.0,
-            git_ui_preferences.1,
-            git_ui_preferences.2,
-            git_ui_preferences.3,
-        );
+    let source_control_open = s.show_source_control;
+    cx.use_effect(source_control_open, move || {
+        let _ = workspace_persistence::save_source_control_open(source_control_open);
         || {}
     });
-    let terminal_preferences = (s.default_shell, s.terminal_cursor_blink);
-    cx.use_effect(terminal_preferences, move || {
-        let _ = workspace_persistence::save_terminal_preferences(
-            terminal_preferences.0,
-            terminal_preferences.1,
-        );
+    let settings = Settings {
+        default_shell: s.default_shell,
+        terminal_cursor_blink: s.terminal_cursor_blink,
+        git_inline_blame: s.git_inline_blame,
+        git_split_diff: s.git_split_diff,
+        git_tree_view: s.git_tree_view,
+    };
+    cx.use_effect(settings, move || {
+        let _ = settings_persistence::save(&settings);
         || {}
     });
     let show_clone_dialog = s.show_clone_dialog;

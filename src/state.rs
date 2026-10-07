@@ -281,11 +281,12 @@ impl AppState {
         app.workspace_folders = session.open_folders;
         app.recent_folders = session.recent_folders;
         app.show_source_control = session.source_control_open;
-        app.git_tree_view = session.git_tree_view;
-        app.git_split_diff = session.git_split_diff;
-        app.git_inline_blame = session.git_inline_blame;
-        app.default_shell = session.default_shell;
-        app.terminal_cursor_blink = session.terminal_cursor_blink;
+        let settings = crate::settings_persistence::load();
+        app.git_tree_view = settings.git_tree_view;
+        app.git_split_diff = settings.git_split_diff;
+        app.git_inline_blame = settings.git_inline_blame;
+        app.default_shell = settings.default_shell;
+        app.terminal_cursor_blink = settings.terminal_cursor_blink;
         crate::workspace_actions::hydrate_workspace_folders(&mut app);
         crate::workspace_actions::hydrate_file_tabs(
             &mut app,

@@ -22,7 +22,7 @@ pub struct WindowGeometry {
     pub maximized: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct WorkspaceSession {
     #[serde(default)]
     pub open_folders: Vec<PathBuf>,
@@ -44,42 +44,6 @@ pub struct WorkspaceSession {
     pub terminal_height: Option<f32>,
     #[serde(default)]
     pub source_control_open: bool,
-    #[serde(default)]
-    pub git_tree_view: bool,
-    #[serde(default)]
-    pub git_split_diff: bool,
-    #[serde(default)]
-    pub git_inline_blame: bool,
-    #[serde(default)]
-    pub default_shell: ShellKind,
-    #[serde(default = "default_true")]
-    pub terminal_cursor_blink: bool,
-}
-
-impl Default for WorkspaceSession {
-    fn default() -> Self {
-        Self {
-            open_folders: Vec::new(),
-            recent_folders: Vec::new(),
-            window: None,
-            open_files: Vec::new(),
-            active_file: None,
-            terminal_tabs: Vec::new(),
-            active_terminal: None,
-            show_terminal: false,
-            terminal_height: None,
-            source_control_open: false,
-            git_tree_view: false,
-            git_split_diff: false,
-            git_inline_blame: false,
-            default_shell: ShellKind::default(),
-            terminal_cursor_blink: true,
-        }
-    }
-}
-
-fn default_true() -> bool {
-    true
 }
 
 pub fn load() -> WorkspaceSession {
@@ -131,28 +95,8 @@ pub fn save_terminal_state(
     })
 }
 
-pub fn save_git_ui(
-    source_control_open: bool,
-    git_tree_view: bool,
-    git_split_diff: bool,
-    git_inline_blame: bool,
-) -> io::Result<()> {
-    update(|session| {
-        session.source_control_open = source_control_open;
-        session.git_tree_view = git_tree_view;
-        session.git_split_diff = git_split_diff;
-        session.git_inline_blame = git_inline_blame;
-    })
-}
-
-pub fn save_terminal_preferences(
-    default_shell: ShellKind,
-    terminal_cursor_blink: bool,
-) -> io::Result<()> {
-    update(|session| {
-        session.default_shell = default_shell;
-        session.terminal_cursor_blink = terminal_cursor_blink;
-    })
+pub fn save_source_control_open(source_control_open: bool) -> io::Result<()> {
+    update(|session| session.source_control_open = source_control_open)
 }
 
 fn update(change: impl FnOnce(&mut WorkspaceSession)) -> io::Result<()> {
@@ -171,10 +115,15 @@ fn update(change: impl FnOnce(&mut WorkspaceSession)) -> io::Result<()> {
 }
 
 fn save_to(path: &Path, session: &WorkspaceSession) -> io::Result<()> {
+    write_json(path, session)
+}
+
+/// Pretty-print `value` to `path`, creating the parent directory as needed.
+pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let contents = serde_json::to_vec_pretty(session).map_err(io::Error::other)?;
+    let contents = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     fs::write(path, contents)
 }
 
@@ -183,12 +132,17 @@ fn persistence_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn session_path() -> Option<PathBuf> {
+pub(crate) fn session_path() -> Option<PathBuf> {
+    config_path("workspace.json")
+}
+
+/// Path of `file_name` inside Loom's per-user configuration directory.
+pub(crate) fn config_path(file_name: &str) -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         env::var_os("APPDATA")
             .map(PathBuf::from)
-            .map(|path| path.join("Loom").join("workspace.json"))
+            .map(|path| path.join("Loom").join(file_name))
     }
 
     #[cfg(target_os = "macos")]
@@ -197,18 +151,18 @@ fn session_path() -> Option<PathBuf> {
             path.join("Library")
                 .join("Application Support")
                 .join("Loom")
-                .join("workspace.json")
+                .join(file_name)
         })
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
-            return Some(PathBuf::from(path).join("loom").join("workspace.json"));
+            return Some(PathBuf::from(path).join("loom").join(file_name));
         }
         env::var_os("HOME")
             .map(PathBuf::from)
-            .map(|path| path.join(".config").join("loom").join("workspace.json"))
+            .map(|path| path.join(".config").join("loom").join(file_name))
     }
 }
 
@@ -235,11 +189,6 @@ mod tests {
             show_terminal: true,
             terminal_height: Some(320.0),
             source_control_open: true,
-            git_tree_view: true,
-            git_split_diff: true,
-            git_inline_blame: true,
-            default_shell: ShellKind::Bash,
-            terminal_cursor_blink: false,
         };
 
         let json = serde_json::to_string(&session).unwrap();
