@@ -1014,6 +1014,56 @@ fn add_folder_state(app: &mut AppState, path: PathBuf) -> bool {
     true
 }
 
+/// Open paths given on the command line, after the previous session has been
+/// restored. The first folder replaces the workspace like Open Folder and any
+/// further folders are added to it; files open as tabs, the last one active.
+/// Unreadable paths are reported once in a toast.
+pub(crate) fn open_launch_paths(app: &mut AppState, paths: Vec<PathBuf>) {
+    if open_launch_paths_with(app, paths, read_text_file) {
+        persist_workspace(app);
+    }
+}
+
+/// Apply launch paths to the state; returns whether the workspace folders
+/// changed and need to be persisted.
+fn open_launch_paths_with(
+    app: &mut AppState,
+    paths: Vec<PathBuf>,
+    mut read: impl FnMut(&Path) -> Result<String, String>,
+) -> bool {
+    let mut replaced_workspace = false;
+    let mut errors = Vec::new();
+    for path in paths {
+        // Relative to the launching shell's directory. `absolute` keeps the
+        // plain spelling (no `\\?\` prefix), so session tabs still match.
+        let path = std::path::absolute(&path).unwrap_or(path);
+        if path.is_dir() {
+            let path = normalized_folder(path);
+            if replaced_workspace {
+                add_folder_state(app, path);
+            } else {
+                replace_folder_state(app, path);
+                replaced_workspace = true;
+            }
+            continue;
+        }
+        match read(&path) {
+            Ok(contents) => {
+                app.workspace.open_path(path, contents);
+            }
+            Err(message) => errors.push(message),
+        }
+    }
+    if let Some(first) = errors.first() {
+        let message = match errors.len() {
+            1 => first.clone(),
+            count => format!("{first} (and {} more)", count - 1),
+        };
+        app.show_toast(message);
+    }
+    replaced_workspace
+}
+
 /// Populate directory caches for folders restored from the previous session.
 pub(crate) fn hydrate_workspace_folders(app: &mut AppState) {
     app.workspace_folders = existing_unique(std::mem::take(&mut app.workspace_folders));
@@ -1169,6 +1219,56 @@ mod tests {
                 continuation: CloseContinuation::CloseTabs,
             })
         );
+    }
+
+    #[test]
+    fn launch_paths_open_the_first_folder_add_others_and_open_files() {
+        let root = close_test_directory("launch-paths");
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        let file = first.join("main.rs");
+        let mut app = AppState::new();
+        app.workspace_folders
+            .push(PathBuf::from("previous-workspace"));
+
+        let changed = open_launch_paths_with(
+            &mut app,
+            vec![first.clone(), file.clone(), second.clone()],
+            |_| Ok("fn main() {}".to_owned()),
+        );
+
+        assert!(changed);
+        assert_eq!(
+            app.workspace_folders,
+            vec![normalized_folder(first), normalized_folder(second)]
+        );
+        let active = app.workspace.active().unwrap();
+        assert_eq!(app.workspace.meta(active).unwrap().path, file);
+        assert!(app.toast.is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unreadable_launch_files_report_one_toast_and_keep_the_workspace() {
+        let mut app = AppState::new();
+        app.workspace_folders
+            .push(PathBuf::from("previous-workspace"));
+
+        let changed = open_launch_paths_with(
+            &mut app,
+            vec![PathBuf::from("missing-a.rs"), PathBuf::from("missing-b.rs")],
+            |path| Err(format!("Could not open {}", path.display())),
+        );
+
+        assert!(!changed);
+        assert_eq!(
+            app.workspace_folders,
+            vec![PathBuf::from("previous-workspace")]
+        );
+        assert!(app.workspace.open_files().is_empty());
+        assert!(app.toast.as_deref().unwrap().ends_with("(and 1 more)"));
     }
 
     #[test]

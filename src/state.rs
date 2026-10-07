@@ -282,6 +282,7 @@ impl AppState {
             session.open_files,
             session.active_file,
         );
+        crate::workspace_actions::open_launch_paths(&mut app, crate::launch::take_paths());
         app
     }
 

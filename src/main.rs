@@ -23,6 +23,7 @@ mod file_icons;
 mod git;
 mod git_actions;
 mod input;
+mod launch;
 mod model;
 mod state;
 mod terminal_session;
@@ -39,6 +40,7 @@ use lgui::prelude::*;
 use lgui::{WinitApplication, WinitWindowIcon, WinitWindowOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    launch::init(std::env::args_os().skip(1));
     let native_window_options = native_window_options()?;
     let window_options = window_geometry::restore_options(
         WindowOptions::new("loom")
