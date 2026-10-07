@@ -6,6 +6,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lgui::prelude::{Color, Element, Stroke, TextAlign, TextStyle, UiRect, VisualStyle, panel};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 // ---- Palettes ----------------------------------------------------------
 
@@ -96,8 +97,7 @@ pub struct Theme {
     pub palette: Palette,
 }
 
-pub const DEFAULT_THEME: &str = "aura-dark";
-
+/// Built-in themes; the first entry is the default.
 pub static THEMES: &[Theme] = &[
     Theme {
         id: "aura-dark",
@@ -371,28 +371,51 @@ const HIGH_CONTRAST: Palette = Palette {
     ],
 };
 
+/// A built-in theme. Stored in `settings.json` as the theme's string id; an
+/// unknown id loads as the default theme.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ThemeId(usize); // index into THEMES; 0 is the default
+
+impl ThemeId {
+    pub fn all() -> impl Iterator<Item = Self> {
+        (0..THEMES.len()).map(Self)
+    }
+
+    pub fn parse(id: &str) -> Option<Self> {
+        THEMES.iter().position(|theme| theme.id == id).map(Self)
+    }
+
+    pub fn theme(self) -> &'static Theme {
+        &THEMES[self.0]
+    }
+}
+
+impl Serialize for ThemeId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.theme().id)
+    }
+}
+
+impl<'de> Deserialize<'de> for ThemeId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let id = String::deserialize(deserializer)?;
+        Ok(Self::parse(&id).unwrap_or_default())
+    }
+}
+
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
 
 /// The active palette.
 pub fn c() -> &'static Palette {
-    &THEMES[CURRENT.load(Ordering::Relaxed)].palette
+    &current().theme().palette
 }
 
-/// Id of the active theme.
-pub fn current_id() -> &'static str {
-    THEMES[CURRENT.load(Ordering::Relaxed)].id
+pub fn current() -> ThemeId {
+    ThemeId(CURRENT.load(Ordering::Relaxed))
 }
 
-/// Switch to the theme with `id`. Returns `false` and keeps the current
-/// theme when no built-in theme has that id.
-pub fn set(id: &str) -> bool {
-    match THEMES.iter().position(|theme| theme.id == id) {
-        Some(index) => {
-            CURRENT.store(index, Ordering::Relaxed);
-            true
-        }
-        None => false,
-    }
+pub fn set(id: ThemeId) {
+    CURRENT.store(id.0, Ordering::Relaxed);
 }
 
 // ---- Layout metrics (px) ----------------------------------------------
@@ -482,7 +505,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn theme_ids_are_unique_and_include_the_default() {
+    fn theme_ids_are_unique() {
         for (index, theme) in THEMES.iter().enumerate() {
             assert!(
                 THEMES[index + 1..].iter().all(|other| other.id != theme.id),
@@ -490,12 +513,26 @@ mod tests {
                 theme.id
             );
         }
-        assert!(THEMES.iter().any(|theme| theme.id == DEFAULT_THEME));
-        assert_eq!(THEMES[0].id, DEFAULT_THEME);
     }
 
     #[test]
-    fn unknown_theme_id_is_rejected() {
-        assert!(!set("no-such-theme"));
+    fn default_theme_is_aura_dark() {
+        assert_eq!(ThemeId::default().theme().id, "aura-dark");
+    }
+
+    #[test]
+    fn theme_ids_round_trip_as_json_strings() {
+        for id in ThemeId::all() {
+            let json = serde_json::to_string(&id).unwrap();
+            assert_eq!(json, format!("\"{}\"", id.theme().id));
+            assert_eq!(serde_json::from_str::<ThemeId>(&json).unwrap(), id);
+        }
+    }
+
+    #[test]
+    fn unknown_theme_id_loads_as_the_default() {
+        assert_eq!(ThemeId::parse("no-such-theme"), None);
+        let decoded: ThemeId = serde_json::from_str("\"no-such-theme\"").unwrap();
+        assert_eq!(decoded, ThemeId::default());
     }
 }

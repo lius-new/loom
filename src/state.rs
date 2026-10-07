@@ -7,6 +7,7 @@ use crate::input::keymap::Action;
 use crate::model::document::FileId;
 use crate::model::workspace::Workspace;
 use crate::terminal_session::ShellKind;
+use crate::theme::ThemeId;
 use crate::ui::components::input::InputState;
 
 /// One entry in a loaded directory listing.
@@ -94,6 +95,8 @@ pub struct AppState {
     /// Whether the terminal shell selector is expanded.
     pub terminal_shell_menu: bool,
     /// Shell used for terminals that are not opened from the shell selector.
+    /// Active color theme, applied at the start of every frame.
+    pub theme: ThemeId,
     pub default_shell: ShellKind,
     pub terminal_cursor_blink: bool,
     /// Horizontal scroll offset of the editor tab strip, in logical pixels.
@@ -210,6 +213,7 @@ impl AppState {
             selecting_terminal: false,
             terminal_focused: false,
             terminal_shell_menu: false,
+            theme: ThemeId::default(),
             default_shell: ShellKind::default(),
             terminal_cursor_blink: true,
             tab_scroll_x: 0.0,
@@ -285,6 +289,7 @@ impl AppState {
         app.git_tree_view = settings.git_tree_view;
         app.git_split_diff = settings.git_split_diff;
         app.git_inline_blame = settings.git_inline_blame;
+        app.theme = settings.theme;
         app.default_shell = settings.default_shell;
         app.terminal_cursor_blink = settings.terminal_cursor_blink;
         crate::workspace_actions::hydrate_workspace_folders(&mut app);

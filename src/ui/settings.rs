@@ -4,11 +4,11 @@
 //! values, so there is no separate apply/save step.
 
 use lgui::core::{CursorIcon, EventPolicy, WheelUnit, clip};
-use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, group, panel, text};
+use lgui::prelude::{Color, Element, State, TextAlign, UiRect, VisualStyle, group, panel, text};
 
 use crate::state::AppState;
 use crate::terminal_session::ShellKind;
-use crate::theme;
+use crate::theme::{self, ThemeId};
 use crate::ui::tabs::{TEXT_MARGIN, measure};
 
 const MAX_PAGE_W: f32 = 720.0;
@@ -25,9 +25,15 @@ const KNOB: f32 = 12.0;
 const SEGMENT_W: f32 = 64.0;
 const SEGMENT_H: f32 = 24.0;
 const SCROLL_STEP: f32 = 24.0;
+const THEME_CARD_H: f32 = 72.0;
+const THEME_CARD_MAX_W: f32 = 168.0;
+const THEME_CARD_GAP: f32 = 12.0;
+const THEME_NAME_H: f32 = 24.0;
+const THEME_ROW_H: f32 = ROW_H + THEME_CARD_H + 18.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Setting {
+    Theme,
     DefaultShell,
     TerminalCursorBlink,
     InlineBlame,
@@ -35,7 +41,8 @@ enum Setting {
     TreeView,
 }
 
-const SECTIONS: [(&str, &[Setting]); 2] = [
+const SECTIONS: [(&str, &[Setting]); 3] = [
+    ("APPEARANCE", &[Setting::Theme]),
     (
         "TERMINAL",
         &[Setting::DefaultShell, Setting::TerminalCursorBlink],
@@ -49,6 +56,7 @@ const SECTIONS: [(&str, &[Setting]); 2] = [
 impl Setting {
     fn label(self) -> &'static str {
         match self {
+            Self::Theme => "Color theme",
             Self::DefaultShell => "Default shell",
             Self::TerminalCursorBlink => "Cursor blinking",
             Self::InlineBlame => "Inline blame",
@@ -59,6 +67,7 @@ impl Setting {
 
     fn description(self) -> &'static str {
         match self {
+            Self::Theme => "Colors used across the editor, panels and terminal.",
             Self::DefaultShell => "Used when a new terminal opens without picking a shell.",
             Self::TerminalCursorBlink => "Blink the terminal cursor while it has focus.",
             Self::InlineBlame => "Show the last commit for the current line in the editor.",
@@ -70,7 +79,7 @@ impl Setting {
     /// Current value of an on/off setting; `None` for choice settings.
     fn enabled(self, app: &AppState) -> Option<bool> {
         match self {
-            Self::DefaultShell => None,
+            Self::Theme | Self::DefaultShell => None,
             Self::TerminalCursorBlink => Some(app.terminal_cursor_blink),
             Self::InlineBlame => Some(app.git_inline_blame),
             Self::SplitDiff => Some(app.git_split_diff),
@@ -80,21 +89,29 @@ impl Setting {
 
     fn toggle(self, app: &mut AppState) {
         match self {
-            Self::DefaultShell => {}
+            Self::Theme | Self::DefaultShell => {}
             Self::TerminalCursorBlink => app.terminal_cursor_blink ^= true,
             Self::InlineBlame => app.git_inline_blame ^= true,
             Self::SplitDiff => app.git_split_diff ^= true,
             Self::TreeView => app.git_tree_view ^= true,
         }
     }
+
+    fn height(self) -> f32 {
+        match self {
+            Self::Theme => THEME_ROW_H,
+            _ => ROW_H,
+        }
+    }
 }
 
 fn content_height() -> f32 {
-    let rows: usize = SECTIONS.iter().map(|(_, settings)| settings.len()).sum();
-    PAGE_PAD_TOP
-        + HEADER_H
-        + SECTIONS.len() as f32 * (SECTION_TITLE_H + SECTION_GAP)
-        + rows as f32 * ROW_H
+    let rows: f32 = SECTIONS
+        .iter()
+        .flat_map(|(_, settings)| settings.iter())
+        .map(|setting| setting.height())
+        .sum();
+    PAGE_PAD_TOP + HEADER_H + SECTIONS.len() as f32 * (SECTION_TITLE_H + SECTION_GAP) + rows
 }
 
 pub fn render(rect: UiRect, state: State<AppState>) -> Element {
@@ -154,9 +171,9 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             VisualStyle::filled(theme::c().border),
         ));
         for &setting in settings {
-            let row = UiRect::new(page_left, top, page_right, top + ROW_H);
+            let row = UiRect::new(page_left, top, page_right, top + setting.height());
             content = content.child(setting_row(row, setting, &app, state.clone()));
-            top += ROW_H;
+            top += setting.height();
         }
         top += SECTION_GAP;
     }
@@ -166,9 +183,11 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
 }
 
 fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppState>) -> Element {
-    let control_w = match setting.enabled(app) {
-        Some(_) => SWITCH_W,
-        None => SEGMENT_W * ShellKind::ALL.len() as f32,
+    let control_w = match setting {
+        // The theme cards sit below the label, so the text spans the row.
+        Setting::Theme => 0.0,
+        Setting::DefaultShell => SEGMENT_W * ShellKind::ALL.len() as f32,
+        _ => SWITCH_W,
     };
     let control_left = row.right - control_w;
     let text_right = (control_left - CONTROL_GAP).max(row.left);
@@ -205,6 +224,14 @@ fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppSt
                     ),
                     on,
                 ));
+        }
+        None if setting == Setting::Theme => {
+            let cards_top = row.top + ROW_H - 4.0;
+            element = element.child(theme_picker(
+                UiRect::new(row.left, cards_top, row.right, cards_top + THEME_CARD_H),
+                app.theme,
+                state,
+            ));
         }
         None => {
             element = element.child(shell_selector(
@@ -291,6 +318,92 @@ fn shell_selector(rect: UiRect, selected: ShellKind, state: State<AppState>) -> 
     selector
 }
 
+/// One card per built-in theme, each drawn in its own palette with a tiny
+/// code preview so the choice is visible before it is applied.
+fn theme_picker(rect: UiRect, selected: ThemeId, state: State<AppState>) -> Element {
+    let count = ThemeId::all().count() as f32;
+    let card_w =
+        ((rect.width() - THEME_CARD_GAP * (count - 1.0)) / count).clamp(0.0, THEME_CARD_MAX_W);
+    let mut picker = group(rect);
+    for (index, id) in ThemeId::all().enumerate() {
+        let entry = id.theme();
+        let p = &entry.palette;
+        let active = id == selected;
+        let left = rect.left + index as f32 * (card_w + THEME_CARD_GAP);
+        let card = UiRect::new(left, rect.top, left + card_w, rect.bottom);
+        let (ring, ring_w) = if active {
+            (theme::c().accent, 2.0)
+        } else {
+            (theme::c().border, 1.0)
+        };
+
+        // Mini code lines: (indent, [(width, color)]).
+        let lines: [(f32, &[(f32, Color)]); 3] = [
+            (0.0, &[(18.0, p.syntax.keyword), (30.0, p.syntax.function)]),
+            (10.0, &[(22.0, p.syntax.property), (36.0, p.syntax.string)]),
+            (10.0, &[(44.0, p.syntax.comment)]),
+        ];
+        let mut element = theme::bordered(card, p.bg, ring, 6.0, ring_w);
+        for (row, (indent, bars)) in lines.into_iter().enumerate() {
+            let y = card.top + 12.0 + row as f32 * 9.0;
+            let mut x = card.left + 12.0 + indent;
+            for &(width, color) in bars {
+                let right = (x + width).min(card.right - 12.0);
+                if right > x {
+                    element = element.child(panel(
+                        UiRect::new(x, y, right, y + 4.0),
+                        VisualStyle::filled(color).radius(2.0),
+                    ));
+                }
+                x += width + 5.0;
+            }
+        }
+        let name_top = card.bottom - THEME_NAME_H;
+        element = element
+            .child(panel(
+                UiRect::new(
+                    card.left + ring_w,
+                    name_top,
+                    card.right - ring_w,
+                    name_top + 1.0,
+                ),
+                VisualStyle::filled(p.border),
+            ))
+            .child(text(
+                UiRect::new(
+                    card.left + 10.0,
+                    name_top + 4.0,
+                    card.right - 22.0,
+                    card.bottom - 2.0,
+                ),
+                entry.name,
+                theme::sans(
+                    if active { p.text_bright } else { p.text_muted },
+                    theme::SMALL + 1.0,
+                ),
+            ))
+            .child(panel(
+                UiRect::new(
+                    card.right - 16.0,
+                    name_top + 8.0,
+                    card.right - 8.0,
+                    name_top + 16.0,
+                ),
+                VisualStyle::filled(p.accent).radius(4.0),
+            ));
+
+        let select_state = state.clone();
+        picker = picker.child(
+            element
+                .key(format!("settings-theme-{}", entry.id))
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || select_state.update(move |app| app.theme = id)),
+        );
+    }
+    picker
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +430,14 @@ mod tests {
         assert_eq!(Setting::DefaultShell.enabled(&app), None);
         Setting::DefaultShell.toggle(&mut app);
         assert_eq!(app.default_shell, before);
+    }
+
+    #[test]
+    fn theme_is_a_choice_not_a_toggle() {
+        let mut app = AppState::new();
+        let before = app.theme;
+        assert_eq!(Setting::Theme.enabled(&app), None);
+        Setting::Theme.toggle(&mut app);
+        assert_eq!(app.theme, before);
     }
 }

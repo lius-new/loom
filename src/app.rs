@@ -105,6 +105,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     // Snapshot toggles for this frame.
     let s = state.get();
+    theme::set(s.theme);
     let open_tab_paths = s.workspace.open_paths();
     let active_tab_path = s.workspace.active_path().map(std::path::Path::to_path_buf);
     let git_roots = s.workspace_folders.clone();
@@ -166,6 +167,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         || {}
     });
     let settings = Settings {
+        theme: s.theme,
         default_shell: s.default_shell,
         terminal_cursor_blink: s.terminal_cursor_blink,
         git_inline_blame: s.git_inline_blame,

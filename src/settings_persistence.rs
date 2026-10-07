@@ -10,12 +10,15 @@ use std::sync::{Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use crate::terminal_session::ShellKind;
+use crate::theme::ThemeId;
 use crate::workspace_persistence::{config_path, session_path, write_json};
 
 const FILE_NAME: &str = "settings.json";
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Settings {
+    #[serde(default)]
+    pub theme: ThemeId,
     #[serde(default)]
     pub default_shell: ShellKind,
     #[serde(default = "default_true")]
@@ -31,6 +34,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            theme: ThemeId::default(),
             default_shell: ShellKind::default(),
             terminal_cursor_blink: true,
             git_inline_blame: false,
@@ -85,6 +89,7 @@ mod tests {
     #[test]
     fn settings_round_trip_as_json() {
         let settings = Settings {
+            theme: ThemeId::parse("ember").unwrap(),
             default_shell: ShellKind::Bash,
             terminal_cursor_blink: false,
             git_inline_blame: true,
@@ -121,6 +126,7 @@ mod tests {
         assert_eq!(
             decoded,
             Settings {
+                theme: ThemeId::default(),
                 default_shell: ShellKind::Bash,
                 terminal_cursor_blink: false,
                 git_inline_blame: true,
