@@ -194,7 +194,7 @@ pub fn render(
         .child(text(
             save_rect,
             "Save",
-            centered(theme::sans_semibold(theme::c().text_bright, theme::UI_SIZE)),
+            centered(theme::sans_semibold(theme::c().on_accent, theme::UI_SIZE)),
         )),
     )
 }

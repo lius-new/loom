@@ -22,7 +22,9 @@ pub struct Palette {
     pub selection: Color,
     pub accent: Color,
     pub accent_hover: Color,
+    pub on_accent: Color, // text and knobs drawn on an accent fill
     pub scrollbar: Color,
+    pub shadow_alpha: u8, // opacity of popup drop shadows
 
     // Text, from most to least prominent
     pub text_bright: Color,
@@ -96,11 +98,28 @@ pub struct Theme {
 
 pub const DEFAULT_THEME: &str = "aura-dark";
 
-pub static THEMES: &[Theme] = &[Theme {
-    id: "aura-dark",
-    name: "Aura Dark",
-    palette: AURA_DARK,
-}];
+pub static THEMES: &[Theme] = &[
+    Theme {
+        id: "aura-dark",
+        name: "Aura Dark",
+        palette: AURA_DARK,
+    },
+    Theme {
+        id: "aura-light",
+        name: "Aura Light",
+        palette: AURA_LIGHT,
+    },
+    Theme {
+        id: "ember",
+        name: "Ember",
+        palette: EMBER,
+    },
+    Theme {
+        id: "high-contrast",
+        name: "High Contrast",
+        palette: HIGH_CONTRAST,
+    },
+];
 
 const AURA_DARK: Palette = Palette {
     bg: Color(0x14161b),
@@ -111,7 +130,9 @@ const AURA_DARK: Palette = Palette {
     selection: Color(0x273449),
     accent: Color(0x818cf8), // electric indigo
     accent_hover: Color(0x6366f1),
+    on_accent: Color(0xf4f4f5),
     scrollbar: Color(0x27272a),
+    shadow_alpha: 80,
 
     text_bright: Color(0xf4f4f5),
     text: Color(0xe4e4e7),
@@ -159,6 +180,194 @@ const AURA_DARK: Palette = Palette {
     ansi: [
         0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5, 0x666666,
         0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xffffff,
+    ],
+};
+
+const AURA_LIGHT: Palette = Palette {
+    bg: Color(0xfafafa),
+    sidebar: Color(0xf3f4f6),
+    surface: Color(0xffffff),
+    border: Color(0xe4e4e7),
+    active_line: Color(0xeef0f4),
+    selection: Color(0xdbe4ff),
+    accent: Color(0x4f46e5),
+    accent_hover: Color(0x4338ca),
+    on_accent: Color(0xffffff),
+    scrollbar: Color(0xd4d4d8),
+    shadow_alpha: 30,
+
+    text_bright: Color(0x09090b),
+    text: Color(0x18181b),
+    text_soft: Color(0x27272a),
+    text_muted: Color(0x52525b),
+    text_dim: Color(0x71717a),
+    text_faint: Color(0xa1a1aa),
+    text_ghost: Color(0xc4c4c8),
+
+    error: Color(0xe11d48),
+    error_text: Color(0xbe123c),
+    warning: Color(0xb45309),
+
+    syntax: SyntaxColors {
+        keyword: Color(0xdb2777),
+        function: Color(0x2563eb),
+        type_name: Color(0xb45309),
+        string: Color(0x15803d),
+        comment: Color(0x64748b),
+        number: Color(0xc2410c),
+        property: Color(0x7c3aed),
+    },
+    diff: DiffColors {
+        add_bg: Color(0xdef2eb), // rgba(16,185,129,.12) over bg
+        add_fg: Color(0x047857),
+        add_mark: Color(0x10b981),
+        del_bg: Color(0xf9e4e7), // rgba(244,63,94,.12) over bg
+        del_fg: Color(0xbe123c),
+        del_mark: Color(0xf43f5e),
+        mod_mark: Color(0x3b82f6),
+    },
+    git: GitColors {
+        added: Color(0x0284c7),
+        modified: Color(0xa16207),
+        deleted: Color(0xe11d48),
+        staged: Color(0x059669),
+    },
+    badge: BadgeColors {
+        csharp: Color(0x9333ea),
+        rust: Color(0xea580c),
+        typescript: Color(0x2563eb),
+        javascript: Color(0xca8a04),
+        diff: Color(0x9333ea),
+    },
+    ansi: [
+        0x000000, 0xcd3131, 0x00bc00, 0x949800, 0x0451a5, 0xbc05bc, 0x0598bc, 0x555555, 0x666666,
+        0xcd3131, 0x14ce14, 0xb5ba00, 0x0451a5, 0xbc05bc, 0x0598bc, 0xa5a5a5,
+    ],
+};
+
+/// Warm stone-and-ember dark theme.
+const EMBER: Palette = Palette {
+    bg: Color(0x1c1917),
+    sidebar: Color(0x171412),
+    surface: Color(0x262220),
+    border: Color(0x332d29),
+    active_line: Color(0x221e1b),
+    selection: Color(0x44352a),
+    accent: Color(0xfb923c),
+    accent_hover: Color(0xf97316),
+    on_accent: Color(0x1c1917),
+    scrollbar: Color(0x2e2925),
+    shadow_alpha: 90,
+
+    text_bright: Color(0xfafaf9),
+    text: Color(0xe7e5e4),
+    text_soft: Color(0xd6d3d1),
+    text_muted: Color(0xa8a29e),
+    text_dim: Color(0x78716c),
+    text_faint: Color(0x57534e),
+    text_ghost: Color(0x44403c),
+
+    error: Color(0xf87171),
+    error_text: Color(0xfca5a5),
+    warning: Color(0xfacc15),
+
+    syntax: SyntaxColors {
+        keyword: Color(0xfb7185),
+        function: Color(0xfacc15),
+        type_name: Color(0x5eead4),
+        string: Color(0xa3e635),
+        comment: Color(0x78716c),
+        number: Color(0xc4b5fd),
+        property: Color(0xfdba74),
+    },
+    diff: DiffColors {
+        add_bg: Color(0x292e17), // rgba(132,204,22,.12) over bg
+        add_fg: Color(0xbef264),
+        add_mark: Color(0x84cc16),
+        del_bg: Color(0x351e1c), // rgba(239,68,68,.12) over bg
+        del_fg: Color(0xfca5a5),
+        del_mark: Color(0xef4444),
+        mod_mark: Color(0x60a5fa),
+    },
+    git: GitColors {
+        added: Color(0x5eead4),
+        modified: Color(0xfacc15),
+        deleted: Color(0xf87171),
+        staged: Color(0xa3e635),
+    },
+    badge: BadgeColors {
+        csharp: Color(0xc4b5fd),
+        rust: Color(0xfb923c),
+        typescript: Color(0x93c5fd),
+        javascript: Color(0xfde047),
+        diff: Color(0xc4b5fd),
+    },
+    ansi: [
+        0x1c1917, 0xef4444, 0x84cc16, 0xeab308, 0x60a5fa, 0xc084fc, 0x2dd4bf, 0xd6d3d1, 0x57534e,
+        0xf87171, 0xa3e635, 0xfacc15, 0x93c5fd, 0xd8b4fe, 0x5eead4, 0xfafaf9,
+    ],
+};
+
+/// Black background, bright text and strong borders.
+const HIGH_CONTRAST: Palette = Palette {
+    bg: Color(0x000000),
+    sidebar: Color(0x0a0a0a),
+    surface: Color(0x141414),
+    border: Color(0x6b6b6b),
+    active_line: Color(0x1f1f1f),
+    selection: Color(0x264f78),
+    accent: Color(0x4cc2ff),
+    accent_hover: Color(0x2aa7f0),
+    on_accent: Color(0x000000),
+    scrollbar: Color(0x5a5a5a),
+    shadow_alpha: 80,
+
+    text_bright: Color(0xffffff),
+    text: Color(0xffffff),
+    text_soft: Color(0xf0f0f0),
+    text_muted: Color(0xd4d4d4),
+    text_dim: Color(0xbdbdbd),
+    text_faint: Color(0xa3a3a3),
+    text_ghost: Color(0x8a8a8a),
+
+    error: Color(0xff6b6b),
+    error_text: Color(0xff9e9e),
+    warning: Color(0xffd60a),
+
+    syntax: SyntaxColors {
+        keyword: Color(0xff7edb),
+        function: Color(0x7cc7ff),
+        type_name: Color(0xffd60a),
+        string: Color(0x7dff8a),
+        comment: Color(0x9ca3af),
+        number: Color(0xffab5e),
+        property: Color(0xd2a8ff),
+    },
+    diff: DiffColors {
+        add_bg: Color(0x0f3a1e),
+        add_fg: Color(0x8dff9e),
+        add_mark: Color(0x3ddc84),
+        del_bg: Color(0x4a1414),
+        del_fg: Color(0xffb3b3),
+        del_mark: Color(0xff5c5c),
+        mod_mark: Color(0x7cc7ff),
+    },
+    git: GitColors {
+        added: Color(0x7cc7ff),
+        modified: Color(0xffd60a),
+        deleted: Color(0xff6b6b),
+        staged: Color(0x7dff8a),
+    },
+    badge: BadgeColors {
+        csharp: Color(0xd2a8ff),
+        rust: Color(0xffab5e),
+        typescript: Color(0x7cc7ff),
+        javascript: Color(0xffd60a),
+        diff: Color(0xd2a8ff),
+    },
+    ansi: [
+        0x000000, 0xff5c5c, 0x3ddc84, 0xffd60a, 0x5c9dff, 0xff7edb, 0x4fd8ff, 0xe5e5e5, 0x7f7f7f,
+        0xff8080, 0x7dff8a, 0xffe866, 0x8cb8ff, 0xffa6ea, 0x8ce6ff, 0xffffff,
     ],
 };
 
@@ -266,4 +475,27 @@ pub fn bordered(rect: UiRect, fill: Color, border: Color, radius: f32, width: f3
         inner_rect,
         VisualStyle::filled(fill).radius((radius - width).max(0.0)),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_ids_are_unique_and_include_the_default() {
+        for (index, theme) in THEMES.iter().enumerate() {
+            assert!(
+                THEMES[index + 1..].iter().all(|other| other.id != theme.id),
+                "duplicate theme id {}",
+                theme.id
+            );
+        }
+        assert!(THEMES.iter().any(|theme| theme.id == DEFAULT_THEME));
+        assert_eq!(THEMES[0].id, DEFAULT_THEME);
+    }
+
+    #[test]
+    fn unknown_theme_id_is_rejected() {
+        assert!(!set("no-such-theme"));
+    }
 }

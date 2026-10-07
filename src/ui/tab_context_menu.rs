@@ -131,7 +131,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
     let mut surface = theme::bordered(card, theme::c().surface, theme::c().border, 6.0, 1.0)
         .shadow(
             ShadowStyle::new(Color::BLACK)
-                .alpha(80)
+                .alpha(theme::c().shadow_alpha)
                 .offset(0.0, 2.0)
                 .blur(3.0),
         )

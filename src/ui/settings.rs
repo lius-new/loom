@@ -242,7 +242,7 @@ fn switch(rect: UiRect, on: bool) -> Element {
             rect.top + inset + KNOB,
         ),
         VisualStyle::filled(if on {
-            theme::c().text_bright
+            theme::c().on_accent
         } else {
             theme::c().text_muted
         })

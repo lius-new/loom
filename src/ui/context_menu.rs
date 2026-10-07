@@ -382,7 +382,7 @@ pub fn render(
     )
     .shadow(
         ShadowStyle::new(Color::BLACK)
-            .alpha(80)
+            .alpha(theme::c().shadow_alpha)
             .offset(0.0, 2.0)
             .blur(3.0),
     )
