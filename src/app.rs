@@ -622,6 +622,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         st_tabs_pointer_up.try_update(tabs::finish_pointer_interaction);
     });
 
+    // A release that never arrived must not drop a stale file on the next
+    // click; a file row press records a fresh drag after this runs.
+    let st_stale_file_drag = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerDown, move |_ctx, _payload| {
+        st_stale_file_drag.try_update(|app| app.file_drag.take().is_some());
+    });
     // An Explorer file press becomes a drag into the editor once it moves;
     // its release either opens it like a click or drops it on a pane.
     let st_file_drag = state.clone();
@@ -720,26 +726,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     for sash in s.workspace.layout().sashes(editor_area) {
         root = root.child(pane_sash::render(sash, state.clone()));
     }
-    // Preview where a dragged tab or Explorer file would land on a pane.
-    let file_drop = s
-        .file_drag
-        .as_ref()
-        .filter(|drag| drag.active)
-        .and_then(|drag| drag.drop);
-    if let Some(TabDrop::Pane { pane, split }) = s
-        .tab_drag
-        .as_ref()
-        .filter(|drag| drag.active)
-        .and_then(|drag| drag.drop)
-        .or(file_drop)
-        && let Some(region) = regions.iter().find(|region| region.pane == pane)
-    {
-        root = root.child(lgui::prelude::panel(
-            tabs::drop_preview(region.body, split),
-            VisualStyle::filled(theme::c().accent).alpha(40),
-        ));
-    }
-
     if source_control_left {
         root = root.child(git_panel::render(
             source_control_rect,
@@ -831,6 +817,30 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             editor_focus.clone(),
         ));
     }
+    root = root.child(toast::render(vp, state.clone()));
+
+    // Drag feedback goes last: inserting it earlier would shift the index of
+    // the elements after it and drop the pressed element's pointer capture.
+    // Preview where a dragged tab or Explorer file would land on a pane.
+    let file_drop = s
+        .file_drag
+        .as_ref()
+        .filter(|drag| drag.active)
+        .and_then(|drag| drag.drop);
+    if let Some(TabDrop::Pane { pane, split }) = s
+        .tab_drag
+        .as_ref()
+        .filter(|drag| drag.active)
+        .and_then(|drag| drag.drop)
+        .or(file_drop)
+        && let Some(region) = regions.iter().find(|region| region.pane == pane)
+    {
+        root = root.child(lgui::prelude::panel(
+            tabs::drop_preview(region.body, split),
+            VisualStyle::filled(theme::c().accent).alpha(40),
+        ));
+    }
+
     // The dragged Explorer file's name follows the pointer.
     if let Some(drag) = s.file_drag.as_ref().filter(|drag| drag.active) {
         let name = drag.path.file_name().map_or_else(
@@ -856,7 +866,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             ),
         );
     }
-    root = root.child(toast::render(vp, state.clone()));
 
     root
 }
