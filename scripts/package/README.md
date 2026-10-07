@@ -60,6 +60,13 @@ folders, and opens files as tabs; the Explorer entries and `loom` rely on it.
 To upgrade Inno Setup or MinGit, update the version, URL and SHA-256 together
 in `windows/index.mjs`. Never change the installer's `AppId`.
 
+## Known limitations
+
+- Windows 11 top-level context menu: "Open with Loom" only appears under
+  "Show more options". The top-level menu needs an `IExplorerCommand`
+  component in a signed sparse MSIX package, so it waits until Loom has code
+  signing.
+
 ## Other platforms
 
 macOS and Linux are not implemented yet (`--platform macos|linux` reports
