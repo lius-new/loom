@@ -1,1 +1,3 @@
 /target/
+# Packaging toolchain, downloads, staging and artifacts (scripts/package).
+/.packaging/

@@ -1,0 +1,20 @@
+# Placeholder: Linux packaging (.deb / AppImage) is not implemented yet.
+# Only manual runs are enabled so release tags do not trigger a failing job.
+# When implemented, add `--platform linux` support to scripts/package and
+# mirror release-windows.yml.
+
+name: Release (Linux)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  placeholder:
+    name: Package Linux (not implemented)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report status
+        run: echo "::notice::Linux packaging is not implemented yet."

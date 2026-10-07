@@ -104,10 +104,18 @@ GitHub Actions checks formatting and Clippy on Linux, then tests and builds Loom
 on Ubuntu x64, Windows x64, and macOS ARM64. Successful runs expose packaged
 binaries as workflow artifacts.
 
-The release workflow validates that the requested version matches `Cargo.toml`.
-Push a version tag such as `v0.1.0`, or run the workflow manually with `0.1.0`,
-to build all three packages and publish them to the corresponding GitHub
-release.
+Each platform has its own release workflow. `release-windows.yml` validates
+that the requested version matches `Cargo.toml`, builds the per-user installer
+and portable zip with the scripts in [`scripts/package`](scripts/package/README.md),
+and publishes them to the GitHub release. Push a version tag such as `v0.1.0`,
+or run the workflow manually with `0.1.0`. The macOS and Linux workflows are
+placeholders until those packages are implemented.
+
+Build the Windows packages locally with:
+
+```sh
+node scripts/package/package.mjs all
+```
 
 `lgui` uses Skia for rendering and Winit for the window. The renderer is the
 **software** Skia backend (`renderer-skia-software`), which presents via

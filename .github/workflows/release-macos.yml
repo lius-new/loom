@@ -1,0 +1,20 @@
+# Placeholder: macOS packaging (.app / .dmg) is not implemented yet.
+# Only manual runs are enabled so release tags do not trigger a failing job.
+# When implemented, add `--platform macos` support to scripts/package and
+# mirror release-windows.yml.
+
+name: Release (macOS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  placeholder:
+    name: Package macOS (not implemented)
+    runs-on: macos-15
+    steps:
+      - name: Report status
+        run: echo "::notice::macOS packaging is not implemented yet."

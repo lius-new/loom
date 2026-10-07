@@ -1,0 +1,109 @@
+name: Release (Windows)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version from Cargo.toml, without the leading v
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: Package Windows x64
+    runs-on: windows-2025
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="$INPUT_VERSION"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Show Node.js version
+        run: node --version
+
+      # The packaging scripts verify Cargo.toml against the requested version
+      # before doing any work.
+      - name: Install packaging toolchain
+        run: node scripts/package/package.mjs setup --expect-version ${{ steps.version.outputs.version }}
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Compile
+        run: node scripts/package/package.mjs compile --expect-version ${{ steps.version.outputs.version }}
+
+      - name: Package
+        run: node scripts/package/package.mjs package --expect-version ${{ steps.version.outputs.version }}
+
+      - name: Build installer
+        run: node scripts/package/package.mjs bundle --expect-version ${{ steps.version.outputs.version }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Loom-${{ steps.version.outputs.version }}-windows-x86_64
+          path: .packaging/dist/Loom-${{ steps.version.outputs.version }}-windows-x86_64-*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to GitHub release
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: Loom-${{ needs.package.outputs.version }}-windows-x86_64
+          path: dist
+
+      # Each platform workflow adds its own assets to the shared release.
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.package.outputs.version }}
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Loom $VERSION" \
+              --generate-notes
+          fi
