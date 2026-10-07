@@ -10,7 +10,6 @@
 
 use lgui::core::{EventPolicy, IconStyle, UiElement, UiFocusHandle, UiId, precompiled};
 use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text};
-use lgui::text::measure_width;
 
 use crate::git::GitStoreSnapshot;
 use crate::state::AppState;
@@ -24,14 +23,12 @@ const GAP: f32 = 10.0;
 /// Extra right margin inside each text rect so the last glyph is not clipped.
 const TEXT_MARGIN: f32 = 6.0;
 
-/// Natural width of `s` at the status bar text size, measured with the
-/// renderer's own text system so it matches the rendered pixels. Falls back
-/// to a per-character estimate when no text system is installed.
-fn measure(s: &str) -> f32 {
-    let bounds = UiRect::new(0.0, 0.0, 10_000.0, theme::SMALL);
-    measure_width(s, bounds, theme::SMALL, 400).unwrap_or_else(|| {
-        s.chars().count() as f32 * theme::CHAR_W * (theme::SMALL / theme::CODE_SIZE)
-    })
+/// Natural width of `s` in the monospace status bar font at `weight`,
+/// measured with the renderer's text system so it matches the rendered
+/// pixels. Measuring with the default sans font underestimated monospace
+/// labels, and a too-narrow rect wraps text such as `feat/keymap` at the `/`.
+fn measure(s: &str, weight: i32) -> f32 {
+    super::tabs::measure(s, theme::SMALL, weight)
 }
 
 pub fn render(
@@ -158,7 +155,7 @@ pub fn render(
     let git_inner_gap = 5.0;
     let git_pad = 7.0;
     let git_badge_h = 16.0;
-    let git_w = git_pad * 2.0 + git_icon_w + git_inner_gap + measure(&git_label) + TEXT_MARGIN;
+    let git_w = git_pad * 2.0 + git_icon_w + git_inner_gap + measure(&git_label, 400) + TEXT_MARGIN;
     let git_rect = UiRect::new(
         rect.left + 38.0,
         rect.top,
@@ -236,11 +233,14 @@ pub fn render(
         ));
     }
 
-    let total = items.iter().map(|(s, _)| measure(s)).sum::<f32>()
+    let total = items
+        .iter()
+        .map(|(s, style)| measure(s, style.weight))
+        .sum::<f32>()
         + GAP * (items.len().saturating_sub(1)) as f32;
     let mut x = rect.right - EDGE_PAD - total;
     for (label, style) in items {
-        let w = measure(&label);
+        let w = measure(&label, style.weight);
         bar = bar.child(text(
             UiRect::new(x, rect.top, x + w + TEXT_MARGIN, rect.bottom),
             label,
