@@ -295,6 +295,30 @@ impl Workspace {
         Some(new)
     }
 
+    /// Replace the layout of a workspace without open tabs by `shape`, whose
+    /// leaves are numbered `0..` in reading order. Each leaf becomes a new empty
+    /// pane; the new panes are returned in that order.
+    pub fn restore_layout(&mut self, mut shape: PaneNode) -> Vec<PaneId> {
+        if !self.documents.is_empty() {
+            return self.pane_ids();
+        }
+        let count = shape.leaves().len();
+        let ids = (0..count)
+            .map(|_| {
+                let id = PaneId::new(self.next_pane_id);
+                self.next_pane_id += 1;
+                id
+            })
+            .collect::<Vec<_>>();
+        shape.map_leaves(&mut |leaf| ids[leaf.get() as usize]);
+        shape.normalize();
+        self.panes = ids.iter().map(|id| (*id, Pane::default())).collect();
+        self.layout = shape;
+        self.active_pane = ids[0];
+        self.pane_mru = ids.clone();
+        ids
+    }
+
     /// Insert an empty pane next to `pane` without focusing it.
     fn add_pane(&mut self, pane: PaneId, direction: Direction) -> Option<PaneId> {
         let new = PaneId::new(self.next_pane_id);
@@ -864,35 +888,6 @@ impl Workspace {
             .collect()
     }
 
-    /// Disk-backed tabs worth restoring in a later session. Preview tabs are
-    /// browsing state, so they intentionally do not survive a restart.
-    pub fn persistent_open_paths(&self) -> Vec<PathBuf> {
-        let mut paths = Vec::new();
-        for pane in self.pane_ids() {
-            let pane = &self.panes[&pane];
-            for id in &pane.items {
-                if pane.is_preview(*id) {
-                    continue;
-                }
-                if let Some(document) = self.documents.get(id).filter(|d| d.is_text())
-                    && !paths.contains(&document.meta.path)
-                {
-                    paths.push(document.meta.path.clone());
-                }
-            }
-        }
-        paths
-    }
-
-    /// The active path is persisted only when that same tab is restorable.
-    pub fn persistent_active_path(&self) -> Option<&Path> {
-        let id = self.active()?;
-        if self.active_pane_ref().is_preview(id) || !self.is_file(id) {
-            return None;
-        }
-        self.meta(id).map(|meta| meta.path.as_path())
-    }
-
     pub fn meta(&self, id: FileId) -> Option<&FileMeta> {
         self.documents.get(&id).map(|document| &document.meta)
     }
@@ -1453,27 +1448,6 @@ mod tests {
         assert_eq!(workspace.active(), Some(permanent));
         assert_eq!(workspace.preview(), Some(preview));
         assert_eq!(workspace.active_items(), &[permanent, preview]);
-    }
-
-    #[test]
-    fn preview_tabs_are_excluded_from_session_state() {
-        let mut workspace = Workspace::new();
-        let permanent_path = PathBuf::from("permanent.rs");
-        let preview_path = PathBuf::from("preview.rs");
-        let permanent = workspace.open_path(permanent_path.clone(), String::new());
-        workspace.preview_path(preview_path, String::new());
-
-        assert_eq!(
-            workspace.persistent_open_paths(),
-            vec![permanent_path.clone()]
-        );
-        assert_eq!(workspace.persistent_active_path(), None);
-
-        workspace.set_active(permanent);
-        assert_eq!(
-            workspace.persistent_active_path(),
-            Some(permanent_path.as_path())
-        );
     }
 
     #[test]

@@ -379,11 +379,7 @@ impl AppState {
         app.default_shell = settings.default_shell;
         app.terminal_cursor_blink = settings.terminal_cursor_blink;
         crate::workspace_actions::hydrate_workspace_folders(&mut app);
-        crate::workspace_actions::hydrate_file_tabs(
-            &mut app,
-            session.open_files,
-            session.active_file,
-        );
+        crate::workspace_actions::hydrate_editor_layout(&mut app, session.editor_layout);
         crate::workspace_actions::open_launch_paths(&mut app, crate::launch::take_paths());
         app
     }

@@ -9,12 +9,14 @@ use lgui::prelude::State;
 
 use crate::file_tree::read_directory;
 use crate::model::document::FileId;
-use crate::model::pane_layout::PaneId;
+use crate::model::pane_layout::{Axis, Child, PaneId, PaneNode};
+use crate::model::workspace::Workspace;
 use crate::state::{
     AppState, CloseContinuation, CloseRequest, ExplorerCreateKind, ExplorerCreateRequest,
     ExplorerRenameRequest, ExplorerTargetKind,
 };
 use crate::workspace_persistence::{self, MAX_RECENT_FOLDERS};
+use crate::workspace_persistence::{EditorLayout, SavedAxis, SavedChild, SavedPaneNode};
 
 const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const TREE_ROW_H: f32 = 20.0;
@@ -1123,36 +1125,166 @@ pub(crate) fn hydrate_workspace_folders(app: &mut AppState) {
 
 /// Reopen the persisted file tabs from disk, preserving their order and the
 /// active tab. Files that are no longer readable are skipped independently.
-pub(crate) fn hydrate_file_tabs(
-    app: &mut AppState,
-    open_files: Vec<PathBuf>,
-    active_file: Option<PathBuf>,
-) {
-    hydrate_file_tabs_with(app, open_files, active_file, read_text_file);
+/// The pane layout worth restoring later: file tabs only (no previews, diffs
+/// or built-in pages), with panes left empty by that filter dropped.
+pub(crate) fn saved_editor_layout(workspace: &Workspace) -> Option<EditorLayout> {
+    let mut leaf_index = 0;
+    let mut active_pane = None;
+    let root = save_pane_node(
+        workspace,
+        workspace.layout(),
+        &mut leaf_index,
+        &mut active_pane,
+    )?;
+    Some(EditorLayout {
+        root,
+        active_pane: active_pane.unwrap_or(0),
+    })
 }
 
-fn hydrate_file_tabs_with(
-    app: &mut AppState,
-    open_files: Vec<PathBuf>,
-    active_file: Option<PathBuf>,
-    mut read: impl FnMut(&Path) -> Result<String, String>,
-) {
-    let mut first_restored = None;
-    let mut active_restored = None;
-    for path in open_files {
-        let Ok(contents) = read(&path) else {
-            continue;
-        };
-        let should_activate = active_file.as_deref() == Some(path.as_path());
-        let id = app.workspace.open_path(path, contents);
-        first_restored.get_or_insert(id);
-        if should_activate {
-            active_restored = Some(id);
+fn save_pane_node(
+    workspace: &Workspace,
+    node: &PaneNode,
+    leaf_index: &mut usize,
+    active_pane: &mut Option<usize>,
+) -> Option<SavedPaneNode> {
+    match node {
+        PaneNode::Leaf(id) => {
+            let pane = workspace.pane(*id)?;
+            let restorable = |file: FileId| !pane.is_preview(file) && workspace.is_file(file);
+            let path = |file: FileId| workspace.meta(file).map(|meta| meta.path.clone());
+            let items = pane
+                .items()
+                .iter()
+                .copied()
+                .filter(|file| restorable(*file))
+                .filter_map(path)
+                .collect::<Vec<_>>();
+            if items.is_empty() {
+                return None;
+            }
+            if *id == workspace.active_pane() {
+                *active_pane = Some(*leaf_index);
+            }
+            *leaf_index += 1;
+            let active = pane
+                .active()
+                .filter(|file| restorable(*file))
+                .and_then(path);
+            Some(SavedPaneNode::Pane { items, active })
+        }
+        PaneNode::Split { axis, children } => {
+            let mut saved = children
+                .iter()
+                .filter_map(|child| {
+                    save_pane_node(workspace, &child.node, leaf_index, active_pane).map(|node| {
+                        SavedChild {
+                            size: child.size,
+                            node,
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            match saved.len() {
+                0 => None,
+                1 => saved.pop().map(|child| child.node),
+                _ => {
+                    let total: f32 = saved.iter().map(|child| child.size).sum();
+                    for child in &mut saved {
+                        child.size /= total.max(f32::EPSILON);
+                    }
+                    Some(SavedPaneNode::Split {
+                        axis: match axis {
+                            Axis::Horizontal => SavedAxis::Horizontal,
+                            Axis::Vertical => SavedAxis::Vertical,
+                        },
+                        children: saved,
+                    })
+                }
+            }
         }
     }
+}
 
-    if let Some(id) = active_restored.or(first_restored) {
-        app.workspace.set_active(id);
+pub(crate) fn hydrate_editor_layout(app: &mut AppState, layout: Option<EditorLayout>) {
+    hydrate_editor_layout_with(app, layout, read_text_file);
+}
+
+/// Rebuild the saved panes and reopen their files. Files that can no longer
+/// be read are skipped, and a pane left without tabs is dropped.
+fn hydrate_editor_layout_with(
+    app: &mut AppState,
+    layout: Option<EditorLayout>,
+    mut read: impl FnMut(&Path) -> Result<String, String>,
+) {
+    let Some(layout) = layout else {
+        return;
+    };
+    let mut contents = Vec::new();
+    let shape = restored_shape(layout.root, &mut contents);
+    let panes = app.workspace.restore_layout(shape);
+    for (&pane, (items, active)) in panes.iter().zip(contents) {
+        app.workspace.activate_pane(pane);
+        let mut first = None;
+        let mut active_id = None;
+        for path in items {
+            let Ok(text) = read(&path) else {
+                continue;
+            };
+            let is_active = active.as_ref() == Some(&path);
+            let id = app.workspace.open_path(path, text);
+            first.get_or_insert(id);
+            if is_active {
+                active_id = Some(id);
+            }
+        }
+        if let Some(id) = active_id.or(first) {
+            app.workspace.activate(pane, id);
+        }
+    }
+    for &pane in &panes {
+        if app.workspace.pane(pane).is_some_and(|pane| pane.is_empty()) {
+            app.workspace.close_pane(pane);
+        }
+    }
+    let focus = panes
+        .get(layout.active_pane)
+        .copied()
+        .filter(|pane| app.workspace.pane(*pane).is_some())
+        .unwrap_or_else(|| app.workspace.pane_ids()[0]);
+    app.workspace.activate_pane(focus);
+}
+
+/// The tree shape of a saved layout with leaves numbered in reading order;
+/// each leaf's tabs are pushed onto `contents` in the same order.
+fn restored_shape(
+    node: SavedPaneNode,
+    contents: &mut Vec<(Vec<PathBuf>, Option<PathBuf>)>,
+) -> PaneNode {
+    match node {
+        SavedPaneNode::Pane { items, active } => {
+            let leaf = PaneId::new(contents.len() as u64);
+            contents.push((items, active));
+            PaneNode::Leaf(leaf)
+        }
+        SavedPaneNode::Split { axis, children } if !children.is_empty() => PaneNode::Split {
+            axis: match axis {
+                SavedAxis::Horizontal => Axis::Horizontal,
+                SavedAxis::Vertical => Axis::Vertical,
+            },
+            children: children
+                .into_iter()
+                .map(|child| Child {
+                    size: child.size,
+                    node: restored_shape(child.node, contents),
+                })
+                .collect(),
+        },
+        SavedPaneNode::Split { .. } => {
+            let leaf = PaneId::new(contents.len() as u64);
+            contents.push((Vec::new(), None));
+            PaneNode::Leaf(leaf)
+        }
     }
 }
 
@@ -1686,28 +1818,146 @@ mod tests {
         assert_eq!(app.recent_folders, vec![second, older, first]);
     }
 
+    fn read_all_but(missing: &'static str) -> impl FnMut(&Path) -> Result<String, String> {
+        move |path| {
+            if path == Path::new(missing) {
+                Err("missing".to_owned())
+            } else {
+                Ok(format!("// {}", path.display()))
+            }
+        }
+    }
+
     #[test]
     fn restores_file_tabs_in_order_and_reactivates_the_saved_file() {
         let mut app = AppState::new();
         let first = PathBuf::from("first.rs");
-        let missing = PathBuf::from("missing.rs");
         let second = PathBuf::from("second.rs");
-
-        hydrate_file_tabs_with(
-            &mut app,
-            vec![first.clone(), missing.clone(), second.clone()],
-            Some(first.clone()),
-            |path| {
-                if path == missing {
-                    Err("missing".to_owned())
-                } else {
-                    Ok(format!("// {}", path.display()))
-                }
+        let layout = EditorLayout {
+            root: SavedPaneNode::Pane {
+                items: vec![first.clone(), PathBuf::from("missing.rs"), second.clone()],
+                active: Some(first.clone()),
             },
-        );
+            active_pane: 0,
+        };
+
+        hydrate_editor_layout_with(&mut app, Some(layout), read_all_but("missing.rs"));
 
         assert_eq!(app.workspace.open_paths(), vec![first.clone(), second]);
         assert_eq!(app.workspace.active_path(), Some(first.as_path()));
+    }
+
+    #[test]
+    fn split_layout_round_trips_through_the_session_format() {
+        let mut app = AppState::new();
+        let left = app.workspace.active_pane();
+        app.workspace.open_path(PathBuf::from("a.rs"), "a".into());
+        app.workspace.open_path(PathBuf::from("b.rs"), "b".into());
+        let right = app
+            .workspace
+            .split(left, crate::model::pane_layout::Direction::Right)
+            .unwrap();
+        app.workspace
+            .preview_path(PathBuf::from("preview.rs"), String::new());
+        app.workspace.open_settings();
+        app.workspace
+            .split(right, crate::model::pane_layout::Direction::Down)
+            .unwrap();
+        app.workspace.open_path(PathBuf::from("c.rs"), "c".into());
+        app.workspace.activate_pane(right);
+
+        let saved = saved_editor_layout(&app.workspace).unwrap();
+        // The settings page and preview tab are not restorable.
+        assert_eq!(
+            saved.root,
+            SavedPaneNode::Split {
+                axis: SavedAxis::Horizontal,
+                children: vec![
+                    SavedChild {
+                        size: 0.5,
+                        node: SavedPaneNode::Pane {
+                            items: vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")],
+                            active: Some(PathBuf::from("b.rs")),
+                        },
+                    },
+                    SavedChild {
+                        size: 0.5,
+                        node: SavedPaneNode::Split {
+                            axis: SavedAxis::Vertical,
+                            children: vec![
+                                SavedChild {
+                                    size: 0.5,
+                                    node: SavedPaneNode::Pane {
+                                        items: vec![PathBuf::from("b.rs")],
+                                        active: None,
+                                    },
+                                },
+                                SavedChild {
+                                    size: 0.5,
+                                    node: SavedPaneNode::Pane {
+                                        items: vec![PathBuf::from("c.rs")],
+                                        active: Some(PathBuf::from("c.rs")),
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                ],
+            }
+        );
+        assert_eq!(saved.active_pane, 1);
+
+        let mut restored = AppState::new();
+        hydrate_editor_layout_with(&mut restored, Some(saved.clone()), read_all_but(""));
+        assert_eq!(restored.workspace.pane_count(), 3);
+        let resaved = saved_editor_layout(&restored.workspace).unwrap();
+        assert_eq!(resaved.active_pane, 1);
+        assert_eq!(
+            restored.workspace.open_paths(),
+            vec![
+                PathBuf::from("a.rs"),
+                PathBuf::from("b.rs"),
+                PathBuf::from("c.rs")
+            ]
+        );
+        // Without a saved active tab, the restored pane activates its first tab.
+        let SavedPaneNode::Split { children, .. } = resaved.root else {
+            panic!("expected a split")
+        };
+        assert_eq!(children.len(), 2);
+    }
+
+    #[test]
+    fn panes_whose_files_are_gone_are_dropped_on_restore() {
+        let mut app = AppState::new();
+        let layout = EditorLayout {
+            root: SavedPaneNode::Split {
+                axis: SavedAxis::Horizontal,
+                children: vec![
+                    SavedChild {
+                        size: 0.3,
+                        node: SavedPaneNode::Pane {
+                            items: vec![PathBuf::from("gone.rs")],
+                            active: None,
+                        },
+                    },
+                    SavedChild {
+                        size: 0.7,
+                        node: SavedPaneNode::Pane {
+                            items: vec![PathBuf::from("kept.rs")],
+                            active: None,
+                        },
+                    },
+                ],
+            },
+            active_pane: 0,
+        };
+
+        hydrate_editor_layout_with(&mut app, Some(layout), read_all_but("gone.rs"));
+
+        assert_eq!(app.workspace.pane_count(), 1);
+        assert_eq!(app.workspace.open_paths(), vec![PathBuf::from("kept.rs")]);
+        assert_eq!(app.workspace.active_path(), Some(Path::new("kept.rs")));
     }
 
     #[test]

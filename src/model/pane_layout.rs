@@ -300,6 +300,18 @@ impl PaneNode {
         true
     }
 
+    /// Replace every leaf id through `map`.
+    pub fn map_leaves(&mut self, map: &mut impl FnMut(PaneId) -> PaneId) {
+        match self {
+            Self::Leaf(id) => *id = map(*id),
+            Self::Split { children, .. } => {
+                for child in children {
+                    child.node.map_leaves(map);
+                }
+            }
+        }
+    }
+
     /// The pane in the top-right corner of the layout.
     pub fn top_right(&self) -> PaneId {
         match self {

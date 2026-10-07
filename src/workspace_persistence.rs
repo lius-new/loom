@@ -22,6 +22,43 @@ pub struct WindowGeometry {
     pub maximized: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SavedAxis {
+    Horizontal,
+    Vertical,
+}
+
+/// One node of the saved pane tree.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedPaneNode {
+    Pane {
+        items: Vec<PathBuf>,
+        #[serde(default)]
+        active: Option<PathBuf>,
+    },
+    Split {
+        axis: SavedAxis,
+        children: Vec<SavedChild>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SavedChild {
+    /// Fraction of the parent split.
+    pub size: f32,
+    pub node: SavedPaneNode,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct EditorLayout {
+    pub root: SavedPaneNode,
+    /// Index of the focused pane in reading order.
+    #[serde(default)]
+    pub active_pane: usize,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct WorkspaceSession {
     #[serde(default)]
@@ -30,10 +67,9 @@ pub struct WorkspaceSession {
     pub recent_folders: Vec<PathBuf>,
     #[serde(default)]
     pub window: Option<WindowGeometry>,
+    /// Editor panes and their restorable file tabs.
     #[serde(default)]
-    pub open_files: Vec<PathBuf>,
-    #[serde(default)]
-    pub active_file: Option<PathBuf>,
+    pub editor_layout: Option<EditorLayout>,
     #[serde(default)]
     pub terminal_tabs: Vec<ShellKind>,
     #[serde(default)]
@@ -74,11 +110,8 @@ pub fn save_window_geometry(geometry: WindowGeometry) -> io::Result<()> {
     update(|session| session.window = Some(geometry))
 }
 
-pub fn save_file_tabs(open_files: &[PathBuf], active_file: Option<&Path>) -> io::Result<()> {
-    update(|session| {
-        session.open_files = open_files.to_vec();
-        session.active_file = active_file.map(Path::to_path_buf);
-    })
+pub fn save_editor_layout(layout: Option<&EditorLayout>) -> io::Result<()> {
+    update(|session| session.editor_layout = layout.cloned())
 }
 
 pub fn save_terminal_state(
@@ -182,8 +215,28 @@ mod tests {
                 height: 600.0,
                 maximized: false,
             }),
-            open_files: vec![PathBuf::from("one/main.rs"), PathBuf::from("two/lib.rs")],
-            active_file: Some(PathBuf::from("one/main.rs")),
+            editor_layout: Some(EditorLayout {
+                root: SavedPaneNode::Split {
+                    axis: SavedAxis::Horizontal,
+                    children: vec![
+                        SavedChild {
+                            size: 0.4,
+                            node: SavedPaneNode::Pane {
+                                items: vec![PathBuf::from("one/main.rs")],
+                                active: Some(PathBuf::from("one/main.rs")),
+                            },
+                        },
+                        SavedChild {
+                            size: 0.6,
+                            node: SavedPaneNode::Pane {
+                                items: vec![PathBuf::from("two/lib.rs")],
+                                active: None,
+                            },
+                        },
+                    ],
+                },
+                active_pane: 1,
+            }),
             terminal_tabs: vec![ShellKind::PowerShell, ShellKind::Bash],
             active_terminal: Some(1),
             show_terminal: true,
