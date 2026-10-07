@@ -2,7 +2,6 @@
 //! editor-specific overlay scrollbars.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -134,6 +133,7 @@ pub fn render(
                         app.editor.menu = Some((point.x, point.y));
                         app.editor.menu_hover = None;
                         app.editor.drag = None;
+                        app.tab_context_menu = None;
                         app.context_menu = None;
                         app.context_menu_target = None;
                         app.context_menu_hover = None;
@@ -1164,18 +1164,7 @@ fn is_save_shortcut(event: &KeyboardEvent) -> bool {
 }
 
 fn save_active_document(state: &State<AppState>) {
-    let Some((id, path, contents)) = state.get().workspace.active_save_snapshot() else {
-        return;
-    };
-
-    match fs::write(&path, contents.as_bytes()) {
-        Ok(()) => state.update(move |app| {
-            app.workspace.mark_saved(id);
-        }),
-        Err(error) => state.update(move |app| {
-            app.show_toast(format!("Could not save {}: {error}", path.display()));
-        }),
-    }
+    crate::workspace_actions::save_active_document(state);
 }
 
 #[cfg(test)]

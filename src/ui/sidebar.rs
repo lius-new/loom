@@ -88,6 +88,7 @@ pub fn render(
         .on_pointer_down_with_button(move |_cx, p, button| {
             if button == PointerButton::Right {
                 st_menu.update(move |app| {
+                    app.tab_context_menu = None;
                     app.context_menu = Some((p.point.x, p.point.y));
                     app.context_menu_target = None;
                 });
@@ -828,6 +829,7 @@ fn dir_row(
             }
             PointerButton::Right => {
                 click_state.update(move |app| {
+                    app.tab_context_menu = None;
                     app.context_menu = Some((pointer.point.x, pointer.point.y));
                     app.context_menu_target = Some(ExplorerContextTarget {
                         path: PathBuf::from(key),
@@ -1008,6 +1010,7 @@ fn build_tree(
                             PointerButton::Right => {
                                 let path = action_path.clone();
                                 st.update(move |app| {
+                                    app.tab_context_menu = None;
                                     app.context_menu = Some((pointer.point.x, pointer.point.y));
                                     app.context_menu_target = Some(ExplorerContextTarget {
                                         path,

@@ -9,6 +9,13 @@ use lgui::{WindowMode, WindowOptions, WindowPosition};
 
 use crate::workspace_persistence::{self, WindowGeometry};
 
+#[derive(Clone, Copy, Debug)]
+pub struct AppCloseRequested;
+
+impl lgui::events::Event for AppCloseRequested {
+    const NAME: &'static str = "loom.app_close_requested";
+}
+
 const DEFAULT_WIDTH: f32 = 900.0;
 const DEFAULT_HEIGHT: f32 = 600.0;
 const MIN_WIDTH: f32 = 480.0;
@@ -77,7 +84,8 @@ pub fn handle_focus_change(focused: bool) {
 
 pub fn handle_close_requested(context: &mut UiEventContext) {
     save_current();
-    context.window().close();
+    context.emit(AppCloseRequested);
+    context.request_frame();
 }
 
 pub fn remember_native_window() {

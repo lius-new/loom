@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::input::keymap::Action;
+use crate::model::document::FileId;
 use crate::model::workspace::Workspace;
 use crate::ui::components::input::InputState;
 
@@ -45,6 +46,33 @@ pub struct ExplorerContextTarget {
     pub kind: ExplorerTargetKind,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseContinuation {
+    CloseTabs,
+    ExitApplication,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CloseRequest {
+    pub targets: Vec<FileId>,
+    pub continuation: CloseContinuation,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabDragState {
+    pub source: FileId,
+    pub pointer_origin_x: f32,
+    pub target_index: usize,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabContextMenuState {
+    pub position: (f32, f32),
+    pub target: FileId,
+    pub hovered: Option<usize>,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub editor: crate::editor::interaction::EditorInteraction,
@@ -63,7 +91,22 @@ pub struct AppState {
     pub terminal_focused: bool,
     /// Whether the terminal shell selector is expanded.
     pub terminal_shell_menu: bool,
-    pub show_palette: bool,
+    /// Horizontal scroll offset of the editor tab strip, in logical pixels.
+    pub tab_scroll_x: f32,
+    /// Open tab currently under the pointer.
+    pub tab_hovered: Option<FileId>,
+    /// Whether the pointer is inside the editor tab strip.
+    pub tab_strip_hovered: bool,
+    /// Active horizontal tab scrollbar thumb drag.
+    pub tab_scrollbar_dragging: bool,
+    /// Pointer x offset from the tab scrollbar thumb's left edge.
+    pub tab_scrollbar_drag_offset: f32,
+    /// Pending or active left-button tab reorder gesture.
+    pub tab_drag: Option<TabDragState>,
+    /// Context menu opened for one editor tab.
+    pub tab_context_menu: Option<TabContextMenuState>,
+    /// Pending close operation waiting for the user to resolve dirty files.
+    pub close_request: Option<CloseRequest>,
     pub toast: Option<String>,
     /// Cached entries per loaded directory (key = directory path string).
     /// Renders read from this cache; the filesystem is only hit on open and
@@ -161,7 +204,14 @@ impl AppState {
             resizing_terminal: false,
             terminal_focused: false,
             terminal_shell_menu: false,
-            show_palette: false,
+            tab_scroll_x: 0.0,
+            tab_hovered: None,
+            tab_strip_hovered: false,
+            tab_scrollbar_dragging: false,
+            tab_scrollbar_drag_offset: 0.0,
+            tab_drag: None,
+            tab_context_menu: None,
+            close_request: None,
             toast: None,
             dir_entries: HashMap::new(),
             expanded: HashSet::new(),
@@ -237,18 +287,13 @@ impl AppState {
 
     pub fn apply(&mut self, action: Action) {
         match action {
-            Action::OpenPalette => {
-                self.show_palette = true;
-            }
             Action::CloneRepository => {
                 if !self.cloning_repository {
-                    self.show_palette = false;
                     self.show_clone_dialog = true;
                     self.clone_repository_error = None;
                 }
             }
             Action::OpenSourceControl => {
-                self.show_palette = false;
                 self.show_source_control = true;
             }
             Action::OpenExplorer => {
@@ -263,7 +308,13 @@ impl AppState {
             Action::ToggleTerminal => self.show_terminal = !self.show_terminal,
             Action::CloseOverlay => {
                 self.editor.menu = None;
-                self.show_palette = false;
+                self.context_menu = None;
+                self.context_menu_target = None;
+                self.context_menu_hover = None;
+                self.tab_context_menu = None;
+                self.close_request = None;
+                self.tab_drag = None;
+                self.tab_scrollbar_dragging = false;
                 if !self.cloning_repository {
                     self.show_clone_dialog = false;
                     self.clone_input_focused = false;
@@ -271,6 +322,20 @@ impl AppState {
             }
             Action::NextFile => self.workspace.next(),
             Action::PrevFile => self.workspace.prev(),
+            Action::SelectFile(index) => {
+                self.workspace.activate_at(index);
+            }
+            Action::SelectLastFile => {
+                self.workspace.activate_last();
+            }
+            Action::CloseActiveFile => {
+                // A pending (possibly batch) request must be resolved first.
+                if self.close_request.is_none()
+                    && let Some(id) = self.workspace.active()
+                {
+                    crate::workspace_actions::request_close_tab_in(self, id);
+                }
+            }
         }
     }
 

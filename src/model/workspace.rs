@@ -63,6 +63,57 @@ impl Workspace {
             .collect()
     }
 
+    /// Labels for open tabs. Duplicate file names receive the shortest parent
+    /// path suffix that distinguishes them from the other open documents.
+    pub fn tab_labels(&self) -> HashMap<FileId, String> {
+        let mut groups: HashMap<String, Vec<(FileId, &Path)>> = HashMap::new();
+        for id in &self.open {
+            let Some(document) = self.documents.get(id) else {
+                continue;
+            };
+            groups
+                .entry(document.meta.name.clone())
+                .or_default()
+                .push((*id, document.meta.path.as_path()));
+        }
+
+        let mut labels = HashMap::with_capacity(self.open.len());
+        for (name, documents) in groups {
+            if documents.len() == 1 {
+                labels.insert(documents[0].0, name);
+                continue;
+            }
+
+            let parents = documents
+                .iter()
+                .map(|(_, path)| parent_components(path))
+                .collect::<Vec<_>>();
+            for (index, (id, _)) in documents.iter().enumerate() {
+                let parts = &parents[index];
+                let mut distinguishing = String::new();
+                for depth in 1..=parts.len().max(1) {
+                    let candidate = parent_suffix(parts, depth);
+                    let normalized = candidate.to_lowercase();
+                    let unique = parents.iter().enumerate().all(|(other_index, other)| {
+                        other_index == index
+                            || parent_suffix(other, depth).to_lowercase() != normalized
+                    });
+                    distinguishing = candidate;
+                    if unique {
+                        break;
+                    }
+                }
+                let label = if distinguishing.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{name} — {distinguishing}")
+                };
+                labels.insert(*id, label);
+            }
+        }
+        labels
+    }
+
     pub fn active(&self) -> Option<FileId> {
         self.active
     }
@@ -124,6 +175,14 @@ impl Workspace {
             .collect()
     }
 
+    pub fn dirty_file_ids(&self) -> Vec<FileId> {
+        self.open
+            .iter()
+            .copied()
+            .filter(|id| self.is_dirty(*id))
+            .collect()
+    }
+
     pub fn has_dirty_paths_under(&self, root: &Path) -> bool {
         self.documents
             .iter()
@@ -144,6 +203,10 @@ impl Workspace {
 
     pub fn active_save_snapshot(&self) -> Option<(FileId, PathBuf, String)> {
         let id = self.active?;
+        self.save_snapshot(id)
+    }
+
+    pub fn save_snapshot(&self, id: FileId) -> Option<(FileId, PathBuf, String)> {
         let document = self.documents.get(&id)?;
         if document.diff.is_some() {
             return None;
@@ -273,6 +336,40 @@ impl Workspace {
         if self.documents.contains_key(&id) {
             self.active = Some(id);
         }
+    }
+
+    pub fn activate_at(&mut self, index: usize) -> bool {
+        let Some(id) = self.open.get(index).copied() else {
+            return false;
+        };
+        let changed = self.active != Some(id);
+        self.active = Some(id);
+        changed
+    }
+
+    pub fn activate_last(&mut self) -> bool {
+        let Some(id) = self.open.last().copied() else {
+            return false;
+        };
+        let changed = self.active != Some(id);
+        self.active = Some(id);
+        changed
+    }
+
+    /// Move an open tab to a final index while preserving its document and
+    /// active state. Returns whether the visible order changed.
+    pub fn move_tab(&mut self, id: FileId, target_index: usize) -> bool {
+        let Some(source_index) = self.open.iter().position(|&file| file == id) else {
+            return false;
+        };
+        let target_index = target_index.min(self.open.len().saturating_sub(1));
+        if source_index == target_index {
+            return false;
+        }
+
+        let id = self.open.remove(source_index);
+        self.open.insert(target_index, id);
+        true
     }
 
     pub fn close(&mut self, id: FileId) {
@@ -441,6 +538,22 @@ impl Workspace {
     }
 }
 
+fn parent_components(path: &Path) -> Vec<String> {
+    path.parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .filter_map(|component| {
+            let value = component.as_os_str().to_string_lossy();
+            (!value.is_empty() && value != "\\" && value != "/").then(|| value.into_owned())
+        })
+        .collect()
+}
+
+fn parent_suffix(parts: &[String], depth: usize) -> String {
+    let start = parts.len().saturating_sub(depth);
+    parts[start..].join("/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,6 +648,70 @@ mod tests {
 
         workspace.active_buffer_mut().unwrap().backspace();
         assert!(workspace.is_dirty(file));
+    }
+
+    #[test]
+    fn dirty_file_ids_follow_tab_order_and_exclude_clean_files() {
+        let mut workspace = Workspace::new();
+        let first = workspace.open_path(PathBuf::from("first.rs"), String::new());
+        workspace
+            .active_buffer_mut()
+            .unwrap()
+            .insert("first change");
+        let clean = workspace.open_path(PathBuf::from("clean.rs"), String::new());
+        let second = workspace.open_path(PathBuf::from("second.rs"), String::new());
+        workspace
+            .active_buffer_mut()
+            .unwrap()
+            .insert("second change");
+
+        assert_eq!(workspace.dirty_file_ids(), vec![first, second]);
+        assert!(!workspace.dirty_file_ids().contains(&clean));
+    }
+
+    #[test]
+    fn moving_tabs_uses_the_requested_final_index_and_keeps_the_active_document() {
+        let mut workspace = Workspace::new();
+        let first = workspace.open_path(PathBuf::from("first.rs"), String::new());
+        let second = workspace.open_path(PathBuf::from("second.rs"), String::new());
+        let third = workspace.open_path(PathBuf::from("third.rs"), String::new());
+
+        assert!(workspace.move_tab(first, 2));
+        assert_eq!(workspace.open_files(), &[second, third, first]);
+        assert_eq!(workspace.active(), Some(third));
+
+        assert!(workspace.move_tab(first, 0));
+        assert_eq!(workspace.open_files(), &[first, second, third]);
+        assert!(!workspace.move_tab(first, 0));
+    }
+
+    #[test]
+    fn duplicate_tab_names_use_the_shortest_distinguishing_parent_suffix() {
+        let mut workspace = Workspace::new();
+        let first = workspace.open_path(PathBuf::from("alpha/src/main.rs"), String::new());
+        let second = workspace.open_path(PathBuf::from("beta/src/main.rs"), String::new());
+        let unique = workspace.open_path(PathBuf::from("beta/src/lib.rs"), String::new());
+
+        let labels = workspace.tab_labels();
+        assert_eq!(labels.get(&first).unwrap(), "main.rs — alpha/src");
+        assert_eq!(labels.get(&second).unwrap(), "main.rs — beta/src");
+        assert_eq!(labels.get(&unique).unwrap(), "lib.rs");
+    }
+
+    #[test]
+    fn positional_activation_selects_existing_indices_and_the_last_tab() {
+        let mut workspace = Workspace::new();
+        let first = workspace.open_path(PathBuf::from("first.rs"), String::new());
+        let second = workspace.open_path(PathBuf::from("second.rs"), String::new());
+        let third = workspace.open_path(PathBuf::from("third.rs"), String::new());
+
+        assert!(workspace.activate_at(0));
+        assert_eq!(workspace.active(), Some(first));
+        assert!(!workspace.activate_at(99));
+        assert_eq!(workspace.active(), Some(first));
+        assert!(workspace.activate_last());
+        assert_eq!(workspace.active(), Some(third));
+        assert_ne!(workspace.active(), Some(second));
     }
 
     #[test]

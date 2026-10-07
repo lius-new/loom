@@ -14,12 +14,12 @@ use lgui::window::WindowFocusChanged;
 use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
 use crate::input::keymap;
-use crate::state::AppState;
+use crate::state::{AppState, CloseContinuation, CloseRequest};
 use crate::terminal_session::{ShellKind, TerminalTabs};
 use crate::theme;
 use crate::ui::{
-    clone_repository, command_palette, context_menu, diff_editor, git_panel, sidebar, statusbar,
-    tabs, terminal, titlebar, toast,
+    clone_repository, close_confirmation, context_menu, diff_editor, git_panel, sidebar, statusbar,
+    tab_context_menu, tabs, terminal, titlebar, toast,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -43,7 +43,9 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_controller = terminal_tab_snapshot
         .active()
         .map(|tab| tab.controller.clone());
-    let application = cx.application().resource::<ApplicationHandle>();
+    let application_context = cx.application();
+    let application = application_context.resource::<ApplicationHandle>();
+    let window_manager = application_context.windows();
     let editor_id = cx.use_stable_id();
     let editor_focus = cx.focus_handle(editor_id.clone());
     let terminal_id = cx.use_stable_id();
@@ -54,6 +56,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let explorer_create_input_focus = cx.focus_handle(explorer_create_input_id.clone());
     let commit_input_id = cx.use_stable_id();
     let commit_input_focus = cx.focus_handle(commit_input_id.clone());
+    let close_dialog_id = cx.use_stable_id();
+    let close_dialog_focus = cx.focus_handle(close_dialog_id.clone());
     let vp = cx.viewport();
     let w = vp.width();
     let h = vp.height();
@@ -64,13 +68,32 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         if event.window_id.as_str() == "loom" {
             window_geometry::handle_focus_change(event.focused);
             if !event.focused {
-                window_focus_state.try_update(editor_view::finish_scrollbar_drag);
+                window_focus_state.try_update(|app| {
+                    editor_view::finish_scrollbar_drag(app) | tabs::cancel_pointer_interaction(app)
+                });
             } else {
                 window_focus_state.update(|app| {
                     app.workspace.reconcile_disk();
                 });
                 crate::git_actions::refresh(&window_focus_state, &window_focus_git_store);
             }
+        }
+    });
+    let close_state = state.clone();
+    cx.use_event_once::<window_geometry::AppCloseRequested>(move |_| {
+        let dirty_targets = close_state.get().workspace.dirty_file_ids();
+        if dirty_targets.is_empty() {
+            window_manager.close("loom");
+        } else {
+            close_state.update(move |app| {
+                app.close_request = Some(CloseRequest {
+                    targets: dirty_targets,
+                    continuation: CloseContinuation::ExitApplication,
+                });
+                app.tab_context_menu = None;
+                app.show_clone_dialog = false;
+                app.editor.menu = None;
+            });
         }
     });
     cx.use_effect((), || {
@@ -150,7 +173,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         );
         || {}
     });
-    let show_palette = s.show_palette;
     let show_clone_dialog = s.show_clone_dialog;
     let editing_explorer_entry = s.explorer_create.is_some() || s.explorer_rename.is_some();
 
@@ -182,18 +204,46 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         tabs_right,
         theme::TITLEBAR_H + theme::TABS_H,
     );
+    let tab_visibility_state = state.clone();
+    let tab_visibility_items = s
+        .workspace
+        .open_files()
+        .iter()
+        .filter_map(|id| {
+            s.workspace.meta(*id).map(|meta| {
+                (
+                    *id,
+                    meta.name.clone(),
+                    s.workspace.is_dirty(*id),
+                    s.workspace.is_diff(*id),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    let tab_visibility_key = (
+        tab_visibility_items,
+        s.workspace.active(),
+        tabs_rect.width(),
+        s.show_drawer,
+    );
+    cx.use_effect(tab_visibility_key, move || {
+        let desired = tabs::active_visible_scroll(tabs_rect, &tab_visibility_state.get());
+        tab_visibility_state.try_update(move |app| {
+            if (app.tab_scroll_x - desired).abs() <= f32::EPSILON {
+                return false;
+            }
+            app.tab_scroll_x = desired;
+            true
+        });
+        || {}
+    });
     let code_rect = UiRect::new(
         editor_left,
         theme::TITLEBAR_H + theme::TABS_H,
         tabs_right,
         main_bottom,
     );
-    let source_control_rect = UiRect::new(
-        0.0,
-        theme::TITLEBAR_H,
-        s.git_sidebar_w,
-        main_bottom,
-    );
+    let source_control_rect = UiRect::new(0.0, theme::TITLEBAR_H, s.git_sidebar_w, main_bottom);
     let explorer_rect = UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom);
     let terminal_rect = UiRect::new(
         0.0,
@@ -264,6 +314,15 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     cx.use_effect(show_clone_dialog, move || {
         if show_clone_dialog {
             mounted_clone_focus.focus();
+        }
+    });
+    // The close confirmation takes keyboard focus while open so Enter/Esc go
+    // to the dialog rather than the editor; it hands focus back on resolve.
+    let showing_close_request = s.close_request.is_some();
+    let mounted_close_focus = close_dialog_focus.clone();
+    cx.use_effect(showing_close_request, move || {
+        if showing_close_request {
+            mounted_close_focus.focus();
         }
     });
     let mounted_create_focus = explorer_create_input_focus.clone();
@@ -426,6 +485,29 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         }
     });
 
+    let st_tabs_pointer = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
+        if let UiEventPayload::PointerMove { pointer } = payload {
+            st_tabs_pointer.try_update(|app| {
+                tabs::update_pointer(app, tabs_rect, pointer.point.x, pointer.point.y, false)
+            });
+        }
+    });
+
+    let st_tabs_drag = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerDrag, move |_ctx, payload| {
+        if let UiEventPayload::PointerDrag { pointer } = payload {
+            st_tabs_drag.try_update(|app| {
+                tabs::update_pointer(app, tabs_rect, pointer.point.x, pointer.point.y, true)
+            });
+        }
+    });
+
+    let st_tabs_pointer_up = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerUp, move |_ctx, _payload| {
+        st_tabs_pointer_up.try_update(tabs::finish_pointer_interaction);
+    });
+
     // Keep editor scrollbar drags alive while the pointer is anywhere in the
     // window. Relying only on the narrow thumb/track as the drag source makes
     // the interaction fragile once the pointer leaves that hit region.
@@ -507,6 +589,15 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         terminal_tabs.clone(),
     ));
 
+    if s.context_menu.is_none()
+        && s.tab_context_menu.is_none()
+        && !show_clone_dialog
+        && s.close_request.is_none()
+        && let Some(tooltip) = tabs::render_tooltip(vp, tabs_rect, &s)
+    {
+        root = root.child(tooltip);
+    }
+
     // ---- Overlays ------------------------------------------------------
     if let Some(pos) = s.editor.menu {
         root = root.child(crate::editor::edit_menu::render(
@@ -517,9 +608,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             editor_focus.clone(),
         ));
     }
-    if show_palette {
-        root = root.child(command_palette::render(vp, state.clone(), editor_focus));
-    }
     if let Some(pos) = s.context_menu {
         root = root.child(context_menu::render(
             vp,
@@ -528,12 +616,23 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_tabs.clone(),
         ));
     }
+    if s.tab_context_menu.is_some() {
+        root = root.child(tab_context_menu::render(vp, state.clone()));
+    }
     if show_clone_dialog {
         root = root.child(clone_repository::render(
             vp,
             state.clone(),
             clone_input_focus,
             clone_input_id,
+        ));
+    }
+    if s.close_request.is_some() {
+        root = root.child(close_confirmation::render(
+            vp,
+            state.clone(),
+            close_dialog_id,
+            editor_focus.clone(),
         ));
     }
     root = root.child(toast::render(vp, state.clone()));

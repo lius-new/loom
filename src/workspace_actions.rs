@@ -7,13 +7,274 @@ use std::thread;
 use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
 use lgui::prelude::State;
 
+use crate::model::document::FileId;
 use crate::state::{
-    AppState, DirEntry, ExplorerCreateKind, ExplorerCreateRequest, ExplorerRenameRequest,
-    ExplorerTargetKind,
+    AppState, CloseContinuation, CloseRequest, DirEntry, ExplorerCreateKind, ExplorerCreateRequest,
+    ExplorerRenameRequest, ExplorerTargetKind,
 };
 use crate::workspace_persistence::{self, MAX_RECENT_FOLDERS};
 
 const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const TREE_ROW_H: f32 = 20.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabCloseScope {
+    Tab,
+    Others,
+    Right,
+    Saved,
+    All,
+}
+
+pub fn save_active_document(state: &State<AppState>) -> bool {
+    let Some(id) = state.get().workspace.active() else {
+        return false;
+    };
+    save_document(state, id)
+}
+
+pub fn save_document(state: &State<AppState>, id: FileId) -> bool {
+    let Some((id, path, contents)) = state.get().workspace.save_snapshot(id) else {
+        return false;
+    };
+
+    match fs::write(&path, contents.as_bytes()) {
+        Ok(()) => {
+            state.update(move |app| {
+                app.workspace.mark_saved(id);
+            });
+            true
+        }
+        Err(error) => {
+            state.update(move |app| {
+                app.show_toast(format!("Could not save {}: {error}", path.display()));
+            });
+            false
+        }
+    }
+}
+
+pub fn request_close_tab(state: &State<AppState>, id: FileId) {
+    state.update(move |app| request_close_tab_in(app, id));
+}
+
+pub(crate) fn request_close_tab_in(app: &mut AppState, id: FileId) {
+    request_close_tabs_in(app, vec![id]);
+}
+
+pub fn tab_close_targets(app: &AppState, target: FileId, scope: TabCloseScope) -> Vec<FileId> {
+    let open = app.workspace.open_files();
+    let Some(target_index) = open.iter().position(|id| *id == target) else {
+        return Vec::new();
+    };
+    match scope {
+        TabCloseScope::Tab => vec![target],
+        TabCloseScope::Others => open.iter().copied().filter(|id| *id != target).collect(),
+        TabCloseScope::Right => open.iter().copied().skip(target_index + 1).collect(),
+        TabCloseScope::Saved => open
+            .iter()
+            .copied()
+            .filter(|id| !app.workspace.is_dirty(*id))
+            .collect(),
+        TabCloseScope::All => open.to_vec(),
+    }
+}
+
+pub fn request_close_tabs(state: &State<AppState>, target: FileId, scope: TabCloseScope) {
+    let targets = tab_close_targets(&state.get(), target, scope);
+    state.update(move |app| request_close_tabs_in(app, targets));
+}
+
+fn request_close_tabs_in(app: &mut AppState, targets: Vec<FileId>) {
+    let mut existing = Vec::with_capacity(targets.len());
+    for id in targets {
+        if app.workspace.meta(id).is_some() && !existing.contains(&id) {
+            existing.push(id);
+        }
+    }
+    if existing.is_empty() {
+        return;
+    }
+    app.tab_context_menu = None;
+    app.tab_drag = None;
+    app.editor.menu = None;
+    if existing.iter().any(|id| app.workspace.is_dirty(*id)) {
+        app.close_request = Some(CloseRequest {
+            targets: existing,
+            continuation: CloseContinuation::CloseTabs,
+        });
+    } else {
+        for id in existing {
+            app.workspace.close(id);
+        }
+    }
+}
+
+pub fn cancel_close_request(state: &State<AppState>) {
+    state.update(cancel_close_request_in);
+}
+
+fn cancel_close_request_in(app: &mut AppState) {
+    app.close_request = None;
+}
+
+pub fn discard_close_request(state: &State<AppState>) -> Option<CloseContinuation> {
+    let continuation = state.get().close_request.as_ref()?.continuation;
+    state.update(|app| {
+        let _ = discard_close_request_in(app);
+    });
+    Some(continuation)
+}
+
+fn discard_close_request_in(app: &mut AppState) -> Option<CloseContinuation> {
+    let request = app.close_request.take()?;
+    for id in request.targets {
+        app.workspace.close(id);
+    }
+    Some(request.continuation)
+}
+
+pub fn save_close_request(state: &State<AppState>) -> Option<CloseContinuation> {
+    let mut next = state.get();
+    match save_close_request_in(&mut next) {
+        Ok(continuation) => {
+            state.set(next);
+            continuation
+        }
+        Err(error) => {
+            next.show_toast(error);
+            state.set(next);
+            None
+        }
+    }
+}
+
+fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>, String> {
+    let Some(request) = app.close_request.clone() else {
+        return Ok(None);
+    };
+    for id in &request.targets {
+        if !app.workspace.is_dirty(*id) {
+            continue;
+        }
+        let Some((id, path, contents)) = app.workspace.save_snapshot(*id) else {
+            continue;
+        };
+        fs::write(&path, contents.as_bytes())
+            .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
+        app.workspace.mark_saved(id);
+    }
+    for id in request.targets {
+        app.workspace.close(id);
+    }
+    app.close_request = None;
+    Ok(Some(request.continuation))
+}
+
+pub fn reveal_file_in_tree(state: &State<AppState>, id: FileId) {
+    state.update(move |app| {
+        let Some(path) = app.workspace.meta(id).map(|meta| meta.path.clone()) else {
+            return;
+        };
+        let Some(root) = app
+            .workspace_folders
+            .iter()
+            .filter(|root| path.starts_with(root))
+            .max_by_key(|root| root.components().count())
+            .cloned()
+        else {
+            app.show_toast("File is outside the workspace.");
+            return;
+        };
+
+        app.workspace.set_active(id);
+        app.show_drawer = true;
+        let mut directories = Vec::new();
+        let mut current = path.parent();
+        while let Some(directory) = current {
+            if !directory.starts_with(&root) {
+                break;
+            }
+            directories.push(directory.to_path_buf());
+            if directory == root {
+                break;
+            }
+            current = directory.parent();
+        }
+        directories.reverse();
+        for directory in directories {
+            let key = directory.to_string_lossy().into_owned();
+            app.dir_entries
+                .insert(key.clone(), read_entries(&directory));
+            app.expanded.insert(key);
+        }
+        if let Some(index) = visible_tree_row_index(app, &path) {
+            app.tree_scroll = index.saturating_sub(1) as f32 * TREE_ROW_H;
+        }
+        app.tree_scroll_x = 0.0;
+    });
+}
+
+fn visible_tree_row_index(app: &AppState, target: &Path) -> Option<usize> {
+    let mut index = 0usize;
+    for root in &app.workspace_folders {
+        if root == target {
+            return Some(index);
+        }
+        index += 1;
+        let key = root.to_string_lossy();
+        if app.expanded.contains(key.as_ref())
+            && let Some(found) = visible_descendant_index(app, key.as_ref(), target, &mut index)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn visible_descendant_index(
+    app: &AppState,
+    directory_key: &str,
+    target: &Path,
+    index: &mut usize,
+) -> Option<usize> {
+    let entries = app.dir_entries.get(directory_key)?;
+    for entry in entries {
+        if entry.path == target {
+            return Some(*index);
+        }
+        *index += 1;
+        let key = entry.path.to_string_lossy();
+        if entry.is_dir
+            && app.expanded.contains(key.as_ref())
+            && let Some(found) = visible_descendant_index(app, key.as_ref(), target, index)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+fn dirty_test_file(app: &mut AppState, path: PathBuf, original: &str, change: &str) -> FileId {
+    fs::write(&path, original).unwrap();
+    let id = app.workspace.open_path(path, original.to_owned());
+    app.workspace.active_buffer_mut().unwrap().move_end();
+    app.workspace.active_buffer_mut().unwrap().insert(change);
+    id
+}
+
+#[cfg(test)]
+fn close_test_directory(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "loom-close-{name}-{}-{}",
+        std::process::id(),
+        crate::model::document::content_hash(name)
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    root
+}
 
 pub fn choose_file(state: &State<AppState>) -> bool {
     let mut options = FileDialogOptions::new().title("Open File");
@@ -876,6 +1137,238 @@ fn read_text_file(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clean_tab_closes_without_confirmation() {
+        let mut app = AppState::new();
+        let id = app
+            .workspace
+            .open_path(PathBuf::from("workspace/clean.rs"), String::new());
+
+        request_close_tab_in(&mut app, id);
+
+        assert!(app.workspace.meta(id).is_none());
+        assert!(app.close_request.is_none());
+    }
+
+    #[test]
+    fn dirty_tab_waits_for_confirmation() {
+        let mut app = AppState::new();
+        let id = app
+            .workspace
+            .open_path(PathBuf::from("workspace/dirty.rs"), String::new());
+        app.workspace.active_buffer_mut().unwrap().insert("changed");
+
+        request_close_tab_in(&mut app, id);
+
+        assert!(app.workspace.meta(id).is_some());
+        assert_eq!(
+            app.close_request,
+            Some(CloseRequest {
+                targets: vec![id],
+                continuation: CloseContinuation::CloseTabs,
+            })
+        );
+    }
+
+    #[test]
+    fn keyboard_close_uses_the_guarded_request_for_the_active_tab() {
+        use crate::input::keymap::Action;
+
+        let mut app = AppState::new();
+        let clean = app
+            .workspace
+            .open_path(PathBuf::from("workspace/clean.rs"), String::new());
+        let dirty = app
+            .workspace
+            .open_path(PathBuf::from("workspace/dirty.rs"), String::new());
+        app.workspace.active_buffer_mut().unwrap().insert("changed");
+
+        app.apply(Action::CloseActiveFile);
+        assert!(app.workspace.meta(dirty).is_some());
+        assert_eq!(
+            app.close_request
+                .as_ref()
+                .map(|request| request.targets.clone()),
+            Some(vec![dirty])
+        );
+
+        // A pending request is never replaced by another keyboard close.
+        app.workspace.set_active(clean);
+        app.apply(Action::CloseActiveFile);
+        assert!(app.workspace.meta(clean).is_some());
+        assert_eq!(
+            app.close_request
+                .as_ref()
+                .map(|request| request.targets.clone()),
+            Some(vec![dirty])
+        );
+
+        app.close_request = None;
+        app.apply(Action::CloseActiveFile);
+        assert!(app.workspace.meta(clean).is_none());
+        assert!(app.close_request.is_none());
+    }
+
+    #[test]
+    fn tab_close_scopes_follow_visible_order_and_dirty_state() {
+        let mut app = AppState::new();
+        let first = app
+            .workspace
+            .open_path(PathBuf::from("first.rs"), String::new());
+        let second = app
+            .workspace
+            .open_path(PathBuf::from("second.rs"), String::new());
+        app.workspace.active_buffer_mut().unwrap().insert("dirty");
+        let third = app
+            .workspace
+            .open_path(PathBuf::from("third.rs"), String::new());
+        let fourth = app
+            .workspace
+            .open_path(PathBuf::from("fourth.rs"), String::new());
+
+        assert_eq!(
+            tab_close_targets(&app, second, TabCloseScope::Tab),
+            vec![second]
+        );
+        assert_eq!(
+            tab_close_targets(&app, second, TabCloseScope::Others),
+            vec![first, third, fourth]
+        );
+        assert_eq!(
+            tab_close_targets(&app, second, TabCloseScope::Right),
+            vec![third, fourth]
+        );
+        assert_eq!(
+            tab_close_targets(&app, second, TabCloseScope::Saved),
+            vec![first, third, fourth]
+        );
+        assert_eq!(
+            tab_close_targets(&app, second, TabCloseScope::All),
+            vec![first, second, third, fourth]
+        );
+    }
+
+    #[test]
+    fn mixed_batch_waits_for_dirty_review_before_closing_clean_tabs() {
+        let mut app = AppState::new();
+        let clean = app
+            .workspace
+            .open_path(PathBuf::from("clean.rs"), String::new());
+        let dirty = app
+            .workspace
+            .open_path(PathBuf::from("dirty.rs"), String::new());
+        app.workspace.active_buffer_mut().unwrap().insert("dirty");
+
+        request_close_tabs_in(&mut app, vec![clean, dirty]);
+
+        assert!(app.workspace.meta(clean).is_some());
+        assert!(app.workspace.meta(dirty).is_some());
+        assert_eq!(
+            app.close_request,
+            Some(CloseRequest {
+                targets: vec![clean, dirty],
+                continuation: CloseContinuation::CloseTabs,
+            })
+        );
+    }
+
+    #[test]
+    fn saving_multiple_dirty_tabs_closes_them_after_every_write_succeeds() {
+        let root = close_test_directory("save-all");
+        let mut app = AppState::new();
+        let first_path = root.join("first.txt");
+        let second_path = root.join("second.txt");
+        let first = dirty_test_file(&mut app, first_path.clone(), "first", " updated");
+        let second = dirty_test_file(&mut app, second_path.clone(), "second", " updated");
+        app.close_request = Some(CloseRequest {
+            targets: vec![first, second],
+            continuation: CloseContinuation::ExitApplication,
+        });
+
+        let result = save_close_request_in(&mut app).unwrap();
+
+        assert_eq!(result, Some(CloseContinuation::ExitApplication));
+        assert!(app.workspace.meta(first).is_none());
+        assert!(app.workspace.meta(second).is_none());
+        assert!(app.close_request.is_none());
+        assert_eq!(fs::read_to_string(first_path).unwrap(), "first updated");
+        assert_eq!(fs::read_to_string(second_path).unwrap(), "second updated");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_batch_save_keeps_every_tab_open() {
+        let root = close_test_directory("partial-failure");
+        let mut app = AppState::new();
+        let first_path = root.join("first.txt");
+        let first = dirty_test_file(&mut app, first_path.clone(), "first", " updated");
+        let missing_path = root.join("missing-parent").join("second.txt");
+        let second = app.workspace.open_path(missing_path, "second".to_owned());
+        app.workspace.active_buffer_mut().unwrap().move_end();
+        app.workspace
+            .active_buffer_mut()
+            .unwrap()
+            .insert(" updated");
+        app.close_request = Some(CloseRequest {
+            targets: vec![first, second],
+            continuation: CloseContinuation::CloseTabs,
+        });
+
+        let error = save_close_request_in(&mut app).unwrap_err();
+
+        assert!(error.contains("Could not save"));
+        assert!(app.workspace.meta(first).is_some());
+        assert!(app.workspace.meta(second).is_some());
+        assert!(!app.workspace.is_dirty(first));
+        assert!(app.workspace.is_dirty(second));
+        assert!(app.close_request.is_some());
+        assert_eq!(fs::read_to_string(first_path).unwrap(), "first updated");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn discarding_multiple_dirty_tabs_closes_every_target() {
+        let mut app = AppState::new();
+        let first = app
+            .workspace
+            .open_path(PathBuf::from("first.txt"), String::new());
+        app.workspace.active_buffer_mut().unwrap().insert("first");
+        let second = app
+            .workspace
+            .open_path(PathBuf::from("second.txt"), String::new());
+        app.workspace.active_buffer_mut().unwrap().insert("second");
+        app.close_request = Some(CloseRequest {
+            targets: vec![first, second],
+            continuation: CloseContinuation::CloseTabs,
+        });
+
+        let result = discard_close_request_in(&mut app);
+
+        assert_eq!(result, Some(CloseContinuation::CloseTabs));
+        assert!(app.workspace.meta(first).is_none());
+        assert!(app.workspace.meta(second).is_none());
+        assert!(app.close_request.is_none());
+    }
+
+    #[test]
+    fn cancelling_batch_close_preserves_dirty_tabs() {
+        let mut app = AppState::new();
+        let id = app
+            .workspace
+            .open_path(PathBuf::from("dirty.txt"), String::new());
+        app.workspace.active_buffer_mut().unwrap().insert("changed");
+        app.close_request = Some(CloseRequest {
+            targets: vec![id],
+            continuation: CloseContinuation::ExitApplication,
+        });
+
+        cancel_close_request_in(&mut app);
+
+        assert!(app.workspace.meta(id).is_some());
+        assert!(app.workspace.is_dirty(id));
+        assert!(app.close_request.is_none());
+    }
 
     #[test]
     fn derives_clone_directory_from_common_repository_urls() {

@@ -206,7 +206,7 @@ fn context_target(app: &AppState) -> Option<ExplorerContextTarget> {
     })
 }
 
-fn workspace_root_for_path(app: &AppState, path: &Path) -> Option<PathBuf> {
+pub(crate) fn workspace_root_for_path(app: &AppState, path: &Path) -> Option<PathBuf> {
     app.workspace_folders
         .iter()
         .filter(|root| path.starts_with(root))
@@ -214,7 +214,7 @@ fn workspace_root_for_path(app: &AppState, path: &Path) -> Option<PathBuf> {
         .cloned()
 }
 
-fn copy_target_path(
+pub(crate) fn copy_target_path(
     state: &State<AppState>,
     clipboard: &dyn Clipboard,
     target: &Path,
@@ -258,7 +258,7 @@ fn clipboard_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn reveal_target(state: &State<AppState>, target: &ExplorerContextTarget) {
+pub(crate) fn reveal_target(state: &State<AppState>, target: &ExplorerContextTarget) {
     match reveal_in_file_manager(&target.path, target.kind) {
         Ok(()) => {}
         Err(error) => state.update(move |app| {
