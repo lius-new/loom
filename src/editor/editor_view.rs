@@ -309,7 +309,9 @@ pub fn render(
             }
         }
 
-        if visible_lines.contains(&cursor_line) {
+        // Only the editor that owns keyboard focus shows a caret.
+        let editor_focused = s.focused && focused_pane;
+        if editor_focused && visible_lines.contains(&cursor_line) {
             let cursor_y = code_top + cursor_line as f32 * theme::LINE_H;
             let cursor_layout = layout_line(lines[cursor_line], code_left, cursor_y, layout_right);
             let cursor_x = caret_x(cursor_layout.as_ref(), cursor_col)
@@ -320,13 +322,8 @@ pub fn render(
                 cursor_x + 2.0,
                 cursor_y + theme::LINE_H - 3.0,
             );
-            let cursor_style = if s.focused && focused_pane {
-                VisualStyle::filled(theme::c().accent)
-            } else {
-                VisualStyle::default().stroked(theme::hairline(theme::c().accent))
-            };
-            code = code.child(panel(cursor_rect, cursor_style));
-            if !s.editor.preedit.is_empty() && s.focused && focused_pane {
+            code = code.child(panel(cursor_rect, VisualStyle::filled(theme::c().accent)));
+            if !s.editor.preedit.is_empty() {
                 let width = layout_line(&s.editor.preedit, 0.0, 0.0, metrics.content_w)
                     .map_or(80.0, |l| l.width)
                     .max(2.0);
