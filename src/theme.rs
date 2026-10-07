@@ -1,59 +1,190 @@
 //! Design tokens for the "Aura Code" editor (ported from code-preview.html).
 //!
-//! Centralizes colors, layout metrics and text-style helpers so every UI
+//! Centralizes color palettes, layout metrics and text-style helpers so every UI
 //! module renders from a single source of truth.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lgui::prelude::{Color, Element, Stroke, TextAlign, TextStyle, UiRect, VisualStyle, panel};
 
-// ---- Editor chrome -----------------------------------------------------
-pub const BG: Color = Color(0x14161b); // primary editor background
-pub const SIDEBAR: Color = Color(0x111216); // slightly darker panel
-pub const SURFACE: Color = Color(0x1c1f26); // elevated cards / inputs
-pub const BORDER: Color = Color(0x262a35); // divider borders
-pub const ACTIVE_LINE: Color = Color(0x1a1d24); // active row highlight
-pub const SELECTION: Color = Color(0x273449);
-pub const ACCENT: Color = Color(0x818cf8); // electric indigo
-pub const ACCENT_HOVER: Color = Color(0x6366f1);
+// ---- Palettes ----------------------------------------------------------
 
-// ---- Syntax palette ----------------------------------------------------
-pub const KW: Color = Color(0xf472b6); // keywords (pink)
-pub const FUNC: Color = Color(0x60a5fa); // functions (blue)
-pub const TYPE: Color = Color(0xfbbf24); // classes & structs (amber)
-pub const STR: Color = Color(0x4ade80); // strings (emerald)
-pub const COMMENT: Color = Color(0x64748b); // comments (slate)
-pub const NUM: Color = Color(0xfb923c); // numbers (orange)
-pub const PROP: Color = Color(0xa78bfa); // properties (purple)
+/// Every color the UI draws with. Built-in themes are `Palette` values in
+/// `THEMES`; the active one is read through `c()`.
+#[derive(Clone, Copy, Debug)]
+pub struct Palette {
+    // Editor chrome
+    pub bg: Color,          // primary editor background
+    pub sidebar: Color,     // slightly darker panel
+    pub surface: Color,     // elevated cards / inputs
+    pub border: Color,      // divider borders
+    pub active_line: Color, // active row / hover highlight
+    pub selection: Color,
+    pub accent: Color,
+    pub accent_hover: Color,
+    pub scrollbar: Color,
 
-// ---- Zinc ramp (neutral text) -----------------------------------------
-pub const ZINC_100: Color = Color(0xf4f4f5);
-pub const ZINC_200: Color = Color(0xe4e4e7);
-pub const ZINC_300: Color = Color(0xd4d4d8);
-pub const ZINC_400: Color = Color(0xa1a1aa);
-pub const ZINC_500: Color = Color(0x71717a);
-pub const ZINC_600: Color = Color(0x52525b);
-pub const ZINC_700: Color = Color(0x3f3f46);
-pub const ZINC_800: Color = Color(0x27272a);
+    // Text, from most to least prominent
+    pub text_bright: Color,
+    pub text: Color,
+    pub text_soft: Color,
+    pub text_muted: Color,
+    pub text_dim: Color,
+    pub text_faint: Color,
+    pub text_ghost: Color,
 
-// ---- Accent hues -------------------------------------------------------
-pub const PURPLE_400: Color = Color(0xc084fc);
-pub const ORANGE_400: Color = Color(0xfb923c);
-pub const BLUE_400: Color = Color(0x60a5fa);
-pub const EMERALD_400: Color = Color(0x34d399);
-pub const EMERALD_500: Color = Color(0x10b981);
-pub const EMERALD_600: Color = Color(0x059669);
-pub const ROSE_400: Color = Color(0xfb7185);
-pub const ROSE_500: Color = Color(0xf43f5e);
-pub const AMBER_400: Color = Color(0xfbbf24);
-pub const AMBER_500: Color = Color(0xf59e0b);
+    // Status
+    pub error: Color,
+    pub error_text: Color,
+    pub warning: Color,
 
-// ---- Git diff / ghost --------------------------------------------------
-pub const DIFF_DEL_BG: Color = Color(0x2f1b23); // rgba(244,63,94,.12) over BG
-pub const DIFF_DEL_BORDER: Color = Color(0xf43f5e);
-pub const DIFF_DEL_FG: Color = Color(0xfda4af);
-pub const DIFF_ADD_BG: Color = Color(0x142a27); // rgba(16,185,129,.12) over BG
-pub const DIFF_ADD_BORDER: Color = Color(0x10b981);
-pub const DIFF_ADD_FG: Color = Color(0x6ee7b7);
-pub const GHOST: Color = Color(0x64748b);
+    pub syntax: SyntaxColors,
+    pub diff: DiffColors,
+    pub git: GitColors,
+    pub badge: BadgeColors,
+    /// The 16 ANSI terminal colors, as `0xRRGGBB`.
+    pub ansi: [u32; 16],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SyntaxColors {
+    pub keyword: Color,
+    pub function: Color,
+    pub type_name: Color,
+    pub string: Color,
+    pub comment: Color,
+    pub number: Color,
+    pub property: Color,
+}
+
+/// Diff rows and the editor gutter's change markers.
+#[derive(Clone, Copy, Debug)]
+pub struct DiffColors {
+    pub add_bg: Color,
+    pub add_fg: Color,
+    pub add_mark: Color,
+    pub del_bg: Color,
+    pub del_fg: Color,
+    pub del_mark: Color,
+    pub mod_mark: Color,
+}
+
+/// Change-kind letters in the Source Control panel.
+#[derive(Clone, Copy, Debug)]
+pub struct GitColors {
+    pub added: Color,
+    pub modified: Color,
+    pub deleted: Color,
+    pub staged: Color,
+}
+
+/// Tab badges.
+#[derive(Clone, Copy, Debug)]
+pub struct BadgeColors {
+    pub csharp: Color,
+    pub rust: Color,
+    pub typescript: Color,
+    pub javascript: Color,
+    pub diff: Color,
+}
+
+pub struct Theme {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub palette: Palette,
+}
+
+pub const DEFAULT_THEME: &str = "aura-dark";
+
+pub static THEMES: &[Theme] = &[Theme {
+    id: "aura-dark",
+    name: "Aura Dark",
+    palette: AURA_DARK,
+}];
+
+const AURA_DARK: Palette = Palette {
+    bg: Color(0x14161b),
+    sidebar: Color(0x111216),
+    surface: Color(0x1c1f26),
+    border: Color(0x262a35),
+    active_line: Color(0x1a1d24),
+    selection: Color(0x273449),
+    accent: Color(0x818cf8), // electric indigo
+    accent_hover: Color(0x6366f1),
+    scrollbar: Color(0x27272a),
+
+    text_bright: Color(0xf4f4f5),
+    text: Color(0xe4e4e7),
+    text_soft: Color(0xd4d4d8),
+    text_muted: Color(0xa1a1aa),
+    text_dim: Color(0x71717a),
+    text_faint: Color(0x52525b),
+    text_ghost: Color(0x3f3f46),
+
+    error: Color(0xf43f5e),
+    error_text: Color(0xfda4af),
+    warning: Color(0xfbbf24),
+
+    syntax: SyntaxColors {
+        keyword: Color(0xf472b6),
+        function: Color(0x60a5fa),
+        type_name: Color(0xfbbf24),
+        string: Color(0x4ade80),
+        comment: Color(0x64748b),
+        number: Color(0xfb923c),
+        property: Color(0xa78bfa),
+    },
+    diff: DiffColors {
+        add_bg: Color(0x142a27), // rgba(16,185,129,.12) over bg
+        add_fg: Color(0x6ee7b7),
+        add_mark: Color(0x10b981),
+        del_bg: Color(0x2f1b23), // rgba(244,63,94,.12) over bg
+        del_fg: Color(0xfda4af),
+        del_mark: Color(0xf43f5e),
+        mod_mark: Color(0x60a5fa),
+    },
+    git: GitColors {
+        added: Color(0x38bdf8),
+        modified: Color(0xeab308),
+        deleted: Color(0xf43f5e),
+        staged: Color(0x34d399),
+    },
+    badge: BadgeColors {
+        csharp: Color(0xc084fc),
+        rust: Color(0xfb923c),
+        typescript: Color(0x60a5fa),
+        javascript: Color(0xfbbf24),
+        diff: Color(0xc084fc),
+    },
+    ansi: [
+        0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5, 0x666666,
+        0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xffffff,
+    ],
+};
+
+static CURRENT: AtomicUsize = AtomicUsize::new(0);
+
+/// The active palette.
+pub fn c() -> &'static Palette {
+    &THEMES[CURRENT.load(Ordering::Relaxed)].palette
+}
+
+/// Id of the active theme.
+pub fn current_id() -> &'static str {
+    THEMES[CURRENT.load(Ordering::Relaxed)].id
+}
+
+/// Switch to the theme with `id`. Returns `false` and keeps the current
+/// theme when no built-in theme has that id.
+pub fn set(id: &str) -> bool {
+    match THEMES.iter().position(|theme| theme.id == id) {
+        Some(index) => {
+            CURRENT.store(index, Ordering::Relaxed);
+            true
+        }
+        None => false,
+    }
+}
 
 // ---- Layout metrics (px) ----------------------------------------------
 pub const TITLEBAR_H: f32 = 32.0;

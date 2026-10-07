@@ -55,7 +55,7 @@ pub fn render(
     // the dialog modal.
     let key_state = state.clone();
     let key_focus = editor_focus.clone();
-    let overlay_style = VisualStyle::filled(theme::BG).alpha(214);
+    let overlay_style = VisualStyle::filled(theme::c().bg).alpha(214);
     let mut root = Element::new(move |cx| {
         UiElement::panel(dialog_id.clone(), viewport, overlay_style).children(cx.children)
     })
@@ -88,8 +88,8 @@ pub fn render(
     })
     .child(theme::bordered(
         card,
-        theme::SIDEBAR,
-        theme::BORDER,
+        theme::c().sidebar,
+        theme::c().border,
         8.0,
         1.0,
     ));
@@ -102,7 +102,7 @@ pub fn render(
             card.top + 42.0,
         ),
         "Save your changes?",
-        theme::sans_semibold(theme::ZINC_100, 15.0),
+        theme::sans_semibold(theme::c().text_bright, 15.0),
     ));
     root = root.child(text(
         UiRect::new(
@@ -112,7 +112,7 @@ pub fn render(
             card.top + 75.0,
         ),
         message,
-        theme::sans(theme::ZINC_400, theme::UI_SIZE),
+        theme::sans(theme::c().text_muted, theme::UI_SIZE),
     ));
     root = root.child(text(
         UiRect::new(
@@ -122,7 +122,7 @@ pub fn render(
             card.top + 96.0,
         ),
         "Your changes will be lost if you don't save them.",
-        theme::sans(theme::ZINC_500, theme::SMALL),
+        theme::sans(theme::c().text_dim, theme::SMALL),
     ));
 
     let button_top = card.bottom - 46.0;
@@ -148,30 +148,24 @@ pub fn render(
     let discard_state = state.clone();
     let discard_focus = editor_focus.clone();
     root = root.child(
-        theme::bordered(
-            discard_rect,
-            theme::SIDEBAR,
-            theme::DIFF_DEL_BORDER,
-            4.0,
-            1.0,
-        )
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(CursorIcon::Pointer)
-        .on_click(move |cx: &mut UiEventContext| {
-            let continuation = workspace_actions::discard_close_request(&discard_state);
-            finish(cx, &discard_state, &discard_focus, continuation);
-        })
-        .child(text(
-            discard_rect,
-            "Don't Save",
-            centered(theme::sans(theme::DIFF_DEL_FG, theme::UI_SIZE)),
-        )),
+        theme::bordered(discard_rect, theme::c().sidebar, theme::c().error, 4.0, 1.0)
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move |cx: &mut UiEventContext| {
+                let continuation = workspace_actions::discard_close_request(&discard_state);
+                finish(cx, &discard_state, &discard_focus, continuation);
+            })
+            .child(text(
+                discard_rect,
+                "Don't Save",
+                centered(theme::sans(theme::c().error_text, theme::UI_SIZE)),
+            )),
     );
 
     let cancel_state = state.clone();
     let cancel_focus = editor_focus.clone();
     root = root.child(
-        theme::bordered(cancel_rect, theme::SIDEBAR, theme::BORDER, 4.0, 1.0)
+        theme::bordered(cancel_rect, theme::c().sidebar, theme::c().border, 4.0, 1.0)
             .event_policy(EventPolicy::INTERACTIVE)
             .cursor(CursorIcon::Pointer)
             .on_click(move |cx: &mut UiEventContext| {
@@ -181,24 +175,27 @@ pub fn render(
             .child(text(
                 cancel_rect,
                 "Cancel",
-                centered(theme::sans(theme::ZINC_300, theme::UI_SIZE)),
+                centered(theme::sans(theme::c().text_soft, theme::UI_SIZE)),
             )),
     );
 
     let save_state = state;
     root.child(
-        panel(save_rect, VisualStyle::filled(theme::ACCENT).radius(4.0))
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move |cx: &mut UiEventContext| {
-                let continuation = workspace_actions::save_close_request(&save_state);
-                finish(cx, &save_state, &editor_focus, continuation);
-            })
-            .child(text(
-                save_rect,
-                "Save",
-                centered(theme::sans_semibold(theme::ZINC_100, theme::UI_SIZE)),
-            )),
+        panel(
+            save_rect,
+            VisualStyle::filled(theme::c().accent).radius(4.0),
+        )
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .on_click(move |cx: &mut UiEventContext| {
+            let continuation = workspace_actions::save_close_request(&save_state);
+            finish(cx, &save_state, &editor_focus, continuation);
+        })
+        .child(text(
+            save_rect,
+            "Save",
+            centered(theme::sans_semibold(theme::c().text_bright, theme::UI_SIZE)),
+        )),
     )
 }
 

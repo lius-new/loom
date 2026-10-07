@@ -214,9 +214,9 @@ impl TabBadge {
 
 fn tab_badge(app: &AppState, id: FileId, meta: &FileMeta) -> TabBadge {
     if app.workspace.is_settings(id) {
-        TabBadge::Icon("settings", theme::ZINC_400)
+        TabBadge::Icon("settings", theme::c().text_muted)
     } else if app.workspace.is_diff(id) {
-        TabBadge::Text("Δ", theme::PURPLE_400)
+        TabBadge::Text("Δ", theme::c().badge.diff)
     } else {
         TabBadge::Text(meta.lang.badge(), meta.lang.badge_color())
     }
@@ -448,7 +448,14 @@ pub fn render_tooltip(viewport: UiRect, rect: UiRect, app: &AppState) -> Option<
     let left = item_left.clamp(viewport.left + 8.0, viewport.right - width - 8.0);
     let tooltip_rect = UiRect::new(left, rect.bottom + 4.0, left + width, rect.bottom + 28.0);
     Some(
-        theme::bordered(tooltip_rect, theme::SURFACE, theme::BORDER, 4.0, 1.0).child(text(
+        theme::bordered(
+            tooltip_rect,
+            theme::c().surface,
+            theme::c().border,
+            4.0,
+            1.0,
+        )
+        .child(text(
             UiRect::new(
                 tooltip_rect.left + 9.0,
                 tooltip_rect.top + 4.0,
@@ -456,7 +463,7 @@ pub fn render_tooltip(viewport: UiRect, rect: UiRect, app: &AppState) -> Option<
                 tooltip_rect.bottom - 3.0,
             ),
             path,
-            theme::mono(theme::ZINC_300, theme::SMALL),
+            theme::mono(theme::c().text_soft, theme::SMALL),
         )),
     )
 }
@@ -466,7 +473,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     let active = s.workspace.active();
     let labels = s.workspace.tab_labels();
 
-    let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
+    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
     let controls_left = controls_left(rect, &s);
     let layout = tab_layout(rect, &s, false);
     let tab_viewport = UiRect::new(
@@ -511,10 +518,10 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             rect.bottom - PILL_INSET,
         );
         tab_layer = tab_layer.child(
-            theme::bordered(pill, theme::BG, theme::BORDER, 2.0, 1.0).child(text(
+            theme::bordered(pill, theme::c().bg, theme::c().border, 2.0, 1.0).child(text(
                 UiRect::new(pill.left + PAD, pill.top, pill.right - PAD, pill.bottom),
                 label,
-                theme::mono(theme::ZINC_100, theme::UI_SIZE),
+                theme::mono(theme::c().text_bright, theme::UI_SIZE),
             )),
         );
     }
@@ -562,9 +569,9 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             rect.bottom - PILL_INSET,
         );
         let name_style = if Some(id) == active {
-            theme::mono(theme::ZINC_100, theme::UI_SIZE)
+            theme::mono(theme::c().text_bright, theme::UI_SIZE)
         } else {
-            theme::mono(theme::ZINC_400, theme::UI_SIZE)
+            theme::mono(theme::c().text_muted, theme::UI_SIZE)
         };
 
         let badge_left = pill.left + PAD;
@@ -594,7 +601,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         // Active tab gets a crisp 1px border; see theme::bordered for why a
         // filled ring is used instead of a stroked outline.
         let mut tab_el = if Some(id) == active {
-            theme::bordered(pill, theme::BG, theme::BORDER, 2.0, 1.0)
+            theme::bordered(pill, theme::c().bg, theme::c().border, 2.0, 1.0)
         } else {
             panel(pill, VisualStyle::default().radius(2.0))
         }
@@ -655,7 +662,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                     pill.bottom,
                 ),
                 DIRTY_MARK,
-                theme::mono(theme::ACCENT, theme::SMALL),
+                theme::mono(theme::c().accent, theme::SMALL),
             ));
         }
 
@@ -688,7 +695,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                         pill.bottom,
                     ),
                     "✕",
-                    theme::mono(theme::ZINC_500, theme::SMALL),
+                    theme::mono(theme::c().text_dim, theme::SMALL),
                 )),
             );
         }
@@ -721,7 +728,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                     screen_x + 1.0,
                     rect.bottom - PILL_INSET,
                 ),
-                VisualStyle::filled(theme::ACCENT).radius(1.0),
+                VisualStyle::filled(theme::c().accent).radius(1.0),
             ));
         }
     }
@@ -733,7 +740,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             let left = tab_viewport.left + index as f32 * strip_w;
             bar = bar.child(panel(
                 UiRect::new(left, rect.top, left + strip_w, rect.bottom),
-                VisualStyle::filled(theme::SIDEBAR).alpha(alpha),
+                VisualStyle::filled(theme::c().sidebar).alpha(alpha),
             ));
         }
     }
@@ -743,7 +750,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             let right = tab_viewport.right - index as f32 * strip_w;
             bar = bar.child(panel(
                 UiRect::new(right - strip_w, rect.top, right, rect.bottom),
-                VisualStyle::filled(theme::SIDEBAR).alpha(alpha),
+                VisualStyle::filled(theme::c().sidebar).alpha(alpha),
             ));
         }
     }
@@ -784,12 +791,12 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             })
             .child(panel(
                 visual_track,
-                VisualStyle::filled(theme::ZINC_800).radius(TAB_SCROLLBAR_H / 2.0),
+                VisualStyle::filled(theme::c().scrollbar).radius(TAB_SCROLLBAR_H / 2.0),
             ))
             .child(
                 panel(
                     thumb_rect,
-                    VisualStyle::filled(theme::ZINC_500).radius(TAB_SCROLLBAR_H / 2.0),
+                    VisualStyle::filled(theme::c().text_dim).radius(TAB_SCROLLBAR_H / 2.0),
                 )
                 .key("tabs-horizontal-scrollbar-thumb")
                 .event_policy(EventPolicy::INTERACTIVE)
@@ -820,23 +827,28 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
         );
         bar = bar.child(panel(
             UiRect::new(controls_left, rect.top, controls_left + 1.0, rect.bottom),
-            VisualStyle::filled(theme::BORDER),
+            VisualStyle::filled(theme::c().border),
         ));
         bar = bar.child(
             panel(
                 UiRect::new(controls_left + 1.0, rect.top, rect.right, rect.bottom),
-                VisualStyle::filled(theme::SIDEBAR),
+                VisualStyle::filled(theme::c().sidebar),
             )
             .event_policy(EventPolicy::INTERACTIVE)
             .on_click(move || state.update(|app| app.show_drawer = true))
-            .child(icon("tabs.drawer", "panel-left", icon_r, theme::ZINC_400)),
+            .child(icon(
+                "tabs.drawer",
+                "panel-left",
+                icon_r,
+                theme::c().text_muted,
+            )),
         );
     }
 
     // Hairline bottom border (matches the title bar).
     bar = bar.child(panel(
         UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-        VisualStyle::filled(theme::BORDER),
+        VisualStyle::filled(theme::c().border),
     ));
 
     bar

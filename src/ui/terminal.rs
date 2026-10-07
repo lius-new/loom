@@ -89,7 +89,7 @@ pub fn render(
     semantics.state.multiline = true;
 
     let mut terminal = Element::new(move |cx| {
-        UiElement::panel(terminal_id, rect, VisualStyle::filled(theme::BG))
+        UiElement::panel(terminal_id, rect, VisualStyle::filled(theme::c().bg))
             .ime_cursor_rect(cursor_rect)
             .children(cx.children)
     })
@@ -197,14 +197,14 @@ pub fn render(
     terminal = terminal.child(panel(
         UiRect::new(rect.left, rect.top, rect.right, rect.top + 1.0),
         VisualStyle::filled(if resizing {
-            theme::ACCENT
+            theme::c().accent
         } else {
-            theme::BORDER
+            theme::c().border
         }),
     ));
     terminal = terminal.child(panel(
         UiRect::new(rect.left, header.bottom - 1.0, rect.right, header.bottom),
-        VisualStyle::filled(theme::BORDER),
+        VisualStyle::filled(theme::c().border),
     ));
 
     let tool_right = rect.right - 6.0;
@@ -238,7 +238,7 @@ pub fn render(
     terminal = terminal.child(
         panel(
             instance_rect,
-            VisualStyle::filled(theme::SURFACE).radius(3.0),
+            VisualStyle::filled(theme::c().surface).radius(3.0),
         )
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
@@ -255,7 +255,7 @@ pub fn render(
                 instance_rect.left + 19.0,
                 instance_rect.top + 17.0,
             ),
-            theme::ZINC_400,
+            theme::c().text_muted,
         ))
         .child(text(
             UiRect::new(
@@ -265,7 +265,7 @@ pub fn render(
                 instance_rect.bottom,
             ),
             snapshot.shell.short_label(),
-            theme::mono(theme::ZINC_300, theme::SMALL),
+            theme::mono(theme::c().text_soft, theme::SMALL),
         ))
         .child(icon(
             "terminal.instance.chevron",
@@ -276,7 +276,7 @@ pub fn render(
                 instance_rect.right - 5.0,
                 instance_rect.top + 17.0,
             ),
-            theme::ZINC_500,
+            theme::c().text_dim,
         )),
     );
 
@@ -388,7 +388,7 @@ fn render_terminal_tabs(
         );
         let active = tab.id == active_id;
         let visual = if active {
-            theme::bordered(tab_rect, theme::BG, theme::BORDER, 2.0, 1.0)
+            theme::bordered(tab_rect, theme::c().bg, theme::c().border, 2.0, 1.0)
         } else {
             panel(tab_rect, VisualStyle::default().radius(2.0))
         }
@@ -397,9 +397,9 @@ fn render_terminal_tabs(
             display_name,
             theme::mono(
                 if active {
-                    theme::ZINC_100
+                    theme::c().text_bright
                 } else {
-                    theme::ZINC_400
+                    theme::c().text_muted
                 },
                 theme::UI_SIZE,
             ),
@@ -464,7 +464,7 @@ fn render_terminal_tabs(
                         tab_rect.bottom,
                     ),
                     "✕",
-                    theme::mono(theme::ZINC_500, theme::SMALL),
+                    theme::mono(theme::c().text_dim, theme::SMALL),
                 )),
         );
 
@@ -505,14 +505,14 @@ fn render_screen(
             let right = (content.left + f32::from(end_col) * TERMINAL_CHAR_W).min(content.right);
             screen = screen.child(panel(
                 UiRect::new(left, top, right, top + TERMINAL_LINE_H),
-                VisualStyle::filled(theme::SELECTION),
+                VisualStyle::filled(theme::c().selection),
             ));
         }
         for run in runs {
             let (left, right) = run_span(content, run);
             let run_rect = UiRect::new(left, top, right, top + TERMINAL_LINE_H);
             if !run.text.is_empty() {
-                let foreground = run.style.foreground.map(Color).unwrap_or(theme::ZINC_200);
+                let foreground = run.style.foreground.map(Color).unwrap_or(theme::c().text);
                 let mut style = if run.style.bold {
                     theme::mono_bold(foreground, TERMINAL_FONT_SIZE)
                 } else {
@@ -540,9 +540,9 @@ fn render_screen(
     if cursor_is_drawn(snapshot.cursor_visible, focused, cursor_blink_visible) {
         let cursor = terminal_cursor_rect(content, snapshot.cursor);
         let cursor_style = if focused {
-            VisualStyle::filled(theme::ZINC_300).alpha(0xc8)
+            VisualStyle::filled(theme::c().text_soft).alpha(0xc8)
         } else {
-            VisualStyle::default().stroked(theme::hairline(theme::ZINC_500))
+            VisualStyle::default().stroked(theme::hairline(theme::c().text_dim))
         };
         screen = screen.child(panel(cursor, cursor_style));
     }
@@ -552,7 +552,7 @@ fn render_screen(
         screen = screen.child(text(
             UiRect::new(content.left, top, content.right, top + TERMINAL_LINE_H),
             message,
-            theme::mono(theme::ZINC_500, theme::SMALL),
+            theme::mono(theme::c().text_dim, theme::SMALL),
         ));
     }
 
@@ -668,7 +668,7 @@ fn shell_menu(
         instance_rect.right,
         instance_rect.bottom + 4.0 + SHELL_MENU_ROW_H * ShellKind::ALL.len() as f32 + 8.0,
     );
-    let mut menu = theme::bordered(menu_rect, theme::SURFACE, theme::BORDER, 4.0, 1.0);
+    let mut menu = theme::bordered(menu_rect, theme::c().surface, theme::c().border, 4.0, 1.0);
     for (index, shell) in ShellKind::ALL.into_iter().enumerate() {
         let top = menu_rect.top + 4.0 + index as f32 * SHELL_MENU_ROW_H;
         let row = UiRect::new(
@@ -694,7 +694,7 @@ fn shell_menu(
         let item = item.child(text(
             UiRect::new(row.left + 8.0, row.top, row.right - 8.0, row.bottom),
             shell.label(),
-            theme::mono(theme::ZINC_200, theme::UI_SIZE),
+            theme::mono(theme::c().text, theme::UI_SIZE),
         ));
         menu = menu.child(item);
     }

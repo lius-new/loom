@@ -937,10 +937,10 @@ fn cell_style(cell: &vt100::Cell) -> TerminalCellStyle {
     if cell.inverse() {
         std::mem::swap(&mut foreground, &mut background);
         if foreground.is_none() {
-            foreground = Some(0x14161b);
+            foreground = Some(crate::theme::c().bg.0);
         }
         if background.is_none() {
-            background = Some(0xe4e4e7);
+            background = Some(crate::theme::c().text.0);
         }
     }
     TerminalCellStyle {
@@ -963,12 +963,9 @@ fn terminal_color(color: vt100::Color) -> Option<u32> {
 }
 
 fn indexed_color(index: u8) -> u32 {
-    const ANSI: [u32; 16] = [
-        0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5, 0x666666,
-        0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xffffff,
-    ];
+    let ansi = &crate::theme::c().ansi;
     match index {
-        0..=15 => ANSI[index as usize],
+        0..=15 => ansi[index as usize],
         16..=231 => {
             let index = index - 16;
             let red = index / 36;

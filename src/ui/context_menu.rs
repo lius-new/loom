@@ -373,23 +373,29 @@ pub fn render(
     // Menu surface. A capture-phase move clears the hover highlight whenever
     // the pointer is over the surface but not on an item (padding, separators).
     let st_clear = state.clone();
-    let mut surface = theme::bordered(card, theme::SURFACE, theme::BORDER, 6.0, MENU_BORDER)
-        .shadow(
-            ShadowStyle::new(Color::BLACK)
-                .alpha(80)
-                .offset(0.0, 2.0)
-                .blur(3.0),
-        )
-        .event_policy(EventPolicy::INTERACTIVE)
-        .on_event_capture(UiEventKind::PointerMove, move |_cx, _p| {
-            st_clear.try_update(|app| {
-                let changed = app.context_menu_hover.is_some();
-                if changed {
-                    app.context_menu_hover = None;
-                }
-                changed
-            });
+    let mut surface = theme::bordered(
+        card,
+        theme::c().surface,
+        theme::c().border,
+        6.0,
+        MENU_BORDER,
+    )
+    .shadow(
+        ShadowStyle::new(Color::BLACK)
+            .alpha(80)
+            .offset(0.0, 2.0)
+            .blur(3.0),
+    )
+    .event_policy(EventPolicy::INTERACTIVE)
+    .on_event_capture(UiEventKind::PointerMove, move |_cx, _p| {
+        st_clear.try_update(|app| {
+            let changed = app.context_menu_hover.is_some();
+            if changed {
+                app.context_menu_hover = None;
+            }
+            changed
         });
+    });
 
     // Rows.
     let mut y = card.top + MENU_PAD;
@@ -405,7 +411,7 @@ pub fn render(
                         card.right - ITEM_PAD_X,
                         line_y + 1.0,
                     ),
-                    VisualStyle::filled(theme::BORDER),
+                    VisualStyle::filled(theme::c().border),
                 ));
                 y += SEP_H;
             }
@@ -434,7 +440,7 @@ pub fn render(
                 let mut item = panel(
                     item_rect,
                     if hovered {
-                        VisualStyle::filled(theme::SELECTION)
+                        VisualStyle::filled(theme::c().selection)
                     } else {
                         VisualStyle::default()
                     },
@@ -569,11 +575,11 @@ pub fn render(
                     item_rect.bottom,
                 );
                 let label_color = if hovered {
-                    theme::ZINC_100
+                    theme::c().text_bright
                 } else if !enabled {
-                    theme::ZINC_500
+                    theme::c().text_dim
                 } else {
-                    theme::ZINC_300
+                    theme::c().text_soft
                 };
                 item = item.child(text(
                     label_rect,
@@ -593,7 +599,7 @@ pub fn render(
                     item = item.child(text(
                         sc_rect,
                         sc,
-                        theme::mono_right(theme::ZINC_500, theme::UI_SIZE),
+                        theme::mono_right(theme::c().text_dim, theme::UI_SIZE),
                     ));
                 }
 

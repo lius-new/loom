@@ -32,9 +32,9 @@ pub fn render(
             line_decorations.is_some_and(|values| values.contains(&GutterDecoration::Breakpoint));
 
         let color: Color = if has_bp {
-            theme::ROSE_500
+            theme::c().error
         } else {
-            theme::ZINC_600
+            theme::c().text_faint
         };
         let num_rect = UiRect::new(rect.left, y, rect.right - 10.0, y + theme::LINE_H);
         g = g.child(text(
@@ -45,13 +45,13 @@ pub fn render(
 
         if has_bp {
             let dot = UiRect::new(rect.right - 11.0, y + 8.0, rect.right - 5.0, y + 14.0);
-            g = g.child(ellipse(dot, VisualStyle::filled(theme::ROSE_500)));
+            g = g.child(ellipse(dot, VisualStyle::filled(theme::c().error)));
         }
         if let Some(change) = line_decorations.and_then(|values| {
             values.iter().find_map(|value| match value {
-                GutterDecoration::GitAdded => Some(theme::DIFF_ADD_BORDER),
-                GutterDecoration::GitModified => Some(theme::BLUE_400),
-                GutterDecoration::GitDeleted => Some(theme::DIFF_DEL_BORDER),
+                GutterDecoration::GitAdded => Some(theme::c().diff.add_mark),
+                GutterDecoration::GitModified => Some(theme::c().diff.mod_mark),
+                GutterDecoration::GitDeleted => Some(theme::c().diff.del_mark),
                 _ => None,
             })
         }) {

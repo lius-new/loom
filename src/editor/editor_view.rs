@@ -58,7 +58,7 @@ pub fn render(
 
     let ime_rect = ime_cursor_rect(&s, rect);
     let mut root = Element::new(move |cx| {
-        UiElement::panel(editor_id, rect, VisualStyle::filled(theme::BG))
+        UiElement::panel(editor_id, rect, VisualStyle::filled(theme::c().bg))
             .ime_cursor_rect(ime_rect)
             .semantics(Semantics::new(SemanticRole::TextInput).name("Code editor"))
             .children(cx.children)
@@ -222,7 +222,7 @@ pub fn render(
                     rect.right,
                     highlight_y + theme::LINE_H,
                 ),
-                VisualStyle::filled(theme::ACTIVE_LINE),
+                VisualStyle::filled(theme::c().active_line),
             );
             root = root.child(clip(rect, 0.0, -scroll_y).child(highlight));
         }
@@ -282,7 +282,7 @@ pub fn render(
                     }
                     code = code.child(panel(
                         UiRect::new(left, y, right.max(left + 2.0), y + theme::LINE_H),
-                        VisualStyle::filled(theme::ACCENT).alpha(55),
+                        VisualStyle::filled(theme::c().accent).alpha(55),
                     ));
                 }
             }
@@ -317,9 +317,9 @@ pub fn render(
                 cursor_y + theme::LINE_H - 3.0,
             );
             let cursor_style = if s.focused {
-                VisualStyle::filled(theme::ACCENT)
+                VisualStyle::filled(theme::c().accent)
             } else {
-                VisualStyle::default().stroked(theme::hairline(theme::ACCENT))
+                VisualStyle::default().stroked(theme::hairline(theme::c().accent))
             };
             code = code.child(panel(cursor_rect, cursor_style));
             if !s.editor.preedit.is_empty() && s.focused {
@@ -333,15 +333,15 @@ pub fn render(
                     cursor_y + theme::LINE_H,
                 );
                 code = code.child(
-                    panel(r, VisualStyle::filled(theme::SURFACE))
+                    panel(r, VisualStyle::filled(theme::c().surface))
                         .child(text(
                             r,
                             s.editor.preedit.clone(),
-                            theme::mono(theme::ZINC_100, theme::CODE_SIZE),
+                            theme::mono(theme::c().text_bright, theme::CODE_SIZE),
                         ))
                         .child(panel(
                             UiRect::new(r.left, r.bottom - 2.0, r.right, r.bottom - 1.0),
-                            VisualStyle::filled(theme::ACCENT),
+                            VisualStyle::filled(theme::c().accent),
                         )),
                 );
             }
@@ -532,7 +532,7 @@ fn vertical_scrollbar(
     let st_thumb_up = state;
     let thumb = panel(
         thumb_rect,
-        VisualStyle::filled(theme::ZINC_500)
+        VisualStyle::filled(theme::c().text_dim)
             .alpha(alpha)
             .radius(2.0),
     )
@@ -632,7 +632,7 @@ fn horizontal_scrollbar(
     let st_thumb_up = state;
     let thumb = panel(
         thumb_rect,
-        VisualStyle::filled(theme::ZINC_500)
+        VisualStyle::filled(theme::c().text_dim)
             .alpha(alpha)
             .radius(2.0),
     )

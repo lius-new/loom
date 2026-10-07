@@ -108,7 +108,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     let mut top = rect.top + PAGE_PAD_TOP - scroll_y;
 
     let wheel_state = state.clone();
-    let mut page = panel(rect, VisualStyle::filled(theme::BG))
+    let mut page = panel(rect, VisualStyle::filled(theme::c().bg))
         .event_policy(EventPolicy::INTERACTIVE)
         .on_wheel(move |cx, delta| {
             let step = match delta.unit {
@@ -133,12 +133,12 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             top + 26.0,
         ),
         "Settings",
-        theme::mono_bold(theme::ZINC_100, 18.0),
+        theme::mono_bold(theme::c().text_bright, 18.0),
     ));
     content = content.child(text(
         UiRect::new(page_left, top + 28.0, page_right, top + 48.0),
         "Changes apply immediately and are saved automatically.",
-        theme::sans(theme::ZINC_500, theme::UI_SIZE),
+        theme::sans(theme::c().text_dim, theme::UI_SIZE),
     ));
     top += HEADER_H;
 
@@ -146,12 +146,12 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         content = content.child(text(
             UiRect::new(page_left, top, page_right, top + SECTION_TITLE_H),
             title,
-            theme::mono(theme::ZINC_500, theme::SMALL).tracking(0.8),
+            theme::mono(theme::c().text_dim, theme::SMALL).tracking(0.8),
         ));
         top += SECTION_TITLE_H;
         content = content.child(panel(
             UiRect::new(page_left, top - 1.0, page_right, top),
-            VisualStyle::filled(theme::BORDER),
+            VisualStyle::filled(theme::c().border),
         ));
         for &setting in settings {
             let row = UiRect::new(page_left, top, page_right, top + ROW_H);
@@ -177,16 +177,16 @@ fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppSt
     element = element.child(text(
         UiRect::new(row.left, row.top + 11.0, text_right, row.top + 29.0),
         setting.label(),
-        theme::sans(theme::ZINC_200, theme::UI_SIZE),
+        theme::sans(theme::c().text, theme::UI_SIZE),
     ));
     element = element.child(text(
         UiRect::new(row.left, row.top + 30.0, text_right, row.top + 48.0),
         setting.description(),
-        theme::sans(theme::ZINC_500, theme::SMALL + 1.0),
+        theme::sans(theme::c().text_dim, theme::SMALL + 1.0),
     ));
     element = element.child(panel(
         UiRect::new(row.left, row.bottom - 1.0, row.right, row.bottom),
-        VisualStyle::filled(theme::ACTIVE_LINE),
+        VisualStyle::filled(theme::c().active_line),
     ));
 
     match setting.enabled(app) {
@@ -223,7 +223,11 @@ fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppSt
 }
 
 fn switch(rect: UiRect, on: bool) -> Element {
-    let track = if on { theme::ACCENT } else { theme::ZINC_700 };
+    let track = if on {
+        theme::c().accent
+    } else {
+        theme::c().text_ghost
+    };
     let inset = (SWITCH_H - KNOB) / 2.0;
     let knob_left = if on {
         rect.right - inset - KNOB
@@ -237,26 +241,31 @@ fn switch(rect: UiRect, on: bool) -> Element {
             knob_left + KNOB,
             rect.top + inset + KNOB,
         ),
-        VisualStyle::filled(if on { theme::ZINC_100 } else { theme::ZINC_400 }).radius(KNOB / 2.0),
+        VisualStyle::filled(if on {
+            theme::c().text_bright
+        } else {
+            theme::c().text_muted
+        })
+        .radius(KNOB / 2.0),
     ))
 }
 
 fn shell_selector(rect: UiRect, selected: ShellKind, state: State<AppState>) -> Element {
-    let mut selector = theme::bordered(rect, theme::SURFACE, theme::BORDER, 4.0, 1.0);
+    let mut selector = theme::bordered(rect, theme::c().surface, theme::c().border, 4.0, 1.0);
     for (index, shell) in ShellKind::ALL.into_iter().enumerate() {
         let left = rect.left + index as f32 * SEGMENT_W;
         let segment = UiRect::new(left, rect.top, left + SEGMENT_W, rect.bottom);
         let active = shell == selected;
         let fill = if active {
-            VisualStyle::filled(theme::SELECTION).radius(3.0)
+            VisualStyle::filled(theme::c().selection).radius(3.0)
         } else {
             VisualStyle::default()
         };
         let mut label = theme::mono(
             if active {
-                theme::ZINC_100
+                theme::c().text_bright
             } else {
-                theme::ZINC_400
+                theme::c().text_muted
             },
             theme::UI_SIZE,
         );

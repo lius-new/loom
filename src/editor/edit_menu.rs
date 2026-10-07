@@ -48,7 +48,7 @@ pub fn render(
             cx.stop_propagation();
         });
     let mut menu =
-        theme::bordered(card, theme::SURFACE, theme::BORDER, 5.0, 1.0).event_policy(policy);
+        theme::bordered(card, theme::c().surface, theme::c().border, 5.0, 1.0).event_policy(policy);
     for (i, (label, shortcut, command)) in items.into_iter().enumerate() {
         let enabled = s.workspace.active_buffer().is_some_and(|b| match command {
             Command::Undo => b.can_undo(),
@@ -63,9 +63,9 @@ pub fn render(
             y + 4.0 + (i + 1) as f32 * 28.0,
         );
         let color = if enabled {
-            theme::ZINC_300
+            theme::c().text_soft
         } else {
-            theme::ZINC_500
+            theme::c().text_dim
         };
         let st = state.clone();
         let hover = state.clone();
@@ -73,7 +73,7 @@ pub fn render(
         let row = panel(
             r,
             if enabled && s.editor.menu_hover == Some(i) {
-                VisualStyle::filled(theme::ACTIVE_LINE)
+                VisualStyle::filled(theme::c().active_line)
             } else {
                 VisualStyle::default()
             },

@@ -55,11 +55,11 @@ impl Language {
 
     pub fn badge_color(self) -> Color {
         match self {
-            Self::CSharp => theme::PURPLE_400,
-            Self::Rust => theme::ORANGE_400,
-            Self::TypeScript => theme::BLUE_400,
-            Self::JavaScript => theme::AMBER_400,
-            Self::PlainText => theme::ZINC_400,
+            Self::CSharp => theme::c().badge.csharp,
+            Self::Rust => theme::c().badge.rust,
+            Self::TypeScript => theme::c().badge.typescript,
+            Self::JavaScript => theme::c().badge.javascript,
+            Self::PlainText => theme::c().text_muted,
         }
     }
 }

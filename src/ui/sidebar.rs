@@ -68,7 +68,7 @@ pub fn render(
     let header_rect = UiRect::new(rect.left, rect.top, rect.right, rect.top + HEADER_H);
     let content_rect = UiRect::new(rect.left, header_rect.bottom, rect.right, rect.bottom);
 
-    let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR))
+    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar))
         .child(drawer_header(header_rect, state.clone()));
 
     // Background right-click capture: covers the drawer at the lowest z-order.
@@ -210,7 +210,7 @@ pub fn render(
                 if y > children_top {
                     tree_els.push(panel(
                         UiRect::new(guide_x, children_top, guide_x + 1.0, y),
-                        VisualStyle::filled(theme::BORDER),
+                        VisualStyle::filled(theme::c().border),
                     ));
                 }
             }
@@ -309,9 +309,9 @@ pub fn render(
         .child(panel(
             UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
             VisualStyle::filled(if s.resizing_sidebar {
-                theme::ACCENT
+                theme::c().accent
             } else {
-                theme::BORDER
+                theme::c().border
             }),
         ));
     bar = bar.child(handle);
@@ -333,7 +333,7 @@ pub(super) fn drawer_icon(
 }
 
 fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
-    let mut header = panel(rect, VisualStyle::filled(theme::SIDEBAR));
+    let mut header = panel(rect, VisualStyle::filled(theme::c().sidebar));
     let icon_top = rect.top + (rect.height() - 14.0) / 2.0;
     let explorer_icon = UiRect::new(
         rect.left + 12.0,
@@ -345,7 +345,7 @@ fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
         "sidebar.explorer",
         "explorer",
         explorer_icon,
-        theme::ZINC_500,
+        theme::c().text_dim,
     ));
     header = header.child(text(
         UiRect::new(
@@ -355,7 +355,7 @@ fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
             rect.bottom,
         ),
         "EXPLORER",
-        theme::mono_bold(theme::ZINC_300, theme::SMALL).tracking(0.8),
+        theme::mono_bold(theme::c().text_soft, theme::SMALL).tracking(0.8),
     ));
 
     let collapse_hit = UiRect::new(
@@ -386,13 +386,13 @@ fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
                 "sidebar.collapse.icon",
                 "panel-left",
                 collapse_icon,
-                theme::ZINC_500,
+                theme::c().text_dim,
             )),
     );
 
     header.child(panel(
         UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-        VisualStyle::filled(theme::BORDER),
+        VisualStyle::filled(theme::c().border),
     ))
 }
 
@@ -401,8 +401,8 @@ fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
 fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
     let cx = (rect.left + rect.right) / 2.0;
     let icon_rect = UiRect::new(cx - 24.0, rect.top + 28.0, cx + 24.0, rect.top + 76.0);
-    let icon =
-        theme::bordered(icon_rect, theme::SURFACE, theme::BORDER, 10.0, 1.0).child(drawer_icon(
+    let icon = theme::bordered(icon_rect, theme::c().surface, theme::c().border, 10.0, 1.0).child(
+        drawer_icon(
             "sidebar.empty.folder",
             crate::file_icons::FOLDER_ICON,
             UiRect::new(
@@ -411,10 +411,11 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
                 icon_rect.right - 12.0,
                 icon_rect.bottom - 12.0,
             ),
-            theme::ZINC_500,
-        ));
+            theme::c().text_dim,
+        ),
+    );
 
-    let mut centered_title = theme::sans_semibold(theme::ZINC_200, theme::UI_SIZE);
+    let mut centered_title = theme::sans_semibold(theme::c().text, theme::UI_SIZE);
     centered_title.align = TextAlign::Center;
     let title = text(
         UiRect::new(
@@ -427,7 +428,7 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
         centered_title,
     );
 
-    let mut centered_desc = theme::sans(theme::ZINC_500, theme::SMALL);
+    let mut centered_desc = theme::sans(theme::c().text_dim, theme::SMALL);
     centered_desc.align = TextAlign::Center;
     let desc_line_one = text(
         UiRect::new(
@@ -457,7 +458,7 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
         rect.top + 198.0,
     );
     let st = state.clone();
-    let btn = theme::bordered(btn_rect, theme::SURFACE, theme::BORDER, 4.0, 1.0)
+    let btn = theme::bordered(btn_rect, theme::c().surface, theme::c().border, 4.0, 1.0)
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
@@ -472,7 +473,7 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
                 btn_rect.left + 26.0,
                 btn_rect.top + 24.0,
             ),
-            theme::ACCENT,
+            theme::c().accent,
         ))
         .child(text(
             UiRect::new(
@@ -482,7 +483,7 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
                 btn_rect.bottom,
             ),
             "Open Folder",
-            theme::sans_semibold(theme::ZINC_200, theme::UI_SIZE),
+            theme::sans_semibold(theme::c().text, theme::UI_SIZE),
         ));
 
     let clone_rect = UiRect::new(
@@ -510,7 +511,7 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
                 clone_rect.left + 26.0,
                 clone_rect.top + 22.0,
             ),
-            theme::ZINC_600,
+            theme::c().text_faint,
         ))
         .child(text(
             UiRect::new(
@@ -520,7 +521,7 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
                 clone_rect.bottom,
             ),
             "Clone Repository...",
-            theme::sans(theme::ZINC_400, theme::UI_SIZE),
+            theme::sans(theme::c().text_muted, theme::UI_SIZE),
         ))
         .child(text(
             UiRect::new(
@@ -530,7 +531,7 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
                 clone_rect.bottom,
             ),
             "Ctrl+Shift+G",
-            theme::mono_right(theme::ZINC_600, 9.0),
+            theme::mono_right(theme::c().text_faint, 9.0),
         ));
 
     vec![
@@ -589,11 +590,11 @@ fn create_row(
         .as_ref()
         .map_or(ExplorerCreateKind::File, |request| request.kind);
     let border = if snapshot.explorer_create_error.is_some() {
-        theme::DIFF_DEL_BORDER
+        theme::c().error
     } else if snapshot.explorer_create_input.focused {
-        theme::ACCENT
+        theme::c().accent
     } else {
-        theme::BORDER
+        theme::c().border
     };
     let icon = if kind == ExplorerCreateKind::Folder {
         crate::file_icons::FOLDER_ICON
@@ -625,10 +626,10 @@ fn create_row(
             },
             placeholder: "",
             style: InputStyle {
-                text: theme::mono(theme::ZINC_200, theme::UI_SIZE),
-                placeholder: theme::mono(theme::ZINC_600, theme::UI_SIZE),
-                caret: theme::ZINC_200,
-                selection: theme::ACCENT,
+                text: theme::mono(theme::c().text, theme::UI_SIZE),
+                placeholder: theme::mono(theme::c().text_faint, theme::UI_SIZE),
+                caret: theme::c().text,
+                selection: theme::c().accent,
             },
             on_submit: Some(workspace_actions::finish_explorer_create),
             on_cancel: Some(workspace_actions::cancel_explorer_create),
@@ -638,7 +639,7 @@ fn create_row(
 
     panel(
         UiRect::new(rect.left, y, rect.right, y + CREATE_ROW_H),
-        VisualStyle::filled(theme::SURFACE),
+        VisualStyle::filled(theme::c().surface),
     )
     .child(precompiled(
         UiElement::icon(
@@ -651,9 +652,9 @@ fn create_row(
             ),
             icon,
         )
-        .icon_style(IconStyle::new(theme::ZINC_400)),
+        .icon_style(IconStyle::new(theme::c().text_muted)),
     ))
-    .child(theme::bordered(input_rect, theme::BG, border, 3.0, 1.0))
+    .child(theme::bordered(input_rect, theme::c().bg, border, 3.0, 1.0))
     .child(input)
 }
 
@@ -668,11 +669,11 @@ fn rename_row(
 ) -> Element {
     let snapshot = state.get();
     let border = if snapshot.explorer_create_error.is_some() {
-        theme::DIFF_DEL_BORDER
+        theme::c().error
     } else if snapshot.explorer_create_input.focused {
-        theme::ACCENT
+        theme::c().accent
     } else {
-        theme::BORDER
+        theme::c().border
     };
     let input_rect = UiRect::new(
         indent + TREE_LABEL_OFFSET,
@@ -718,10 +719,10 @@ fn rename_row(
             label,
             placeholder: "",
             style: InputStyle {
-                text: theme::mono(theme::ZINC_200, theme::UI_SIZE),
-                placeholder: theme::mono(theme::ZINC_600, theme::UI_SIZE),
-                caret: theme::ZINC_200,
-                selection: theme::ACCENT,
+                text: theme::mono(theme::c().text, theme::UI_SIZE),
+                placeholder: theme::mono(theme::c().text_faint, theme::UI_SIZE),
+                caret: theme::c().text,
+                selection: theme::c().accent,
             },
             on_submit: Some(workspace_actions::finish_explorer_rename),
             on_cancel: Some(workspace_actions::cancel_explorer_create),
@@ -730,7 +731,7 @@ fn rename_row(
     );
     panel(
         UiRect::new(rect.left, y, rect.right, y + ROW_H),
-        VisualStyle::filled(theme::SURFACE),
+        VisualStyle::filled(theme::c().surface),
     )
     .child(precompiled(
         UiElement::icon(
@@ -743,9 +744,9 @@ fn rename_row(
             ),
             icon,
         )
-        .icon_style(IconStyle::new(theme::ZINC_400)),
+        .icon_style(IconStyle::new(theme::c().text_muted)),
     ))
-    .child(theme::bordered(input_rect, theme::BG, border, 3.0, 1.0))
+    .child(theme::bordered(input_rect, theme::c().bg, border, 3.0, 1.0))
     .child(input)
 }
 
@@ -788,9 +789,9 @@ fn dir_row(
     let layer = if sticky { "sticky" } else { "content" };
     let fid = UiId::owned(format!("tree-{layer}-{key}"));
     let style = if sticky {
-        VisualStyle::filled(theme::SIDEBAR)
+        VisualStyle::filled(theme::c().sidebar)
     } else if hovered {
-        VisualStyle::filled(theme::SURFACE)
+        VisualStyle::filled(theme::c().surface)
     } else {
         VisualStyle::default()
     };
@@ -853,12 +854,12 @@ fn dir_row(
             ),
             icon,
         )
-        .icon_style(IconStyle::new(theme::ZINC_400)),
+        .icon_style(IconStyle::new(theme::c().text_muted)),
     ))
     .child(text(
         UiRect::new(indent + TREE_LABEL_OFFSET, y + 2.0, text_right, y + 18.0),
         name.to_string(),
-        theme::mono(theme::ZINC_300, theme::UI_SIZE),
+        theme::mono(theme::c().text_soft, theme::UI_SIZE),
     ))
 }
 
@@ -964,9 +965,9 @@ fn build_tree(
                     .map(|state| state.display_kind().indicator())
                     .unwrap_or_default();
                 let row_style = if s.workspace.active_path() == Some(file_path.as_path()) {
-                    VisualStyle::filled(theme::ACTIVE_LINE)
+                    VisualStyle::filled(theme::c().active_line)
                 } else if s.tree_hovered_path.as_deref() == Some(key.as_str()) {
-                    VisualStyle::filled(theme::SURFACE)
+                    VisualStyle::filled(theme::c().surface)
                 } else {
                     VisualStyle::default()
                 };
@@ -1034,7 +1035,7 @@ fn build_tree(
                             ),
                             icon,
                         )
-                        .icon_style(IconStyle::new(theme::ZINC_400)),
+                        .icon_style(IconStyle::new(theme::c().text_muted)),
                     ))
                     .child(text(
                         UiRect::new(
@@ -1044,7 +1045,7 @@ fn build_tree(
                             *y + 18.0,
                         ),
                         name,
-                        theme::mono(theme::ZINC_400, theme::UI_SIZE),
+                        theme::mono(theme::c().text_muted, theme::UI_SIZE),
                     ))
                     .child(text(
                         UiRect::new(
@@ -1054,7 +1055,7 @@ fn build_tree(
                             *y + 18.0,
                         ),
                         git_indicator,
-                        theme::mono(theme::ACCENT, theme::SMALL),
+                        theme::mono(theme::c().accent, theme::SMALL),
                     ));
                 els.push(row);
             }
@@ -1101,7 +1102,7 @@ fn build_tree(
             if *y > children_top {
                 els.push(panel(
                     UiRect::new(guide_x, children_top, guide_x + 1.0, *y),
-                    VisualStyle::filled(theme::BORDER),
+                    VisualStyle::filled(theme::c().border),
                 ));
             }
         }
@@ -1226,7 +1227,7 @@ fn vertical_scrollbar(
     let st_up = state.clone();
     let thumb = panel(
         UiRect::new(track.left, thumb_top, track.right, thumb_top + thumb_h),
-        VisualStyle::filled(theme::ZINC_600).radius(2.0),
+        VisualStyle::filled(theme::c().text_faint).radius(2.0),
     )
     .key("file-tree-vertical-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)
@@ -1284,7 +1285,7 @@ fn horizontal_scrollbar(
     let st_up = state.clone();
     panel(
         UiRect::new(thumb_left, track.top, thumb_left + thumb_w, track.bottom),
-        VisualStyle::filled(theme::ZINC_600).radius(2.0),
+        VisualStyle::filled(theme::c().text_faint).radius(2.0),
     )
     .key("file-tree-horizontal-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)

@@ -128,7 +128,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
         });
 
     let clear_hover = state.clone();
-    let mut surface = theme::bordered(card, theme::SURFACE, theme::BORDER, 6.0, 1.0)
+    let mut surface = theme::bordered(card, theme::c().surface, theme::c().border, 6.0, 1.0)
         .shadow(
             ShadowStyle::new(Color::BLACK)
                 .alpha(80)
@@ -160,7 +160,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                         card.right - ITEM_PAD_X,
                         line_y + 1.0,
                     ),
-                    VisualStyle::filled(theme::BORDER),
+                    VisualStyle::filled(theme::c().border),
                 ));
                 row_top += SEP_H;
             }
@@ -176,7 +176,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                 let mut item = panel(
                     row,
                     if hovered {
-                        VisualStyle::filled(theme::SELECTION)
+                        VisualStyle::filled(theme::c().selection)
                     } else {
                         VisualStyle::default()
                     },
@@ -241,11 +241,11 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                     *label,
                     theme::mono(
                         if hovered {
-                            theme::ZINC_100
+                            theme::c().text_bright
                         } else if enabled {
-                            theme::ZINC_300
+                            theme::c().text_soft
                         } else {
-                            theme::ZINC_500
+                            theme::c().text_dim
                         },
                         theme::UI_SIZE,
                     ),

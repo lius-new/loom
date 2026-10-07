@@ -12,7 +12,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         None => {
             return panel(
                 UiRect::new(0.0, 0.0, 0.0, 0.0),
-                VisualStyle::filled(theme::BG),
+                VisualStyle::filled(theme::c().bg),
             );
         }
     };
@@ -25,7 +25,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         cx + w / 2.0,
         rect.bottom - 16.0,
     );
-    let mut p = panel(pill, VisualStyle::filled(theme::SURFACE).radius(12.0));
+    let mut p = panel(pill, VisualStyle::filled(theme::c().surface).radius(12.0));
     p = p.child(text(
         UiRect::new(
             pill.left + 14.0,
@@ -34,7 +34,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             pill.bottom,
         ),
         "✦",
-        theme::sans(theme::ACCENT, theme::SMALL),
+        theme::sans(theme::c().accent, theme::SMALL),
     ));
     p = p.child(text(
         UiRect::new(
@@ -44,7 +44,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
             pill.bottom,
         ),
         msg,
-        theme::sans(theme::ZINC_200, theme::SMALL),
+        theme::sans(theme::c().text, theme::SMALL),
     ));
     p
 }

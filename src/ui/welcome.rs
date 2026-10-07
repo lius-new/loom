@@ -58,7 +58,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             page_top + 26.0,
         ),
         "Loom",
-        theme::mono_bold(theme::ZINC_100, 18.0),
+        theme::mono_bold(theme::c().text_bright, 18.0),
     ));
     welcome = welcome.child(text(
         UiRect::new(
@@ -68,12 +68,12 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             page_top + 24.0,
         ),
         format!("v{}", env!("CARGO_PKG_VERSION")),
-        theme::mono(theme::ZINC_500, theme::SMALL),
+        theme::mono(theme::c().text_dim, theme::SMALL),
     ));
     welcome = welcome.child(text(
         UiRect::new(page_left, page_top + 28.0, page_right, page_top + 48.0),
         "Open a file or folder to start editing.",
-        theme::sans(theme::ZINC_500, theme::UI_SIZE),
+        theme::sans(theme::c().text_dim, theme::UI_SIZE),
     ));
 
     let sections_top = page_top + 76.0;
@@ -182,7 +182,7 @@ fn section_title(rect: UiRect, label: &'static str) -> Element {
     text(
         UiRect::new(rect.left, rect.top, rect.right, rect.top + SECTION_TITLE_H),
         label,
-        theme::mono(theme::ZINC_500, theme::SMALL).tracking(0.8),
+        theme::mono(theme::c().text_dim, theme::SMALL).tracking(0.8),
     )
     .into()
 }
@@ -197,7 +197,7 @@ fn action_row(
     editor_focus: UiFocusHandle,
 ) -> Element {
     let surface = if hovered {
-        theme::bordered(rect, theme::SURFACE, theme::BORDER, 4.0, 1.0)
+        theme::bordered(rect, theme::c().surface, theme::c().border, 4.0, 1.0)
     } else {
         panel(rect, VisualStyle::default().radius(4.0))
     };
@@ -228,9 +228,9 @@ fn action_row(
             label,
             theme::sans(
                 if hovered {
-                    theme::ZINC_100
+                    theme::c().text_bright
                 } else {
-                    theme::ZINC_300
+                    theme::c().text_soft
                 },
                 theme::UI_SIZE,
             ),
@@ -238,10 +238,10 @@ fn action_row(
 }
 
 fn empty_recent_card(rect: UiRect) -> Element {
-    theme::bordered(rect, theme::BG, theme::BORDER, 5.0, 1.0).child(text(
+    theme::bordered(rect, theme::c().bg, theme::c().border, 5.0, 1.0).child(text(
         UiRect::new(rect.left + 12.0, rect.top, rect.right - 12.0, rect.bottom),
         "No recent folders",
-        theme::mono(theme::ZINC_500, theme::UI_SIZE),
+        theme::mono(theme::c().text_dim, theme::UI_SIZE),
     ))
 }
 
@@ -264,9 +264,9 @@ fn recent_workspace_card(
         400,
     );
     let surface = if hovered {
-        theme::bordered(rect, theme::SURFACE, theme::BORDER, 5.0, 1.0)
+        theme::bordered(rect, theme::c().surface, theme::c().border, 5.0, 1.0)
     } else {
-        theme::bordered(rect, theme::BG, theme::BORDER, 5.0, 1.0)
+        theme::bordered(rect, theme::c().bg, theme::c().border, 5.0, 1.0)
     };
     let hover_state = state.clone();
     let click_state = state;
@@ -294,9 +294,9 @@ fn recent_workspace_card(
             name,
             theme::sans_semibold(
                 if hovered {
-                    theme::ZINC_100
+                    theme::c().text_bright
                 } else {
-                    theme::ZINC_200
+                    theme::c().text
                 },
                 theme::UI_SIZE,
             ),
@@ -309,7 +309,7 @@ fn recent_workspace_card(
                 rect.bottom - 6.0,
             ),
             display_path,
-            theme::mono(theme::ZINC_500, theme::SMALL),
+            theme::mono(theme::c().text_dim, theme::SMALL),
         ))
 }
 
@@ -317,16 +317,16 @@ fn footer(rect: UiRect) -> Element {
     group(rect)
         .child(panel(
             UiRect::new(rect.left, rect.top, rect.right, rect.top + 1.0),
-            VisualStyle::filled(theme::BORDER),
+            VisualStyle::filled(theme::c().border),
         ))
         .child(text(
             UiRect::new(rect.left, rect.top + 10.0, rect.right, rect.top + 28.0),
             "Welcome to Loom",
-            theme::sans_semibold(theme::ZINC_300, theme::UI_SIZE),
+            theme::sans_semibold(theme::c().text_soft, theme::UI_SIZE),
         ))
         .child(text(
             UiRect::new(rect.left, rect.top + 28.0, rect.right, rect.bottom),
             "A focused workspace for exploring projects, editing code, and running local shells.",
-            theme::sans(theme::ZINC_500, theme::SMALL),
+            theme::sans(theme::c().text_dim, theme::SMALL),
         ))
 }

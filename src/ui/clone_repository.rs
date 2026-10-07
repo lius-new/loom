@@ -31,12 +31,12 @@ pub fn render(
         card.top + 99.0,
     );
 
-    let mut root = panel(viewport, VisualStyle::filled(theme::BG).alpha(214))
+    let mut root = panel(viewport, VisualStyle::filled(theme::c().bg).alpha(214))
         .event_policy(EventPolicy::INTERACTIVE)
         .child(theme::bordered(
             card,
-            theme::SIDEBAR,
-            theme::BORDER,
+            theme::c().sidebar,
+            theme::c().border,
             8.0,
             1.0,
         ));
@@ -49,7 +49,7 @@ pub fn render(
             card.top + 40.0,
         ),
         "Clone Repository",
-        theme::sans_semibold(theme::ZINC_100, 15.0),
+        theme::sans_semibold(theme::c().text_bright, 15.0),
     ));
     root = root.child(text(
         UiRect::new(
@@ -59,7 +59,7 @@ pub fn render(
             card.top + 58.0,
         ),
         "Enter a Git repository URL, then choose its destination folder.",
-        theme::sans(theme::ZINC_500, theme::SMALL),
+        theme::sans(theme::c().text_dim, theme::SMALL),
     ));
 
     let close_state = state.clone();
@@ -97,7 +97,7 @@ pub fn render(
                 card.right - 17.0,
                 card.top + 29.0,
             ),
-            theme::ZINC_500,
+            theme::c().text_dim,
         )),
     );
 
@@ -111,11 +111,11 @@ pub fn render(
         display_value
     };
     let input_style = if snapshot.clone_repository_error.is_some() {
-        theme::DIFF_DEL_BORDER
+        theme::c().error
     } else if snapshot.clone_input_focused {
-        theme::ACCENT
+        theme::c().accent
     } else {
-        theme::BORDER
+        theme::c().border
     };
     let mut semantics = Semantics::new(SemanticRole::TextInput)
         .name("Repository URL")
@@ -142,7 +142,7 @@ pub fn render(
         UiElement::panel(
             input_id,
             input_rect,
-            VisualStyle::filled(theme::BG).radius(4.0),
+            VisualStyle::filled(theme::c().bg).radius(4.0),
         )
         .ime_cursor_rect(ime_rect)
         .children(cx.children)
@@ -258,9 +258,9 @@ pub fn render(
         label,
         theme::mono(
             if placeholder {
-                theme::ZINC_600
+                theme::c().text_faint
             } else {
-                theme::ZINC_200
+                theme::c().text
             },
             theme::UI_SIZE,
         ),
@@ -268,7 +268,7 @@ pub fn render(
     root = root.child(input_element);
 
     if snapshot.clone_input_focused && !snapshot.cloning_repository && !placeholder {
-        root = root.child(panel(ime_rect, VisualStyle::filled(theme::ZINC_200)));
+        root = root.child(panel(ime_rect, VisualStyle::filled(theme::c().text)));
     }
 
     if let Some(error) = snapshot.clone_repository_error.as_ref() {
@@ -280,7 +280,7 @@ pub fn render(
                 card.top + 121.0,
             ),
             error.clone(),
-            theme::sans(theme::DIFF_DEL_BORDER, theme::SMALL),
+            theme::sans(theme::c().error, theme::SMALL),
         ));
     }
 
@@ -298,7 +298,7 @@ pub fn render(
     );
     let cancel_state = state.clone();
     root = root.child(
-        theme::bordered(cancel_rect, theme::SIDEBAR, theme::BORDER, 4.0, 1.0)
+        theme::bordered(cancel_rect, theme::c().sidebar, theme::c().border, 4.0, 1.0)
             .event_policy(EventPolicy::INTERACTIVE)
             .cursor(if snapshot.cloning_repository {
                 CursorIcon::NotAllowed
@@ -317,7 +317,7 @@ pub fn render(
             .child(text(
                 cancel_rect,
                 "Cancel",
-                centered(theme::sans(theme::ZINC_300, theme::UI_SIZE)),
+                centered(theme::sans(theme::c().text_soft, theme::UI_SIZE)),
             )),
     );
 
@@ -328,9 +328,9 @@ pub fn render(
         panel(
             clone_rect,
             VisualStyle::filled(if can_clone {
-                theme::ACCENT
+                theme::c().accent
             } else {
-                theme::ZINC_700
+                theme::c().text_ghost
             })
             .radius(4.0),
         )
@@ -352,7 +352,7 @@ pub fn render(
             } else {
                 "Clone"
             },
-            centered(theme::sans_semibold(theme::ZINC_100, theme::UI_SIZE)),
+            centered(theme::sans_semibold(theme::c().text_bright, theme::UI_SIZE)),
         )),
     )
 }

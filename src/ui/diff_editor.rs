@@ -21,7 +21,7 @@ const BUTTON_GAP: f32 = 4.0;
 pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {
     let app = state.get();
     let Some(document) = app.workspace.active_diff() else {
-        return panel(rect, VisualStyle::filled(theme::BG));
+        return panel(rect, VisualStyle::filled(theme::c().bg));
     };
 
     let split = app.git_split_diff;
@@ -72,7 +72,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
     let scroll_y = stored_y.clamp(0.0, max_y);
 
     let wheel_state = state.clone();
-    let mut root = panel(rect, VisualStyle::filled(theme::BG))
+    let mut root = panel(rect, VisualStyle::filled(theme::c().bg))
         .event_policy(EventPolicy::INTERACTIVE)
         .on_wheel(move |cx, delta| {
             let (step_x, step_y) = match delta.unit {
@@ -129,7 +129,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                 body_rect.top + 64.0,
             ),
             message,
-            theme::mono(theme::ZINC_500, theme::UI_SIZE),
+            theme::mono(theme::c().text_dim, theme::UI_SIZE),
         ));
     }
 
@@ -156,7 +156,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
                 body_rect.right,
                 thumb_top + thumb_h,
             ),
-            VisualStyle::filled(theme::ZINC_600).radius(2.0),
+            VisualStyle::filled(theme::c().text_faint).radius(2.0),
         ));
     }
 
@@ -176,10 +176,10 @@ fn toolbar(
     current_change: Option<usize>,
     absolute_path: PathBuf,
 ) -> Element {
-    let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
+    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
     bar = bar.child(panel(
         UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-        VisualStyle::filled(theme::BORDER),
+        VisualStyle::filled(theme::c().border),
     ));
 
     let compact = rect.width() < 560.0;
@@ -255,7 +255,7 @@ fn toolbar(
     bar = bar.child(text(
         position_rect,
         position,
-        theme::mono_right(theme::ZINC_600, theme::SMALL),
+        theme::mono_right(theme::c().text_faint, theme::SMALL),
     ));
 
     let stats = format!("+{additions}  −{deletions}");
@@ -265,7 +265,7 @@ fn toolbar(
     bar = bar.child(text(
         stats_rect,
         stats,
-        theme::mono_right(theme::ZINC_500, theme::SMALL),
+        theme::mono_right(theme::c().text_dim, theme::SMALL),
     ));
 
     let path_rect = UiRect::new(
@@ -282,7 +282,7 @@ fn toolbar(
             path_rect.bottom,
         ),
         path,
-        theme::mono(theme::ZINC_300, theme::UI_SIZE),
+        theme::mono(theme::c().text_soft, theme::UI_SIZE),
     )))
 }
 
@@ -295,9 +295,9 @@ fn take_button_rect(right: &mut f32, top: f32, width: f32) -> UiRect {
 fn toolbar_button(rect: UiRect, label: &'static str, active: bool) -> Element {
     let mut style = theme::mono(
         if active {
-            theme::ZINC_200
+            theme::c().text
         } else {
-            theme::ZINC_500
+            theme::c().text_dim
         },
         theme::SMALL,
     );
@@ -305,7 +305,7 @@ fn toolbar_button(rect: UiRect, label: &'static str, active: bool) -> Element {
     panel(
         rect,
         if active {
-            VisualStyle::filled(theme::ACTIVE_LINE).radius(3.0)
+            VisualStyle::filled(theme::c().active_line).radius(3.0)
         } else {
             VisualStyle::default().radius(3.0)
         },
@@ -317,24 +317,24 @@ fn toolbar_button(rect: UiRect, label: &'static str, active: bool) -> Element {
 
 fn split_headers(rect: UiRect, source_label: &str) -> Element {
     let middle = rect.left + rect.width() / 2.0;
-    panel(rect, VisualStyle::filled(theme::SIDEBAR))
+    panel(rect, VisualStyle::filled(theme::c().sidebar))
         .child(text(
             UiRect::new(rect.left + 12.0, rect.top, middle - 8.0, rect.bottom),
             "Original",
-            theme::mono(theme::ZINC_600, theme::SMALL),
+            theme::mono(theme::c().text_faint, theme::SMALL),
         ))
         .child(text(
             UiRect::new(middle + 12.0, rect.top, rect.right - 8.0, rect.bottom),
             source_label.to_owned(),
-            theme::mono(theme::ZINC_600, theme::SMALL),
+            theme::mono(theme::c().text_faint, theme::SMALL),
         ))
         .child(panel(
             UiRect::new(middle, rect.top, middle + 1.0, rect.bottom),
-            VisualStyle::filled(theme::BORDER),
+            VisualStyle::filled(theme::c().border),
         ))
         .child(panel(
             UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-            VisualStyle::filled(theme::BORDER),
+            VisualStyle::filled(theme::c().border),
         ))
 }
 
@@ -349,10 +349,10 @@ fn render_inline(rect: UiRect, rows: &[DiffRow], scroll_x: f32, scroll_y: f32) -
         let top = rect.top + index as f32 * ROW_H - scroll_y;
         let row_rect = UiRect::new(rect.left, top, rect.right, top + ROW_H);
         let (background, foreground, marker) = match row.kind {
-            DiffRowKind::Context => (None, theme::ZINC_300, ""),
-            DiffRowKind::Addition => (Some(theme::DIFF_ADD_BG), theme::DIFF_ADD_FG, "+"),
-            DiffRowKind::Deletion => (Some(theme::DIFF_DEL_BG), theme::DIFF_DEL_FG, "−"),
-            DiffRowKind::Hunk => (Some(theme::SURFACE), theme::ZINC_500, ""),
+            DiffRowKind::Context => (None, theme::c().text_soft, ""),
+            DiffRowKind::Addition => (Some(theme::c().diff.add_bg), theme::c().diff.add_fg, "+"),
+            DiffRowKind::Deletion => (Some(theme::c().diff.del_bg), theme::c().diff.del_fg, "−"),
+            DiffRowKind::Hunk => (Some(theme::c().surface), theme::c().text_dim, ""),
         };
         if let Some(background) = background {
             body = body.child(panel(row_rect, VisualStyle::filled(background)));
@@ -361,7 +361,7 @@ fn render_inline(rect: UiRect, rows: &[DiffRow], scroll_x: f32, scroll_y: f32) -
             body = body.child(text(
                 UiRect::new(rect.left + 10.0, top, rect.right - 10.0, top + ROW_H),
                 row.text.clone(),
-                theme::mono(theme::ZINC_500, theme::SMALL),
+                theme::mono(theme::c().text_dim, theme::SMALL),
             ));
             continue;
         }
@@ -403,12 +403,12 @@ fn render_split(rect: UiRect, rows: &[SplitDiffRow], scroll_x: f32, scroll_y: f3
             body = body
                 .child(panel(
                     UiRect::new(rect.left, top, rect.right, top + ROW_H),
-                    VisualStyle::filled(theme::SURFACE),
+                    VisualStyle::filled(theme::c().surface),
                 ))
                 .child(text(
                     UiRect::new(rect.left + 10.0, top, rect.right - 10.0, top + ROW_H),
                     hunk.clone(),
-                    theme::mono(theme::ZINC_500, theme::SMALL),
+                    theme::mono(theme::c().text_dim, theme::SMALL),
                 ));
             continue;
         }
@@ -416,25 +416,25 @@ fn render_split(rect: UiRect, rows: &[SplitDiffRow], scroll_x: f32, scroll_y: f3
         if row.changed && row.old_text.is_some() {
             body = body.child(panel(
                 UiRect::new(rect.left, top, middle, top + ROW_H),
-                VisualStyle::filled(theme::DIFF_DEL_BG),
+                VisualStyle::filled(theme::c().diff.del_bg),
             ));
         }
         if row.changed && row.new_text.is_some() {
             body = body.child(panel(
                 UiRect::new(middle, top, rect.right, top + ROW_H),
-                VisualStyle::filled(theme::DIFF_ADD_BG),
+                VisualStyle::filled(theme::c().diff.add_bg),
             ));
         }
 
         let old_color = if row.changed {
-            theme::DIFF_DEL_FG
+            theme::c().diff.del_fg
         } else {
-            theme::ZINC_300
+            theme::c().text_soft
         };
         let new_color = if row.changed {
-            theme::DIFF_ADD_FG
+            theme::c().diff.add_fg
         } else {
-            theme::ZINC_300
+            theme::c().text_soft
         };
         body = body
             .child(line_number(rect.left, top, row.old_line))
@@ -468,7 +468,7 @@ fn line_number(left: f32, top: f32, number: Option<usize>) -> Element {
     text(
         UiRect::new(left, top, left + NUMBER_W - 8.0, top + ROW_H),
         number.map(|line| line.to_string()).unwrap_or_default(),
-        theme::mono_right(theme::ZINC_600, theme::SMALL),
+        theme::mono_right(theme::c().text_faint, theme::SMALL),
     )
     .into()
 }
@@ -491,7 +491,7 @@ fn code_line(
 fn vertical_rule(x: f32, rect: UiRect) -> Element {
     panel(
         UiRect::new(x - 1.0, rect.top, x, rect.bottom),
-        VisualStyle::filled(theme::BORDER),
+        VisualStyle::filled(theme::c().border),
     )
 }
 

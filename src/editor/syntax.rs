@@ -24,14 +24,14 @@ enum Tok {
 
 fn color_for(kind: Tok) -> Color {
     match kind {
-        Tok::Kw => theme::KW,
-        Tok::Fn => theme::FUNC,
-        Tok::Type => theme::TYPE,
-        Tok::Str => theme::STR,
-        Tok::Comment => theme::COMMENT,
-        Tok::Num => theme::NUM,
-        Tok::Prop => theme::PROP,
-        Tok::Plain => theme::ZINC_200,
+        Tok::Kw => theme::c().syntax.keyword,
+        Tok::Fn => theme::c().syntax.function,
+        Tok::Type => theme::c().syntax.type_name,
+        Tok::Str => theme::c().syntax.string,
+        Tok::Comment => theme::c().syntax.comment,
+        Tok::Num => theme::c().syntax.number,
+        Tok::Prop => theme::c().syntax.property,
+        Tok::Plain => theme::c().text,
     }
 }
 

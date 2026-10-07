@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use lgui::core::{
-    Color, CursorIcon, EventPolicy, PointerButton, SemanticRole, Semantics, UiEventKind,
-    UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip,
+    CursorIcon, EventPolicy, PointerButton, SemanticRole, Semantics, UiEventKind, UiEventPayload,
+    UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
@@ -14,10 +14,6 @@ use crate::state::AppState;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::{git_actions, theme};
 
-const GIT_ADDED: Color = Color(0x38bdf8);
-const GIT_MODIFIED: Color = Color(0xeab308);
-const GIT_DELETED: Color = Color(0xf43f5e);
-const GIT_STAGED: Color = Color(0x34d399);
 const TOPLINE_H: f32 = theme::TABS_H;
 const PROMPT_H: f32 = 38.0;
 const SECTION_H: f32 = 22.0;
@@ -34,7 +30,7 @@ pub fn render(
     let app = state.get();
     let resizing = app.resizing_git_sidebar;
     let git = store.get();
-    let mut root = panel(rect, VisualStyle::filled(theme::SIDEBAR));
+    let mut root = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
     // Compact topline: the branch lives in the titlebar trigger, while this
     // drawer only exposes change and sync state.
@@ -46,7 +42,7 @@ pub fn render(
             rect.top + TOPLINE_H,
         ),
         "CHANGES",
-        theme::mono(theme::ZINC_500, theme::SMALL),
+        theme::mono(theme::c().text_dim, theme::SMALL),
     ));
     root = root.child(panel(
         UiRect::new(
@@ -55,7 +51,7 @@ pub fn render(
             rect.right,
             rect.top + TOPLINE_H,
         ),
-        VisualStyle::filled(theme::BORDER),
+        VisualStyle::filled(theme::c().border),
     ));
     let Some(repository) = git.active() else {
         let message = if git.initializing {
@@ -74,7 +70,7 @@ pub fn render(
                 rect.top + TOPLINE_H + 58.0,
             ),
             message,
-            theme::sans(theme::ZINC_500, theme::UI_SIZE),
+            theme::sans(theme::c().text_dim, theme::UI_SIZE),
         ));
         return root.child(git_resize_handle(rect, state, resizing));
     };
@@ -141,7 +137,7 @@ pub fn render(
                     section_icon_id,
                     section_icon,
                     UiRect::new(rect.left + 9.0, y + 5.0, rect.left + 21.0, y + 17.0),
-                    theme::ZINC_700,
+                    theme::c().text_ghost,
                 ))
                 .child(text(
                     UiRect::new(
@@ -151,7 +147,7 @@ pub fn render(
                         y + SECTION_H,
                     ),
                     title,
-                    theme::mono(theme::ZINC_700, theme::SMALL),
+                    theme::mono(theme::c().text_ghost, theme::SMALL),
                 ))
                 .child(text(
                     UiRect::new(
@@ -161,7 +157,7 @@ pub fn render(
                         y + SECTION_H,
                     ),
                     files.len().to_string(),
-                    theme::mono_right(theme::ZINC_700, theme::SMALL),
+                    theme::mono_right(theme::c().text_ghost, theme::SMALL),
                 )),
         );
         y += SECTION_H;
@@ -175,9 +171,10 @@ pub fn render(
             } else {
                 DiffTarget::IndexToWorktree
             };
-            let active = app.workspace.active_diff().is_some_and(|diff| {
-                diff.matches(&repository.worktree_root, path, target)
-            });
+            let active = app
+                .workspace
+                .active_diff()
+                .is_some_and(|diff| diff.matches(&repository.worktree_root, path, target));
             content.push(file_row(
                 UiRect::new(rect.left, y, content_rect.right, y + ROW_H),
                 path.clone(),
@@ -224,11 +221,11 @@ pub fn render(
     }
     root = root.child(panel(
         UiRect::new(rect.left, prompt_top, rect.right, rect.bottom),
-        VisualStyle::filled(theme::BG),
+        VisualStyle::filled(theme::c().bg),
     ));
     root = root.child(panel(
         UiRect::new(rect.left, prompt_top, rect.right, prompt_top + 1.0),
-        VisualStyle::filled(theme::BORDER),
+        VisualStyle::filled(theme::c().border),
     ));
     let commit_button_rect = UiRect::new(
         rect.right - 34.0,
@@ -287,7 +284,7 @@ fn git_vertical_scrollbar(
     let drag_end = state;
     panel(
         UiRect::new(track.left, thumb_top, track.right, thumb_top + thumb_h),
-        VisualStyle::filled(theme::ZINC_600).radius(2.0),
+        VisualStyle::filled(theme::c().text_faint).radius(2.0),
     )
     .key("git-vertical-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)
@@ -340,19 +337,14 @@ fn git_resize_handle(rect: UiRect, state: State<AppState>, resizing: bool) -> El
         .child(panel(
             UiRect::new(rect.right - 1.0, rect.top, rect.right, rect.bottom),
             VisualStyle::filled(if resizing {
-                theme::ACCENT
+                theme::c().accent
             } else {
-                theme::BORDER
+                theme::c().border
             }),
         ))
 }
 
-fn commit_input(
-    rect: UiRect,
-    state: State<AppState>,
-    focus: UiFocusHandle,
-    id: UiId,
-) -> Element {
+fn commit_input(rect: UiRect, state: State<AppState>, focus: UiFocusHandle, id: UiId) -> Element {
     input::render(
         rect,
         id,
@@ -362,10 +354,10 @@ fn commit_input(
             label: "Commit message",
             placeholder: "Commit message",
             style: InputStyle {
-                text: theme::mono(theme::ZINC_200, theme::SMALL),
-                placeholder: theme::mono(theme::ZINC_600, theme::SMALL),
-                caret: theme::ZINC_600,
-                selection: theme::ACCENT,
+                text: theme::mono(theme::c().text, theme::SMALL),
+                placeholder: theme::mono(theme::c().text_faint, theme::SMALL),
+                caret: theme::c().text_faint,
+                selection: theme::c().accent,
             },
             on_submit: None,
             on_cancel: None,
@@ -382,18 +374,14 @@ fn commit_input_state_mut(app: &mut AppState) -> &mut InputState {
     &mut app.git_commit_input
 }
 
-fn commit_button(
-    rect: UiRect,
-    state: State<AppState>,
-    store: State<GitStoreSnapshot>,
-) -> Element {
+fn commit_button(rect: UiRect, state: State<AppState>, store: State<GitStoreSnapshot>) -> Element {
     let has_message = !state.get().git_commit_input.text().trim().is_empty();
     let click_state = state.clone();
     let click_store = store;
     panel(
         rect,
         if has_message {
-            VisualStyle::filled(theme::ACTIVE_LINE).radius(3.0)
+            VisualStyle::filled(theme::c().active_line).radius(3.0)
         } else {
             VisualStyle::default().radius(3.0)
         },
@@ -408,11 +396,16 @@ fn commit_button(
     .child(super::sidebar::drawer_icon(
         "git-commit-button-icon",
         "check",
-        UiRect::new(rect.left + 7.0, rect.top + 7.0, rect.right - 7.0, rect.bottom - 7.0),
+        UiRect::new(
+            rect.left + 7.0,
+            rect.top + 7.0,
+            rect.right - 7.0,
+            rect.bottom - 7.0,
+        ),
         if has_message {
-            theme::ZINC_200
+            theme::c().text
         } else {
-            theme::ZINC_600
+            theme::c().text_faint
         },
     ))
 }
@@ -441,19 +434,19 @@ fn file_row(
     let action_path = path.clone();
     let kind = file_state.display_kind();
     let (indicator, indicator_color) = if file_state.conflict.is_some() {
-        ("!", GIT_DELETED)
+        ("!", theme::c().git.deleted)
     } else if staged {
-        ("+", GIT_STAGED)
+        ("+", theme::c().git.staged)
     } else {
         match kind {
-            ChangeKind::Added => ("+", GIT_ADDED),
-            ChangeKind::Modified | ChangeKind::TypeChanged => ("~", GIT_MODIFIED),
-            ChangeKind::Deleted => ("-", GIT_DELETED),
-            ChangeKind::Renamed => (">", GIT_MODIFIED),
-            ChangeKind::Copied => ("+", GIT_ADDED),
-            ChangeKind::Untracked => ("?", GIT_ADDED),
-            ChangeKind::Unmerged => ("!", GIT_DELETED),
-            _ => (kind.indicator(), theme::ZINC_500),
+            ChangeKind::Added => ("+", theme::c().git.added),
+            ChangeKind::Modified | ChangeKind::TypeChanged => ("~", theme::c().git.modified),
+            ChangeKind::Deleted => ("-", theme::c().git.deleted),
+            ChangeKind::Renamed => (">", theme::c().git.modified),
+            ChangeKind::Copied => ("+", theme::c().git.added),
+            ChangeKind::Untracked => ("?", theme::c().git.added),
+            ChangeKind::Unmerged => ("!", theme::c().git.deleted),
+            _ => (kind.indicator(), theme::c().text_dim),
         }
     };
     let stat = if staged {
@@ -462,12 +455,12 @@ fn file_row(
         file_state.worktree_stat.as_ref()
     };
     let diff_summary = stat.map_or_else(String::new, |stat| {
-            if stat.binary {
-                "binary".to_owned()
-            } else {
-                format!("+{} -{}", stat.additions, stat.deletions)
-            }
-        });
+        if stat.binary {
+            "binary".to_owned()
+        } else {
+            format!("+{} -{}", stat.additions, stat.deletions)
+        }
+    });
     let name = path.display().to_string();
     let name_left = rect.left + 30.0;
     let name_viewport = UiRect::new(name_left, rect.top, rect.right - 52.0, rect.bottom);
@@ -475,10 +468,8 @@ fn file_row(
     // width, then clip the viewport. Giving the text only the viewport width
     // makes the text engine choose path separators as word-break points and
     // can hide an entire trailing path segment at once.
-    let name_width = name.chars().count() as f32
-        * theme::CHAR_W
-        * (theme::SMALL / theme::CODE_SIZE)
-        + 12.0;
+    let name_width =
+        name.chars().count() as f32 * theme::CHAR_W * (theme::SMALL / theme::CODE_SIZE) + 12.0;
     let name_content = UiRect::new(
         name_left,
         rect.top,
@@ -488,26 +479,25 @@ fn file_row(
     panel(
         rect,
         if active {
-            VisualStyle::filled(theme::ACTIVE_LINE)
+            VisualStyle::filled(theme::c().active_line)
         } else {
             VisualStyle::default()
         },
     )
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(CursorIcon::Pointer)
-        .on_click(move || {
-            let result = crate::git::service().and_then(|service| {
-                service.backend().parsed_full_diff(
-                    &open_repository,
-                    target,
-                    std::slice::from_ref(&open_relative_path),
-                )
-            });
-            match result {
-                Ok(diff) => {
-                    let document = if diff.files.is_empty()
-                        && open_file_state.worktree == ChangeKind::Untracked
-                    {
+    .event_policy(EventPolicy::INTERACTIVE)
+    .cursor(CursorIcon::Pointer)
+    .on_click(move || {
+        let result = crate::git::service().and_then(|service| {
+            service.backend().parsed_full_diff(
+                &open_repository,
+                target,
+                std::slice::from_ref(&open_relative_path),
+            )
+        });
+        match result {
+            Ok(diff) => {
+                let document =
+                    if diff.files.is_empty() && open_file_state.worktree == ChangeKind::Untracked {
                         match std::fs::read_to_string(&open_path) {
                             Ok(contents) => DiffDocument::added(
                                 open_repository.clone(),
@@ -530,64 +520,53 @@ fn file_row(
                             diff,
                         )
                     };
-                    open_state.update(move |app| {
-                        app.workspace.open_diff(document);
-                    });
-                    focus.focus();
-                }
-                Err(error) => {
-                    open_state.update(move |app| {
-                        app.show_toast(error.user_message());
-                    });
-                }
+                open_state.update(move |app| {
+                    app.workspace.open_diff(document);
+                });
+                focus.focus();
             }
+            Err(error) => {
+                open_state.update(move |app| {
+                    app.show_toast(error.user_message());
+                });
+            }
+        }
+    })
+    .child(text(
+        UiRect::new(rect.left + 12.0, rect.top, rect.left + 24.0, rect.bottom),
+        indicator,
+        theme::mono_bold(indicator_color, theme::SMALL),
+    ))
+    .child(clip(name_viewport, 0.0, 0.0).child(text(
+        name_content,
+        name,
+        theme::mono(
+            if active {
+                theme::c().text
+            } else {
+                theme::c().text_dim
+            },
+            theme::SMALL,
+        ),
+    )))
+    .child(
+        panel(
+            UiRect::new(rect.right - 50.0, rect.top, rect.right, rect.bottom),
+            VisualStyle::default(),
+        )
+        .event_policy(EventPolicy::INTERACTIVE)
+        .on_click(move |cx: &mut lgui::core::UiEventContext| {
+            if staged {
+                git_actions::unstage_path(&action_state, &action_store, action_path.clone());
+            } else {
+                git_actions::stage_path(&action_state, &action_store, action_path.clone());
+            }
+            cx.stop_propagation();
         })
         .child(text(
-            UiRect::new(
-                rect.left + 12.0,
-                rect.top,
-                rect.left + 24.0,
-                rect.bottom,
-            ),
-            indicator,
-            theme::mono_bold(indicator_color, theme::SMALL),
-        ))
-        .child(clip(name_viewport, 0.0, 0.0).child(text(
-            name_content,
-            name,
-            theme::mono(
-                if active {
-                    theme::ZINC_200
-                } else {
-                    theme::ZINC_500
-                },
-                theme::SMALL,
-            ),
-        )))
-        .child(
-            panel(
-                UiRect::new(rect.right - 50.0, rect.top, rect.right, rect.bottom),
-                VisualStyle::default(),
-            )
-            .event_policy(EventPolicy::INTERACTIVE)
-            .on_click(move |cx: &mut lgui::core::UiEventContext| {
-                if staged {
-                    git_actions::unstage_path(&action_state, &action_store, action_path.clone());
-                } else {
-                    git_actions::stage_path(&action_state, &action_store, action_path.clone());
-                }
-                cx.stop_propagation();
-            })
-            .child(text(
-                UiRect::new(
-                    rect.right - 46.0,
-                    rect.top,
-                    rect.right - 12.0,
-                    rect.bottom,
-                ),
-                diff_summary,
-                theme::mono_right(theme::ZINC_700, 9.0),
-            )),
-        )
+            UiRect::new(rect.right - 46.0, rect.top, rect.right - 12.0, rect.bottom),
+            diff_summary,
+            theme::mono_right(theme::c().text_ghost, 9.0),
+        )),
+    )
 }
-

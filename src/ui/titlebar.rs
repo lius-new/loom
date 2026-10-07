@@ -16,7 +16,7 @@ fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Elem
 }
 
 pub fn render(rect: UiRect, state: State<AppState>) -> Element {
-    let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR)).window_drag_region();
+    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar)).window_drag_region();
 
     // ---- Right cluster (anchored to the window controls) --------------
     let right = rect.right - 4.0;
@@ -38,9 +38,9 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                 rect.top + 23.0,
             ),
             if settings_open {
-                theme::ACCENT
+                theme::c().accent
             } else {
-                theme::ZINC_400
+                theme::c().text_muted
             },
         ));
     bar = bar.child(settings_btn);
@@ -65,7 +65,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                 min_r.right - 12.0,
                 rect.top + 22.0,
             ),
-            theme::ZINC_400,
+            theme::c().text_muted,
         ));
     bar = bar.child(min_btn);
 
@@ -84,7 +84,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                 max_r.right - 12.0,
                 rect.top + 22.0,
             ),
-            theme::ZINC_400,
+            theme::c().text_muted,
         ));
     bar = bar.child(max_btn);
 
@@ -103,14 +103,14 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
                 close_r.right - 12.0,
                 rect.top + 22.0,
             ),
-            theme::ZINC_400,
+            theme::c().text_muted,
         ));
     bar = bar.child(close_btn);
 
     // Hairline bottom border
     bar = bar.child(panel(
         UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-        VisualStyle::filled(theme::BORDER),
+        VisualStyle::filled(theme::c().border),
     ));
 
     bar

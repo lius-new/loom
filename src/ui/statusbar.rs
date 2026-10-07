@@ -45,7 +45,7 @@ pub fn render(
     let s = state.get();
     let git = git_store.get();
 
-    let mut bar = panel(rect, VisualStyle::filled(theme::SIDEBAR));
+    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
     let st = state.clone();
     let terminal_sessions = terminal_tabs;
@@ -54,9 +54,9 @@ pub fn render(
     let top = rect.top + (rect.height() - 14.0) / 2.0;
     let icon_r = UiRect::new(rect.left + 10.0, top, rect.left + 24.0, top + 14.0);
     let color = if s.show_terminal {
-        theme::ACCENT
+        theme::c().accent
     } else {
-        theme::ZINC_400
+        theme::c().text_muted
     };
     bar = bar.child(
         panel(
@@ -96,20 +96,20 @@ pub fn render(
             let (line, col) = buffer.line_col();
             items.push((
                 format!("Ln {}, Col {}", line + 1, col + 1),
-                theme::mono(theme::ZINC_400, theme::SMALL),
+                theme::mono(theme::c().text_muted, theme::SMALL),
             ));
             items.push((
                 "Spaces: 2".to_string(),
-                theme::mono(theme::ZINC_500, theme::SMALL),
+                theme::mono(theme::c().text_dim, theme::SMALL),
             ));
             items.push((
                 "UTF-8".to_string(),
-                theme::mono(theme::ZINC_500, theme::SMALL),
+                theme::mono(theme::c().text_dim, theme::SMALL),
             ));
         } else if s.workspace.is_diff(id) {
             items.push((
                 "Text Diff".to_string(),
-                theme::mono(theme::ZINC_500, theme::SMALL),
+                theme::mono(theme::c().text_dim, theme::SMALL),
             ));
         }
         if s.workspace.is_file(id) || s.workspace.is_diff(id) {
@@ -121,11 +121,11 @@ pub fn render(
     } else {
         items.push((
             "Spaces: 2".to_string(),
-            theme::mono(theme::ZINC_500, theme::SMALL),
+            theme::mono(theme::c().text_dim, theme::SMALL),
         ));
         items.push((
             "UTF-8".to_string(),
-            theme::mono(theme::ZINC_500, theme::SMALL),
+            theme::mono(theme::c().text_dim, theme::SMALL),
         ));
     }
 
@@ -159,11 +159,11 @@ pub fn render(
         git_badge_top + git_badge_h,
     );
     let git_color = if git_dirty {
-        theme::AMBER_400
+        theme::c().warning
     } else if git.active().is_some() {
-        theme::ZINC_400
+        theme::c().text_muted
     } else {
-        theme::ZINC_700
+        theme::c().text_ghost
     };
     let git_state = state.clone();
     bar = bar.child(
@@ -180,7 +180,7 @@ pub fn render(
             .child(panel(
                 git_badge_rect,
                 if s.show_source_control {
-                    VisualStyle::filled(theme::ACTIVE_LINE).radius(3.0)
+                    VisualStyle::filled(theme::c().active_line).radius(3.0)
                 } else {
                     VisualStyle::default()
                 },
@@ -218,7 +218,7 @@ pub fn render(
                 rect.bottom,
             ),
             operation.message.clone(),
-            theme::mono(theme::ZINC_500, theme::SMALL),
+            theme::mono(theme::c().text_dim, theme::SMALL),
         ));
     }
 
@@ -238,7 +238,7 @@ pub fn render(
     // Hairline top border (matches the title bar's bottom border).
     bar = bar.child(panel(
         UiRect::new(rect.left, rect.top, rect.right, rect.top + 1.0),
-        VisualStyle::filled(theme::BORDER),
+        VisualStyle::filled(theme::c().border),
     ));
 
     bar
