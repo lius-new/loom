@@ -503,7 +503,7 @@ on KeyDown capture:
 ### M7 显示与可发现性
 
 - [x] `edit_menu.rs` 的快捷键文字改为从 keymap 反查（`key_actions::editor_shortcut_label`）。`context_menu.rs` 目前没有任何项显示快捷键，无需改动
-- [x] 独立的 **Keymap 页**（与 Settings 一样以单独标签页打开，`workspace::OpenKeymap`，默认绑定 `secondary-k secondary-s`，标签图标为键盘）：只读列出全部 Action 及其绑定（Action、按键、上下文、来源，User 来源高亮），提供“Edit keymap.json”按钮和显示配置文件路径
+- [x] 独立的 **Keymap 页**（与 Settings 一样以单独标签页打开，`workspace::OpenKeymap`，默认绑定 `secondary-k secondary-s`，标签图标为 ⌘（`command`；键盘图标在 12px 下细节过多））：只读列出全部 Action 及其绑定（Action、按键、上下文、来源，User 来源高亮），提供“Edit keymap.json”按钮和显示配置文件路径
 - [x] Keymap 页的筛选框：按空格分词，对 Action、描述、按键、上下文、来源做不区分大小写的匹配；Esc 清空筛选
 - [x] Settings 页只保留 KEYBOARD 分区的一行入口（“Open Keymap”）
 - [x] 工作区模型把 `settings: bool` 泛化为 `page: Option<AppPage>`（Settings / Keymap），每种页面最多一个标签

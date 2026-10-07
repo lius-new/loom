@@ -158,8 +158,8 @@ pub(super) fn ellipsize(value: &str, max_width: f32, size: f32, weight: i32) -> 
 }
 
 /// A color-tinted, resolution-independent SVG icon (rasterized at physical pixels).
-fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Element {
-    precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
+fn icon(id: UiId, key: &'static str, rect: UiRect, color: Color) -> Element {
+    precompiled(UiElement::icon(id, rect, key).icon_style(IconStyle::new(color)))
 }
 
 fn controls_left(rect: UiRect, app: &AppState) -> f32 {
@@ -203,8 +203,10 @@ impl TabBadge {
             .into(),
             Self::Icon(key, color) => {
                 let top = pill.top + (pill.height() - BADGE_ICON) / 2.0;
+                // Icon badges belong to built-in pages, which have one tab
+                // each, so the icon name keeps the element id unique.
                 icon(
-                    "tabs.badge",
+                    UiId::owned(format!("tabs.badge.{key}")),
                     key,
                     UiRect::new(left, top, left + BADGE_ICON, top + BADGE_ICON),
                     color,
@@ -218,7 +220,7 @@ fn tab_badge(app: &AppState, id: FileId, meta: &FileMeta) -> TabBadge {
     if let Some(page) = app.workspace.page(id) {
         let icon = match page {
             AppPage::Settings => "settings",
-            AppPage::Keymap => "keyboard",
+            AppPage::Keymap => "command",
         };
         TabBadge::Icon(icon, theme::c().text_muted)
     } else if app.workspace.is_diff(id) {
@@ -863,7 +865,7 @@ pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle)
             .event_policy(EventPolicy::INTERACTIVE)
             .on_click(move || state.update(|app| app.show_drawer = true))
             .child(icon(
-                "tabs.drawer",
+                UiId::new("tabs.drawer"),
                 "panel-left",
                 icon_r,
                 theme::c().text_muted,
