@@ -260,8 +260,8 @@ fn visible_descendant_index(
 fn dirty_test_file(app: &mut AppState, path: PathBuf, original: &str, change: &str) -> FileId {
     fs::write(&path, original).unwrap();
     let id = app.workspace.open_path(path, original.to_owned());
-    app.workspace.active_buffer_mut().unwrap().move_end();
-    app.workspace.active_buffer_mut().unwrap().insert(change);
+    app.workspace.active_editor_mut().unwrap().move_end();
+    app.workspace.active_editor_mut().unwrap().insert(change);
     id
 }
 
@@ -1198,7 +1198,7 @@ mod tests {
         let id = app
             .workspace
             .open_path(PathBuf::from("workspace/dirty.rs"), String::new());
-        app.workspace.active_buffer_mut().unwrap().insert("changed");
+        app.workspace.active_editor_mut().unwrap().insert("changed");
 
         request_close_tab_in(&mut app, id);
 
@@ -1279,7 +1279,7 @@ mod tests {
         let dirty = app
             .workspace
             .open_path(PathBuf::from("workspace/dirty.rs"), String::new());
-        app.workspace.active_buffer_mut().unwrap().insert("changed");
+        app.workspace.active_editor_mut().unwrap().insert("changed");
 
         app.apply(Action::CloseActiveItem);
         assert!(app.workspace.meta(dirty).is_some());
@@ -1316,7 +1316,7 @@ mod tests {
         let second = app
             .workspace
             .open_path(PathBuf::from("second.rs"), String::new());
-        app.workspace.active_buffer_mut().unwrap().insert("dirty");
+        app.workspace.active_editor_mut().unwrap().insert("dirty");
         let third = app
             .workspace
             .open_path(PathBuf::from("third.rs"), String::new());
@@ -1355,7 +1355,7 @@ mod tests {
         let dirty = app
             .workspace
             .open_path(PathBuf::from("dirty.rs"), String::new());
-        app.workspace.active_buffer_mut().unwrap().insert("dirty");
+        app.workspace.active_editor_mut().unwrap().insert("dirty");
 
         request_close_tabs_in(&mut app, vec![clean, dirty]);
 
@@ -1402,9 +1402,9 @@ mod tests {
         let first = dirty_test_file(&mut app, first_path.clone(), "first", " updated");
         let missing_path = root.join("missing-parent").join("second.txt");
         let second = app.workspace.open_path(missing_path, "second".to_owned());
-        app.workspace.active_buffer_mut().unwrap().move_end();
+        app.workspace.active_editor_mut().unwrap().move_end();
         app.workspace
-            .active_buffer_mut()
+            .active_editor_mut()
             .unwrap()
             .insert(" updated");
         app.close_request = Some(CloseRequest {
@@ -1430,11 +1430,11 @@ mod tests {
         let first = app
             .workspace
             .open_path(PathBuf::from("first.txt"), String::new());
-        app.workspace.active_buffer_mut().unwrap().insert("first");
+        app.workspace.active_editor_mut().unwrap().insert("first");
         let second = app
             .workspace
             .open_path(PathBuf::from("second.txt"), String::new());
-        app.workspace.active_buffer_mut().unwrap().insert("second");
+        app.workspace.active_editor_mut().unwrap().insert("second");
         app.close_request = Some(CloseRequest {
             targets: vec![first, second],
             continuation: CloseContinuation::CloseTabs,
@@ -1454,7 +1454,7 @@ mod tests {
         let id = app
             .workspace
             .open_path(PathBuf::from("dirty.txt"), String::new());
-        app.workspace.active_buffer_mut().unwrap().insert("changed");
+        app.workspace.active_editor_mut().unwrap().insert("changed");
         app.close_request = Some(CloseRequest {
             targets: vec![id],
             continuation: CloseContinuation::ExitApplication,

@@ -70,7 +70,7 @@ pub fn render(
             .workspace
             .meta(id)
             .expect("active document metadata exists");
-        let buffer = s.workspace.active_buffer().expect("active buffer exists");
+        let buffer = s.workspace.active_editor().expect("active buffer exists");
         let decorations = git
             .line_changes
             .get(&meta.path)
@@ -88,7 +88,7 @@ pub fn render(
                     .collect::<BTreeMap<_, _>>()
             })
             .unwrap_or_default();
-        let lines = document_lines(buffer);
+        let lines = document_lines(&buffer);
         let (cursor_line, cursor_col) = buffer.line_col();
         let code_top = rect.top;
         let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
@@ -117,13 +117,13 @@ pub fn render(
             pointer_focus.focus();
             st_pointer.update(move |app| {
                 let (scroll_x, scroll_y) = app.workspace.active_scroll();
-                let cursor = app.workspace.active_buffer().map(|buffer| {
+                let cursor = app.workspace.active_editor().map(|buffer| {
                     cursor_offset_from_point(
-                        buffer, rect, code_left, metrics, scroll_x, scroll_y, point.x, point.y,
+                        &buffer, rect, code_left, metrics, scroll_x, scroll_y, point.x, point.y,
                     )
                 });
                 if let Some(cursor) = cursor
-                    && let Some(buffer) = app.workspace.active_buffer_mut()
+                    && let Some(mut buffer) = app.workspace.active_editor_mut()
                 {
                     if button == PointerButton::Right {
                         if !buffer.selection().is_some_and(|r| r.contains(&cursor)) {
@@ -422,7 +422,7 @@ pub fn render(
             app.editor.ime_pending = false;
             app.editor.preedit.clear();
             app.editor.preedit_cursor = None;
-            if let Some(buffer) = app.workspace.active_buffer_mut() {
+            if let Some(mut buffer) = app.workspace.active_editor_mut() {
                 buffer.break_undo_group();
             }
         })
@@ -640,8 +640,8 @@ pub fn drag_scrollbars(app: &mut AppState, rect: UiRect, pointer_x: f32, pointer
     }
 
     let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
-    let Some(metrics) = app.workspace.active_buffer().map(|buffer| {
-        let lines = document_lines(buffer);
+    let Some(metrics) = app.workspace.active_editor().map(|buffer| {
+        let lines = document_lines(&buffer);
         scroll_metrics(rect, code_left, &lines)
     }) else {
         return finish_scrollbar_drag(app);
@@ -916,10 +916,10 @@ fn line_index_from_point(
 }
 
 fn reveal_cursor(app: &mut AppState, rect: UiRect) {
-    let Some(buffer) = app.workspace.active_buffer() else {
+    let Some(buffer) = app.workspace.active_editor() else {
         return;
     };
-    let lines = document_lines(buffer);
+    let lines = document_lines(&buffer);
     let (line, column) = buffer.line_col();
     let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
     let metrics = scroll_metrics(rect, code_left, &lines);
@@ -978,14 +978,14 @@ fn apply_command(
     command: Command,
     clipboard: &dyn lgui::services::Clipboard,
 ) -> Result<(), lgui::services::ClipboardError> {
-    if app.workspace.active_buffer().is_none() {
+    if app.workspace.active_editor().is_none() {
         return Ok(());
     }
     match command {
         Command::Copy | Command::Cut => {
             let selected = app
                 .workspace
-                .active_buffer()
+                .active_editor()
                 .and_then(|buffer| buffer.selected_text())
                 .map(str::to_owned);
             if let Some(value) = selected {
@@ -994,7 +994,7 @@ fn apply_command(
                 if command == Command::Cut {
                     app.workspace.promote_active_preview();
                 }
-                if let Some(buffer) = app.workspace.active_buffer_mut() {
+                if let Some(mut buffer) = app.workspace.active_editor_mut() {
                     buffer.break_undo_group();
                     if command == Command::Cut {
                         buffer.backspace();
@@ -1008,12 +1008,12 @@ fn apply_command(
                 let changes_text = !value.is_empty()
                     || app
                         .workspace
-                        .active_buffer()
+                        .active_editor()
                         .is_some_and(|buffer| buffer.selection().is_some());
                 if changes_text {
                     app.workspace.promote_active_preview();
                 }
-                if let Some(buffer) = app.workspace.active_buffer_mut() {
+                if let Some(mut buffer) = app.workspace.active_editor_mut() {
                     buffer.paste(&value);
                 }
             }
@@ -1026,24 +1026,24 @@ fn apply_command(
             let changes_text = match command {
                 Command::Undo => app
                     .workspace
-                    .active_buffer()
-                    .is_some_and(TextBuffer::can_undo),
+                    .active_editor()
+                    .is_some_and(|editor| editor.can_undo()),
                 Command::Redo => app
                     .workspace
-                    .active_buffer()
-                    .is_some_and(TextBuffer::can_redo),
+                    .active_editor()
+                    .is_some_and(|editor| editor.can_redo()),
                 _ => true,
             };
             if changes_text {
                 app.workspace.promote_active_preview();
             }
-            if let Some(buffer) = app.workspace.active_buffer_mut() {
-                commands::apply(buffer, command);
+            if let Some(mut buffer) = app.workspace.active_editor_mut() {
+                commands::apply(&mut buffer, command);
             }
         }
         _ => {
-            if let Some(buffer) = app.workspace.active_buffer_mut() {
-                commands::apply(buffer, command);
+            if let Some(mut buffer) = app.workspace.active_editor_mut() {
+                commands::apply(&mut buffer, command);
             }
         }
     }
@@ -1051,7 +1051,7 @@ fn apply_command(
 }
 
 fn ime_cursor_rect(app: &AppState, rect: UiRect) -> UiRect {
-    let Some(buffer) = app.workspace.active_buffer() else {
+    let Some(buffer) = app.workspace.active_editor() else {
         return rect;
     };
     let (line, col) = buffer.line_col();
@@ -1085,10 +1085,10 @@ fn update_drag_selection(app: &mut AppState, rect: UiRect) {
     }
     let (sx, sy) = app.workspace.active_scroll();
     let left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
-    if let Some(buffer) = app.workspace.active_buffer_mut() {
-        let metrics = scroll_metrics(rect, left, &document_lines(buffer));
+    if let Some(mut buffer) = app.workspace.active_editor_mut() {
+        let metrics = scroll_metrics(rect, left, &document_lines(&buffer));
         let cursor = cursor_offset_from_point(
-            buffer,
+            &buffer,
             rect,
             left,
             metrics,
@@ -1150,10 +1150,10 @@ pub fn drag_scroll_tick(app: &mut AppState, rect: UiRect) -> bool {
     if dx == 0.0 && dy == 0.0 {
         return false;
     }
-    let Some(buffer) = app.workspace.active_buffer() else {
+    let Some(buffer) = app.workspace.active_editor() else {
         return false;
     };
-    let metrics = scroll_metrics(rect, left, &document_lines(buffer));
+    let metrics = scroll_metrics(rect, left, &document_lines(&buffer));
     let (x, y) = app.workspace.active_scroll();
     let next = (
         (x + dx).clamp(0.0, metrics.max_x),
@@ -1173,7 +1173,7 @@ pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
     if !input.is_empty() {
         app.workspace.promote_active_preview();
     }
-    if let Some(buffer) = app.workspace.active_buffer_mut() {
+    if let Some(mut buffer) = app.workspace.active_editor_mut() {
         if app.editor.ime_pending {
             buffer.break_undo_group();
         }
@@ -1294,7 +1294,7 @@ mod tests {
             state
                 .get()
                 .workspace
-                .active_buffer()
+                .active_editor()
                 .unwrap()
                 .selected_text(),
             Some("hello")
@@ -1312,7 +1312,7 @@ mod tests {
             KeyModifiers::empty()
         )));
         assert_eq!(
-            state.get().workspace.active_buffer().unwrap().text(),
+            state.get().workspace.active_editor().unwrap().text(),
             "  hello world\nsecond"
         );
         send(key(
@@ -1323,7 +1323,7 @@ mod tests {
             state
                 .get()
                 .workspace
-                .active_buffer()
+                .active_editor()
                 .unwrap()
                 .selected_text(),
             Some("hello")
@@ -1333,12 +1333,12 @@ mod tests {
             cursor: Some(0..5),
         }));
         assert_eq!(
-            state.get().workspace.active_buffer().unwrap().text(),
+            state.get().workspace.active_editor().unwrap().text(),
             "hello world\nsecond"
         );
         send(InputEvent::Ime(ImeEvent::Commit("你好".into())));
         assert_eq!(
-            state.get().workspace.active_buffer().unwrap().text(),
+            state.get().workspace.active_editor().unwrap().text(),
             "你好 world\nsecond"
         );
         assert!(state.get().editor.preedit.is_empty());
@@ -1350,7 +1350,7 @@ mod tests {
             state
                 .get()
                 .workspace
-                .active_buffer()
+                .active_editor()
                 .unwrap()
                 .selected_text(),
             Some("hello")
@@ -1433,27 +1433,27 @@ mod tests {
         let mut app = document("你好 world");
         let clipboard = TestClipboard::default();
         app.workspace
-            .active_buffer_mut()
+            .active_editor_mut()
             .unwrap()
             .select_range(0..6);
         apply_command(&mut app, Command::Copy, &clipboard).unwrap();
         assert_eq!(clipboard.read_text().unwrap().as_deref(), Some("你好"));
         apply_command(&mut app, Command::Cut, &clipboard).unwrap();
-        assert_eq!(app.workspace.active_buffer().unwrap().text(), " world");
+        assert_eq!(app.workspace.active_editor().unwrap().text(), " world");
         apply_command(&mut app, Command::Undo, &clipboard).unwrap();
         assert_eq!(
-            app.workspace.active_buffer().unwrap().selected_text(),
+            app.workspace.active_editor().unwrap().selected_text(),
             Some("你好")
         );
         clipboard.write_text("再见").unwrap();
         apply_command(&mut app, Command::Paste, &clipboard).unwrap();
-        assert_eq!(app.workspace.active_buffer().unwrap().text(), "再见 world");
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "再见 world");
     }
 
     #[test]
     fn clipboard_failure_and_empty_clipboard_never_destroy_selection() {
         let mut app = document("keep this");
-        app.workspace.active_buffer_mut().unwrap().select_all();
+        app.workspace.active_editor_mut().unwrap().select_all();
         let unavailable = TestClipboard {
             fail: true,
             ..Default::default()
@@ -1461,16 +1461,16 @@ mod tests {
         for command in [Command::Cut, Command::Copy, Command::Paste] {
             assert!(apply_command(&mut app, command, &unavailable).is_err());
             assert_eq!(
-                app.workspace.active_buffer().unwrap().selected_text(),
+                app.workspace.active_editor().unwrap().selected_text(),
                 Some("keep this")
             );
         }
         apply_command(&mut app, Command::Paste, &TestClipboard::default()).unwrap();
         assert_eq!(
-            app.workspace.active_buffer().unwrap().selected_text(),
+            app.workspace.active_editor().unwrap().selected_text(),
             Some("keep this")
         );
-        assert!(!app.workspace.active_buffer().unwrap().can_undo());
+        assert!(!app.workspace.active_editor().unwrap().can_undo());
     }
 
     #[test]
@@ -1494,7 +1494,7 @@ mod tests {
         clipboard.write_text("!").unwrap();
         apply_command(&mut app, Command::Paste, &clipboard).unwrap();
         assert!(!app.workspace.is_preview(preview));
-        assert_eq!(app.workspace.active_buffer().unwrap().text(), "h!ello");
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "h!ello");
     }
 
     #[test]
@@ -1503,7 +1503,7 @@ mod tests {
         let preview = app
             .workspace
             .preview_path("preview.txt".into(), "hello".into());
-        app.workspace.active_buffer_mut().unwrap().select_all();
+        app.workspace.active_editor_mut().unwrap().select_all();
         let unavailable = TestClipboard {
             fail: true,
             ..Default::default()
@@ -1511,7 +1511,7 @@ mod tests {
 
         assert!(apply_command(&mut app, Command::Cut, &unavailable).is_err());
         assert!(app.workspace.is_preview(preview));
-        assert_eq!(app.workspace.active_buffer().unwrap().text(), "hello");
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "hello");
     }
 
     #[test]
@@ -1536,12 +1536,12 @@ mod tests {
         });
         assert!(drag_scroll_tick(&mut app, rect));
         let first = app.workspace.active_scroll().1;
-        let first_selection = app.workspace.active_buffer().unwrap().selection().unwrap();
+        let first_selection = app.workspace.active_editor().unwrap().selection().unwrap();
         assert!(drag_scroll_tick(&mut app, rect));
         assert!(app.workspace.active_scroll().1 > first);
         assert!(
             app.workspace
-                .active_buffer()
+                .active_editor()
                 .unwrap()
                 .selection()
                 .unwrap()
@@ -1593,13 +1593,13 @@ mod tests {
         });
         update_drag_selection(&mut app, rect);
         assert_eq!(
-            app.workspace.active_buffer().unwrap().selected_text(),
+            app.workspace.active_editor().unwrap().selected_text(),
             Some("one\ntwo\n")
         );
         app.editor.drag.as_mut().unwrap().point.1 = theme::LINE_H * 2.0 + 1.0;
         update_drag_selection(&mut app, rect);
         assert_eq!(
-            app.workspace.active_buffer().unwrap().selected_text(),
+            app.workspace.active_editor().unwrap().selected_text(),
             Some("two\nthree")
         );
     }
@@ -1608,7 +1608,7 @@ mod tests {
     fn switching_documents_cancels_drag_and_keeps_undo_histories_independent() {
         let mut app = document("first");
         let first = app.workspace.active().unwrap();
-        app.workspace.active_buffer_mut().unwrap().insert("A");
+        app.workspace.active_editor_mut().unwrap().insert("A");
         app.editor.drag = Some(DragSelection {
             document: first,
             origin: 0..0,
@@ -1617,25 +1617,25 @@ mod tests {
         });
         app.workspace
             .open_path("second.txt".into(), "second".into());
-        app.workspace.active_buffer_mut().unwrap().insert("B");
+        app.workspace.active_editor_mut().unwrap().insert("B");
         assert!(drag_scroll_tick(
             &mut app,
             UiRect::new(0.0, 0.0, 400.0, 100.0)
         ));
         assert!(app.editor.drag.is_none());
-        app.workspace.active_buffer_mut().unwrap().undo();
-        assert_eq!(app.workspace.active_buffer().unwrap().text(), "second");
+        app.workspace.active_editor_mut().unwrap().undo();
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "second");
         app.workspace.set_active(first);
-        assert_eq!(app.workspace.active_buffer().unwrap().text(), "Afirst");
-        app.workspace.active_buffer_mut().unwrap().undo();
-        assert_eq!(app.workspace.active_buffer().unwrap().text(), "first");
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "Afirst");
+        app.workspace.active_editor_mut().unwrap().undo();
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "first");
     }
 
     #[test]
     fn keyboard_reveal_scrolls_to_the_document_end() {
         let mut app = document(&"long line\n".repeat(100));
         app.workspace
-            .active_buffer_mut()
+            .active_editor_mut()
             .unwrap()
             .navigate(crate::model::buffer::Movement::Finish, false);
         reveal_cursor(&mut app, UiRect::new(0.0, 0.0, 400.0, 100.0));

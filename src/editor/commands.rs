@@ -1,5 +1,5 @@
 //! Shared keyboard and context-menu editing commands.
-use crate::model::buffer::{Movement, TextBuffer};
+use crate::model::buffer::{EditorMut, Movement};
 use lgui::core::{KeyState, KeyboardEvent, LogicalKey, NamedKey};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +75,7 @@ pub fn command_for(ev: &KeyboardEvent, page: usize) -> Option<Command> {
     };
     Some(Command::Move(movement, shift))
 }
-pub fn apply(buffer: &mut TextBuffer, command: Command) {
+pub fn apply(buffer: &mut EditorMut<'_>, command: Command) {
     match command {
         Command::Move(m, e) => buffer.navigate(m, e),
         Command::Delete(f, w) => buffer.erase(f, w),

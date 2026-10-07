@@ -454,7 +454,7 @@ mod tests {
 
         assert!(apply_batch(&mut app, &batch));
         assert_eq!(
-            app.workspace.active_buffer().unwrap().text(),
+            app.workspace.active_editor().unwrap().text(),
             "after and longer"
         );
         assert!(

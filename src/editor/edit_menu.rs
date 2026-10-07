@@ -56,7 +56,7 @@ pub fn render(
         let shortcut = Action::for_editor_command(command)
             .and_then(|action| key_actions::editor_shortcut_label(&s, action))
             .unwrap_or_default();
-        let enabled = s.workspace.active_buffer().is_some_and(|b| match command {
+        let enabled = s.workspace.active_editor().is_some_and(|b| match command {
             Command::Undo => b.can_undo(),
             Command::Redo => b.can_redo(),
             Command::Copy | Command::Cut => b.selection().is_some(),

@@ -439,7 +439,7 @@ impl AppState {
             }
         } else if self.workspace.active_diff().is_some() {
             MainSurface::Diff
-        } else if self.workspace.active_buffer().is_some() {
+        } else if self.workspace.active_editor().is_some() {
             MainSurface::Editor
         } else if self.workspace_folders.is_empty() {
             MainSurface::Welcome

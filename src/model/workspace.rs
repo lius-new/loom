@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::git::DiffTarget;
-use crate::model::buffer::TextBuffer;
+use crate::model::buffer::{Editor, EditorMut, Selection, TextBuffer};
 use crate::model::diff_document::DiffDocument;
 use crate::model::document::{DiskState, FileId, FileMeta};
 
@@ -31,6 +31,7 @@ impl AppPage {
 struct OpenDocument {
     meta: FileMeta,
     buffer: TextBuffer,
+    selection: Selection,
     saved_text: String,
     diff: Option<DiffDocument>,
     /// A built-in page (Settings, Keymap) rather than a file.
@@ -229,18 +230,20 @@ impl Workspace {
         self.paths.get(path).copied()
     }
 
-    pub fn active_buffer(&self) -> Option<&TextBuffer> {
+    pub fn active_editor(&self) -> Option<Editor<'_>> {
         self.active
             .and_then(|id| self.documents.get(&id))
             .filter(|document| document.is_text())
-            .map(|document| &document.buffer)
+            .map(|document| Editor::new(&document.buffer, document.selection))
     }
 
-    pub fn active_buffer_mut(&mut self) -> Option<&mut TextBuffer> {
+    pub fn active_editor_mut(&mut self) -> Option<EditorMut<'_>> {
         self.active
             .and_then(|id| self.documents.get_mut(&id))
             .filter(|document| document.is_text())
-            .map(|document| &mut document.buffer)
+            .map(|document| {
+                EditorMut::new(&mut document.buffer, &mut document.selection, Vec::new())
+            })
     }
 
     pub fn is_dirty(&self, id: FileId) -> bool {
@@ -376,6 +379,7 @@ impl Workspace {
             OpenDocument {
                 meta: FileMeta::from_path(path.clone()),
                 buffer: TextBuffer::new(contents),
+                selection: Selection::default(),
                 saved_text,
                 diff: None,
                 page: None,
@@ -424,6 +428,7 @@ impl Workspace {
             OpenDocument {
                 meta,
                 buffer: TextBuffer::new(String::new()),
+                selection: Selection::default(),
                 saved_text: String::new(),
                 diff: Some(diff),
                 page: None,
@@ -466,6 +471,7 @@ impl Workspace {
             OpenDocument {
                 meta,
                 buffer: TextBuffer::new(String::new()),
+                selection: Selection::default(),
                 saved_text: String::new(),
                 diff: None,
                 page: Some(page),
@@ -678,7 +684,11 @@ impl Workspace {
             document.disk_conflict = true;
             ReconcileResult::Conflict(path)
         } else {
-            replace_buffer_from_disk(&mut document.buffer, contents.clone());
+            replace_buffer_from_disk(
+                &mut document.buffer,
+                &mut document.selection,
+                contents.clone(),
+            );
             document.saved_text = contents;
             document.disk_state = current;
             document.disk_conflict = false;
@@ -697,7 +707,11 @@ impl Workspace {
         let contents = std::fs::read_to_string(&document.meta.path).map_err(|error| {
             format!("Could not reload {}: {error}", document.meta.path.display())
         })?;
-        replace_buffer_from_disk(&mut document.buffer, contents.clone());
+        replace_buffer_from_disk(
+            &mut document.buffer,
+            &mut document.selection,
+            contents.clone(),
+        );
         document.saved_text = contents;
         document.disk_state = DiskState::capture(&document.meta.path, &document.saved_text);
         document.disk_conflict = false;
@@ -770,16 +784,9 @@ impl Workspace {
 /// External reloads reset edit history but retain the caret/selection as far
 /// as the new document length permits. Per-document scroll lives outside the
 /// buffer and is therefore preserved as well.
-fn replace_buffer_from_disk(buffer: &mut TextBuffer, contents: String) {
-    let cursor = buffer.cursor();
-    let selection = buffer.selection();
-    let mut replacement = TextBuffer::new(contents);
-    if let Some(selection) = selection {
-        replacement.select_range(selection.start..selection.end);
-    } else {
-        replacement.set_cursor(cursor);
-    }
-    *buffer = replacement;
+fn replace_buffer_from_disk(buffer: &mut TextBuffer, selection: &mut Selection, contents: String) {
+    buffer.reload(contents);
+    *selection = buffer.clamp(*selection);
 }
 
 fn parent_components(path: &Path) -> Vec<String> {
@@ -814,7 +821,7 @@ mod tests {
         assert_eq!(workspace.active(), Some(settings));
         assert!(workspace.active_is_settings());
         assert_eq!(workspace.active_path(), None);
-        assert!(workspace.active_buffer().is_none());
+        assert!(workspace.active_editor().is_none());
         assert!(workspace.save_snapshot(settings).is_none());
         assert!(!workspace.is_dirty(settings));
         assert!(!workspace.is_file(settings));
@@ -853,7 +860,7 @@ mod tests {
             workspace.open_paths(),
             vec![PathBuf::from("src/main.rs"), PathBuf::from("README.md")]
         );
-        assert_eq!(workspace.active_buffer().unwrap().text(), "fn main() {}");
+        assert_eq!(workspace.active_editor().unwrap().text(), "fn main() {}");
     }
 
     #[test]
@@ -876,7 +883,7 @@ mod tests {
     fn editing_a_preview_defensively_preserves_it_before_the_next_preview() {
         let mut workspace = Workspace::new();
         let first = workspace.preview_path(PathBuf::from("first.rs"), String::new());
-        workspace.active_buffer_mut().unwrap().insert("changed");
+        workspace.active_editor_mut().unwrap().insert("changed");
 
         let second = workspace.preview_path(PathBuf::from("second.rs"), String::new());
 
@@ -897,7 +904,7 @@ mod tests {
         assert_eq!(reopened, preview);
         assert_eq!(workspace.open_files(), &[preview]);
         assert_eq!(workspace.preview(), None);
-        assert_eq!(workspace.active_buffer().unwrap().text(), "original");
+        assert_eq!(workspace.active_editor().unwrap().text(), "original");
     }
 
     #[test]
@@ -978,7 +985,7 @@ mod tests {
         assert_eq!(first, reopened);
         assert_eq!(workspace.active(), Some(first));
         assert!(workspace.is_diff(first));
-        assert!(workspace.active_buffer().is_none());
+        assert!(workspace.active_editor().is_none());
         assert_eq!(workspace.open_files(), &[file, first]);
         assert_eq!(workspace.open_paths(), vec![file_path]);
     }
@@ -1003,10 +1010,10 @@ mod tests {
         let file = workspace.open_path(PathBuf::from("notes.txt"), "hello".into());
 
         assert!(!workspace.is_dirty(file));
-        workspace.active_buffer_mut().unwrap().move_end();
+        workspace.active_editor_mut().unwrap().move_end();
         assert!(!workspace.is_dirty(file));
 
-        workspace.active_buffer_mut().unwrap().insert("!");
+        workspace.active_editor_mut().unwrap().insert("!");
         assert!(workspace.is_dirty(file));
 
         let (snapshot_id, path, contents) = workspace.active_save_snapshot().unwrap();
@@ -1016,7 +1023,7 @@ mod tests {
         assert!(workspace.mark_saved(file));
         assert!(!workspace.is_dirty(file));
 
-        workspace.active_buffer_mut().unwrap().backspace();
+        workspace.active_editor_mut().unwrap().backspace();
         assert!(workspace.is_dirty(file));
     }
 
@@ -1025,13 +1032,13 @@ mod tests {
         let mut workspace = Workspace::new();
         let first = workspace.open_path(PathBuf::from("first.rs"), String::new());
         workspace
-            .active_buffer_mut()
+            .active_editor_mut()
             .unwrap()
             .insert("first change");
         let clean = workspace.open_path(PathBuf::from("clean.rs"), String::new());
         let second = workspace.open_path(PathBuf::from("second.rs"), String::new());
         workspace
-            .active_buffer_mut()
+            .active_editor_mut()
             .unwrap()
             .insert("second change");
 
@@ -1128,8 +1135,8 @@ mod tests {
         std::fs::write(&path, "disk one").unwrap();
         let mut workspace = Workspace::new();
         let id = workspace.open_path(path.clone(), "disk one".into());
-        workspace.active_buffer_mut().unwrap().move_end();
-        workspace.active_buffer_mut().unwrap().insert(" + editor");
+        workspace.active_editor_mut().unwrap().move_end();
+        workspace.active_editor_mut().unwrap().insert(" + editor");
         std::fs::write(&path, "disk two with size").unwrap();
 
         assert_eq!(
@@ -1137,7 +1144,7 @@ mod tests {
             ReconcileResult::Conflict(path.clone())
         );
         assert_eq!(
-            workspace.active_buffer().unwrap().text(),
+            workspace.active_editor().unwrap().text(),
             "disk one + editor"
         );
         assert!(workspace.has_disk_conflict(id));
@@ -1156,7 +1163,7 @@ mod tests {
         std::fs::write(&path, "before").unwrap();
         let mut workspace = Workspace::new();
         let id = workspace.open_path(path.clone(), "before".into());
-        workspace.active_buffer_mut().unwrap().select_range(2..4);
+        workspace.active_editor_mut().unwrap().select_range(2..4);
         workspace.set_active_scroll(12.0, 34.0);
         std::fs::write(&path, "after and longer").unwrap();
 
@@ -1165,11 +1172,11 @@ mod tests {
             ReconcileResult::Reloaded(path.clone())
         );
         assert_eq!(
-            workspace.active_buffer().unwrap().text(),
+            workspace.active_editor().unwrap().text(),
             "after and longer"
         );
-        assert_eq!(workspace.active_buffer().unwrap().cursor(), 4);
-        assert_eq!(workspace.active_buffer().unwrap().selection(), Some(2..4));
+        assert_eq!(workspace.active_editor().unwrap().cursor(), 4);
+        assert_eq!(workspace.active_editor().unwrap().selection(), Some(2..4));
         assert_eq!(workspace.active_scroll(), (12.0, 34.0));
         assert!(!workspace.is_dirty(id));
 
@@ -1194,7 +1201,7 @@ mod tests {
             workspace.reconcile_document(id),
             ReconcileResult::Missing(path.clone())
         );
-        assert_eq!(workspace.active_buffer().unwrap().text(), "contents");
+        assert_eq!(workspace.active_editor().unwrap().text(), "contents");
         assert!(workspace.is_missing_on_disk(id));
         assert!(!workspace.has_disk_conflict(id));
 
@@ -1240,8 +1247,8 @@ mod tests {
         std::fs::write(&path, "before").unwrap();
         let mut workspace = Workspace::new();
         let id = workspace.open_path(path.clone(), "before".into());
-        workspace.active_buffer_mut().unwrap().move_end();
-        workspace.active_buffer_mut().unwrap().insert(" saved");
+        workspace.active_editor_mut().unwrap().move_end();
+        workspace.active_editor_mut().unwrap().insert(" saved");
         std::fs::write(&path, "before saved").unwrap();
         assert!(workspace.mark_saved(id));
 

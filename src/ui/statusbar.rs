@@ -103,7 +103,7 @@ pub fn render(
                 theme::mono_bold(theme::c().warning, theme::SMALL),
             ));
         }
-        if let Some(buffer) = s.workspace.active_buffer() {
+        if let Some(buffer) = s.workspace.active_editor() {
             let (line, col) = buffer.line_col();
             items.push((
                 format!("Ln {}, Col {}", line + 1, col + 1),

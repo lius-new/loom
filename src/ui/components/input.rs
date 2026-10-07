@@ -10,7 +10,7 @@ use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel};
 use lgui::services::ServicesContextExt;
 
 use crate::editor::commands::{self, Command};
-use crate::model::buffer::{Movement, TextBuffer};
+use crate::model::buffer::{EditorMut, Movement, Selection, TextBuffer};
 
 use super::text::SingleLineText;
 
@@ -20,6 +20,7 @@ const CURSOR_MARGIN: f32 = 8.0;
 #[derive(Clone)]
 pub struct InputState {
     buffer: TextBuffer,
+    selection: Selection,
     pub focused: bool,
     pub scroll_x: f32,
     pub preedit: String,
@@ -35,10 +36,11 @@ impl Default for InputState {
 
 impl InputState {
     pub fn new(value: impl Into<String>) -> Self {
-        let mut buffer = TextBuffer::new(value);
-        buffer.navigate(Movement::Finish, false);
+        let buffer = TextBuffer::new(value);
+        let selection = Selection::caret(buffer.text().len());
         Self {
             buffer,
+            selection,
             focused: false,
             scroll_x: 0.0,
             preedit: String::new(),
@@ -51,8 +53,13 @@ impl InputState {
         self.buffer.text()
     }
 
+    fn editor(&mut self) -> EditorMut<'_> {
+        EditorMut::new(&mut self.buffer, &mut self.selection, Vec::new())
+    }
+
     pub fn clear(&mut self) {
         self.buffer = TextBuffer::new("");
+        self.selection = Selection::default();
         self.scroll_x = 0.0;
         self.preedit.clear();
         self.preedit_cursor = None;
@@ -61,8 +68,8 @@ impl InputState {
 
     pub fn set_text(&mut self, value: impl Into<String>) {
         let value = value.into();
+        self.selection = Selection::caret(value.len());
         self.buffer = TextBuffer::new(value);
-        self.buffer.navigate(Movement::Finish, false);
         self.preedit.clear();
         self.preedit_cursor = None;
     }
@@ -149,7 +156,7 @@ where
     let measure_bounds = UiRect::new(0.0, 0.0, 100_000.0, rect.height());
     let measured = SingleLineText::new(snapshot.text(), measure_bounds, style.text);
     let viewport_w = content.width().max(1.0);
-    let base_caret = measured.caret_offset(snapshot.buffer.cursor());
+    let base_caret = measured.caret_offset(snapshot.selection.cursor);
     let preedit_cursor = snapshot
         .preedit_cursor
         .as_ref()
@@ -166,8 +173,8 @@ where
         base_caret + preedit_caret,
         viewport_w,
     );
-    let caret_x = (content.left + base_caret + preedit_caret - scroll)
-        .clamp(content.left, content.right);
+    let caret_x =
+        (content.left + base_caret + preedit_caret - scroll).clamp(content.left, content.right);
     let caret_height = (style.text.height + 4.0)
         .min((rect.height() - 4.0).max(1.0))
         .max(1.0);
@@ -207,7 +214,7 @@ where
             pointer.point.y - rect.top,
         );
         pointer_binding.update(move |input| {
-            input.buffer.select_to(offset, false);
+            input.editor().select_to(offset, false);
             input.drag_anchor = Some(offset);
             reveal_cursor(input, viewport_w, style.text);
         });
@@ -220,8 +227,8 @@ where
         );
         drag_binding.update(move |input| {
             if let Some(anchor) = input.drag_anchor {
-                input.buffer.set_cursor(anchor);
-                input.buffer.select_to(offset, true);
+                input.editor().set_cursor(anchor);
+                input.editor().select_to(offset, true);
                 reveal_cursor(input, viewport_w, style.text);
             }
         });
@@ -234,7 +241,7 @@ where
         let value = single_line(value);
         if !value.is_empty() {
             input_binding.update(move |input| {
-                input.buffer.insert(&value);
+                input.editor().insert(&value);
                 input.preedit.clear();
                 input.preedit_cursor = None;
                 reveal_cursor(input, viewport_w, style.text);
@@ -307,7 +314,7 @@ where
             input.drag_anchor = None;
             input.preedit.clear();
             input.preedit_cursor = None;
-            input.buffer.break_undo_group();
+            input.editor().break_undo_group();
         });
         if let Some(on_blur) = on_blur {
             on_blur(&blur_action_state);
@@ -315,7 +322,7 @@ where
     });
 
     let mut content_group = group(text_bounds);
-    if let Some(selection) = snapshot.buffer.selection() {
+    if let Some(selection) = snapshot.selection.range() {
         for selection in measured.selection_rects(selection) {
             content_group = content_group.child(panel(
                 UiRect::new(
@@ -328,43 +335,36 @@ where
             ));
         }
     }
-    content_group = content_group.child(if snapshot.text().is_empty() && snapshot.preedit.is_empty() {
-        SingleLineText::new(placeholder, text_bounds, style.placeholder).element()
-    } else {
-        SingleLineText::new(snapshot.text(), text_bounds, style.text).element()
-    });
+    content_group = content_group.child(
+        if snapshot.text().is_empty() && snapshot.preedit.is_empty() {
+            SingleLineText::new(placeholder, text_bounds, style.placeholder).element()
+        } else {
+            SingleLineText::new(snapshot.text(), text_bounds, style.text).element()
+        },
+    );
     if !snapshot.preedit.is_empty() {
-        let preedit_left = content.left + measured.caret_offset(snapshot.buffer.cursor());
+        let preedit_left = content.left + measured.caret_offset(snapshot.selection.cursor);
         let preedit_bounds = UiRect::new(
             preedit_left,
             text_bounds.top,
             text_bounds.right,
             text_bounds.bottom,
         );
-        let preedit = SingleLineText::new(
-            snapshot.preedit.clone(),
-            preedit_bounds,
-            style.text,
-        );
+        let preedit = SingleLineText::new(snapshot.preedit.clone(), preedit_bounds, style.text);
         let underline_right = preedit_left + preedit.width().max(2.0);
-        content_group = content_group
-            .child(preedit.element())
-            .child(panel(
-                UiRect::new(
-                    preedit_left,
-                    rect.bottom - 8.0,
-                    underline_right,
-                    rect.bottom - 7.0,
-                ),
-                VisualStyle::filled(style.caret),
-            ));
+        content_group = content_group.child(preedit.element()).child(panel(
+            UiRect::new(
+                preedit_left,
+                rect.bottom - 8.0,
+                underline_right,
+                rect.bottom - 7.0,
+            ),
+            VisualStyle::filled(style.caret),
+        ));
     }
     root = root.child(clip(content, -scroll, 0.0).child(content_group));
     if snapshot.focused {
-        root = root.child(panel(
-            caret_rect,
-            VisualStyle::filled(style.caret),
-        ));
+        root = root.child(panel(caret_rect, VisualStyle::filled(style.caret)));
     }
     root
 }
@@ -376,26 +376,27 @@ fn apply_command(
 ) {
     match command {
         Command::Copy | Command::Cut => {
-            if let Some(value) = input.buffer.selected_text() {
+            let mut editor = input.editor();
+            if let Some(value) = editor.selected_text() {
                 if clipboard.write_text(value).is_ok() && command == Command::Cut {
-                    input.buffer.backspace();
+                    editor.backspace();
                 }
-                input.buffer.break_undo_group();
+                editor.break_undo_group();
             }
         }
         Command::Paste => {
             if let Ok(Some(value)) = clipboard.read_text() {
-                input.buffer.insert(&single_line(&value));
-                input.buffer.break_undo_group();
+                input.editor().insert(&single_line(&value));
+                input.editor().break_undo_group();
             }
         }
         Command::Move(Movement::Up | Movement::PageUp(_), extend) => {
-            input.buffer.navigate(Movement::Home, extend);
+            input.editor().navigate(Movement::Home, extend);
         }
         Command::Move(Movement::Down | Movement::PageDown(_), extend) => {
-            input.buffer.navigate(Movement::End, extend);
+            input.editor().navigate(Movement::End, extend);
         }
-        _ => commands::apply(&mut input.buffer, command),
+        _ => commands::apply(&mut input.editor(), command),
     }
 }
 
@@ -403,17 +404,12 @@ fn visible_scroll(input: &InputState, measured: &SingleLineText, viewport_w: f32
     scroll_for_position(
         input.scroll_x,
         measured.width(),
-        measured.caret_offset(input.buffer.cursor()),
+        measured.caret_offset(input.selection.cursor),
         viewport_w,
     )
 }
 
-fn scroll_for_position(
-    stored: f32,
-    content_width: f32,
-    caret: f32,
-    viewport_w: f32,
-) -> f32 {
+fn scroll_for_position(stored: f32, content_width: f32, caret: f32, viewport_w: f32) -> f32 {
     let max_scroll = (content_width - viewport_w).max(0.0);
     let mut scroll = stored.clamp(0.0, max_scroll);
     if caret < scroll + CURSOR_MARGIN {
@@ -532,7 +528,7 @@ mod tests {
             InputEvent::TextInput("abc".to_owned()),
         );
         assert_eq!(state.get().input.text(), "abc");
-        assert_eq!(state.get().input.buffer.cursor(), 3);
+        assert_eq!(state.get().input.selection.cursor, 3);
         let rendered_text = session
             .tree()
             .nodes()
@@ -573,7 +569,7 @@ mod tests {
             InputEvent::Ime(ImeEvent::Commit("你好".to_owned())),
         );
         assert_eq!(state.get().input.text(), "abc你好");
-        assert_eq!(state.get().input.buffer.cursor(), "abc你好".len());
+        assert_eq!(state.get().input.selection.cursor, "abc你好".len());
         assert!(state.get().input.preedit.is_empty());
         let ime_caret = session
             .tree()

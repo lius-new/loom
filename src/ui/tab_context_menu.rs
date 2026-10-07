@@ -349,8 +349,8 @@ mod tests {
         assert!(!action_enabled(&app, target, Action::ReloadFromDisk));
         assert!(!action_enabled(&app, target, Action::KeepEditorVersion));
 
-        app.workspace.active_buffer_mut().unwrap().move_end();
-        app.workspace.active_buffer_mut().unwrap().insert(" editor");
+        app.workspace.active_editor_mut().unwrap().move_end();
+        app.workspace.active_editor_mut().unwrap().insert(" editor");
         std::fs::write(&path, "after and longer").unwrap();
         app.workspace.reconcile_document(target);
         assert!(action_enabled(&app, target, Action::ReloadFromDisk));
