@@ -434,7 +434,7 @@ pub fn cancel_pointer_interaction(app: &mut AppState) -> bool {
 pub fn render_tooltip(viewport: UiRect, rect: UiRect, app: &AppState) -> Option<Element> {
     let hovered = app.tab_hovered?;
     let path = app.workspace.meta(hovered)?.path.clone();
-    let path = display_path(&path);
+    let path = super::display_path(&path);
     let index = app
         .workspace
         .open_files()
@@ -459,23 +459,6 @@ pub fn render_tooltip(viewport: UiRect, rect: UiRect, app: &AppState) -> Option<
             theme::mono(theme::ZINC_300, theme::SMALL),
         )),
     )
-}
-
-#[cfg(target_os = "windows")]
-fn display_path(path: &std::path::Path) -> String {
-    let value = path.to_string_lossy();
-    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{unc}")
-    } else if let Some(local) = value.strip_prefix(r"\\?\") {
-        local.to_owned()
-    } else {
-        value.into_owned()
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn display_path(path: &std::path::Path) -> String {
-    path.to_string_lossy().into_owned()
 }
 
 pub fn render(rect: UiRect, state: State<AppState>, editor_focus: UiFocusHandle) -> Element {

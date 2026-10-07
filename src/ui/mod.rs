@@ -20,3 +20,22 @@ pub mod terminal;
 pub mod titlebar;
 pub mod toast;
 pub mod welcome;
+
+/// A path as shown to or copied by the user. `fs::canonicalize` yields
+/// verbatim paths on Windows (`\\?\D:\dir`), so drop that prefix.
+#[cfg(target_os = "windows")]
+pub fn display_path(path: &std::path::Path) -> String {
+    let value = path.to_string_lossy();
+    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else if let Some(local) = value.strip_prefix(r"\\?\") {
+        local.to_owned()
+    } else {
+        value.into_owned()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn display_path(path: &std::path::Path) -> String {
+    path.to_string_lossy().into_owned()
+}

@@ -256,7 +256,7 @@ fn recent_workspace_card(
         .file_name()
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    let path_label = path.to_string_lossy();
+    let path_label = super::display_path(path);
     let display_path = ellipsize(
         &path_label,
         (rect.width() - 24.0).max(0.0),

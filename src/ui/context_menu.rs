@@ -229,33 +229,16 @@ pub(crate) fn copy_target_path(
         if relative.as_os_str().is_empty() {
             ".".to_owned()
         } else {
-            clipboard_path(relative)
+            super::display_path(relative)
         }
     } else {
-        clipboard_path(target)
+        super::display_path(target)
     };
     let label = if relative { "relative path" } else { "path" };
     match clipboard.write_text(&value) {
         Ok(()) => state.update(move |app| app.show_toast(format!("Copied {label}."))),
         Err(error) => state.update(move |app| app.show_toast(format!("Clipboard: {error}"))),
     }
-}
-
-#[cfg(target_os = "windows")]
-fn clipboard_path(path: &Path) -> String {
-    let value = path.to_string_lossy();
-    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{unc}")
-    } else if let Some(local) = value.strip_prefix(r"\\?\") {
-        local.to_owned()
-    } else {
-        value.into_owned()
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn clipboard_path(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
 }
 
 pub(crate) fn reveal_target(state: &State<AppState>, target: &ExplorerContextTarget) {
@@ -271,9 +254,9 @@ pub(crate) fn reveal_target(state: &State<AppState>, target: &ExplorerContextTar
 fn reveal_in_file_manager(path: &Path, kind: ExplorerTargetKind) -> std::io::Result<()> {
     let mut command = Command::new("explorer.exe");
     if kind == ExplorerTargetKind::File {
-        command.arg(format!("/select,{}", clipboard_path(path)));
+        command.arg(format!("/select,{}", super::display_path(path)));
     } else {
-        command.arg(clipboard_path(path));
+        command.arg(super::display_path(path));
     }
     command.spawn().map(|_| ())
 }
@@ -740,15 +723,15 @@ mod tests {
     #[test]
     fn copied_windows_paths_hide_the_verbatim_prefix() {
         assert_eq!(
-            clipboard_path(Path::new(r"\\?\D:\Documents\project")),
+            crate::ui::display_path(Path::new(r"\\?\D:\Documents\project")),
             r"D:\Documents\project"
         );
         assert_eq!(
-            clipboard_path(Path::new(r"\\?\UNC\server\share\project")),
+            crate::ui::display_path(Path::new(r"\\?\UNC\server\share\project")),
             r"\\server\share\project"
         );
         assert_eq!(
-            clipboard_path(Path::new(r"D:\Documents\project")),
+            crate::ui::display_path(Path::new(r"D:\Documents\project")),
             r"D:\Documents\project"
         );
     }
