@@ -125,6 +125,34 @@ pub struct TerminalSnapshot {
     pub lines: Vec<Vec<TerminalRun>>,
     pub cursor: (u16, u16),
     pub cursor_visible: bool,
+    pub application_cursor: bool,
+    /// Selected cells per visible row as `(row, start_col, end_col)`, end exclusive.
+    pub selection: Vec<(u16, u16, u16)>,
+}
+
+/// A cell boundary in coordinates that survive scrolling the view: row `0` is
+/// the top of the live screen and negative rows are in the scrollback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct GridPoint {
+    row: i64,
+    col: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Selection {
+    anchor: GridPoint,
+    head: GridPoint,
+}
+
+impl Selection {
+    fn ordered(self) -> Option<(GridPoint, GridPoint)> {
+        let (start, end) = if self.anchor <= self.head {
+            (self.anchor, self.head)
+        } else {
+            (self.head, self.anchor)
+        };
+        (start != end).then_some((start, end))
+    }
 }
 
 #[derive(Clone)]
@@ -248,6 +276,7 @@ struct TerminalInner {
     process: Mutex<Option<RunningProcess>>,
     shell: Mutex<ShellKind>,
     status: Mutex<TerminalStatus>,
+    selection: Mutex<Option<Selection>>,
     generation: AtomicU64,
 }
 
@@ -281,6 +310,7 @@ impl TerminalController {
                 process: Mutex::new(None),
                 shell: Mutex::new(shell),
                 status: Mutex::new(TerminalStatus::Idle),
+                selection: Mutex::new(None),
                 generation: AtomicU64::new(0),
             }),
         }
@@ -316,6 +346,7 @@ impl TerminalController {
         *lock(&self.inner.shell) = shell;
         *lock(&self.inner.status) = TerminalStatus::Starting;
         *lock(&self.inner.parser) = vt100::Parser::new(size.rows, size.cols, SCROLLBACK_ROWS);
+        *lock(&self.inner.selection) = None;
 
         match spawn_shell(shell, cwd, size) {
             Ok(spawned) => {
@@ -381,6 +412,8 @@ impl TerminalController {
 
     pub fn write(&self, bytes: &[u8]) {
         lock(&self.inner.parser).screen_mut().set_scrollback(0);
+        // Typing into the shell ends the selection, as in other terminals.
+        *lock(&self.inner.selection) = None;
         let mut process = lock(&self.inner.process);
         let Some(process) = process.as_mut() else {
             return;
@@ -399,6 +432,7 @@ impl TerminalController {
             let mut parser = lock(&self.inner.parser);
             if parser.screen().size() != (size.rows, size.cols) {
                 parser.screen_mut().set_size(size.rows, size.cols);
+                *lock(&self.inner.selection) = None;
             }
         }
 
@@ -422,11 +456,61 @@ impl TerminalController {
         parser.screen_mut().set_scrollback(next);
     }
 
+    /// Writes pasted text, wrapping it for shells that enabled bracketed paste.
+    pub fn paste(&self, value: &str) {
+        if value.is_empty() {
+            return;
+        }
+        let bracketed = lock(&self.inner.parser).screen().bracketed_paste();
+        self.write(&paste_bytes(value, bracketed));
+    }
+
+    /// Starts a selection at a visible cell boundary.
+    pub fn begin_selection(&self, row: u16, col: u16) {
+        let point = self.grid_point(row, col);
+        *lock(&self.inner.selection) = Some(Selection {
+            anchor: point,
+            head: point,
+        });
+    }
+
+    /// Moves the free end of the selection to a visible cell boundary.
+    pub fn extend_selection(&self, row: u16, col: u16) {
+        let point = self.grid_point(row, col);
+        if let Some(selection) = lock(&self.inner.selection).as_mut() {
+            selection.head = point;
+        }
+    }
+
+    pub fn clear_selection(&self) -> bool {
+        lock(&self.inner.selection).take().is_some()
+    }
+
+    pub fn selected_text(&self) -> Option<String> {
+        let mut parser = lock(&self.inner.parser);
+        let (start, end) = (*lock(&self.inner.selection))?.ordered()?;
+        Some(selection_text(parser.screen_mut(), start, end))
+    }
+
+    fn grid_point(&self, row: u16, col: u16) -> GridPoint {
+        let parser = lock(&self.inner.parser);
+        let screen = parser.screen();
+        let (rows, cols) = screen.size();
+        GridPoint {
+            row: i64::from(row.min(rows.saturating_sub(1))) - screen.scrollback() as i64,
+            col: col.min(cols),
+        }
+    }
+
     pub fn snapshot(&self) -> TerminalSnapshot {
         let parser = lock(&self.inner.parser);
         let screen = parser.screen();
         let (rows, cols) = screen.size();
         let lines = (0..rows).map(|row| line_runs(screen, row, cols)).collect();
+        let selection = lock(&self.inner.selection)
+            .and_then(Selection::ordered)
+            .map(|(start, end)| visible_selection(start, end, screen.scrollback(), rows, cols))
+            .unwrap_or_default();
         TerminalSnapshot {
             shell: self.shell(),
             status: lock(&self.inner.status).clone(),
@@ -435,6 +519,8 @@ impl TerminalController {
             lines,
             cursor: screen.cursor_position(),
             cursor_visible: !screen.hide_cursor() && screen.scrollback() == 0,
+            application_cursor: screen.application_cursor(),
+            selection,
         }
     }
 
@@ -669,6 +755,72 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn visible_selection(
+    start: GridPoint,
+    end: GridPoint,
+    scrollback: usize,
+    rows: u16,
+    cols: u16,
+) -> Vec<(u16, u16, u16)> {
+    (0..rows)
+        .filter_map(|row| {
+            let grid_row = i64::from(row) - scrollback as i64;
+            if grid_row < start.row || grid_row > end.row {
+                return None;
+            }
+            let from = if grid_row == start.row { start.col } else { 0 };
+            let to = if grid_row == end.row { end.col } else { cols };
+            (from < to).then_some((row, from, to))
+        })
+        .collect()
+}
+
+/// Reads the selected text row by row, scrolling the parser's view as needed
+/// so rows above the visible screen can still be copied.
+fn selection_text(screen: &mut vt100::Screen, start: GridPoint, end: GridPoint) -> String {
+    let original_scrollback = screen.scrollback();
+    let (rows, cols) = screen.size();
+    let mut text = String::new();
+    for grid_row in start.row..=end.row {
+        screen.set_scrollback(usize::try_from(-grid_row).unwrap_or(0));
+        let Ok(row) = u16::try_from(grid_row + screen.scrollback() as i64) else {
+            continue;
+        };
+        if row >= rows {
+            continue;
+        }
+        let from = if grid_row == start.row { start.col } else { 0 };
+        let to = if grid_row == end.row { end.col } else { cols };
+        if from < to {
+            let line = screen
+                .rows(from, to - from)
+                .nth(usize::from(row))
+                .unwrap_or_default();
+            text.push_str(line.trim_end_matches(' '));
+        }
+        if grid_row != end.row && !screen.row_wrapped(row) {
+            text.push('\n');
+        }
+    }
+    screen.set_scrollback(original_scrollback);
+    text
+}
+
+fn paste_bytes(value: &str, bracketed: bool) -> Vec<u8> {
+    // Shells submit lines on carriage return; a bare LF would not run them.
+    let normalized = value.replace("\r\n", "\r").replace('\n', "\r");
+    let mut bytes = Vec::with_capacity(normalized.len() + 12);
+    if bracketed {
+        bytes.extend_from_slice(b"\x1b[200~");
+        // The payload must not be able to end bracketing early.
+        bytes.extend_from_slice(normalized.replace("\x1b[201~", "").as_bytes());
+        bytes.extend_from_slice(b"\x1b[201~");
+    } else {
+        bytes.extend_from_slice(normalized.as_bytes());
+    }
+    bytes
+}
+
 fn line_runs(screen: &vt100::Screen, row: u16, cols: u16) -> Vec<TerminalRun> {
     let mut runs = Vec::new();
     let mut current: Option<TerminalRun> = None;
@@ -893,6 +1045,49 @@ mod tests {
             visible,
             vec![(0, 1, "A"), (1, 2, "中"), (3, 2, "文"), (5, 1, "B")]
         );
+    }
+
+    #[test]
+    fn selection_text_spans_rows_and_joins_wrapped_lines() {
+        let mut parser = vt100::Parser::new(3, 6, 0);
+        parser.process(b"abcdefgh\r\nxyz   ");
+        let text = selection_text(
+            parser.screen_mut(),
+            GridPoint { row: 0, col: 2 },
+            GridPoint { row: 2, col: 2 },
+        );
+        assert_eq!(text, "cdefgh\nxy");
+    }
+
+    #[test]
+    fn selection_text_reads_rows_in_scrollback() {
+        let mut parser = vt100::Parser::new(2, 10, 10);
+        parser.process(b"one\r\ntwo\r\nthree");
+        let text = selection_text(
+            parser.screen_mut(),
+            GridPoint { row: -1, col: 0 },
+            GridPoint { row: 0, col: 3 },
+        );
+        assert_eq!(text, "one\ntwo");
+        assert_eq!(parser.screen().scrollback(), 0);
+    }
+
+    #[test]
+    fn visible_selection_follows_the_scrolled_view() {
+        let start = GridPoint { row: -1, col: 2 };
+        let end = GridPoint { row: 0, col: 3 };
+        assert_eq!(visible_selection(start, end, 0, 2, 10), vec![(0, 0, 3)]);
+        assert_eq!(
+            visible_selection(start, end, 1, 2, 10),
+            vec![(0, 2, 10), (1, 0, 3)]
+        );
+    }
+
+    #[test]
+    fn paste_normalizes_newlines_and_honors_bracketed_mode() {
+        assert_eq!(paste_bytes("a\r\nb\nc", false), b"a\rb\rc");
+        assert_eq!(paste_bytes("ls", true), b"\x1b[200~ls\x1b[201~");
+        assert_eq!(paste_bytes("x\x1b[201~y", true), b"\x1b[200~xy\x1b[201~");
     }
 
     #[test]

@@ -4,15 +4,16 @@ use std::sync::Arc;
 
 use lgui::ApplicationHandle;
 use lgui::core::{
-    CursorIcon, EventPolicy, IconStyle, KeyState, KeyboardEvent, LogicalKey, NamedKey,
+    CursorIcon, EventPolicy, IconStyle, KeyState, KeyboardEvent, LogicalKey, NamedKey, Point,
     PointerButton, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId, WheelUnit, clip,
     precompiled,
 };
 use lgui::prelude::{Color, Element, State, UiRect, VisualStyle, group, panel, text};
+use lgui::services::{Clipboard, ClipboardError, ServicesContextExt};
 
 use crate::state::AppState;
 use crate::terminal_session::{
-    ShellKind, TerminalController, TerminalSize, TerminalTab, TerminalTabs,
+    ShellKind, TerminalController, TerminalRun, TerminalSize, TerminalTab, TerminalTabs,
 };
 use crate::theme;
 use crate::ui::tabs::{
@@ -99,6 +100,51 @@ pub fn render(
     let focus_on_click = terminal_focus.clone();
     terminal = terminal.on_click(move || focus_on_click.focus());
 
+    let (screen_rows, screen_cols) = (snapshot.rows, snapshot.cols);
+    let select_controller = controller.clone();
+    let select_state = state.clone();
+    let select_application = application.clone();
+    terminal = terminal.on_pointer_down_with_button(move |cx, pointer, button| {
+        if !content.contains(pointer.point) {
+            return;
+        }
+        let (row, col) = cell_at(content, pointer.point, screen_rows, screen_cols);
+        match button {
+            PointerButton::Left => {
+                select_controller.begin_selection(row, col);
+                select_state.update(|app| app.selecting_terminal = true);
+            }
+            // Right click copies a selection, or pastes when there is none.
+            PointerButton::Right => {
+                let clipboard = cx.application().clipboard();
+                let result = match copy_selection(&select_controller, clipboard.as_ref()) {
+                    Ok(true) => Ok(()),
+                    Ok(false) => paste_clipboard(&select_controller, clipboard.as_ref()),
+                    Err(error) => Err(error),
+                };
+                report_clipboard_error(&select_state, result);
+            }
+            _ => return,
+        }
+        select_application.request_frame();
+    });
+
+    let drag_controller = controller.clone();
+    let drag_state = state.clone();
+    let drag_application = application.clone();
+    terminal = terminal.on_pointer_drag(move |cx, pointer| {
+        if drag_state.get().selecting_terminal {
+            let (row, col) = cell_at(content, pointer.point, screen_rows, screen_cols);
+            drag_controller.extend_selection(row, col);
+            drag_application.request_frame();
+            cx.stop_propagation();
+        }
+    });
+    let select_up_state = state.clone();
+    terminal = terminal.on_pointer_up(move |_cx, _pointer| {
+        select_up_state.try_update(|app| std::mem::take(&mut app.selecting_terminal));
+    });
+
     let input_controller = controller.clone();
     let input_application = application.clone();
     terminal = terminal.on_input(move |cx, input| {
@@ -111,8 +157,9 @@ pub fn render(
 
     let key_controller = controller.clone();
     let key_application = application.clone();
+    let application_cursor = snapshot.application_cursor;
     terminal = terminal.on_key_down(move |cx, event| {
-        if let Some(bytes) = key_bytes(event) {
+        if let Some(bytes) = key_bytes(event, application_cursor) {
             key_controller.write(&bytes);
             key_application.request_frame();
             cx.prevent_default();
@@ -440,16 +487,30 @@ fn render_screen(
             break;
         }
         for run in runs {
-            let left = content.left + f32::from(run.start_col) * TERMINAL_CHAR_W;
-            let right =
-                (left + f32::from(run.columns) * TERMINAL_CHAR_W + 2.0).min(content.right + 2.0);
-            let run_rect = UiRect::new(left, top, right, top + TERMINAL_LINE_H);
             if let Some(background) = run.style.background {
+                let (left, right) = run_span(content, run);
                 screen = screen.child(panel(
                     UiRect::new(left, top, right, top + TERMINAL_LINE_H),
                     VisualStyle::filled(Color(background)),
                 ));
             }
+        }
+        // Selection sits above cell backgrounds and below the glyphs.
+        for &(_, start_col, end_col) in snapshot
+            .selection
+            .iter()
+            .filter(|(selected_row, ..)| usize::from(*selected_row) == row)
+        {
+            let left = content.left + f32::from(start_col) * TERMINAL_CHAR_W;
+            let right = (content.left + f32::from(end_col) * TERMINAL_CHAR_W).min(content.right);
+            screen = screen.child(panel(
+                UiRect::new(left, top, right, top + TERMINAL_LINE_H),
+                VisualStyle::filled(theme::SELECTION),
+            ));
+        }
+        for run in runs {
+            let (left, right) = run_span(content, run);
+            let run_rect = UiRect::new(left, top, right, top + TERMINAL_LINE_H);
             if !run.text.is_empty() {
                 let foreground = run.style.foreground.map(Color).unwrap_or(theme::ZINC_200);
                 let mut style = if run.style.bold {
@@ -496,6 +557,99 @@ fn render_screen(
     }
 
     clip(content, 0.0, 0.0).child(screen)
+}
+
+fn run_span(content: UiRect, run: &TerminalRun) -> (f32, f32) {
+    let left = content.left + f32::from(run.start_col) * TERMINAL_CHAR_W;
+    let right = (left + f32::from(run.columns) * TERMINAL_CHAR_W + 2.0).min(content.right + 2.0);
+    (left, right)
+}
+
+/// Maps a pointer to the nearest cell boundary, clamped to the screen.
+fn cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u16) {
+    let row = ((point.y - content.top) / TERMINAL_LINE_H)
+        .floor()
+        .clamp(0.0, f32::from(rows.saturating_sub(1)));
+    let col = ((point.x - content.left) / TERMINAL_CHAR_W)
+        .round()
+        .clamp(0.0, f32::from(cols));
+    (row as u16, col as u16)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClipboardShortcut {
+    Copy,
+    CopyOrInterrupt,
+    Paste,
+}
+
+fn clipboard_shortcut_for(event: &KeyboardEvent) -> Option<ClipboardShortcut> {
+    if event.state != KeyState::Down || event.modifiers.alt() {
+        return None;
+    }
+    let ctrl = event.modifiers.ctrl();
+    let shift = event.modifiers.shift();
+    match &event.key {
+        LogicalKey::Character(value) if ctrl && value.eq_ignore_ascii_case("c") => Some(if shift {
+            ClipboardShortcut::Copy
+        } else {
+            ClipboardShortcut::CopyOrInterrupt
+        }),
+        LogicalKey::Character(value) if ctrl && value.eq_ignore_ascii_case("v") => {
+            Some(ClipboardShortcut::Paste)
+        }
+        LogicalKey::Named(NamedKey::Insert) if shift && !ctrl => Some(ClipboardShortcut::Paste),
+        _ => None,
+    }
+}
+
+/// Handles the terminal's copy/paste keys. Ctrl+C copies when text is
+/// selected and otherwise interrupts, matching Windows Terminal.
+///
+/// Returns `None` when the event is not a clipboard shortcut.
+pub fn handle_clipboard_shortcut(
+    controller: &TerminalController,
+    event: &KeyboardEvent,
+    clipboard: &dyn Clipboard,
+) -> Option<Result<(), ClipboardError>> {
+    Some(match clipboard_shortcut_for(event)? {
+        ClipboardShortcut::Copy => copy_selection(controller, clipboard).map(|_| ()),
+        ClipboardShortcut::CopyOrInterrupt => copy_selection(controller, clipboard).map(|copied| {
+            if !copied {
+                controller.write(b"\x03");
+            }
+        }),
+        ClipboardShortcut::Paste => paste_clipboard(controller, clipboard),
+    })
+}
+
+fn copy_selection(
+    controller: &TerminalController,
+    clipboard: &dyn Clipboard,
+) -> Result<bool, ClipboardError> {
+    let Some(value) = controller.selected_text() else {
+        return Ok(false);
+    };
+    // A failed copy keeps the selection so the user can retry.
+    clipboard.write_text(&value)?;
+    controller.clear_selection();
+    Ok(true)
+}
+
+fn paste_clipboard(
+    controller: &TerminalController,
+    clipboard: &dyn Clipboard,
+) -> Result<(), ClipboardError> {
+    if let Some(value) = clipboard.read_text()? {
+        controller.paste(&value);
+    }
+    Ok(())
+}
+
+pub fn report_clipboard_error(state: &State<AppState>, result: Result<(), ClipboardError>) {
+    if let Err(error) = result {
+        state.update(|app| app.show_toast(format!("Clipboard: {error}")));
+    }
 }
 
 fn cursor_is_drawn(pty_visible: bool, focused: bool, blink_visible: bool) -> bool {
@@ -558,9 +712,63 @@ fn terminal_cursor_rect(content: UiRect, cursor: (u16, u16)) -> UiRect {
     )
 }
 
-fn key_bytes(event: &KeyboardEvent) -> Option<Vec<u8>> {
+fn key_bytes(event: &KeyboardEvent, application_cursor: bool) -> Option<Vec<u8>> {
     if event.state != KeyState::Down {
         return None;
+    }
+
+    let shift = event.modifiers.shift();
+    let alt = event.modifiers.alt();
+    let ctrl = event.modifiers.ctrl();
+    // xterm modifier parameter: 1 + Shift(1) + Alt(2) + Ctrl(4).
+    let modifier = 1 + u8::from(shift) + 2 * u8::from(alt) + 4 * u8::from(ctrl);
+    if let LogicalKey::Named(named) = &event.key {
+        let cursor_final = match named {
+            NamedKey::ArrowUp => Some('A'),
+            NamedKey::ArrowDown => Some('B'),
+            NamedKey::ArrowRight => Some('C'),
+            NamedKey::ArrowLeft => Some('D'),
+            NamedKey::Home => Some('H'),
+            NamedKey::End => Some('F'),
+            _ => None,
+        };
+        if let Some(final_byte) = cursor_final {
+            return Some(
+                if modifier > 1 {
+                    format!("\x1b[1;{modifier}{final_byte}")
+                } else if application_cursor {
+                    format!("\x1bO{final_byte}")
+                } else {
+                    format!("\x1b[{final_byte}")
+                }
+                .into_bytes(),
+            );
+        }
+        let tilde_code = match named {
+            NamedKey::Insert => Some(2),
+            NamedKey::Delete => Some(3),
+            NamedKey::PageUp => Some(5),
+            NamedKey::PageDown => Some(6),
+            _ => None,
+        };
+        if let Some(code) = tilde_code {
+            return Some(
+                if modifier > 1 {
+                    format!("\x1b[{code};{modifier}~")
+                } else {
+                    format!("\x1b[{code}~")
+                }
+                .into_bytes(),
+            );
+        }
+        if *named == NamedKey::Backspace {
+            // Ctrl+Backspace deletes a word (^H), Alt+Backspace sends ESC DEL.
+            return Some(match (ctrl, alt) {
+                (true, _) => b"\x08".to_vec(),
+                (false, true) => b"\x1b\x7f".to_vec(),
+                (false, false) => b"\x7f".to_vec(),
+            });
+        }
     }
 
     if event.modifiers.ctrl()
@@ -580,20 +788,9 @@ fn key_bytes(event: &KeyboardEvent) -> Option<Vec<u8>> {
 
     let bytes: &[u8] = match &event.key {
         LogicalKey::Named(NamedKey::Enter) => b"\r",
-        LogicalKey::Named(NamedKey::Backspace) => b"\x7f",
-        LogicalKey::Named(NamedKey::Delete) => b"\x1b[3~",
-        LogicalKey::Named(NamedKey::Tab) if event.modifiers.shift() => b"\x1b[Z",
+        LogicalKey::Named(NamedKey::Tab) if shift => b"\x1b[Z",
         LogicalKey::Named(NamedKey::Tab) => b"\t",
         LogicalKey::Named(NamedKey::Escape) => b"\x1b",
-        LogicalKey::Named(NamedKey::ArrowUp) => b"\x1b[A",
-        LogicalKey::Named(NamedKey::ArrowDown) => b"\x1b[B",
-        LogicalKey::Named(NamedKey::ArrowRight) => b"\x1b[C",
-        LogicalKey::Named(NamedKey::ArrowLeft) => b"\x1b[D",
-        LogicalKey::Named(NamedKey::Home) => b"\x1b[H",
-        LogicalKey::Named(NamedKey::End) => b"\x1b[F",
-        LogicalKey::Named(NamedKey::PageUp) => b"\x1b[5~",
-        LogicalKey::Named(NamedKey::PageDown) => b"\x1b[6~",
-        LogicalKey::Named(NamedKey::Insert) => b"\x1b[2~",
         _ => return None,
     };
     Some(bytes.to_vec())
@@ -613,6 +810,99 @@ mod tests {
         assert!(!cursor_is_drawn(true, true, false));
         assert!(cursor_is_drawn(true, false, false));
         assert!(!cursor_is_drawn(false, true, true));
+    }
+
+    fn key(key: LogicalKey, modifiers: lgui::core::KeyModifiers) -> KeyboardEvent {
+        KeyboardEvent {
+            state: KeyState::Down,
+            key,
+            modifiers,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn clipboard_shortcuts_follow_windows_terminal_conventions() {
+        use lgui::core::KeyModifiers;
+        let ctrl = KeyModifiers::CONTROL;
+        let ctrl_shift = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+        let character = |value: &str| LogicalKey::Character(value.into());
+
+        assert_eq!(
+            clipboard_shortcut_for(&key(character("c"), ctrl)),
+            Some(ClipboardShortcut::CopyOrInterrupt)
+        );
+        assert_eq!(
+            clipboard_shortcut_for(&key(character("C"), ctrl_shift)),
+            Some(ClipboardShortcut::Copy)
+        );
+        assert_eq!(
+            clipboard_shortcut_for(&key(character("v"), ctrl)),
+            Some(ClipboardShortcut::Paste)
+        );
+        assert_eq!(
+            clipboard_shortcut_for(&key(
+                LogicalKey::Named(NamedKey::Insert),
+                KeyModifiers::SHIFT
+            )),
+            Some(ClipboardShortcut::Paste)
+        );
+        assert_eq!(clipboard_shortcut_for(&key(character("d"), ctrl)), None);
+    }
+
+    #[test]
+    fn modified_navigation_keys_use_xterm_sequences() {
+        use lgui::core::KeyModifiers;
+        let left = LogicalKey::Named(NamedKey::ArrowLeft);
+        assert_eq!(
+            key_bytes(&key(left.clone(), KeyModifiers::empty()), false).unwrap(),
+            b"\x1b[D"
+        );
+        assert_eq!(
+            key_bytes(&key(left.clone(), KeyModifiers::empty()), true).unwrap(),
+            b"\x1bOD"
+        );
+        assert_eq!(
+            key_bytes(&key(left, KeyModifiers::CONTROL), false).unwrap(),
+            b"\x1b[1;5D"
+        );
+        assert_eq!(
+            key_bytes(
+                &key(LogicalKey::Named(NamedKey::Delete), KeyModifiers::CONTROL),
+                false
+            )
+            .unwrap(),
+            b"\x1b[3;5~"
+        );
+        assert_eq!(
+            key_bytes(
+                &key(
+                    LogicalKey::Named(NamedKey::Backspace),
+                    KeyModifiers::CONTROL
+                ),
+                false
+            )
+            .unwrap(),
+            b"\x08"
+        );
+    }
+
+    #[test]
+    fn pointer_maps_to_the_nearest_cell_boundary() {
+        let content = UiRect::new(10.0, 20.0, 400.0, 200.0);
+        let point = |x, y| Point { x, y };
+        assert_eq!(cell_at(content, point(10.0, 20.0), 5, 40), (0, 0));
+        assert_eq!(
+            cell_at(
+                content,
+                point(10.0 + TERMINAL_CHAR_W * 2.6, 20.0 + TERMINAL_LINE_H * 1.5),
+                5,
+                40
+            ),
+            (1, 3)
+        );
+        assert_eq!(cell_at(content, point(-50.0, 900.0), 5, 40), (4, 0));
+        assert_eq!(cell_at(content, point(9_000.0, 0.0), 5, 40), (0, 40));
     }
 
     #[test]

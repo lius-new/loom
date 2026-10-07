@@ -9,6 +9,7 @@ use std::time::Duration;
 use lgui::ApplicationHandle;
 use lgui::core::{KeyboardEvent, UiEventKind, UiEventPayload};
 use lgui::prelude::{Element, RenderCx, UiRect, group};
+use lgui::services::ServicesContextExt;
 use lgui::window::WindowFocusChanged;
 
 use crate::editor::editor_view;
@@ -392,17 +393,16 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         let UiEventPayload::Keyboard { event } = payload else {
             return;
         };
-        let is_ctrl_c = event.state == lgui::core::KeyState::Down
-            && event.modifiers.ctrl()
-            && matches!(
-                &event.key,
-                lgui::core::LogicalKey::Character(value) if value.eq_ignore_ascii_case("c")
-            );
+        // Clipboard keys are captured here so editor-wide shortcuts never see them.
         if interrupt_state.get().terminal_focused
-            && is_ctrl_c
             && let Some(controller) = interrupt_controller.as_ref()
+            && let Some(result) = terminal::handle_clipboard_shortcut(
+                controller,
+                event,
+                ctx.application().clipboard().as_ref(),
+            )
         {
-            controller.write(b"\x03");
+            terminal::report_clipboard_error(&interrupt_state, result);
             interrupt_application.request_frame();
             ctx.prevent_default();
             ctx.stop_propagation();

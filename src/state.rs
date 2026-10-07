@@ -87,6 +87,7 @@ pub struct AppState {
     pub terminal_h: f32,
     /// True while the terminal's top resize handle is being dragged.
     pub resizing_terminal: bool,
+    pub selecting_terminal: bool,
     /// Whether keyboard input is currently routed to the terminal surface.
     pub terminal_focused: bool,
     /// Whether the terminal shell selector is expanded.
@@ -202,6 +203,7 @@ impl AppState {
             show_terminal: false,
             terminal_h: crate::theme::TERMINAL_H,
             resizing_terminal: false,
+            selecting_terminal: false,
             terminal_focused: false,
             terminal_shell_menu: false,
             tab_scroll_x: 0.0,
