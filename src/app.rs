@@ -29,6 +29,7 @@ use crate::workspace_persistence;
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state_with(AppState::restored);
     let git_store = cx.state_with(GitStoreSnapshot::default);
+    let git_poll_control = cx.state_with(crate::git::PollControl::default);
     let terminal_tabs = cx.state_with(|| {
         let session = workspace_persistence::load();
         TerminalTabs::restored(session.terminal_tabs, session.active_terminal)
@@ -149,17 +150,20 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         };
         move || drop(handle)
     });
+    // Switching tabs only retargets line decorations; the poller keeps running.
+    let git_poll = git_poll_control.get();
+    let poll_target = git_poll.clone();
+    cx.use_effect(git_active_path.clone(), move || {
+        poll_target.set_active_path(git_active_path);
+        || {}
+    });
     let polling_store = git_store.clone();
-    cx.use_effect((git_roots.clone(), git_active_path.clone()), move || {
-        let handle = crate::git::start_polling_async(
+    cx.use_effect(git_roots.clone(), move || {
+        let handle = crate::git::start_polling(
             git_roots,
-            git_active_path,
+            git_poll,
             Duration::from_millis(2_000),
-            move |snapshot| {
-                polling_store.update(move |current| {
-                    current.replace_if_newer(snapshot);
-                })
-            },
+            move |result| polling_store.update(move |current| current.apply_scan(result)),
         );
         move || drop(handle)
     });

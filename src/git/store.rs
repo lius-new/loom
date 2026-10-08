@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
-use std::thread;
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::time::{Duration, Instant, SystemTime};
 
 use super::backend::{CliGitBackend, GitBackend};
 use super::command::CancellationToken;
@@ -65,12 +65,95 @@ impl GitStoreSnapshot {
     }
 
     /// Prevent a slower scan from replacing a newer repository generation.
+    /// Scans never know about a running operation, so the current one
+    /// survives the replacement.
     pub fn replace_if_newer(&mut self, next: Self) -> bool {
         if next.generation < self.generation {
             return false;
         }
-        *self = next;
+        let operation = self.operation.take();
+        *self = Self { operation, ..next };
         true
+    }
+
+    /// Apply a scan result. A failed scan keeps the last known repositories
+    /// visible instead of emptying the drawer.
+    pub fn apply_scan(&mut self, result: GitResult<Self>) {
+        match result {
+            Ok(next) => {
+                self.replace_if_newer(next);
+            }
+            Err(error) => {
+                self.last_error = Some(error);
+                self.initializing = false;
+            }
+        }
+    }
+}
+
+/// What the UI tells the status poller between scans. The active file only
+/// selects which file gets line decorations, so switching tabs updates this
+/// instead of restarting the poller.
+#[derive(Clone, Debug, Default)]
+pub struct PollControl {
+    shared: Arc<(Mutex<PollRequest>, Condvar)>,
+}
+
+#[derive(Debug, Default)]
+struct PollRequest {
+    active_path: Option<PathBuf>,
+    wake: bool,
+}
+
+impl PollControl {
+    /// Point line decorations at `path` and scan again without waiting for
+    /// the polling interval.
+    pub fn set_active_path(&self, path: Option<PathBuf>) {
+        let (request, signal) = &*self.shared;
+        let mut request = request.lock().unwrap_or_else(PoisonError::into_inner);
+        if request.active_path != path {
+            request.active_path = path;
+            request.wake = true;
+            signal.notify_all();
+        }
+    }
+
+    /// The path for the scan about to start. That scan satisfies any pending
+    /// wake request.
+    fn begin_scan(&self) -> Option<PathBuf> {
+        let (request, _) = &*self.shared;
+        let mut request = request.lock().unwrap_or_else(PoisonError::into_inner);
+        request.wake = false;
+        request.active_path.clone()
+    }
+
+    /// Sleep until `interval` passes or a scan is requested. Returns false
+    /// once `stopped` is set.
+    fn wait(&self, interval: Duration, stopped: &AtomicBool) -> bool {
+        let (request, signal) = &*self.shared;
+        let deadline = Instant::now() + interval;
+        let mut request = request.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if stopped.load(Ordering::Acquire) {
+                return false;
+            }
+            let now = Instant::now();
+            if request.wake || now >= deadline {
+                return true;
+            }
+            request = signal
+                .wait_timeout(request, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
+    /// Wake every waiting poller so a stopped one can exit. Taking the lock
+    /// orders this after a waiter's `stopped` check.
+    pub(super) fn notify(&self) {
+        let (request, signal) = &*self.shared;
+        let _request = request.lock().unwrap_or_else(PoisonError::into_inner);
+        signal.notify_all();
     }
 }
 
@@ -196,52 +279,50 @@ impl GitService {
         self.backend.clone_repository(url, target, cancellation)
     }
 
-    pub fn start_polling(
-        self: &Arc<Self>,
-        roots: Vec<PathBuf>,
-        active_path: Option<PathBuf>,
+    /// Scan `roots` until `stopped` is set, publishing only results that
+    /// differ from the previous one.
+    pub fn poll(
+        &self,
+        roots: &[PathBuf],
+        control: &PollControl,
+        stopped: &AtomicBool,
         interval: Duration,
-        publish: impl Fn(GitStoreSnapshot) + Send + 'static,
-    ) -> PollingHandle {
-        let (stop_sender, stop_receiver) = mpsc::channel();
-        let service = Arc::clone(self);
-        let worker = thread::Builder::new()
-            .name("loom-git-status".into())
-            .spawn(move || {
-                let mut previous = None;
-                // Publish a useful state as soon as possible. This avoids
-                // blocking the drawer on nested-repository discovery,
-                // untracked-file traversal, and two active-file diffs.
-                publish_refresh(
-                    &service,
-                    &roots,
-                    active_path.as_deref(),
-                    true,
-                    &mut previous,
-                    &publish,
-                );
+        publish: &impl Fn(GitResult<GitStoreSnapshot>),
+    ) {
+        let mut previous = None;
+        // Publish a useful state as soon as possible. This avoids blocking
+        // the drawer on nested-repository discovery, untracked-file
+        // traversal, and two active-file diffs.
+        let mut mode = RefreshMode::Fast;
+        while !stopped.load(Ordering::Acquire) {
+            let active_path = control.begin_scan();
+            let result = match mode {
+                RefreshMode::Fast => self.refresh_fast(roots, active_path.as_deref()),
+                RefreshMode::Detailed => self.refresh(roots, active_path.as_deref()),
+            };
+            // A stopped poller's roots are stale; its result must not land.
+            if stopped.load(Ordering::Acquire) {
+                break;
+            }
+            let published = match &result {
+                Ok(snapshot) => Published::Snapshot(snapshot_fingerprint(snapshot)),
+                Err(error) => Published::Error(error.clone()),
+            };
+            if previous.as_ref() != Some(&published) {
+                previous = Some(published);
+                publish(result);
+            }
+            if mode == RefreshMode::Fast {
                 // Always publish the first detailed result. It carries nested
                 // repositories, untracked files, and active-file line changes
                 // that are intentionally absent from the fast snapshot.
+                mode = RefreshMode::Detailed;
                 previous = None;
-                loop {
-                    publish_refresh(
-                        &service,
-                        &roots,
-                        active_path.as_deref(),
-                        false,
-                        &mut previous,
-                        &publish,
-                    );
-                    if stop_receiver.recv_timeout(interval).is_ok() {
-                        break;
-                    }
-                }
-            })
-            .ok();
-        PollingHandle {
-            stop_sender: Some(stop_sender),
-            worker,
+                continue;
+            }
+            if !control.wait(interval, stopped) {
+                break;
+            }
         }
     }
 }
@@ -252,34 +333,12 @@ enum RefreshMode {
     Detailed,
 }
 
-fn publish_refresh(
-    service: &GitService,
-    roots: &[PathBuf],
-    active_path: Option<&Path>,
-    fast: bool,
-    previous: &mut Option<u64>,
-    publish: &impl Fn(GitStoreSnapshot),
-) {
-    let result = if fast {
-        service.refresh_fast(roots, active_path)
-    } else {
-        service.refresh(roots, active_path)
-    };
-    match result {
-        Ok(snapshot) => {
-            let fingerprint = snapshot_fingerprint(&snapshot);
-            if *previous != Some(fingerprint) {
-                *previous = Some(fingerprint);
-                publish(snapshot);
-            }
-        }
-        Err(error) => publish(GitStoreSnapshot {
-            last_error: Some(error),
-            generation: service.generation.load(Ordering::Acquire),
-            initializing: false,
-            ..GitStoreSnapshot::default()
-        }),
-    }
+/// The last thing a poller published, so an unchanged state or a repeated
+/// error does not wake the UI every interval.
+#[derive(Debug, PartialEq)]
+enum Published {
+    Snapshot(u64),
+    Error(GitError),
 }
 
 fn collect_line_changes(diff: &super::diff::UnifiedDiff, output: &mut BTreeMap<usize, LineChange>) {
@@ -305,22 +364,6 @@ fn collect_line_changes(diff: &super::diff::UnifiedDiff, output: &mut BTreeMap<u
                     DiffLine::NoNewline => {}
                 }
             }
-        }
-    }
-}
-
-pub struct PollingHandle {
-    stop_sender: Option<mpsc::Sender<()>>,
-    worker: Option<thread::JoinHandle<()>>,
-}
-
-impl Drop for PollingHandle {
-    fn drop(&mut self) {
-        if let Some(sender) = self.stop_sender.take() {
-            let _ = sender.send(());
-        }
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
         }
     }
 }
@@ -379,6 +422,7 @@ fn snapshot_fingerprint(snapshot: &GitStoreSnapshot) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::error::GitErrorKind;
 
     #[test]
     fn picks_the_nearest_repository_for_a_file() {
@@ -429,5 +473,80 @@ mod tests {
             ..GitStoreSnapshot::default()
         }));
         assert_eq!(current.generation, 10);
+    }
+
+    #[test]
+    fn scans_keep_the_running_operation() {
+        let mut current = GitStoreSnapshot {
+            operation: Some(operation(OperationKind::Push, "Pushing…", false)),
+            generation: 1,
+            ..GitStoreSnapshot::default()
+        };
+        current.apply_scan(Ok(GitStoreSnapshot {
+            generation: 2,
+            ..GitStoreSnapshot::default()
+        }));
+        assert_eq!(current.generation, 2);
+        assert!(current.operation.is_some());
+    }
+
+    #[test]
+    fn a_failed_scan_keeps_known_repositories() {
+        let mut current = GitStoreSnapshot {
+            generation: 3,
+            ..GitStoreSnapshot::default()
+        };
+        current.repositories.insert(
+            RepositoryId(1),
+            RepositorySnapshot {
+                id: RepositoryId(1),
+                worktree_root: PathBuf::from("/workspace"),
+                git_dir: PathBuf::new(),
+                common_dir: PathBuf::new(),
+                head: HeadState::default(),
+                upstream: None,
+                ahead: 0,
+                behind: 0,
+                files: BTreeMap::new(),
+                ignored: Default::default(),
+                repository_state: RepositoryState::Normal,
+                features: RepositoryFeatures::default(),
+                generation: 3,
+            },
+        );
+        current.apply_scan(Err(GitError::new(GitErrorKind::Other, "status failed")));
+        assert_eq!(current.repositories.len(), 1);
+        assert_eq!(current.generation, 3);
+        assert!(current.last_error.is_some());
+        assert!(!current.initializing);
+    }
+
+    #[test]
+    fn changing_the_active_path_wakes_the_poller() {
+        let control = PollControl::default();
+        let stopped = AtomicBool::new(false);
+        control.set_active_path(Some(PathBuf::from("/workspace/a")));
+        let started = Instant::now();
+        assert!(control.wait(Duration::from_secs(60), &stopped));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(control.begin_scan(), Some(PathBuf::from("/workspace/a")));
+        // The same path is not a new request.
+        control.set_active_path(Some(PathBuf::from("/workspace/a")));
+        assert!(!control.shared.0.lock().unwrap().wake);
+    }
+
+    #[test]
+    fn stopping_ends_the_wait() {
+        let control = PollControl::default();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let waiter = {
+            let control = control.clone();
+            let stopped = Arc::clone(&stopped);
+            std::thread::spawn(move || control.wait(Duration::from_secs(60), &stopped))
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        stopped.store(true, Ordering::Release);
+        control.notify();
+        assert!(!waiter.join().unwrap());
     }
 }

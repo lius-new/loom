@@ -18,11 +18,9 @@ pub fn refresh(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool
     let store = store.clone();
     thread::Builder::new()
         .name("loom-git-refresh".into())
-        .spawn(move || match service.refresh(&roots, active.as_deref()) {
-            Ok(snapshot) => store.update(move |current| {
-                current.replace_if_newer(snapshot);
-            }),
-            Err(error) => store.update(move |snapshot| snapshot.last_error = Some(error)),
+        .spawn(move || {
+            let result = service.refresh(&roots, active.as_deref());
+            store.update(move |current| current.apply_scan(result));
         })
         .is_ok()
 }
@@ -241,15 +239,11 @@ fn run(
                             app.show_toast(format!("{conflicts} open file(s) changed on disk; editor buffers were preserved."));
                         }
                     });
-                    match service.refresh(&roots, active_path.as_deref()) {
-                        Ok(snapshot) => store.update(move |current| {
-                            current.replace_if_newer(snapshot);
-                        }),
-                        Err(error) => store.update(move |snapshot| {
-                            snapshot.operation = None;
-                            snapshot.last_error = Some(error);
-                        }),
-                    }
+                    let result = service.refresh(&roots, active_path.as_deref());
+                    store.update(move |current| {
+                        current.apply_scan(result);
+                        current.operation = None;
+                    });
                 }
                 Err(error) => {
                     let message = error.user_message();

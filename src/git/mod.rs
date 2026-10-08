@@ -16,11 +16,12 @@ pub mod types;
 pub use backend::CliGitBackend;
 pub use error::{GitError, GitResult};
 pub use runtime::GitRuntimeManager;
-pub use store::{GitService, GitStoreSnapshot};
+pub use store::{GitService, GitStoreSnapshot, PollControl};
 pub use types::*;
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -36,49 +37,41 @@ pub fn service() -> GitResult<Arc<GitService>> {
         .clone()
 }
 
-/// Resolve the runtime and start status polling entirely off the UI thread.
-/// This keeps slow PATH/runtime checks and the first repository scan from
-/// delaying the initial frame.
-pub fn start_polling_async(
+/// Resolve the runtime and poll repository status for `roots` entirely off
+/// the UI thread. This keeps slow PATH/runtime checks and the first
+/// repository scan from delaying the initial frame. `control` carries the
+/// active file, which changes without restarting the poller.
+pub fn start_polling(
     roots: Vec<PathBuf>,
-    active_path: Option<PathBuf>,
+    control: PollControl,
     interval: Duration,
-    publish: impl Fn(GitStoreSnapshot) + Send + 'static,
-) -> AsyncPollingHandle {
-    let (stop_sender, stop_receiver) = mpsc::channel();
-    let worker = thread::Builder::new()
-        .name("loom-git-bootstrap".into())
+    publish: impl Fn(GitResult<GitStoreSnapshot>) + Send + 'static,
+) -> PollingHandle {
+    let stopped = Arc::new(AtomicBool::new(false));
+    let worker_control = control.clone();
+    let worker_stopped = Arc::clone(&stopped);
+    let _ = thread::Builder::new()
+        .name("loom-git-status".into())
         .spawn(move || match service() {
             Ok(service) => {
-                let polling = service.start_polling(roots, active_path, interval, publish);
-                let _ = stop_receiver.recv();
-                drop(polling);
+                service.poll(&roots, &worker_control, &worker_stopped, interval, &publish)
             }
-            Err(error) => publish(GitStoreSnapshot {
-                last_error: Some(error),
-                initializing: false,
-                ..GitStoreSnapshot::default()
-            }),
-        })
-        .ok();
-    AsyncPollingHandle {
-        stop_sender: Some(stop_sender),
-        worker,
-    }
+            Err(error) => publish(Err(error)),
+        });
+    PollingHandle { control, stopped }
 }
 
-pub struct AsyncPollingHandle {
-    stop_sender: Option<mpsc::Sender<()>>,
-    worker: Option<thread::JoinHandle<()>>,
+/// Stops its poller when dropped. It does not wait for the worker: the UI
+/// thread must never block on a scan in flight, and a stopped poller
+/// publishes nothing further.
+pub struct PollingHandle {
+    control: PollControl,
+    stopped: Arc<AtomicBool>,
 }
 
-impl Drop for AsyncPollingHandle {
+impl Drop for PollingHandle {
     fn drop(&mut self) {
-        if let Some(sender) = self.stop_sender.take() {
-            let _ = sender.send(());
-        }
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.stopped.store(true, Ordering::Release);
+        self.control.notify();
     }
 }
