@@ -73,6 +73,8 @@ pub struct WorkspaceSession {
     #[serde(default)]
     pub terminal_tabs: Vec<ShellKind>,
     #[serde(default)]
+    pub terminal_groups: Vec<usize>,
+    #[serde(default)]
     pub active_terminal: Option<usize>,
     #[serde(default)]
     pub show_terminal: bool,
@@ -116,12 +118,14 @@ pub fn save_editor_layout(layout: Option<&EditorLayout>) -> io::Result<()> {
 
 pub fn save_terminal_state(
     terminal_tabs: &[ShellKind],
+    terminal_groups: &[usize],
     active_terminal: Option<usize>,
     show_terminal: bool,
     terminal_height: f32,
 ) -> io::Result<()> {
     update(|session| {
         session.terminal_tabs = terminal_tabs.to_vec();
+        session.terminal_groups = terminal_groups.to_vec();
         session.active_terminal = active_terminal;
         session.show_terminal = show_terminal;
         session.terminal_height = Some(terminal_height);
@@ -237,7 +241,12 @@ mod tests {
                 },
                 active_pane: 1,
             }),
-            terminal_tabs: vec![ShellKind::PowerShell, ShellKind::Bash],
+            terminal_tabs: vec![
+                ShellKind::PowerShell,
+                ShellKind::PowerShell,
+                ShellKind::Bash,
+            ],
+            terminal_groups: vec![0, 0, 1],
             active_terminal: Some(1),
             show_terminal: true,
             terminal_height: Some(320.0),

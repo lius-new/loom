@@ -20,8 +20,8 @@ use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::{
     clone_repository, close_confirmation, context_menu, diff_editor, git_panel, keymap_page,
-    pane_sash, settings, sidebar, statusbar, tab_context_menu, tabs, terminal, titlebar, toast,
-    welcome, workspace_home,
+    pane_sash, settings, sidebar, statusbar, tab_context_menu, tabs, terminal,
+    terminal_tab_context_menu, titlebar, toast, welcome, workspace_home,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -32,17 +32,19 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let git_poll_control = state.get().git_poll_control;
     let terminal_tabs = cx.state_with(|| {
         let session = workspace_persistence::load();
-        TerminalTabs::restored(session.terminal_tabs, session.active_terminal)
+        TerminalTabs::restored_with_groups(
+            session.terminal_tabs,
+            session.active_terminal,
+            &session.terminal_groups,
+        )
     });
     let terminal_cursor_blink = cx.state(true);
     let terminal_cursor_visible = terminal_cursor_blink.get();
     let terminal_tab_snapshot = terminal_tabs.get();
     let active_terminal_id = terminal_tab_snapshot.active_id();
     let terminal_shells = terminal_tab_snapshot.shells();
+    let terminal_groups = terminal_tab_snapshot.saved_groups();
     let active_terminal_index = terminal_tab_snapshot.active_index();
-    let active_terminal_cwd = terminal_tab_snapshot
-        .active()
-        .and_then(|tab| tab.cwd.clone());
     let terminal_controller = terminal_tab_snapshot
         .active()
         .map(|tab| tab.controller.clone());
@@ -148,6 +150,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
                     continuation: CloseContinuation::ExitApplication,
                 });
                 app.tab_context_menu = None;
+                app.terminal_tab_context_menu = None;
                 app.show_clone_dialog = false;
                 app.editor.menu = None;
             });
@@ -244,6 +247,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     cx.use_effect(
         (
             terminal_shells.clone(),
+            terminal_groups.clone(),
             active_terminal_index,
             show_term,
             s.terminal_h,
@@ -251,6 +255,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         move || {
             let _ = workspace_persistence::save_terminal_state(
                 &terminal_shells,
+                &terminal_groups,
                 active_terminal_index,
                 show_term,
                 s.terminal_h,
@@ -381,7 +386,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         w,
         h - theme::STATUS_H,
     );
-    let terminal_size = terminal::pty_size(terminal_rect);
     let drag_state = state.clone();
     let dragging = s.editor.drag.is_some();
     cx.use_effect((dragging, s.workspace.active(), code_rect), move || {
@@ -407,34 +411,50 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         }
     });
-    let terminal_cwd = active_terminal_cwd.or_else(|| {
+    let terminal_cwd = {
         s.workspace_folders
             .first()
             .cloned()
             .or_else(|| std::env::current_dir().ok())
-    });
+    };
 
-    let terminal_start = terminal_controller.clone();
+    let terminal_sessions = terminal_tab_snapshot.active_group();
+    let terminal_starts = terminal_sessions
+        .iter()
+        .zip(terminal::pane_rects(terminal_rect, terminal_sessions.len()))
+        .map(|(session, rect)| {
+            (
+                session.id,
+                session.controller.clone(),
+                session.cwd.clone().or_else(|| terminal_cwd.clone()),
+                terminal::pty_size_for_body(rect),
+            )
+        })
+        .collect::<Vec<_>>();
+    let terminal_start_key = terminal_starts
+        .iter()
+        .map(|(id, _, cwd, size)| (*id, cwd.clone(), *size))
+        .collect::<Vec<_>>();
     let terminal_start_application = application.clone();
-    let start_cwd = terminal_cwd.clone();
-    cx.use_effect(
-        (
-            show_term,
-            active_terminal_id,
-            terminal_size,
-            terminal_cwd.clone(),
-        ),
-        move || {
-            if show_term && let Some(terminal_start) = terminal_start.as_ref() {
+    cx.use_effect((show_term, terminal_start_key), move || {
+        if show_term {
+            for (_, terminal_start, cwd, size) in terminal_starts {
                 terminal_start.ensure_started(
-                    start_cwd.as_deref(),
-                    terminal_size,
-                    terminal_start_application,
+                    cwd.as_deref(),
+                    size,
+                    terminal_start_application.clone(),
                 );
             }
-        },
-    );
+        }
+    });
     let mounted_terminal_focus = terminal_focus.clone();
+    terminal_tab_context_menu::restore_focus_on_dismiss(
+        cx,
+        s.terminal_tab_context_menu.is_some(),
+        show_term,
+        terminal_focus.clone(),
+        editor_focus.clone(),
+    );
     cx.use_effect((show_term, active_terminal_id), move || {
         if show_term {
             mounted_terminal_focus.focus();
@@ -654,6 +674,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
                 let overlay = app.editor.menu.is_some()
                     || app.context_menu.is_some()
                     || app.tab_context_menu.is_some()
+                    || app.terminal_tab_context_menu.is_some()
                     || app.close_request.is_some()
                     || app.show_clone_dialog;
                 !overlay && app.workspace.activate_pane(pane)
@@ -830,7 +851,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_id,
             terminal_controller,
             terminal_tabs.clone(),
-            application,
+            application.clone(),
             terminal_cursor_visible,
             max_terminal_h,
         ));
@@ -841,12 +862,13 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         state.clone(),
         git_store.clone(),
         editor_focus.clone(),
-        terminal_focus,
+        terminal_focus.clone(),
         terminal_tabs.clone(),
     ));
 
     if s.context_menu.is_none()
         && s.tab_context_menu.is_none()
+        && s.terminal_tab_context_menu.is_none()
         && !show_clone_dialog
         && s.close_request.is_none()
         && let Some(tooltip) = tabs::render_tooltip(vp, &strips, &s)
@@ -874,6 +896,16 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
     if s.tab_context_menu.is_some() {
         root = root.child(tab_context_menu::render(vp, state.clone()));
+    }
+    if s.terminal_tab_context_menu.is_some() {
+        root = root.child(terminal_tab_context_menu::render(
+            vp,
+            state.clone(),
+            terminal_tabs.clone(),
+            application.clone(),
+            terminal_focus.clone(),
+            editor_focus.clone(),
+        ));
     }
     if show_clone_dialog {
         root = root.child(clone_repository::render(

@@ -109,6 +109,12 @@ pub struct TabContextMenuState {
     pub hovered: Option<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalTabContextMenuState {
+    pub position: (f32, f32),
+    pub target: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToastKind {
     Info,
@@ -171,6 +177,7 @@ pub struct AppState {
     pub terminal_focused: bool,
     /// Whether the terminal shell selector is expanded.
     pub terminal_shell_menu: bool,
+    pub terminal_tab_context_menu: Option<TerminalTabContextMenuState>,
     /// Shell used for terminals that are not opened from the shell selector.
     /// Active color theme, applied at the start of every frame.
     pub theme: ThemeId,
@@ -315,6 +322,7 @@ impl AppState {
             selecting_terminal: false,
             terminal_focused: false,
             terminal_shell_menu: false,
+            terminal_tab_context_menu: None,
             theme: ThemeId::default(),
             default_shell: ShellKind::default(),
             terminal_cursor_blink: true,
@@ -436,7 +444,10 @@ impl AppState {
                     self.sidebar_hovered = false;
                 }
             }
-            Action::ToggleTerminal => self.show_terminal = !self.show_terminal,
+            Action::ToggleTerminal => {
+                self.show_terminal = !self.show_terminal;
+                self.terminal_tab_context_menu = None;
+            }
             Action::CloseOverlay => {
                 self.close_menus();
                 self.close_request = None;
@@ -523,6 +534,7 @@ impl AppState {
         self.context_menu_target = None;
         self.context_menu_hover = None;
         self.tab_context_menu = None;
+        self.terminal_tab_context_menu = None;
     }
 
     /// Split the focused pane, dropping pointer gestures tied to the old layout.

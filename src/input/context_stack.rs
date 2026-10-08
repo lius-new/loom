@@ -98,7 +98,11 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
             stack.push(vim_context(app));
         }
     }
-    if app.editor.menu.is_some() || app.context_menu.is_some() || app.tab_context_menu.is_some() {
+    if app.editor.menu.is_some()
+        || app.context_menu.is_some()
+        || app.tab_context_menu.is_some()
+        || app.terminal_tab_context_menu.is_some()
+    {
         stack.push(KeyContext::new(MENU));
     }
     stack

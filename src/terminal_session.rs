@@ -163,6 +163,8 @@ pub struct TerminalController {
 #[derive(Clone)]
 pub struct TerminalTab {
     pub id: u64,
+    /// Sessions with the same group share a tab and render side by side.
+    pub group_id: u64,
     pub controller: TerminalController,
     pub cwd: Option<PathBuf>,
 }
@@ -182,9 +184,25 @@ impl TerminalTabs {
     }
 
     pub fn restored(shells: Vec<ShellKind>, active_index: Option<usize>) -> Self {
+        Self::restored_with_groups(shells, active_index, &[])
+    }
+
+    pub fn restored_with_groups(
+        shells: Vec<ShellKind>,
+        active_index: Option<usize>,
+        groups: &[usize],
+    ) -> Self {
         let mut tabs = Self::empty();
-        for shell in shells {
-            tabs.add(shell);
+        for (index, shell) in shells.into_iter().enumerate() {
+            let id = tabs.add(shell);
+            if index > 0
+                && groups.get(index).is_some()
+                && groups.get(index) == groups.get(index - 1)
+            {
+                let group = tabs.tabs[index - 1].group_id;
+                tabs.tabs.last_mut().unwrap().group_id = group;
+            }
+            debug_assert_eq!(tabs.active_id, Some(id));
         }
         if let Some(active_id) = active_index
             .and_then(|index| tabs.tabs.get(index))
@@ -216,6 +234,51 @@ impl TerminalTabs {
         self.tabs.iter().find(|tab| tab.id == active_id)
     }
 
+    pub fn active_group(&self) -> Vec<TerminalTab> {
+        let Some(active) = self.active() else {
+            return Vec::new();
+        };
+        self.tabs
+            .iter()
+            .filter(|tab| tab.group_id == active.group_id)
+            .cloned()
+            .collect()
+    }
+
+    pub fn saved_groups(&self) -> Vec<usize> {
+        let mut group = 0;
+        self.tabs
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| {
+                if index > 0 && self.tabs[index - 1].group_id != tab.group_id {
+                    group += 1;
+                }
+                group
+            })
+            .collect()
+    }
+
+    pub fn split(&mut self, target: u64) -> Option<u64> {
+        let index = self.tabs.iter().position(|tab| tab.id == target)?;
+        let group_id = self.tabs[index].group_id;
+        let shell = self.tabs[index].controller.shell();
+        let cwd = self.tabs[index].cwd.clone();
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        self.tabs.insert(
+            index + 1,
+            TerminalTab {
+                id,
+                group_id,
+                controller: TerminalController::with_shell(shell),
+                cwd,
+            },
+        );
+        self.active_id = Some(id);
+        Some(id)
+    }
+
     pub fn shells(&self) -> Vec<ShellKind> {
         self.tabs.iter().map(|tab| tab.controller.shell()).collect()
     }
@@ -238,6 +301,7 @@ impl TerminalTabs {
         self.next_id = self.next_id.saturating_add(1);
         self.tabs.push(TerminalTab {
             id,
+            group_id: id,
             controller: TerminalController::with_shell(shell),
             cwd,
         });
@@ -257,8 +321,16 @@ impl TerminalTabs {
         if self.active_id == Some(id) {
             self.active_id = self
                 .tabs
-                .get(index)
-                .or_else(|| self.tabs.last())
+                .iter()
+                .skip(index)
+                .find(|tab| tab.group_id == removed.group_id)
+                .or_else(|| {
+                    self.tabs
+                        .iter()
+                        .rev()
+                        .find(|tab| tab.group_id == removed.group_id)
+                })
+                .or_else(|| self.tabs.get(index).or_else(|| self.tabs.last()))
                 .map(|tab| tab.id);
         }
         Some(removed.controller)
@@ -1146,6 +1218,55 @@ mod tests {
         tabs.close(second);
         assert!(tabs.is_empty());
         assert_eq!(tabs.active_id(), None);
+    }
+
+    #[test]
+    fn splitting_keeps_independent_sessions_in_one_group_and_close_keeps_siblings() {
+        let mut tabs = TerminalTabs::new();
+        let first = tabs.active_id().unwrap();
+        let other = tabs.add(ShellKind::Cmd);
+        let second = tabs.split(first).unwrap();
+        let third = tabs.split(second).unwrap();
+        assert_eq!(
+            tabs.active_group()
+                .iter()
+                .map(|tab| tab.id)
+                .collect::<Vec<_>>(),
+            vec![first, second, third]
+        );
+        assert_eq!(tabs.saved_groups(), vec![0, 0, 0, 1]);
+        assert!(!Arc::ptr_eq(
+            &tabs.tabs[0].controller.inner,
+            &tabs.tabs[1].controller.inner
+        ));
+        tabs.select(first);
+        tabs.close(first);
+        assert_eq!(tabs.active_id(), Some(second));
+        tabs.close(second);
+        assert_eq!(tabs.active_id(), Some(third));
+        assert_eq!(tabs.saved_groups(), vec![0, 1]);
+        tabs.close(third);
+        assert_eq!(tabs.active_id(), Some(other));
+        assert!(tabs.split(999).is_none());
+    }
+
+    #[test]
+    fn grouped_terminal_layout_round_trips_and_legacy_sessions_stay_separate() {
+        let mut original = TerminalTabs::new();
+        let first = original.active_id().unwrap();
+        let split = original.split(first).unwrap();
+        original.add_at(ShellKind::Bash, Some("workspace".into()));
+        original.select(split);
+        let restored = TerminalTabs::restored_with_groups(
+            original.shells(),
+            original.active_index(),
+            &original.saved_groups(),
+        );
+        assert_eq!(restored.saved_groups(), vec![0, 0, 1]);
+        assert_eq!(restored.active_index(), Some(1));
+        assert_eq!(restored.active_group().len(), 2);
+        let legacy = TerminalTabs::restored(original.shells(), original.active_index());
+        assert_eq!(legacy.saved_groups(), vec![0, 1, 2]);
     }
 
     #[test]
