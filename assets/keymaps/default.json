@@ -3,7 +3,8 @@
 // Contexts, from the root to the focused element:
 //   Workspace os=… surface=editor|diff|settings|keymap|home|welcome|empty
 //     Editor extension=…   the code editor has focus
-//     Terminal             the terminal has focus
+//       Vim mode=normal|visual|insert|replace   Vim mode is on (Settings)
+//     Terminal            the terminal has focus
 //     Input                a single-line text field has focus
 //     Menu                 an editor, Explorer or tab menu is open (deepest)
 //   Dialog CloseConfirmation | Dialog CloneRepository   (modal, separate roots)
@@ -89,6 +90,58 @@
       "shift-enter": "editor::Newline",
       "tab": "editor::Tab",
       "shift-tab": "editor::Backtab"
+    }
+  },
+  {
+    // Vim (Settings > Editor > Vim mode). Keys no binding claims go to Vim;
+    // `null` hands a key that has an application binding to Vim instead.
+    // Bind keys in a Vim context in keymap.json to take them back.
+    "context": "Vim && mode != insert && mode != replace",
+    "bindings": {
+      "escape": null,
+      "enter": null,
+      "shift-enter": null,
+      "backspace": null,
+      "shift-backspace": null,
+      "delete": null,
+      "shift-delete": null,
+      "tab": null,
+      "shift-tab": null,
+      "left": null,
+      "right": null,
+      "up": null,
+      "down": null,
+      "home": null,
+      "end": null,
+      "pageup": null,
+      "pagedown": null,
+      "ctrl-a": null,
+      "ctrl-b": null,
+      "ctrl-d": null,
+      "ctrl-f": null,
+      "ctrl-i": null,
+      "ctrl-o": null,
+      "ctrl-r": null,
+      "ctrl-u": null,
+      "ctrl-v": null,
+      "ctrl-x": null
+    }
+  },
+  {
+    "context": "Vim && (mode == insert || mode == replace)",
+    "bindings": {
+      "escape": null,
+      "backspace": null,
+      "shift-backspace": null,
+      "delete": null,
+      "shift-delete": null,
+      "enter": null,
+      "shift-enter": null,
+      "tab": null,
+      "ctrl-o": null,
+      "ctrl-r": null,
+      "ctrl-u": null,
+      "ctrl-w": null
     }
   },
   {

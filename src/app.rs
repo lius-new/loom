@@ -168,10 +168,13 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         || {}
     });
     let document_state = state.clone();
-    cx.use_effect(s.workspace.active(), move || {
+    let active_view = (s.workspace.active_pane(), s.workspace.active());
+    cx.use_effect(active_view, move || {
         document_state.update(|app| {
             app.editor.drag = None;
             app.editor.menu = None;
+            // Leaving a view ends its Vim insert and returns it to Normal mode.
+            crate::editor::vim_input::sync_view(app);
         });
     });
     let show_term = s.show_terminal;
@@ -205,6 +208,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         git_inline_blame: s.git_inline_blame,
         git_split_diff: s.git_split_diff,
         git_tree_view: s.git_tree_view,
+        vim: s.vim.options.into(),
     };
     cx.use_effect(settings, move || {
         let _ = settings_persistence::save(&settings);

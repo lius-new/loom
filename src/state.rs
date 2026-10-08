@@ -152,6 +152,8 @@ pub enum MainSurface {
 #[derive(Clone)]
 pub struct AppState {
     pub editor: crate::editor::interaction::EditorInteraction,
+    /// Vim editing behaviour, when enabled in Settings.
+    pub vim: crate::vim::Vim,
     pub workspace: Workspace,
     pub focused: bool,
     /// File explorer drawer on the right.
@@ -296,6 +298,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             editor: Default::default(),
+            vim: Default::default(),
             workspace: Workspace::new(),
             focused: false,
             show_drawer: true,
@@ -394,6 +397,7 @@ impl AppState {
         app.theme = settings.theme;
         app.default_shell = settings.default_shell;
         app.terminal_cursor_blink = settings.terminal_cursor_blink;
+        app.vim.options = settings.vim.into();
         crate::workspace_actions::hydrate_workspace_folders(&mut app);
         crate::workspace_actions::hydrate_editor_layout(&mut app, session.editor_layout);
         crate::workspace_actions::open_launch_paths(&mut app, crate::launch::take_paths());

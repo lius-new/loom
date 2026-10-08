@@ -40,10 +40,13 @@ enum Setting {
     InlineBlame,
     SplitDiff,
     TreeView,
+    VimMode,
+    VimSystemClipboard,
 }
 
-const SECTIONS: [(&str, &[Setting]); 3] = [
+const SECTIONS: [(&str, &[Setting]); 4] = [
     ("APPEARANCE", &[Setting::Theme]),
+    ("EDITOR", &[Setting::VimMode, Setting::VimSystemClipboard]),
     (
         "TERMINAL",
         &[Setting::DefaultShell, Setting::TerminalCursorBlink],
@@ -63,6 +66,8 @@ impl Setting {
             Self::InlineBlame => "Inline blame",
             Self::SplitDiff => "Side-by-side diff",
             Self::TreeView => "Tree view",
+            Self::VimMode => "Vim mode",
+            Self::VimSystemClipboard => "Vim: use the system clipboard",
         }
     }
 
@@ -74,6 +79,10 @@ impl Setting {
             Self::InlineBlame => "Show the last commit for the current line in the editor.",
             Self::SplitDiff => "Open diffs with the old and new versions in two columns.",
             Self::TreeView => "Group changed files by folder in Source Control.",
+            Self::VimMode => "Edit with Vim modes, operators and motions.",
+            Self::VimSystemClipboard => {
+                "Yank, delete and put without a register name through the clipboard."
+            }
         }
     }
 
@@ -85,6 +94,8 @@ impl Setting {
             Self::InlineBlame => Some(app.git_inline_blame),
             Self::SplitDiff => Some(app.git_split_diff),
             Self::TreeView => Some(app.git_tree_view),
+            Self::VimMode => Some(app.vim.options.enabled),
+            Self::VimSystemClipboard => Some(app.vim.options.system_clipboard),
         }
     }
 
@@ -95,6 +106,11 @@ impl Setting {
             Self::InlineBlame => app.git_inline_blame ^= true,
             Self::SplitDiff => app.git_split_diff ^= true,
             Self::TreeView => app.git_tree_view ^= true,
+            Self::VimMode => {
+                let enabled = !app.vim.options.enabled;
+                crate::editor::vim_input::set_enabled(app, enabled);
+            }
+            Self::VimSystemClipboard => app.vim.options.system_clipboard ^= true,
         }
     }
 
@@ -477,6 +493,8 @@ mod tests {
             Setting::InlineBlame,
             Setting::SplitDiff,
             Setting::TreeView,
+            Setting::VimMode,
+            Setting::VimSystemClipboard,
         ] {
             let before = setting.enabled(&app).expect("on/off setting");
             setting.toggle(&mut app);

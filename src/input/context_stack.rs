@@ -14,6 +14,7 @@ pub const MENU: &str = "Menu";
 pub const DIALOG: &str = "Dialog";
 pub const CLOSE_CONFIRMATION: &str = "CloseConfirmation";
 pub const CLONE_REPOSITORY: &str = "CloneRepository";
+pub const VIM: &str = "Vim";
 
 pub fn os_name() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -61,6 +62,13 @@ pub fn editor_context(app: &AppState) -> KeyContext {
     editor
 }
 
+/// The Vim node below the editor, e.g. `Vim mode=normal`.
+pub fn vim_context(app: &AppState) -> KeyContext {
+    let mut vim = KeyContext::new(VIM);
+    vim.set("mode", app.vim.mode().context_name());
+    vim
+}
+
 /// The context stack from the root to the focused element.
 pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
     // Modal dialogs are roots of their own, so workspace bindings never reach
@@ -86,6 +94,9 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         stack.push(KeyContext::new(TERMINAL));
     } else if app.focused && app.main_surface() == MainSurface::Editor {
         stack.push(editor_context(app));
+        if crate::editor::vim_input::is_active(app) {
+            stack.push(vim_context(app));
+        }
     }
     if app.editor.menu.is_some() || app.context_menu.is_some() || app.tab_context_menu.is_some() {
         stack.push(KeyContext::new(MENU));
@@ -365,5 +376,100 @@ mod tests {
             &stack,
         );
         assert_eq!(second.actions, [Action::OpenKeymap]);
+    }
+}
+
+#[cfg(test)]
+mod vim_tests {
+    use super::*;
+    use crate::input::action::Action;
+    use crate::input::dispatcher::dispatch_key;
+    use crate::input::keymap::BindingSource;
+    use crate::input::keymap_file;
+    use crate::input::keystroke::Keystroke;
+
+    fn vim_app() -> AppState {
+        let mut app = AppState::new();
+        app.workspace
+            .open_path("main.rs".into(), "fn main() {}".into());
+        app.focused = true;
+        app.vim.options.enabled = true;
+        crate::editor::vim_input::sync_view(&mut app);
+        app
+    }
+
+    fn ks(source: &str) -> Keystroke {
+        Keystroke::parse(source).unwrap()
+    }
+
+    #[test]
+    fn vim_takes_conflicting_keys_and_leaves_application_shortcuts() {
+        let app = vim_app();
+        let stack = context_stack(&app);
+        assert_eq!(
+            describe(&stack[1..]),
+            "Editor extension=rs > Vim mode=normal"
+        );
+        let keymap = keymap_file::default_keymap();
+        for key in ["escape", "ctrl-v", "ctrl-r", "ctrl-d", "left", "enter", "j"] {
+            let result = dispatch_key(&keymap, Vec::new(), ks(key), &stack);
+            assert!(result.is_unbound(), "{key} goes to Vim");
+        }
+        let save = dispatch_key(&keymap, Vec::new(), ks("secondary-s"), &stack);
+        assert_eq!(save.actions.first(), Some(&Action::Save));
+    }
+
+    #[test]
+    fn user_mappings_are_key_sequences_in_vim_contexts() {
+        let mut app = vim_app();
+        let user = keymap_file::parse(
+            r#"[{ "context": "Vim && mode == insert", "bindings": { "j k": ["vim::Keys", "<Esc>"] } }]"#,
+            BindingSource::User,
+        )
+        .unwrap();
+        assert!(user.errors.is_empty());
+        let keymap = keymap_file::build(user.bindings);
+        let normal = context_stack(&app);
+        assert!(dispatch_key(&keymap, Vec::new(), ks("j"), &normal).is_unbound());
+
+        let mut editor = app.workspace.active_editor_mut().unwrap();
+        let mut host = NoHost;
+        app.vim
+            .handle_key(&mut editor, crate::vim::Key::Char('i'), &mut host);
+        drop(editor);
+        let insert = context_stack(&app);
+        let first = dispatch_key(&keymap, Vec::new(), ks("j"), &insert);
+        assert_eq!(first.pending, [ks("j")]);
+        let second = dispatch_key(&keymap, first.pending, ks("k"), &insert);
+        let Some(Action::VimKeys(keys)) = second.actions.first() else {
+            panic!("jk maps to vim::Keys");
+        };
+        assert_eq!(keys.keys(), "<Esc>");
+        // Another key after `j` types the `j` and then itself.
+        let first = dispatch_key(&keymap, Vec::new(), ks("j"), &insert);
+        let other = dispatch_key(&keymap, first.pending, ks("x"), &insert);
+        assert_eq!(other.replay.len(), 1);
+        assert!(other.replay[0].actions.is_empty() && other.is_unbound());
+    }
+
+    struct NoHost;
+
+    impl crate::vim::Clipboard for NoHost {
+        fn read(&mut self) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+        fn write(&mut self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    impl crate::vim::Host for NoHost {
+        fn page_lines(&self) -> usize {
+            10
+        }
+        fn visible_lines(&self) -> std::ops::Range<usize> {
+            0..10
+        }
+        fn request(&mut self, _: crate::vim::Request) {}
     }
 }

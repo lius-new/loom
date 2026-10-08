@@ -23,6 +23,9 @@ use crate::model::pane_layout::PaneId;
 use crate::model::text::TextBuffer;
 use crate::state::AppState;
 use crate::theme;
+use crate::vim::{self, CursorShape};
+
+use super::vim_input;
 
 const SCROLLBAR_SIZE: f32 = 12.0;
 const SCROLLBAR_INSET: f32 = 2.0;
@@ -60,10 +63,17 @@ pub fn render(
     let focused_pane = s.workspace.active_pane() == pane;
 
     let ime_rect = ime_cursor_rect(&s, rect);
+    // Vim's Normal and Visual modes take keys as commands, so the input
+    // method stays off until a mode accepts text.
+    let role = if s.vim.is_enabled() && !s.vim.accepts_text() {
+        SemanticRole::Group
+    } else {
+        SemanticRole::TextInput
+    };
     let mut root = Element::new(move |cx| {
         UiElement::panel(editor_id, rect, VisualStyle::filled(theme::c().bg))
             .ime_cursor_rect(ime_rect)
-            .semantics(Semantics::new(SemanticRole::TextInput).name("Code editor"))
+            .semantics(Semantics::new(role).name("Code editor"))
             .children(cx.children)
     })
     .event_policy(EventPolicy::INTERACTIVE)
@@ -163,11 +173,14 @@ pub fn render(
                                 buffer.line_range_with_break(line)
                             }
                             SelectionUnit::Word => buffer.word_range(cursor),
-                            SelectionUnit::Character => cursor..cursor,
+                            SelectionUnit::Character => {
+                                buffer.select_to(cursor, shift);
+                                // Dragging extends from where the selection is anchored.
+                                let anchor = buffer.selection_state().anchor.unwrap_or(cursor);
+                                anchor..anchor
+                            }
                         };
-                        if unit == SelectionUnit::Character {
-                            buffer.select_to(cursor, shift);
-                        } else {
+                        if unit != SelectionUnit::Character {
                             buffer.select_range(origin.clone());
                         }
                         app.editor.drag = Some(DragSelection {
@@ -178,6 +191,7 @@ pub fn render(
                         });
                     }
                 }
+                super::vim_input::after_pointer(app);
                 reveal_cursor(app, rect);
             });
             cx.stop_propagation();
@@ -264,28 +278,52 @@ pub fn render(
             code_top + metrics.content_h,
         ));
 
+        // Vim draws its own visual selection; other views show the core one.
+        let vim_view = s.vim.is_enabled() && s.vim.view() == Some((pane, id));
+        let selections: Vec<Range<usize>> = vim_view
+            .then(|| s.vim.highlights(buffer.buffer(), buffer.selection_state()))
+            .flatten()
+            .unwrap_or_else(|| buffer.selection().into_iter().collect());
+        let matches = if s.vim.is_enabled() {
+            s.vim.search_matches(buffer.buffer(), visible_lines.clone())
+        } else {
+            Vec::new()
+        };
         for line_index in visible_lines.clone() {
             let y = code_top + line_index as f32 * theme::LINE_H;
             let line = lines[line_index];
             let layout = layout_line(line, code_left, y, layout_right);
-            if let Some(selection) = buffer.selection() {
-                let (start, end) = (buffer.line_start(line_index), buffer.line_end(line_index));
-                let next = buffer.line_range_with_break(line_index).end;
-                if selection.start < next && selection.end > start {
-                    let from = selection.start.max(start).min(end);
-                    let to = selection.end.min(end).max(start);
-                    let left = caret_x(layout.as_ref(), buffer.text()[start..from].chars().count())
-                        .unwrap_or(code_left);
-                    let mut right =
-                        caret_x(layout.as_ref(), buffer.text()[start..to].chars().count())
-                            .unwrap_or(left);
-                    if selection.end > end {
-                        right += theme::CHAR_W;
-                    }
-                    code = code.child(panel(
-                        UiRect::new(left, y, right.max(left + 2.0), y + theme::LINE_H),
-                        VisualStyle::filled(theme::c().accent).alpha(55),
-                    ));
+            let (start, end) = (buffer.line_start(line_index), buffer.line_end(line_index));
+            let next = buffer.line_range_with_break(line_index).end;
+            // The part of `range` on this line, as a highlight rectangle.
+            let line_rect = |range: &Range<usize>| {
+                if range.start >= next || range.end <= start {
+                    return None;
+                }
+                let from = range.start.max(start).min(end);
+                let to = range.end.min(end).max(start);
+                let left = caret_x(layout.as_ref(), buffer.text()[start..from].chars().count())
+                    .unwrap_or(code_left);
+                let mut right = caret_x(layout.as_ref(), buffer.text()[start..to].chars().count())
+                    .unwrap_or(left);
+                if range.end > end {
+                    right += theme::CHAR_W;
+                }
+                Some(UiRect::new(
+                    left,
+                    y,
+                    right.max(left + 2.0),
+                    y + theme::LINE_H,
+                ))
+            };
+            for found in &matches {
+                if let Some(r) = line_rect(found) {
+                    code = code.child(panel(r, VisualStyle::filled(theme::c().warning).alpha(45)));
+                }
+            }
+            for selection in &selections {
+                if let Some(r) = line_rect(selection) {
+                    code = code.child(panel(r, VisualStyle::filled(theme::c().accent).alpha(55)));
                 }
             }
             let mut x = code_left;
@@ -314,13 +352,41 @@ pub fn render(
             let cursor_layout = layout_line(lines[cursor_line], code_left, cursor_y, layout_right);
             let cursor_x = caret_x(cursor_layout.as_ref(), cursor_col)
                 .unwrap_or(code_left + cursor_col as f32 * theme::CHAR_W);
-            let cursor_rect = UiRect::new(
-                cursor_x,
-                cursor_y + 3.0,
-                cursor_x + 2.0,
-                cursor_y + theme::LINE_H - 3.0,
-            );
-            code = code.child(panel(cursor_rect, VisualStyle::filled(theme::c().accent)));
+            let shape = if vim_view {
+                s.vim.cursor_shape()
+            } else {
+                CursorShape::Bar
+            };
+            if shape == CursorShape::Bar {
+                let cursor_rect = UiRect::new(
+                    cursor_x,
+                    cursor_y + 3.0,
+                    cursor_x + 2.0,
+                    cursor_y + theme::LINE_H - 3.0,
+                );
+                code = code.child(panel(cursor_rect, VisualStyle::filled(theme::c().accent)));
+            } else {
+                // Block cursors cover the character under the cursor.
+                let chars = buffer
+                    .grapheme_at(buffer.cursor())
+                    .filter(|grapheme| !grapheme.starts_with(['\r', '\n']))
+                    .map_or(0, |grapheme| grapheme.chars().count());
+                let right = (chars > 0)
+                    .then(|| caret_x(cursor_layout.as_ref(), cursor_col + chars))
+                    .flatten()
+                    .unwrap_or(cursor_x + theme::CHAR_W)
+                    .max(cursor_x + 2.0);
+                let top = match shape {
+                    CursorShape::Underline => cursor_y + theme::LINE_H - 3.0,
+                    CursorShape::HalfBlock => cursor_y + theme::LINE_H / 2.0,
+                    _ => cursor_y + 1.0,
+                };
+                let cursor_rect = UiRect::new(cursor_x, top, right, cursor_y + theme::LINE_H - 1.0);
+                code = code.child(panel(
+                    cursor_rect,
+                    VisualStyle::filled(theme::c().accent).alpha(140),
+                ));
+            }
             if let Some(session) = s.editor.preedit_for(pane, id) {
                 let width = layout_line(&session.text, 0.0, 0.0, metrics.content_w)
                     .map_or(80.0, |l| l.width)
@@ -952,20 +1018,45 @@ pub fn execute_command(
         }
         app.editor.menu = None;
         app.editor.drag = None;
-        if let Err(error) = apply_command(app, command, clipboard.as_ref()) {
-            app.show_error(format!("Clipboard: {error}"));
+        // Copy and Cut of a Vim visual selection go through Vim's registers.
+        if matches!(command, Command::Copy | Command::Cut)
+            && vim_input::visual_clipboard(app, command == Command::Cut, rect, clipboard.as_ref())
+        {
+            return;
         }
+        match apply_command(app, command, clipboard.as_ref()) {
+            Ok(pasted) => vim_input::record_insert(app, insert_event(command, pasted)),
+            Err(error) => app.show_error(format!("Clipboard: {error}")),
+        }
+        vim_input::after_command(app, matches!(command, Command::Undo | Command::Redo));
         reveal_cursor(app, rect);
     });
+}
+
+/// The typing event a default editing command makes in Vim's Insert mode;
+/// `None` for commands that move the cursor or reach outside typing.
+fn insert_event(command: Command, pasted: Option<String>) -> Option<vim::InsertEvent> {
+    use vim::InsertEvent;
+    Some(match command {
+        Command::Delete(false, false) => InsertEvent::Backspace,
+        Command::Delete(true, false) => InsertEvent::Delete,
+        Command::Delete(false, true) => InsertEvent::DeleteWordBack,
+        Command::Delete(true, true) => InsertEvent::DeleteWordForward,
+        Command::Enter => InsertEvent::Newline,
+        Command::Indent(false) => InsertEvent::Tab,
+        Command::Indent(true) => InsertEvent::Backtab,
+        Command::Paste => InsertEvent::Paste(pasted?),
+        _ => return None,
+    })
 }
 
 pub(crate) fn apply_command(
     app: &mut AppState,
     command: Command,
     clipboard: &dyn lgui::services::Clipboard,
-) -> Result<(), lgui::services::ClipboardError> {
+) -> Result<Option<String>, lgui::services::ClipboardError> {
     if app.workspace.active_editor().is_none() {
-        return Ok(());
+        return Ok(None);
     }
     match command {
         Command::Copy | Command::Cut => {
@@ -1002,6 +1093,7 @@ pub(crate) fn apply_command(
                 if let Some(mut buffer) = app.workspace.active_editor_mut() {
                     normal::paste(&mut buffer, &value);
                 }
+                return Ok(Some(value));
             }
         }
         Command::Delete(..)
@@ -1033,7 +1125,7 @@ pub(crate) fn apply_command(
             }
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn ime_cursor_rect(app: &AppState, rect: UiRect) -> UiRect {
@@ -1088,7 +1180,10 @@ fn update_drag_selection(app: &mut AppState, rect: UiRect) {
             drag.point.1,
         );
         match drag.unit {
-            SelectionUnit::Character => buffer.select_to(cursor, true),
+            SelectionUnit::Character => {
+                buffer.set_cursor(drag.origin.start);
+                buffer.select_to(cursor, true);
+            }
             SelectionUnit::Word | SelectionUnit::Line => {
                 let range = if drag.unit == SelectionUnit::Word {
                     buffer.word_range(cursor)
@@ -1110,6 +1205,7 @@ fn update_drag_selection(app: &mut AppState, rect: UiRect) {
             }
         }
     }
+    super::vim_input::after_pointer(app);
 }
 
 /// Called while the pointer is held down, even when it stops moving outside the viewport.
@@ -1202,6 +1298,18 @@ pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
     else {
         return;
     };
+    let in_active_view =
+        app.workspace.active_pane() == pane && app.workspace.active() == Some(document);
+    if in_active_view && vim_input::is_active(app) {
+        if vim_input::handle_text(app, input, rect) {
+            return;
+        }
+        // Text in Normal or Visual mode is not a command. Only a composition
+        // the input method commits late is still typed.
+        if session.is_none() {
+            return;
+        }
+    }
     if !input.is_empty() {
         app.workspace.promote_preview(pane, document);
     }

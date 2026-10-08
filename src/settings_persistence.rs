@@ -29,6 +29,41 @@ pub struct Settings {
     pub git_split_diff: bool,
     #[serde(default)]
     pub git_tree_view: bool,
+    #[serde(default)]
+    pub vim: VimSettings,
+}
+
+/// Preferences for Vim editing (`"vim"` in `settings.json`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(default)]
+pub struct VimSettings {
+    pub enabled: bool,
+    /// Yanks, deletes and puts without a register name use the system clipboard.
+    pub system_clipboard: bool,
+    pub ignore_case: bool,
+    pub smart_case: bool,
+}
+
+impl From<VimSettings> for crate::vim::Options {
+    fn from(settings: VimSettings) -> Self {
+        Self {
+            enabled: settings.enabled,
+            system_clipboard: settings.system_clipboard,
+            ignore_case: settings.ignore_case,
+            smart_case: settings.smart_case,
+        }
+    }
+}
+
+impl From<crate::vim::Options> for VimSettings {
+    fn from(options: crate::vim::Options) -> Self {
+        Self {
+            enabled: options.enabled,
+            system_clipboard: options.system_clipboard,
+            ignore_case: options.ignore_case,
+            smart_case: options.smart_case,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -40,6 +75,7 @@ impl Default for Settings {
             git_inline_blame: false,
             git_split_diff: false,
             git_tree_view: false,
+            vim: VimSettings::default(),
         }
     }
 }
@@ -95,6 +131,11 @@ mod tests {
             git_inline_blame: true,
             git_split_diff: true,
             git_tree_view: true,
+            vim: VimSettings {
+                enabled: true,
+                smart_case: true,
+                ..VimSettings::default()
+            },
         };
 
         let json = serde_json::to_string(&settings).unwrap();
@@ -132,6 +173,7 @@ mod tests {
                 git_inline_blame: true,
                 git_split_diff: false,
                 git_tree_view: true,
+                vim: VimSettings::default(),
             }
         );
     }

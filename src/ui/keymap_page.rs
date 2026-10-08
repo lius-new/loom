@@ -65,6 +65,7 @@ fn shortcut_rows(keymap: &Keymap) -> Vec<ShortcutRow> {
         {
             let action = match binding.action {
                 Action::ActivateItem(index) => format!("{} {index}", meta.name),
+                Action::VimKeys(keys) => format!("{} {}", meta.name, keys.keys()),
                 _ => meta.name.to_owned(),
             };
             rows.push(ShortcutRow {

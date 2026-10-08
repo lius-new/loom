@@ -118,7 +118,7 @@ Vim 的包含式选择、行选择和块选择属于 Vim 层的概念，在执�
 
 Normal 下命令按键由 Vim 行为消费；Insert 下普通文本输入、中文输入法和常规插入操作复用已有路径。搜索框、命令框、对话框及其他文本控件依据焦点处理自己的输入。焦点离开编辑区域后，不能继续消费其他控件的输入。
 
-**优先规则：** 应用快捷键与 Vim 按键的冲突沿用现有按键映射的上下文机制解决。启用 Vim 时，编辑区域的上下文栈中加入表示 Vim 模式的上下文（例如 Normal、Insert、Visual），它比 `Editor` 更深，因此其中的绑定优先于普通编辑快捷键；未被 Vim 上下文绑定的按键继续落到应用快捷键。用户通过 `keymap.json` 在 Vim 上下文中添加绑定，或以 `null` 释放某个按键给应用使用。
+**优先规则：** 应用快捷键与 Vim 按键的冲突沿用现有按键映射的上下文机制解决。启用 Vim 时，编辑区域的上下文栈在 `Editor` 下加入 `Vim mode=normal|visual|insert|replace` 节点，它比 `Editor` 更深。每个按键先经过按键映射：有绑定的按键执行绑定的动作，没有任何绑定的按键交给 Vim。默认按键映射在 Vim 上下文中把与 Vim 冲突的按键（如 Normal 模式下的 `Esc`、方向键、`Ctrl-v`、`Ctrl-r`、`Ctrl-d`，Insert 模式下的 `Esc`、`Backspace`、`Enter`、`Ctrl-w`）绑定为 `null`，这些按键因此交给 Vim；`Ctrl-s`、`Ctrl-z` 等其余应用快捷键照常生效。用户可在 `keymap.json` 的 Vim 上下文中重新绑定这些按键，把它们交还给应用。
 
 ### 6.2 输入法与待完成序列
 
@@ -191,14 +191,20 @@ Vim 行为层在 Loom 内自研，不嵌入外部 Vim 引擎。理由：
 
 两种编辑行为使用同一套文档呈现和布局。行为提供光标形态、附加高亮、状态文本等呈现信息，绘制层不解析 Vim 命令。
 
-鼠标点击、拖选、滚动和窗格切换继续使用编辑器现有基础能力。Vim 接入层根据这些动作更新模式或取消待完成命令；具体交互规则应写入功能验收，避免鼠标行为与键盘状态相互脱节。
+鼠标点击、拖选、滚动和窗格切换继续使用编辑器现有基础能力。Vim 接入层根据这些动作更新模式或取消待完成命令，规则如下：
+
+- 任何点击或拖选都取消待完成的命令和命令行。
+- 在 Normal 或 Visual 模式下，单击回到 Normal 模式，光标落在字符上；拖选、双击选词或三击选行进入字符 Visual 模式。
+- 在 Insert 模式下点击，保持 Insert 模式，从新位置继续输入；`.` 只重复点击之后输入的内容。
+- 应用的全选进入字符 Visual 模式；应用的撤销、重做与 `u` 相同，光标落在变更处，不保留选区。
+- 切换窗格或标签页时，离开的视图结束输入并回到 Normal 模式，进入的视图从 Normal 模式开始。
 
 保存、关闭、切换文档等操作继续由应用层执行。Vim 命令入口调用这些能力，并复用未保存提示和错误反馈。
 
 配置分两处保存：
 
-- `settings.json`：是否启用 Vim、剪贴板同步，以及少量必要选项（如搜索是否区分大小写、映射超时）。
-- `keymap.json`：应用快捷键与 Vim 上下文中的按键绑定（见 6.1），以及用户的 Vim 按键映射。映射默认不递归，具体写法在阶段三确定。
+- `settings.json` 中的 `"vim"` 对象：`enabled`（是否启用 Vim）、`system_clipboard`（无名寄存器与系统剪贴板同步），以及 `ignore_case`、`smart_case`。设置页提供前两项的开关；`:set` 可在运行中修改搜索选项。
+- `keymap.json`：应用快捷键与 Vim 上下文中的按键绑定（见 6.1），以及用户的 Vim 按键映射。映射写作 Vim 上下文中的绑定，动作为 `["vim::Keys", "<Esc>"]`，例如在 `Vim && mode == insert` 中把 `"j k"` 映射为 `<Esc>`。映射发出的按键直接交给 Vim，不再经过映射，因此映射不递归。多键映射沿用按键序列的等待机制，超时为 1 秒；超时或后续按键不匹配时，已按下的键按未映射的按键执行。
 
 当前计数、待完成操作符、输入法组合等临时交互状态不持久化。
 
@@ -237,8 +243,8 @@ Vim 行为层在 Loom 内自研，不嵌入外部 Vim 引擎。理由：
 
 完成条件：
 
-- [ ] P0 清单全部实现，每项都有表驱动验收用例。
-- [ ] Vim 可以在运行中开启和关闭，关闭后普通编辑行为与阶段二一致。
+- [x] P0 清单全部实现，每项都有表驱动验收用例。
+- [x] Vim 可以在运行中开启和关闭，关闭后普通编辑行为与阶段二一致。
 
 ### 阶段四：完成实用范围并验证集成
 
@@ -246,9 +252,9 @@ Vim 行为层在 Loom 内自研，不嵌入外部 Vim 引擎。理由：
 
 完成条件：
 
-- [ ] P1 清单全部实现。
-- [ ] 第 10 节的验收序列全部通过。
-- [ ] “不支持命令”列表已整理，支持范围内的行为稳定。
+- [x] P1 清单全部实现。
+- [x] 第 10 节的验收序列全部通过。
+- [x] “不支持命令”列表已整理（附录 B），支持范围内的行为稳定。
 
 ## 10. 验收标准与扩展边界
 
@@ -258,13 +264,13 @@ Vim 行为层在 Loom 内自研，不嵌入外部 Vim 引擎。理由：
 
 Vim 验收使用日常操作序列。例如：
 
-- 使用计数、操作符和文本对象完成编辑，撤销后恢复合理的文本与光标。
-- 执行插入后使用点重复，在新位置获得正确结果。
-- 使用字符、行和块寄存器复制粘贴，并验证历史和选区。
-- 经系统剪贴板在 Loom 与外部程序之间复制粘贴，并验证内容类型。
-- 在 Insert 中使用中文输入法，再退出到 Normal，确认没有丢字或误触命令。
-- 在共享文档的多个窗格间切换，确认状态、位置和历史符合约定。
-- 关闭 Vim 后继续普通编辑，确认默认输入与快捷键正常。
+- 使用计数、操作符和文本对象完成编辑，撤销后恢复合理的文本与光标。（`vim::tests::text_objects`、`undo_puts_the_cursor_on_the_change`）
+- 执行插入后使用点重复，在新位置获得正确结果。（`vim::tests::undo_redo_and_repeat`、`editor::vim_integration_tests::insert_mode_keys_go_to_vim_and_are_repeated`）
+- 使用字符、行和块寄存器复制粘贴，并验证历史和选区。（`vim::tests::registers_and_put`、`visual_selections`）
+- 经系统剪贴板在 Loom 与外部程序之间复制粘贴，并验证内容类型。（`vim::tests::system_clipboard_registers`、`vim::register::tests`）
+- 在 Insert 中使用中文输入法，再退出到 Normal，确认没有丢字或误触命令。（`editor::vim_integration_tests::input_method_text_in_insert_mode_then_normal_mode_commands`）
+- 在共享文档的多个窗格间切换，确认状态、位置和历史符合约定。（`editor::vim_input::tests::switching_panes_ends_the_insert_and_shares_text_and_history`）
+- 关闭 Vim 后继续普通编辑，确认默认输入与快捷键正常。（`editor::vim_integration_tests::turning_vim_off_restores_default_editing`）
 
 扩展性通过实际边界衡量：新增编辑命令能够复用核心操作，替换底层存储无需重写输入语义，新增输入行为不必侵入文档和历史内部；确有新的共同能力时，可以有目的地调整核心 API。
 
@@ -294,8 +300,8 @@ Emacs 只用于检验这些边界是否合理，本次不实现 Emacs，也不�
 | --- | --- | --- | --- | --- |
 | 一：确认普通编辑基线 | 完成 | 2026-10-08 | 2026-10-08 | 产出见 `docs/editor-core-baseline.md`；测试 `editor::baseline_tests`、`perf_baseline` |
 | 二：共同编辑核心与迁移 | 完成 | 2026-10-08 | 2026-10-08 | 核心位于 `src/model/text/`，默认编辑行为位于 `src/editor/normal.rs`；测试 `model::text::*`、`editor::normal`、`editor::baseline_tests`、`editor_view::tests::a_late_composition_commit_*`；性能见 `docs/editor-core-baseline.md` 第 3 节 |
-| 三：Vim P0 工作流 | 未开始 | | | |
-| 四：Vim P1 与集成验证 | 未开始 | | | |
+| 三：Vim P0 工作流 | 完成 | 2026-10-08 | 2026-10-08 | Vim 层位于 `src/vim/`，接入位于 `src/editor/vim_input.rs`；测试 `vim::tests`、`editor::vim_integration_tests` |
+| 四：Vim P1 与集成验证 | 完成 | 2026-10-08 | 2026-10-08 | 验收序列见第 10 节对应测试；不支持的命令见附录 B |
 
 日期使用 `YYYY-MM-DD`。前一阶段完成之前，后一阶段不开始；如需提前做准备工作（例如原型验证），在备注中说明，不改变阶段状态。
 
@@ -312,6 +318,11 @@ Emacs 只用于检验这些边界是否合理，本次不实现 Emacs，也不�
 | 2026-10-08 | 现有缺陷 | 逐字输入随文档大小线性变慢：字素边界查询从文档开头遍历，每次输入后重新计算全部行宽（10 MB 文档每字符约 178 ms） | 4.1、4.3 | 已修复：局部字素查询、增量行索引、缓存行宽 |
 | 2026-10-08 | 现有缺陷 | 多行缩进逐行改写文本，复杂度为二次（10 MB 全选缩进约 24 s） | 4.3 | 已修复：一次批量修改 |
 | 2026-10-08 | 现有缺陷 | 输入法组合状态是应用级的，提交写入当时的活动文档 | 6.2 | 已修复：组合会话属于开始时的视图 |
+| 2026-10-08 | 设计变更 | `o`、`O` 沿用当前行缩进，整行修改（`cc`、`S`、跨行的 `ci{`）保留首行缩进，相当于 Vim 开启 `autoindent`，与普通编辑的回车一致 | 7.2 | 已实施 |
+| 2026-10-08 | 设计变更 | 按键优先的具体机制、鼠标交互规则与映射写法在实现时确定，已先写入 6.1 与第 8 节 | 6.1、8 | 已实施 |
+| 2026-10-08 | 范围调整 | 宏只记录交给 Vim 的按键和输入的文本；由普通编辑快捷键处理的按键（Insert 中的方向键、`Shift-Tab`、`Ctrl-Backspace`、应用的粘贴）不进入宏 | 7.4 | 列入附录 B |
+| 2026-10-08 | 范围调整 | 标记以文档偏移保存，不随其他位置的修改移动；跳转列表只在当前文档内跳转 | 7.4 | 列入附录 B |
+| 2026-10-08 | 范围调整 | 搜索模式不支持反向引用（`\1`，替换文本中支持）；`:set` 只支持 `ignorecase`、`smartcase`、`hlsearch` | 7.2 | 列入附录 B |
 | 2026-10-08 | 现有缺陷 | 撤销的反向变更由前后文本求最小差异，其他视图的位置可能落在相邻边界 | 4.4 | 已修复：历史记录精确变更 |
 | 2026-10-08 | 设计变更 | 历史存储由整文本快照改为精确变更记录，以精确变换其他视图的位置并降低内存占用（已先修改 4.4） | 4.4 | 已实施 |
 
@@ -332,27 +343,45 @@ Emacs 只用于检验这些边界是否合理，本次不实现 Emacs，也不�
 
 | 功能组 | 命令 | 状态 | 备注 |
 | --- | --- | --- | --- |
-| 模式 | `i` `a` `I` `A` `o` `O`；`v` `V` `Ctrl-v`；`R`、`r`；`Esc` `Ctrl-[` 返回 Normal | 未开始 | |
-| 移动 | `h` `j` `k` `l`；`w` `b` `e` `W` `B` `E`；`0` `^` `$`；`gg` `G` `{count}G`；`f` `F` `t` `T` `;` `,`；`%`；`{` `}`；`Ctrl-d` `Ctrl-u` | 未开始 | |
-| 操作符与编辑 | `d` `c` `y`；`dd` `cc` `yy`；`D` `C` `Y`；`x` `X` `s` `S`；`J`；`~` | 未开始 | |
-| 文本对象 | `iw` `aw`；`i"` `a"` `i'` `a'`；`i(` `a(` `ib` `ab`；`i[` `a[`；`i{` `a{` `iB` `aB` | 未开始 | |
-| 寄存器与粘贴 | 无名寄存器、`"a`–`"z`、`"0`、`"+` `"*`；`p` `P`；Visual 下 `d` `c` `y` `p` | 未开始 | |
-| 历史与重复 | `u` `Ctrl-r` `.` | 未开始 | |
-| 搜索 | `/` `?` `n` `N` `*` `#` | 未开始 | |
-| 命令 | `:w` `:q` `:q!` `:wq` `:x` `:{行号}` | 未开始 | |
-| 反馈 | 模式指示、待完成命令显示、按模式区分的光标形态、错误提示 | 未开始 | |
+| 模式 | `i` `a` `I` `A` `o` `O`；`v` `V` `Ctrl-v`；`R`、`r`；`Esc` `Ctrl-[` 返回 Normal | 完成 | `vim::tests::change_and_insert`、`visual_selections`、`modes_report_status_and_cursor_shape`；`editor::vim_integration_tests` |
+| 移动 | `h` `j` `k` `l`；`w` `b` `e` `W` `B` `E`；`0` `^` `$`；`gg` `G` `{count}G`；`f` `F` `t` `T` `;` `,`；`%`；`{` `}`；`Ctrl-d` `Ctrl-u` | 完成 | `vim::tests::character_and_line_motions`、`word_motions`、`finds_matches_and_paragraphs`；`vim::motion::tests` |
+| 操作符与编辑 | `d` `c` `y`；`dd` `cc` `yy`；`D` `C` `Y`；`x` `X` `s` `S`；`J`；`~` | 完成 | `vim::tests::operators_with_motions`、`line_operators`、`change_and_insert`、`joins_and_counts` |
+| 文本对象 | `iw` `aw`；`i"` `a"` `i'` `a'`；`i(` `a(` `ib` `ab`；`i[` `a[`；`i{` `a{` `iB` `aB` | 完成 | `vim::tests::text_objects`；`vim::object::tests` |
+| 寄存器与粘贴 | 无名寄存器、`"a`–`"z`、`"0`、`"+` `"*`；`p` `P`；Visual 下 `d` `c` `y` `p` | 完成 | `vim::tests::registers_and_put`、`system_clipboard_registers`、`visual_selections`；`vim::register::tests` |
+| 历史与重复 | `u` `Ctrl-r` `.` | 完成 | `vim::tests::undo_redo_and_repeat`、`undo_puts_the_cursor_on_the_change` |
+| 搜索 | `/` `?` `n` `N` `*` `#` | 完成 | `vim::tests::search_and_star`；`vim::search::tests` |
+| 命令 | `:w` `:q` `:q!` `:wq` `:x` `:{行号}` | 完成 | `vim::tests::command_line_and_ex` |
+| 反馈 | 模式指示、待完成命令显示、按模式区分的光标形态、错误提示 | 完成 | 状态栏左侧显示模式、命令行或消息、待完成按键和宏录制；`vim::tests::modes_report_status_and_cursor_shape` |
 
 ### P1（阶段四）
 
 | 功能组 | 命令 | 状态 | 备注 |
 | --- | --- | --- | --- |
-| 移动 | `H` `M` `L`；`ge` `gE`；`gj` `gk`（显示行）；`Ctrl-f` `Ctrl-b`；`zz` `zt` `zb` | 未开始 | |
-| 操作符与编辑 | `>` `<` `>>` `<<`；`gu` `gU` `g~`；`gJ`；`Ctrl-a` `Ctrl-x` | 未开始 | |
-| 文本对象 | `ip` `ap`；`i<` `a<`；`` i` `` `` a` `` | 未开始 | |
-| 寄存器 | `"A`–`"Z` 追加；`"1`–`"9` 删除历史；`"-`；`"_`；Insert 下 `Ctrl-r {reg}` | 未开始 | |
-| 标记与跳转 | `m{a-z}`；`'{a-z}` `` `{a-z} ``；`''` ` `` `；`Ctrl-o` `Ctrl-i` | 未开始 | |
-| 宏 | `q{reg}` … `q`；`@{reg}` `@@`，支持计数 | 未开始 | |
-| 映射 | 用户按键映射（默认不递归），含 Insert 下的多键映射与超时 | 未开始 | |
-| Visual | `o` 切换端点；`gv`；块选择下 `I` `A` `c` `$` | 未开始 | |
-| Insert | `Ctrl-w` `Ctrl-u` `Ctrl-o` | 未开始 | |
-| 命令 | `:s`（当前行、`%` 与行范围，`g` `i` 标志）；`:noh`；`:set` 少量选项（`ignorecase` `smartcase`） | 未开始 | |
+| 移动 | `H` `M` `L`；`ge` `gE`；`gj` `gk`（显示行）；`Ctrl-f` `Ctrl-b`；`zz` `zt` `zb` | 完成 | Loom 不折行，`gj` `gk` 与 `j` `k` 相同；`vim::tests::word_motions` |
+| 操作符与编辑 | `>` `<` `>>` `<<`；`gu` `gU` `g~`；`gJ`；`Ctrl-a` `Ctrl-x` | 完成 | 缩进单位与普通编辑相同（两个空格）；`vim::tests::change_and_insert`、`visual_selections`、`joins_and_counts` |
+| 文本对象 | `ip` `ap`；`i<` `a<`；`` i` `` `` a` `` | 完成 | `vim::tests::text_objects`；`vim::object::tests` |
+| 寄存器 | `"A`–`"Z` 追加；`"1`–`"9` 删除历史；`"-`；`"_`；Insert 下 `Ctrl-r {reg}` | 完成 | `vim::tests::registers_and_put`、`insert_mode_keys` |
+| 标记与跳转 | `m{a-z}`；`'{a-z}` `` `{a-z} ``；`''` ` `` `；`Ctrl-o` `Ctrl-i` | 完成 | 标记不随修改移动，跳转限当前文档（11.4）；`vim::tests::marks_jumps_and_macros` |
+| 宏 | `q{reg}` … `q`；`@{reg}` `@@`，支持计数 | 完成 | 只记录交给 Vim 的按键与输入的文本（11.4）；`vim::tests::marks_jumps_and_macros` |
+| 映射 | 用户按键映射（默认不递归），含 Insert 下的多键映射与超时 | 完成 | `keymap.json` 中的 `["vim::Keys", …]`（第 8 节）；`input::context_stack::vim_tests` |
+| Visual | `o` 切换端点；`gv`；块选择下 `I` `A` `c` `$` | 完成 | `vim::tests::visual_selections` |
+| Insert | `Ctrl-w` `Ctrl-u` `Ctrl-o` | 完成 | `vim::tests::insert_mode_keys` |
+| 命令 | `:s`（当前行、`%` 与行范围，`g` `i` 标志）；`:noh`；`:set` 少量选项（`ignorecase` `smartcase`） | 完成 | 另支持 `:d`、`:y` 与 `'<,'>`；`vim::tests::command_line_and_ex` |
+
+## 附录 B：不支持的命令与已知限制
+
+以下内容不在本次范围内，或只部分支持。输入未支持的 Normal 模式命令时按键被丢弃，未支持的 Ex 命令提示 `E492`。
+
+| 类别 | 内容 |
+| --- | --- |
+| 脚本与插件 | Vimscript、`:normal`、`:global`、`:execute`、插件及 `.vimrc` |
+| Ex 命令 | 除 `:w` `:q` `:q!` `:wq` `:x` `:{行号}` `:s` `:d` `:y` `:noh` `:set` 以外的命令；`:s` 的 `c`（逐个确认）标志 |
+| 选项 | 除 `ignorecase`、`smartcase`、`hlsearch` 以外的选项（如 `shiftwidth`、`textwidth`、`wrap`） |
+| 窗口与缓冲区 | `Ctrl-w` 窗口命令、`:e` `:bn` 等缓冲区命令（使用 Loom 的窗格与标签页操作） |
+| 折叠与格式 | `z` 折叠命令、`=` `gq` 格式化、自动补全（`Ctrl-n` `Ctrl-p` 在 Normal 模式下为上下移动） |
+| 搜索 | 模式中的反向引用 `\1`；`\%V` 等 Vim 专有原子；`:s` 替换文本中的 `~` |
+| 标记 | 大写（跨文件）标记、`` `[ `` `` `] `` `` `. `` 等自动标记；标记不随修改移动 |
+| 跳转 | 跨文件跳转；`g;` `g,` 修改列表 |
+| 宏 | 不记录由普通编辑快捷键处理的按键（Insert 中的方向键、`Shift-Tab`、`Ctrl-Backspace`、应用的粘贴） |
+| 映射 | 只支持非递归映射；超时固定为 1 秒；映射不接收计数 |
+| 显示行 | Loom 不折行，`gj` `gk` 与 `j` `k` 相同 |

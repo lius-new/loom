@@ -1750,6 +1750,7 @@ dependencies = [
  "lgui",
  "notify",
  "portable-pty",
+ "regex",
  "ring",
  "serde",
  "serde_json",

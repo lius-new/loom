@@ -18,8 +18,8 @@ mod lines;
 mod selection;
 
 pub use buffer::TextBuffer;
-pub use change::{Assoc, Edit};
+pub use change::{Assoc, ChangeSet, Edit};
 pub use editor::{Editor, EditorMut};
 pub use history::EditKind;
-pub use lines::display_width;
+pub use lines::{display_width, grapheme_width};
 pub use selection::Selection;

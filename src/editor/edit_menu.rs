@@ -59,7 +59,9 @@ pub fn render(
         let enabled = s.workspace.active_editor().is_some_and(|b| match command {
             Command::Undo => b.can_undo(),
             Command::Redo => b.can_redo(),
-            Command::Copy | Command::Cut => b.selection().is_some(),
+            Command::Copy | Command::Cut => {
+                b.selection().is_some() || matches!(s.vim.mode(), crate::vim::Mode::Visual(_))
+            }
             _ => true,
         });
         let r = UiRect::new(

@@ -25,9 +25,12 @@ pub const USER_TEMPLATE: &str = r#"// Loom key bindings. Entries here override t
 // Each section maps keystrokes to actions while its context is active:
 //   - keystrokes: modifiers joined with "-" (ctrl, alt, shift, cmd, secondary),
 //     sequences separated by spaces: "secondary-k secondary-s"
-//   - contexts: Workspace, Editor, Terminal, Input, Menu, CloseConfirmation,
-//     CloneRepository; combine with &&, ||, ! and >
+//   - contexts: Workspace, Editor, Vim (mode=normal|visual|insert|replace),
+//     Terminal, Input, Menu, CloseConfirmation, CloneRepository; combine with
+//     &&, ||, ! and >. Keys no binding claims in a Vim context go to Vim.
 //   - actions: "namespace::Name", ["pane::ActivateItem", 0], or null to disable
+//   - Vim key mappings send keys in Vim notation to Vim, not mapped again:
+//     { "context": "Vim && mode == insert", "bindings": { "j k": ["vim::Keys", "<Esc>"] } }
 //
 // The Keymap page (secondary-k secondary-s) lists every action and its binding.
 [

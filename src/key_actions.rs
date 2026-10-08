@@ -19,9 +19,10 @@ use lgui::services::ServicesContextExt;
 use notify::{RecursiveMode, Watcher};
 
 use crate::editor::editor_view;
+use crate::editor::vim_input;
 use crate::input::action::Action;
 use crate::input::context::KeyContext;
-use crate::input::context_stack::{self, EDITOR, TERMINAL};
+use crate::input::context_stack::{self, EDITOR, TERMINAL, VIM};
 use crate::input::dispatcher::{self, Replay};
 use crate::input::keymap;
 use crate::input::keymap_file::{self, UserKeymap};
@@ -87,7 +88,6 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
         return false;
     }
     let keymap = keymap::current();
-    #[cfg(debug_assertions)]
     let typed = keystroke.clone();
     let result = dispatcher::dispatch_key(&keymap, pending, keystroke, &stack);
     // `LOOM_LOG_KEYS=1 cargo run` traces how each keystroke resolved.
@@ -114,7 +114,19 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
     }
     let waiting = !result.pending.is_empty();
     set_pending(&env.state, result.pending);
-    waiting || run_actions(env, &result.actions)
+    waiting || run_actions(env, &result.actions) || vim_key(env, &stack, &typed)
+}
+
+/// Offer a keystroke no binding claimed to Vim, when it drives the editor.
+fn vim_key(env: &KeyEnv, stack: &[KeyContext], keystroke: &Keystroke) -> bool {
+    if !stack.iter().any(|context| context.primary() == Some(VIM)) {
+        return false;
+    }
+    let Some(key) = crate::vim::Key::from_keystroke(keystroke) else {
+        return false;
+    };
+    let clipboard = env.application.clipboard();
+    vim_input::handle_key(&env.state, key, env.editor_rect, clipboard.as_ref())
 }
 
 /// Resolve a sequence that timed out, if `seq` still identifies it.
@@ -182,14 +194,14 @@ fn run_actions(env: &KeyEnv, actions: &[Action]) -> bool {
 }
 
 fn run_replay(env: &KeyEnv, stack: &[KeyContext], replay: Replay) {
-    if run_actions(env, &replay.actions) {
+    if run_actions(env, &replay.actions) || vim_key(env, stack, &replay.keystroke) {
         return;
     }
     let Some(text) = replay.keystroke.text() else {
         return;
     };
     match stack.last().and_then(KeyContext::primary) {
-        Some(EDITOR) => {
+        Some(EDITOR | VIM) => {
             let rect = env.editor_rect;
             env.state
                 .update(move |app| editor_view::insert_text(app, &text, rect));
@@ -223,6 +235,15 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
                 None => env.state.update(|app| app.apply(action)),
             }
             true
+        }
+        Action::VimKeys(keys) => {
+            let clipboard = env.application.clipboard();
+            vim_input::feed_keys(
+                &env.state,
+                &keys.keys(),
+                env.editor_rect,
+                clipboard.as_ref(),
+            )
         }
         Action::OpenKeymapFile => {
             open_keymap_file(env);

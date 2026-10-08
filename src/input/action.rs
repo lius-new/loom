@@ -26,6 +26,8 @@ macro_rules! actions {
             $($variant,)*
             /// `["pane::ActivateItem", index]`: select a tab by position.
             ActivateItem(usize),
+            /// `["vim::Keys", "<Esc>"]`: send keys to Vim, without remapping them.
+            VimKeys(VimKeys),
             /// `null` in a keymap file: disables the keystroke in that context.
             NoAction,
         }
@@ -36,6 +38,11 @@ macro_rules! actions {
             ActionMeta {
                 name: "pane::ActivateItem",
                 description: "Activate the tab at a zero-based position",
+                takes_argument: true,
+            },
+            ActionMeta {
+                name: "vim::Keys",
+                description: "Send keys in Vim notation to Vim (a key mapping)",
                 takes_argument: true,
             },
         ];
@@ -52,6 +59,7 @@ macro_rules! actions {
                 match self {
                     $(Action::$variant => $name,)*
                     Action::ActivateItem(_) => "pane::ActivateItem",
+                    Action::VimKeys(_) => "vim::Keys",
                     Action::NoAction => "null",
                 }
             }
@@ -141,6 +149,33 @@ actions! {
     DialogSecondary => "dialog::Secondary", "Choose the dialog's secondary option";
 }
 
+/// Keys of a `vim::Keys` binding, interned so `Action` stays `Copy`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VimKeys(usize);
+
+fn interned_keys() -> &'static std::sync::Mutex<Vec<String>> {
+    static KEYS: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> = std::sync::OnceLock::new();
+    KEYS.get_or_init(Default::default)
+}
+
+impl VimKeys {
+    pub fn intern(keys: &str) -> Self {
+        let mut interned = interned_keys().lock().expect("interned keys lock");
+        let index = interned
+            .iter()
+            .position(|known| known == keys)
+            .unwrap_or_else(|| {
+                interned.push(keys.to_owned());
+                interned.len() - 1
+            });
+        Self(index)
+    }
+
+    pub fn keys(self) -> String {
+        interned_keys().lock().expect("interned keys lock")[self.0].clone()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActionError(pub String);
 
@@ -173,6 +208,15 @@ impl Action {
                         .ok_or_else(|| {
                             ActionError(
                                 "`pane::ActivateItem` needs a non-negative index".to_owned(),
+                            )
+                        }),
+                    "vim::Keys" => argument
+                        .as_str()
+                        .filter(|keys| !keys.is_empty())
+                        .map(|keys| Action::VimKeys(VimKeys::intern(keys)))
+                        .ok_or_else(|| {
+                            ActionError(
+                                "`vim::Keys` needs keys in Vim notation, e.g. \"<Esc>\"".to_owned(),
                             )
                         }),
                     _ if unit_action(name).is_some() => {
@@ -261,7 +305,9 @@ mod tests {
     #[test]
     fn names_round_trip_for_every_listed_action() {
         for meta in ACTIONS {
-            let value = if meta.takes_argument {
+            let value = if meta.name == "vim::Keys" {
+                json!([meta.name, "<Esc>"])
+            } else if meta.takes_argument {
                 json!([meta.name, 0])
             } else {
                 json!(meta.name)

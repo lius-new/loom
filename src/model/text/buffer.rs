@@ -11,6 +11,16 @@ use super::history::History;
 use super::lines::{LineIndex, display_width, grapheme_width};
 use super::selection::Selection;
 
+/// The line break ending the first line, if it has one.
+fn first_line_ending(text: &str, lines: &LineIndex) -> Option<&'static str> {
+    let next = lines.next_start(0)?;
+    Some(if next >= 2 && text.as_bytes()[next - 2] == b'\r' {
+        "\r\n"
+    } else {
+        "\n"
+    })
+}
+
 /// Apply validated, sorted edits to `text` in one pass.
 pub(super) fn apply(text: &mut String, edits: Vec<Edit>) -> ChangeSet {
     let mut changes = Vec::with_capacity(edits.len());
@@ -56,16 +66,21 @@ pub struct TextBuffer {
     lines: Arc<LineIndex>,
     history: Arc<History>,
     version: u64,
+    /// The line break of the first line, kept for when no line break is left.
+    ending: &'static str,
 }
 
 impl TextBuffer {
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
+        let lines = LineIndex::new(&text);
+        let ending = first_line_ending(&text, &lines).unwrap_or("\n");
         Self {
-            lines: Arc::new(LineIndex::new(&text)),
+            lines: Arc::new(lines),
             text: Arc::new(text),
             history: Arc::default(),
             version: 0,
+            ending,
         }
     }
 
@@ -104,6 +119,9 @@ impl TextBuffer {
         let changes = apply(Arc::make_mut(&mut self.text), edits);
         Arc::make_mut(&mut self.lines).update(&self.text, &changes);
         self.version += 1;
+        if let Some(ending) = first_line_ending(&self.text, &self.lines) {
+            self.ending = ending;
+        }
         Ok(changes)
     }
 
@@ -269,10 +287,7 @@ impl TextBuffer {
 
     /// The line break the document uses, judged by its first line.
     pub fn line_ending(&self) -> &'static str {
-        match self.lines.next_start(0) {
-            Some(next) if next >= 2 && self.text.as_bytes()[next - 2] == b'\r' => "\r\n",
-            _ => "\n",
-        }
+        self.ending
     }
 
     // ---- Display columns -----------------------------------------------------
@@ -299,6 +314,33 @@ impl TextBuffer {
             offset = range.start + index + grapheme.len();
         }
         offset
+    }
+
+    /// The text of `line` covering display columns `left..right`. A wide
+    /// character or tab that straddles either edge is included whole; a line
+    /// that ends before `left` has no range.
+    pub fn display_column_range(
+        &self,
+        line: usize,
+        left: usize,
+        right: usize,
+    ) -> Option<Range<usize>> {
+        let range = self.line_range(line);
+        let mut x = 0;
+        let mut start = None;
+        let mut end = range.start;
+        for (index, grapheme) in self.text[range.clone()].grapheme_indices(true) {
+            if x >= right {
+                break;
+            }
+            let width = grapheme_width(grapheme, x);
+            if x + width.max(1) > left && start.is_none() {
+                start = Some(range.start + index);
+            }
+            x += width;
+            end = range.start + index + grapheme.len();
+        }
+        start.map(|start| start..end)
     }
 
     pub fn line_display_width(&self, line: usize) -> usize {
@@ -391,6 +433,18 @@ mod tests {
         assert_eq!(buffer.offset_at_display_column(1, 3), 8, "inside 文");
         assert_eq!(buffer.max_line_display_width(), 5);
         assert_eq!(buffer.line(7), "end", "lines clamp to the last one");
+        assert_eq!(
+            buffer.display_column_range(0, 1, 3),
+            Some(1..2),
+            "the tab spans 1..4"
+        );
+        assert_eq!(
+            buffer.display_column_range(1, 1, 3),
+            Some(5..11),
+            "both wide characters"
+        );
+        assert_eq!(buffer.display_column_range(1, 5, 9), None);
+        assert_eq!(buffer.display_column_range(2, 1, 99), Some(13..15));
     }
 
     #[test]

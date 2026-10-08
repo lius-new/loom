@@ -20,7 +20,7 @@ pub enum Movement {
 }
 
 /// Spaces one indentation step inserts.
-const INDENT: &str = "  ";
+pub const INDENT: &str = "  ";
 
 /// Insert typed or committed text over the selection. Plain characters join
 /// the current typing run; line breaks and tabs are undo steps of their own.

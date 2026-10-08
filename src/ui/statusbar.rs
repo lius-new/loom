@@ -220,17 +220,25 @@ pub fn render(
                 theme::mono(git_color, theme::SMALL),
             )),
     );
+    let mut left = git_rect.right + GAP;
     if let Some(operation) = &git.operation {
         bar = bar.child(text(
-            UiRect::new(
-                git_rect.right + GAP,
-                rect.top,
-                git_rect.right + GAP + 180.0,
-                rect.bottom,
-            ),
+            UiRect::new(left, rect.top, left + 180.0, rect.bottom),
             operation.message.clone(),
             theme::mono(theme::c().text_dim, theme::SMALL),
         ));
+        left += 180.0 + GAP;
+    }
+    if crate::editor::vim_input::is_active(&s) {
+        for (label, style) in vim_items(&s.vim) {
+            let width = measure(&label, style.weight) + TEXT_MARGIN;
+            bar = bar.child(text(
+                UiRect::new(left, rect.top, left + width, rect.bottom),
+                label,
+                style,
+            ));
+            left += width + GAP;
+        }
     }
 
     let total = items
@@ -256,4 +264,44 @@ pub fn render(
     ));
 
     bar
+}
+
+/// Vim's mode, then its command line, message or pending keys, and macro
+/// recording, left to right.
+fn vim_items(vim: &crate::vim::Vim) -> Vec<(String, TextStyle)> {
+    use crate::vim::Mode;
+    let status = vim.status();
+    let mode_color = match vim.mode() {
+        Mode::Normal => theme::c().text_muted,
+        Mode::Insert => theme::c().accent,
+        Mode::Replace => theme::c().error,
+        Mode::Visual(_) => theme::c().warning,
+    };
+    let mut items = vec![(
+        format!("-- {} --", status.mode),
+        theme::mono_bold(mode_color, theme::SMALL),
+    )];
+    if let Some(line) = status.command_line {
+        items.push((line, theme::mono(theme::c().text_bright, theme::SMALL)));
+    } else if let Some(message) = status.message {
+        let color = if message.error {
+            theme::c().error
+        } else {
+            theme::c().text_soft
+        };
+        items.push((message.text, theme::mono(color, theme::SMALL)));
+    }
+    if !status.pending.is_empty() {
+        items.push((
+            status.pending,
+            theme::mono_bold(theme::c().accent, theme::SMALL),
+        ));
+    }
+    if let Some(register) = status.recording {
+        items.push((
+            format!("recording @{register}"),
+            theme::mono(theme::c().warning, theme::SMALL),
+        ));
+    }
+    items
 }

@@ -33,6 +33,7 @@ mod state;
 mod terminal_session;
 mod theme;
 mod ui;
+mod vim;
 mod window_geometry;
 mod workspace_actions;
 mod workspace_persistence;

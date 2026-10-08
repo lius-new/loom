@@ -1,0 +1,297 @@
+//! Vim through the real event path: focus, the keymap's capture listener,
+//! key events, and text input that the platform only sends for keys no
+//! handler prevented.
+
+use std::sync::{Arc, Mutex};
+
+use lgui::application::{AppView, ApplicationContext};
+use lgui::core::{
+    ImeEvent, InputEvent, KeyModifiers, KeyState, KeyboardEvent, LogicalKey, NamedKey, Point,
+    PointerButton, PointerData, SemanticRole, UiScale, dispatch_runtime_output,
+};
+use lgui::prelude::{State, UiRect, group};
+use lgui::session::UiSession;
+
+use crate::git::GitStoreSnapshot;
+use crate::model::pane_layout::PaneId;
+use crate::state::AppState;
+use crate::theme;
+use crate::vim::Mode;
+
+struct Ui {
+    session: UiSession,
+    view: AppView,
+    app: ApplicationContext,
+    state: State<AppState>,
+    viewport: UiRect,
+}
+
+impl Ui {
+    fn new(contents: &str) -> Self {
+        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let output = exposed.clone();
+        let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
+        let app = ApplicationContext::empty(Default::default());
+        let view_app = app.clone();
+        let contents = contents.to_owned();
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state({
+                let mut app = AppState::new();
+                app.workspace.open_path("vim.txt".into(), contents.clone());
+                app.vim.options.enabled = true;
+                app
+            });
+            let git_store = cx.state(GitStoreSnapshot::default());
+            *output.lock().unwrap() = Some(state.clone());
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id.clone());
+            let env = crate::key_actions::KeyEnv {
+                state: state.clone(),
+                application: view_app.clone(),
+                editor_focus: focus.clone(),
+                editor_rect: viewport,
+                terminal: None,
+            };
+            crate::key_actions::attach(
+                group(viewport).child(super::editor_view::render(
+                    PaneId::new(1),
+                    viewport,
+                    state,
+                    git_store,
+                    id,
+                    focus,
+                )),
+                env,
+            )
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        let mut ui = Self {
+            session,
+            view,
+            app,
+            state,
+            viewport,
+        };
+        // Focus the editor with a click at the start of the text.
+        let point = PointerData::mouse(Point::new(theme::GUTTER_W + theme::CODE_PAD, 5.0));
+        ui.send(InputEvent::PointerDown {
+            pointer: point,
+            button: PointerButton::Left,
+        });
+        ui.send(InputEvent::PointerUp {
+            pointer: point,
+            button: PointerButton::Left,
+        });
+        ui
+    }
+
+    /// Dispatch one input event; returns whether a handler prevented its
+    /// default action.
+    fn send(&mut self, input: InputEvent) -> bool {
+        let events = self.session.handle_input(input);
+        let mut prevented = false;
+        let session = &mut self.session;
+        dispatch_runtime_output(
+            events,
+            &self.app,
+            &lgui::window::WindowId::new("vim-test"),
+            |action| session.handle_default_action(action),
+            |cx| prevented |= cx.default_prevented(),
+        );
+        self.session
+            .render_view(&self.view, self.viewport, UiScale::ONE);
+        prevented
+    }
+
+    /// Press a key the way the platform reports it: the key event, then its
+    /// text unless a handler prevented the key's default action.
+    fn press(&mut self, key: LogicalKey, modifiers: KeyModifiers) {
+        let text = match &key {
+            LogicalKey::Character(text) if !modifiers.ctrl() => Some(text.to_string()),
+            _ => None,
+        };
+        let prevented = self.send(InputEvent::Keyboard(KeyboardEvent {
+            state: KeyState::Down,
+            key,
+            modifiers,
+            ..Default::default()
+        }));
+        if !prevented && let Some(text) = text {
+            self.send(InputEvent::TextInput(text));
+        }
+    }
+
+    /// Type Vim notation: characters, `<Esc>`, `<CR>`, `<BS>` and `<C-x>`.
+    fn keys(&mut self, keys: &str) {
+        for key in crate::vim::Key::parse(keys) {
+            use crate::vim::Key;
+            let (logical, modifiers) = match key {
+                Key::Char(c) => {
+                    let shift = c.is_uppercase();
+                    (
+                        LogicalKey::Character(c.to_string()),
+                        if shift {
+                            KeyModifiers::SHIFT
+                        } else {
+                            KeyModifiers::empty()
+                        },
+                    )
+                }
+                Key::Ctrl(c) => (LogicalKey::Character(c.to_string()), KeyModifiers::CONTROL),
+                Key::Esc => (LogicalKey::Named(NamedKey::Escape), KeyModifiers::empty()),
+                Key::Enter => (LogicalKey::Named(NamedKey::Enter), KeyModifiers::empty()),
+                Key::Backspace => (
+                    LogicalKey::Named(NamedKey::Backspace),
+                    KeyModifiers::empty(),
+                ),
+                Key::Tab => (LogicalKey::Named(NamedKey::Tab), KeyModifiers::empty()),
+                Key::Left => (
+                    LogicalKey::Named(NamedKey::ArrowLeft),
+                    KeyModifiers::empty(),
+                ),
+                other => panic!("no key event for {other:?}"),
+            };
+            self.press(logical, modifiers);
+        }
+    }
+
+    fn text(&self) -> String {
+        self.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .text()
+            .to_owned()
+    }
+
+    fn cursor(&self) -> usize {
+        self.state.get().workspace.active_editor().unwrap().cursor()
+    }
+
+    fn mode(&self) -> Mode {
+        self.state.get().vim.mode()
+    }
+
+    /// The editor's semantic role, which decides whether the platform input
+    /// method is enabled.
+    fn role(&self) -> SemanticRole {
+        let tree = self.session.tree();
+        let focused = self
+            .session
+            .runtime()
+            .interaction_state()
+            .focused
+            .clone()
+            .expect("the editor has focus");
+        tree.node(&focused)
+            .and_then(|node| node.semantics.as_ref())
+            .map(|semantics| semantics.role)
+            .expect("the editor has semantics")
+    }
+}
+
+#[test]
+fn commands_do_not_type_and_insert_mode_does() {
+    let mut ui = Ui::new("hello world");
+    assert_eq!(ui.mode(), Mode::Normal);
+    assert_eq!(
+        ui.role(),
+        SemanticRole::Group,
+        "no input method in Normal mode"
+    );
+    ui.keys("w");
+    assert_eq!((ui.text().as_str(), ui.cursor()), ("hello world", 6));
+    ui.keys("i");
+    assert_eq!(ui.mode(), Mode::Insert);
+    assert_eq!(ui.role(), SemanticRole::TextInput);
+    assert_eq!(ui.text(), "hello world", "the i itself is not typed");
+    ui.keys("big ");
+    assert_eq!(ui.text(), "hello big world");
+    ui.keys("<Esc>");
+    assert_eq!((ui.mode(), ui.cursor()), (Mode::Normal, 9));
+    ui.keys("u");
+    assert_eq!(ui.text(), "hello world", "the insert is one undo step");
+    ui.keys("<C-r>");
+    assert_eq!(ui.text(), "hello big world");
+    ui.keys("0dw");
+    assert_eq!(ui.text(), "big world");
+    ui.keys("x.");
+    assert_eq!(ui.text(), "g world");
+}
+
+#[test]
+fn insert_mode_keys_go_to_vim_and_are_repeated() {
+    let mut ui = Ui::new("a\nb");
+    ui.keys("A12<BS>3<CR>x<Esc>");
+    assert_eq!(ui.text(), "a13\nx\nb");
+    ui.keys("j.");
+    assert_eq!(ui.text(), "a13\nx\nb13\nx");
+    ui.keys("uu");
+    assert_eq!(ui.text(), "a\nb");
+}
+
+#[test]
+fn input_method_text_in_insert_mode_then_normal_mode_commands() {
+    let mut ui = Ui::new("end");
+    ui.keys("i");
+    ui.send(InputEvent::Ime(ImeEvent::Preedit {
+        text: "nihao".into(),
+        cursor: Some(0..5),
+    }));
+    // Keys belong to the composition while it shows text.
+    ui.keys("<Esc>");
+    assert_eq!(ui.mode(), Mode::Insert);
+    ui.send(InputEvent::Ime(ImeEvent::Preedit {
+        text: String::new(),
+        cursor: None,
+    }));
+    ui.send(InputEvent::Ime(ImeEvent::Commit("你好".into())));
+    assert_eq!(ui.text(), "你好end");
+    ui.keys("<Esc>");
+    assert_eq!(ui.mode(), Mode::Normal);
+    ui.keys("x");
+    assert_eq!(
+        ui.text(),
+        "你end",
+        "no character was lost or typed as a command"
+    );
+    ui.keys("u");
+    assert_eq!(ui.text(), "你好end");
+    ui.keys("u");
+    assert_eq!(ui.text(), "end");
+}
+
+#[test]
+fn application_shortcuts_and_vim_keys_share_the_keyboard() {
+    let mut ui = Ui::new("one\ntwo");
+    // Ctrl+V starts a visual block instead of pasting.
+    ui.keys("<C-v>j");
+    assert_eq!(ui.mode(), Mode::Visual(crate::vim::VisualKind::Block));
+    ui.keys("d");
+    assert_eq!(ui.text(), "ne\nwo");
+    // Ctrl+Z is still the application's undo.
+    ui.press(LogicalKey::Character("z".into()), KeyModifiers::CONTROL);
+    assert_eq!(ui.text(), "one\ntwo");
+    assert_eq!(ui.mode(), Mode::Normal);
+}
+
+#[test]
+fn turning_vim_off_restores_default_editing() {
+    let mut ui = Ui::new("text");
+    ui.keys("A!");
+    assert_eq!(ui.mode(), Mode::Insert);
+    ui.state
+        .update(|app| super::vim_input::set_enabled(app, false));
+    ui.session.render_view(&ui.view, ui.viewport, UiScale::ONE);
+    assert_eq!(ui.role(), SemanticRole::TextInput);
+    ui.keys("jk");
+    assert_eq!(ui.text(), "text!jk");
+    ui.keys("<Esc>");
+    // Default editing: Ctrl+Z undoes the typing, and the insert session's
+    // undo step was closed when Vim turned off.
+    ui.press(LogicalKey::Character("z".into()), KeyModifiers::CONTROL);
+    assert_eq!(ui.text(), "text!");
+}
