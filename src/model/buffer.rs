@@ -149,6 +149,15 @@ impl TextBuffer {
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
+    /// Bytes held by the undo and redo history.
+    #[cfg(test)]
+    pub fn history_bytes(&self) -> usize {
+        self.undo
+            .iter()
+            .chain(self.redo.iter())
+            .map(|s| s.text.len())
+            .sum()
+    }
     pub fn break_undo_group(&mut self) {
         self.last_edit = None;
     }

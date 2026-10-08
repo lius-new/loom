@@ -1,5 +1,7 @@
 //! Editor layer: syntax highlighting, gutter and the code viewport.
 
+#[cfg(test)]
+mod baseline_tests;
 pub mod commands;
 pub mod edit_menu;
 pub mod editor_view;

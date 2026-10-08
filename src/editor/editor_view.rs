@@ -927,7 +927,7 @@ fn line_index_from_point(
         .min(line_count - 1)
 }
 
-fn reveal_cursor(app: &mut AppState, rect: UiRect) {
+pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
     let Some(buffer) = app.workspace.active_editor() else {
         return;
     };
@@ -985,7 +985,7 @@ pub fn execute_command(
     });
 }
 
-fn apply_command(
+pub(crate) fn apply_command(
     app: &mut AppState,
     command: Command,
     clipboard: &dyn lgui::services::Clipboard,
