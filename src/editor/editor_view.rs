@@ -14,12 +14,13 @@ use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel, text};
 use lgui::text::{self, TextLayout, TextLayoutRequest};
 
 use super::commands::{self, Command};
-use super::interaction::{DragSelection, SelectionUnit};
+use super::interaction::{DragSelection, ImeSession, SelectionUnit};
 use crate::editor::gutter;
+use crate::editor::normal;
 use crate::editor::syntax;
 use crate::git::{GitStoreSnapshot, LineChange};
-use crate::model::buffer::TextBuffer;
 use crate::model::pane_layout::PaneId;
+use crate::model::text::TextBuffer;
 use crate::state::AppState;
 use crate::theme;
 
@@ -95,7 +96,7 @@ pub fn render(
         let (cursor_line, cursor_col) = buffer.line_col();
         let code_top = rect.top;
         let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
-        let metrics = scroll_metrics(rect, code_left, &lines);
+        let metrics = scroll_metrics(rect, code_left, &buffer);
         let (stored_x, stored_y) = s.workspace.scroll(pane);
         let scroll_x = stored_x.clamp(0.0, metrics.max_x);
         let scroll_y = stored_y.clamp(0.0, metrics.max_y);
@@ -159,7 +160,7 @@ pub fn render(
                                     scroll_y,
                                     buffer.line_count(),
                                 );
-                                buffer.line_range(line)
+                                buffer.line_range_with_break(line)
                             }
                             SelectionUnit::Word => buffer.word_range(cursor),
                             SelectionUnit::Character => cursor..cursor,
@@ -263,16 +264,13 @@ pub fn render(
             code_top + metrics.content_h,
         ));
 
-        let line_bounds = buffer.line_bounds();
         for line_index in visible_lines.clone() {
             let y = code_top + line_index as f32 * theme::LINE_H;
             let line = lines[line_index];
             let layout = layout_line(line, code_left, y, layout_right);
             if let Some(selection) = buffer.selection() {
-                let (start, end) = line_bounds[line_index];
-                let next = line_bounds
-                    .get(line_index + 1)
-                    .map_or(buffer.text().len(), |b| b.0);
+                let (start, end) = (buffer.line_start(line_index), buffer.line_end(line_index));
+                let next = buffer.line_range_with_break(line_index).end;
                 if selection.start < next && selection.end > start {
                     let from = selection.start.max(start).min(end);
                     let to = selection.end.min(end).max(start);
@@ -323,8 +321,8 @@ pub fn render(
                 cursor_y + theme::LINE_H - 3.0,
             );
             code = code.child(panel(cursor_rect, VisualStyle::filled(theme::c().accent)));
-            if !s.editor.preedit.is_empty() {
-                let width = layout_line(&s.editor.preedit, 0.0, 0.0, metrics.content_w)
+            if let Some(session) = s.editor.preedit_for(pane, id) {
+                let width = layout_line(&session.text, 0.0, 0.0, metrics.content_w)
                     .map_or(80.0, |l| l.width)
                     .max(2.0);
                 let r = UiRect::new(
@@ -337,7 +335,7 @@ pub fn render(
                     panel(r, VisualStyle::filled(theme::c().surface))
                         .child(text(
                             r,
-                            s.editor.preedit.clone(),
+                            session.text.clone(),
                             theme::mono(theme::c().text_bright, theme::CODE_SIZE),
                         ))
                         .child(panel(
@@ -388,22 +386,10 @@ pub fn render(
 
     let st_ime = state.clone();
     root = root.on_composition_update(move |_, value, cursor| {
-        st_ime.update(|app| {
-            if !value.is_empty() {
-                app.editor.ime_pending = true;
-            }
-            app.editor.preedit = value.to_owned();
-            app.editor.preedit_cursor = cursor;
-        })
+        st_ime.update(|app| update_composition(app, value, cursor))
     });
     let st_ime_end = state.clone();
-    root = root.on_composition_end(move |_| {
-        st_ime_end.update(|app| {
-            app.editor.ime_pending = false;
-            app.editor.preedit.clear();
-            app.editor.preedit_cursor = None;
-        })
-    });
+    root = root.on_composition_end(move |_| st_ime_end.update(|app| app.editor.ime = None));
 
     // Bound keys are dispatched from the keymap (`key_actions`) before they
     // reach the editor. Unbound shortcut chords must still not type text.
@@ -424,9 +410,7 @@ pub fn render(
         st_blur.update(|app| {
             app.focused = false;
             app.editor.drag = None;
-            app.editor.ime_pending = false;
-            app.editor.preedit.clear();
-            app.editor.preedit_cursor = None;
+            app.editor.ime = None;
             if let Some(mut buffer) = app.workspace.active_editor_mut() {
                 buffer.break_undo_group();
             }
@@ -652,10 +636,11 @@ pub fn drag_scrollbars(app: &mut AppState, rect: UiRect, pointer_x: f32, pointer
     }
 
     let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
-    let Some(metrics) = app.workspace.active_editor().map(|buffer| {
-        let lines = document_lines(&buffer);
-        scroll_metrics(rect, code_left, &lines)
-    }) else {
+    let Some(metrics) = app
+        .workspace
+        .active_editor()
+        .map(|buffer| scroll_metrics(rect, code_left, &buffer))
+    else {
         return finish_scrollbar_drag(app);
     };
     let (mut scroll_x, mut scroll_y) = app.workspace.active_scroll();
@@ -716,23 +701,14 @@ pub fn finish_scrollbar_drag(app: &mut AppState) -> bool {
 }
 
 fn document_lines(buffer: &TextBuffer) -> Vec<&str> {
-    buffer
-        .line_bounds()
-        .into_iter()
-        .map(|(a, b)| &buffer.text()[a..b])
-        .collect()
+    buffer.lines().collect()
 }
 
-fn scroll_metrics(rect: UiRect, code_left: f32, lines: &[&str]) -> ScrollMetrics {
+fn scroll_metrics(rect: UiRect, code_left: f32, buffer: &TextBuffer) -> ScrollMetrics {
     let mut viewport_w = (rect.right - code_left).max(1.0);
     let mut viewport_h = rect.height().max(1.0);
-    let longest_columns = lines
-        .iter()
-        .map(|line| visual_columns(line))
-        .max()
-        .unwrap_or(0);
-    let natural_w = longest_columns as f32 * theme::CHAR_W + TRAILING_CODE_SPACE;
-    let content_h = (lines.len() as f32 * theme::LINE_H).max(theme::LINE_H);
+    let natural_w = buffer.max_line_display_width() as f32 * theme::CHAR_W + TRAILING_CODE_SPACE;
+    let content_h = (buffer.line_count() as f32 * theme::LINE_H).max(theme::LINE_H);
     // A scrollbar may make the other axis overflow; reserve both before revealing the caret.
     for _ in 0..2 {
         viewport_w = (rect.right
@@ -763,7 +739,7 @@ fn scroll_metrics(rect: UiRect, code_left: f32, lines: &[&str]) -> ScrollMetrics
 }
 
 fn visual_columns(line: &str) -> usize {
-    crate::model::buffer::display_columns(line)
+    crate::model::text::display_width(line)
 }
 
 fn visible_line_range(scroll_y: f32, viewport_h: f32, line_count: usize) -> Range<usize> {
@@ -889,9 +865,8 @@ fn cursor_offset_from_point(
     point_x: f32,
     point_y: f32,
 ) -> usize {
-    let lines = document_lines(buffer);
-    let line = line_index_from_point(point_y, rect.top, scroll_y, lines.len());
-    let line_text = lines[line];
+    let line = line_index_from_point(point_y, rect.top, scroll_y, buffer.line_count());
+    let line_text = buffer.line(line);
     let content_x = point_x + scroll_x;
     let content_y = point_y + scroll_y;
     let line_top = rect.top + line as f32 * theme::LINE_H;
@@ -903,7 +878,7 @@ fn cursor_offset_from_point(
     )
     .map(|layout| hit_column(&layout, content_x, content_y))
     .unwrap_or_else(|| fallback_hit_column(line_text, content_x - code_left));
-    let line_start = buffer.line_bounds()[line].0;
+    let line_start = buffer.line_start(line);
     line_start
         + line_text
             .char_indices()
@@ -931,10 +906,9 @@ pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
     let Some(buffer) = app.workspace.active_editor() else {
         return;
     };
-    let lines = document_lines(&buffer);
     let (line, column) = buffer.line_col();
     let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
-    let metrics = scroll_metrics(rect, code_left, &lines);
+    let metrics = scroll_metrics(rect, code_left, &buffer);
     let (mut scroll_x, mut scroll_y) = app.workspace.active_scroll();
 
     let line_top = line as f32 * theme::LINE_H;
@@ -946,7 +920,7 @@ pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
     }
 
     let layout = layout_line(
-        lines[line],
+        buffer.line(line),
         code_left,
         rect.top,
         code_left + metrics.content_w,
@@ -1009,7 +983,7 @@ pub(crate) fn apply_command(
                 if let Some(mut buffer) = app.workspace.active_editor_mut() {
                     buffer.break_undo_group();
                     if command == Command::Cut {
-                        buffer.backspace();
+                        normal::backspace(&mut buffer);
                         buffer.break_undo_group();
                     }
                 }
@@ -1026,7 +1000,7 @@ pub(crate) fn apply_command(
                     app.workspace.promote_active_preview();
                 }
                 if let Some(mut buffer) = app.workspace.active_editor_mut() {
-                    buffer.paste(&value);
+                    normal::paste(&mut buffer, &value);
                 }
             }
         }
@@ -1072,14 +1046,18 @@ fn ime_cursor_rect(app: &AppState, rect: UiRect) -> UiRect {
     let top = rect.top + line as f32 * theme::LINE_H - sy;
     let layout = layout_line(buffer.line(line), left, top, left + 100000.0);
     let mut x = caret_x(layout.as_ref(), col).unwrap_or(left) - sx;
-    if !app.editor.preedit.is_empty() {
-        let index = app
-            .editor
-            .preedit_cursor
+    let pane = app.workspace.active_pane();
+    if let Some(session) = app
+        .workspace
+        .active()
+        .and_then(|document| app.editor.preedit_for(pane, document))
+    {
+        let index = session
+            .cursor
             .as_ref()
-            .map_or(app.editor.preedit.len(), |r| r.start)
-            .min(app.editor.preedit.len());
-        let prefix = app.editor.preedit.get(..index).unwrap_or("");
+            .map_or(session.text.len(), |r| r.start)
+            .min(session.text.len());
+        let prefix = session.text.get(..index).unwrap_or("");
         x += layout_line(prefix, 0.0, 0.0, 100000.0).map_or(0.0, |l| l.width);
     }
     let x = x.clamp(left, rect.right.max(left));
@@ -1098,7 +1076,7 @@ fn update_drag_selection(app: &mut AppState, rect: UiRect) {
     let (sx, sy) = app.workspace.active_scroll();
     let left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
     if let Some(mut buffer) = app.workspace.active_editor_mut() {
-        let metrics = scroll_metrics(rect, left, &document_lines(&buffer));
+        let metrics = scroll_metrics(rect, left, &buffer);
         let cursor = cursor_offset_from_point(
             &buffer,
             rect,
@@ -1115,7 +1093,7 @@ fn update_drag_selection(app: &mut AppState, rect: UiRect) {
                 let range = if drag.unit == SelectionUnit::Word {
                     buffer.word_range(cursor)
                 } else {
-                    buffer.line_range(line_index_from_point(
+                    buffer.line_range_with_break(line_index_from_point(
                         drag.point.1,
                         rect.top,
                         sy,
@@ -1165,7 +1143,7 @@ pub fn drag_scroll_tick(app: &mut AppState, rect: UiRect) -> bool {
     let Some(buffer) = app.workspace.active_editor() else {
         return false;
     };
-    let metrics = scroll_metrics(rect, left, &document_lines(&buffer));
+    let metrics = scroll_metrics(rect, left, &buffer);
     let (x, y) = app.workspace.active_scroll();
     let next = (
         (x + dx).clamp(0.0, metrics.max_x),
@@ -1179,26 +1157,67 @@ pub fn drag_scroll_tick(app: &mut AppState, rect: UiRect) -> bool {
     true
 }
 
-/// Insert typed (or replayed) text at the cursor of the active document.
+/// Track the composition shown by the input method. A composition belongs to
+/// the view that was active when it started.
+fn update_composition(app: &mut AppState, text: &str, cursor: Option<Range<usize>>) {
+    let pane = app.workspace.active_pane();
+    let Some(document) = app.workspace.active() else {
+        return;
+    };
+    match app.editor.ime.as_mut() {
+        Some(session) => {
+            // An emptied composition has ended; a new one starts where the
+            // focus is now.
+            if session.text.is_empty() {
+                (session.pane, session.document) = (pane, document);
+            }
+            session.text = text.to_owned();
+            session.cursor = cursor;
+        }
+        None if !text.is_empty() => {
+            app.editor.ime = Some(ImeSession {
+                pane,
+                document,
+                text: text.to_owned(),
+                cursor,
+            });
+        }
+        None => {}
+    }
+}
+
+/// Insert typed, committed or replayed text. Input method commits go to the
+/// view their composition started in, and are dropped if it has closed.
 pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
     app.editor.drag = None;
-    if !input.is_empty() {
-        app.workspace.promote_active_preview();
-    }
-    if let Some(mut buffer) = app.workspace.active_editor_mut() {
-        if app.editor.ime_pending {
-            buffer.break_undo_group();
-        }
-        buffer.insert(input);
-        if app.editor.ime_pending {
-            buffer.break_undo_group();
-        }
-    }
-    app.editor.ime_pending = false;
-    app.editor.preedit.clear();
-    app.editor.preedit_cursor = None;
     app.editor.menu = None;
-    reveal_cursor(app, rect);
+    let session = app.editor.ime.take();
+    let pane = session
+        .as_ref()
+        .map_or(app.workspace.active_pane(), |session| session.pane);
+    let Some(document) = session
+        .as_ref()
+        .map(|session| session.document)
+        .or_else(|| app.workspace.active())
+    else {
+        return;
+    };
+    if !input.is_empty() {
+        app.workspace.promote_preview(pane, document);
+    }
+    if let Some(mut editor) = app.workspace.view_editor_mut(pane, document) {
+        // A composition commit is an undo step of its own.
+        if session.is_some() {
+            editor.break_undo_group();
+        }
+        normal::insert(&mut editor, input);
+        if session.is_some() {
+            editor.break_undo_group();
+        }
+    }
+    if app.workspace.active_pane() == pane && app.workspace.active() == Some(document) {
+        reveal_cursor(app, rect);
+    }
 }
 
 /// Lines in one page of an editor of this size, for page movements.
@@ -1360,7 +1379,7 @@ mod tests {
             state.get().workspace.active_editor().unwrap().text(),
             "你好 world\nsecond"
         );
-        assert!(state.get().editor.preedit.is_empty());
+        assert!(state.get().editor.ime.is_none());
         send(key(
             LogicalKey::Character("z".into()),
             KeyModifiers::CONTROL,
@@ -1509,7 +1528,7 @@ mod tests {
 
         apply_command(
             &mut app,
-            Command::Move(crate::model::buffer::Movement::Right, false),
+            Command::Move(normal::Movement::Right, false),
             &clipboard,
         )
         .unwrap();
@@ -1634,7 +1653,7 @@ mod tests {
     fn switching_documents_cancels_drag_and_keeps_undo_histories_independent() {
         let mut app = document("first");
         let first = app.workspace.active().unwrap();
-        app.workspace.active_editor_mut().unwrap().insert("A");
+        normal::insert(&mut app.workspace.active_editor_mut().unwrap(), "A");
         app.editor.drag = Some(DragSelection {
             document: first,
             origin: 0..0,
@@ -1643,7 +1662,7 @@ mod tests {
         });
         app.workspace
             .open_path("second.txt".into(), "second".into());
-        app.workspace.active_editor_mut().unwrap().insert("B");
+        normal::insert(&mut app.workspace.active_editor_mut().unwrap(), "B");
         assert!(drag_scroll_tick(
             &mut app,
             UiRect::new(0.0, 0.0, 400.0, 100.0)
@@ -1658,12 +1677,66 @@ mod tests {
     }
 
     #[test]
+    fn a_late_composition_commit_lands_in_the_view_it_started_in() {
+        let rect = UiRect::new(0.0, 0.0, 400.0, 300.0);
+        let mut app = document("first");
+        let first = app.workspace.active().unwrap();
+        let left = app.workspace.active_pane();
+        update_composition(&mut app, "ni", None);
+        assert!(app.editor.preedit_for(left, first).is_some());
+
+        let second = app
+            .workspace
+            .open_path("second.txt".into(), "second".into());
+        assert!(app.editor.preedit_for(left, second).is_none());
+        insert_text(&mut app, "你", rect);
+        assert_eq!(app.workspace.active(), Some(second));
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "second");
+        app.workspace.set_active(first);
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "你first");
+        assert!(app.editor.ime.is_none());
+
+        // Plain typing without a composition goes to the active view.
+        insert_text(&mut app, "x", rect);
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "你xfirst");
+    }
+
+    #[test]
+    fn a_commit_for_a_closed_view_is_dropped() {
+        let rect = UiRect::new(0.0, 0.0, 400.0, 300.0);
+        let mut app = document("first");
+        let first = app.workspace.active().unwrap();
+        update_composition(&mut app, "ni", None);
+        app.workspace
+            .open_path("second.txt".into(), "second".into());
+        app.workspace.close(first);
+        insert_text(&mut app, "你", rect);
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "second");
+    }
+
+    #[test]
+    fn an_emptied_composition_moves_to_the_view_that_starts_the_next_one() {
+        let mut app = document("first");
+        let left = app.workspace.active_pane();
+        let first = app.workspace.active().unwrap();
+        update_composition(&mut app, "ni", None);
+        update_composition(&mut app, "", None);
+        let right = app
+            .workspace
+            .split(left, crate::model::pane_layout::Direction::Right)
+            .unwrap();
+        update_composition(&mut app, "hao", None);
+        assert!(app.editor.preedit_for(right, first).is_some());
+        assert!(app.editor.preedit_for(left, first).is_none());
+    }
+
+    #[test]
     fn keyboard_reveal_scrolls_to_the_document_end() {
         let mut app = document(&"long line\n".repeat(100));
         app.workspace
             .active_editor_mut()
             .unwrap()
-            .navigate(crate::model::buffer::Movement::Finish, false);
+            .select_to(usize::MAX, false);
         reveal_cursor(&mut app, UiRect::new(0.0, 0.0, 400.0, 100.0));
         assert_eq!(
             app.workspace.active_scroll().1,

@@ -11,7 +11,7 @@ use lgui::services::{Clipboard, ClipboardError};
 
 use super::commands::Command;
 use super::editor_view::{apply_command, insert_text};
-use crate::model::buffer::Movement;
+use crate::editor::normal::Movement;
 use crate::model::pane_layout::Direction;
 use crate::state::AppState;
 
@@ -107,7 +107,14 @@ fn committed_text_merges_into_one_undo_step_until_the_caret_moves() {
 fn ime_commit_is_its_own_undo_step() {
     let mut app = document("");
     insert_text(&mut app, "a", RECT);
-    app.editor.ime_pending = true;
+    let pane = app.workspace.active_pane();
+    let document = app.workspace.active().unwrap();
+    app.editor.ime = Some(crate::editor::interaction::ImeSession {
+        pane,
+        document,
+        text: String::new(),
+        cursor: None,
+    });
     insert_text(&mut app, "你好", RECT);
     insert_text(&mut app, "b", RECT);
     assert_eq!(text(&app), "a你好b");
@@ -188,8 +195,7 @@ fn undo_restores_the_undoing_pane_and_shifts_the_other_panes() {
     run(&mut app, Command::Undo);
     assert_eq!(text(&app), "one two");
     assert_eq!(app.workspace.editor(right).unwrap().cursor(), 3);
-    // The left caret sat right after the removed " big"; it stays on that seam.
-    assert!((3..=4).contains(&app.workspace.editor(left).unwrap().cursor()));
+    assert_eq!(app.workspace.editor(left).unwrap().cursor(), 3);
 
     run(&mut app, Command::Redo);
     assert_eq!(text(&app), "one big two");

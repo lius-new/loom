@@ -7,7 +7,7 @@
 use serde_json::Value;
 
 use crate::editor::commands::Command;
-use crate::model::buffer::Movement;
+use crate::editor::normal::Movement;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActionMeta {

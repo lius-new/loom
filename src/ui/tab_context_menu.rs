@@ -316,6 +316,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::text::EditKind;
     use std::path::PathBuf;
 
     #[test]
@@ -437,8 +438,15 @@ mod tests {
             Action::KeepEditorVersion
         ));
 
-        app.workspace.active_editor_mut().unwrap().move_end();
-        app.workspace.active_editor_mut().unwrap().insert(" editor");
+        app.workspace
+            .active_editor_mut()
+            .unwrap()
+            .select_to(usize::MAX, false);
+        app.workspace
+            .active_editor_mut()
+            .unwrap()
+            .replace_selection(" editor", EditKind::Typing)
+            .unwrap();
         std::fs::write(&path, "after and longer").unwrap();
         app.workspace.reconcile_document(target);
         assert!(action_enabled(

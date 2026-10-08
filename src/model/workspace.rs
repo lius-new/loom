@@ -8,10 +8,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::git::DiffTarget;
-use crate::model::buffer::{Editor, EditorMut, Selection, TextBuffer};
 use crate::model::diff_document::DiffDocument;
 use crate::model::document::{DiskState, FileId, FileMeta};
 use crate::model::pane_layout::{Direction, PaneId, PaneNode};
+use crate::model::text::{Editor, EditorMut, Selection, TextBuffer};
 use lgui::prelude::UiRect;
 
 pub const SETTINGS_TITLE: &str = "Settings";
@@ -810,6 +810,18 @@ impl Workspace {
         Some(Editor::new(&document.buffer, view.selection))
     }
 
+    /// The editor of one specific view: `document` as shown in `pane`, whether
+    /// or not it is the pane's active tab.
+    pub fn view_editor_mut(&mut self, pane: PaneId, document: FileId) -> Option<EditorMut<'_>> {
+        if !self.panes.get(&pane)?.contains(document) {
+            return None;
+        }
+        self.documents
+            .get_mut(&document)
+            .filter(|d| d.is_text())?
+            .editor_mut(pane)
+    }
+
     pub fn editor_mut(&mut self, pane: PaneId) -> Option<EditorMut<'_>> {
         let id = self.panes.get(&pane)?.active?;
         self.documents
@@ -1343,6 +1355,7 @@ fn parent_suffix(parts: &[String], depth: usize) -> String {
 mod tests {
     use super::*;
     use crate::git::diff::UnifiedDiff;
+    use crate::model::text::EditKind;
 
     #[test]
     fn settings_tab_is_unique_and_never_treated_as_a_file() {
@@ -1417,7 +1430,11 @@ mod tests {
     fn editing_a_preview_defensively_preserves_it_before_the_next_preview() {
         let mut workspace = Workspace::new();
         let first = workspace.preview_path(PathBuf::from("first.rs"), String::new());
-        workspace.active_editor_mut().unwrap().insert("changed");
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .replace_selection("changed", EditKind::Typing)
+            .unwrap();
 
         let second = workspace.preview_path(PathBuf::from("second.rs"), String::new());
 
@@ -1523,10 +1540,17 @@ mod tests {
         let file = workspace.open_path(PathBuf::from("notes.txt"), "hello".into());
 
         assert!(!workspace.is_dirty(file));
-        workspace.active_editor_mut().unwrap().move_end();
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .select_to(usize::MAX, false);
         assert!(!workspace.is_dirty(file));
 
-        workspace.active_editor_mut().unwrap().insert("!");
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .replace_selection("!", EditKind::Typing)
+            .unwrap();
         assert!(workspace.is_dirty(file));
 
         let (snapshot_id, path, contents) = workspace.active_save_snapshot().unwrap();
@@ -1536,7 +1560,11 @@ mod tests {
         assert!(workspace.mark_saved(file));
         assert!(!workspace.is_dirty(file));
 
-        workspace.active_editor_mut().unwrap().backspace();
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .replace(5..6, "", EditKind::Backspace)
+            .unwrap();
         assert!(workspace.is_dirty(file));
     }
 
@@ -1547,13 +1575,15 @@ mod tests {
         workspace
             .active_editor_mut()
             .unwrap()
-            .insert("first change");
+            .replace_selection("first change", EditKind::Typing)
+            .unwrap();
         let clean = workspace.open_path(PathBuf::from("clean.rs"), String::new());
         let second = workspace.open_path(PathBuf::from("second.rs"), String::new());
         workspace
             .active_editor_mut()
             .unwrap()
-            .insert("second change");
+            .replace_selection("second change", EditKind::Typing)
+            .unwrap();
 
         assert_eq!(workspace.dirty_file_ids(), vec![first, second]);
         assert!(!workspace.dirty_file_ids().contains(&clean));
@@ -1648,8 +1678,15 @@ mod tests {
         std::fs::write(&path, "disk one").unwrap();
         let mut workspace = Workspace::new();
         let id = workspace.open_path(path.clone(), "disk one".into());
-        workspace.active_editor_mut().unwrap().move_end();
-        workspace.active_editor_mut().unwrap().insert(" + editor");
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .select_to(usize::MAX, false);
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .replace_selection(" + editor", EditKind::Typing)
+            .unwrap();
         std::fs::write(&path, "disk two with size").unwrap();
 
         assert_eq!(
@@ -1760,8 +1797,15 @@ mod tests {
         std::fs::write(&path, "before").unwrap();
         let mut workspace = Workspace::new();
         let id = workspace.open_path(path.clone(), "before".into());
-        workspace.active_editor_mut().unwrap().move_end();
-        workspace.active_editor_mut().unwrap().insert(" saved");
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .select_to(usize::MAX, false);
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .replace_selection(" saved", EditKind::Typing)
+            .unwrap();
         std::fs::write(&path, "before saved").unwrap();
         assert!(workspace.mark_saved(id));
 
@@ -1809,7 +1853,11 @@ mod tests {
         workspace.editor_mut(right).unwrap().set_cursor(7);
         workspace.set_scroll(right, 0.0, 99.0);
 
-        workspace.editor_mut(left).unwrap().insert(">> ");
+        workspace
+            .editor_mut(left)
+            .unwrap()
+            .replace_selection(">> ", EditKind::Typing)
+            .unwrap();
 
         assert_eq!(workspace.editor(right).unwrap().text(), ">> one two");
         assert_eq!(workspace.editor(right).unwrap().cursor(), 10);
@@ -1823,7 +1871,11 @@ mod tests {
     #[test]
     fn closing_one_tab_keeps_the_document_until_its_last_tab_closes() {
         let (mut workspace, left, right, id) = two_panes_with("a.rs", "text");
-        workspace.editor_mut(right).unwrap().insert("x");
+        workspace
+            .editor_mut(right)
+            .unwrap()
+            .replace_selection("x", EditKind::Typing)
+            .unwrap();
 
         assert!(workspace.released_by(&[(right, id)]).is_empty());
         assert_eq!(workspace.released_by(&[(left, id), (right, id)]), vec![id]);

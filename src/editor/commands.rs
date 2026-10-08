@@ -1,5 +1,6 @@
 //! Shared keyboard and context-menu editing commands.
-use crate::model::buffer::{EditorMut, Movement};
+use super::normal::{self, Movement};
+use crate::model::text::EditorMut;
 use lgui::core::{KeyState, KeyboardEvent, LogicalKey, NamedKey};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,16 +76,20 @@ pub fn command_for(ev: &KeyboardEvent, page: usize) -> Option<Command> {
     };
     Some(Command::Move(movement, shift))
 }
-pub fn apply(buffer: &mut EditorMut<'_>, command: Command) {
+pub fn apply(editor: &mut EditorMut<'_>, command: Command) {
     match command {
-        Command::Move(m, e) => buffer.navigate(m, e),
-        Command::Delete(f, w) => buffer.erase(f, w),
-        Command::Enter => buffer.enter(),
-        Command::Indent(out) => buffer.indent(out),
-        Command::SelectAll => buffer.select_all(),
-        Command::Escape => buffer.clear_selection(),
-        Command::Undo => buffer.undo(),
-        Command::Redo => buffer.redo(),
+        Command::Move(movement, extend) => normal::navigate(editor, movement, extend),
+        Command::Delete(forward, word) => normal::erase(editor, forward, word),
+        Command::Enter => normal::enter(editor),
+        Command::Indent(outdent) => normal::indent(editor, outdent),
+        Command::SelectAll => editor.select_all(),
+        Command::Escape => editor.clear_selection(),
+        Command::Undo => {
+            editor.undo();
+        }
+        Command::Redo => {
+            editor.redo();
+        }
         Command::Copy | Command::Cut | Command::Paste => {}
     }
 }

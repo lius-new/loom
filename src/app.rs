@@ -172,9 +172,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         document_state.update(|app| {
             app.editor.drag = None;
             app.editor.menu = None;
-            app.editor.preedit.clear();
-            app.editor.preedit_cursor = None;
-            app.editor.ime_pending = false;
         });
     });
     let show_term = s.show_terminal;

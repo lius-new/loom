@@ -1,5 +1,6 @@
 //! Transient pointer and IME state; selections and history live in each buffer.
 use crate::model::document::FileId;
+use crate::model::pane_layout::PaneId;
 use lgui::core::KeyModifiers;
 use std::{
     ops::Range,
@@ -29,9 +30,35 @@ pub struct EditorInteraction {
     pub last_tab_click: Option<(Instant, FileId, f32, f32, u8)>,
     pub menu: Option<(f32, f32)>,
     pub menu_hover: Option<usize>,
-    pub preedit: String,
-    pub ime_pending: bool,
-    pub preedit_cursor: Option<Range<usize>>,
+    /// The input method composition in progress, and the view it belongs to.
+    pub ime: Option<ImeSession>,
+}
+
+/// An input method composition. It belongs to the view where it started, so a
+/// commit that arrives after the focus moved still lands in that view.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImeSession {
+    pub pane: PaneId,
+    pub document: FileId,
+    /// Composition text; it is not part of the document until committed.
+    pub text: String,
+    pub cursor: Option<Range<usize>>,
+}
+
+impl EditorInteraction {
+    /// The composition text to draw in `pane` showing `document`, if any.
+    pub fn preedit_for(&self, pane: PaneId, document: FileId) -> Option<&ImeSession> {
+        self.ime.as_ref().filter(|session| {
+            session.pane == pane && session.document == document && !session.text.is_empty()
+        })
+    }
+
+    /// Whether a composition is showing text, which owns every key.
+    pub fn is_composing(&self) -> bool {
+        self.ime
+            .as_ref()
+            .is_some_and(|session| !session.text.is_empty())
+    }
 }
 impl EditorInteraction {
     pub fn click_count(&mut self, document: FileId, x: f32, y: f32) -> u8 {

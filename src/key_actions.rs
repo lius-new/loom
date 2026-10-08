@@ -74,7 +74,7 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
     let mut pending = Vec::new();
     let mut stack = Vec::new();
     env.state.try_update(|app| {
-        composing = !app.editor.preedit.is_empty()
+        composing = app.editor.is_composing()
             || !app.explorer_create_input.preedit.is_empty()
             || !app.git_commit_input.preedit.is_empty()
             || !app.keymap_search.preedit.is_empty();

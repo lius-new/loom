@@ -10,7 +10,8 @@ use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel};
 use lgui::services::ServicesContextExt;
 
 use crate::editor::commands::{self, Command};
-use crate::model::buffer::{EditorMut, Movement, Selection, TextBuffer};
+use crate::editor::normal::{self, Movement};
+use crate::model::text::{EditorMut, Selection, TextBuffer};
 
 use super::text::SingleLineText;
 
@@ -241,7 +242,7 @@ where
         let value = single_line(value);
         if !value.is_empty() {
             input_binding.update(move |input| {
-                input.editor().insert(&value);
+                normal::insert(&mut input.editor(), &value);
                 input.preedit.clear();
                 input.preedit_cursor = None;
                 reveal_cursor(input, viewport_w, style.text);
@@ -379,22 +380,22 @@ fn apply_command(
             let mut editor = input.editor();
             if let Some(value) = editor.selected_text() {
                 if clipboard.write_text(value).is_ok() && command == Command::Cut {
-                    editor.backspace();
+                    normal::backspace(&mut editor);
                 }
                 editor.break_undo_group();
             }
         }
         Command::Paste => {
             if let Ok(Some(value)) = clipboard.read_text() {
-                input.editor().insert(&single_line(&value));
+                normal::insert(&mut input.editor(), &single_line(&value));
                 input.editor().break_undo_group();
             }
         }
         Command::Move(Movement::Up | Movement::PageUp(_), extend) => {
-            input.editor().navigate(Movement::Home, extend);
+            normal::navigate(&mut input.editor(), Movement::Home, extend);
         }
         Command::Move(Movement::Down | Movement::PageDown(_), extend) => {
-            input.editor().navigate(Movement::End, extend);
+            normal::navigate(&mut input.editor(), Movement::End, extend);
         }
         _ => commands::apply(&mut input.editor(), command),
     }
