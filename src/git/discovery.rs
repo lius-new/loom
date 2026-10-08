@@ -47,7 +47,7 @@ pub fn discover_fast(
     let mut seen = HashSet::new();
     let mut repositories = Vec::new();
     for root in workspace_roots {
-        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+        let root = canonical(root.clone());
         let repository = if root.join(".git").exists() {
             Some(from_git_marker(&root)?)
         } else {
@@ -85,7 +85,7 @@ fn from_git_marker(root: &Path) -> GitResult<DiscoveredRepository> {
             root.join(path)
         }
     };
-    let git_dir = std::fs::canonicalize(&git_dir).unwrap_or(git_dir);
+    let git_dir = canonical(git_dir);
     let common_dir = std::fs::read_to_string(git_dir.join("commondir"))
         .ok()
         .map(|value| {
@@ -96,7 +96,7 @@ fn from_git_marker(root: &Path) -> GitResult<DiscoveredRepository> {
                 git_dir.join(path)
             }
         })
-        .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
+        .map(canonical)
         .unwrap_or_else(|| git_dir.clone());
     Ok(DiscoveredRepository {
         worktree_root: root.to_path_buf(),
@@ -135,11 +135,19 @@ pub fn discover_one(
         return Ok(None);
     }
     Ok(Some(DiscoveredRepository {
-        worktree_root: PathBuf::from(&lines[0]),
-        git_dir: PathBuf::from(&lines[1]),
-        common_dir: PathBuf::from(&lines[2]),
+        worktree_root: canonical(PathBuf::from(&lines[0])),
+        git_dir: canonical(PathBuf::from(&lines[1])),
+        common_dir: canonical(PathBuf::from(&lines[2])),
         bare: lines[3] == "true",
     }))
+}
+
+/// One spelling per repository, matching workspace folders (canonicalized
+/// when opened). Git prints `D:/dir` on Windows while `fs::canonicalize`
+/// yields `\\?\D:\dir`; mixing them gives the fast and detailed scans
+/// different repository ids.
+fn canonical(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
 }
 
 fn direct_children(root: &Path) -> Vec<PathBuf> {

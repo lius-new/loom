@@ -70,10 +70,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let h = vp.height();
     window_geometry::observe_viewport(w, h);
     let window_focus_state = state.clone();
-    let window_focus_git_store = git_store.clone();
+    let window_focus_git_poll = git_poll_control.get();
     cx.use_event_once::<WindowFocusChanged>(move |event| {
         if event.window_id.as_str() == "loom" {
             window_geometry::handle_focus_change(event.focused);
+            // A background window does not poll; regaining focus rescans.
+            window_focus_git_poll.set_paused(!event.focused);
             if !event.focused {
                 window_focus_state.try_update(|app| {
                     // A key sequence does not survive leaving the window.
@@ -88,7 +90,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
                     crate::file_tree::refresh_all_loaded_directories(app);
                     app.workspace.reconcile_disk();
                 });
-                crate::git_actions::refresh(&window_focus_state, &window_focus_git_store);
             }
         }
     });

@@ -1259,4 +1259,28 @@ mod tests {
         assert_eq!(parsed[0].ours.as_deref(), Some("bbbb"));
         assert_eq!(parsed[0].theirs.as_deref(), Some("cccc"));
     }
+
+    #[test]
+    fn fast_and_detailed_discovery_agree_on_repository_paths() {
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        let roots = [root.clone()];
+        let fast = discovery::discover_fast(backend.runner(), &roots).unwrap();
+        let detailed = backend.discover(&roots).unwrap();
+        assert_eq!(fast, detailed);
+        assert_eq!(fast[0].worktree_root, std::fs::canonicalize(&root).unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_only_commands_time_out_by_default() {
+        assert!(GitCommand::new().timeout.is_none());
+        assert!(GitCommand::new().read_only().timeout.is_some());
+        let explicit = Duration::from_secs(5);
+        assert_eq!(
+            GitCommand::new().timeout(explicit).read_only().timeout,
+            Some(explicit)
+        );
+    }
 }

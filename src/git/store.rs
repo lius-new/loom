@@ -103,9 +103,22 @@ pub struct PollControl {
 struct PollRequest {
     active_path: Option<PathBuf>,
     wake: bool,
+    paused: bool,
 }
 
 impl PollControl {
+    /// Stop interval scans while the window is in the background. Resuming
+    /// scans immediately, since anything may have changed meanwhile.
+    pub fn set_paused(&self, paused: bool) {
+        let (request, signal) = &*self.shared;
+        let mut request = request.lock().unwrap_or_else(PoisonError::into_inner);
+        if request.paused != paused {
+            request.paused = paused;
+            request.wake |= !paused;
+            signal.notify_all();
+        }
+    }
+
     /// Point line decorations at `path` and scan again without waiting for
     /// the polling interval.
     pub fn set_active_path(&self, path: Option<PathBuf>) {
@@ -127,8 +140,8 @@ impl PollControl {
         request.active_path.clone()
     }
 
-    /// Sleep until `interval` passes or a scan is requested. Returns false
-    /// once `stopped` is set.
+    /// Sleep until `interval` passes or a scan is requested; while paused,
+    /// only a request ends the wait. Returns false once `stopped` is set.
     fn wait(&self, interval: Duration, stopped: &AtomicBool) -> bool {
         let (request, signal) = &*self.shared;
         let deadline = Instant::now() + interval;
@@ -137,8 +150,15 @@ impl PollControl {
             if stopped.load(Ordering::Acquire) {
                 return false;
             }
+            if request.wake {
+                return true;
+            }
+            if request.paused {
+                request = signal.wait(request).unwrap_or_else(PoisonError::into_inner);
+                continue;
+            }
             let now = Instant::now();
-            if request.wake || now >= deadline {
+            if now >= deadline {
                 return true;
             }
             request = signal
@@ -533,6 +553,28 @@ mod tests {
         // The same path is not a new request.
         control.set_active_path(Some(PathBuf::from("/workspace/a")));
         assert!(!control.shared.0.lock().unwrap().wake);
+    }
+
+    #[test]
+    fn a_paused_poller_waits_until_resumed() {
+        let control = PollControl::default();
+        let stopped = Arc::new(AtomicBool::new(false));
+        control.set_paused(true);
+        let waiter = {
+            let control = control.clone();
+            let stopped = Arc::clone(&stopped);
+            std::thread::spawn(move || {
+                let started = Instant::now();
+                let scanned = control.wait(Duration::from_millis(10), &stopped);
+                (scanned, started.elapsed())
+            })
+        };
+        std::thread::sleep(Duration::from_millis(200));
+        control.set_paused(false);
+        let (scanned, waited) = waiter.join().unwrap();
+        assert!(scanned);
+        // The 10ms interval passed long before; only resuming ended the wait.
+        assert!(waited >= Duration::from_millis(200));
     }
 
     #[test]

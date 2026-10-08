@@ -24,6 +24,9 @@ impl CancellationToken {
     }
 }
 
+/// Generous enough for `status` or `blame` in a large repository.
+const READ_ONLY_TIMEOUT: Duration = Duration::from_secs(120);
+
 #[derive(Clone, Debug)]
 pub struct GitCommand {
     pub cwd: Option<PathBuf>,
@@ -70,8 +73,12 @@ impl GitCommand {
         self
     }
 
+    /// A query that changes nothing. It also gets a default timeout so a hung
+    /// process cannot stall status polling for good; an explicit `timeout`
+    /// still wins.
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
+        self.timeout.get_or_insert(READ_ONLY_TIMEOUT);
         self
     }
 

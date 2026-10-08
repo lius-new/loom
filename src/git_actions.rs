@@ -9,22 +9,6 @@ use crate::git::store::operation;
 use crate::git::{GitService, GitStoreSnapshot, OperationKind, RepositorySnapshot};
 use crate::state::AppState;
 
-pub fn refresh(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
-    let roots = state.get().workspace_folders.clone();
-    let active = state.get().workspace.active_path().map(ToOwned::to_owned);
-    let Ok(service) = crate::git::service() else {
-        return false;
-    };
-    let store = store.clone();
-    thread::Builder::new()
-        .name("loom-git-refresh".into())
-        .spawn(move || {
-            let result = service.refresh(&roots, active.as_deref());
-            store.update(move |current| current.apply_scan(result));
-        })
-        .is_ok()
-}
-
 pub fn stage_all(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
     let Some(repository) = active_repository(store) else {
         return false;
