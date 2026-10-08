@@ -103,6 +103,7 @@ function installInnoSetup(installer) {
     info(`Using installed ${path.relative(ROOT, innoDir())}`);
     return;
   }
+  fs.mkdirSync(TOOLS_DIR, { recursive: true });
   const temporary = `${innoDir()}.partial`;
   fs.rmSync(temporary, { recursive: true, force: true });
   fs.rmSync(innoDir(), { recursive: true, force: true });
