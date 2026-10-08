@@ -48,7 +48,13 @@ pub fn render(
     } else {
         document.rows.len()
     };
-    let metrics = scroll_metrics(body_rect, split, row_count, document.longest_line(split));
+    let metrics = scroll_metrics(
+        body_rect,
+        split,
+        row_count,
+        document.longest_line(split),
+        app.git_split_ratio,
+    );
     let max_y = metrics.max_y;
     let max_x = metrics.max_x;
     let scroll_x = stored_x.clamp(0.0, max_x);
@@ -132,6 +138,7 @@ pub fn render(
             &document.split_rows,
             scroll_x,
             scroll_y,
+            app.git_split_ratio,
         ))
     } else {
         root.child(render_inline(
@@ -141,6 +148,34 @@ pub fn render(
             scroll_y,
         ))
     };
+
+    if split {
+        let down = state.clone();
+        let moving = state.clone();
+        let up = state.clone();
+        root = root.child(crate::ui::pane_sash::horizontal(
+            format!("git-split-{}", pane.get()),
+            split_middle(content_rect, app.git_split_ratio),
+            (content_rect.top, content_rect.bottom),
+            app.git_split_drag == Some(pane),
+            move || down.update(|app| app.git_split_drag = Some(pane)),
+            move |x| {
+                moving.try_update(|app| {
+                    if app.git_split_drag != Some(pane) || content_rect.width() <= 0.0 {
+                        return false;
+                    }
+                    let position = crate::ui::pane_sash::split_position(
+                        content_rect.left,
+                        content_rect.right,
+                        x,
+                    );
+                    app.git_split_ratio = (position - content_rect.left) / content_rect.width();
+                    true
+                });
+            },
+            move || up.update(|app| app.git_split_drag = None),
+        ));
+    }
 
     let emphasized = app.editor_hovered == Some(pane)
         || (app.workspace.active_pane() == pane
@@ -182,7 +217,17 @@ fn code_left(rect: UiRect, split: bool) -> f32 {
         }
 }
 
-fn scroll_metrics(rect: UiRect, split: bool, rows: usize, longest_line: usize) -> ScrollMetrics {
+fn split_middle(rect: UiRect, ratio: f32) -> f32 {
+    crate::ui::pane_sash::split_position(rect.left, rect.right, rect.left + rect.width() * ratio)
+}
+
+fn scroll_metrics(
+    rect: UiRect,
+    split: bool,
+    rows: usize,
+    longest_line: usize,
+    ratio: f32,
+) -> ScrollMetrics {
     let content_h = rows as f32 * ROW_H;
     let content_w = longest_line as f32 * theme::CHAR_W + theme::CODE_PAD * 2.0;
     let mut viewport_h = rect.height().max(1.0);
@@ -195,7 +240,9 @@ fn scroll_metrics(rect: UiRect, split: bool, rows: usize, longest_line: usize) -
                 0.0
             };
         viewport_w = (if split {
-            width / 2.0 - NUMBER_W
+            let bounds = UiRect::new(rect.left, rect.top, rect.left + width, rect.bottom);
+            let left_width = split_middle(bounds, ratio) - rect.left;
+            left_width.min(width - left_width) - NUMBER_W
         } else {
             width - NUMBER_W * 2.0 - MARKER_W
         })
@@ -234,7 +281,13 @@ pub(crate) fn drag_scrollbars(app: &mut AppState, rect: UiRect, x: f32, y: f32) 
     } else {
         document.rows.len()
     };
-    let metrics = scroll_metrics(body, split, rows, document.longest_line(split));
+    let metrics = scroll_metrics(
+        body,
+        split,
+        rows,
+        document.longest_line(split),
+        app.git_split_ratio,
+    );
     editor_view::drag_scrollbars_with_metrics(app, body, code_left(body, split), metrics, x, y)
 }
 
@@ -448,8 +501,14 @@ fn render_inline(rect: UiRect, rows: &[DiffRow], scroll_x: f32, scroll_y: f32) -
         .child(vertical_rule(text_left, rect))
 }
 
-fn render_split(rect: UiRect, rows: &[SplitDiffRow], scroll_x: f32, scroll_y: f32) -> Element {
-    let middle = rect.left + rect.width() / 2.0;
+fn render_split(
+    rect: UiRect,
+    rows: &[SplitDiffRow],
+    scroll_x: f32,
+    scroll_y: f32,
+    ratio: f32,
+) -> Element {
+    let middle = split_middle(rect, ratio);
     let old_text_left = rect.left + NUMBER_W;
     let new_text_left = middle + NUMBER_W;
     let old_viewport = UiRect::new(old_text_left, rect.top, middle, rect.bottom);
@@ -667,6 +726,35 @@ mod tests {
         };
         let pointer = |x, y| PointerData::mouse(Point::new(x, y));
         let body_top = TOOLBAR_H;
+
+        if split {
+            let body = UiRect::new(
+                0.0,
+                TOOLBAR_H,
+                viewport.right - SCROLLBAR_SIZE,
+                viewport.bottom - SCROLLBAR_SIZE,
+            );
+            let middle = split_middle(body, 0.5);
+            send(InputEvent::PointerDown {
+                pointer: pointer(middle, 80.0),
+                button: PointerButton::Left,
+            });
+            assert_eq!(state.get().git_split_drag, Some(PaneId::new(1)));
+            send(InputEvent::PointerMove(pointer(900.0, 80.0)));
+            assert!(state.get().git_split_ratio > 0.5);
+            assert!(
+                (split_middle(body, state.get().git_split_ratio) - (body.right - 200.0)).abs()
+                    < 0.01
+            );
+            send(InputEvent::PointerUp {
+                pointer: pointer(900.0, 80.0),
+                button: PointerButton::Left,
+            });
+            assert_eq!(state.get().git_split_drag, None);
+            let ratio = state.get().git_split_ratio;
+            send(InputEvent::PointerMove(pointer(20.0, 80.0)));
+            assert_eq!(state.get().git_split_ratio, ratio);
+        }
 
         // Grab the thumb, then move away from its strip and beyond the viewport.
         send(InputEvent::PointerDown {

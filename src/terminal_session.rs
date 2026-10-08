@@ -165,6 +165,7 @@ pub struct TerminalTab {
     pub id: u64,
     /// Sessions with the same group share a tab and render side by side.
     pub group_id: u64,
+    pub width_weight: f32,
     pub controller: TerminalController,
     pub cwd: Option<PathBuf>,
 }
@@ -259,11 +260,25 @@ impl TerminalTabs {
             .collect()
     }
 
+    pub fn widths(&self) -> Vec<f32> {
+        self.tabs.iter().map(|tab| tab.width_weight).collect()
+    }
+
+    pub fn restore_widths(&mut self, widths: &[f32]) {
+        for (tab, width) in self.tabs.iter_mut().zip(widths) {
+            if width.is_finite() && *width > 0.0 {
+                tab.width_weight = width.clamp(0.001, 1000.0);
+            }
+        }
+    }
+
     pub fn split(&mut self, target: u64) -> Option<u64> {
         let index = self.tabs.iter().position(|tab| tab.id == target)?;
         let group_id = self.tabs[index].group_id;
         let shell = self.tabs[index].controller.shell();
         let cwd = self.tabs[index].cwd.clone();
+        let width_weight = self.tabs[index].width_weight * 0.5;
+        self.tabs[index].width_weight = width_weight;
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         self.tabs.insert(
@@ -271,6 +286,7 @@ impl TerminalTabs {
             TerminalTab {
                 id,
                 group_id,
+                width_weight,
                 controller: TerminalController::with_shell(shell),
                 cwd,
             },
@@ -302,6 +318,7 @@ impl TerminalTabs {
         self.tabs.push(TerminalTab {
             id,
             group_id: id,
+            width_weight: 1.0,
             controller: TerminalController::with_shell(shell),
             cwd,
         });
@@ -313,6 +330,22 @@ impl TerminalTabs {
         if self.tabs.iter().any(|tab| tab.id == id) {
             self.active_id = Some(id);
         }
+    }
+
+    pub fn resize_pair(&mut self, left: u64, right: u64, fraction: f32) {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == left) else {
+            return;
+        };
+        let Some(next) = self.tabs.get(index + 1) else {
+            return;
+        };
+        if next.id != right || next.group_id != self.tabs[index].group_id {
+            return;
+        }
+        let total = self.tabs[index].width_weight + next.width_weight;
+        let fraction = fraction.clamp(0.001, 0.999);
+        self.tabs[index].width_weight = total * fraction;
+        self.tabs[index + 1].width_weight = total * (1.0 - fraction);
     }
 
     pub fn close(&mut self, id: u64) -> Option<TerminalController> {
@@ -1257,11 +1290,14 @@ mod tests {
         let split = original.split(first).unwrap();
         original.add_at(ShellKind::Bash, Some("workspace".into()));
         original.select(split);
-        let restored = TerminalTabs::restored_with_groups(
+        original.resize_pair(first, split, 0.75);
+        let mut restored = TerminalTabs::restored_with_groups(
             original.shells(),
             original.active_index(),
             &original.saved_groups(),
         );
+        restored.restore_widths(&original.widths());
+        assert_eq!(restored.widths(), original.widths());
         assert_eq!(restored.saved_groups(), vec![0, 0, 1]);
         assert_eq!(restored.active_index(), Some(1));
         assert_eq!(restored.active_group().len(), 2);

@@ -15,6 +15,52 @@ pub const PANE_MIN: MinSize = MinSize {
 /// Width of the invisible hit strip centred on the 1px divider.
 const HIT: f32 = 4.0;
 
+pub fn split_position(left: f32, right: f32, position: f32) -> f32 {
+    let minimum = PANE_MIN.width.min((right - left).max(0.0) / 2.0);
+    position.clamp(left + minimum, right - minimum)
+}
+
+/// Shared pointer capture and feedback for horizontal content splits.
+pub fn horizontal(
+    key: String,
+    position: f32,
+    span: (f32, f32),
+    active: bool,
+    start: impl Fn() + Send + Sync + 'static,
+    drag: impl Fn(f32) + Send + Sync + 'static,
+    end: impl Fn() + Send + Sync + 'static,
+) -> Element {
+    panel(
+        UiRect::new(position - HIT / 2.0, span.0, position + HIT / 2.0, span.1),
+        VisualStyle::default(),
+    )
+    .key(key)
+    .event_policy(EventPolicy::INTERACTIVE)
+    .cursor(CursorIcon::ResizeHorizontal)
+    .on_pointer_down_with_button(move |cx, _, button| {
+        if button == PointerButton::Left {
+            start();
+            cx.stop_propagation();
+        }
+    })
+    .on_pointer_drag(move |cx, pointer| {
+        drag(pointer.point.x);
+        cx.stop_propagation();
+    })
+    .on_pointer_up(move |cx, _| {
+        end();
+        cx.stop_propagation();
+    })
+    .child(panel(
+        UiRect::new(position - 0.5, span.0, position + 0.5, span.1),
+        VisualStyle::filled(if active {
+            theme::c().accent
+        } else {
+            theme::c().border
+        }),
+    ))
+}
+
 pub fn render(sash: Sash, state: State<AppState>) -> Element {
     let s = state.get();
     let active = s

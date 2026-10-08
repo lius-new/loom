@@ -215,6 +215,9 @@ pub struct AppState {
     pub resizing_sidebar: bool,
     /// The pane divider being dragged.
     pub sash_drag: Option<crate::model::pane_layout::Sash>,
+    pub git_split_drag: Option<crate::model::pane_layout::PaneId>,
+    pub git_split_ratio: f32,
+    pub terminal_split_drag: Option<u64>,
     /// Width and drag state for the independent left Source Control drawer.
     pub git_sidebar_w: f32,
     pub resizing_git_sidebar: bool,
@@ -342,6 +345,9 @@ impl AppState {
             sidebar_w: crate::theme::SIDEBAR_W,
             resizing_sidebar: false,
             sash_drag: None,
+            git_split_drag: None,
+            git_split_ratio: 0.5,
+            terminal_split_drag: None,
             git_sidebar_w: crate::theme::SIDEBAR_W,
             resizing_git_sidebar: false,
             git_scroll: 0.0,

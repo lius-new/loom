@@ -103,20 +103,47 @@ pub fn pty_size(rect: UiRect) -> TerminalSize {
     ))
 }
 
-pub fn pane_rects(rect: UiRect, count: usize) -> Vec<UiRect> {
+#[cfg(test)]
+fn pane_rects(rect: UiRect, count: usize) -> Vec<UiRect> {
+    weighted_pane_rects(rect, &vec![1.0; count])
+}
+
+pub fn session_rects(rect: UiRect, sessions: &[TerminalTab]) -> Vec<UiRect> {
+    weighted_pane_rects(
+        rect,
+        &sessions
+            .iter()
+            .map(|session| session.width_weight)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn weighted_pane_rects(rect: UiRect, weights: &[f32]) -> Vec<UiRect> {
+    let count = weights.len();
     if count == 0 {
         return Vec::new();
     }
+    let minimum = crate::ui::pane_sash::PANE_MIN
+        .width
+        .min(rect.width().max(0.0) / count as f32);
+    let remaining = (rect.width() - minimum * count as f32).max(0.0);
+    let total: f32 = weights.iter().sum();
+    let mut left = rect.left;
     (0..count)
         .map(|index| {
-            UiRect::new(
-                rect.left
-                    + rect.width() * index as f32 / count as f32
-                    + if index > 0 { 1.0 } else { 0.0 },
+            let right = if index + 1 == count {
+                rect.right
+            } else {
+                left + minimum + remaining * weights[index] / total
+            };
+            let pane = UiRect::new(
+                left + if index > 0 { 1.0 } else { 0.0 },
                 rect.top + HEADER_H,
-                rect.left + rect.width() * (index + 1) as f32 / count as f32,
+                right,
                 rect.bottom,
-            )
+            );
+            left = right;
+            pane
         })
         .collect()
 }
@@ -161,7 +188,7 @@ pub fn render(
     let header = UiRect::new(rect.left, rect.top + 1.0, rect.right, rect.top + HEADER_H);
     let body = UiRect::new(rect.left, header.bottom, rect.right, rect.bottom);
     let sessions = terminal_tab_snapshot.active_group();
-    let body_rects = pane_rects(rect, sessions.len());
+    let body_rects = session_rects(rect, &sessions);
     let active_index = sessions
         .iter()
         .position(|session| session.id == active_tab_id)
@@ -353,7 +380,7 @@ pub fn render(
         )),
     );
 
-    for (session, session_rect) in sessions.iter().zip(pane_rects(rect, sessions.len())) {
+    for (session, session_rect) in sessions.iter().zip(body_rects.iter().copied()) {
         let active = session.id == active_tab_id;
         let id = UiId::owned(format!("terminal-session-{}", session.id));
         terminal = terminal.child(render_session(
@@ -368,17 +395,42 @@ pub fn render(
             application.clone(),
             cursor_blink_visible,
         ));
-        if session_rect.left > body.left {
-            terminal = terminal.child(panel(
-                UiRect::new(
-                    session_rect.left - 1.0,
-                    body.top,
-                    session_rect.left,
-                    body.bottom,
-                ),
-                VisualStyle::filled(theme::c().border),
-            ));
-        }
+    }
+
+    // Add handles after all session surfaces so they win hit testing.
+    for index in 0..sessions.len().saturating_sub(1) {
+        let left_id = sessions[index].id;
+        let right_id = sessions[index + 1].id;
+        let pair_left = body_rects[index].left - if index > 0 { 1.0 } else { 0.0 };
+        let pair_right = body_rects[index + 1].right;
+        let minimum = crate::ui::pane_sash::PANE_MIN
+            .width
+            .min(rect.width() / sessions.len() as f32);
+        let remaining = (rect.width() - minimum * sessions.len() as f32).max(0.0);
+        let down = state.clone();
+        let moving = state.clone();
+        let up = state.clone();
+        let tabs = terminal_tabs.clone();
+        terminal = terminal.child(crate::ui::pane_sash::horizontal(
+            format!("terminal-split-{left_id}-{right_id}"),
+            body_rects[index].right + 0.5,
+            (body.top, body.bottom),
+            app_state.terminal_split_drag == Some(left_id),
+            move || down.update(|app| app.terminal_split_drag = Some(left_id)),
+            move |x| {
+                if moving.get().terminal_split_drag != Some(left_id) || remaining <= 0.0 {
+                    return;
+                }
+                let position = crate::ui::pane_sash::split_position(pair_left, pair_right, x);
+                let pair_extra = (pair_right - pair_left - minimum * 2.0).max(0.0);
+                if pair_extra > 0.0 {
+                    let fraction =
+                        ((position - pair_left - minimum) / pair_extra).clamp(0.001, 0.999);
+                    tabs.update(|tabs| tabs.resize_pair(left_id, right_id, fraction));
+                }
+            },
+            move || up.update(|app| app.terminal_split_drag = None),
+        ));
     }
 
     if shell_menu_open {
@@ -1129,6 +1181,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resizing_adjacent_panes_preserves_other_widths_and_fits_narrow_windows() {
+        let mut tabs = TerminalTabs::new();
+        let first = tabs.active_id().unwrap();
+        let second = tabs.split(first).unwrap();
+        tabs.split(second);
+        let bounds = UiRect::new(20.0, 0.0, 1020.0, 300.0);
+        let before = session_rects(bounds, &tabs.active_group());
+        tabs.resize_pair(first, second, 0.8);
+        let after = session_rects(bounds, &tabs.active_group());
+        assert!(after[0].width() > before[0].width());
+        assert!(after[1].width() < before[1].width());
+        assert!((after[2].left - before[2].left).abs() < 0.001);
+        assert!((after[2].width() - before[2].width()).abs() < 0.001);
+        assert!(after.iter().all(|pane| pane.width() >= 199.0));
+        let narrow = session_rects(UiRect::new(0.0, 0.0, 90.0, 300.0), &tabs.active_group());
+        assert_eq!(narrow.last().unwrap().right, 90.0);
+        assert!(narrow.iter().all(|pane| pane.width() >= 29.0));
+    }
+
+    #[test]
     fn split_panes_select_independently_preserve_drag_selection_and_route_input() {
         use lgui::application::{AppView, ApplicationContext};
         use lgui::core::{InputEvent, PointerData, UiScale, dispatch_runtime_output};
@@ -1222,6 +1294,42 @@ mod tests {
                 .ime_cursor_rect
                 .unwrap()
         };
+        let divider = PointerData::mouse(Point::new(300.5, 80.0));
+        send(InputEvent::PointerDown {
+            pointer: divider,
+            button: PointerButton::Left,
+        });
+        assert_eq!(state.get().terminal_split_drag, Some(1));
+        let moved = PointerData::mouse(Point::new(350.0, 80.0));
+        send(InputEvent::PointerMove(moved));
+        assert_eq!(tabs.get().active_id(), Some(2));
+        let layout = session_rects(
+            UiRect::new(0.0, 0.0, 600.0, 260.0),
+            &tabs.get().active_group(),
+        );
+        assert_eq!(layout[0].right, 350.0);
+        assert!(pty_size_for_body(layout[0]).cols > pty_size_for_body(layout[1]).cols);
+        send(InputEvent::PointerUp {
+            pointer: moved,
+            button: PointerButton::Left,
+        });
+        assert_eq!(state.get().terminal_split_drag, None);
+        let weights = tabs
+            .get()
+            .active_group()
+            .iter()
+            .map(|tab| tab.width_weight)
+            .collect::<Vec<_>>();
+        send(InputEvent::PointerMove(divider));
+        assert_eq!(
+            tabs.get()
+                .active_group()
+                .iter()
+                .map(|tab| tab.width_weight)
+                .collect::<Vec<_>>(),
+            weights
+        );
+
         let start = PointerData::mouse(Point::new(50.0, 80.0));
         let caret = send(InputEvent::PointerDown {
             pointer: start,

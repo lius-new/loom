@@ -75,6 +75,8 @@ pub struct WorkspaceSession {
     #[serde(default)]
     pub terminal_groups: Vec<usize>,
     #[serde(default)]
+    pub terminal_widths: Vec<f32>,
+    #[serde(default)]
     pub active_terminal: Option<usize>,
     #[serde(default)]
     pub show_terminal: bool,
@@ -119,6 +121,7 @@ pub fn save_editor_layout(layout: Option<&EditorLayout>) -> io::Result<()> {
 pub fn save_terminal_state(
     terminal_tabs: &[ShellKind],
     terminal_groups: &[usize],
+    terminal_widths: &[f32],
     active_terminal: Option<usize>,
     show_terminal: bool,
     terminal_height: f32,
@@ -126,6 +129,7 @@ pub fn save_terminal_state(
     update(|session| {
         session.terminal_tabs = terminal_tabs.to_vec();
         session.terminal_groups = terminal_groups.to_vec();
+        session.terminal_widths = terminal_widths.to_vec();
         session.active_terminal = active_terminal;
         session.show_terminal = show_terminal;
         session.terminal_height = Some(terminal_height);
@@ -247,6 +251,7 @@ mod tests {
                 ShellKind::Bash,
             ],
             terminal_groups: vec![0, 0, 1],
+            terminal_widths: vec![1.5, 0.5, 1.0],
             active_terminal: Some(1),
             show_terminal: true,
             terminal_height: Some(320.0),

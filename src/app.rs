@@ -32,11 +32,13 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let git_poll_control = state.get().git_poll_control;
     let terminal_tabs = cx.state_with(|| {
         let session = workspace_persistence::load();
-        TerminalTabs::restored_with_groups(
+        let mut tabs = TerminalTabs::restored_with_groups(
             session.terminal_tabs,
             session.active_terminal,
             &session.terminal_groups,
-        )
+        );
+        tabs.restore_widths(&session.terminal_widths);
+        tabs
     });
     let terminal_cursor_blink = cx.state(true);
     let terminal_cursor_visible = terminal_cursor_blink.get();
@@ -44,6 +46,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let active_terminal_id = terminal_tab_snapshot.active_id();
     let terminal_shells = terminal_tab_snapshot.shells();
     let terminal_groups = terminal_tab_snapshot.saved_groups();
+    let terminal_widths = terminal_tab_snapshot.widths();
     let active_terminal_index = terminal_tab_snapshot.active_index();
     let terminal_controller = terminal_tab_snapshot
         .active()
@@ -121,9 +124,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
                     // A key sequence does not survive leaving the window.
                     let had_pending = !app.pending_keystrokes.is_empty();
                     app.pending_keystrokes.clear();
+                    let split_drag = app.git_split_drag.take().is_some()
+                        | app.terminal_split_drag.take().is_some();
                     editor_view::finish_scrollbar_drag(app)
                         | tabs::cancel_pointer_interaction(app)
                         | had_pending
+                        | split_drag
                 });
             } else {
                 crate::file_watcher::refresh_async(
@@ -248,18 +254,23 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         (
             terminal_shells.clone(),
             terminal_groups.clone(),
+            terminal_widths.clone(),
+            s.terminal_split_drag,
             active_terminal_index,
             show_term,
             s.terminal_h,
         ),
         move || {
-            let _ = workspace_persistence::save_terminal_state(
-                &terminal_shells,
-                &terminal_groups,
-                active_terminal_index,
-                show_term,
-                s.terminal_h,
-            );
+            if s.terminal_split_drag.is_none() {
+                let _ = workspace_persistence::save_terminal_state(
+                    &terminal_shells,
+                    &terminal_groups,
+                    &terminal_widths,
+                    active_terminal_index,
+                    show_term,
+                    s.terminal_h,
+                );
+            }
             || {}
         },
     );
@@ -421,7 +432,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_sessions = terminal_tab_snapshot.active_group();
     let terminal_starts = terminal_sessions
         .iter()
-        .zip(terminal::pane_rects(terminal_rect, terminal_sessions.len()))
+        .zip(terminal::session_rects(terminal_rect, &terminal_sessions))
         .map(|(session, rect)| {
             (
                 session.id,
