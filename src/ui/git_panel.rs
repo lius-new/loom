@@ -3,20 +3,21 @@
 use std::path::PathBuf;
 
 use lgui::core::{
-    CursorIcon, EventPolicy, PointerButton, SemanticRole, Semantics, UiEventKind, UiEventPayload,
-    UiFocusHandle, UiId, WheelUnit, clip,
+    CursorIcon, EventPolicy, PointerButton, SemanticRole, Semantics, UiElement, UiEventKind,
+    UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
 use crate::git::{ChangeKind, DiffTarget, FileState, GitStoreSnapshot};
 use crate::state::AppState;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
+use crate::ui::components::scrollbar;
 use crate::{git_actions, theme};
 
 const TOPLINE_H: f32 = theme::TABS_H;
 const PROMPT_H: f32 = 38.0;
 const SECTION_H: f32 = 22.0;
-const ROW_H: f32 = 24.0;
+const ROW_H: f32 = 20.0;
 
 pub fn render(
     rect: UiRect,
@@ -41,7 +42,7 @@ pub fn render(
             rect.top + TOPLINE_H,
         ),
         "CHANGES",
-        theme::mono(theme::c().text_dim, theme::SMALL),
+        theme::mono_bold(theme::c().text_soft, theme::SMALL).tracking(0.8),
     ));
     root = root.child(panel(
         UiRect::new(
@@ -282,12 +283,79 @@ fn visible_rows(
 #[cfg(test)]
 mod virtualization_tests {
     use super::*;
+
+    #[test]
+    fn scrollbar_is_separate_from_resize_handle_and_drags_outside_its_strip() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
+        use lgui::session::UiSession;
+        use std::sync::{Arc, Mutex};
+
+        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let output = exposed.clone();
+        let viewport = UiRect::new(0.0, 0.0, 300.0, 300.0);
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state_with(AppState::new);
+            *output.lock().unwrap() = Some(state.clone());
+            let scroll = state.get().git_scroll;
+            panel(viewport, VisualStyle::default())
+                .child(git_vertical_scrollbar(
+                    viewport,
+                    1200.0,
+                    scroll,
+                    state.clone(),
+                ))
+                .child(git_resize_handle(viewport, state, false))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        let point = Point::new(viewport.right - 14.0, 12.0);
+        assert_eq!(session.tree().cursor_at(point), None);
+        assert_eq!(
+            session
+                .tree()
+                .cursor_at(Point::new(viewport.right - 4.0, 12.0)),
+            Some(CursorIcon::ResizeHorizontal)
+        );
+        let context = ApplicationContext::empty(Default::default());
+        let mut send = |input| {
+            let events = session.handle_input(input);
+            dispatch_runtime_output(
+                events,
+                &context,
+                &lgui::window::WindowId::new("git-drawer-scrollbar-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        send(InputEvent::PointerDown {
+            pointer: PointerData::mouse(point),
+            button: PointerButton::Left,
+        });
+        assert!(state.get().git_scrollbar_dragging);
+        assert!(!state.get().resizing_git_sidebar);
+        let outside = PointerData::mouse(Point::new(30.0, 260.0));
+        send(InputEvent::PointerMove(outside));
+        assert!(state.get().git_scroll > 0.0);
+        send(InputEvent::PointerUp {
+            pointer: outside,
+            button: PointerButton::Left,
+        });
+        assert!(!state.get().git_scrollbar_dragging);
+        let released = state.get().git_scroll;
+        send(InputEvent::PointerMove(PointerData::mouse(point)));
+        assert_eq!(state.get().git_scroll, released);
+    }
+
     #[test]
     fn a_hundred_thousand_changes_only_build_the_viewport_rows() {
         let first = visible_rows(0.0, 0.0, 480.0, 100_000);
         let middle = visible_rows(0.0, 50_000.0 * ROW_H, 50_000.0 * ROW_H + 480.0, 100_000);
-        assert!(first.len() <= 22);
-        assert!(middle.len() <= 22);
+        let viewport_rows = (480.0 / ROW_H).ceil() as usize + 2;
+        assert!(first.len() <= viewport_rows);
+        assert!(middle.len() <= viewport_rows);
         assert!(middle.start > 100); // Entries after the old 100-file cap are reachable.
         let end = visible_rows(0.0, 100_000.0 * ROW_H, 100_000.0 * ROW_H + 480.0, 100_000);
         assert_eq!(end.end, 100_000);
@@ -305,13 +373,13 @@ fn git_vertical_scrollbar(
     let viewport_h = rect.height();
     let max_scroll = (content_bottom - rect.bottom).max(0.0);
     let track = UiRect::new(
-        rect.right - 7.0,
+        rect.right - 8.0 - scrollbar::SIZE,
         rect.top + 8.0,
-        rect.right - 3.0,
+        rect.right - 8.0,
         rect.bottom - 8.0,
     );
     let thumb_h = (track.height() * viewport_h / content_h)
-        .max(24.0)
+        .max(scrollbar::MIN_THUMB_LENGTH)
         .min(track.height());
     let travel = track.height() - thumb_h;
     let thumb_top = if max_scroll == 0.0 {
@@ -323,9 +391,14 @@ fn git_vertical_scrollbar(
     let drag_start = state.clone();
     let drag_move = state.clone();
     let drag_end = state;
-    panel(
-        UiRect::new(track.left, thumb_top, track.right, thumb_top + thumb_h),
-        VisualStyle::filled(theme::c().text_faint).radius(2.0),
+    scrollbar::thumb(
+        UiRect::new(
+            track.left + scrollbar::INSET,
+            thumb_top,
+            track.right - scrollbar::INSET,
+            thumb_top + thumb_h,
+        ),
+        0xb8,
     )
     .key("git-vertical-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)
@@ -335,7 +408,7 @@ fn git_vertical_scrollbar(
             app.git_scrollbar_drag_offset = pointer.point.y - thumb_top;
         });
     })
-    .on_pointer_move(move |_cx, pointer| {
+    .on_pointer_drag(move |_cx, pointer| {
         drag_move.update(move |app| {
             if app.git_scrollbar_dragging && travel > 0.0 {
                 let next = (pointer.point.y - track_top - app.git_scrollbar_drag_offset) / travel
@@ -516,14 +589,16 @@ fn file_row(
         rect.bottom,
     );
     let row_key = format!("git-file-{target:?}-{}", path.display());
-    panel(
-        rect,
-        if active {
+    Element::new(move |cx| {
+        let style = if active {
             VisualStyle::filled(theme::c().active_line)
+        } else if cx.context.interaction_flags(&cx.id).hovered {
+            VisualStyle::filled(theme::c().surface)
         } else {
             VisualStyle::default()
-        },
-    )
+        };
+        UiElement::panel(cx.id, rect, style).children(cx.children)
+    })
     .key(row_key)
     .event_policy(EventPolicy::INTERACTIVE)
     .cursor(CursorIcon::Pointer)

@@ -25,6 +25,7 @@ use crate::state::{
 };
 use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
+use crate::ui::components::scrollbar;
 use crate::workspace_actions;
 
 const HEADER_H: f32 = theme::TABS_H;
@@ -1232,13 +1233,13 @@ fn vertical_scrollbar(
     let max_scroll = (content_bottom - rect.bottom).max(0.0);
 
     let track = UiRect::new(
-        rect.right - 7.0,
+        rect.right - scrollbar::SIZE,
         rect.top + 8.0,
-        rect.right - 3.0,
+        rect.right,
         rect.bottom - 8.0,
     );
     let thumb_h = (track.height() * viewport_h / content_h)
-        .max(24.0)
+        .max(scrollbar::MIN_THUMB_LENGTH)
         .min(track.height());
     let travel = track.height() - thumb_h;
     let thumb_top = if max_scroll == 0.0 {
@@ -1256,9 +1257,14 @@ fn vertical_scrollbar(
     let st_down = state.clone();
     let st_move = state.clone();
     let st_up = state.clone();
-    let thumb = panel(
-        UiRect::new(track.left, thumb_top, track.right, thumb_top + thumb_h),
-        VisualStyle::filled(theme::c().text_faint).radius(2.0),
+    let thumb = scrollbar::thumb(
+        UiRect::new(
+            track.left + scrollbar::INSET,
+            thumb_top,
+            track.right - scrollbar::INSET,
+            thumb_top + thumb_h,
+        ),
+        0xb8,
     )
     .key("file-tree-vertical-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)
@@ -1268,7 +1274,7 @@ fn vertical_scrollbar(
             app.scrollbar_drag_offset = p.point.y - thumb_top;
         });
     })
-    .on_pointer_move(move |_cx, p| {
+    .on_pointer_drag(move |_cx, p| {
         st_move.update(move |app| {
             if app.scrollbar_dragging && travel > 0.0 {
                 let t = (p.point.y - track_top - app.scrollbar_drag_offset) / travel * max_scroll;
@@ -1296,12 +1302,12 @@ fn horizontal_scrollbar(
     let max_scroll = (content_right - rect.right).max(0.0);
     let track = UiRect::new(
         rect.left + 8.0,
-        rect.bottom - 7.0,
+        rect.bottom - scrollbar::SIZE,
         rect.right - 8.0,
-        rect.bottom - 3.0,
+        rect.bottom,
     );
     let thumb_w = (track.width() * viewport_w / content_w)
-        .max(24.0)
+        .max(scrollbar::MIN_THUMB_LENGTH)
         .min(track.width());
     let travel = track.width() - thumb_w;
     let thumb_left = if max_scroll == 0.0 {
@@ -1314,9 +1320,14 @@ fn horizontal_scrollbar(
     let st_down = state.clone();
     let st_move = state.clone();
     let st_up = state.clone();
-    panel(
-        UiRect::new(thumb_left, track.top, thumb_left + thumb_w, track.bottom),
-        VisualStyle::filled(theme::c().text_faint).radius(2.0),
+    scrollbar::thumb(
+        UiRect::new(
+            thumb_left,
+            track.top + scrollbar::INSET,
+            thumb_left + thumb_w,
+            track.bottom - scrollbar::INSET,
+        ),
+        0xb8,
     )
     .key("file-tree-horizontal-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)
@@ -1326,7 +1337,7 @@ fn horizontal_scrollbar(
             app.horizontal_scrollbar_drag_offset = p.point.x - thumb_left;
         });
     })
-    .on_pointer_move(move |_cx, p| {
+    .on_pointer_drag(move |_cx, p| {
         st_move.update(move |app| {
             if app.horizontal_scrollbar_dragging && travel > 0.0 {
                 let t = (p.point.x - track_left - app.horizontal_scrollbar_drag_offset) / travel
