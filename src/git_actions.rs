@@ -194,15 +194,16 @@ fn run(
         state.update(|app| app.show_error("No usable Git runtime is available."));
         return false;
     };
-    let roots = state.get().workspace_folders.clone();
-    let active_path = state.get().workspace.active_path().map(ToOwned::to_owned);
+    let poll_control = state.get().git_poll_control;
     store.update(move |snapshot| {
         snapshot.operation = Some(operation(kind, message, false));
         snapshot.last_error = None;
     });
     let state = state.clone();
     let store = store.clone();
-    thread::Builder::new()
+    let worker_store = store.clone();
+    let worker_poll_control = poll_control.clone();
+    let spawned = thread::Builder::new()
         .name(format!("loom-git-{kind:?}").to_ascii_lowercase())
         .spawn(move || {
             let result = action(&service, &repository.worktree_root);
@@ -223,21 +224,27 @@ fn run(
                             app.show_toast(format!("{conflicts} open file(s) changed on disk; editor buffers were preserved."));
                         }
                     });
-                    let result = service.refresh(&roots, active_path.as_deref());
-                    store.update(move |current| {
-                        current.apply_scan(result);
+                    worker_store.update(move |current| {
                         current.operation = None;
                     });
                 }
                 Err(error) => {
                     let message = error.user_message();
                     state.update(move |app| app.show_error(message));
-                    store.update(move |snapshot| {
+                    worker_store.update(move |snapshot| {
                         snapshot.operation = None;
                         snapshot.last_error = Some(error);
                     });
                 }
             }
+            // The current worker knows the current roots and open tabs. Never
+            // publish a separate scan using the operation's starting context.
+            worker_poll_control.request_refresh();
         })
-        .is_ok()
+        .is_ok();
+    if !spawned {
+        store.update(|snapshot| snapshot.operation = None);
+        poll_control.request_refresh();
+    }
+    spawned
 }

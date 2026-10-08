@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::git::DiffTarget;
+use crate::git::{DiffContent, DiffRequest, DiffTarget, GitResult, PollTarget};
 use crate::model::diff_document::DiffDocument;
 use crate::model::document::{DiskState, FileId, FileMeta};
 use crate::model::pane_layout::{Direction, PaneId, PaneNode};
@@ -1095,6 +1095,66 @@ impl Workspace {
         id
     }
 
+    pub fn git_poll_target(&self) -> PollTarget {
+        let mut diffs = self
+            .documents
+            .values()
+            .filter_map(|document| {
+                document.diff.as_ref().map(|diff| DiffRequest {
+                    repository_root: diff.repository_root.clone(),
+                    path: diff.path.clone(),
+                    target: diff.target,
+                })
+            })
+            .collect::<Vec<_>>();
+        diffs.sort();
+        PollTarget {
+            active_path: self.active_path().map(Path::to_path_buf),
+            diffs,
+        }
+    }
+
+    /// Replace only still-open matching diffs, without revealing a tab or
+    /// resetting its views. Failed reads retain the last successful content.
+    pub fn apply_git_diffs(
+        &mut self,
+        diffs: &std::collections::BTreeMap<DiffRequest, GitResult<DiffContent>>,
+    ) -> bool {
+        let mut changed = false;
+        for document in self.documents.values_mut() {
+            let Some(current) = &document.diff else {
+                continue;
+            };
+            let request = DiffRequest {
+                repository_root: current.repository_root.clone(),
+                path: current.path.clone(),
+                target: current.target,
+            };
+            let Some(Ok(content)) = diffs.get(&request) else {
+                continue;
+            };
+            let next = match content {
+                DiffContent::Unified(diff) => DiffDocument::from_unified(
+                    request.repository_root,
+                    request.path,
+                    request.target,
+                    diff.clone(),
+                ),
+                DiffContent::Untracked(contents) => DiffDocument::added(
+                    request.repository_root,
+                    request.path,
+                    request.target,
+                    contents,
+                ),
+            };
+            if *current != next {
+                document.diff = Some(next);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// Open the settings page, or focus it if it is already open.
     pub fn open_settings(&mut self) -> FileId {
         self.open_page(AppPage::Settings)
@@ -1518,6 +1578,56 @@ mod tests {
         assert!(workspace.active_editor().is_none());
         assert_eq!(workspace.active_items(), &[file, first]);
         assert_eq!(workspace.open_paths(), vec![file_path]);
+    }
+
+    #[test]
+    fn background_diff_refresh_preserves_tabs_focus_and_views() {
+        use crate::git::error::{GitError, GitErrorKind};
+        use std::collections::BTreeMap;
+        let mut workspace = Workspace::new();
+        let root = PathBuf::from("repo");
+        let path = PathBuf::from("new.txt");
+        let diff_id = workspace.open_diff(DiffDocument::added(
+            root.clone(),
+            path.clone(),
+            DiffTarget::IndexToWorktree,
+            "old\n",
+        ));
+        workspace.set_active_scroll(12.0, 48.0);
+        let target = workspace.git_poll_target();
+        let request = target.diffs[0].clone();
+        let text_id = workspace.open_path(root.join("other.txt"), "editor text".into());
+        let tabs = workspace.active_items().to_vec();
+        let updated = BTreeMap::from([(
+            request.clone(),
+            Ok(DiffContent::Untracked("updated\n".into())),
+        )]);
+        assert!(workspace.apply_git_diffs(&updated));
+        assert!(!workspace.apply_git_diffs(&updated));
+        assert_eq!(workspace.active(), Some(text_id));
+        assert_eq!(workspace.active_items(), tabs);
+        assert_eq!(
+            workspace.diff_id_for(&root, &path, DiffTarget::IndexToWorktree),
+            Some(diff_id)
+        );
+        workspace.set_active(diff_id);
+        assert_eq!(workspace.active_scroll(), (12.0, 48.0));
+        assert_eq!(workspace.active_diff().unwrap().rows[0].text, "updated");
+        assert!(!workspace.apply_git_diffs(&BTreeMap::from([(
+            request.clone(),
+            Err(GitError::new(GitErrorKind::Other, "read failed"))
+        )])));
+        assert_eq!(workspace.active_diff().unwrap().rows[0].text, "updated");
+        // A newly empty diff clears old rows after stage/commit or deletion.
+        assert!(workspace.apply_git_diffs(&BTreeMap::from([(
+            request,
+            Ok(DiffContent::Unified(UnifiedDiff::default()))
+        )])));
+        assert!(workspace.active_diff().unwrap().rows.is_empty());
+        workspace.close(diff_id);
+        assert!(workspace.git_poll_target().diffs.is_empty());
+        assert!(!workspace.apply_git_diffs(&updated));
+        assert_eq!(workspace.active_items(), &[text_id]);
     }
 
     #[test]

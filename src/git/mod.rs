@@ -16,7 +16,7 @@ pub mod types;
 pub use backend::CliGitBackend;
 pub use error::{GitError, GitResult};
 pub use runtime::GitRuntimeManager;
-pub use store::{GitService, GitStoreSnapshot, PollControl};
+pub use store::{GitService, GitStoreSnapshot, PollControl, PollTarget};
 pub use types::*;
 
 use std::path::PathBuf;
@@ -45,7 +45,7 @@ pub fn start_polling(
     roots: Vec<PathBuf>,
     control: PollControl,
     interval: Duration,
-    publish: impl Fn(GitResult<GitStoreSnapshot>) + Send + 'static,
+    publish: impl Fn(&PollTarget, GitResult<GitStoreSnapshot>) + Send + 'static,
 ) -> PollingHandle {
     let stopped = Arc::new(AtomicBool::new(false));
     let worker_control = control.clone();
@@ -56,7 +56,11 @@ pub fn start_polling(
             Ok(service) => {
                 service.poll(&roots, &worker_control, &worker_stopped, interval, &publish)
             }
-            Err(error) => publish(Err(error)),
+            Err(error) => {
+                if !worker_stopped.load(Ordering::Acquire) {
+                    publish(&worker_control.target(), Err(error));
+                }
+            }
         });
     PollingHandle { control, stopped }
 }

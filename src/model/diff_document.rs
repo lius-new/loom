@@ -31,7 +31,7 @@ pub struct SplitDiffRow {
     pub changed: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiffDocument {
     pub repository_root: PathBuf,
     pub path: PathBuf,

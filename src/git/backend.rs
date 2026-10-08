@@ -1261,6 +1261,133 @@ mod tests {
     }
 
     #[test]
+    fn polling_reloads_open_diffs_after_edits_stage_commit_and_deletion() {
+        use crate::git::diff::DiffLine;
+        use crate::git::{GitService, PollControl, PollTarget};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        let tracked = PathBuf::from("tracked.txt");
+        let untracked = PathBuf::from("new.txt");
+        std::fs::write(root.join(&tracked), "one\n").unwrap();
+        backend
+            .stage(&root, std::slice::from_ref(&tracked))
+            .unwrap();
+        backend.commit(&root, "initial", false, false).unwrap();
+        std::fs::write(root.join(&tracked), "one\ntwo\n").unwrap();
+        std::fs::write(root.join(&untracked), "new\n").unwrap();
+        let request = |path: &PathBuf, target| DiffRequest {
+            repository_root: root.clone(),
+            path: path.clone(),
+            target,
+        };
+        let worktree = request(&tracked, DiffTarget::IndexToWorktree);
+        let index = request(&tracked, DiffTarget::HeadToIndex);
+        let added = request(&untracked, DiffTarget::IndexToWorktree);
+        let control = PollControl::default();
+        control.set_target(PollTarget {
+            active_path: Some(root.join(&tracked)),
+            diffs: vec![worktree.clone(), index.clone(), added.clone()],
+        });
+        let service = GitService::new(backend);
+        let phase = AtomicUsize::new(0);
+        let stopped = AtomicBool::new(false);
+        let has_addition = |content: &GitResult<DiffContent>, text: &str| {
+            let DiffContent::Unified(diff) = content.as_ref().unwrap() else {
+                panic!("expected a tracked diff")
+            };
+            diff.files
+                .iter()
+                .flat_map(|file| &file.hunks)
+                .flat_map(|hunk| &hunk.lines)
+                .any(|line| matches!(line, DiffLine::Addition(value) if value == text))
+        };
+        let empty = |content: &GitResult<DiffContent>| {
+            assert_eq!(
+                content.as_ref().unwrap(),
+                &DiffContent::Unified(UnifiedDiff::default())
+            );
+        };
+        service.poll(
+            std::slice::from_ref(&root),
+            &control,
+            &stopped,
+            Duration::from_millis(1),
+            &|_, result| {
+                let snapshot = result.unwrap();
+                if snapshot.diffs.is_empty() {
+                    return;
+                } // Fast startup scan.
+                match phase.fetch_add(1, Ordering::AcqRel) {
+                    0 => {
+                        assert!(has_addition(&snapshot.diffs[&worktree], "two"));
+                        empty(&snapshot.diffs[&index]);
+                        assert_eq!(
+                            snapshot.diffs[&added],
+                            Ok(DiffContent::Untracked("new\n".into()))
+                        );
+                        // Same porcelain status and numstat; diff content must still change.
+                        std::fs::write(root.join(&tracked), "one\nthree\n").unwrap();
+                        std::fs::write(root.join(&untracked), "changed\n").unwrap();
+                    }
+                    1 => {
+                        assert!(has_addition(&snapshot.diffs[&worktree], "three"));
+                        assert_eq!(
+                            snapshot.diffs[&added],
+                            Ok(DiffContent::Untracked("changed\n".into()))
+                        );
+                        service
+                            .backend()
+                            .stage(&root, std::slice::from_ref(&tracked))
+                            .unwrap();
+                        std::fs::remove_file(root.join(&untracked)).unwrap();
+                    }
+                    2 => {
+                        empty(&snapshot.diffs[&worktree]);
+                        empty(&snapshot.diffs[&added]);
+                        assert!(has_addition(&snapshot.diffs[&index], "three"));
+                        service
+                            .backend()
+                            .commit(&root, "update", false, false)
+                            .unwrap();
+                    }
+                    3 => {
+                        empty(&snapshot.diffs[&worktree]);
+                        empty(&snapshot.diffs[&index]);
+                        stopped.store(true, Ordering::Release);
+                    }
+                    _ => panic!("unexpected scan"),
+                }
+                control.request_refresh();
+            },
+        );
+        assert_eq!(phase.load(Ordering::Acquire), 4);
+        // Open diff tabs outlive removal of their workspace folder.
+        std::fs::write(root.join(&untracked), "outside workspace\n").unwrap();
+        let stopped = AtomicBool::new(false);
+        service.poll(
+            &[],
+            &control,
+            &stopped,
+            Duration::from_millis(1),
+            &|_, result| {
+                let snapshot = result.unwrap();
+                if snapshot.diffs.is_empty() {
+                    return;
+                }
+                assert!(snapshot.repositories.is_empty());
+                assert_eq!(
+                    snapshot.diffs[&added],
+                    Ok(DiffContent::Untracked("outside workspace\n".into()))
+                );
+                stopped.store(true, Ordering::Release);
+            },
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn fast_and_detailed_discovery_agree_on_repository_paths() {
         let Some((root, backend)) = repository() else {
             return;

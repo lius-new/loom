@@ -284,6 +284,8 @@ pub struct AppState {
     pub git_tree_view: bool,
     pub git_split_diff: bool,
     pub git_inline_blame: bool,
+    /// Shared by UI commands and the single repository scan worker.
+    pub git_poll_control: crate::git::PollControl,
     /// Keystrokes of a key sequence waiting for its next key.
     pub pending_keystrokes: Vec<Keystroke>,
     /// Bumped whenever `pending_keystrokes` changes, restarting its timeout.
@@ -372,6 +374,7 @@ impl AppState {
             git_tree_view: false,
             git_split_diff: false,
             git_inline_blame: false,
+            git_poll_control: crate::git::PollControl::default(),
             pending_keystrokes: Vec::new(),
             pending_keystrokes_seq: 0,
             keymap_version: 0,

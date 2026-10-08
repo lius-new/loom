@@ -362,11 +362,25 @@ impl PathDecoration {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiffTarget {
     HeadToIndex,
     IndexToWorktree,
     HeadToWorktree,
+}
+
+/// Identity of an open diff that needs to follow repository changes.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DiffRequest {
+    pub repository_root: PathBuf,
+    pub path: PathBuf,
+    pub target: DiffTarget,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DiffContent {
+    Unified(super::diff::UnifiedDiff),
+    Untracked(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

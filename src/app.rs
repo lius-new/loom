@@ -29,7 +29,7 @@ use crate::workspace_persistence;
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state_with(AppState::restored);
     let git_store = cx.state_with(GitStoreSnapshot::default);
-    let git_poll_control = cx.state_with(crate::git::PollControl::default);
+    let git_poll_control = state.get().git_poll_control;
     let terminal_tabs = cx.state_with(|| {
         let session = workspace_persistence::load();
         TerminalTabs::restored(session.terminal_tabs, session.active_terminal)
@@ -70,7 +70,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let h = vp.height();
     window_geometry::observe_viewport(w, h);
     let window_focus_state = state.clone();
-    let window_focus_git_poll = git_poll_control.get();
+    let window_focus_git_poll = git_poll_control.clone();
     cx.use_event_once::<WindowFocusChanged>(move |event| {
         if event.window_id.as_str() == "loom" {
             window_geometry::handle_focus_change(event.focused);
@@ -124,9 +124,8 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let s = state.get();
     theme::set(s.theme);
     let editor_layout = crate::workspace_actions::saved_editor_layout(&s.workspace);
-    let active_tab_path = s.workspace.active_path().map(std::path::Path::to_path_buf);
     let git_roots = s.workspace_folders.clone();
-    let git_active_path = active_tab_path.clone();
+    let git_target = s.workspace.git_poll_target();
     let file_watch_state = state.clone();
     let file_watch_roots = git_roots.clone();
     cx.use_effect(file_watch_roots.clone(), move || {
@@ -152,19 +151,34 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         move || drop(handle)
     });
     // Switching tabs only retargets line decorations; the poller keeps running.
-    let git_poll = git_poll_control.get();
+    let git_poll = git_poll_control.clone();
     let poll_target = git_poll.clone();
-    cx.use_effect(git_active_path.clone(), move || {
-        poll_target.set_active_path(git_active_path);
+    cx.use_effect(git_target.clone(), move || {
+        poll_target.set_target(git_target);
         || {}
     });
     let polling_store = git_store.clone();
+    let polling_state = state.clone();
     cx.use_effect(git_roots.clone(), move || {
+        let scan_roots = git_roots.clone();
         let handle = crate::git::start_polling(
             git_roots,
             git_poll,
             Duration::from_millis(2_000),
-            move |result| polling_store.update(move |current| current.apply_scan(result)),
+            move |target, result| {
+                // Validate under the app-state lock, including the gap between
+                // a workspace change and its render effect stopping the worker.
+                polling_state.try_update(|app| {
+                    let mut diffs_changed = false;
+                    polling_store.try_update(|current| {
+                        let (store_changed, changed) =
+                            apply_git_scan(app, current, &scan_roots, target, result);
+                        diffs_changed = changed;
+                        store_changed
+                    });
+                    diffs_changed
+                });
+            },
         );
         move || drop(handle)
     });
@@ -884,4 +898,102 @@ fn pane_strip_rect(pane: UiRect) -> UiRect {
 /// A pane's surface below its tab strip.
 fn pane_body_rect(pane: UiRect) -> UiRect {
     UiRect::new(pane.left, pane.top + theme::TABS_H, pane.right, pane.bottom)
+}
+
+fn apply_git_scan(
+    app: &mut AppState,
+    current: &mut GitStoreSnapshot,
+    roots: &[std::path::PathBuf],
+    target: &crate::git::PollTarget,
+    result: crate::git::GitResult<GitStoreSnapshot>,
+) -> (bool, bool) {
+    if app.workspace_folders != roots || app.workspace.git_poll_target() != *target {
+        return (false, false);
+    }
+    let diffs_changed = if let Ok(next) = &result
+        && next.generation >= current.generation
+    {
+        app.workspace.apply_git_diffs(&next.diffs)
+    } else {
+        false
+    };
+    (current.apply_scan(result), diffs_changed)
+}
+
+#[cfg(test)]
+mod git_refresh_tests {
+    use super::*;
+    use crate::git::{GitError, PollTarget, error::GitErrorKind};
+    use std::path::PathBuf;
+
+    #[test]
+    fn rejects_success_and_failure_from_a_previous_workspace() {
+        let old_roots = vec![PathBuf::from("old")];
+        let mut app = AppState::new();
+        app.workspace_folders = vec![PathBuf::from("current")];
+        let mut store = GitStoreSnapshot::default();
+        for result in [
+            Ok(GitStoreSnapshot {
+                generation: 100,
+                initializing: false,
+                ..Default::default()
+            }),
+            Err(GitError::new(GitErrorKind::Other, "old scan failed")),
+        ] {
+            assert_eq!(
+                apply_git_scan(
+                    &mut app,
+                    &mut store,
+                    &old_roots,
+                    &PollTarget::default(),
+                    result
+                ),
+                (false, false)
+            );
+        }
+        assert_eq!(store.generation, 0);
+        assert!(store.last_error.is_none());
+    }
+
+    #[test]
+    fn rejects_a_scan_for_a_tab_that_is_no_longer_active() {
+        let mut app = AppState::new();
+        app.workspace
+            .open_path(PathBuf::from("a.txt"), String::new());
+        let target = app.workspace.git_poll_target();
+        app.workspace
+            .open_path(PathBuf::from("b.txt"), String::new());
+        let mut store = GitStoreSnapshot::default();
+        assert_eq!(
+            apply_git_scan(
+                &mut app,
+                &mut store,
+                &[],
+                &target,
+                Ok(GitStoreSnapshot {
+                    generation: 100,
+                    initializing: false,
+                    ..Default::default()
+                })
+            ),
+            (false, false)
+        );
+        assert_eq!(store.generation, 0);
+        let current_target = app.workspace.git_poll_target();
+        assert_eq!(
+            apply_git_scan(
+                &mut app,
+                &mut store,
+                &[],
+                &current_target,
+                Ok(GitStoreSnapshot {
+                    generation: 101,
+                    initializing: false,
+                    ..Default::default()
+                })
+            ),
+            (true, false)
+        );
+        assert_eq!(store.generation, 101);
+    }
 }
