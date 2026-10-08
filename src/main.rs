@@ -18,6 +18,7 @@
 #![allow(dead_code)] // the data layer & palette expose an intentionally broad API
 
 mod app;
+mod background_ui;
 mod editor;
 mod file_icons;
 mod file_tree;

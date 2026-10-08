@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -192,10 +193,10 @@ pub struct RepositorySnapshot {
     pub upstream: Option<UpstreamState>,
     pub ahead: u32,
     pub behind: u32,
-    pub files: BTreeMap<PathBuf, FileState>,
+    pub files: Arc<BTreeMap<PathBuf, FileState>>,
     /// Paths that match an ignore rule, relative to the worktree root. An
     /// ignored directory is listed once and covers everything below it.
-    pub ignored: BTreeSet<PathBuf>,
+    pub ignored: Arc<BTreeSet<PathBuf>>,
     pub repository_state: RepositoryState,
     pub features: RepositoryFeatures,
     pub generation: u64,
@@ -341,7 +342,7 @@ pub enum PathDecoration {
 }
 
 impl PathDecoration {
-    fn for_state(state: &FileState) -> Option<Self> {
+    pub(crate) fn for_state(state: &FileState) -> Option<Self> {
         if state.conflict.is_some() {
             return Some(Self::Conflict);
         }
@@ -469,8 +470,13 @@ mod tests {
             files: files
                 .iter()
                 .map(|(path, state)| (PathBuf::from(path), state.clone()))
-                .collect(),
-            ignored: ignored.iter().map(PathBuf::from).collect(),
+                .collect::<BTreeMap<_, _>>()
+                .into(),
+            ignored: ignored
+                .iter()
+                .map(PathBuf::from)
+                .collect::<BTreeSet<_>>()
+                .into(),
             repository_state: RepositoryState::Normal,
             features: RepositoryFeatures::default(),
             generation: 1,

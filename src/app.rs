@@ -48,6 +48,43 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         .map(|tab| tab.controller.clone());
     let application_context = cx.application();
     let application = application_context.resource::<ApplicationHandle>();
+    let dispatch_state = state.clone();
+    let dispatch_handle = application.as_ref().clone();
+    cx.use_effect((), move || {
+        dispatch_state.update(|app| app.git_application = Some(dispatch_handle));
+        || {}
+    });
+    let notification_state = state.clone();
+    let notification_store = git_store.clone();
+    let notification_application = application.as_ref().clone();
+    let scan_notifications = cx
+        .state_with(move || {
+            crate::background_ui::LatestNotification::new(
+                notification_application,
+                move |notification: GitScanNotification| {
+                    let mut retired = None;
+                    notification_state.try_update(|app| {
+                        let mut diffs_changed = false;
+                        notification_store.try_update(|current| {
+                            let old = current.clone();
+                            let (store_changed, changed) = apply_git_scan(
+                                app,
+                                current,
+                                &notification.roots,
+                                &notification.target,
+                                notification.result,
+                            );
+                            retired = Some(old);
+                            diffs_changed = changed;
+                            store_changed
+                        });
+                        diffs_changed
+                    });
+                    crate::background_ui::retire(retired);
+                },
+            )
+        })
+        .get();
     let window_manager = application_context.windows();
     // Welcome, Workspace Home and the editor share one stable identity so
     // focus survives transitions between central surfaces.
@@ -71,6 +108,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     window_geometry::observe_viewport(w, h);
     let window_focus_state = state.clone();
     let window_focus_git_poll = git_poll_control.clone();
+    let window_focus_application = application.as_ref().clone();
     cx.use_event_once::<WindowFocusChanged>(move |event| {
         if event.window_id.as_str() == "loom" {
             window_geometry::handle_focus_change(event.focused);
@@ -86,10 +124,10 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
                         | had_pending
                 });
             } else {
-                window_focus_state.update(|app| {
-                    crate::file_tree::refresh_all_loaded_directories(app);
-                    app.workspace.reconcile_disk();
-                });
+                crate::file_watcher::refresh_async(
+                    window_focus_state.clone(),
+                    window_focus_application.clone(),
+                );
             }
         }
     });
@@ -128,14 +166,29 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let git_target = s.workspace.git_poll_target();
     let file_watch_state = state.clone();
     let file_watch_roots = git_roots.clone();
+    let file_watch_application = application.as_ref().clone();
     cx.use_effect(file_watch_roots.clone(), move || {
         let handle = if file_watch_roots.is_empty() {
             None
         } else {
             let batch_state = file_watch_state.clone();
-            match crate::file_watcher::start(file_watch_roots, move |batch| {
-                batch_state
-                    .try_update(move |app| crate::file_watcher::apply_batch(app, &batch));
+            let error_roots = file_watch_roots.clone();
+            let error_state = file_watch_state.clone();
+            let error_application = file_watch_application.clone();
+            match crate::file_watcher::start_async(file_watch_roots, move |batch| {
+                let prepared = crate::file_watcher::prepare_batch(&batch_state.get(), &batch);
+                let state = batch_state.clone();
+                crate::file_watcher::notify_prepared(state, file_watch_application.clone(), prepared);
+            }, move |error| {
+                let state = error_state.clone();
+                let roots = error_roots.clone();
+                error_application.post(move || {
+                    state.try_update(|app| {
+                        if app.workspace_folders != roots { return false }
+                        app.show_error(format!("File watching is unavailable; Explorer will refresh when Loom regains focus: {error}"));
+                        true
+                    });
+                });
             }) {
                 Ok(handle) => Some(handle),
                 Err(error) => {
@@ -157,8 +210,6 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         poll_target.set_target(git_target);
         || {}
     });
-    let polling_store = git_store.clone();
-    let polling_state = state.clone();
     cx.use_effect(git_roots.clone(), move || {
         let scan_roots = git_roots.clone();
         let handle = crate::git::start_polling(
@@ -166,17 +217,10 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             git_poll,
             Duration::from_millis(2_000),
             move |target, result| {
-                // Validate under the app-state lock, including the gap between
-                // a workspace change and its render effect stopping the worker.
-                polling_state.try_update(|app| {
-                    let mut diffs_changed = false;
-                    polling_store.try_update(|current| {
-                        let (store_changed, changed) =
-                            apply_git_scan(app, current, &scan_roots, target, result);
-                        diffs_changed = changed;
-                        store_changed
-                    });
-                    diffs_changed
+                scan_notifications.send(GitScanNotification {
+                    roots: scan_roots.clone(),
+                    target: target.clone(),
+                    result,
                 });
             },
         );
@@ -414,11 +458,17 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let mounted_create_focus = explorer_create_input_focus.clone();
     let finished_create_focus = editor_focus.clone();
     let pending_tree_state = state.clone();
+    let pending_tree_application = application.as_ref().clone();
     cx.use_effect(editing_explorer_entry, move || {
         if editing_explorer_entry {
             mounted_create_focus.focus();
         } else {
-            pending_tree_state.try_update(crate::file_tree::apply_pending_refresh);
+            if pending_tree_state.get().pending_file_tree_refresh {
+                crate::file_watcher::refresh_async(
+                    pending_tree_state.clone(),
+                    pending_tree_application,
+                );
+            }
             finished_create_focus.focus();
         }
     });
@@ -908,16 +958,35 @@ fn apply_git_scan(
     result: crate::git::GitResult<GitStoreSnapshot>,
 ) -> (bool, bool) {
     if app.workspace_folders != roots || app.workspace.git_poll_target() != *target {
+        crate::background_ui::retire(result);
+        return (false, false);
+    }
+    if result
+        .as_ref()
+        .is_ok_and(|next| next.generation < current.generation)
+    {
+        crate::background_ui::retire(result);
         return (false, false);
     }
     let diffs_changed = if let Ok(next) = &result
         && next.generation >= current.generation
     {
-        app.workspace.apply_git_diffs(&next.diffs)
+        let retired = app
+            .workspace
+            .apply_prepared_git_diffs(&next.presentation.diffs);
+        let changed = !retired.is_empty();
+        crate::background_ui::retire(retired);
+        changed
     } else {
         false
     };
     (current.apply_scan(result), diffs_changed)
+}
+
+struct GitScanNotification {
+    roots: Vec<std::path::PathBuf>,
+    target: crate::git::PollTarget,
+    result: crate::git::GitResult<GitStoreSnapshot>,
 }
 
 #[cfg(test)]

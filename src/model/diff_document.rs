@@ -1,6 +1,7 @@
 //! Read-only, line-oriented documents shown by the diff editor.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::git::DiffTarget;
 use crate::git::diff::{DiffLine, UnifiedDiff};
@@ -39,6 +40,66 @@ pub struct DiffDocument {
     pub rows: Vec<DiffRow>,
     pub split_rows: Vec<SplitDiffRow>,
     pub binary: bool,
+    metrics: DiffMetrics,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DiffMetrics {
+    additions: usize,
+    deletions: usize,
+    longest_inline: usize,
+    longest_split: usize,
+    inline_starts: Arc<Vec<usize>>,
+    split_starts: Arc<Vec<usize>>,
+}
+
+impl DiffMetrics {
+    fn new(rows: &[DiffRow], split_rows: &[SplitDiffRow]) -> Self {
+        Self {
+            additions: rows
+                .iter()
+                .filter(|row| row.kind == DiffRowKind::Addition)
+                .count(),
+            deletions: rows
+                .iter()
+                .filter(|row| row.kind == DiffRowKind::Deletion)
+                .count(),
+            longest_inline: rows
+                .iter()
+                .map(|row| row.text.chars().count())
+                .max()
+                .unwrap_or_default(),
+            longest_split: split_rows
+                .iter()
+                .flat_map(|row| [row.old_text.as_deref(), row.new_text.as_deref()])
+                .flatten()
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or_default(),
+            inline_starts: rows
+                .iter()
+                .enumerate()
+                .filter_map(|(index, row)| {
+                    let changed = matches!(row.kind, DiffRowKind::Addition | DiffRowKind::Deletion);
+                    let previous = index > 0
+                        && matches!(
+                            rows[index - 1].kind,
+                            DiffRowKind::Addition | DiffRowKind::Deletion
+                        );
+                    (changed && !previous).then_some(index)
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            split_starts: split_rows
+                .iter()
+                .enumerate()
+                .filter_map(|(index, row)| {
+                    (row.changed && (index == 0 || !split_rows[index - 1].changed)).then_some(index)
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        }
+    }
 }
 
 impl DiffDocument {
@@ -113,6 +174,7 @@ impl DiffDocument {
         }
 
         let split_rows = build_split_rows(&rows);
+        let metrics = DiffMetrics::new(&rows, &split_rows);
         Self {
             repository_root,
             path,
@@ -120,6 +182,7 @@ impl DiffDocument {
             rows,
             split_rows,
             binary,
+            metrics,
         }
     }
 
@@ -140,6 +203,7 @@ impl DiffDocument {
             })
             .collect();
         let split_rows = build_split_rows(&rows);
+        let metrics = DiffMetrics::new(&rows, &split_rows);
         Self {
             repository_root,
             path,
@@ -147,6 +211,7 @@ impl DiffDocument {
             rows,
             split_rows,
             binary: false,
+            metrics,
         }
     }
 
@@ -175,44 +240,26 @@ impl DiffDocument {
     }
 
     pub fn additions(&self) -> usize {
-        self.rows
-            .iter()
-            .filter(|row| row.kind == DiffRowKind::Addition)
-            .count()
+        self.metrics.additions
     }
 
     pub fn deletions(&self) -> usize {
-        self.rows
-            .iter()
-            .filter(|row| row.kind == DiffRowKind::Deletion)
-            .count()
+        self.metrics.deletions
     }
 
-    pub fn change_starts(&self, split: bool) -> Vec<usize> {
+    pub fn change_starts(&self, split: bool) -> Arc<Vec<usize>> {
         if split {
-            self.split_rows
-                .iter()
-                .enumerate()
-                .filter_map(|(index, row)| {
-                    (row.changed
-                        && (index == 0 || !self.split_rows[index.saturating_sub(1)].changed))
-                        .then_some(index)
-                })
-                .collect()
+            self.metrics.split_starts.clone()
         } else {
-            self.rows
-                .iter()
-                .enumerate()
-                .filter_map(|(index, row)| {
-                    let changed = matches!(row.kind, DiffRowKind::Addition | DiffRowKind::Deletion);
-                    let previous_changed = index > 0
-                        && matches!(
-                            self.rows[index - 1].kind,
-                            DiffRowKind::Addition | DiffRowKind::Deletion
-                        );
-                    (changed && !previous_changed).then_some(index)
-                })
-                .collect()
+            self.metrics.inline_starts.clone()
+        }
+    }
+
+    pub fn longest_line(&self, split: bool) -> usize {
+        if split {
+            self.metrics.longest_split
+        } else {
+            self.metrics.longest_inline
         }
     }
 }
@@ -316,8 +363,8 @@ mod tests {
         assert_eq!(document.split_rows[1].new_text.as_deref(), Some("new"));
         assert_eq!(document.split_rows[2].old_text, None);
         assert_eq!(document.split_rows[2].new_text.as_deref(), Some("more"));
-        assert_eq!(document.change_starts(false), vec![1]);
-        assert_eq!(document.change_starts(true), vec![1]);
+        assert_eq!(document.change_starts(false).as_slice(), &[1]);
+        assert_eq!(document.change_starts(true).as_slice(), &[1]);
         assert_eq!(document.title(), "a.txt (Working Tree)");
     }
 }

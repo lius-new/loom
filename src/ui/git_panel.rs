@@ -9,7 +9,6 @@ use lgui::core::{
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
 use crate::git::{ChangeKind, DiffTarget, FileState, GitStoreSnapshot};
-use crate::model::diff_document::DiffDocument;
 use crate::state::AppState;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::{git_actions, theme};
@@ -83,6 +82,27 @@ pub fn render(
         prompt_top,
     );
     let mut content = Vec::new();
+    let prepared = git.presentation.repositories.get(&repository.id);
+    let sections = prepared.map(|prepared| &prepared.sections);
+    let content_height = 8.0
+        + (0..4)
+            .map(|filter| {
+                let count = sections.map_or(0, |sections| sections[filter].len());
+                if count == 0 {
+                    0.0
+                } else {
+                    SECTION_H
+                        + 10.0
+                        + if app.git_collapsed_sections.contains(&(filter as u8)) {
+                            0.0
+                        } else {
+                            count as f32 * ROW_H
+                        }
+                }
+            })
+            .sum::<f32>();
+    let max_scroll = (content_height - content_rect.height()).max(0.0);
+    let scroll = app.git_scroll.clamp(0.0, max_scroll);
     let mut y = content_rect.top + 8.0;
     for (title, filter) in [
         ("CONFLICTS", 0_u8),
@@ -90,20 +110,7 @@ pub fn render(
         ("UNSTAGED", 2),
         ("UNTRACKED", 3),
     ] {
-        let files = repository
-            .files
-            .iter()
-            .filter(|(_, value)| match filter {
-                0 => value.conflict.is_some(),
-                1 => value.conflict.is_none() && value.index != ChangeKind::Unmodified,
-                2 => {
-                    value.conflict.is_none()
-                        && value.worktree != ChangeKind::Unmodified
-                        && value.worktree != ChangeKind::Untracked
-                }
-                _ => value.worktree == ChangeKind::Untracked,
-            })
-            .collect::<Vec<_>>();
+        let files = sections.map_or(&[][..], |sections| sections[filter as usize].as_slice());
         if files.is_empty() {
             continue;
         }
@@ -165,7 +172,18 @@ pub fn render(
             y += 10.0;
             continue;
         }
-        for (path, file_state) in files.into_iter().take(100) {
+        let rows_top = y;
+        let visible = visible_rows(
+            rows_top,
+            content_rect.top + scroll,
+            content_rect.bottom + scroll,
+            files.len(),
+        );
+        y += files.len() as f32 * ROW_H;
+        for index in visible {
+            let path = &files[index];
+            let file_state = &repository.files[path];
+            let row_y = rows_top + index as f32 * ROW_H;
             let target = if filter == 1 {
                 DiffTarget::HeadToIndex
             } else {
@@ -176,7 +194,7 @@ pub fn render(
                 .active_diff()
                 .is_some_and(|diff| diff.matches(&repository.worktree_root, path, target));
             content.push(file_row(
-                UiRect::new(rect.left, y, content_rect.right, y + ROW_H),
+                UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H),
                 path.clone(),
                 file_state.clone(),
                 filter == 1,
@@ -187,13 +205,10 @@ pub fn render(
                 store.clone(),
                 editor_focus.clone(),
             ));
-            y += ROW_H;
         }
         y += 10.0;
     }
     let content_bottom = y;
-    let max_scroll = (content_bottom - content_rect.bottom).max(0.0);
-    let scroll = app.git_scroll.clamp(0.0, max_scroll);
     let wheel_state = state.clone();
     root = root.on_event(UiEventKind::Wheel, move |_cx, payload| {
         if let UiEventPayload::Wheel { delta } = payload {
@@ -251,6 +266,32 @@ pub fn render(
     ));
     root = root.child(git_resize_handle(rect, state, resizing));
     root
+}
+
+fn visible_rows(
+    rows_top: f32,
+    viewport_top: f32,
+    viewport_bottom: f32,
+    count: usize,
+) -> std::ops::Range<usize> {
+    let start = ((viewport_top - rows_top) / ROW_H).floor().max(0.0) as usize;
+    let end = ((viewport_bottom - rows_top) / ROW_H).ceil().max(0.0) as usize;
+    start.saturating_sub(1).min(count)..end.saturating_add(1).min(count)
+}
+
+#[cfg(test)]
+mod virtualization_tests {
+    use super::*;
+    #[test]
+    fn a_hundred_thousand_changes_only_build_the_viewport_rows() {
+        let first = visible_rows(0.0, 0.0, 480.0, 100_000);
+        let middle = visible_rows(0.0, 50_000.0 * ROW_H, 50_000.0 * ROW_H + 480.0, 100_000);
+        assert!(first.len() <= 22);
+        assert!(middle.len() <= 22);
+        assert!(middle.start > 100); // Entries after the old 100-file cap are reachable.
+        let end = visible_rows(0.0, 100_000.0 * ROW_H, 100_000.0 * ROW_H + 480.0, 100_000);
+        assert_eq!(end.end, 100_000);
+    }
 }
 
 fn git_vertical_scrollbar(
@@ -422,12 +463,10 @@ fn file_row(
     store: State<GitStoreSnapshot>,
     editor_focus: UiFocusHandle,
 ) -> Element {
-    let absolute = repository_root.join(&path);
     let open_state = state.clone();
-    let open_path = absolute.clone();
     let open_repository = repository_root.clone();
     let open_relative_path = path.clone();
-    let open_file_state = file_state.clone();
+    let untracked = file_state.worktree == ChangeKind::Untracked;
     let focus = editor_focus;
     let action_state = state.clone();
     let action_store = store.clone();
@@ -476,6 +515,7 @@ fn file_row(
         name_left + name_width.max(name_viewport.width()),
         rect.bottom,
     );
+    let row_key = format!("git-file-{target:?}-{}", path.display());
     panel(
         rect,
         if active {
@@ -484,53 +524,20 @@ fn file_row(
             VisualStyle::default()
         },
     )
+    .key(row_key)
     .event_policy(EventPolicy::INTERACTIVE)
     .cursor(CursorIcon::Pointer)
     .on_click(move || {
-        let result = crate::git::service().and_then(|service| {
-            service.backend().parsed_full_diff(
-                &open_repository,
+        git_actions::open_diff(
+            &open_state,
+            crate::git::DiffRequest {
+                repository_root: open_repository.clone(),
+                path: open_relative_path.clone(),
                 target,
-                std::slice::from_ref(&open_relative_path),
-            )
-        });
-        match result {
-            Ok(diff) => {
-                let document =
-                    if diff.files.is_empty() && open_file_state.worktree == ChangeKind::Untracked {
-                        match std::fs::read_to_string(&open_path) {
-                            Ok(contents) => DiffDocument::added(
-                                open_repository.clone(),
-                                open_relative_path.clone(),
-                                target,
-                                &contents,
-                            ),
-                            Err(error) => {
-                                open_state.update(move |app| {
-                                    app.show_error(format!("Could not open diff: {error}"));
-                                });
-                                return;
-                            }
-                        }
-                    } else {
-                        DiffDocument::from_unified(
-                            open_repository.clone(),
-                            open_relative_path.clone(),
-                            target,
-                            diff,
-                        )
-                    };
-                open_state.update(move |app| {
-                    app.workspace.open_diff(document);
-                });
-                focus.focus();
-            }
-            Err(error) => {
-                open_state.update(move |app| {
-                    app.show_error(error.user_message());
-                });
-            }
-        }
+            },
+            untracked,
+        );
+        focus.focus();
     })
     .child(text(
         UiRect::new(rect.left + 12.0, rect.top, rect.left + 24.0, rect.bottom),

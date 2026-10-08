@@ -200,7 +200,7 @@ pub struct AppState {
     /// Cached entries per loaded directory (key = directory path string).
     /// Renders read from this cache; the filesystem is only hit on open and
     /// on first expand.
-    pub dir_entries: HashMap<String, Vec<DirEntry>>,
+    pub dir_entries: HashMap<String, std::sync::Arc<Vec<DirEntry>>>,
     /// Directory paths currently expanded in the tree.
     pub expanded: HashSet<String>,
     pub sidebar_w: f32,
@@ -286,6 +286,9 @@ pub struct AppState {
     pub git_inline_blame: bool,
     /// Shared by UI commands and the single repository scan worker.
     pub git_poll_control: crate::git::PollControl,
+    pub git_application: Option<lgui::ApplicationHandle>,
+    pub git_open_diff_sequence: u64,
+    pub git_diff_loading: Option<crate::git::DiffRequest>,
     /// Keystrokes of a key sequence waiting for its next key.
     pub pending_keystrokes: Vec<Keystroke>,
     /// Bumped whenever `pending_keystrokes` changes, restarting its timeout.
@@ -375,6 +378,9 @@ impl AppState {
             git_split_diff: false,
             git_inline_blame: false,
             git_poll_control: crate::git::PollControl::default(),
+            git_application: None,
+            git_open_diff_sequence: 0,
+            git_diff_loading: None,
             pending_keystrokes: Vec::new(),
             pending_keystrokes_seq: 0,
             keymap_version: 0,

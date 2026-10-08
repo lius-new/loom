@@ -7,11 +7,12 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::state::{AppState, DirEntry};
 
 /// Read and sort one directory's entries (directories first, then name).
-pub(crate) fn read_directory(dir: &Path) -> Vec<DirEntry> {
+pub(crate) fn read_directory(dir: &Path) -> Arc<Vec<DirEntry>> {
     let mut entries = match fs::read_dir(dir) {
         Ok(iter) => iter
             .flatten()
@@ -24,7 +25,7 @@ pub(crate) fn read_directory(dir: &Path) -> Vec<DirEntry> {
         Err(_) => Vec::new(),
     };
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
-    entries
+    Arc::new(entries)
 }
 
 /// Refresh one directory only when it has already been loaded by Explorer.
@@ -188,7 +189,7 @@ mod tests {
         app.workspace_folders.push(root.clone());
         app.dir_entries
             .insert(root_key.clone(), read_directory(&root));
-        app.dir_entries.insert(child_key.clone(), Vec::new());
+        app.dir_entries.insert(child_key.clone(), Vec::new().into());
         app.expanded.insert(root_key);
         app.expanded.insert(child_key.clone());
 
@@ -206,7 +207,7 @@ mod tests {
         let mut app = AppState::new();
         app.workspace_folders.push(root.clone());
         app.dir_entries
-            .insert(root.to_string_lossy().into_owned(), Vec::new());
+            .insert(root.to_string_lossy().into_owned(), Vec::new().into());
         app.explorer_create = Some(crate::state::ExplorerCreateRequest {
             kind: crate::state::ExplorerCreateKind::File,
             parent: root.clone(),

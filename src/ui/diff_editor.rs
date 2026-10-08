@@ -56,23 +56,7 @@ pub fn render(
     } else {
         (body_rect.width() - NUMBER_W * 2.0 - MARKER_W - theme::CODE_PAD).max(1.0)
     };
-    let longest_line = if split {
-        document
-            .split_rows
-            .iter()
-            .flat_map(|row| [row.old_text.as_deref(), row.new_text.as_deref()])
-            .flatten()
-            .map(|line| line.chars().count())
-            .max()
-            .unwrap_or_default()
-    } else {
-        document
-            .rows
-            .iter()
-            .map(|row| row.text.chars().count())
-            .max()
-            .unwrap_or_default()
-    };
+    let longest_line = document.longest_line(split);
     let content_w = longest_line as f32 * theme::CHAR_W + theme::CODE_PAD * 2.0;
     let max_x = (content_w - code_width).max(0.0);
     let scroll_x = stored_x.clamp(0.0, max_x);
@@ -191,7 +175,7 @@ fn toolbar(
     additions: usize,
     deletions: usize,
     split: bool,
-    starts: Vec<usize>,
+    starts: std::sync::Arc<Vec<usize>>,
     current_change: Option<usize>,
     absolute_path: PathBuf,
 ) -> Element {

@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -75,6 +77,132 @@ pub(crate) fn apply_batch(app: &mut AppState, batch: &FileChangeBatch) -> bool {
     tree_changed || document_changed
 }
 
+pub(crate) struct PreparedFileBatch {
+    roots: Vec<PathBuf>,
+    directories: Vec<(
+        String,
+        Arc<Vec<crate::state::DirEntry>>,
+        Option<Arc<Vec<crate::state::DirEntry>>>,
+    )>,
+    disk_updates: Vec<crate::model::workspace::PreparedDiskUpdate>,
+    defer_tree: bool,
+}
+
+pub(crate) fn prepare_batch(app: &AppState, batch: &FileChangeBatch) -> PreparedFileBatch {
+    let paths = batch.paths().map(Path::to_path_buf).collect::<Vec<_>>();
+    let disk_updates = app
+        .workspace
+        .prepare_disk_updates(&paths, batch.requires_full_rescan);
+    let mut working = app.clone();
+    working.pending_file_tree_refresh = false;
+    if batch.requires_full_rescan {
+        crate::file_tree::refresh_all_loaded_directories(&mut working);
+    } else {
+        crate::file_tree::refresh_affected_paths(
+            &mut working,
+            batch
+                .changes
+                .iter()
+                .filter(|change| change.kind != FileChangeKind::Modify)
+                .map(|change| change.path.clone()),
+        );
+    }
+    let directories = app
+        .dir_entries
+        .iter()
+        .filter_map(|(key, previous)| {
+            let next = working.dir_entries.get(key);
+            (next != Some(previous)).then(|| (key.clone(), previous.clone(), next.cloned()))
+        })
+        .collect();
+    PreparedFileBatch {
+        roots: app.workspace_folders.clone(),
+        directories,
+        disk_updates,
+        defer_tree: working.pending_file_tree_refresh,
+    }
+}
+
+pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch) -> (bool, bool) {
+    let mut changed = false;
+    let mut retry = false;
+    if app.workspace_folders == batch.roots {
+        if batch.defer_tree || app.explorer_create.is_some() || app.explorer_rename.is_some() {
+            app.pending_file_tree_refresh = true;
+        } else {
+            app.pending_file_tree_refresh = false;
+            for (key, previous, next) in &batch.directories {
+                if app
+                    .dir_entries
+                    .get(key)
+                    .is_some_and(|current| Arc::ptr_eq(current, previous))
+                {
+                    let old = if let Some(next) = next {
+                        app.dir_entries.insert(key.clone(), next.clone())
+                    } else {
+                        app.expanded.remove(key);
+                        app.dir_entries.remove(key)
+                    };
+                    crate::background_ui::retire(old);
+                    changed = true;
+                } else if app.dir_entries.contains_key(key) {
+                    retry = true;
+                }
+            }
+        }
+    }
+    crate::background_ui::retire(batch.directories);
+    let expected_updates = batch.disk_updates.len();
+    let outcomes = app.workspace.apply_disk_updates(batch.disk_updates);
+    retry |= outcomes.len() < expected_updates;
+    changed |= outcomes.iter().any(|result| {
+        matches!(
+            result,
+            ReconcileResult::Reloaded(_)
+                | ReconcileResult::Conflict(_)
+                | ReconcileResult::Missing(_)
+        )
+    });
+    (changed, retry)
+}
+
+pub(crate) fn notify_prepared(
+    state: lgui::prelude::State<AppState>,
+    application: lgui::ApplicationHandle,
+    prepared: PreparedFileBatch,
+) {
+    let next_application = application.clone();
+    application.post(move || {
+        let mut retry = false;
+        state.try_update(|app| {
+            let (changed, stale) = apply_prepared_batch(app, prepared);
+            retry = stale;
+            changed
+        });
+        if retry {
+            refresh_async(state, next_application);
+        }
+    });
+}
+
+pub(crate) fn refresh_async(
+    state: lgui::prelude::State<AppState>,
+    application: lgui::ApplicationHandle,
+) {
+    let _ = thread::Builder::new()
+        .name("loom-disk-refresh".into())
+        .spawn(move || {
+            let prepared = prepare_batch(
+                &state.get(),
+                &FileChangeBatch {
+                    changes: Vec::new(),
+                    requires_full_rescan: true,
+                },
+            );
+            notify_prepared(state, application, prepared);
+        });
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WatchBackendKind {
     Native,
@@ -90,10 +218,57 @@ pub(crate) struct FileWatchHandle {
 impl Drop for FileWatchHandle {
     fn drop(&mut self) {
         let _ = self.stop.send(());
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        // A batch may be reading a slow disk. Never join it on the UI thread;
+        // delayed notifications are validated before they are applied.
+        self.worker.take();
     }
+}
+
+pub(crate) struct AsyncFileWatchHandle {
+    stop: Sender<()>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl Drop for AsyncFileWatchHandle {
+    fn drop(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+        let _ = self.stop.send(());
+    }
+}
+
+/// Recursive watcher registration and polling fallback may traverse a large
+/// tree. Set them up off the event loop too, not just their event callbacks.
+pub(crate) fn start_async(
+    roots: Vec<PathBuf>,
+    on_batch: impl Fn(FileChangeBatch) + Send + 'static,
+    on_error: impl Fn(String) + Send + 'static,
+) -> std::io::Result<AsyncFileWatchHandle> {
+    let (stop, receiver) = mpsc::channel();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let worker_stopped = stopped.clone();
+    thread::Builder::new()
+        .name("loom-watch-setup".into())
+        .spawn(move || {
+            let batch_stopped = worker_stopped.clone();
+            match start(roots, move |batch| {
+                if !batch_stopped.load(Ordering::Acquire) {
+                    on_batch(batch);
+                }
+            }) {
+                Ok(handle) => {
+                    if !worker_stopped.load(Ordering::Acquire) {
+                        let _ = receiver.recv();
+                    }
+                    drop(handle);
+                }
+                Err(error) => {
+                    if !worker_stopped.load(Ordering::Acquire) {
+                        on_error(error.to_string());
+                    }
+                }
+            }
+        })?;
+    Ok(AsyncFileWatchHandle { stop, stopped })
 }
 
 enum WatchBackend {
@@ -241,6 +416,14 @@ fn coalesce_events(events: Vec<notify::Result<Event>>, roots: &[PathBuf]) -> Fil
         }
         for path in event.paths {
             let path = absolute_event_path(path, roots);
+            // Git metadata is polled by the Git worker and must not cause
+            // directory/document reload storms during checkout or staging.
+            if path
+                .components()
+                .any(|component| component.as_os_str() == ".git")
+            {
+                continue;
+            }
             if !roots.iter().any(|root| path.starts_with(root)) {
                 continue;
             }
@@ -420,6 +603,52 @@ mod tests {
             std::slice::from_ref(&root),
         );
         assert!(batch.changes.is_empty());
+    }
+
+    #[test]
+    fn git_metadata_events_do_not_trigger_explorer_reload_batches() {
+        let root = temp_directory("git-metadata");
+        let batch = coalesce_events(
+            vec![
+                event(
+                    EventKind::Modify(ModifyKind::Any),
+                    [root.join(".git/index")],
+                ),
+                event(
+                    EventKind::Create(CreateKind::File),
+                    [root.join("nested/.git/objects/object")],
+                ),
+                event(EventKind::Modify(ModifyKind::Any), [root.join("source.rs")]),
+            ],
+            std::slice::from_ref(&root),
+        );
+        assert_eq!(batch.changes.len(), 1);
+        assert_eq!(batch.changes[0].path, root.join("source.rs"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn outdated_directory_notifications_request_a_fresh_read() {
+        let root = temp_directory("delayed-notification");
+        let mut app = AppState::new();
+        app.workspace_folders.push(root.clone());
+        let key = root.to_string_lossy().into_owned();
+        app.dir_entries
+            .insert(key.clone(), crate::file_tree::read_directory(&root));
+        fs::write(root.join("first.txt"), "first").unwrap();
+        let full = FileChangeBatch {
+            changes: Vec::new(),
+            requires_full_rescan: true,
+        };
+        let first = prepare_batch(&app, &full);
+        fs::write(root.join("second.txt"), "second").unwrap();
+        let second = prepare_batch(&app, &full);
+        assert_eq!(apply_prepared_batch(&mut app, first), (true, false));
+        assert_eq!(apply_prepared_batch(&mut app, second), (false, true));
+        let retry = prepare_batch(&app, &full);
+        assert_eq!(apply_prepared_batch(&mut app, retry), (true, false));
+        assert_eq!(app.dir_entries[&key].len(), 2);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -10,10 +10,24 @@ use super::backend::{CliGitBackend, GitBackend};
 use super::command::CancellationToken;
 use super::error::{GitError, GitResult};
 use super::types::*;
+use crate::model::diff_document::DiffDocument;
+
+#[derive(Clone, Debug, Default)]
+pub struct GitPresentation {
+    pub repositories: BTreeMap<RepositoryId, RepositoryPresentation>,
+    pub diffs: BTreeMap<DiffRequest, Arc<DiffDocument>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RepositoryPresentation {
+    pub sections: [Vec<PathBuf>; 4],
+    pub dirty_count: usize,
+    pub decorations: BTreeMap<PathBuf, PathDecoration>,
+}
 
 #[derive(Clone, Debug)]
 pub struct GitStoreSnapshot {
-    pub repositories: BTreeMap<RepositoryId, RepositorySnapshot>,
+    pub repositories: Arc<BTreeMap<RepositoryId, RepositorySnapshot>>,
     pub active_repository: Option<RepositoryId>,
     pub operation: Option<OperationState>,
     pub last_error: Option<GitError>,
@@ -21,22 +35,24 @@ pub struct GitStoreSnapshot {
     pub generation: u64,
     /// Git line decorations for currently active files, keyed by absolute path
     /// and one-based line number.
-    pub line_changes: BTreeMap<PathBuf, BTreeMap<usize, LineChange>>,
-    pub diffs: BTreeMap<DiffRequest, GitResult<DiffContent>>,
+    pub line_changes: Arc<BTreeMap<PathBuf, BTreeMap<usize, LineChange>>>,
+    pub diffs: Arc<BTreeMap<DiffRequest, GitResult<DiffContent>>>,
+    pub presentation: Arc<GitPresentation>,
     pub initializing: bool,
 }
 
 impl Default for GitStoreSnapshot {
     fn default() -> Self {
         Self {
-            repositories: BTreeMap::new(),
+            repositories: Arc::default(),
             active_repository: None,
             operation: None,
             last_error: None,
             runtime_label: None,
             generation: 0,
-            line_changes: BTreeMap::new(),
-            diffs: BTreeMap::new(),
+            line_changes: Arc::default(),
+            diffs: Arc::default(),
+            presentation: Arc::default(),
             initializing: true,
         }
     }
@@ -86,7 +102,7 @@ impl GitStoreSnapshot {
                 if next.generation < self.generation {
                     return false;
                 }
-                let changed = !same_scan(self, &next);
+                let changed = !same_shared_scan(self, &next);
                 // Advance the generation even when no repaint is needed.
                 self.replace_if_newer(next);
                 changed
@@ -98,6 +114,119 @@ impl GitStoreSnapshot {
                 changed
             }
         }
+    }
+
+    /// Build render data and compare large collections only on a worker.
+    /// Stable collections keep their Arc identity, making UI comparison O(1).
+    pub fn prepare_for_ui(&mut self, previous: Option<&Self>) {
+        if let Some(previous) = previous {
+            if same_repositories(&self.repositories, &previous.repositories) {
+                self.repositories = previous.repositories.clone();
+            }
+            if self.line_changes == previous.line_changes {
+                self.line_changes = previous.line_changes.clone();
+            }
+            if self.diffs == previous.diffs {
+                self.diffs = previous.diffs.clone();
+            }
+            if Arc::ptr_eq(&self.repositories, &previous.repositories)
+                && Arc::ptr_eq(&self.diffs, &previous.diffs)
+            {
+                self.presentation = previous.presentation.clone();
+                return;
+            }
+        }
+        let mut presentation = GitPresentation::default();
+        for (id, repository) in self.repositories.iter() {
+            let mut prepared = RepositoryPresentation::default();
+            for (path, file) in repository.files.iter() {
+                prepared.dirty_count += usize::from(file.is_changed());
+                if file.conflict.is_some() {
+                    prepared.sections[0].push(path.clone());
+                } else {
+                    if file.index != ChangeKind::Unmodified {
+                        prepared.sections[1].push(path.clone());
+                    }
+                    if file.worktree != ChangeKind::Unmodified
+                        && file.worktree != ChangeKind::Untracked
+                    {
+                        prepared.sections[2].push(path.clone());
+                    }
+                }
+                if file.worktree == ChangeKind::Untracked {
+                    prepared.sections[3].push(path.clone());
+                }
+                if let Some(decoration) = PathDecoration::for_state(file) {
+                    for ancestor in path.ancestors().filter(|path| !path.as_os_str().is_empty()) {
+                        prepared
+                            .decorations
+                            .entry(ancestor.to_path_buf())
+                            .and_modify(|current| *current = (*current).min(decoration))
+                            .or_insert(decoration);
+                    }
+                }
+            }
+            presentation.repositories.insert(*id, prepared);
+        }
+        for (request, result) in self.diffs.iter() {
+            // Reuse a prepared document when only some other diff changed.
+            if let Some(previous) = previous
+                && previous.diffs.get(request) == Some(result)
+            {
+                if let Some(document) = previous.presentation.diffs.get(request) {
+                    presentation.diffs.insert(request.clone(), document.clone());
+                }
+                continue;
+            }
+            let Ok(content) = result else { continue };
+            let document = match content {
+                DiffContent::Unified(diff) => DiffDocument::from_unified(
+                    request.repository_root.clone(),
+                    request.path.clone(),
+                    request.target,
+                    diff.clone(),
+                ),
+                DiffContent::Untracked(contents) => DiffDocument::added(
+                    request.repository_root.clone(),
+                    request.path.clone(),
+                    request.target,
+                    contents,
+                ),
+            };
+            presentation
+                .diffs
+                .insert(request.clone(), Arc::new(document));
+        }
+        self.presentation = Arc::new(presentation);
+    }
+
+    pub fn decoration_for_absolute_path(&self, path: &Path) -> Option<PathDecoration> {
+        let repository = self.repository_for_path(path)?;
+        let relative = repository.relative_path(path)?;
+        if relative.as_os_str().is_empty() {
+            return None;
+        }
+        if let Some(decoration) = self
+            .presentation
+            .repositories
+            .get(&repository.id)
+            .and_then(|prepared| prepared.decorations.get(&relative))
+        {
+            return Some(*decoration);
+        }
+        relative.ancestors().find_map(|ancestor| {
+            if repository
+                .files
+                .get(ancestor)
+                .is_some_and(|state| state.worktree == ChangeKind::Untracked)
+            {
+                Some(PathDecoration::Created)
+            } else if repository.ignored.contains(ancestor) {
+                Some(PathDecoration::Ignored)
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -277,7 +406,7 @@ impl GitService {
         }
         let runtime = self.backend.runtime();
         let mut snapshot = GitStoreSnapshot {
-            repositories,
+            repositories: repositories.into(),
             active_repository: None,
             operation: None,
             last_error: None,
@@ -286,8 +415,9 @@ impl GitService {
                 runtime.source, runtime.version.major, runtime.version.minor, runtime.version.patch
             )),
             generation,
-            line_changes: BTreeMap::new(),
-            diffs: BTreeMap::new(),
+            line_changes: Arc::default(),
+            diffs: Arc::default(),
+            presentation: Arc::default(),
             initializing: false,
         };
         snapshot.choose_active_for_path(active_path);
@@ -307,7 +437,7 @@ impl GitService {
                 }
             }
             if !changes.is_empty() {
-                snapshot.line_changes.insert(path.to_path_buf(), changes);
+                Arc::make_mut(&mut snapshot.line_changes).insert(path.to_path_buf(), changes);
             }
         }
         Ok(snapshot)
@@ -352,6 +482,7 @@ impl GitService {
         interval: Duration,
         publish: &impl Fn(&PollTarget, GitResult<GitStoreSnapshot>),
     ) {
+        let mut previous = None;
         // Publish a useful state as soon as possible. This avoids blocking
         // the drawer on nested-repository discovery, untracked-file
         // traversal, and two active-file diffs.
@@ -366,9 +497,8 @@ impl GitService {
                 && let Ok(snapshot) = &mut result
             {
                 for request in &target.diffs {
-                    snapshot
-                        .diffs
-                        .insert(request.clone(), self.refresh_diff(request, snapshot));
+                    let content = self.refresh_diff(request, snapshot);
+                    Arc::make_mut(&mut snapshot.diffs).insert(request.clone(), content);
                 }
             }
             // A stopped poller's roots are stale; its result must not land.
@@ -376,6 +506,10 @@ impl GitService {
                 break;
             }
             if control.is_current(revision) {
+                if let Ok(snapshot) = &mut result {
+                    snapshot.prepare_for_ui(previous.as_ref());
+                    previous = Some(snapshot.clone());
+                }
                 publish(&target, result);
             }
             if mode == RefreshMode::Fast {
@@ -502,20 +636,42 @@ fn same_scan(last: &GitStoreSnapshot, next: &GitStoreSnapshot) -> bool {
         generation: _,
         line_changes,
         diffs,
+        presentation: _,
         initializing,
     } = last;
-    repositories.len() == next.repositories.len()
-        && repositories.iter().zip(&next.repositories).all(
-            |((id, repository), (next_id, next_repository))| {
-                id == next_id && repository.same_state(next_repository)
-            },
-        )
+    same_repositories(repositories, &next.repositories)
         && *active_repository == next.active_repository
         && *last_error == next.last_error
         && *runtime_label == next.runtime_label
         && *line_changes == next.line_changes
         && *diffs == next.diffs
         && *initializing == next.initializing
+}
+
+fn same_repositories(
+    last: &BTreeMap<RepositoryId, RepositorySnapshot>,
+    next: &BTreeMap<RepositoryId, RepositorySnapshot>,
+) -> bool {
+    last.len() == next.len()
+        && last
+            .iter()
+            .zip(next)
+            .all(|((id, repository), (next_id, next_repository))| {
+                id == next_id && repository.same_state(next_repository)
+            })
+}
+
+fn same_shared_scan(last: &GitStoreSnapshot, next: &GitStoreSnapshot) -> bool {
+    (Arc::ptr_eq(&last.repositories, &next.repositories)
+        || (last.repositories.is_empty() && next.repositories.is_empty()))
+        && (Arc::ptr_eq(&last.line_changes, &next.line_changes)
+            || (last.line_changes.is_empty() && next.line_changes.is_empty()))
+        && (Arc::ptr_eq(&last.diffs, &next.diffs)
+            || (last.diffs.is_empty() && next.diffs.is_empty()))
+        && last.active_repository == next.active_repository
+        && last.last_error == next.last_error
+        && last.runtime_label == next.runtime_label
+        && last.initializing == next.initializing
 }
 
 #[cfg(test)]
@@ -534,7 +690,7 @@ mod tests {
             upstream: None,
             ahead: 0,
             behind: 0,
-            files: BTreeMap::new(),
+            files: Arc::default(),
             ignored: Default::default(),
             repository_state: RepositoryState::Normal,
             features: RepositoryFeatures::default(),
@@ -546,8 +702,8 @@ mod tests {
             ..parent.clone()
         };
         let mut store = GitStoreSnapshot::default();
-        store.repositories.insert(parent.id, parent);
-        store.repositories.insert(child.id, child);
+        Arc::make_mut(&mut store.repositories).insert(parent.id, parent);
+        Arc::make_mut(&mut store.repositories).insert(child.id, child);
         assert_eq!(
             store
                 .repository_for_path(Path::new("/workspace/nested/file"))
@@ -595,7 +751,7 @@ mod tests {
             generation: 3,
             ..GitStoreSnapshot::default()
         };
-        current.repositories.insert(
+        Arc::make_mut(&mut current.repositories).insert(
             RepositoryId(1),
             RepositorySnapshot {
                 id: RepositoryId(1),
@@ -606,7 +762,7 @@ mod tests {
                 upstream: None,
                 ahead: 0,
                 behind: 0,
-                files: BTreeMap::new(),
+                files: Arc::default(),
                 ignored: Default::default(),
                 repository_state: RepositoryState::Normal,
                 features: RepositoryFeatures::default(),
@@ -649,7 +805,7 @@ mod tests {
             upstream: None,
             ahead: 0,
             behind: 0,
-            files: BTreeMap::new(),
+            files: Arc::default(),
             ignored: Default::default(),
             repository_state: RepositoryState::Normal,
             features: RepositoryFeatures::default(),
@@ -661,7 +817,7 @@ mod tests {
                 initializing: false,
                 ..GitStoreSnapshot::default()
             };
-            snapshot.repositories.insert(
+            Arc::make_mut(&mut snapshot.repositories).insert(
                 repository.id,
                 RepositorySnapshot {
                     generation,
@@ -724,7 +880,7 @@ mod tests {
         assert_eq!(current.generation, 2);
         assert!(current.operation.is_some());
         current.last_error = Some(GitError::new(GitErrorKind::Other, "operation failed"));
-        current.line_changes.insert(
+        Arc::make_mut(&mut current.line_changes).insert(
             PathBuf::from("old.txt"),
             BTreeMap::from([(1, LineChange::Added)]),
         );
@@ -773,5 +929,81 @@ mod tests {
         stopped.store(true, Ordering::Release);
         control.notify();
         assert!(!waiter.join().unwrap());
+    }
+
+    #[test]
+    fn large_snapshots_share_render_data_and_unchanged_scans_do_not_repaint() {
+        let files = (0..50_000)
+            .map(|index| {
+                (
+                    PathBuf::from(format!("src/file-{index:05}.txt")),
+                    FileState {
+                        worktree: ChangeKind::Modified,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let repository = RepositorySnapshot {
+            id: RepositoryId(1),
+            worktree_root: PathBuf::from("/repo"),
+            git_dir: PathBuf::new(),
+            common_dir: PathBuf::new(),
+            head: HeadState::default(),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            files: files.into(),
+            ignored: Default::default(),
+            repository_state: RepositoryState::Normal,
+            features: RepositoryFeatures::default(),
+            generation: 1,
+        };
+        let mut current = GitStoreSnapshot {
+            repositories: BTreeMap::from([(repository.id, repository.clone())]).into(),
+            generation: 1,
+            initializing: false,
+            ..Default::default()
+        };
+        current.prepare_for_ui(None);
+        assert_eq!(
+            current.presentation.repositories[&repository.id].sections[2].len(),
+            50_000
+        );
+        assert_eq!(
+            current.decoration_for_absolute_path(Path::new("/repo/src")),
+            Some(PathDecoration::Modified)
+        );
+        let render_copy = current.clone();
+        assert!(Arc::ptr_eq(
+            &current.repositories,
+            &render_copy.repositories
+        ));
+        assert!(Arc::ptr_eq(
+            &current.presentation,
+            &render_copy.presentation
+        ));
+        assert!(Arc::ptr_eq(
+            &repository.files,
+            &render_copy.active().unwrap().files
+        ));
+        let mut next = GitStoreSnapshot {
+            repositories: BTreeMap::from([(
+                repository.id,
+                RepositorySnapshot {
+                    generation: 2,
+                    ..repository
+                },
+            )])
+            .into(),
+            generation: 2,
+            initializing: false,
+            ..Default::default()
+        };
+        next.prepare_for_ui(Some(&current));
+        assert!(Arc::ptr_eq(&next.repositories, &current.repositories));
+        assert!(Arc::ptr_eq(&next.presentation, &current.presentation));
+        assert!(!current.apply_scan(Ok(next)));
+        assert_eq!(current.generation, 2);
     }
 }

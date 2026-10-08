@@ -375,7 +375,7 @@ fn visible_descendant_index(
     index: &mut usize,
 ) -> Option<usize> {
     let entries = app.dir_entries.get(directory_key)?;
-    for entry in entries {
+    for entry in entries.iter() {
         if entry.path == target {
             return Some(*index);
         }
@@ -1893,11 +1893,11 @@ mod tests {
         app.workspace_folders = vec![removed.clone(), kept.clone()];
         app.recent_folders = vec![removed.clone(), kept.clone()];
         app.dir_entries
-            .insert(removed.to_string_lossy().into_owned(), Vec::new());
+            .insert(removed.to_string_lossy().into_owned(), Vec::new().into());
         app.dir_entries
-            .insert(child.to_string_lossy().into_owned(), Vec::new());
+            .insert(child.to_string_lossy().into_owned(), Vec::new().into());
         app.dir_entries
-            .insert(kept.to_string_lossy().into_owned(), Vec::new());
+            .insert(kept.to_string_lossy().into_owned(), Vec::new().into());
         app.expanded.insert(removed.to_string_lossy().into_owned());
         app.expanded.insert(child.to_string_lossy().into_owned());
         app.expanded.insert(kept.to_string_lossy().into_owned());
@@ -2257,7 +2257,7 @@ mod tests {
         let new_file = new_path.join("main.rs");
         app.workspace_folders = vec![root];
         app.dir_entries
-            .insert(old_path.to_string_lossy().into_owned(), Vec::new());
+            .insert(old_path.to_string_lossy().into_owned(), Vec::new().into());
         app.expanded.insert(old_path.to_string_lossy().into_owned());
         app.workspace.open_path(old_file, String::new());
 

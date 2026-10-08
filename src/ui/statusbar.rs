@@ -140,9 +140,12 @@ pub fn render(
         ));
     }
 
-    let git_dirty = git
-        .active()
-        .is_some_and(|repository| repository.dirty_count() > 0);
+    let git_dirty = git.active().is_some_and(|repository| {
+        git.presentation
+            .repositories
+            .get(&repository.id)
+            .is_some_and(|prepared| prepared.dirty_count > 0)
+    });
     let git_label = git.active().map_or_else(
         || "No Git".to_owned(),
         |repository| {
@@ -221,6 +224,14 @@ pub fn render(
             )),
     );
     let mut left = git_rect.right + GAP;
+    if s.git_diff_loading.is_some() {
+        bar = bar.child(text(
+            UiRect::new(left, rect.top, left + 140.0, rect.bottom),
+            "Loading diff…",
+            theme::mono(theme::c().text_dim, theme::SMALL),
+        ));
+        left += 140.0 + GAP;
+    }
     if let Some(operation) = &git.operation {
         bar = bar.child(text(
             UiRect::new(left, rect.top, left + 180.0, rect.bottom),

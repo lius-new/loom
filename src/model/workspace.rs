@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::git::{DiffContent, DiffRequest, DiffTarget, GitResult, PollTarget};
 use crate::model::diff_document::DiffDocument;
@@ -45,8 +46,8 @@ pub struct ViewState {
 struct OpenDocument {
     meta: FileMeta,
     buffer: TextBuffer,
-    saved_text: String,
-    diff: Option<DiffDocument>,
+    saved_text: Arc<String>,
+    diff: Option<Arc<DiffDocument>>,
     /// A built-in page (Settings, Keymap) rather than a file.
     page: Option<AppPage>,
     /// One view per pane that has this document as a tab.
@@ -61,7 +62,7 @@ impl OpenDocument {
         Self {
             meta,
             buffer: TextBuffer::new(contents.clone()),
-            saved_text: contents,
+            saved_text: Arc::new(contents),
             diff: None,
             page: None,
             views: HashMap::new(),
@@ -163,6 +164,16 @@ pub enum ReconcileResult {
     Conflict(PathBuf),
     Missing(PathBuf),
     Failed(PathBuf, String),
+}
+
+pub struct PreparedDiskUpdate {
+    id: FileId,
+    path: PathBuf,
+    expected_disk: DiskState,
+    expected_saved: Arc<String>,
+    expected_version: u64,
+    replacement: OpenDocument,
+    outcome: ReconcileResult,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -783,7 +794,7 @@ impl Workspace {
     pub fn active_diff(&self) -> Option<&DiffDocument> {
         self.active()
             .and_then(|id| self.documents.get(&id))
-            .and_then(|document| document.diff.as_ref())
+            .and_then(|document| document.diff.as_deref())
     }
 
     pub fn active_page(&self) -> Option<AppPage> {
@@ -833,7 +844,7 @@ impl Workspace {
     /// The diff shown by a pane's active tab.
     pub fn diff(&self, pane: PaneId) -> Option<&DiffDocument> {
         let id = self.panes.get(&pane)?.active?;
-        self.documents.get(&id)?.diff.as_ref()
+        self.documents.get(&id)?.diff.as_deref()
     }
 
     /// The built-in page shown by a pane's active tab.
@@ -921,7 +932,7 @@ impl Workspace {
 
     pub fn is_dirty(&self, id: FileId) -> bool {
         self.documents.get(&id).is_some_and(|document| {
-            document.is_text() && document.buffer.text() != document.saved_text
+            document.is_text() && document.buffer.text() != document.saved_text.as_str()
         })
     }
 
@@ -977,7 +988,7 @@ impl Workspace {
         if !document.is_text() {
             return false;
         }
-        document.saved_text = document.buffer.text().to_owned();
+        document.saved_text = Arc::new(document.buffer.text().to_owned());
         document.disk_state = DiskState::capture(&document.meta.path, &document.saved_text);
         document.disk_conflict = false;
         document.missing_on_disk = false;
@@ -1069,6 +1080,10 @@ impl Workspace {
     /// Open or refresh a read-only diff tab. A tab is uniquely identified by
     /// repository, relative path and comparison target.
     pub fn open_diff(&mut self, diff: DiffDocument) -> FileId {
+        self.open_prepared_diff(Arc::new(diff))
+    }
+
+    pub fn open_prepared_diff(&mut self, diff: Arc<DiffDocument>) -> FileId {
         if let Some((&id, document)) = self.documents.iter_mut().find(|(_, document)| {
             document.diff.as_ref().is_some_and(|current| {
                 current.matches(&diff.repository_root, &diff.path, diff.target)
@@ -1076,7 +1091,7 @@ impl Workspace {
         }) {
             document.meta.name = diff.title();
             document.meta.path = diff.absolute_path();
-            document.diff = Some(diff);
+            crate::background_ui::retire(document.diff.replace(diff));
             self.reveal(id);
             return id;
         }
@@ -1085,8 +1100,15 @@ impl Workspace {
         let absolute_path = diff.absolute_path();
         let mut meta = FileMeta::from_path(absolute_path.clone());
         meta.name = diff.title();
-        let mut document =
-            OpenDocument::new(meta, String::new(), DiskState::capture(&absolute_path, ""));
+        let mut document = OpenDocument::new(
+            meta,
+            String::new(),
+            DiskState {
+                modified_time: None,
+                size: 0,
+                content_hash: 0,
+            },
+        );
         document.diff = Some(diff);
         self.documents.insert(id, document);
         let pane = self.active_pane;
@@ -1147,12 +1169,36 @@ impl Workspace {
                     contents,
                 ),
             };
-            if *current != next {
-                document.diff = Some(next);
+            if **current != next {
+                document.diff = Some(Arc::new(next));
                 changed = true;
             }
         }
         changed
+    }
+
+    /// Prepared by the Git worker. The UI only replaces shared pointers.
+    pub fn apply_prepared_git_diffs(
+        &mut self,
+        diffs: &std::collections::BTreeMap<DiffRequest, Arc<DiffDocument>>,
+    ) -> Vec<Arc<DiffDocument>> {
+        let mut retired = Vec::new();
+        for document in self.documents.values_mut() {
+            let Some(current) = &document.diff else {
+                continue;
+            };
+            let request = DiffRequest {
+                repository_root: current.repository_root.clone(),
+                path: current.path.clone(),
+                target: current.target,
+            };
+            if let Some(next) = diffs.get(&request)
+                && !Arc::ptr_eq(current, next)
+            {
+                retired.push(document.diff.replace(next.clone()).unwrap());
+            }
+        }
+        retired
     }
 
     /// Open the settings page, or focus it if it is already open.
@@ -1236,6 +1282,98 @@ impl Workspace {
             .collect()
     }
 
+    /// Run on a snapshot outside the reactive state lock. All file reads,
+    /// content hashing and line-index construction happen here.
+    pub fn prepare_disk_updates(
+        &self,
+        changed_paths: &[PathBuf],
+        full_rescan: bool,
+    ) -> Vec<PreparedDiskUpdate> {
+        let mut working = self.clone();
+        let ids = self
+            .ordered_documents()
+            .into_iter()
+            .filter(|id| {
+                self.documents.get(id).is_some_and(|document| {
+                    document.is_text()
+                        && (full_rescan
+                            || changed_paths
+                                .iter()
+                                .any(|path| document.meta.path.starts_with(path)))
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut updates = Vec::new();
+        for id in ids {
+            let original = &self.documents[&id];
+            let outcome = working.reconcile_document(id);
+            if matches!(outcome, ReconcileResult::Failed(_, _)) {
+                continue;
+            }
+            let replacement = working.documents.remove(&id).unwrap();
+            updates.push(PreparedDiskUpdate {
+                id,
+                path: original.meta.path.clone(),
+                expected_disk: original.disk_state.clone(),
+                expected_saved: original.saved_text.clone(),
+                expected_version: original.buffer.version(),
+                replacement,
+                outcome,
+            });
+        }
+        updates
+    }
+
+    /// Delayed disk notifications never overwrite a save, rename, closed tab,
+    /// or editor changes made while the worker was reading the file.
+    pub fn apply_disk_updates(&mut self, updates: Vec<PreparedDiskUpdate>) -> Vec<ReconcileResult> {
+        let mut outcomes = Vec::new();
+        let mut retired = Vec::new();
+        for update in updates {
+            let Some(document) = self.documents.get_mut(&update.id) else {
+                retired.push(update);
+                continue;
+            };
+            if document.meta.path != update.path
+                || document.disk_state != update.expected_disk
+                || !Arc::ptr_eq(&document.saved_text, &update.expected_saved)
+            {
+                retired.push(update);
+                continue;
+            }
+            if matches!(update.outcome, ReconcileResult::Reloaded(_))
+                && document.buffer.version() != update.expected_version
+            {
+                document.disk_conflict = true;
+                outcomes.push(ReconcileResult::Conflict(update.path.clone()));
+                retired.push(update);
+                continue;
+            }
+            let old = document.clone();
+            if matches!(update.outcome, ReconcileResult::Reloaded(_)) {
+                document
+                    .buffer
+                    .install_prepared(update.replacement.buffer.clone());
+                document.saved_text = update.replacement.saved_text.clone();
+                document.clamp_views();
+            }
+            document.disk_state = update.replacement.disk_state.clone();
+            document.disk_conflict = update.replacement.disk_conflict;
+            if matches!(update.outcome, ReconcileResult::Missing(_))
+                && document.buffer.version() != update.expected_version
+            {
+                document.disk_conflict = true;
+            }
+            document.missing_on_disk = update.replacement.missing_on_disk;
+            outcomes.push(update.outcome.clone());
+            // Keep old shared text alive until the reclaimer frees it.
+            crate::background_ui::retire(old);
+            retired.push(update);
+        }
+        crate::background_ui::retire(retired);
+        outcomes
+    }
+
     /// Reconcile open documents touched by a watcher batch. A directory-level
     /// event also covers open descendants; a rescan checks everything.
     pub fn reconcile_changed_paths(
@@ -1270,7 +1408,7 @@ impl Workspace {
         if !document.is_text() {
             return ReconcileResult::Unchanged(path);
         }
-        let dirty = document.buffer.text() != document.saved_text;
+        let dirty = document.buffer.text() != document.saved_text.as_str();
         let previous = document.disk_state.clone();
         let contents = match std::fs::read_to_string(&path) {
             Ok(contents) => contents,
@@ -1299,7 +1437,7 @@ impl Workspace {
             ReconcileResult::Conflict(path)
         } else {
             replace_buffer_from_disk(document, contents.clone());
-            document.saved_text = contents;
+            document.saved_text = Arc::new(contents);
             document.disk_state = current;
             document.disk_conflict = false;
             ReconcileResult::Reloaded(path)
@@ -1318,7 +1456,7 @@ impl Workspace {
             format!("Could not reload {}: {error}", document.meta.path.display())
         })?;
         replace_buffer_from_disk(document, contents.clone());
-        document.saved_text = contents;
+        document.saved_text = Arc::new(contents);
         document.disk_state = DiskState::capture(&document.meta.path, &document.saved_text);
         document.disk_conflict = false;
         document.missing_on_disk = false;
@@ -1809,6 +1947,81 @@ mod tests {
         );
         assert!(workspace.has_disk_conflict(id));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delayed_disk_notification_preserves_intervening_edits_and_saves() {
+        let root = std::env::temp_dir().join(format!("loom-async-disk-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("file.txt");
+        std::fs::write(&path, "base").unwrap();
+        let mut workspace = Workspace::new();
+        let id = workspace.open_path(path.clone(), "base".into());
+        std::fs::write(&path, "disk changed").unwrap();
+        let pending = workspace.prepare_disk_updates(&[], true);
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .select_to(usize::MAX, false);
+        workspace
+            .active_editor_mut()
+            .unwrap()
+            .replace_selection(" + editor", EditKind::Typing)
+            .unwrap();
+        assert_eq!(
+            workspace.apply_disk_updates(pending),
+            vec![ReconcileResult::Conflict(path.clone())]
+        );
+        assert_eq!(workspace.active_editor().unwrap().text(), "base + editor");
+        let pending = workspace.prepare_disk_updates(&[], true);
+        std::fs::write(&path, workspace.active_editor().unwrap().text()).unwrap();
+        workspace.mark_saved(id);
+        assert!(workspace.apply_disk_updates(pending).is_empty());
+        assert!(!workspace.has_disk_conflict(id));
+        assert_eq!(workspace.active_editor().unwrap().text(), "base + editor");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prepared_disk_and_diff_notifications_apply_without_rereading_files() {
+        let root = std::env::temp_dir().join(format!("loom-prepared-disk-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("file.txt");
+        std::fs::write(&path, "base").unwrap();
+        let mut workspace = Workspace::new();
+        workspace.open_path(path.clone(), "base".into());
+        workspace.set_active_scroll(12.0, 24.0);
+        std::fs::write(&path, "read by worker\nsecond line").unwrap();
+        let updates = workspace.prepare_disk_updates(&[], true);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(
+            workspace.apply_disk_updates(updates),
+            vec![ReconcileResult::Reloaded(path)]
+        );
+        assert_eq!(
+            workspace.active_editor().unwrap().text(),
+            "read by worker\nsecond line"
+        );
+        assert_eq!(workspace.active_scroll(), (12.0, 24.0));
+        let request = DiffRequest {
+            repository_root: root,
+            path: PathBuf::from("diff.txt"),
+            target: DiffTarget::IndexToWorktree,
+        };
+        let document = Arc::new(DiffDocument::added(
+            request.repository_root.clone(),
+            request.path.clone(),
+            request.target,
+            "prepared diff\n",
+        ));
+        workspace.open_prepared_diff(document.clone());
+        let clone = workspace.clone();
+        assert!(std::ptr::eq(
+            clone.active_diff().unwrap(),
+            workspace.active_diff().unwrap()
+        ));
+        let diffs = std::collections::BTreeMap::from([(request, document)]);
+        assert!(workspace.apply_prepared_git_diffs(&diffs).is_empty());
     }
 
     #[test]

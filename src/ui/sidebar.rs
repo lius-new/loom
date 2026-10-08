@@ -18,9 +18,10 @@ use lgui::prelude::{Color, Element, State, TextAlign, UiRect, VisualStyle, panel
 
 use crate::file_tree::read_directory;
 use crate::git::{GitStoreSnapshot, PathDecoration};
+#[cfg(test)]
+use crate::state::DirEntry;
 use crate::state::{
-    AppState, DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind,
-    FileDragState,
+    AppState, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind, FileDragState,
 };
 use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
@@ -755,10 +756,7 @@ fn explorer_create_input_mut(app: &mut AppState) -> &mut InputState {
 /// `default`, using the same precedence as Zed's project panel.
 fn tree_label_color(git: &GitStoreSnapshot, path: &Path, default: Color) -> Color {
     let colors = theme::c().git;
-    match git
-        .repository_for_path(path)
-        .and_then(|repository| repository.decoration_for_absolute_path(path))
-    {
+    match git.decoration_for_absolute_path(path) {
         Some(PathDecoration::Conflict | PathDecoration::Deleted) => colors.deleted,
         Some(PathDecoration::Modified) => colors.modified,
         Some(PathDecoration::Created) => colors.added,
@@ -896,7 +894,7 @@ fn build_tree(
         return els;
     };
 
-    for entry in entries {
+    for entry in entries.iter() {
         let is_dir = entry.is_dir;
         let name = entry.name.clone();
         let key = entry.path.to_string_lossy().into_owned();
@@ -1163,7 +1161,7 @@ fn extend_content_right(dir_key: &str, depth: usize, s: &AppState, left: f32, ri
         return;
     };
 
-    for entry in entries {
+    for entry in entries.iter() {
         *right = right.max(row_content_right(left, depth, &entry.name));
         if entry.is_dir {
             let key = entry.path.to_string_lossy();
@@ -1429,7 +1427,8 @@ mod tests {
                 name: "src".to_string(),
                 path: nested_key.into(),
                 is_dir: true,
-            }],
+            }]
+            .into(),
         );
         state.dir_entries.insert(
             nested_key.to_string(),
@@ -1437,7 +1436,8 @@ mod tests {
                 name: long_name.to_string(),
                 path: format!("{nested_key}/{long_name}").into(),
                 is_dir: false,
-            }],
+            }]
+            .into(),
         );
 
         assert_eq!(

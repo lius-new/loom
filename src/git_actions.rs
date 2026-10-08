@@ -1,6 +1,7 @@
 //! Asynchronous UI-facing Git commands.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 
 use lgui::prelude::State;
@@ -9,18 +10,96 @@ use crate::git::store::operation;
 use crate::git::{GitService, GitStoreSnapshot, OperationKind, RepositorySnapshot};
 use crate::state::AppState;
 
+pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untracked: bool) {
+    let app = state.get();
+    let Some(application) = app.git_application else {
+        return;
+    };
+    let roots = app.workspace_folders;
+    let active_view = (app.workspace.active_pane(), app.workspace.active());
+    let sequence = app.git_open_diff_sequence + 1;
+    state.update(|app| {
+        app.git_open_diff_sequence = sequence;
+        app.git_diff_loading = Some(request.clone());
+    });
+    let worker_state = state.clone();
+    let spawned = thread::Builder::new()
+        .name("loom-git-open-diff".into())
+        .spawn(move || {
+            let result = crate::git::service().and_then(|service| {
+                let diff = service.backend().parsed_full_diff(
+                    &request.repository_root,
+                    request.target,
+                    std::slice::from_ref(&request.path),
+                )?;
+                let document = if diff.files.is_empty()
+                    && untracked
+                    && request.target != crate::git::DiffTarget::HeadToIndex
+                {
+                    let contents =
+                        std::fs::read_to_string(request.repository_root.join(&request.path))?;
+                    crate::model::diff_document::DiffDocument::added(
+                        request.repository_root,
+                        request.path,
+                        request.target,
+                        &contents,
+                    )
+                } else {
+                    crate::model::diff_document::DiffDocument::from_unified(
+                        request.repository_root,
+                        request.path,
+                        request.target,
+                        diff,
+                    )
+                };
+                Ok(Arc::new(document))
+            });
+            application.post(move || {
+                let mut result = Some(result);
+                worker_state.update(|app| {
+                    if app.git_open_diff_sequence != sequence {
+                        return;
+                    }
+                    app.git_diff_loading = None;
+                    if app.workspace_folders != roots
+                        || (app.workspace.active_pane(), app.workspace.active()) != active_view
+                    {
+                        return;
+                    }
+                    match result.take().unwrap() {
+                        Ok(document) => {
+                            app.workspace.open_prepared_diff(document);
+                        }
+                        Err(error) => app.show_error(error.user_message()),
+                    }
+                });
+                crate::background_ui::retire(result);
+            });
+        })
+        .is_ok();
+    if !spawned {
+        state.update(|app| {
+            app.git_diff_loading = None;
+            app.show_error("Could not start Git diff worker.");
+        });
+    }
+}
+
 pub fn stage_all(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
     let Some(repository) = active_repository(store) else {
         return false;
     };
-    let paths = repository.files.keys().cloned().collect::<Vec<_>>();
+    let files = repository.files.clone();
     run(
         state,
         store,
         repository,
         OperationKind::Stage,
         "Staging changes…",
-        move |service, root| service.write(root, |backend| backend.stage(root, &paths)),
+        move |service, root| {
+            let paths = files.keys().cloned().collect::<Vec<_>>();
+            service.write(root, |backend| backend.stage(root, &paths))
+        },
     )
 }
 
@@ -190,11 +269,11 @@ fn run(
     if store.get().operation.is_some() {
         return false;
     }
-    let Ok(service) = crate::git::service() else {
-        state.update(|app| app.show_error("No usable Git runtime is available."));
+    let app = state.get();
+    let Some(application) = app.git_application else {
         return false;
     };
-    let poll_control = state.get().git_poll_control;
+    let poll_control = app.git_poll_control;
     store.update(move |snapshot| {
         snapshot.operation = Some(operation(kind, message, false));
         snapshot.last_error = None;
@@ -206,7 +285,12 @@ fn run(
     let spawned = thread::Builder::new()
         .name(format!("loom-git-{kind:?}").to_ascii_lowercase())
         .spawn(move || {
-            let result = action(&service, &repository.worktree_root);
+            let result = crate::git::service().and_then(|service| action(&service, &repository.worktree_root));
+            let disk_updates = if result.is_ok() {
+                state.get().workspace.prepare_disk_updates(&[], true)
+            } else { Vec::new() };
+            let completion_application = application.clone();
+            application.post(move || {
             match result {
                 Ok(()) => {
                     if kind == OperationKind::Commit {
@@ -215,7 +299,11 @@ fn run(
                         });
                     }
                     state.update(|app| {
-                        let outcomes = app.workspace.reconcile_disk();
+                        let expected_updates = disk_updates.len();
+                        let outcomes = app.workspace.apply_disk_updates(disk_updates);
+                        if outcomes.len() < expected_updates {
+                            crate::file_watcher::refresh_async(state.clone(), completion_application);
+                        }
                         let conflicts = outcomes
                             .iter()
                             .filter(|outcome| matches!(outcome, crate::model::workspace::ReconcileResult::Conflict(_)))
@@ -240,6 +328,7 @@ fn run(
             // The current worker knows the current roots and open tabs. Never
             // publish a separate scan using the operation's starting context.
             worker_poll_control.request_refresh();
+            });
         })
         .is_ok();
     if !spawned {

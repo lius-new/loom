@@ -109,6 +109,11 @@ impl TextBuffer {
         self.version = version;
     }
 
+    pub fn install_prepared(&mut self, mut prepared: Self) {
+        prepared.version = self.version + 1;
+        *self = prepared;
+    }
+
     /// Validate and apply `edits`, all given in the current text's offsets.
     /// Nothing changes when any edit is invalid.
     pub(super) fn apply_edits(&mut self, edits: Vec<Edit>) -> Result<ChangeSet, EditError> {
