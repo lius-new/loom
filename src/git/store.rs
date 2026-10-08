@@ -324,12 +324,15 @@ impl GitService {
             if stopped.load(Ordering::Acquire) {
                 break;
             }
-            let published = match &result {
-                Ok(snapshot) => Published::Snapshot(snapshot_fingerprint(snapshot)),
-                Err(error) => Published::Error(error.clone()),
+            // An unchanged state or a repeated error must not wake the UI
+            // every interval.
+            let unchanged = match (&previous, &result) {
+                (Some(Ok(last)), Ok(next)) => same_scan(last, next),
+                (Some(Err(last)), Err(next)) => last == next,
+                _ => false,
             };
-            if previous.as_ref() != Some(&published) {
-                previous = Some(published);
+            if !unchanged {
+                previous = Some(result.clone());
                 publish(result);
             }
             if mode == RefreshMode::Fast {
@@ -351,14 +354,6 @@ impl GitService {
 enum RefreshMode {
     Fast,
     Detailed,
-}
-
-/// The last thing a poller published, so an unchanged state or a repeated
-/// error does not wake the UI every interval.
-#[derive(Debug, PartialEq)]
-enum Published {
-    Snapshot(u64),
-    Error(GitError),
 }
 
 fn collect_line_changes(diff: &super::diff::UnifiedDiff, output: &mut BTreeMap<usize, LineChange>) {
@@ -408,35 +403,31 @@ fn repository_id(path: &Path) -> RepositoryId {
     RepositoryId(hasher.finish())
 }
 
-fn snapshot_fingerprint(snapshot: &GitStoreSnapshot) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    snapshot.active_repository.hash(&mut hasher);
-    for (id, repository) in &snapshot.repositories {
-        id.hash(&mut hasher);
-        repository.worktree_root.hash(&mut hasher);
-        repository.branch_label().hash(&mut hasher);
-        repository.ahead.hash(&mut hasher);
-        repository.behind.hash(&mut hasher);
-        repository.repository_state.hash(&mut hasher);
-        for (path, state) in &repository.files {
-            path.hash(&mut hasher);
-            format!("{state:?}").hash(&mut hasher);
-        }
-        repository.ignored.hash(&mut hasher);
-    }
-    for (path, changes) in &snapshot.line_changes {
-        path.hash(&mut hasher);
-        for (line, change) in changes {
-            line.hash(&mut hasher);
-            match change {
-                LineChange::Added => 0_u8,
-                LineChange::Modified => 1_u8,
-                LineChange::Deleted => 2_u8,
-            }
-            .hash(&mut hasher);
-        }
-    }
-    hasher.finish()
+/// Whether two scans saw the same state; generations always differ.
+/// Destructured so a new field cannot be left out of the comparison.
+fn same_scan(last: &GitStoreSnapshot, next: &GitStoreSnapshot) -> bool {
+    let GitStoreSnapshot {
+        repositories,
+        active_repository,
+        operation,
+        last_error,
+        runtime_label,
+        generation: _,
+        line_changes,
+        initializing,
+    } = last;
+    repositories.len() == next.repositories.len()
+        && repositories.iter().zip(&next.repositories).all(
+            |((id, repository), (next_id, next_repository))| {
+                id == next_id && repository.same_state(next_repository)
+            },
+        )
+        && *active_repository == next.active_repository
+        && *operation == next.operation
+        && *last_error == next.last_error
+        && *runtime_label == next.runtime_label
+        && *line_changes == next.line_changes
+        && *initializing == next.initializing
 }
 
 #[cfg(test)]
@@ -553,6 +544,49 @@ mod tests {
         // The same path is not a new request.
         control.set_active_path(Some(PathBuf::from("/workspace/a")));
         assert!(!control.shared.0.lock().unwrap().wake);
+    }
+
+    #[test]
+    fn scans_differing_only_in_generation_are_the_same() {
+        let repository = RepositorySnapshot {
+            id: RepositoryId(1),
+            worktree_root: PathBuf::from("/workspace"),
+            git_dir: PathBuf::new(),
+            common_dir: PathBuf::new(),
+            head: HeadState::default(),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            files: BTreeMap::new(),
+            ignored: Default::default(),
+            repository_state: RepositoryState::Normal,
+            features: RepositoryFeatures::default(),
+            generation: 1,
+        };
+        let scan = |generation, repository: RepositorySnapshot| {
+            let mut snapshot = GitStoreSnapshot {
+                generation,
+                initializing: false,
+                ..GitStoreSnapshot::default()
+            };
+            snapshot.repositories.insert(
+                repository.id,
+                RepositorySnapshot {
+                    generation,
+                    ..repository
+                },
+            );
+            snapshot
+        };
+        let last = scan(1, repository.clone());
+        assert!(same_scan(&last, &scan(2, repository.clone())));
+        let tracking = RepositorySnapshot {
+            upstream: Some(UpstreamState {
+                name: "origin/main".into(),
+            }),
+            ..repository
+        };
+        assert!(!same_scan(&last, &scan(2, tracking)));
     }
 
     #[test]

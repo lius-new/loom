@@ -210,6 +210,38 @@ pub struct RepositoryFeatures {
 }
 
 impl RepositorySnapshot {
+    /// Equal apart from `generation`, which every scan bumps. Destructured so
+    /// a new field cannot be left out of the comparison.
+    pub fn same_state(&self, other: &Self) -> bool {
+        let Self {
+            id,
+            worktree_root,
+            git_dir,
+            common_dir,
+            head,
+            upstream,
+            ahead,
+            behind,
+            files,
+            ignored,
+            repository_state,
+            features,
+            generation: _,
+        } = self;
+        *id == other.id
+            && *worktree_root == other.worktree_root
+            && *git_dir == other.git_dir
+            && *common_dir == other.common_dir
+            && *head == other.head
+            && *upstream == other.upstream
+            && *ahead == other.ahead
+            && *behind == other.behind
+            && *files == other.files
+            && *ignored == other.ignored
+            && *repository_state == other.repository_state
+            && *features == other.features
+    }
+
     pub fn branch_label(&self) -> String {
         match &self.head {
             HeadState::Branch(name) | HeadState::Unborn(name) => name.clone(),
