@@ -27,20 +27,20 @@ use crate::vim::{self, CursorShape};
 
 use super::vim_input;
 
-const SCROLLBAR_SIZE: f32 = 12.0;
+pub(crate) const SCROLLBAR_SIZE: f32 = 12.0;
 const SCROLLBAR_INSET: f32 = 2.0;
 const MIN_THUMB_LENGTH: f32 = 28.0;
 const TRAILING_CODE_SPACE: f32 = 32.0;
 const CURSOR_REVEAL_MARGIN: f32 = 12.0;
 
 #[derive(Clone, Copy, Debug)]
-struct ScrollMetrics {
-    viewport_w: f32,
-    viewport_h: f32,
-    content_w: f32,
-    content_h: f32,
-    max_x: f32,
-    max_y: f32,
+pub(crate) struct ScrollMetrics {
+    pub viewport_w: f32,
+    pub viewport_h: f32,
+    pub content_w: f32,
+    pub content_h: f32,
+    pub max_x: f32,
+    pub max_y: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -471,7 +471,7 @@ pub fn render(
     crate::ui::track_main_surface_focus(root, state)
 }
 
-fn vertical_scrollbar(
+pub(crate) fn vertical_scrollbar(
     pane: PaneId,
     rect: UiRect,
     metrics: ScrollMetrics,
@@ -574,7 +574,7 @@ fn vertical_scrollbar(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn horizontal_scrollbar(
+pub(crate) fn horizontal_scrollbar(
     pane: PaneId,
     rect: UiRect,
     code_left: f32,
@@ -694,6 +694,17 @@ pub fn drag_scrollbars(app: &mut AppState, rect: UiRect, pointer_x: f32, pointer
     else {
         return finish_scrollbar_drag(app);
     };
+    drag_scrollbars_with_metrics(app, rect, code_left, metrics, pointer_x, pointer_y)
+}
+
+pub(crate) fn drag_scrollbars_with_metrics(
+    app: &mut AppState,
+    rect: UiRect,
+    code_left: f32,
+    metrics: ScrollMetrics,
+    pointer_x: f32,
+    pointer_y: f32,
+) -> bool {
     let (mut scroll_x, mut scroll_y) = app.workspace.active_scroll();
 
     if app.editor_vertical_scrollbar_dragging && metrics.max_y > 0.0 {

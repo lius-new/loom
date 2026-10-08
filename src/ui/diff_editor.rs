@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use lgui::core::{CursorIcon, EventPolicy, UiFocusHandle, WheelUnit, clip};
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
+use crate::editor::editor_view::{self, SCROLLBAR_SIZE, ScrollMetrics};
 use crate::model::diff_document::{DiffRow, DiffRowKind, SplitDiffRow};
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
@@ -15,7 +16,6 @@ const PANE_HEADER_H: f32 = 22.0;
 const ROW_H: f32 = 20.0;
 const NUMBER_W: f32 = 44.0;
 const MARKER_W: f32 = 20.0;
-const SCROLLBAR_W: f32 = 4.0;
 const BUTTON_H: f32 = 22.0;
 const BUTTON_GAP: f32 = 4.0;
 
@@ -49,16 +49,9 @@ pub fn render(
     } else {
         document.rows.len()
     };
-    let content_h = row_count as f32 * ROW_H;
-    let max_y = (content_h - body_rect.height()).max(0.0);
-    let code_width = if split {
-        (body_rect.width() / 2.0 - NUMBER_W - theme::CODE_PAD).max(1.0)
-    } else {
-        (body_rect.width() - NUMBER_W * 2.0 - MARKER_W - theme::CODE_PAD).max(1.0)
-    };
-    let longest_line = document.longest_line(split);
-    let content_w = longest_line as f32 * theme::CHAR_W + theme::CODE_PAD * 2.0;
-    let max_x = (content_w - code_width).max(0.0);
+    let metrics = scroll_metrics(body_rect, split, row_count, document.longest_line(split));
+    let max_y = metrics.max_y;
+    let max_x = metrics.max_x;
     let scroll_x = stored_x.clamp(0.0, max_x);
     let scroll_y = stored_y.clamp(0.0, max_y);
 
@@ -111,7 +104,12 @@ pub fn render(
 
     if split {
         root = root.child(split_headers(
-            UiRect::new(rect.left, rect.top + TOOLBAR_H, rect.right, body_top),
+            UiRect::new(
+                rect.left,
+                rect.top + TOOLBAR_H,
+                rect.right - if max_y > 0.0 { SCROLLBAR_SIZE } else { 0.0 },
+                body_top,
+            ),
             source_label,
         ));
     }
@@ -135,34 +133,127 @@ pub fn render(
         ));
     }
 
+    let content_rect = UiRect::new(
+        body_rect.left,
+        body_rect.top,
+        body_rect.right - if max_y > 0.0 { SCROLLBAR_SIZE } else { 0.0 },
+        body_rect.bottom - if max_x > 0.0 { SCROLLBAR_SIZE } else { 0.0 },
+    );
     root = if split {
         root.child(render_split(
-            body_rect,
+            content_rect,
             &document.split_rows,
             scroll_x,
             scroll_y,
         ))
     } else {
-        root.child(render_inline(body_rect, &document.rows, scroll_x, scroll_y))
+        root.child(render_inline(
+            content_rect,
+            &document.rows,
+            scroll_x,
+            scroll_y,
+        ))
     };
 
+    let emphasized = app.editor_hovered == Some(pane)
+        || (app.workspace.active_pane() == pane
+            && (app.editor_vertical_scrollbar_dragging
+                || app.editor_horizontal_scrollbar_dragging));
     if max_y > 0.0 {
-        let thumb_h =
-            (body_rect.height() * body_rect.height() / content_h).clamp(24.0, body_rect.height());
-        let travel = body_rect.height() - thumb_h;
-        let thumb_top = body_rect.top + travel * (scroll_y / max_y);
-        root = root.child(panel(
-            UiRect::new(
-                body_rect.right - SCROLLBAR_W,
-                thumb_top,
-                body_rect.right,
-                thumb_top + thumb_h,
-            ),
-            VisualStyle::filled(theme::c().text_faint).radius(2.0),
+        root = root.child(editor_view::vertical_scrollbar(
+            pane,
+            body_rect,
+            metrics,
+            scroll_y,
+            max_x > 0.0,
+            emphasized,
+            state.clone(),
+        ));
+    }
+    if max_x > 0.0 {
+        root = root.child(editor_view::horizontal_scrollbar(
+            pane,
+            body_rect,
+            code_left(body_rect, split),
+            metrics,
+            scroll_x,
+            max_y > 0.0,
+            emphasized,
+            state,
         ));
     }
 
     root
+}
+
+fn code_left(rect: UiRect, split: bool) -> f32 {
+    rect.left
+        + if split {
+            NUMBER_W
+        } else {
+            NUMBER_W * 2.0 + MARKER_W
+        }
+}
+
+fn scroll_metrics(rect: UiRect, split: bool, rows: usize, longest_line: usize) -> ScrollMetrics {
+    let content_h = rows as f32 * ROW_H;
+    let content_w = longest_line as f32 * theme::CHAR_W + theme::CODE_PAD * 2.0;
+    let mut viewport_h = rect.height().max(1.0);
+    let mut viewport_w = 1.0;
+    for _ in 0..3 {
+        let width = rect.width()
+            - if content_h > viewport_h {
+                SCROLLBAR_SIZE
+            } else {
+                0.0
+            };
+        viewport_w = (if split {
+            width / 2.0 - NUMBER_W
+        } else {
+            width - NUMBER_W * 2.0 - MARKER_W
+        })
+        .max(1.0);
+        viewport_h = (rect.height()
+            - if content_w > viewport_w {
+                SCROLLBAR_SIZE
+            } else {
+                0.0
+            })
+        .max(1.0);
+    }
+    ScrollMetrics {
+        viewport_w,
+        viewport_h,
+        content_w: content_w.max(viewport_w),
+        content_h,
+        max_x: (content_w - viewport_w).max(0.0),
+        max_y: (content_h - viewport_h).max(0.0),
+    }
+}
+
+/// Use the same window-level drag handling as the text editor, including
+/// movements outside the scrollbar strip.
+pub(crate) fn drag_scrollbars(app: &mut AppState, rect: UiRect, x: f32, y: f32) -> bool {
+    if !app.editor_vertical_scrollbar_dragging && !app.editor_horizontal_scrollbar_dragging {
+        return false;
+    }
+    let split = app.git_split_diff;
+    let Some(document) = app.workspace.diff(app.workspace.active_pane()) else {
+        return editor_view::finish_scrollbar_drag(app);
+    };
+    let body = UiRect::new(
+        rect.left,
+        rect.top + TOOLBAR_H + if split { PANE_HEADER_H } else { 0.0 },
+        rect.right,
+        rect.bottom,
+    );
+    let rows = if split {
+        document.split_rows.len()
+    } else {
+        document.rows.len()
+    };
+    let metrics = scroll_metrics(body, split, rows, document.longest_line(split));
+    editor_view::drag_scrollbars_with_metrics(app, body, code_left(body, split), metrics, x, y)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -544,6 +635,134 @@ fn navigate_change(app: &mut AppState, starts: &[usize], next: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_scrollbars_drag_and_release_outside_the_track() {
+        scrollbars_drag_and_release(false);
+    }
+
+    #[test]
+    fn split_scrollbars_drag_and_release_outside_the_track() {
+        scrollbars_drag_and_release(true);
+    }
+
+    fn scrollbars_drag_and_release(split: bool) {
+        use crate::git::DiffTarget;
+        use crate::model::diff_document::DiffDocument;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{
+            InputEvent, Point, PointerButton, PointerData, UiEventKind, UiEventPayload, UiScale,
+            dispatch_runtime_output,
+        };
+        use lgui::prelude::group;
+        use lgui::session::UiSession;
+        use std::sync::{Arc, Mutex};
+
+        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let output = exposed.clone();
+        let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state_with(|| {
+                let mut app = AppState::new();
+                app.git_split_diff = split;
+                app.workspace.open_diff(DiffDocument::added(
+                    "test-repo".into(),
+                    "long.txt".into(),
+                    DiffTarget::HeadToWorktree,
+                    &format!("{}\n", "x".repeat(200)).repeat(100),
+                ));
+                app
+            });
+            *output.lock().unwrap() = Some(state.clone());
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id);
+            let drag_state = state.clone();
+            let up_state = state.clone();
+            group(viewport)
+                .on_event_capture(UiEventKind::PointerMove, move |_, payload| {
+                    if let UiEventPayload::PointerMove { pointer } = payload {
+                        drag_state.try_update(|app| {
+                            drag_scrollbars(app, viewport, pointer.point.x, pointer.point.y)
+                        });
+                    }
+                })
+                .on_event_capture(UiEventKind::PointerUp, move |_, _| {
+                    up_state.try_update(editor_view::finish_scrollbar_drag);
+                })
+                .child(render(PaneId::new(1), viewport, state, focus))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        let context = ApplicationContext::empty(Default::default());
+        let mut send = |input| {
+            let events = session.handle_input(input);
+            dispatch_runtime_output(
+                events,
+                &context,
+                &lgui::window::WindowId::new("diff-scrollbar-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        let pointer = |x, y| PointerData::mouse(Point::new(x, y));
+        let body_top = TOOLBAR_H + if split { PANE_HEADER_H } else { 0.0 };
+
+        // Grab the thumb, then move away from its strip and beyond the viewport.
+        send(InputEvent::PointerDown {
+            pointer: pointer(496.0, body_top + 4.0),
+            button: PointerButton::Left,
+        });
+        assert!(state.get().editor_vertical_scrollbar_dragging);
+        send(InputEvent::PointerMove(pointer(30.0, 500.0)));
+        let bottom = state.get().workspace.active_scroll().1;
+        assert!(bottom > 0.0);
+        send(InputEvent::PointerUp {
+            pointer: pointer(30.0, 500.0),
+            button: PointerButton::Left,
+        });
+        assert!(!state.get().editor_vertical_scrollbar_dragging);
+        send(InputEvent::PointerMove(pointer(30.0, body_top)));
+        assert_eq!(state.get().workspace.active_scroll().1, bottom);
+
+        // Clicking the track jumps toward the pointer and starts a new drag.
+        send(InputEvent::PointerDown {
+            pointer: pointer(499.0, body_top + 40.0),
+            button: PointerButton::Left,
+        });
+        assert!(state.get().workspace.active_scroll().1 < bottom);
+        send(InputEvent::PointerUp {
+            pointer: pointer(499.0, body_top + 40.0),
+            button: PointerButton::Left,
+        });
+
+        let left = code_left(viewport, split);
+        send(InputEvent::PointerDown {
+            pointer: pointer(left + 4.0, 296.0),
+            button: PointerButton::Left,
+        });
+        assert!(state.get().editor_horizontal_scrollbar_dragging);
+        send(InputEvent::PointerMove(pointer(900.0, 100.0)));
+        let right = state.get().workspace.active_scroll().0;
+        assert!(right > 0.0);
+        send(InputEvent::PointerUp {
+            pointer: pointer(900.0, 100.0),
+            button: PointerButton::Left,
+        });
+        assert!(!state.get().editor_horizontal_scrollbar_dragging);
+        send(InputEvent::PointerMove(pointer(left, 100.0)));
+        assert_eq!(state.get().workspace.active_scroll().0, right);
+        send(InputEvent::PointerDown {
+            pointer: pointer(left + 30.0, 299.0),
+            button: PointerButton::Left,
+        });
+        assert!(state.get().workspace.active_scroll().0 < right);
+        send(InputEvent::PointerUp {
+            pointer: pointer(left + 30.0, 299.0),
+            button: PointerButton::Left,
+        });
+    }
 
     #[test]
     fn change_counter_tracks_the_nearest_change_above_the_viewport() {

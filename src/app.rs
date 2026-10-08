@@ -732,7 +732,11 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
             st_editor_scrollbar_drag.try_update(|app| {
-                editor_view::drag_scrollbars(app, code_rect, pointer.point.x, pointer.point.y)
+                if app.main_surface() == MainSurface::Diff {
+                    diff_editor::drag_scrollbars(app, code_rect, pointer.point.x, pointer.point.y)
+                } else {
+                    editor_view::drag_scrollbars(app, code_rect, pointer.point.x, pointer.point.y)
+                }
             });
         }
     });
