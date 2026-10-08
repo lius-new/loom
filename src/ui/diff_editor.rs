@@ -12,7 +12,6 @@ use crate::state::AppState;
 use crate::theme;
 
 const TOOLBAR_H: f32 = 34.0;
-const PANE_HEADER_H: f32 = 22.0;
 const ROW_H: f32 = 20.0;
 const NUMBER_W: f32 = 44.0;
 const MARKER_W: f32 = 20.0;
@@ -42,7 +41,7 @@ pub fn render(
     let current_line = (stored_y / ROW_H).floor() as usize;
     let current_change = current_change_number(&starts, current_line);
 
-    let body_top = rect.top + TOOLBAR_H + if split { PANE_HEADER_H } else { 0.0 };
+    let body_top = rect.top + TOOLBAR_H;
     let body_rect = UiRect::new(rect.left, body_top, rect.right, rect.bottom);
     let row_count = if split {
         document.split_rows.len()
@@ -101,18 +100,6 @@ pub fn render(
         current_change,
         absolute_path,
     ));
-
-    if split {
-        root = root.child(split_headers(
-            UiRect::new(
-                rect.left,
-                rect.top + TOOLBAR_H,
-                rect.right - if max_y > 0.0 { SCROLLBAR_SIZE } else { 0.0 },
-                body_top,
-            ),
-            source_label,
-        ));
-    }
 
     if row_count == 0 {
         let label = format!("{} — {source_label}", document.path.display());
@@ -241,12 +228,7 @@ pub(crate) fn drag_scrollbars(app: &mut AppState, rect: UiRect, x: f32, y: f32) 
     let Some(document) = app.workspace.diff(app.workspace.active_pane()) else {
         return editor_view::finish_scrollbar_drag(app);
     };
-    let body = UiRect::new(
-        rect.left,
-        rect.top + TOOLBAR_H + if split { PANE_HEADER_H } else { 0.0 },
-        rect.right,
-        rect.bottom,
-    );
+    let body = UiRect::new(rect.left, rect.top + TOOLBAR_H, rect.right, rect.bottom);
     let rows = if split {
         document.split_rows.len()
     } else {
@@ -415,29 +397,6 @@ fn toolbar_button(rect: UiRect, label: &'static str, active: bool) -> Element {
     .event_policy(EventPolicy::INTERACTIVE)
     .cursor(CursorIcon::Pointer)
     .child(text(rect, label, style))
-}
-
-fn split_headers(rect: UiRect, source_label: &str) -> Element {
-    let middle = rect.left + rect.width() / 2.0;
-    panel(rect, VisualStyle::filled(theme::c().sidebar))
-        .child(text(
-            UiRect::new(rect.left + 12.0, rect.top, middle - 8.0, rect.bottom),
-            "Original",
-            theme::mono(theme::c().text_faint, theme::SMALL),
-        ))
-        .child(text(
-            UiRect::new(middle + 12.0, rect.top, rect.right - 8.0, rect.bottom),
-            source_label.to_owned(),
-            theme::mono(theme::c().text_faint, theme::SMALL),
-        ))
-        .child(panel(
-            UiRect::new(middle, rect.top, middle + 1.0, rect.bottom),
-            VisualStyle::filled(theme::c().border),
-        ))
-        .child(panel(
-            UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-            VisualStyle::filled(theme::c().border),
-        ))
 }
 
 fn render_inline(rect: UiRect, rows: &[DiffRow], scroll_x: f32, scroll_y: f32) -> Element {
@@ -707,7 +666,7 @@ mod tests {
             session.render_view(&view, viewport, UiScale::ONE);
         };
         let pointer = |x, y| PointerData::mouse(Point::new(x, y));
-        let body_top = TOOLBAR_H + if split { PANE_HEADER_H } else { 0.0 };
+        let body_top = TOOLBAR_H;
 
         // Grab the thumb, then move away from its strip and beyond the viewport.
         send(InputEvent::PointerDown {
