@@ -24,6 +24,27 @@ pub mod toast;
 pub mod welcome;
 pub mod workspace_home;
 
+/// These surfaces share an identity, so switching between them does not emit
+/// another focus event. Track focus on every surface, including the home pages.
+pub(crate) fn track_main_surface_focus(
+    surface: lgui::prelude::Element,
+    state: lgui::prelude::State<crate::state::AppState>,
+) -> lgui::prelude::Element {
+    let focus_state = state.clone();
+    surface
+        .on_focus(move |_| focus_state.update(|app| app.focused = true))
+        .on_blur(move |_| {
+            state.update(|app| {
+                app.focused = false;
+                app.editor.drag = None;
+                app.editor.ime = None;
+                if let Some(mut buffer) = app.workspace.active_editor_mut() {
+                    buffer.break_undo_group();
+                }
+            });
+        })
+}
+
 /// A path as shown to or copied by the user. `fs::canonicalize` yields
 /// verbatim paths on Windows (`\\?\D:\dir`), so drop that prefix.
 #[cfg(target_os = "windows")]

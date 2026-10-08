@@ -100,6 +100,7 @@ pub fn render(
             changed
         });
     });
+    home = crate::ui::track_main_surface_focus(home, state.clone());
 
     home = home.child(text(
         UiRect::new(page_left, page_top, page_right, page_top + 18.0),

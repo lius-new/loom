@@ -155,6 +155,7 @@ pub struct AppState {
     /// Vim editing behaviour, when enabled in Settings.
     pub vim: crate::vim::Vim,
     pub workspace: Workspace,
+    /// Focus of the shared welcome/home/editor surface, retained across swaps.
     pub focused: bool,
     /// File explorer drawer on the right.
     pub show_drawer: bool,

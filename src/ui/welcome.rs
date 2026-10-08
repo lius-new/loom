@@ -60,6 +60,7 @@ pub fn render(
             changed
         });
     });
+    welcome = crate::ui::track_main_surface_focus(welcome, state.clone());
 
     let title_w = measure("Loom", 18.0, 700);
     welcome = welcome.child(text(

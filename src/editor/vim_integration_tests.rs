@@ -28,6 +28,10 @@ struct Ui {
 
 impl Ui {
     fn new(contents: &str) -> Self {
+        Self::new_with_home(contents, None)
+    }
+
+    fn new_with_home(contents: &str, workspace_home: Option<bool>) -> Self {
         let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
@@ -37,14 +41,23 @@ impl Ui {
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state({
                 let mut app = AppState::new();
-                app.workspace.open_path("vim.txt".into(), contents.clone());
-                app.vim.options.enabled = true;
+                if let Some(project) = workspace_home {
+                    if project {
+                        app.workspace_folders.push("focus-test-project".into());
+                    }
+                } else {
+                    app.workspace.open_path("vim.txt".into(), contents.clone());
+                    app.vim.options.enabled = true;
+                }
                 app
             });
             let git_store = cx.state(GitStoreSnapshot::default());
+            let terminals = cx.state(crate::terminal_session::TerminalTabs::new());
             *output.lock().unwrap() = Some(state.clone());
             let id = cx.use_stable_id();
             let focus = cx.focus_handle(id.clone());
+            let terminal_id = cx.use_stable_id();
+            let terminal_focus = cx.focus_handle(terminal_id);
             let env = crate::key_actions::KeyEnv {
                 state: state.clone(),
                 application: view_app.clone(),
@@ -52,17 +65,28 @@ impl Ui {
                 editor_rect: viewport,
                 terminal: None,
             };
-            crate::key_actions::attach(
-                group(viewport).child(super::editor_view::render(
+            let surface = if state.get().workspace.active_editor().is_some() {
+                super::editor_view::render(
                     PaneId::new(1),
                     viewport,
-                    state,
+                    state.clone(),
                     git_store,
                     id,
                     focus,
-                )),
-                env,
-            )
+                )
+            } else if workspace_home == Some(true) {
+                crate::ui::workspace_home::render(
+                    viewport,
+                    state.clone(),
+                    id,
+                    focus,
+                    terminal_focus,
+                    terminals,
+                )
+            } else {
+                crate::ui::welcome::render(viewport, state.clone(), id, focus)
+            };
+            crate::key_actions::attach(group(viewport).child(surface), env)
         });
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
@@ -191,6 +215,41 @@ impl Ui {
             .map(|semantics| semantics.role)
             .expect("the editor has semantics")
     }
+}
+
+#[test]
+fn first_file_inherits_focus_from_welcome() {
+    first_file_inherits_focus(false);
+}
+
+#[test]
+fn first_file_inherits_focus_from_workspace_home() {
+    first_file_inherits_focus(true);
+}
+
+fn first_file_inherits_focus(project: bool) {
+    let mut ui = Ui::new_with_home("", Some(project));
+    let focused = ui.session.runtime().interaction_state().focused.clone();
+    assert!(
+        focused.is_some(),
+        "the home surface owns focus before opening a file"
+    );
+    ui.state.update(|app| {
+        app.workspace.open_path("first.txt".into(), "abc".into());
+    });
+    ui.session.render_view(&ui.view, ui.viewport, UiScale::ONE);
+    assert_eq!(ui.session.runtime().interaction_state().focused, focused);
+    assert!(
+        ui.state.get().focused,
+        "the first editor must draw its caret and accept editor keys"
+    );
+    ui.press(
+        LogicalKey::Named(NamedKey::ArrowRight),
+        KeyModifiers::empty(),
+    );
+    assert_eq!(ui.cursor(), 1);
+    ui.send(InputEvent::TextInput("X".into()));
+    assert_eq!(ui.text(), "aXbc");
 }
 
 #[test]

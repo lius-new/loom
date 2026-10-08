@@ -468,22 +468,7 @@ pub fn render(
         }
     });
 
-    let st_focus = state.clone();
-    root = root.on_focus(move |_ctx| st_focus.update(|app| app.focused = true));
-
-    let st_blur = state.clone();
-    root = root.on_blur(move |_ctx| {
-        st_blur.update(|app| {
-            app.focused = false;
-            app.editor.drag = None;
-            app.editor.ime = None;
-            if let Some(mut buffer) = app.workspace.active_editor_mut() {
-                buffer.break_undo_group();
-            }
-        })
-    });
-
-    root
+    crate::ui::track_main_surface_focus(root, state)
 }
 
 fn vertical_scrollbar(
