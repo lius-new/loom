@@ -423,6 +423,9 @@ fn git_vertical_scrollbar(
 }
 
 fn git_resize_handle(rect: UiRect, state: State<AppState>, resizing: bool) -> Element {
+    if state.get().application_layout.is_some() {
+        return lgui::prelude::group(rect);
+    }
     let handle_rect = UiRect::new(rect.right - 8.0, rect.top, rect.right, rect.bottom);
     let drawer_left = rect.left;
     let drag_start = state.clone();

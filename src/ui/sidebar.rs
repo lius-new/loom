@@ -326,7 +326,9 @@ pub fn render(
                 theme::c().border
             }),
         ));
-    bar = bar.child(handle);
+    if s.application_layout.is_none() {
+        bar = bar.child(handle);
+    }
 
     bar
 }

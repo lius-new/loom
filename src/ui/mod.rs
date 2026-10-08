@@ -11,6 +11,7 @@ pub mod context_menu;
 pub mod diff_editor;
 pub mod git_panel;
 pub mod keymap_page;
+pub mod layout_map;
 pub mod pane_sash;
 pub mod settings;
 pub mod sidebar;

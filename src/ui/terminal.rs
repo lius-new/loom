@@ -7,9 +7,8 @@ use lgui::ApplicationHandle;
 use lgui::core::{
     CursorIcon, EventPolicy, IconStyle, KeyState, KeyboardEvent, LogicalKey, NamedKey, Point,
     PointerButton, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId, WheelUnit, clip,
-    precompiled,
 };
-use lgui::prelude::{Color, Element, State, UiRect, VisualStyle, group, panel, text};
+use lgui::prelude::{Color, Element, State, UiRect, VisualStyle, component, group, panel, text};
 use lgui::services::{Clipboard, ClipboardError, ServicesContextExt};
 use lgui::text::{self as text_layout, TextLayoutRequest};
 
@@ -91,7 +90,8 @@ pub fn toggle_panel(
 }
 
 fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Element {
-    precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
+    Element::new(move |cx| UiElement::icon(cx.id, rect, key).icon_style(IconStyle::new(color)))
+        .key(id)
 }
 
 pub fn pty_size(rect: UiRect) -> TerminalSize {
@@ -175,12 +175,99 @@ pub fn render(
     cursor_blink_visible: bool,
     max_height: f32,
 ) -> Element {
+    // A standalone panel has no application layout, so tab drags never start.
+    let map = crate::ui::layout_map::MapStore::default();
+    render_view(
+        rect,
+        state,
+        map,
+        editor_focus,
+        terminal_focus,
+        terminal_id,
+        controller,
+        terminal_tabs,
+        application,
+        cursor_blink_visible,
+        max_height,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_region(
+    rect: UiRect,
+    state: State<AppState>,
+    map: crate::ui::layout_map::MapStore,
+    editor_focus: UiFocusHandle,
+    terminal_focus: UiFocusHandle,
+    terminal_id: UiId,
+    terminal_tabs: State<TerminalTabs>,
+    application: Arc<ApplicationHandle>,
+    cursor_blink_visible: bool,
+    region: crate::model::application_layout::RegionId,
+) -> Element {
+    let app = state.get();
+    let (sessions, active) = app
+        .application_layout
+        .as_ref()
+        .unwrap()
+        .terminal_view(region)
+        .unwrap();
+    let view = terminal_tabs.get().region_view(&sessions, active);
+    let Some(controller) = view.active().map(|t| t.controller.clone()) else {
+        return group(rect);
+    };
+    let primary = terminal_tabs
+        .get()
+        .active_id()
+        .is_some_and(|id| sessions.contains(&id));
+    let id = if primary {
+        terminal_id
+    } else {
+        UiId::owned(format!("terminal-region-{region}"))
+    };
+    render_view(
+        rect,
+        state,
+        map,
+        editor_focus,
+        terminal_focus,
+        id,
+        controller,
+        terminal_tabs,
+        application,
+        cursor_blink_visible,
+        rect.height(),
+        Some((region, view, primary)),
+    )
+    .key(format!("terminal-region-{region}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_view(
+    rect: UiRect,
+    state: State<AppState>,
+    map: crate::ui::layout_map::MapStore,
+    editor_focus: UiFocusHandle,
+    terminal_focus: UiFocusHandle,
+    terminal_id: UiId,
+    controller: TerminalController,
+    terminal_tabs: State<TerminalTabs>,
+    application: Arc<ApplicationHandle>,
+    cursor_blink_visible: bool,
+    max_height: f32,
+    region_view: Option<(u64, TerminalTabs, bool)>,
+) -> Element {
     let app_state = state.get();
     let resizing = app_state.resizing_terminal;
-    let terminal_focused = app_state.terminal_focused;
-    let shell_menu_open = app_state.terminal_shell_menu;
+    let primary = region_view.as_ref().is_none_or(|v| v.2);
+    let terminal_focused = app_state.terminal_focused && primary;
+    let shell_menu_open = app_state.terminal_shell_menu && primary;
     let snapshot = controller.snapshot();
-    let terminal_tab_snapshot = terminal_tabs.get();
+    let terminal_tab_snapshot = region_view
+        .as_ref()
+        .map(|v| v.1.clone())
+        .unwrap_or_else(|| terminal_tabs.get());
     let active_tab_id = terminal_tab_snapshot
         .active_id()
         .expect("a visible terminal panel must have an active tab");
@@ -263,6 +350,7 @@ pub fn render(
 
     let tool_right = rect.right - 38.0;
     let add_tabs = terminal_tabs.clone();
+    let add_state = state.clone();
     let add_focus = terminal_focus.clone();
     let add_shell = snapshot.shell;
     let add_cwd = terminal_tab_snapshot
@@ -287,9 +375,17 @@ pub fn render(
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
             let cwd = add_cwd.clone();
-            add_tabs.update(move |tabs| {
-                tabs.add_at(add_shell, cwd);
+            let mut id = None;
+            add_tabs.update(|tabs| {
+                id = Some(tabs.add_at(add_shell, cwd));
             });
+            if let Some(id) = id {
+                add_state.update(|app| {
+                    if let Some(layout) = &mut app.application_layout {
+                        layout.attach(id);
+                    }
+                });
+            }
             add_focus.focus();
         })
         .child(icon(
@@ -328,6 +424,7 @@ pub fn render(
         active_tab_id,
         terminal_tabs.clone(),
         state.clone(),
+        map.clone(),
         terminal_focus.clone(),
         editor_focus.clone(),
         application.clone(),
@@ -335,6 +432,7 @@ pub fn render(
 
     let menu_state = state.clone();
     let menu_focus = terminal_focus.clone();
+    let menu_tabs = terminal_tabs.clone();
     terminal = terminal.child(
         panel(
             instance_rect,
@@ -343,6 +441,7 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
+            menu_tabs.update(|tabs| tabs.select(active_tab_id));
             menu_state.update(|app| app.terminal_shell_menu = !app.terminal_shell_menu);
             menu_focus.focus();
         })
@@ -442,6 +541,9 @@ pub fn render(
         ));
     }
 
+    if region_view.is_some() {
+        return terminal;
+    }
     let handle = UiRect::new(
         rect.left,
         rect.top - RESIZE_HIT_H / 2.0,
@@ -602,6 +704,7 @@ fn render_terminal_tabs(
     active_id: u64,
     terminal_tabs: State<TerminalTabs>,
     state: State<AppState>,
+    map: crate::ui::layout_map::MapStore,
     terminal_focus: UiFocusHandle,
     editor_focus: UiFocusHandle,
     application: Arc<ApplicationHandle>,
@@ -619,6 +722,9 @@ fn render_terminal_tabs(
     let labels = tabs
         .iter()
         .map(|tab| {
+            if state.get().application_layout.is_some() {
+                return format!("{} {}", tab.controller.shell().short_label(), tab.id);
+            }
             let siblings = tabs
                 .iter()
                 .filter(|other| other.group_id == tab.group_id)
@@ -739,6 +845,8 @@ fn render_terminal_tabs(
             ));
         let select_tabs = terminal_tabs.clone();
         let select_focus = terminal_focus.clone();
+        let press_state = state.clone();
+        let select_map = map.clone();
         let menu_state = state.clone();
         let tab_id = tab.id;
         let mut tab_element = group(tab_rect)
@@ -765,23 +873,57 @@ fn render_terminal_tabs(
                 }
             })
             .child(visual);
+        let select_rect = UiRect::new(
+            tab_rect.left,
+            tab_rect.top,
+            (close_left - TAB_CONTENT_GAP).max(tab_rect.left),
+            tab_rect.bottom,
+        );
+        // The pressed handle owns the cursor while dragging. As its own
+        // component it follows the map's cursor without re-rendering the strip.
         tab_element = tab_element.child(
-            panel(
-                UiRect::new(
-                    tab_rect.left,
-                    tab_rect.top,
-                    (close_left - TAB_CONTENT_GAP).max(tab_rect.left),
-                    tab_rect.bottom,
-                ),
-                VisualStyle::default(),
-            )
-            .key(format!("terminal-tab-select-{tab_id}"))
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                select_tabs.update(move |tabs| tabs.select(tab_id));
-                select_focus.focus();
-            }),
+            component(select_rect, move |cx, &select_rect| {
+                let cursor = cx.use_observable(
+                    select_map.observable(),
+                    |s: &crate::ui::layout_map::MapSignal| s.cursor,
+                );
+                let capture_map = select_map.clone();
+                Element::new(move |cx| {
+                    let id = UiId::owned(format!("terminal-tab-select-{tab_id}"));
+                    if capture_map
+                        .with(|d| d.is_some_and(|d| d.session == tab_id && d.release.is_none()))
+                        && !cx.context.interaction_flags(&id).pressed
+                    {
+                        capture_map.cancel();
+                    }
+                    UiElement::panel(id, select_rect, VisualStyle::default()).children(cx.children)
+                })
+                .key(format!("terminal-tab-select-{tab_id}"))
+                .event_policy(EventPolicy {
+                    hover: true,
+                    press: true,
+                    focus: false,
+                })
+                .cursor(cursor)
+                .on_pointer_down_with_button(move |cx, pointer, button| {
+                    if button == PointerButton::Left {
+                        select_tabs.update(move |tabs| tabs.select(tab_id));
+                        select_focus.focus();
+                        press_state.update(|app| {
+                            if app.application_layout.is_some() {
+                                crate::ui::layout_map::begin(
+                                    app,
+                                    &select_map,
+                                    tab_id,
+                                    pointer.point,
+                                );
+                            }
+                        });
+                        cx.stop_propagation();
+                    }
+                })
+            })
+            .key(format!("terminal-tab-select-component-{tab_id}")),
         );
 
         let close_controller = tab.controller.clone();
@@ -1450,6 +1592,7 @@ mod tests {
                     active_id,
                     tabs.clone(),
                     state.clone(),
+                    crate::ui::layout_map::MapStore::default(),
                     terminal_focus.clone(),
                     editor_focus.clone(),
                     application.clone(),

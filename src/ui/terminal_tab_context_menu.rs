@@ -192,12 +192,23 @@ pub fn render(
                 }
                 if action == Action::New {
                     let cwd = cwd.clone();
-                    action_tabs.update(move |tabs| {
-                        tabs.add_at(shell, cwd);
+                    action_tabs.update(|tabs| {
+                        let id = tabs.add_at(shell, cwd);
+                        action_state.update(|app| {
+                            if let Some(layout) = &mut app.application_layout {
+                                layout.attach(id);
+                            }
+                        });
                     });
                 } else if action == Action::Split {
-                    action_tabs.update(move |tabs| {
-                        tabs.split(target);
+                    action_tabs.update(|tabs| {
+                        if let Some(id) = tabs.split(target) {
+                            action_state.update(|app| {
+                                if let Some(layout) = &mut app.application_layout {
+                                    layout.attach(id);
+                                }
+                            });
+                        }
                     });
                 } else {
                     let targets = close_targets(&action_tabs.get(), target, action);

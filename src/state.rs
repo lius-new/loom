@@ -178,6 +178,8 @@ pub struct AppState {
     /// Whether the terminal shell selector is expanded.
     pub terminal_shell_menu: bool,
     pub terminal_tab_context_menu: Option<TerminalTabContextMenuState>,
+    pub application_layout: Option<crate::model::application_layout::ApplicationLayout>,
+    pub application_sash_drag: Option<crate::model::application_layout::Divider>,
     /// Shell used for terminals that are not opened from the shell selector.
     /// Active color theme, applied at the start of every frame.
     pub theme: ThemeId,
@@ -326,6 +328,8 @@ impl AppState {
             terminal_focused: false,
             terminal_shell_menu: false,
             terminal_tab_context_menu: None,
+            application_layout: None,
+            application_sash_drag: None,
             theme: ThemeId::default(),
             default_shell: ShellKind::default(),
             terminal_cursor_blink: true,
@@ -460,6 +464,7 @@ impl AppState {
                 self.tab_drag = None;
                 self.file_drag = None;
                 self.sash_drag = None;
+                self.application_sash_drag = None;
                 self.tab_scrollbar_dragging = None;
                 if !self.cloning_repository {
                     self.show_clone_dialog = false;

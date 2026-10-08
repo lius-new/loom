@@ -246,6 +246,55 @@ impl TerminalTabs {
             .collect()
     }
 
+    /// A tabbed region shares controller Arcs. Legacy split groups must not make
+    /// its tabs render as simultaneous terminal bodies.
+    pub fn region_view(&self, ids: &[u64], active: Option<u64>) -> Self {
+        let tabs = ids
+            .iter()
+            .filter_map(|id| self.tabs.iter().find(|tab| tab.id == *id))
+            .map(|tab| {
+                let mut tab = tab.clone();
+                tab.group_id = tab.id;
+                tab
+            })
+            .collect::<Vec<_>>();
+        let active_id = self
+            .active_id
+            .filter(|id| ids.contains(id))
+            .or(active.filter(|id| ids.contains(id)))
+            .or_else(|| tabs.first().map(|t| t.id));
+        Self {
+            tabs,
+            active_id,
+            next_id: self.next_id,
+        }
+    }
+
+    /// Moving a session out of a legacy side-by-side group does not restart it.
+    pub fn detach_group(&mut self, id: u64) {
+        if let Some(group) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == id)
+            .map(|tab| tab.group_id)
+            && let Some(other) = self
+                .tabs
+                .iter()
+                .find(|tab| tab.id != id && tab.group_id == group)
+                .map(|tab| tab.id)
+        {
+            for tab in &mut self.tabs {
+                if tab.group_id == group && tab.id != id {
+                    tab.group_id = other;
+                }
+            }
+        }
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.group_id = tab.id;
+            tab.width_weight = 1.0;
+        }
+    }
+
     pub fn saved_groups(&self) -> Vec<usize> {
         let mut group = 0;
         self.tabs
@@ -536,8 +585,9 @@ impl TerminalController {
         {
             let mut parser = lock(&self.inner.parser);
             if parser.screen().size() != (size.rows, size.cols) {
+                let scrollback = parser.screen().scrollback();
                 parser.screen_mut().set_size(size.rows, size.cols);
-                *lock(&self.inner.selection) = None;
+                parser.screen_mut().set_scrollback(scrollback);
             }
         }
 
@@ -1281,6 +1331,99 @@ mod tests {
         tabs.close(third);
         assert_eq!(tabs.active_id(), Some(other));
         assert!(tabs.split(999).is_none());
+    }
+
+    #[test]
+    fn moving_a_group_leader_preserves_controller_cwd_scrollback_and_selection() {
+        use crate::model::application_layout::{ApplicationLayout, Placement, Visibility};
+        use crate::model::pane_layout::Direction;
+        use lgui::prelude::UiRect;
+        let mut tabs = TerminalTabs::restored(vec![], None);
+        let cwd = PathBuf::from("existing-workspace");
+        let first = tabs.add_at(ShellKind::Cmd, Some(cwd.clone()));
+        let sibling = tabs.split(first).unwrap();
+        let controller = tabs.tabs[0].controller.clone();
+        for _ in 0..30 {
+            lock(&controller.inner.parser).process(b"preserved output\r\n");
+        }
+        controller.scroll(3);
+        controller.begin_selection(0, 0);
+        controller.extend_selection(0, 9);
+        let selected = controller.selected_text();
+        let selection = *lock(&controller.inner.selection);
+        let scrollback = lock(&controller.inner.parser).screen().scrollback();
+        let generation = controller.inner.generation.load(Ordering::Acquire);
+        let rect = UiRect::new(0.0, 0.0, 1200.0, 800.0);
+        let visible = Visibility {
+            git: true,
+            files: true,
+            terminal: true,
+        };
+        let mut layout = ApplicationLayout::initial(rect, 200.0, 200.0, 240.0);
+        layout.sync(&[(first, first), (sibling, first)], Some(first));
+        let plan = layout
+            .plan(
+                first,
+                &Placement::Side(1, Direction::Right),
+                rect,
+                visible,
+                vec![first, sibling],
+            )
+            .unwrap();
+        let destination = plan.destination;
+        assert!(layout.commit(plan, rect, visible, &[first, sibling]));
+        tabs.detach_group(first);
+        tabs.select(first);
+        let (sessions, active) = layout.terminal_view(destination).unwrap();
+        let view = tabs.region_view(&sessions, active);
+        assert!(Arc::ptr_eq(
+            &controller.inner,
+            &view.active().unwrap().controller.inner
+        ));
+        assert_eq!(view.active().unwrap().cwd, Some(cwd));
+        assert_eq!(
+            view.active()
+                .unwrap()
+                .controller
+                .inner
+                .generation
+                .load(Ordering::Acquire),
+            generation
+        );
+        assert_ne!(tabs.tabs[0].group_id, tabs.tabs[1].group_id);
+        controller.resize(TerminalSize {
+            rows: 12,
+            cols: 60,
+            pixel_width: 440,
+            pixel_height: 230,
+        });
+        assert_eq!(*lock(&controller.inner.selection), selection);
+        assert_eq!(
+            lock(&controller.inner.parser).screen().scrollback(),
+            scrollback
+        );
+        assert_eq!(controller.selected_text(), selected);
+        // Newly created sessions join the remaining default tab strip.
+        let third = tabs.split(sibling).unwrap();
+        layout.sync(
+            &tabs
+                .tabs()
+                .iter()
+                .map(|t| (t.id, t.group_id))
+                .collect::<Vec<_>>(),
+            Some(third),
+        );
+        assert_eq!(
+            layout.terminal_region(third),
+            layout.terminal_region(sibling)
+        );
+        assert!(layout.terminal_region(third).is_some());
+        assert_ne!(layout.terminal_region(third), layout.terminal_region(first));
+        let ordered = tabs.region_view(&[sibling, first], Some(first));
+        assert_eq!(
+            ordered.tabs().iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![sibling, first]
+        );
     }
 
     #[test]

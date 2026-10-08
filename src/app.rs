@@ -14,13 +14,14 @@ use lgui::window::WindowFocusChanged;
 use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
+use crate::model::application_layout::{ApplicationLayout, Content};
 use crate::settings_persistence::{self, Settings};
 use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::{
     clone_repository, close_confirmation, context_menu, diff_editor, git_panel, keymap_page,
-    pane_sash, settings, sidebar, statusbar, tab_context_menu, tabs, terminal,
+    layout_map, pane_sash, settings, sidebar, statusbar, tab_context_menu, tabs, terminal,
     terminal_tab_context_menu, titlebar, toast, welcome, workspace_home,
 };
 use crate::window_geometry;
@@ -29,6 +30,8 @@ use crate::workspace_persistence;
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state_with(AppState::restored);
     let git_store = cx.state_with(GitStoreSnapshot::default);
+    // Never updated through `State`, so map changes never re-render the app.
+    let layout_map_store = cx.state_with(layout_map::MapStore::default).get();
     let git_poll_control = state.get().git_poll_control;
     let terminal_tabs = cx.state_with(|| {
         let session = workspace_persistence::load();
@@ -114,18 +117,21 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     let window_focus_state = state.clone();
     let window_focus_git_poll = git_poll_control.clone();
     let window_focus_application = application.as_ref().clone();
+    let window_focus_map = layout_map_store.clone();
     cx.use_event_once::<WindowFocusChanged>(move |event| {
         if event.window_id.as_str() == "loom" {
             window_geometry::handle_focus_change(event.focused);
             // A background window does not poll; regaining focus rescans.
             window_focus_git_poll.set_paused(!event.focused);
             if !event.focused {
+                window_focus_map.cancel();
                 window_focus_state.try_update(|app| {
                     // A key sequence does not survive leaving the window.
                     let had_pending = !app.pending_keystrokes.is_empty();
                     app.pending_keystrokes.clear();
                     let split_drag = app.git_split_drag.take().is_some()
-                        | app.terminal_split_drag.take().is_some();
+                        | app.terminal_split_drag.take().is_some()
+                        | app.application_sash_drag.take().is_some();
                     editor_view::finish_scrollbar_drag(app)
                         | tabs::cancel_pointer_interaction(app)
                         | had_pending
@@ -168,7 +174,38 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     // Snapshot toggles for this frame.
+    let content_area = UiRect::new(
+        0.0,
+        theme::TITLEBAR_H,
+        w.max(1.0),
+        (h - theme::STATUS_H).max(theme::TITLEBAR_H + 1.0),
+    );
+    let session_ids = terminal_tab_snapshot
+        .tabs()
+        .iter()
+        .map(|t| t.id)
+        .collect::<Vec<_>>();
+    let session_groups = terminal_tab_snapshot
+        .tabs()
+        .iter()
+        .map(|t| (t.id, t.group_id))
+        .collect::<Vec<_>>();
+    state.try_update(|app| {
+        let before = app.application_layout.clone();
+        let layout = app.application_layout.get_or_insert_with(|| {
+            ApplicationLayout::initial(
+                content_area,
+                app.git_sidebar_w,
+                app.sidebar_w,
+                app.terminal_h,
+            )
+        });
+        layout.sync(&session_groups, active_terminal_id);
+        let changed = before.as_ref() != Some(layout);
+        changed
+    });
     let s = state.get();
+    layout_map::refresh(&s, &layout_map_store, content_area, session_ids.clone());
     theme::set(s.theme);
     let editor_layout = crate::workspace_actions::saved_editor_layout(&s.workspace);
     let git_roots = s.workspace_folders.clone();
@@ -299,28 +336,15 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Region layout ------------------------------------------------
     let titlebar_rect = UiRect::new(0.0, 0.0, w, theme::TITLEBAR_H);
     let statusbar_rect = UiRect::new(0.0, h - theme::STATUS_H, w, h);
-    let max_terminal_h =
-        (h - theme::STATUS_H - theme::TITLEBAR_H - theme::TABS_H - theme::EDITOR_MIN_H)
-            .clamp(theme::TERMINAL_MIN_H, theme::TERMINAL_MAX_H);
-    let terminal_h = s.terminal_h.clamp(theme::TERMINAL_MIN_H, max_terminal_h);
-    let main_bottom = if show_term {
-        h - theme::STATUS_H - terminal_h
-    } else {
-        h - theme::STATUS_H
-    };
+    let application_layout = s.application_layout.as_ref().unwrap();
+    let layout_visibility = layout_map::visibility(&s);
+    let application_snapshot = application_layout.snapshot(content_area, layout_visibility);
     let source_control_left = s.show_source_control;
-    let explorer_right = show_drawer;
-    let editor_left = if source_control_left {
-        s.git_sidebar_w
-    } else {
-        0.0
-    };
-    // The editor and its overlay scrollbars stop at the drawer's visible edge.
-    // This keeps the vertical editor thumb reachable while the drawer is open.
-    let tabs_right = if explorer_right { w - s.sidebar_w } else { w };
     // Each pane is a tab strip above its surface; the focused pane's rects
     // drive the editor-wide handlers (selection auto-scroll, menus, keys).
-    let editor_area = UiRect::new(editor_left, theme::TITLEBAR_H, tabs_right, main_bottom);
+    let editor_area = application_layout
+        .content_rect(&application_snapshot, &Content::Editor)
+        .unwrap_or(content_area);
     let focused_pane = s.workspace.active_pane();
     let pane_rects = s.workspace.layout().layout(editor_area);
     let strips = pane_rects
@@ -389,14 +413,12 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         });
         || {}
     });
-    let source_control_rect = UiRect::new(0.0, theme::TITLEBAR_H, s.git_sidebar_w, main_bottom);
-    let explorer_rect = UiRect::new(w - s.sidebar_w, theme::TITLEBAR_H, w, main_bottom);
-    let terminal_rect = UiRect::new(
-        0.0,
-        h - theme::STATUS_H - terminal_h,
-        w,
-        h - theme::STATUS_H,
-    );
+    let source_control_rect = application_layout
+        .content_rect(&application_snapshot, &Content::Git)
+        .unwrap_or_default();
+    let explorer_rect = application_layout
+        .content_rect(&application_snapshot, &Content::Files)
+        .unwrap_or_default();
     let drag_state = state.clone();
     let dragging = s.editor.drag.is_some();
     cx.use_effect((dragging, s.workspace.active(), code_rect), move || {
@@ -429,17 +451,30 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
             .or_else(|| std::env::current_dir().ok())
     };
 
-    let terminal_sessions = terminal_tab_snapshot.active_group();
-    let terminal_starts = terminal_sessions
+    let terminal_starts = application_snapshot
+        .regions
         .iter()
-        .zip(terminal::session_rects(terminal_rect, &terminal_sessions))
-        .map(|(session, rect)| {
-            (
-                session.id,
-                session.controller.clone(),
-                session.cwd.clone().or_else(|| terminal_cwd.clone()),
-                terminal::pty_size_for_body(rect),
-            )
+        .flat_map(|(region, content, rect)| {
+            let Content::Terminal { .. } = content else {
+                return vec![];
+            };
+            let (ids, active) = application_layout.terminal_view(*region).unwrap();
+            let sessions = terminal_tab_snapshot
+                .region_view(&ids, active)
+                .active_group();
+            let rects = terminal::session_rects(*rect, &sessions);
+            sessions
+                .into_iter()
+                .zip(rects)
+                .map(|(session, rect)| {
+                    (
+                        session.id,
+                        session.controller.clone(),
+                        session.cwd.clone().or_else(|| terminal_cwd.clone()),
+                        terminal::pty_size_for_body(rect),
+                    )
+                })
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
     let terminal_start_key = terminal_starts
@@ -588,6 +623,14 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     // ---- Root (global shortcut listener) ------------------------------
     let mut root = group(vp);
+    root = layout_map::attach(
+        root,
+        state.clone(),
+        layout_map_store.clone(),
+        terminal_tabs.clone(),
+        content_area,
+        terminal_focus.clone(),
+    );
     for kind in [UiEventKind::KeyDown, UiEventKind::KeyUp] {
         let modifiers_state = state.clone();
         root = root.on_event_capture(kind, move |_, payload| {
@@ -853,19 +896,25 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         ));
     }
 
-    if show_term && let Some(terminal_controller) = terminal_controller {
-        root = root.child(terminal::render(
-            terminal_rect,
+    for (region, content, rect) in &application_snapshot.regions {
+        if !matches!(content, Content::Terminal { .. }) {
+            continue;
+        }
+        root = root.child(terminal::render_region(
+            *rect,
             state.clone(),
+            layout_map_store.clone(),
             editor_focus.clone(),
             terminal_focus.clone(),
-            terminal_id,
-            terminal_controller,
+            terminal_id.clone(),
             terminal_tabs.clone(),
             application.clone(),
             terminal_cursor_visible,
-            max_terminal_h,
+            *region,
         ));
+    }
+    for divider in &application_snapshot.dividers {
+        root = root.child(layout_map::render_divider(divider.clone(), state.clone()));
     }
 
     root = root.child(statusbar::render(
@@ -984,7 +1033,13 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         );
     }
 
-    root
+    root.child(layout_map::render(
+        content_area,
+        state.clone(),
+        layout_map_store.clone(),
+        terminal_tabs.clone(),
+        terminal_focus.clone(),
+    ))
 }
 
 /// The tab strip across the top of a pane.
