@@ -1,5 +1,6 @@
 //! Bottom terminal panel backed by a real platform PTY.
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use lgui::ApplicationHandle;
@@ -10,6 +11,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Color, Element, State, UiRect, VisualStyle, group, panel, text};
 use lgui::services::{Clipboard, ClipboardError, ServicesContextExt};
+use lgui::text::{self as text_layout, TextLayoutRequest};
 
 use crate::state::AppState;
 use crate::terminal_session::{
@@ -26,11 +28,42 @@ const INSTANCE_W: f32 = 132.0;
 const BODY_PAD_X: f32 = 12.0;
 const BODY_PAD_Y: f32 = 6.0;
 const TERMINAL_FONT_SIZE: f32 = 12.0;
-const TERMINAL_CHAR_W: f32 = 7.2;
+const FALLBACK_CHAR_W: f32 = TERMINAL_FONT_SIZE * 0.6;
 const TERMINAL_LINE_H: f32 = 19.0;
 const RESIZE_HIT_H: f32 = 8.0;
 const SHELL_MENU_W: f32 = 172.0;
 const SHELL_MENU_ROW_H: f32 = 28.0;
+
+thread_local! {
+    // Only cache a renderer measurement. An early call without a text system
+    // must not pin the fallback width for the lifetime of the window.
+    static CELL_WIDTH: Cell<Option<f32>> = const { Cell::new(None) };
+}
+
+fn terminal_cell_width() -> f32 {
+    CELL_WIDTH.with(|cached| {
+        if let Some(width) = cached.get() {
+            return width;
+        }
+        const SAMPLE: &str = "0000000000000000";
+        let mut request = TextLayoutRequest::single_line(
+            SAMPLE,
+            UiRect::new(0.0, 0.0, 10_000.0, TERMINAL_LINE_H),
+            TERMINAL_FONT_SIZE,
+            400,
+        );
+        request.font_families = theme::MONO_FAMILIES;
+        let measured = text_layout::layout(&request)
+            .map(|layout| layout.width / SAMPLE.len() as f32)
+            .filter(|width| width.is_finite() && *width > 0.0);
+        if let Some(width) = measured {
+            cached.set(Some(width));
+            width
+        } else {
+            FALLBACK_CHAR_W
+        }
+    })
+}
 
 /// Toggle the shared terminal panel, creating its first session on demand and
 /// transferring focus to the surface that becomes active.
@@ -60,16 +93,15 @@ fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Elem
 }
 
 pub fn pty_size(rect: UiRect) -> TerminalSize {
-    let body_w = (rect.width() - BODY_PAD_X * 2.0).max(TERMINAL_CHAR_W);
+    let cell_width = terminal_cell_width();
+    let body_w = (rect.width() - BODY_PAD_X * 2.0).max(cell_width);
     let body_h = (rect.height() - HEADER_H - BODY_PAD_Y * 2.0).max(TERMINAL_LINE_H);
     TerminalSize {
         rows: (body_h / TERMINAL_LINE_H)
             .floor()
             .clamp(1.0, u16::MAX as f32) as u16,
-        cols: (body_w / TERMINAL_CHAR_W)
-            .floor()
-            .clamp(2.0, u16::MAX as f32) as u16,
-        pixel_width: TERMINAL_CHAR_W.round() as u16,
+        cols: (body_w / cell_width).floor().clamp(2.0, u16::MAX as f32) as u16,
+        pixel_width: cell_width.round().max(1.0) as u16,
         pixel_height: TERMINAL_LINE_H.round() as u16,
     }
 }
@@ -105,7 +137,7 @@ pub fn render(
         body.right - BODY_PAD_X,
         body.bottom - BODY_PAD_Y,
     );
-    let cursor_rect = terminal_cursor_rect(content, snapshot.cursor);
+    let cursor_rect = terminal_cursor_rect(content, snapshot.cursor, snapshot.rows, snapshot.cols);
     let mut semantics = Semantics::new(SemanticRole::TextInput)
         .name(format!("{} terminal", snapshot.shell.label()))
         .description("Interactive integrated terminal");
@@ -524,8 +556,9 @@ fn render_screen(
             .iter()
             .filter(|(selected_row, ..)| usize::from(*selected_row) == row)
         {
-            let left = content.left + f32::from(start_col) * TERMINAL_CHAR_W;
-            let right = (content.left + f32::from(end_col) * TERMINAL_CHAR_W).min(content.right);
+            let left = content.left + f32::from(start_col) * terminal_cell_width();
+            let right =
+                (content.left + f32::from(end_col) * terminal_cell_width()).min(content.right);
             screen = screen.child(panel(
                 UiRect::new(left, top, right, top + TERMINAL_LINE_H),
                 VisualStyle::filled(theme::c().selection),
@@ -544,7 +577,24 @@ fn render_screen(
                 if run.style.dim {
                     style = style.alpha(0x90);
                 }
-                screen = screen.child(text(run_rect, run.text.clone(), style));
+                // Keep a terminal run on one row even when shaping/rounding
+                // makes its natural width slightly exceed the allocated cells.
+                let measured = crate::ui::components::text::SingleLineText::new(
+                    run.text.clone(),
+                    UiRect::new(left, top, left + 100_000.0, top + TERMINAL_LINE_H),
+                    style,
+                );
+                let text_rect = UiRect::new(
+                    left,
+                    top,
+                    left + measured.width().max(right - left) + 2.0,
+                    top + TERMINAL_LINE_H,
+                );
+                screen = screen.child(clip(run_rect, 0.0, 0.0).child(text(
+                    text_rect,
+                    run.text.clone(),
+                    style,
+                )));
                 if run.style.underline {
                     screen = screen.child(panel(
                         UiRect::new(
@@ -561,7 +611,7 @@ fn render_screen(
     }
 
     if cursor_is_drawn(snapshot.cursor_visible, focused, cursor_blink_visible) {
-        let cursor = terminal_cursor_rect(content, snapshot.cursor);
+        let cursor = terminal_cursor_rect(content, snapshot.cursor, snapshot.rows, snapshot.cols);
         let cursor_style = if focused {
             VisualStyle::filled(theme::c().text_soft).alpha(0xc8)
         } else {
@@ -583,8 +633,9 @@ fn render_screen(
 }
 
 fn run_span(content: UiRect, run: &TerminalRun) -> (f32, f32) {
-    let left = content.left + f32::from(run.start_col) * TERMINAL_CHAR_W;
-    let right = (left + f32::from(run.columns) * TERMINAL_CHAR_W + 2.0).min(content.right + 2.0);
+    let cell_width = terminal_cell_width();
+    let left = content.left + f32::from(run.start_col) * cell_width;
+    let right = (left + f32::from(run.columns) * cell_width + 2.0).min(content.right + 2.0);
     (left, right)
 }
 
@@ -593,7 +644,7 @@ fn cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u16) {
     let row = ((point.y - content.top) / TERMINAL_LINE_H)
         .floor()
         .clamp(0.0, f32::from(rows.saturating_sub(1)));
-    let col = ((point.x - content.left) / TERMINAL_CHAR_W)
+    let col = ((point.x - content.left) / terminal_cell_width())
         .round()
         .clamp(0.0, f32::from(cols));
     (row as u16, col as u16)
@@ -707,13 +758,16 @@ fn shell_menu(
     menu
 }
 
-fn terminal_cursor_rect(content: UiRect, cursor: (u16, u16)) -> UiRect {
-    let left = content.left + f32::from(cursor.1) * TERMINAL_CHAR_W;
-    let top = content.top + f32::from(cursor.0) * TERMINAL_LINE_H;
+fn terminal_cursor_rect(content: UiRect, cursor: (u16, u16), rows: u16, cols: u16) -> UiRect {
+    let cell_width = terminal_cell_width();
+    // vt100 keeps col == cols while a full line waits for the next character
+    // to trigger wrapping. The visible cursor stays on the last cell meanwhile.
+    let left = content.left + f32::from(cursor.1.min(cols.saturating_sub(1))) * cell_width;
+    let top = content.top + f32::from(cursor.0.min(rows.saturating_sub(1))) * TERMINAL_LINE_H;
     UiRect::new(
         left,
         top + 2.0,
-        left + TERMINAL_CHAR_W,
+        left + cell_width,
         top + TERMINAL_LINE_H - 2.0,
     )
 }
@@ -811,6 +865,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn measured_cell_width_drives_cursor_runs_hit_testing_and_pty_size() {
+        struct RestoreWidth(Option<f32>);
+        impl Drop for RestoreWidth {
+            fn drop(&mut self) {
+                CELL_WIDTH.with(|cached| cached.set(self.0));
+            }
+        }
+        // Simulate a renderer font advance that differs from the old 7.2px.
+        let _restore = RestoreWidth(CELL_WIDTH.with(|cached| cached.replace(Some(6.25))));
+        let content = UiRect::new(10.0, 20.0, 2010.0, 100.0);
+        let mut parser = vt100::Parser::new(4, 300, 0);
+        for count in 1..=200 {
+            parser.process(b"x");
+            let cursor = terminal_cursor_rect(content, parser.screen().cursor_position(), 4, 300);
+            assert_eq!(cursor.left, content.left + count as f32 * 6.25);
+            let run = TerminalRun {
+                start_col: 0,
+                columns: count,
+                text: "x".repeat(usize::from(count)),
+                style: Default::default(),
+            };
+            assert_eq!(run_span(content, &run).1 - 2.0, cursor.left);
+            assert_eq!(
+                cell_at(content, Point::new(cursor.left, content.top), 4, 300),
+                (0, count)
+            );
+        }
+        assert_eq!(pty_size(UiRect::new(0.0, 0.0, 400.0, 160.0)).cols, 60);
+    }
+
+    #[test]
+    fn cursor_remains_visible_while_a_full_line_waits_to_wrap() {
+        let width = terminal_cell_width();
+        let content = UiRect::new(0.0, 0.0, width * 8.0, TERMINAL_LINE_H * 2.0);
+        let mut parser = vt100::Parser::new(2, 8, 0);
+        parser.process(b"12345678");
+        assert_eq!(parser.screen().cursor_position(), (0, 8));
+        let cursor = terminal_cursor_rect(content, parser.screen().cursor_position(), 2, 8);
+        assert!((cursor.right - content.right).abs() < 0.001);
+        assert_eq!(cursor.top, 2.0);
+        parser.process(b"9");
+        let cursor = terminal_cursor_rect(content, parser.screen().cursor_position(), 2, 8);
+        assert_eq!(cursor.left, width);
+        assert_eq!(cursor.top, TERMINAL_LINE_H + 2.0);
+    }
+
+    #[test]
     fn focused_terminal_cursor_follows_blink_phase() {
         assert!(cursor_is_drawn(true, true, true));
         assert!(!cursor_is_drawn(true, true, false));
@@ -872,7 +973,10 @@ mod tests {
         assert_eq!(
             cell_at(
                 content,
-                point(10.0 + TERMINAL_CHAR_W * 2.6, 20.0 + TERMINAL_LINE_H * 1.5),
+                point(
+                    10.0 + terminal_cell_width() * 2.6,
+                    20.0 + TERMINAL_LINE_H * 1.5
+                ),
                 5,
                 40
             ),
