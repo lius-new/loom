@@ -833,10 +833,10 @@ impl GitBackend for CliGitBackend {
         id: RepositoryId,
         generation: u64,
     ) -> GitResult<RepositorySnapshot> {
-        // `normal` reports an untracked directory as one entry instead of
-        // walking every file below it. The tree can expand that directory from
-        // the filesystem when the user needs it, while polling stays cheap.
-        self.status_with_untracked(repository, id, generation, "normal")
+        // Like VS Code and Zed, list every untracked file rather than one entry
+        // per untracked directory, so each file can be opened, staged or
+        // discarded on its own. Ignored directories still stay collapsed.
+        self.status_with_untracked(repository, id, generation, "all")
     }
 
     fn status_fast(
@@ -1210,6 +1210,8 @@ mod tests {
         std::fs::write(root.join(".gitignore"), "build/\n").unwrap();
         std::fs::create_dir_all(root.join("build/out")).unwrap();
         std::fs::write(root.join("build/out/app"), "bin\n").unwrap();
+        std::fs::create_dir_all(root.join("drafts/nested")).unwrap();
+        std::fs::write(root.join("drafts/nested/page.html"), "draft\n").unwrap();
 
         let discovered = backend.discover(std::slice::from_ref(&root)).unwrap();
         let status = backend.status(&discovered[0], RepositoryId(1), 7).unwrap();
@@ -1222,6 +1224,11 @@ mod tests {
             status.files[&PathBuf::from("untracked.txt")].worktree,
             ChangeKind::Untracked
         );
+        assert_eq!(
+            status.files[&PathBuf::from("drafts/nested/page.html")].worktree,
+            ChangeKind::Untracked
+        );
+        assert!(!status.files.contains_key(&PathBuf::from("drafts")));
         assert!(status.ignored.contains(&PathBuf::from("build")));
         assert!(!status.files.contains_key(&PathBuf::from("build")));
         assert!(
