@@ -123,7 +123,7 @@ pub fn render(
         let max_scroll_x = (content_right - content_rect.right).max(0.0);
         let scroll_x = s.tree_scroll_x.clamp(0.0, max_scroll_x);
 
-        let mut y = content_rect.top + 8.0;
+        let mut y = content_rect.top;
         let indent = content_rect.left + INDENT;
         let mut rows = Vec::new();
         let mut tree_els = Vec::new();
