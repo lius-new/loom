@@ -849,7 +849,8 @@ struct LineLayout {
     source_to_display: Vec<usize>,
     width: f32,
 }
-fn expand_tabs(line: &str, initial_column: usize) -> (String, Vec<usize>, usize) {
+/// Expand tabs at four-column stops for editor and diff display.
+pub(crate) fn expand_tabs(line: &str, initial_column: usize) -> (String, Vec<usize>, usize) {
     let mut result = String::new();
     let mut mapping = vec![0];
     let mut column = initial_column;

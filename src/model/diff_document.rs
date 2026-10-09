@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::git::DiffTarget;
 use crate::git::diff::{DiffLine, UnifiedDiff};
+use crate::model::text::display_width;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiffRowKind {
@@ -66,14 +67,14 @@ impl DiffMetrics {
                 .count(),
             longest_inline: rows
                 .iter()
-                .map(|row| row.text.chars().count())
+                .map(|row| display_width(&row.text))
                 .max()
                 .unwrap_or_default(),
             longest_split: split_rows
                 .iter()
                 .flat_map(|row| [row.old_text.as_deref(), row.new_text.as_deref()])
                 .flatten()
-                .map(|line| line.chars().count())
+                .map(display_width)
                 .max()
                 .unwrap_or_default(),
             inline_starts: rows
@@ -337,6 +338,34 @@ fn line_number(value: usize) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::git::diff::parse_unified;
+
+    #[test]
+    fn diff_widths_use_tab_stops_and_unicode_display_columns() {
+        let diff = parse_unified(
+            "diff --git a/a.vue b/a.vue\n--- a/a.vue\n+++ b/a.vue\n@@ -1,1 +1,1 @@\n-\t\t<div>\n+a\t中\tb\n",
+        )
+        .unwrap();
+        let document = DiffDocument::from_unified(
+            "repo".into(),
+            "a.vue".into(),
+            DiffTarget::IndexToWorktree,
+            diff,
+        );
+        assert_eq!(document.longest_line(false), 13);
+        assert_eq!(document.longest_line(true), 13);
+        assert_eq!(document.rows[0].text, "\t\t<div>");
+        assert_eq!(document.split_rows[0].new_text.as_deref(), Some("a\t中\tb"));
+
+        let added = DiffDocument::added(
+            "repo".into(),
+            "a.vue".into(),
+            DiffTarget::HeadToWorktree,
+            "a\t中\tb\r\ne\u{301}\t👩‍💻\tx\r\n",
+        );
+        assert_eq!(added.longest_line(false), 9);
+        assert_eq!(added.longest_line(true), 9);
+        assert_eq!(added.rows[0].text, "a\t中\tb");
+    }
 
     #[test]
     fn converts_a_unified_diff_to_numbered_editor_rows() {

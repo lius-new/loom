@@ -600,10 +600,11 @@ fn code_line(
     value: &str,
     color: lgui::core::Color,
 ) -> Element {
-    let width = (value.chars().count() as f32 * theme::CHAR_W + 16.0).max(viewport.width());
+    let (display, _, columns) = editor_view::expand_tabs(value, 0);
+    let width = (columns as f32 * theme::CHAR_W + 16.0).max(viewport.width());
     clip(viewport, 0.0, 0.0).child(text(
         UiRect::new(left, top, left + width, top + ROW_H),
-        value.to_owned(),
+        display,
         theme::mono(color, theme::CODE_SIZE),
     ))
 }
@@ -653,6 +654,56 @@ fn navigate_change(app: &mut AppState, starts: &[usize], next: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_diff_expands_tabs_before_rendering() {
+        diff_expands_tabs_before_rendering(false);
+    }
+
+    #[test]
+    fn split_diff_expands_tabs_before_rendering() {
+        diff_expands_tabs_before_rendering(true);
+    }
+
+    fn diff_expands_tabs_before_rendering(split: bool) {
+        use crate::git::{DiffTarget, diff::parse_unified};
+        use crate::model::diff_document::DiffDocument;
+        use lgui::application::AppView;
+        use lgui::core::UiScale;
+        use lgui::session::UiSession;
+        use std::sync::Arc;
+
+        let diff = parse_unified(
+            "diff --git a/a.vue b/a.vue\n--- a/a.vue\n+++ b/a.vue\n@@ -1,2 +1,2 @@\n \tend\n-\t\t<div>\n+a\t中\tb\n",
+        )
+        .unwrap();
+        let document = DiffDocument::from_unified(
+            "repo".into(),
+            "a.vue".into(),
+            DiffTarget::IndexToWorktree,
+            diff,
+        );
+        let viewport = UiRect::new(0.0, 0.0, 600.0, 100.0);
+        let view: AppView = Arc::new(move |_| {
+            if split {
+                render_split(viewport, &document.split_rows, 0.0, 0.0, 0.5)
+            } else {
+                render_inline(viewport, &document.rows, 0.0, 0.0)
+            }
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let rendered = session
+            .tree()
+            .nodes()
+            .iter()
+            .filter_map(|node| node.text.as_deref())
+            .collect::<Vec<_>>();
+        for expected in ["    end", "        <div>", "a   中  b"] {
+            assert!(rendered.contains(&expected), "rendered text: {rendered:?}");
+        }
+        assert!(rendered.iter().all(|text| !text.contains('\t')));
+    }
 
     #[test]
     fn inline_scrollbars_drag_and_release_outside_the_track() {
