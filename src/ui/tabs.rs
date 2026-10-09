@@ -176,9 +176,9 @@ fn controls_left(rect: UiRect, app: &AppState, pane: PaneId) -> f32 {
     }
 }
 
-/// Size of an SVG tab badge. Kept on the icon grid rather than shrunk to the
-/// text badges' cap height, which would blur its strokes.
-const BADGE_ICON: f32 = theme::ICON_SIZE;
+/// Size of an SVG tab badge, matched to the cap height of the text badges.
+/// Smaller than theme::ICON_SIZE, so 16px-grid glyphs render slightly soft.
+const BADGE_ICON: f32 = 12.0;
 
 /// Leading tab marker: a language/diff label, or an SVG icon.
 #[derive(Clone, Copy)]

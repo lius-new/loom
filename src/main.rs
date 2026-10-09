@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_icon("plus", icondata::VsAdd)
                 .with_icon("chevron-down", icondata::VsChevronDown)
                 .with_icon("chevron-right", icondata::VsChevronRight)
-                .with_icon("explorer", icondata::VsFiles)
+                .with_icon("explorer", icondata::VsLayers)
                 .with_icon("settings", icondata::VsSettingsGear)
                 .with_icon("close", icondata::VsClose)
                 .with_icon("minus", icondata::VsRemove)
