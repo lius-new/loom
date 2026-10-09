@@ -50,7 +50,7 @@ pub fn render(
     let terminal_target = terminal_focus;
     let top = rect.top + (rect.height() - 14.0) / 2.0;
     let icon_r = UiRect::new(rect.left + 10.0, top, rect.left + 24.0, top + 14.0);
-    let color = if s.show_terminal {
+    let color = if s.default_terminal_open() {
         theme::c().accent
     } else {
         theme::c().text_muted
@@ -60,7 +60,11 @@ pub fn render(
             UiRect::new(rect.left, rect.top, rect.left + 34.0, rect.bottom),
             VisualStyle::default(),
         )
-        .event_policy(EventPolicy::INTERACTIVE)
+        .event_policy(EventPolicy {
+            hover: true,
+            press: true,
+            focus: false,
+        })
         .on_click(move || {
             super::terminal::toggle_panel(
                 &st,

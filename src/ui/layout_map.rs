@@ -328,7 +328,11 @@ impl MapScene {
             }
             zones.push(Zone {
                 rect: UiRect::new(r.left + ew, r.top + eh, r.right - ew, r.bottom - eh),
-                placement: Placement::Side(id, Direction::Right),
+                placement: if matches!(content, Content::Terminal { .. }) {
+                    Placement::Tabs(id)
+                } else {
+                    Placement::Side(id, Direction::Right)
+                },
                 center: true,
                 plan: None,
             });
@@ -362,7 +366,7 @@ pub fn refresh(app: &AppState, map: &MapStore, viewport: UiRect, sessions: Vec<u
         let Some(drag) = slot else {
             return false;
         };
-        if !visible.terminal || layout.terminal_region(drag.session).is_none() {
+        if !layout.terminal_visible(drag.session, visible) {
             *slot = None;
             return true;
         }
@@ -790,9 +794,14 @@ mod tests {
     fn all_map_cells_and_bands_have_explicit_targets_and_matching_geometry() {
         let (_, map, _) = setup();
         let scene = scene_of(&map);
-        for (id, _, rect) in &scene.cells {
+        for (id, content, rect) in &scene.cells {
             let hit = &scene.zones[scene.hit(center(*rect)).unwrap()];
-            assert_eq!(hit.placement, Placement::Side(*id, Direction::Right));
+            let expected = if matches!(content, Content::Terminal { .. }) {
+                Placement::Tabs(*id)
+            } else {
+                Placement::Side(*id, Direction::Right)
+            };
+            assert_eq!(hit.placement, expected);
             assert!(contains(hit.rect, center(*rect)));
         }
         for (index, zone) in scene.zones.iter().enumerate() {
@@ -982,7 +991,7 @@ mod tests {
         assert_ne!(terminals[0].2, terminals[1].2);
         for (id, _, rect) in terminals {
             let zone = &scene.zones[scene.hit(center(*rect)).unwrap()];
-            assert_eq!(zone.placement, Placement::Side(*id, Direction::Right));
+            assert_eq!(zone.placement, Placement::Tabs(*id));
         }
     }
 
@@ -1009,6 +1018,7 @@ mod tests {
                 t.select(1);
                 t
             });
+            let git_store = cx.state_with(crate::git::GitStoreSnapshot::default);
             let state = cx.state_with(|| {
                 let mut a = AppState::new();
                 a.show_terminal = true;
@@ -1063,7 +1073,11 @@ mod tests {
                         region,
                     ));
                 } else {
-                    let element_id = UiId::owned(format!("test-area-{region}"));
+                    let element_id = if matches!(content, Content::Editor) {
+                        editor_id.clone()
+                    } else {
+                        UiId::owned(format!("test-area-{region}"))
+                    };
                     root = root.child(
                         Element::new(move |cx| {
                             UiElement::panel(element_id, r, VisualStyle::default())
@@ -1076,6 +1090,14 @@ mod tests {
             for d in snapshot.dividers {
                 root = root.child(render_divider(d, state.clone()));
             }
+            root = root.child(crate::ui::statusbar::render(
+                UiRect::new(0.0, 776.0, 1200.0, 800.0),
+                state.clone(),
+                git_store,
+                editor_focus.clone(),
+                focus.clone(),
+                tabs.clone(),
+            ));
             root.child(render(
                 viewport,
                 state.clone(),
@@ -1213,6 +1235,51 @@ mod tests {
         send(&mut session, InputEvent::TextInput("after move".into()));
         assert!(controllers[0].snapshot().selection.is_empty());
         assert!(!controllers[1].snapshot().selection.is_empty());
+        // The real toggle hides the default region without disturbing input
+        // focus, process identity, or drag gestures in the detached region.
+        let toggle = Point::new(17.0, 789.0);
+        send(&mut session, down(toggle));
+        send(&mut session, up(toggle));
+        assert!(!state.get().default_terminal_open());
+        assert_eq!(tabs.get().active_id(), Some(1));
+        assert!(
+            session
+                .tree()
+                .node(&UiId::new("layout-terminal-focus"))
+                .is_some()
+        );
+        controllers[0].begin_selection(0, 0);
+        controllers[0].extend_selection(0, 2);
+        send(
+            &mut session,
+            InputEvent::TextInput("while default is hidden".into()),
+        );
+        assert!(controllers[0].snapshot().selection.is_empty());
+        let original = state.get().application_layout.clone();
+        send(&mut session, down(Point::new(35.0, 16.0)));
+        send(
+            &mut session,
+            InputEvent::PointerMove(PointerData::mouse(Point::new(600.0, 400.0))),
+        );
+        assert!(map.is_active());
+        send(
+            &mut session,
+            InputEvent::Keyboard(lgui::core::KeyboardEvent {
+                state: lgui::core::KeyState::Down,
+                key: LogicalKey::Named(NamedKey::Escape),
+                ..Default::default()
+            }),
+        );
+        assert!(!map.is_dragging());
+        assert_eq!(state.get().application_layout, original);
+        send(&mut session, up(Point::new(600.0, 400.0)));
+        send(&mut session, down(toggle));
+        send(&mut session, up(toggle));
+        assert!(state.get().default_terminal_open());
+        assert_eq!(tabs.get().active_id(), Some(2));
+        // Restore the moved session's focus for the following drag checks.
+        send(&mut session, down(Point::new(35.0, 16.0)));
+        send(&mut session, up(Point::new(35.0, 16.0)));
         // Start from its new header; leaving the window cancels the captured press.
         let topology = state.get().application_layout.unwrap().root;
         let sash_down = Point::new(600.0, 400.0);
@@ -1360,5 +1427,90 @@ mod tests {
         assert_eq!(new_rect.bottom, default_rect.bottom);
         assert_eq!(new_rect, default_rect);
         assert_eq!(layout.terminal_view(4), Some((vec![2, 3], Some(3))));
+        // Return the moved session to the default group via its center target.
+        send(
+            &mut session,
+            down(Point::new(moved_rect.left + 30.0, moved_rect.top + 16.0)),
+        );
+        send(
+            &mut session,
+            InputEvent::PointerMove(PointerData::mouse(Point::new(600.0, 400.0))),
+        );
+        let scene = scene_of(&map);
+        let target = center(
+            scene
+                .zones
+                .iter()
+                .find(|z| z.placement == Placement::Tabs(4))
+                .unwrap()
+                .rect,
+        );
+        send(
+            &mut session,
+            InputEvent::PointerMove(PointerData::mouse(target)),
+        );
+        send(&mut session, up(target));
+        assert_eq!(
+            state
+                .get()
+                .application_layout
+                .as_ref()
+                .unwrap()
+                .terminal_view(4),
+            Some((vec![2, 3, 1], Some(1)))
+        );
+        send(&mut session, down(toggle));
+        send(&mut session, up(toggle));
+        assert!(!state.get().default_terminal_open());
+        assert!(
+            session
+                .tree()
+                .node(&UiId::new("layout-terminal-focus"))
+                .is_none()
+        );
+        // Move every session out, then use the real toggle to create a new
+        // default session instead of hiding or relocating the existing ones.
+        send(&mut session, down(toggle));
+        send(&mut session, up(toggle));
+        state.update(|app| {
+            let v = visibility(app);
+            let layout = app.application_layout.as_mut().unwrap();
+            for id in [1, 2, 3] {
+                let plan = layout
+                    .plan(
+                        id,
+                        &Placement::Outer(Direction::Up),
+                        viewport,
+                        v,
+                        vec![1, 2, 3],
+                    )
+                    .unwrap();
+                assert!(layout.commit(plan, viewport, v, &[1, 2, 3]));
+            }
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(!state.get().default_terminal_open());
+        let detached = state.get().application_layout.unwrap();
+        let ownership = [1, 2, 3].map(|id| detached.terminal_region(id).unwrap());
+        send(&mut session, down(toggle));
+        send(&mut session, up(toggle));
+        assert!(state.get().default_terminal_open());
+        assert_eq!(tabs.get().tabs().len(), 4);
+        assert_eq!(tabs.get().active_id(), Some(4));
+        let app = state.get();
+        let layout = app.application_layout.as_ref().unwrap();
+        assert_eq!(layout.default_terminal_active(), Some(4));
+        assert_eq!(
+            [1, 2, 3].map(|id| layout.terminal_region(id).unwrap()),
+            ownership
+        );
+        send(&mut session, down(toggle));
+        send(&mut session, up(toggle));
+        let app = state.get();
+        let layout = app.application_layout.as_ref().unwrap();
+        for id in [1, 2, 3] {
+            assert!(layout.terminal_visible(id, visibility(&app)));
+        }
+        assert!(!layout.terminal_visible(4, visibility(&app)));
     }
 }

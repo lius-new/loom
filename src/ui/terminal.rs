@@ -63,28 +63,66 @@ fn terminal_cell_width() -> f32 {
     })
 }
 
-/// Toggle the shared terminal panel, creating its first session on demand and
-/// transferring focus to the surface that becomes active.
+/// Toggle only the default terminal region. Detached sessions retain their
+/// visibility and focus when that region is hidden.
 pub fn toggle_panel(
     state: &State<AppState>,
     terminal_tabs: &State<TerminalTabs>,
     editor_focus: &UiFocusHandle,
     terminal_focus: &UiFocusHandle,
 ) {
-    let opening = !state.get().show_terminal;
-    if opening && terminal_tabs.get().is_empty() {
-        let shell = state.get().default_shell;
-        terminal_tabs.update(move |tabs| {
-            tabs.add(shell);
+    let app = state.get();
+    let opening = !app.default_terminal_open();
+    let default_session = app
+        .application_layout
+        .as_ref()
+        .and_then(|layout| layout.default_terminal_active())
+        .or_else(|| {
+            app.application_layout
+                .is_none()
+                .then(|| terminal_tabs.get().active_id())
+                .flatten()
+        });
+    let mut selected = default_session;
+    if opening && selected.is_none() {
+        let shell = app.default_shell;
+        let cwd = app.workspace_folders.first().cloned();
+        terminal_tabs.update(|tabs| {
+            selected = Some(tabs.add_at(shell, cwd));
         });
     }
+    if opening && let Some(id) = selected {
+        terminal_tabs.update(|tabs| tabs.select(id));
+    }
+    let active = terminal_tabs.get().active_id();
+    let mut active_visible = false;
     state.update(|app| {
-        app.show_terminal = !app.show_terminal;
-        app.terminal_tab_context_menu = None;
+        if opening
+            && let Some(id) = selected
+            && let Some(layout) = &mut app.application_layout
+        {
+            layout.attach(id);
+        }
+        app.show_terminal = opening;
+        let visible = crate::ui::layout_map::visibility(app);
+        active_visible = active.is_some_and(|id| {
+            app.application_layout
+                .as_ref()
+                .map_or(opening, |layout| layout.terminal_visible(id, visible))
+        });
+        let hidden_menu = app.terminal_tab_context_menu.as_ref().is_some_and(|menu| {
+            app.application_layout
+                .as_ref()
+                .is_some_and(|layout| !layout.terminal_visible(menu.target, visible))
+        });
+        if opening || !active_visible || hidden_menu {
+            app.terminal_tab_context_menu = None;
+            app.terminal_shell_menu = false;
+        }
     });
     if opening {
         terminal_focus.focus();
-    } else {
+    } else if !active_visible {
         editor_focus.focus();
     }
 }

@@ -68,7 +68,13 @@ impl Node {
 pub struct Visibility {
     pub git: bool,
     pub files: bool,
+    /// Controls only the default terminal region; detached regions stay visible.
     pub terminal: bool,
+}
+#[derive(Clone, Copy)]
+struct RegionVisibility {
+    flags: Visibility,
+    default_terminal: Option<RegionId>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct ApplicationLayout {
@@ -97,6 +103,7 @@ pub struct Snapshot {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum Placement {
+    Tabs(RegionId),
     Outer(Direction),
     Side(RegionId, Direction),
     Between {
@@ -191,6 +198,22 @@ impl ApplicationLayout {
                 ..
             } => Some((tabs.clone(), *active)),
             _ => None,
+        }
+    }
+    pub fn default_terminal_active(&self) -> Option<u64> {
+        let (tabs, active) = self.terminal_view(self.default_terminal?)?;
+        active
+            .filter(|id| tabs.contains(id))
+            .or_else(|| tabs.first().copied())
+    }
+    pub fn terminal_visible(&self, session: u64, visible: Visibility) -> bool {
+        self.terminal_region(session)
+            .is_some_and(|region| Some(region) != self.default_terminal || visible.terminal)
+    }
+    fn scoped_visibility(&self, flags: Visibility) -> RegionVisibility {
+        RegionVisibility {
+            flags,
+            default_terminal: self.default_terminal,
         }
     }
     /// New sessions join the default tab strip. Only explicit DropPlans move items
@@ -316,6 +339,43 @@ impl ApplicationLayout {
         let source = self.terminal_region(session)?;
         let only_tab = self.terminal_view(source)?.0.len() == 1;
         let mut layout = self.clone();
+        if let Placement::Tabs(destination) = *target {
+            if destination == source || self.terminal_view(destination).is_none() {
+                return None;
+            }
+            if let Some(Node::Leaf {
+                content: Content::Terminal { tabs, active },
+                ..
+            }) = layout.root.find_mut(source)
+            {
+                tabs.retain(|id| *id != session);
+                if *active == Some(session) {
+                    *active = tabs.first().copied();
+                }
+            }
+            if let Some(Node::Leaf {
+                content: Content::Terminal { tabs, active },
+                ..
+            }) = layout.root.find_mut(destination)
+            {
+                tabs.push(session);
+                *active = Some(session);
+            }
+            layout.clean();
+            if !layout.fit(rect, visible) {
+                return None;
+            }
+            layout.version = self.version + 1;
+            return Some(DropPlan {
+                base_version: self.version,
+                layout,
+                destination,
+                session,
+                viewport: rect,
+                visibility: visible,
+                sessions,
+            });
+        }
         if let Placement::Side(region, _) = *target
             && region == source
             && only_tab
@@ -331,6 +391,7 @@ impl ApplicationLayout {
             },
         };
         match *target {
+            Placement::Tabs(_) => unreachable!("tab-group placement handled above"),
             Placement::Outer(dir) => {
                 layout.wrap(layout.root.id(), dir, leaf);
             }
@@ -458,10 +519,17 @@ impl ApplicationLayout {
             regions: vec![],
             dividers: vec![],
         };
-        geometry(&self.root, &self.sizes, rect, visible, &mut snapshot);
+        geometry(
+            &self.root,
+            &self.sizes,
+            rect,
+            self.scoped_visibility(visible),
+            &mut snapshot,
+        );
         snapshot
     }
     fn fit(&mut self, rect: UiRect, visible: Visibility) -> bool {
+        let visible = self.scoped_visibility(visible);
         let min = minimum(&self.root, visible);
         if min.0 > rect.width() + 0.01 || min.1 > rect.height() + 0.01 {
             return false;
@@ -470,7 +538,7 @@ impl ApplicationLayout {
             node: &Node,
             sizes: &mut HashMap<RegionId, Vec<f32>>,
             rect: UiRect,
-            visible: Visibility,
+            visible: RegionVisibility,
         ) {
             if let Node::Split { id, axis, children } = node {
                 let allocations = allocations(children, &sizes[id], *axis, rect, visible);
@@ -498,6 +566,7 @@ impl ApplicationLayout {
         true
     }
     pub fn resize(&mut self, divider: &Divider, position: f32, visible: Visibility) -> bool {
+        let visible = self.scoped_visibility(visible);
         let Some(Node::Split { axis, children, .. }) = self.root.find(divider.split) else {
             return false;
         };
@@ -549,18 +618,20 @@ impl ApplicationLayout {
         true
     }
 }
-fn enabled(node: &Node, v: Visibility) -> bool {
+fn enabled(node: &Node, v: RegionVisibility) -> bool {
     match node {
-        Node::Leaf { content, .. } => match content {
-            Content::Git => v.git,
-            Content::Files => v.files,
-            Content::Terminal { tabs, .. } => v.terminal && !tabs.is_empty(),
+        Node::Leaf { id, content } => match content {
+            Content::Git => v.flags.git,
+            Content::Files => v.flags.files,
+            Content::Terminal { tabs, .. } => {
+                (Some(*id) != v.default_terminal || v.flags.terminal) && !tabs.is_empty()
+            }
             Content::Editor => true,
         },
         Node::Split { children, .. } => children.iter().any(|n| enabled(n, v)),
     }
 }
-fn minimum(node: &Node, v: Visibility) -> (f32, f32) {
+fn minimum(node: &Node, v: RegionVisibility) -> (f32, f32) {
     if !enabled(node, v) {
         return (0.0, 0.0);
     }
@@ -581,7 +652,7 @@ fn minimum(node: &Node, v: Visibility) -> (f32, f32) {
         }
     }
 }
-fn min_extent(n: &Node, axis: Axis, v: Visibility) -> f32 {
+fn min_extent(n: &Node, axis: Axis, v: RegionVisibility) -> f32 {
     let m = minimum(n, v);
     match axis {
         Axis::Horizontal => m.0,
@@ -599,7 +670,7 @@ fn allocations(
     weights: &[f32],
     axis: Axis,
     rect: UiRect,
-    v: Visibility,
+    v: RegionVisibility,
 ) -> Vec<f32> {
     let extent = extent(rect, axis).max(0.0);
     let sum: f32 = children
@@ -660,7 +731,7 @@ fn geometry(
     node: &Node,
     sizes: &HashMap<RegionId, Vec<f32>>,
     rect: UiRect,
-    v: Visibility,
+    v: RegionVisibility,
     out: &mut Snapshot,
 ) {
     if !enabled(node, v) {
@@ -866,9 +937,115 @@ mod tests {
             terminal: false,
         };
         let snapshot = layout.snapshot(rect, v);
-        assert_eq!(snapshot.regions.len(), 1);
-        assert_eq!(snapshot.regions[0].2, rect);
+        assert_eq!(snapshot.regions.len(), 2);
+        assert!(
+            snapshot
+                .regions
+                .iter()
+                .any(|(_, c, _)| matches!(c, Content::Terminal { tabs, .. } if tabs == &[10]))
+        );
+        assert!(
+            !snapshot
+                .regions
+                .iter()
+                .any(|(_, c, _)| matches!(c, Content::Terminal { tabs, .. } if tabs.contains(&11)))
+        );
         assert_eq!(layout.root, topology);
+    }
+    #[test]
+    fn detached_sessions_keep_visibility_when_the_default_region_is_hidden() {
+        let (mut layout, rect) = setup();
+        let plan = layout
+            .plan(
+                10,
+                &Placement::Outer(Direction::Left),
+                rect,
+                V,
+                vec![10, 11],
+            )
+            .unwrap();
+        assert!(layout.commit(plan, rect, V, &[10, 11]));
+        let hidden = Visibility {
+            terminal: false,
+            ..V
+        };
+        assert!(layout.terminal_visible(10, hidden));
+        assert!(!layout.terminal_visible(11, hidden));
+        let topology = layout.root.clone();
+        let snapshot = layout.snapshot(rect, hidden);
+        assert!(
+            snapshot
+                .regions
+                .iter()
+                .any(|(_, c, _)| matches!(c, Content::Terminal { tabs, .. } if tabs.contains(&10)))
+        );
+        assert!(
+            !snapshot
+                .regions
+                .iter()
+                .any(|(_, c, _)| matches!(c, Content::Terminal { tabs, .. } if tabs.contains(&11)))
+        );
+        assert_eq!(layout.root, topology);
+    }
+
+    #[test]
+    fn moving_the_last_default_session_does_not_move_the_default_ownership() {
+        let rect = UiRect::new(0.0, 0.0, 1600.0, 900.0);
+        let mut layout = ApplicationLayout::initial(rect, 220.0, 220.0, 240.0);
+        layout.sync(&[(10, 10)], Some(10));
+        let source = layout.terminal_region(10).unwrap();
+        let plan = layout
+            .plan(10, &Placement::Outer(Direction::Left), rect, V, vec![10])
+            .unwrap();
+        assert!(layout.commit(plan, rect, V, &[10]));
+        assert_eq!(layout.terminal_region(10), Some(source));
+        assert_eq!(layout.default_terminal_active(), None);
+        let hidden = Visibility {
+            terminal: false,
+            ..V
+        };
+        assert!(layout.terminal_visible(10, hidden));
+        let recreated = layout.attach(11);
+        assert_ne!(recreated, source);
+        assert_eq!(layout.default_terminal_active(), Some(11));
+        assert!(layout.terminal_visible(10, hidden));
+        assert!(!layout.terminal_visible(11, hidden));
+    }
+
+    #[test]
+    fn returning_to_the_default_tab_group_restores_its_visibility_scope() {
+        let (mut layout, rect) = setup();
+        let plan = layout
+            .plan(
+                10,
+                &Placement::Outer(Direction::Left),
+                rect,
+                V,
+                vec![10, 11],
+            )
+            .unwrap();
+        assert!(layout.commit(plan, rect, V, &[10, 11]));
+        let default = layout.terminal_region(11).unwrap();
+        let before = layout.clone();
+        let plan = layout
+            .plan(10, &Placement::Tabs(default), rect, V, vec![10, 11])
+            .unwrap();
+        assert_eq!(
+            layout, before,
+            "preview must preserve ownership until release"
+        );
+        assert!(layout.commit(plan, rect, V, &[10, 11]));
+        assert_eq!(
+            layout.terminal_view(default),
+            Some((vec![11, 10], Some(10)))
+        );
+        assert_eq!(layout.default_terminal_active(), Some(10));
+        let hidden = Visibility {
+            terminal: false,
+            ..V
+        };
+        assert!(!layout.terminal_visible(10, hidden));
+        assert!(!layout.terminal_visible(11, hidden));
     }
     #[test]
     fn stale_model_viewport_visibility_or_closed_session_cannot_commit() {

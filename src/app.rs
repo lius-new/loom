@@ -361,7 +361,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             crate::editor::vim_input::sync_view(app);
         });
     });
-    let show_term = s.show_terminal;
+    let default_terminal_open = s.default_terminal_open();
     cx.use_effect(
         (
             terminal_shells.clone(),
@@ -370,7 +370,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_purposes.clone(),
             s.terminal_split_drag,
             active_terminal_index,
-            show_term,
+            default_terminal_open,
             s.terminal_h,
         ),
         move || {
@@ -381,7 +381,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     &terminal_widths,
                     &terminal_purposes,
                     active_terminal_index,
-                    show_term,
+                    default_terminal_open,
                     s.terminal_h,
                 );
             }
@@ -560,27 +560,24 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         .map(|(id, _, cwd, size)| (*id, cwd.clone(), *size))
         .collect::<Vec<_>>();
     let terminal_start_application = application.clone();
-    cx.use_effect((show_term, terminal_start_key), move || {
-        if show_term {
-            for (_, terminal_start, cwd, size) in terminal_starts {
-                terminal_start.ensure_started(
-                    cwd.as_deref(),
-                    size,
-                    terminal_start_application.clone(),
-                );
-            }
+    let active_visible_terminal =
+        active_terminal_id.filter(|id| application_layout.terminal_visible(*id, layout_visibility));
+    let terminal_visible = active_visible_terminal.is_some();
+    cx.use_effect(terminal_start_key, move || {
+        for (_, terminal_start, cwd, size) in terminal_starts {
+            terminal_start.ensure_started(cwd.as_deref(), size, terminal_start_application.clone());
         }
     });
     let mounted_terminal_focus = terminal_focus.clone();
     terminal_tab_context_menu::restore_focus_on_dismiss(
         cx,
         s.terminal_tab_context_menu.is_some(),
-        show_term,
+        terminal_visible,
         terminal_focus.clone(),
         editor_focus.clone(),
     );
-    cx.use_effect((show_term, active_terminal_id), move || {
-        if show_term {
+    cx.use_effect(active_visible_terminal, move || {
+        if terminal_visible {
             mounted_terminal_focus.focus();
         }
     });
@@ -672,32 +669,35 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let blink_focused = s.terminal_focused && s.terminal_cursor_blink;
     let blink_state = terminal_cursor_blink.clone();
-    cx.use_effect((show_term, blink_focused, active_terminal_id), move || {
-        blink_state.set(true);
-        let (stop_sender, stop_receiver) = mpsc::channel();
-        let worker = if show_term && blink_focused {
-            let worker_state = blink_state.clone();
-            thread::Builder::new()
-                .name("loom-terminal-cursor-blink".to_string())
-                .spawn(move || {
-                    while let Err(RecvTimeoutError::Timeout) =
-                        stop_receiver.recv_timeout(Duration::from_millis(500))
-                    {
-                        worker_state.update(|visible| *visible = !*visible);
-                    }
-                })
-                .ok()
-        } else {
-            None
-        };
-
+    cx.use_effect(
+        (terminal_visible, blink_focused, active_visible_terminal),
         move || {
-            let _ = stop_sender.send(());
-            if let Some(worker) = worker {
-                let _ = worker.join();
+            blink_state.set(true);
+            let (stop_sender, stop_receiver) = mpsc::channel();
+            let worker = if terminal_visible && blink_focused {
+                let worker_state = blink_state.clone();
+                thread::Builder::new()
+                    .name("loom-terminal-cursor-blink".to_string())
+                    .spawn(move || {
+                        while let Err(RecvTimeoutError::Timeout) =
+                            stop_receiver.recv_timeout(Duration::from_millis(500))
+                        {
+                            worker_state.update(|visible| *visible = !*visible);
+                        }
+                    })
+                    .ok()
+            } else {
+                None
+            };
+
+            move || {
+                let _ = stop_sender.send(());
+                if let Some(worker) = worker {
+                    let _ = worker.join();
+                }
             }
-        }
-    });
+        },
+    );
 
     // ---- Root (global shortcut listener) ------------------------------
     let mut root = group(vp);

@@ -174,6 +174,7 @@ pub struct AppState {
     pub show_drawer: bool,
     /// Source Control drawer on the left. It is independent from Explorer.
     pub show_source_control: bool,
+    /// Visibility of the default terminal region, independent of detached regions.
     pub show_terminal: bool,
     /// Current terminal panel height in logical pixels.
     pub terminal_h: f32,
@@ -442,6 +443,15 @@ impl AppState {
         app
     }
 
+    /// Whether the default terminal region currently owns visible sessions.
+    pub fn default_terminal_open(&self) -> bool {
+        self.show_terminal
+            && self
+                .application_layout
+                .as_ref()
+                .is_none_or(|layout| layout.default_terminal_active().is_some())
+    }
+
     /// Apply a `workspace::`, `pane::` or `menu::` action. Actions that need a
     /// view or a platform service are performed by `key_actions` instead.
     pub fn apply(&mut self, action: Action) {
@@ -465,7 +475,7 @@ impl AppState {
                 }
             }
             Action::ToggleTerminal => {
-                self.show_terminal = !self.show_terminal;
+                self.show_terminal = !self.default_terminal_open();
                 self.terminal_tab_context_menu = None;
             }
             Action::CloseOverlay => {
