@@ -431,34 +431,29 @@ fn git_resize_handle(rect: UiRect, state: State<AppState>, resizing: bool) -> El
     let drag_start = state.clone();
     let drag_move = state.clone();
     let drag_end = state;
-    panel(handle_rect, VisualStyle::default())
-        .key("git-resize-handle")
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(CursorIcon::ResizeHorizontal)
-        .on_pointer_down_with_button(move |_cx, _pointer, button| {
-            if button == PointerButton::Left {
-                drag_start.update(|app| app.resizing_git_sidebar = true);
+    crate::ui::components::resize_handle::render(
+        "git-resize-handle",
+        handle_rect,
+        UiRect::new(rect.right - 1.0, rect.top, rect.right, rect.bottom),
+        CursorIcon::ResizeHorizontal,
+        resizing,
+    )
+    .on_pointer_down_with_button(move |_cx, _pointer, button| {
+        if button == PointerButton::Left {
+            drag_start.update(|app| app.resizing_git_sidebar = true);
+        }
+    })
+    .on_pointer_drag(move |_cx, pointer| {
+        drag_move.update(move |app| {
+            if app.resizing_git_sidebar {
+                app.git_sidebar_w = (pointer.point.x - drawer_left)
+                    .clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W);
             }
-        })
-        .on_pointer_drag(move |_cx, pointer| {
-            drag_move.update(move |app| {
-                if app.resizing_git_sidebar {
-                    app.git_sidebar_w = (pointer.point.x - drawer_left)
-                        .clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W);
-                }
-            });
-        })
-        .on_pointer_up(move |_cx, _pointer| {
-            drag_end.update(|app| app.resizing_git_sidebar = false);
-        })
-        .child(panel(
-            UiRect::new(rect.right - 1.0, rect.top, rect.right, rect.bottom),
-            VisualStyle::filled(if resizing {
-                theme::c().accent
-            } else {
-                theme::c().border
-            }),
-        ))
+        });
+    })
+    .on_pointer_up(move |_cx, _pointer| {
+        drag_end.update(|app| app.resizing_git_sidebar = false);
+    })
 }
 
 fn commit_input(rect: UiRect, state: State<AppState>, focus: UiFocusHandle, id: UiId) -> Element {

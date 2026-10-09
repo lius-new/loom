@@ -299,33 +299,28 @@ pub fn render(
     let st_down = state.clone();
     let st_move = state.clone();
     let st_up = state.clone();
-    let handle = panel(handle_rect, VisualStyle::default())
-        .key("file-tree-resize-handle")
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(CursorIcon::ResizeHorizontal)
-        .on_pointer_down_with_button(move |_cx, _p, button| {
-            if button == PointerButton::Left {
-                st_down.update(move |app| app.resizing_sidebar = true);
+    let handle = crate::ui::components::resize_handle::render(
+        "file-tree-resize-handle",
+        handle_rect,
+        UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
+        CursorIcon::ResizeHorizontal,
+        s.resizing_sidebar,
+    )
+    .on_pointer_down_with_button(move |_cx, _p, button| {
+        if button == PointerButton::Left {
+            st_down.update(move |app| app.resizing_sidebar = true);
+        }
+    })
+    .on_pointer_drag(move |_cx, p| {
+        st_move.update(move |app| {
+            if app.resizing_sidebar {
+                app.sidebar_w = resized_sidebar_width(win_right, p.point.x);
             }
-        })
-        .on_pointer_drag(move |_cx, p| {
-            st_move.update(move |app| {
-                if app.resizing_sidebar {
-                    app.sidebar_w = resized_sidebar_width(win_right, p.point.x);
-                }
-            });
-        })
-        .on_pointer_up(move |_cx, _p| {
-            st_up.update(move |app| app.resizing_sidebar = false);
-        })
-        .child(panel(
-            UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
-            VisualStyle::filled(if s.resizing_sidebar {
-                theme::c().accent
-            } else {
-                theme::c().border
-            }),
-        ));
+        });
+    })
+    .on_pointer_up(move |_cx, _p| {
+        st_up.update(move |app| app.resizing_sidebar = false);
+    });
     if s.application_layout.is_none() {
         bar = bar.child(handle);
     }

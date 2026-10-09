@@ -1,11 +1,12 @@
 //! Draggable dividers between editor panes.
 
-use lgui::core::{CursorIcon, EventPolicy, PointerButton};
-use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
+use lgui::core::{CursorIcon, PointerButton};
+use lgui::prelude::{Element, State, UiRect};
+
+use crate::ui::components::resize_handle;
 
 use crate::model::pane_layout::{Axis, MinSize, Sash};
 use crate::state::AppState;
-use crate::theme;
 
 /// Smallest pane a sash drag may produce.
 pub const PANE_MIN: MinSize = MinSize {
@@ -30,13 +31,13 @@ pub fn horizontal(
     drag: impl Fn(f32) + Send + Sync + 'static,
     end: impl Fn() + Send + Sync + 'static,
 ) -> Element {
-    panel(
+    resize_handle::render(
+        key,
         UiRect::new(position - HIT / 2.0, span.0, position + HIT / 2.0, span.1),
-        VisualStyle::default(),
+        UiRect::new(position - 0.5, span.0, position + 0.5, span.1),
+        CursorIcon::ResizeHorizontal,
+        active,
     )
-    .key(key)
-    .event_policy(EventPolicy::INTERACTIVE)
-    .cursor(CursorIcon::ResizeHorizontal)
     .on_pointer_down_with_button(move |cx, _, button| {
         if button == PointerButton::Left {
             start();
@@ -51,14 +52,6 @@ pub fn horizontal(
         end();
         cx.stop_propagation();
     })
-    .child(panel(
-        UiRect::new(position - 0.5, span.0, position + 0.5, span.1),
-        VisualStyle::filled(if active {
-            theme::c().accent
-        } else {
-            theme::c().border
-        }),
-    ))
 }
 
 pub fn render(sash: Sash, state: State<AppState>) -> Element {
@@ -112,10 +105,7 @@ pub fn render(sash: Sash, state: State<AppState>) -> Element {
     let st_move = state.clone();
     let st_up = state;
     let pressed = sash.clone();
-    panel(hit, VisualStyle::default())
-        .key(key)
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(cursor)
+    resize_handle::render(key, hit, line, cursor, active)
         .on_pointer_down_with_button(move |cx, _pointer, button| {
             if button == PointerButton::Left {
                 let sash = pressed.clone();
@@ -138,14 +128,6 @@ pub fn render(sash: Sash, state: State<AppState>) -> Element {
         .on_pointer_up(move |_cx, _pointer| {
             st_up.update(|app| app.sash_drag = None);
         })
-        .child(panel(
-            line,
-            VisualStyle::filled(if active {
-                theme::c().accent
-            } else {
-                theme::c().border
-            }),
-        ))
 }
 
 /// The same boundary of the same split, regardless of where it currently is.

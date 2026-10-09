@@ -334,15 +334,9 @@ fn render_view(
         blur_state.update(|app| app.terminal_focused = false);
     });
 
-    // Crisp separation from the editor above and from terminal content below.
-    terminal = terminal.child(panel(
-        UiRect::new(rect.left, rect.top, rect.right, rect.top + 1.0),
-        VisualStyle::filled(if resizing {
-            theme::c().accent
-        } else {
-            theme::c().border
-        }),
-    ));
+    // The resize handle owns the outer divider; drawing it here too creates
+    // a second edge when the application divider is aligned to physical pixels.
+    // Keep only the separator between the tab strip and terminal content.
     terminal = terminal.child(panel(
         UiRect::new(rect.left, header.bottom - 1.0, rect.right, header.bottom),
         VisualStyle::filled(theme::c().border),
@@ -555,25 +549,28 @@ fn render_view(
     let resize_drag = state.clone();
     let resize_up = state;
     terminal = terminal.child(
-        panel(handle, VisualStyle::default())
-            .key("terminal-resize-handle")
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::ResizeVertical)
-            .on_pointer_down_with_button(move |_cx, _pointer, button| {
-                if button == PointerButton::Left {
-                    resize_down.update(|app| app.resizing_terminal = true);
+        crate::ui::components::resize_handle::render(
+            "terminal-resize-handle",
+            handle,
+            UiRect::new(rect.left, rect.top, rect.right, rect.top + 1.0),
+            CursorIcon::ResizeVertical,
+            resizing,
+        )
+        .on_pointer_down_with_button(move |_cx, _pointer, button| {
+            if button == PointerButton::Left {
+                resize_down.update(|app| app.resizing_terminal = true);
+            }
+        })
+        .on_pointer_drag(move |_cx, pointer| {
+            resize_drag.update(move |app| {
+                if app.resizing_terminal {
+                    app.terminal_h = resized_height(panel_bottom, pointer.point.y, max_height);
                 }
-            })
-            .on_pointer_drag(move |_cx, pointer| {
-                resize_drag.update(move |app| {
-                    if app.resizing_terminal {
-                        app.terminal_h = resized_height(panel_bottom, pointer.point.y, max_height);
-                    }
-                });
-            })
-            .on_pointer_up(move |_cx, _pointer| {
-                resize_up.update(|app| app.resizing_terminal = false);
-            }),
+            });
+        })
+        .on_pointer_up(move |_cx, _pointer| {
+            resize_up.update(|app| app.resizing_terminal = false);
+        }),
     );
 
     terminal

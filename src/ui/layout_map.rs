@@ -591,7 +591,11 @@ fn render_overlay(
                 release_map.cancel();
             }
         }
-        UiElement::panel(cx.id, viewport, VisualStyle::default()).children(cx.children)
+        // This container only owns the preview; its children own all drop targets.
+        // An idle full-size hit rectangle masks every underlying hover cursor.
+        UiElement::panel(cx.id, viewport, VisualStyle::default())
+            .hit_rect(UiRect::new(0.0, 0.0, 0.0, 0.0))
+            .children(cx.children)
     })
     .key("terminal-layout-map");
     let Some(drag) = map.snapshot() else {
@@ -692,7 +696,7 @@ pub fn render_divider(
     divider: crate::model::application_layout::Divider,
     state: State<AppState>,
 ) -> Element {
-    use lgui::core::{EventPolicy, PointerButton};
+    use lgui::core::PointerButton;
     let p = divider.position;
     let (line, hit, cursor) = match divider.axis {
         Axis::Horizontal => (
@@ -716,10 +720,7 @@ pub fn render_divider(
     let down = state.clone();
     let moving = state.clone();
     let up = state;
-    panel(hit, VisualStyle::default())
-        .key(key)
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(cursor)
+    crate::ui::components::resize_handle::render(key, hit, line, cursor, active)
         .on_pointer_down_with_button(move |cx, _, button| {
             if button == PointerButton::Left {
                 down.update(|app| app.application_sash_drag = Some(divider.clone()));
@@ -750,14 +751,6 @@ pub fn render_divider(
             up.update(|app| app.application_sash_drag = None);
             cx.stop_propagation();
         })
-        .child(panel(
-            line,
-            VisualStyle::filled(if active {
-                theme::c().accent
-            } else {
-                theme::c().border
-            }),
-        ))
 }
 
 #[cfg(test)]
@@ -1116,6 +1109,57 @@ mod tests {
             pointer: PointerData::mouse(p),
             button: PointerButton::Left,
         };
+        // The idle preview must not mask real dividers or terminal cursors.
+        let app = state.get();
+        let snapshot = app
+            .application_layout
+            .as_ref()
+            .unwrap()
+            .snapshot(viewport, visibility(&app));
+        assert!(!snapshot.dividers.is_empty());
+        for divider in snapshot.dividers {
+            let point = match divider.axis {
+                Axis::Horizontal => Point::new(
+                    divider.position,
+                    (divider.parent.top + divider.parent.bottom) / 2.0,
+                ),
+                Axis::Vertical => Point::new(
+                    (divider.parent.left + divider.parent.right) / 2.0,
+                    divider.position,
+                ),
+            };
+            let expected = match divider.axis {
+                Axis::Horizontal => CursorIcon::ResizeHorizontal,
+                Axis::Vertical => CursorIcon::ResizeVertical,
+            };
+            assert_eq!(session.tree().cursor_at(point), Some(expected));
+            send(
+                &mut session,
+                InputEvent::PointerMove(PointerData::mouse(point)),
+            );
+            let line_id = UiId::owned(format!(
+                "resize-line-application-sash-{}-{}-{}",
+                divider.split, divider.before, divider.after
+            ));
+            assert_eq!(
+                session.tree().node(&line_id).unwrap().style.fill,
+                Some(theme::c().border)
+            );
+            assert!(state.get().application_sash_drag.is_none());
+            assert!(!map.is_dragging());
+            send(
+                &mut session,
+                InputEvent::PointerMove(PointerData::mouse(Point::new(600.0, 300.0))),
+            );
+            assert_eq!(
+                session.tree().node(&line_id).unwrap().style.fill,
+                Some(theme::c().border)
+            );
+        }
+        assert_eq!(
+            session.tree().cursor_at(Point::new(400.0, 650.0)),
+            Some(CursorIcon::Text)
+        );
         let header = Point::new(35.0, 575.0);
         // An ordinary click retains text-input focus without invoking layout.
         send(&mut session, down(header));
