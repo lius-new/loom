@@ -4,7 +4,8 @@
 //! (the buttons) are excluded automatically by hit testing.
 
 use lgui::core::{
-    Color, IconStyle, PhysicalRect, UiElement, UiEventContext, UiId, UiScale, precompiled,
+    AnimProperty, AnimationBinding, Color, CursorIcon, EventPolicy, IconStyle, PhysicalRect,
+    UiElement, UiEventContext, UiId, UiScale,
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
 
@@ -13,21 +14,81 @@ use crate::state::AppState;
 use crate::theme;
 use crate::window_geometry;
 
-/// A color-tinted, resolution-independent SVG icon (rasterized at physical pixels).
-fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Element {
-    precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
+/// Windows 11 caption close-button red, the same in light and dark themes.
+const CLOSE_HOVER: Color = Color(0xC42B1C);
+
+#[derive(Clone, Copy)]
+enum Glyph {
+    /// Pixel-snapped 12px window-control silhouette.
+    Window,
+    /// Regular UI icon at `theme::ICON_SIZE`.
+    Ui,
+}
+
+#[derive(Clone, Copy)]
+struct CaptionIcon {
+    id: &'static str,
+    key: &'static str,
+    color: Color,
+    glyph: Glyph,
+}
+
+/// A flat title bar button that fades in a hover background and dims while
+/// pressed. `close` uses the red close-button treatment.
+fn caption_button(
+    key: &'static str,
+    rect: UiRect,
+    icon: CaptionIcon,
+    close: bool,
+    on_click: impl Fn(&mut UiEventContext) + Send + Sync + 'static,
+) -> Element {
+    Element::new(move |cx| {
+        let hover = cx.animation_value(AnimProperty::Hover).clamp(0.0, 1.0);
+        let pressed = cx.animation_value(AnimProperty::Pressed).clamp(0.0, 1.0);
+        let c = theme::c();
+        let (fill, fill_alpha, icon_color) = if close {
+            (
+                CLOSE_HOVER,
+                hover * (1.0 - 0.1 * pressed),
+                mix(icon.color, Color::WHITE, hover),
+            )
+        } else {
+            (c.active_line, hover * (1.0 - 0.4 * pressed), icon.color)
+        };
+        let icon_rect = match icon.glyph {
+            Glyph::Window => window_icon_rect(rect, cx.context.scale()),
+            Glyph::Ui => theme::icon_rect(rect),
+        };
+        let style = VisualStyle {
+            fill: Some(fill),
+            fill_alpha: (fill_alpha * 255.0).round() as u8,
+            ..VisualStyle::default()
+        };
+        let icon_alpha = (255.0 * (1.0 - 0.3 * pressed)).round() as u8;
+        UiElement::panel(cx.id, rect, style).child(
+            UiElement::icon(UiId::new(icon.id), icon_rect, icon.key)
+                .icon_style(IconStyle::new(icon_color).alpha(icon_alpha)),
+        )
+    })
+    .key(key)
+    .event_policy(EventPolicy::INTERACTIVE)
+    .animation(AnimationBinding::new(AnimProperty::Hover, 0.0, 1.0))
+    .animation(AnimationBinding::new(AnimProperty::Pressed, 0.0, 1.0))
+    .on_click(on_click)
+}
+
+fn mix(from: Color, to: Color, t: f32) -> Color {
+    let channel = |shift: u32| {
+        let a = ((from.0 >> shift) & 0xFF) as f32;
+        let b = ((to.0 >> shift) & 0xFF) as f32;
+        ((a + (b - a) * t).round() as u32) << shift
+    };
+    Color(channel(16) | channel(8) | channel(0))
 }
 
 /// Keep the SVG bitmap and its destination on the same physical pixel grid.
 /// Auto scaling can shrink the UI below 100%; caption glyphs still need at least
 /// their native 12px canvas, or a 1px edge becomes a faint fractional pixel.
-fn window_icon(id: &'static str, key: &'static str, button: UiRect) -> Element {
-    Element::new(move |cx| {
-        let rect = window_icon_rect(button, cx.context.scale());
-        UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(theme::c().text_soft))
-    })
-}
-
 fn window_icon_rect(button: UiRect, scale: UiScale) -> UiRect {
     let size = scale.physical_length(12.0).max(12);
     let left = scale.physical_value((button.left + button.right) / 2.0) - size / 2;
@@ -44,64 +105,76 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     // Settings, just left of the window controls.
     let settings_r = UiRect::new(right - 148.0, rect.top, right - 116.0, rect.bottom);
     let settings_open = state.get().workspace.active_is_settings();
-    let settings_btn = panel(settings_r, VisualStyle::default())
-        .event_policy(lgui::core::EventPolicy::INTERACTIVE)
-        .cursor(lgui::core::CursorIcon::Pointer)
-        .on_click(move || state.update(|app| app.apply(Action::OpenSettings)))
-        .child(icon(
-            "titlebar.settings",
-            "settings",
-            theme::icon_rect(settings_r),
-            if settings_open {
-                theme::c().accent
-            } else {
-                theme::c().text_muted
+    bar = bar.child(
+        caption_button(
+            "titlebar.settings.button",
+            settings_r,
+            CaptionIcon {
+                id: "titlebar.settings",
+                key: "settings",
+                color: if settings_open {
+                    theme::c().accent
+                } else {
+                    theme::c().text_muted
+                },
+                glyph: Glyph::Ui,
             },
-        ));
-    bar = bar.child(settings_btn);
+            false,
+            move |_: &mut UiEventContext| state.update(|app| app.apply(Action::OpenSettings)),
+        )
+        .cursor(CursorIcon::Pointer),
+    );
 
     // ---- Window controls (far right) ----------------------------------
     let min_r = UiRect::new(right - 108.0, rect.top, right - 72.0, rect.bottom);
     let max_r = UiRect::new(right - 72.0, rect.top, right - 36.0, rect.bottom);
     let close_r = UiRect::new(right - 36.0, rect.top, right, rect.bottom);
+    let window_icon = |id, key| CaptionIcon {
+        id,
+        key,
+        color: theme::c().text_soft,
+        glyph: Glyph::Window,
+    };
 
-    // Minimize
-    let min_btn = panel(min_r, VisualStyle::default())
-        .event_policy(lgui::core::EventPolicy::INTERACTIVE)
-        .on_click(|ctx: &mut UiEventContext| {
+    bar = bar.child(caption_button(
+        "titlebar.minimize.button",
+        min_r,
+        window_icon("titlebar.minimize", "window-minimize"),
+        false,
+        |ctx: &mut UiEventContext| {
             let _ = ctx.window().minimize();
-        })
-        .child(window_icon("titlebar.minimize", "window-minimize", min_r));
-    bar = bar.child(min_btn);
+        },
+    ));
 
-    // Maximize / restore (toggles between maximized and windowed). On Windows 11
-    // the OS owns this button so hovering it shows Snap Layouts; the click
-    // handler covers other platforms.
-    let max_btn = panel(max_r, VisualStyle::default())
-        .event_policy(lgui::core::EventPolicy::INTERACTIVE)
-        .window_maximize_button()
-        .on_click(|ctx: &mut UiEventContext| {
-            let _ = ctx.window().toggle_maximize();
-        })
-        .child(window_icon(
-            "titlebar.maximize",
-            if window_geometry::is_maximized() {
-                "window-restore"
-            } else {
-                "window-maximize"
-            },
+    // Maximize / restore. On Windows 11 the OS owns this button so hovering it
+    // shows Snap Layouts; lgui replays its hover, press and click here.
+    let max_key = if window_geometry::is_maximized() {
+        "window-restore"
+    } else {
+        "window-maximize"
+    };
+    bar = bar.child(
+        caption_button(
+            "titlebar.maximize.button",
             max_r,
-        ));
-    bar = bar.child(max_btn);
+            window_icon("titlebar.maximize", max_key),
+            false,
+            |ctx: &mut UiEventContext| {
+                let _ = ctx.window().toggle_maximize();
+            },
+        )
+        .window_maximize_button(),
+    );
 
-    // Close
-    let close_btn = panel(close_r, VisualStyle::default())
-        .event_policy(lgui::core::EventPolicy::INTERACTIVE)
-        .on_click(|ctx: &mut UiEventContext| {
+    bar = bar.child(caption_button(
+        "titlebar.close.button",
+        close_r,
+        window_icon("titlebar.close", "window-close"),
+        true,
+        |ctx: &mut UiEventContext| {
             let _ = ctx.window().request_close();
-        })
-        .child(window_icon("titlebar.close", "window-close", close_r));
-    bar = bar.child(close_btn);
+        },
+    ));
 
     // Hairline bottom border
     bar = bar.child(panel(
