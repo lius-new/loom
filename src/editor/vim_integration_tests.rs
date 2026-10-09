@@ -354,3 +354,81 @@ fn turning_vim_off_restores_default_editing() {
     ui.press(LogicalKey::Character("z".into()), KeyModifiers::CONTROL);
     assert_eq!(ui.text(), "text!");
 }
+
+impl Ui {
+    /// The painted caret rect and the motion offset still applied to it.
+    fn caret(&self) -> (UiRect, (f32, f32)) {
+        let tree = self.session.tree();
+        let node = tree.node(&lgui::core::UiId::new("editor-caret-1")).unwrap();
+        let layer = tree.node(node.parent.as_ref().unwrap()).unwrap();
+        let transform = layer.compositing_layer.unwrap().transform;
+        (
+            node.layout_rect,
+            (transform.translation_x(), transform.translation_y()),
+        )
+    }
+
+    fn advance(&mut self, elapsed_ms: f32) {
+        self.session.advance(elapsed_ms);
+        self.session
+            .render_view(&self.view, self.viewport, UiScale::ONE);
+    }
+
+    fn settle(&mut self) {
+        self.session.advance(0.0);
+        self.advance(100.0);
+        assert_eq!(self.caret().1, (0.0, 0.0));
+    }
+}
+
+#[test]
+fn smooth_caret_animates_every_vim_shape_without_sliding_on_mode_switches() {
+    let mut ui = Ui::new("hello world\nsecond line");
+    ui.settle();
+    let (start, _) = ui.caret();
+    assert!(start.width() > 2.0, "Normal mode paints a block");
+
+    ui.keys("w");
+    let (target, offset) = ui.caret();
+    assert!(target.left > start.left);
+    assert_eq!(
+        target.left + offset.0,
+        start.left,
+        "motions retarget without jumping"
+    );
+    ui.session.advance(0.0);
+    ui.advance(40.0);
+    let (_, offset) = ui.caret();
+    assert!(offset.0 < 0.0 && target.left + offset.0 > start.left);
+    ui.settle();
+
+    ui.keys("i");
+    let (bar, offset) = ui.caret();
+    assert_eq!(offset, (0.0, 0.0), "a shape change alone does not move");
+    assert_eq!((bar.left, bar.width()), (target.left, 2.0));
+    assert!(bar.top > target.top);
+
+    ui.keys("<Esc>");
+    let (block, offset) = ui.caret();
+    assert!(block.left < bar.left && block.width() > 2.0);
+    assert_eq!(offset.1, 0.0, "switching shapes never slides vertically");
+    assert_eq!(
+        block.left + offset.0,
+        bar.left,
+        "leaving Insert mode animates the step left"
+    );
+    ui.settle();
+
+    ui.keys("vl");
+    assert_eq!(
+        ui.caret().1,
+        (0.0, 0.0),
+        "the caret stays on the edge of a Visual selection"
+    );
+    ui.keys("<Esc>");
+    ui.settle();
+
+    ui.state.update(|app| app.smooth_caret = false);
+    ui.keys("j");
+    assert_eq!(ui.caret().1, (0.0, 0.0), "disabled motion snaps");
+}

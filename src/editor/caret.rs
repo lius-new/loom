@@ -21,15 +21,26 @@ pub(super) struct CaretContext {
     pub scroll: (f32, f32),
 }
 
-pub(super) fn render(target: UiRect, context: CaretContext, animate: bool) -> Element {
-    let color = theme::c().accent;
+/// Paints `shape` and animates its character cell. Motion follows `cell`, the
+/// top-left of the character cell, so switching between bar, block and
+/// underline shapes changes the painted rect without a vertical slide.
+pub(super) fn render(
+    shape: UiRect,
+    cell: [f32; 2],
+    style: VisualStyle,
+    context: CaretContext,
+    animate: bool,
+) -> Element {
     Element::new(move |cx| {
         let scale = cx.context.scale();
-        let target = pixel_aligned(
-            target.translate(-context.scroll.0, -context.scroll.1),
-            scale,
-        )
-        .translate(context.scroll.0, context.scroll.1);
+        let target = pixel_aligned(shape.translate(-context.scroll.0, -context.scroll.1), scale)
+            .translate(context.scroll.0, context.scroll.1);
+        // Snap the cell like the painted rect, or the first frame jumps a subpixel.
+        let snap_scrolled = |value: f32, scroll: f32| snap(value - scroll, scale) + scroll;
+        let cell = [
+            snap_scrolled(cell[0], context.scroll.0),
+            snap_scrolled(cell[1], context.scroll.1),
+        ];
         let id = UiId::owned(format!("editor-caret-{}", context.pane.get()));
         // The framework applies layer translations directly on animation frames,
         // without executing the app view or rerasterizing the editor text.
@@ -37,14 +48,24 @@ pub(super) fn render(target: UiRect, context: CaretContext, animate: bool) -> El
             animated_compositing_layer(target, move |motion: &mut CaretMotion| {
                 let animate = animate && motion.scale == Some(scale);
                 motion.scale = Some(scale);
-                motion.retarget([target.left, target.top], context, animate);
+                motion.retarget(cell, context, animate);
             })
             .child(Element::new(move |_| {
-                UiElement::panel(id, target, VisualStyle::filled(color))
+                UiElement::panel(id, target, style)
             })),
         )
     })
     .key("editor-caret")
+}
+
+/// The thin insertion bar used by the default editor and Vim insert mode.
+pub(super) fn bar(cell: [f32; 2]) -> UiRect {
+    UiRect::new(
+        cell[0],
+        cell[1] + 3.0,
+        cell[0] + 2.0,
+        cell[1] + theme::LINE_H - 3.0,
+    )
 }
 
 #[derive(Clone, Default)]
@@ -147,21 +168,31 @@ fn css_ease(progress: f32) -> f32 {
     bezier((low + high) / 2.0, 0.1, 1.0)
 }
 
+fn snap(value: f32, scale: UiScale) -> f32 {
+    scale.physical_value(value) as f32 / scale.factor()
+}
+
 fn pixel_aligned(rect: UiRect, scale: UiScale) -> UiRect {
-    let factor = scale.factor();
-    let snap = |value| scale.physical_value(value) as f32 / factor;
-    let left = snap(rect.left);
+    let left = snap(rect.left, scale);
+    // Snap the width rather than the right edge so a bar keeps a constant width.
+    // Drop float error first: `x + 2.0 - x` may be 1.9999, which rounds down at 125%.
+    let width = (rect.width() * 64.0).round() / 64.0;
     UiRect::new(
         left,
-        snap(rect.top),
-        left + scale.physical_length(2.0) as f32 / factor,
-        snap(rect.bottom),
+        snap(rect.top, scale),
+        left + scale.physical_length(width) as f32 / scale.factor(),
+        snap(rect.bottom, scale),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn caret_at(rect: UiRect, context: CaretContext) -> Element {
+        let style = VisualStyle::filled(theme::c().accent);
+        render(rect, [rect.left, rect.top], style, context, true)
+    }
 
     fn context() -> CaretContext {
         CaretContext {
@@ -194,7 +225,7 @@ mod tests {
                 render_count.fetch_add(1, Ordering::Relaxed);
                 let target = cx.state(UiRect::new(10.0, 3.0, 12.0, 23.0));
                 *output.lock().unwrap() = Some(target.clone());
-                group(viewport).child(render(target.get(), context(), true))
+                group(viewport).child(caret_at(target.get(), context()))
             })
         });
         let mut session = UiSession::new();
@@ -253,11 +284,8 @@ mod tests {
                     let target = cx.state(UiRect::new(30.37, 8.63, 32.37, 32.63));
                     *output.lock().unwrap() = Some(target.clone());
                     group(viewport).child(
-                        clip(viewport, -context.scroll.0, -context.scroll.1).child(render(
-                            target.get(),
-                            context,
-                            true,
-                        )),
+                        clip(viewport, -context.scroll.0, -context.scroll.1)
+                            .child(caret_at(target.get(), context)),
                     )
                 })
             });

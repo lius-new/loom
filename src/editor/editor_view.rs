@@ -370,26 +370,12 @@ pub fn render(
             } else {
                 CursorShape::Bar
             };
-            if shape == CursorShape::Bar {
-                let cursor_rect = UiRect::new(
-                    cursor_x,
-                    cursor_y + 3.0,
-                    cursor_x + 2.0,
-                    cursor_y + theme::LINE_H - 3.0,
-                );
-                code = code.child(super::caret::render(
-                    cursor_rect,
-                    super::caret::CaretContext {
-                        pane,
-                        document: id,
-                        viewport: rect,
-                        scroll: (scroll_x, scroll_y),
-                    },
-                    s.smooth_caret
-                        && !(s.editor.drag.is_some() && s.editor.caret_dragging)
-                        && buffer.selection().is_none()
-                        && s.editor.preedit_for(pane, id).is_none(),
-                ));
+            let cell = [cursor_x, cursor_y];
+            let (cursor_rect, cursor_style) = if shape == CursorShape::Bar {
+                (
+                    super::caret::bar(cell),
+                    VisualStyle::filled(theme::c().accent),
+                )
             } else {
                 // Block cursors cover the character under the cursor.
                 let chars = buffer
@@ -406,12 +392,29 @@ pub fn render(
                     CursorShape::HalfBlock => cursor_y + theme::LINE_H / 2.0,
                     _ => cursor_y + 1.0,
                 };
-                let cursor_rect = UiRect::new(cursor_x, top, right, cursor_y + theme::LINE_H - 1.0);
-                code = code.child(panel(
-                    cursor_rect,
+                (
+                    UiRect::new(cursor_x, top, right, cursor_y + theme::LINE_H - 1.0),
                     VisualStyle::filled(theme::c().accent).alpha(140),
-                ));
-            }
+                )
+            };
+            // Every shape shares one caret element so mode switches keep the motion.
+            // Selections (core or Vim visual) are painted immediately, so the caret
+            // must not lag behind their edge.
+            code = code.child(super::caret::render(
+                cursor_rect,
+                cell,
+                cursor_style,
+                super::caret::CaretContext {
+                    pane,
+                    document: id,
+                    viewport: rect,
+                    scroll: (scroll_x, scroll_y),
+                },
+                s.smooth_caret
+                    && !(s.editor.drag.is_some() && s.editor.caret_dragging)
+                    && selections.is_empty()
+                    && s.editor.preedit_for(pane, id).is_none(),
+            ));
             if let Some(session) = s.editor.preedit_for(pane, id) {
                 let width = layout_line(&session.text, 0.0, 0.0, metrics.content_w)
                     .map_or(80.0, |l| l.width)
