@@ -50,9 +50,7 @@ pub(super) fn render(
                 motion.scale = Some(scale);
                 motion.retarget(cell, context, animate);
             })
-            .child(Element::new(move |_| {
-                UiElement::panel(id, target, style)
-            })),
+            .child(Element::new(move |_| UiElement::panel(id, target, style))),
         )
     })
     .key("editor-caret")
