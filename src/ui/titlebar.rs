@@ -100,7 +100,9 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar)).window_drag_region();
 
     // ---- Right cluster (anchored to the window controls) --------------
-    let right = rect.right - 4.0;
+    // Flush with the window edge, like native caption buttons, so the close
+    // button's hover fill reaches the corner.
+    let right = rect.right;
 
     // Settings, just left of the window controls.
     let settings_r = UiRect::new(right - 148.0, rect.top, right - 116.0, rect.bottom);
