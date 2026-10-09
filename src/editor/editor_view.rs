@@ -130,6 +130,7 @@ pub fn render(
 
             pointer_focus.focus();
             st_pointer.update(move |app| {
+                app.editor.caret_dragging = false;
                 app.workspace.activate_pane(pane);
                 let (scroll_x, scroll_y) = app.workspace.scroll(pane);
                 let cursor = app.workspace.active_editor().map(|buffer| {
@@ -201,6 +202,7 @@ pub fn render(
         root = root.on_pointer_drag(move |cx, pointer| {
             st_drag.update(|app| {
                 if let Some(drag) = app.editor.drag.as_mut() {
+                    app.editor.caret_dragging = true;
                     drag.point = (pointer.point.x, pointer.point.y);
                 }
                 update_drag_selection(app, rect);
@@ -375,7 +377,19 @@ pub fn render(
                     cursor_x + 2.0,
                     cursor_y + theme::LINE_H - 3.0,
                 );
-                code = code.child(panel(cursor_rect, VisualStyle::filled(theme::c().accent)));
+                code = code.child(super::caret::render(
+                    cursor_rect,
+                    super::caret::CaretContext {
+                        pane,
+                        document: id,
+                        viewport: rect,
+                        scroll: (scroll_x, scroll_y),
+                    },
+                    s.smooth_caret
+                        && !(s.editor.drag.is_some() && s.editor.caret_dragging)
+                        && buffer.selection().is_none()
+                        && s.editor.preedit_for(pane, id).is_none(),
+                ));
             } else {
                 // Block cursors cover the character under the cursor.
                 let chars = buffer
@@ -1499,6 +1513,238 @@ mod tests {
                 .unwrap()
                 .selected_text(),
             Some("hello")
+        );
+    }
+
+    #[test]
+    fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_changes() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{
+            ImeEvent, InputEvent, NamedKey, Point, PointerData, UiScale, dispatch_runtime_output,
+        };
+        use lgui::session::UiSession;
+        use std::sync::Arc;
+
+        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let output = exposed.clone();
+        let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
+        let application = ApplicationContext::empty(Default::default());
+        let view_app = application.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let mut initial = document(&format!("hello world\n{}", "line\n".repeat(40)));
+            initial.focused = true;
+            let state = cx.state(initial);
+            let git = cx.state(GitStoreSnapshot::default());
+            *output.lock().unwrap() = Some(state.clone());
+            let id = UiId::new("smooth-editor-test");
+            let focus = cx.focus_handle(id.clone());
+            let env = crate::key_actions::KeyEnv {
+                state: state.clone(),
+                application: view_app.clone(),
+                editor_focus: focus.clone(),
+                editor_rect: viewport,
+                terminal: None,
+            };
+            crate::key_actions::attach(
+                group(viewport).child(render(PaneId::new(1), viewport, state, git, id, focus)),
+                env,
+            )
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        let send = |session: &mut UiSession, input| {
+            dispatch_runtime_output(
+                session.handle_input(input),
+                &application,
+                &lgui::window::WindowId::new("smooth-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        let caret = |session: &UiSession| {
+            let node = session.tree().node(&UiId::new("editor-caret-1")).unwrap();
+            let layer = session.tree().node(node.parent.as_ref().unwrap()).unwrap();
+            let transform = layer.compositing_layer.unwrap().transform;
+            node.layout_rect
+                .translate(transform.translation_x(), transform.translation_y())
+        };
+        // UiSession has no native text service. Use the editor's existing
+        // fallback metrics for the painted target, and check IME geometry separately.
+        let logical = |state: &State<AppState>| {
+            let app = state.get();
+            let buffer = app.workspace.active_editor().unwrap();
+            let (line, col) = buffer.line_col();
+            let left = viewport.left + theme::GUTTER_W + theme::CODE_PAD;
+            let layout = layout_line(
+                buffer.line(line),
+                left,
+                line as f32 * theme::LINE_H,
+                viewport.right,
+            );
+            (caret_x(layout.as_ref(), col).unwrap_or(left + col as f32 * theme::CHAR_W)
+                - app.workspace.active_scroll().0)
+                .round()
+        };
+        let left = theme::GUTTER_W + theme::CODE_PAD;
+        let pointer = |column| PointerData::mouse(Point::new(left + column * theme::CHAR_W, 5.0));
+        send(
+            &mut session,
+            InputEvent::PointerDown {
+                pointer: pointer(0.0),
+                button: PointerButton::Left,
+            },
+        );
+        send(
+            &mut session,
+            InputEvent::PointerUp {
+                pointer: pointer(0.0),
+                button: PointerButton::Left,
+            },
+        );
+        let start = caret(&session);
+        send(&mut session, InputEvent::TextInput("中".into()));
+        assert!(
+            state
+                .get()
+                .workspace
+                .active_editor()
+                .unwrap()
+                .text()
+                .starts_with("中hello")
+        );
+        assert_eq!(
+            state.get().workspace.active_editor().unwrap().cursor(),
+            "中".len()
+        );
+        assert_eq!(caret(&session), start, "only the visual caret should lag");
+        assert!(logical(&state) > start.left);
+        assert_eq!(
+            session
+                .tree()
+                .node(&UiId::new("smooth-editor-test"))
+                .unwrap()
+                .ime_cursor_rect
+                .unwrap()
+                .left
+                .round(),
+            ime_cursor_rect(&state.get(), viewport).left.round()
+        );
+        session.advance(0.0);
+        session.advance(40.0);
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(caret(&session).left > start.left && caret(&session).left < logical(&state));
+        let displayed = caret(&session);
+        send(
+            &mut session,
+            InputEvent::Keyboard(KeyboardEvent {
+                state: KeyState::Down,
+                key: LogicalKey::Named(NamedKey::ArrowRight),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            caret(&session),
+            displayed,
+            "navigation retargets without jumping"
+        );
+        session.advance(0.0);
+        session.advance(80.0);
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(caret(&session).left, logical(&state));
+
+        let before_click = caret(&session);
+        send(
+            &mut session,
+            InputEvent::PointerDown {
+                pointer: pointer(8.0),
+                button: PointerButton::Left,
+            },
+        );
+        assert_eq!(
+            caret(&session),
+            before_click,
+            "single-click placement should animate"
+        );
+        send(&mut session, InputEvent::PointerMove(pointer(10.0)));
+        assert!(
+            state
+                .get()
+                .workspace
+                .active_editor()
+                .unwrap()
+                .selection()
+                .is_some()
+        );
+        assert_eq!(
+            caret(&session).left,
+            logical(&state),
+            "drag selection must track immediately"
+        );
+        send(
+            &mut session,
+            InputEvent::PointerUp {
+                pointer: pointer(10.0),
+                button: PointerButton::Left,
+            },
+        );
+        send(&mut session, InputEvent::TextInput("x".into()));
+        send(
+            &mut session,
+            InputEvent::Ime(ImeEvent::Preedit {
+                text: "ni".into(),
+                cursor: Some(0..0),
+            }),
+        );
+        assert_eq!(
+            caret(&session).left,
+            logical(&state),
+            "composition cancels visual motion"
+        );
+        send(&mut session, InputEvent::Ime(ImeEvent::Commit("你".into())));
+        assert!(state.get().editor.ime.is_none());
+        state.update(|app| app.smooth_caret = false);
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(
+            caret(&session).left,
+            logical(&state),
+            "turning off motion snaps an active animation"
+        );
+        state.update(|app| {
+            app.smooth_caret = true;
+            app.workspace.active_editor_mut().unwrap().set_cursor(0);
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        state.update(|app| app.workspace.set_active_scroll(0.0, 1.0));
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(
+            caret(&session).left,
+            logical(&state),
+            "scrolling snaps even while moving"
+        );
+        state.update(|app| app.focused = false);
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(session.tree().node(&UiId::new("editor-caret-1")).is_none());
+        state.update(|app| {
+            app.focused = true;
+            app.workspace.active_editor_mut().unwrap().set_cursor(4);
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(
+            caret(&session).left,
+            logical(&state),
+            "focus restoration starts at the logical caret"
+        );
+        state.update(|app| {
+            app.workspace
+                .open_path("other.txt".into(), "other file".into());
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(
+            caret(&session).left,
+            logical(&state),
+            "switching files snaps immediately"
         );
     }
 

@@ -37,6 +37,7 @@ enum Setting {
     Theme,
     DefaultShell,
     TerminalCursorBlink,
+    SmoothCaret,
     InlineBlame,
     SplitDiff,
     TreeView,
@@ -46,7 +47,14 @@ enum Setting {
 
 const SECTIONS: [(&str, &[Setting]); 4] = [
     ("APPEARANCE", &[Setting::Theme]),
-    ("EDITOR", &[Setting::VimMode, Setting::VimSystemClipboard]),
+    (
+        "EDITOR",
+        &[
+            Setting::SmoothCaret,
+            Setting::VimMode,
+            Setting::VimSystemClipboard,
+        ],
+    ),
     (
         "TERMINAL",
         &[Setting::DefaultShell, Setting::TerminalCursorBlink],
@@ -63,6 +71,7 @@ impl Setting {
             Self::Theme => "Color theme",
             Self::DefaultShell => "Default shell",
             Self::TerminalCursorBlink => "Cursor blinking",
+            Self::SmoothCaret => "Smooth caret movement",
             Self::InlineBlame => "Inline blame",
             Self::SplitDiff => "Side-by-side diff",
             Self::TreeView => "Tree view",
@@ -76,6 +85,7 @@ impl Setting {
             Self::Theme => "Colors used across the editor, panels and terminal.",
             Self::DefaultShell => "Used when a new terminal opens without picking a shell.",
             Self::TerminalCursorBlink => "Blink the terminal cursor while it has focus.",
+            Self::SmoothCaret => "Animate the editor caret when typing, navigating or clicking.",
             Self::InlineBlame => "Show the last commit for the current line in the editor.",
             Self::SplitDiff => "Open diffs with the old and new versions in two columns.",
             Self::TreeView => "Group changed files by folder in Source Control.",
@@ -91,6 +101,7 @@ impl Setting {
         match self {
             Self::Theme | Self::DefaultShell => None,
             Self::TerminalCursorBlink => Some(app.terminal_cursor_blink),
+            Self::SmoothCaret => Some(app.smooth_caret),
             Self::InlineBlame => Some(app.git_inline_blame),
             Self::SplitDiff => Some(app.git_split_diff),
             Self::TreeView => Some(app.git_tree_view),
@@ -103,6 +114,7 @@ impl Setting {
         match self {
             Self::Theme | Self::DefaultShell => {}
             Self::TerminalCursorBlink => app.terminal_cursor_blink ^= true,
+            Self::SmoothCaret => app.smooth_caret ^= true,
             Self::InlineBlame => app.git_inline_blame ^= true,
             Self::SplitDiff => app.git_split_diff ^= true,
             Self::TreeView => app.git_tree_view ^= true,
@@ -490,6 +502,7 @@ mod tests {
         let mut app = AppState::new();
         for setting in [
             Setting::TerminalCursorBlink,
+            Setting::SmoothCaret,
             Setting::InlineBlame,
             Setting::SplitDiff,
             Setting::TreeView,

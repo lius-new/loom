@@ -25,6 +25,8 @@ pub struct DragSelection {
 pub struct EditorInteraction {
     pub modifiers: KeyModifiers,
     pub drag: Option<DragSelection>,
+    /// A press can place the caret smoothly; only a real drag must follow immediately.
+    pub caret_dragging: bool,
     pub last_click: Option<(Instant, FileId, f32, f32, u8)>,
     pub last_tree_click: Option<(Instant, PathBuf, f32, f32, u8)>,
     pub last_tab_click: Option<(Instant, FileId, f32, f32, u8)>,

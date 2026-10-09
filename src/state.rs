@@ -185,6 +185,7 @@ pub struct AppState {
     pub theme: ThemeId,
     pub default_shell: ShellKind,
     pub terminal_cursor_blink: bool,
+    pub smooth_caret: bool,
     /// Horizontal scroll offset of each pane's tab strip, in logical pixels.
     pub tab_scroll: HashMap<PaneId, f32>,
     /// Open tab currently under the pointer.
@@ -333,6 +334,7 @@ impl AppState {
             theme: ThemeId::default(),
             default_shell: ShellKind::default(),
             terminal_cursor_blink: true,
+            smooth_caret: true,
             tab_scroll: HashMap::new(),
             tab_hovered: None,
             tab_strip_hovered: None,
@@ -425,6 +427,7 @@ impl AppState {
         app.theme = settings.theme;
         app.default_shell = settings.default_shell;
         app.terminal_cursor_blink = settings.terminal_cursor_blink;
+        app.smooth_caret = settings.smooth_caret;
         app.vim.options = settings.vim.into();
         crate::workspace_actions::hydrate_workspace_folders(&mut app);
         crate::workspace_actions::hydrate_editor_layout(&mut app, session.editor_layout);

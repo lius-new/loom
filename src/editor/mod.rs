@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod baseline_tests;
+mod caret;
 pub mod commands;
 pub mod edit_menu;
 pub mod editor_view;

@@ -23,6 +23,8 @@ pub struct Settings {
     pub default_shell: ShellKind,
     #[serde(default = "default_true")]
     pub terminal_cursor_blink: bool,
+    #[serde(default = "default_true")]
+    pub smooth_caret: bool,
     #[serde(default)]
     pub git_inline_blame: bool,
     #[serde(default)]
@@ -72,6 +74,7 @@ impl Default for Settings {
             theme: ThemeId::default(),
             default_shell: ShellKind::default(),
             terminal_cursor_blink: true,
+            smooth_caret: true,
             git_inline_blame: false,
             git_split_diff: false,
             git_tree_view: false,
@@ -128,6 +131,7 @@ mod tests {
             theme: ThemeId::parse("ember").unwrap(),
             default_shell: ShellKind::Bash,
             terminal_cursor_blink: false,
+            smooth_caret: false,
             git_inline_blame: true,
             git_split_diff: true,
             git_tree_view: true,
@@ -170,6 +174,7 @@ mod tests {
                 theme: ThemeId::default(),
                 default_shell: ShellKind::Bash,
                 terminal_cursor_blink: false,
+                smooth_caret: true,
                 git_inline_blame: true,
                 git_split_diff: false,
                 git_tree_view: true,

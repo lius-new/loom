@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use lgui::ApplicationHandle;
 use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
-use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, group};
+use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, component, group};
 use lgui::window::WindowFocusChanged;
 
 use crate::editor::editor_view;
@@ -28,6 +28,11 @@ use crate::window_geometry;
 use crate::workspace_persistence;
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
+    // Pure caret composition frames keep the app's layout, text and hooks cached.
+    component(cx.viewport(), |cx, _| render_app(cx))
+}
+
+fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state_with(AppState::restored);
     let git_store = cx.state_with(GitStoreSnapshot::default);
     // Never updated through `State`, so map changes never re-render the app.
@@ -321,6 +326,7 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
         theme: s.theme,
         default_shell: s.default_shell,
         terminal_cursor_blink: s.terminal_cursor_blink,
+        smooth_caret: s.smooth_caret,
         git_inline_blame: s.git_inline_blame,
         git_split_diff: s.git_split_diff,
         git_tree_view: s.git_tree_view,
