@@ -74,9 +74,12 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(window_icon("titlebar.minimize", "window-minimize", min_r));
     bar = bar.child(min_btn);
 
-    // Maximize / restore (toggles between maximized and windowed)
+    // Maximize / restore (toggles between maximized and windowed). On Windows 11
+    // the OS owns this button so hovering it shows Snap Layouts; the click
+    // handler covers other platforms.
     let max_btn = panel(max_r, VisualStyle::default())
         .event_policy(lgui::core::EventPolicy::INTERACTIVE)
+        .window_maximize_button()
         .on_click(|ctx: &mut UiEventContext| {
             let _ = ctx.window().toggle_maximize();
         })
