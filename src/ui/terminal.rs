@@ -713,38 +713,34 @@ fn render_terminal_tabs(
 
     let count = tabs.len() as f32;
     let available_tabs_width = (rect.width() - TABS_PAD).max(MIN_TAB_W);
-    let tab_cap =
-        ((available_tabs_width - TAB_GAP * (count - 1.0)) / count).clamp(MIN_TAB_W, MAX_TAB_W);
-
-    let labels = tabs
-        .iter()
-        .map(|tab| {
-            if state.get().application_layout.is_some() {
-                return format!("{} {}", tab.controller.shell().short_label(), tab.id);
-            }
-            let siblings = tabs
-                .iter()
-                .filter(|other| other.group_id == tab.group_id)
-                .collect::<Vec<_>>();
-            if siblings.len() > 1 {
-                let index = siblings
-                    .iter()
-                    .position(|other| other.id == tab.id)
-                    .unwrap();
-                format!("{} {}", tab.controller.shell().short_label(), index + 1)
-            } else {
-                tab.controller.shell().short_label().to_owned()
-            }
-        })
-        .collect::<Vec<_>>();
+    let labels = tabs.iter().map(TerminalTab::label).collect::<Vec<_>>();
     let close_width = measure("✕", theme::SMALL, 400);
     let fixed_width = TAB_PAD + TAB_CONTENT_GAP + close_width + TAB_PAD;
+    let active_width = tabs
+        .iter()
+        .position(|tab| tab.id == active_id)
+        .map(|index| {
+            (fixed_width + measure(&labels[index], theme::UI_SIZE, 400) + TEXT_MARGIN)
+                .max(MIN_TAB_W)
+        })
+        .unwrap_or(0.0);
+    let inactive_count = count - f32::from(active_width > 0.0);
+    let tab_cap = if inactive_count > 0.0 {
+        ((available_tabs_width - active_width - TAB_GAP * (count - 1.0)) / inactive_count)
+            .clamp(MIN_TAB_W, MAX_TAB_W)
+    } else {
+        MAX_TAB_W
+    };
     let widths = labels
         .iter()
-        .map(|name| {
-            (fixed_width + measure(name, theme::UI_SIZE, 400))
-                .min(tab_cap)
-                .max(MIN_TAB_W)
+        .enumerate()
+        .map(|(index, name)| {
+            let natural_width = fixed_width + measure(name, theme::UI_SIZE, 400);
+            if tabs[index].id == active_id {
+                (natural_width + TEXT_MARGIN).max(MIN_TAB_W)
+            } else {
+                natural_width.min(tab_cap).max(MIN_TAB_W)
+            }
         })
         .collect::<Vec<_>>();
     let mut group_left = rect.left + TABS_PAD;
@@ -782,10 +778,8 @@ fn render_terminal_tabs(
     let mut left = rect.left + TABS_PAD;
     for (index, tab) in tabs.iter().enumerate() {
         let name = &labels[index];
-        let name_width = measure(name, theme::UI_SIZE, 400);
-        let close_width = measure("✕", theme::SMALL, 400);
-        let fixed_width = TAB_PAD + TAB_CONTENT_GAP + close_width + TAB_PAD;
-        let tab_width = (fixed_width + name_width).min(tab_cap).max(MIN_TAB_W);
+        let active = tab.id == active_id;
+        let tab_width = widths[index];
         let tab_rect = UiRect::new(
             left,
             rect.top + PILL_INSET,
@@ -801,19 +795,22 @@ fn render_terminal_tabs(
             tab_rect.bottom,
         );
         let name_slot_width = (close_left - TAB_CONTENT_GAP - name_left).max(0.0);
-        let display_name = ellipsize(
-            name,
-            (name_slot_width - TEXT_MARGIN).max(0.0),
-            theme::UI_SIZE,
-            400,
-        );
+        let display_name = if active {
+            name.clone()
+        } else {
+            ellipsize(
+                name,
+                (name_slot_width - TEXT_MARGIN).max(0.0),
+                theme::UI_SIZE,
+                400,
+            )
+        };
         let label_rect = UiRect::new(
             name_left,
             tab_rect.top,
             name_left + name_slot_width,
             tab_rect.bottom,
         );
-        let active = tab.id == active_id;
         let visual = group(tab_rect)
             .child(panel(
                 UiRect::new(
@@ -864,6 +861,7 @@ fn render_terminal_tabs(
                             Some(crate::state::TerminalTabContextMenuState {
                                 position: (pointer.point.x, pointer.point.y),
                                 target: tab_id,
+                                kind: crate::state::TerminalTabMenuKind::Actions,
                             });
                     });
                     cx.stop_propagation();
@@ -880,6 +878,12 @@ fn render_terminal_tabs(
         // component it follows the map's cursor without re-rendering the strip.
         tab_element = tab_element.child(
             component(select_rect, move |cx, &select_rect| {
+                let press_point = cx
+                    .state_with(|| Arc::new(std::sync::Mutex::new(None::<Point>)))
+                    .get();
+                let click_point = press_point.clone();
+                let click_state = press_state.clone();
+                let click_map = select_map.clone();
                 let cursor = cx.use_observable(
                     select_map.observable(),
                     |s: &crate::ui::layout_map::MapSignal| s.cursor,
@@ -904,6 +908,7 @@ fn render_terminal_tabs(
                 .cursor(cursor)
                 .on_pointer_down_with_button(move |cx, pointer, button| {
                     if button == PointerButton::Left {
+                        *press_point.lock().unwrap() = Some(pointer.point);
                         select_tabs.update(move |tabs| tabs.select(tab_id));
                         select_focus.focus();
                         press_state.update(|app| {
@@ -918,6 +923,32 @@ fn render_terminal_tabs(
                         });
                         cx.stop_propagation();
                     }
+                })
+                .on_click(move || {
+                    let Some(point) = click_point.lock().unwrap().take() else {
+                        return;
+                    };
+                    click_state.update(|app| {
+                        if app
+                            .editor
+                            .terminal_tab_click_count(tab_id, point.x, point.y)
+                            == 2
+                        {
+                            app.editor.last_terminal_tab_click = None;
+                            click_map.cancel();
+                            app.editor.menu = None;
+                            app.context_menu = None;
+                            app.context_menu_target = None;
+                            app.tab_context_menu = None;
+                            app.terminal_shell_menu = false;
+                            app.terminal_tab_context_menu =
+                                Some(crate::state::TerminalTabContextMenuState {
+                                    position: (tab_rect.left, tab_rect.bottom),
+                                    target: tab_id,
+                                    kind: crate::state::TerminalTabMenuKind::Purpose,
+                                });
+                        }
+                    });
                 })
             })
             .key(format!("terminal-tab-select-component-{tab_id}")),
@@ -1401,19 +1432,14 @@ mod tests {
                 .left,
             313.0
         );
-        assert!(
+        assert_eq!(
             session
                 .tree()
                 .nodes()
                 .iter()
-                .any(|node| node.text.as_deref() == Some("pwsh 1"))
-        );
-        assert!(
-            session
-                .tree()
-                .nodes()
-                .iter()
-                .any(|node| node.text.as_deref() == Some("pwsh 2"))
+                .filter(|node| node.text.as_deref() == Some("pwsh"))
+                .count(),
+            3 // Two tab labels and the shell selector in the terminal header.
         );
         let context = ApplicationContext::empty(Default::default());
         let mut send = |input| {
@@ -1687,6 +1713,96 @@ mod tests {
             "outside dismissal restores input".into(),
         ));
         assert_eq!(writes.load(Ordering::Acquire), 2);
+
+        // Single click selects a terminal; double click opens its purpose menu.
+        let label = lgui::core::PointerData::mouse(Point::new(30.0, 10.0));
+        send(InputEvent::PointerDown {
+            pointer: label,
+            button: PointerButton::Left,
+        });
+        send(InputEvent::PointerUp {
+            pointer: label,
+            button: PointerButton::Left,
+        });
+        assert!(state.get().terminal_tab_context_menu.is_none());
+        send(InputEvent::PointerDown {
+            pointer: label,
+            button: PointerButton::Left,
+        });
+        send(InputEvent::PointerUp {
+            pointer: label,
+            button: PointerButton::Left,
+        });
+        let purpose_menu = state.get().terminal_tab_context_menu.unwrap();
+        assert_eq!(
+            purpose_menu.kind,
+            crate::state::TerminalTabMenuKind::Purpose
+        );
+        assert_eq!(purpose_menu.target, 1);
+        let origin = purpose_menu.position;
+        let testing = lgui::core::PointerData::mouse(Point::new(origin.0 + 20.0, origin.1 + 59.0));
+        send(InputEvent::PointerDown {
+            pointer: testing,
+            button: PointerButton::Left,
+        });
+        send(InputEvent::PointerUp {
+            pointer: testing,
+            button: PointerButton::Left,
+        });
+        assert_eq!(tabs.get().tabs()[0].label(), "pwsh · Testing");
+        assert!(state.get().terminal_tab_context_menu.is_none());
+        send(InputEvent::TextInput(
+            "typing resumes after purpose selection".into(),
+        ));
+        assert_eq!(writes.load(Ordering::Acquire), 3);
+
+        // The general preset replaces free-form purpose entry.
+        state.update(|app| {
+            app.terminal_tab_context_menu = Some(crate::state::TerminalTabContextMenuState {
+                position: (20.0, 40.0),
+                target: 1,
+                kind: crate::state::TerminalTabMenuKind::Purpose,
+            })
+        });
+        send(InputEvent::PointerMove(lgui::core::PointerData::mouse(
+            Point::new(40.0, 165.0),
+        )));
+        let other = lgui::core::PointerData::mouse(Point::new(40.0, 165.0));
+        send(InputEvent::TextInput(
+            "must not rename or reach shell".into(),
+        ));
+        assert_eq!(writes.load(Ordering::Acquire), 3);
+        send(InputEvent::PointerDown {
+            pointer: other,
+            button: PointerButton::Left,
+        });
+        send(InputEvent::PointerUp {
+            pointer: other,
+            button: PointerButton::Left,
+        });
+        assert!(state.get().terminal_tab_context_menu.is_none());
+        assert_eq!(tabs.get().tabs()[0].label(), "pwsh · Other");
+
+        tabs.update(|tabs| tabs.update_programs(&[(1, Some("node".into()))]));
+        state.update(|app| {
+            app.terminal_tab_context_menu = Some(crate::state::TerminalTabContextMenuState {
+                position: (20.0, 40.0),
+                target: 1,
+                kind: crate::state::TerminalTabMenuKind::Purpose,
+            })
+        });
+        let automatic = lgui::core::PointerData::mouse(Point::new(40.0, 191.0));
+        send(InputEvent::PointerMove(automatic));
+        send(InputEvent::PointerDown {
+            pointer: automatic,
+            button: PointerButton::Left,
+        });
+        send(InputEvent::PointerUp {
+            pointer: automatic,
+            button: PointerButton::Left,
+        });
+        assert_eq!(tabs.get().tabs()[0].label(), "pwsh · node");
+        tabs.update(|tabs| tabs.update_programs(&[(1, None)]));
 
         send(InputEvent::PointerDown {
             pointer: point,

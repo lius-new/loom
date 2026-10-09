@@ -30,6 +30,7 @@ pub struct EditorInteraction {
     pub last_click: Option<(Instant, FileId, f32, f32, u8)>,
     pub last_tree_click: Option<(Instant, PathBuf, f32, f32, u8)>,
     pub last_tab_click: Option<(Instant, FileId, f32, f32, u8)>,
+    pub last_terminal_tab_click: Option<(Instant, u64, f32, f32, u8)>,
     pub menu: Option<(f32, f32)>,
     pub menu_hover: Option<usize>,
     /// The input method composition in progress, and the view it belongs to.
@@ -73,6 +74,10 @@ impl EditorInteraction {
 
     pub fn tab_click_count(&mut self, document: FileId, x: f32, y: f32) -> u8 {
         next_click_count(&mut self.last_tab_click, document, x, y)
+    }
+
+    pub fn terminal_tab_click_count(&mut self, terminal: u64, x: f32, y: f32) -> u8 {
+        next_click_count(&mut self.last_terminal_tab_click, terminal, x, y)
     }
 }
 

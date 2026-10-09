@@ -77,6 +77,8 @@ pub struct WorkspaceSession {
     #[serde(default)]
     pub terminal_widths: Vec<f32>,
     #[serde(default)]
+    pub terminal_purposes: Vec<Option<String>>,
+    #[serde(default)]
     pub active_terminal: Option<usize>,
     #[serde(default)]
     pub show_terminal: bool,
@@ -122,6 +124,7 @@ pub fn save_terminal_state(
     terminal_tabs: &[ShellKind],
     terminal_groups: &[usize],
     terminal_widths: &[f32],
+    terminal_purposes: &[Option<String>],
     active_terminal: Option<usize>,
     show_terminal: bool,
     terminal_height: f32,
@@ -130,6 +133,7 @@ pub fn save_terminal_state(
         session.terminal_tabs = terminal_tabs.to_vec();
         session.terminal_groups = terminal_groups.to_vec();
         session.terminal_widths = terminal_widths.to_vec();
+        session.terminal_purposes = terminal_purposes.to_vec();
         session.active_terminal = active_terminal;
         session.show_terminal = show_terminal;
         session.terminal_height = Some(terminal_height);
@@ -252,6 +256,7 @@ mod tests {
             ],
             terminal_groups: vec![0, 0, 1],
             terminal_widths: vec![1.5, 0.5, 1.0],
+            terminal_purposes: vec![Some("Testing".into()), None, Some("Development".into())],
             active_terminal: Some(1),
             show_terminal: true,
             terminal_height: Some(320.0),

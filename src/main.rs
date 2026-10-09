@@ -31,6 +31,7 @@ mod launch;
 mod model;
 mod settings_persistence;
 mod state;
+mod terminal_program;
 mod terminal_session;
 mod theme;
 mod ui;

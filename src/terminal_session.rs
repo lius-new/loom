@@ -18,6 +18,14 @@ use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_s
 use serde::{Deserialize, Serialize};
 
 const SCROLLBACK_ROWS: usize = 2_000;
+pub const TERMINAL_PURPOSES: &[&str] = &[
+    "Development",
+    "Server",
+    "Testing",
+    "Build",
+    "Debugging",
+    "Other",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalSize {
@@ -168,6 +176,18 @@ pub struct TerminalTab {
     pub width_weight: f32,
     pub controller: TerminalController,
     pub cwd: Option<PathBuf>,
+    pub purpose: Option<String>,
+    pub running_program: Option<String>,
+}
+
+impl TerminalTab {
+    pub fn label(&self) -> String {
+        let shell = self.controller.shell().short_label();
+        match self.purpose.as_ref().or(self.running_program.as_ref()) {
+            Some(name) => format!("{shell} · {name}"),
+            None => shell.to_owned(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -313,6 +333,30 @@ impl TerminalTabs {
         self.tabs.iter().map(|tab| tab.width_weight).collect()
     }
 
+    pub fn purposes(&self) -> Vec<Option<String>> {
+        self.tabs.iter().map(|tab| tab.purpose.clone()).collect()
+    }
+
+    pub fn restore_purposes(&mut self, purposes: &[Option<String>]) {
+        for (tab, purpose) in self.tabs.iter_mut().zip(purposes) {
+            tab.purpose = normalized_purpose(purpose.as_deref());
+        }
+    }
+
+    pub fn set_purpose(&mut self, id: u64, purpose: Option<&str>) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.purpose = normalized_purpose(purpose);
+        }
+    }
+
+    pub fn update_programs(&mut self, programs: &[(u64, Option<String>)]) {
+        for (id, program) in programs {
+            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == *id) {
+                tab.running_program = program.clone();
+            }
+        }
+    }
+
     pub fn restore_widths(&mut self, widths: &[f32]) {
         for (tab, width) in self.tabs.iter_mut().zip(widths) {
             if width.is_finite() && *width > 0.0 {
@@ -338,6 +382,8 @@ impl TerminalTabs {
                 width_weight,
                 controller: TerminalController::with_shell(shell),
                 cwd,
+                purpose: None,
+                running_program: None,
             },
         );
         self.active_id = Some(id);
@@ -370,6 +416,8 @@ impl TerminalTabs {
             width_weight: 1.0,
             controller: TerminalController::with_shell(shell),
             cwd,
+            purpose: None,
+            running_program: None,
         });
         self.active_id = Some(id);
         id
@@ -419,6 +467,19 @@ impl TerminalTabs {
     }
 }
 
+fn normalized_purpose(purpose: Option<&str>) -> Option<String> {
+    let purpose = purpose.map(str::trim).filter(|value| !value.is_empty())?;
+    // Older saved custom purposes use the general preset under the new policy.
+    Some(
+        if TERMINAL_PURPOSES.contains(&purpose) {
+            purpose
+        } else {
+            "Other"
+        }
+        .to_owned(),
+    )
+}
+
 impl Default for TerminalTabs {
     fn default() -> Self {
         Self::new()
@@ -435,6 +496,9 @@ struct TerminalInner {
 }
 
 struct RunningProcess {
+    pid: u32,
+    #[cfg(windows)]
+    console: Option<Arc<crate::terminal_program::SessionConsole>>,
     #[cfg(windows)]
     process: conpty::Process,
     #[cfg(not(windows))]
@@ -486,6 +550,43 @@ impl TerminalController {
 
     pub fn shell(&self) -> ShellKind {
         *lock(&self.inner.shell)
+    }
+
+    /// Inspect the OS process outside reactive UI state locks.
+    pub fn program_candidate(
+        &self,
+        probe: &crate::terminal_program::ProgramProbe,
+        preferred: Option<u32>,
+    ) -> Option<crate::terminal_program::ProgramCandidate> {
+        if !matches!(*lock(&self.inner.status), TerminalStatus::Running) {
+            return None;
+        }
+        #[cfg(windows)]
+        let (pid, console) = {
+            let process = lock(&self.inner.process);
+            let process = process.as_ref()?;
+            (process.pid, process.console.clone())
+        };
+        #[cfg(windows)]
+        {
+            if let Some(console) = console
+                && let Some(members) = console.members()
+            {
+                return probe.session_candidate(&members, &console.baseline, preferred);
+            }
+            probe.candidate(pid, None)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = preferred;
+            let (pid, foreground) = {
+                let process = lock(&self.inner.process);
+                let process = process.as_ref()?;
+                let foreground = process.master.process_group_leader().map(|pid| pid as u32);
+                (process.pid, foreground)
+            };
+            probe.candidate(pid, foreground)
+        }
     }
 
     pub fn restart(
@@ -709,6 +810,16 @@ fn spawn_shell(
     size: TerminalSize,
 ) -> Result<SpawnedShell, String> {
     let program = shell.command();
+    spawn_shell_program(shell, cwd, size, &program)
+}
+
+#[cfg(windows)]
+fn spawn_shell_program(
+    shell: ShellKind,
+    cwd: Option<&Path>,
+    size: TerminalSize,
+    program: &Path,
+) -> Result<SpawnedShell, String> {
     let mut command = std::process::Command::new(&program);
     configure_std_command(&mut command, shell, cwd);
 
@@ -722,8 +833,11 @@ fn spawn_shell(
         .map_err(|error| format!("{error} ({})", program.display()))?;
     let reader = process.output().map_err(|error| error.to_string())?;
     let writer = process.input().map_err(|error| error.to_string())?;
+    let console = crate::terminal_program::SessionConsole::new(process.pid()).map(Arc::new);
     Ok(SpawnedShell {
         process: RunningProcess {
+            pid: process.pid(),
+            console,
             process,
             writer: Box::new(writer),
             size,
@@ -821,6 +935,7 @@ fn spawn_shell(
     let killer = child.clone_killer();
     Ok(SpawnedShell {
         process: RunningProcess {
+            pid: child.process_id().unwrap_or(0),
             master: pair.master,
             writer,
             killer,
@@ -1182,6 +1297,84 @@ mod tests {
     }
 
     #[test]
+    fn tab_names_keep_shell_type_and_prioritize_purpose_then_running_program() {
+        let mut tabs =
+            TerminalTabs::restored(vec![ShellKind::Bash, ShellKind::Bash, ShellKind::Cmd], None);
+        let first = tabs.tabs()[0].id;
+        assert_eq!(
+            tabs.tabs()
+                .iter()
+                .map(TerminalTab::label)
+                .collect::<Vec<_>>(),
+            vec!["bash", "bash", "cmd"]
+        );
+        tabs.update_programs(&[(first, Some("node".into()))]);
+        assert_eq!(tabs.tabs()[0].label(), "bash · node");
+        tabs.set_purpose(first, Some("  Testing  "));
+        assert_eq!(tabs.tabs()[0].label(), "bash · Testing");
+        tabs.update_programs(&[(first, Some("python".into()))]);
+        assert_eq!(tabs.tabs()[0].label(), "bash · Testing");
+        tabs.set_purpose(first, None);
+        assert_eq!(tabs.tabs()[0].label(), "bash · python");
+        tabs.update_programs(&[(first, None)]);
+        assert_eq!(tabs.tabs()[0].label(), "bash");
+        tabs.set_purpose(first, Some("\r\n "));
+        assert_eq!(tabs.tabs()[0].label(), "bash");
+    }
+
+    #[test]
+    fn purposes_survive_restoration_moves_and_sibling_closure_without_saving_programs() {
+        let mut tabs = TerminalTabs::new();
+        let first = tabs.active_id().unwrap();
+        tabs.set_purpose(first, Some("Server"));
+        tabs.update_programs(&[(first, Some("node".into()))]);
+        let second = tabs.split(first).unwrap();
+        assert_eq!(tabs.tabs()[1].purpose, None);
+        tabs.set_purpose(second, Some("Testing"));
+        let mut restored = TerminalTabs::restored_with_groups(
+            tabs.shells(),
+            tabs.active_index(),
+            &tabs.saved_groups(),
+        );
+        restored.restore_purposes(&tabs.purposes());
+        assert_eq!(restored.purposes(), tabs.purposes());
+        assert!(
+            restored
+                .tabs()
+                .iter()
+                .all(|tab| tab.running_program.is_none())
+        );
+        restored.detach_group(second);
+        assert_eq!(
+            restored
+                .region_view(&[second], Some(second))
+                .active()
+                .unwrap()
+                .label(),
+            "pwsh · Testing"
+        );
+        restored.close(first);
+        assert_eq!(restored.purposes(), vec![Some("Testing".into())]);
+    }
+
+    #[test]
+    fn saved_custom_purposes_migrate_to_other_and_only_presets_are_kept() {
+        let mut tabs = TerminalTabs::restored(vec![ShellKind::Bash; 3], None);
+        tabs.restore_purposes(&[Some("Local testing".into()), Some("Server".into()), None]);
+        assert_eq!(
+            tabs.purposes(),
+            vec![Some("Other".into()), Some("Server".into()), None]
+        );
+        let first = tabs.tabs()[0].id;
+        for &purpose in TERMINAL_PURPOSES {
+            tabs.set_purpose(first, Some(purpose));
+            assert_eq!(tabs.tabs()[0].purpose.as_deref(), Some(purpose));
+        }
+        tabs.set_purpose(first, Some("arbitrary custom name"));
+        assert_eq!(tabs.tabs()[0].purpose.as_deref(), Some("Other"));
+    }
+
+    #[test]
     fn indexed_terminal_colors_include_the_ansi_and_rgb_cube_ranges() {
         assert_eq!(indexed_color(1), 0xcd3131);
         assert_eq!(indexed_color(16), 0x000000);
@@ -1478,6 +1671,223 @@ mod tests {
         let empty = TerminalTabs::restored(Vec::new(), None);
         assert!(empty.is_empty());
         assert_eq!(empty.active_index(), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    fn start_launcher_backed_test_shell() -> (TerminalController, Arc<ApplicationHandle>) {
+        let command = ShellKind::Bash.command();
+        let program = command
+            .ancestors()
+            .skip(1)
+            .map(|parent| parent.join("bin/bash.exe"))
+            .find(|path| path != &command && path.is_file())
+            .unwrap_or(command);
+        let spawned = spawn_shell_program(
+            ShellKind::Bash,
+            None,
+            TerminalSize {
+                rows: 12,
+                cols: 80,
+                pixel_width: 560,
+                pixel_height: 228,
+            },
+            &program,
+        )
+        .unwrap();
+        let controller = TerminalController::with_shell(ShellKind::Bash);
+        let mut output = spawned.reader;
+        thread::spawn(move || {
+            let _ = std::io::copy(&mut output, &mut std::io::sink());
+        });
+        *lock(&controller.inner.process) = Some(spawned.process);
+        *lock(&controller.inner.status) = TerminalStatus::Running;
+        (
+            controller,
+            Arc::new(ApplicationHandle::new(|task| task(), || {})),
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "manual launcher-backed ConPTY detection regression"]
+    fn launcher_backed_shell_is_idle_then_detects_and_clears_programs() {
+        use crate::terminal_program::{ProgramProbe, SustainedProgram};
+        use std::time::{Duration, Instant};
+        let (controller, application) = start_launcher_backed_test_shell();
+        let console = lock(&controller.inner.process)
+            .as_ref()
+            .unwrap()
+            .console
+            .is_some();
+        let mut idle = true;
+        for _ in 0..20 {
+            let candidate = controller.program_candidate(&ProgramProbe::new(), None);
+            idle &= candidate.is_none();
+            thread::sleep(Duration::from_millis(100));
+        }
+        let mut tracker = SustainedProgram::default();
+        controller.write(b"ping.exe -n 4 127.0.0.1 >/dev/null\r");
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut detected = false;
+        let mut cleared = false;
+        while Instant::now() < deadline {
+            let now = Instant::now();
+            let candidate =
+                controller.program_candidate(&ProgramProbe::new(), tracker.sustained_pid(now));
+            detected |= tracker
+                .observe(candidate.clone(), now)
+                .is_some_and(|name| name.eq_ignore_ascii_case("ping"));
+            if detected && candidate.is_none() {
+                cleared = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        controller.terminate(&application);
+        assert!(
+            console,
+            "observer must attach to the launcher-backed console"
+        );
+        assert!(idle, "startup processes must never become applications");
+        assert!(detected && cleared);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "manual Git Bash process replacement smoke test"]
+    fn exited_shell_launchers_do_not_hide_unknown_applications() {
+        use crate::terminal_program::{ProgramProbe, SustainedProgram};
+        use std::time::{Duration, Instant};
+
+        let name = format!("loom-session-probe-{}", std::process::id());
+        let executable = env::temp_dir().join(format!("{name}.exe"));
+        let source = executable.with_extension("rs");
+        std::fs::write(&source, r#"fn main() {
+            if std::env::args().nth(1).as_deref() == Some("--child") {
+                std::thread::sleep(std::time::Duration::from_secs(4));
+            } else {
+                std::process::Command::new(std::env::current_exe().unwrap()).arg("--child").spawn().unwrap();
+            }
+        }"#).unwrap();
+        let built = std::process::Command::new("rustc")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let (controller, application) = start_launcher_backed_test_shell();
+        assert!(
+            lock(&controller.inner.process)
+                .as_ref()
+                .unwrap()
+                .console
+                .is_some(),
+            "console observer should be available"
+        );
+        let command = format!("\"{}\"\r", executable.to_string_lossy().replace('\\', "/"));
+        controller.write(command.as_bytes());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut tracker = SustainedProgram::default();
+        let mut identified = false;
+        let mut cleared = false;
+        let mut reproduced_missing_parent = false;
+        while Instant::now() < deadline {
+            let now = Instant::now();
+            let probe = ProgramProbe::new();
+            let candidate = controller.program_candidate(&probe, tracker.sustained_pid(now));
+            if candidate.as_ref().is_some_and(|app| app.name == name) {
+                let pid = lock(&controller.inner.process).as_ref().unwrap().pid;
+                reproduced_missing_parent |= probe
+                    .candidate(pid, None)
+                    .is_none_or(|entry| entry.name != name);
+            }
+            let label = tracker.observe(candidate.clone(), now);
+            identified |= label.as_deref() == Some(name.as_str());
+            if identified && candidate.is_none() && label.is_none() {
+                cleared = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        controller.terminate(&application);
+        std::fs::remove_file(executable).unwrap();
+        std::fs::remove_file(source).unwrap();
+        assert!(
+            reproduced_missing_parent,
+            "the application must remain invisible to ancestry-only detection"
+        );
+        assert!(
+            identified,
+            "the arbitrarily named application should be identified"
+        );
+        assert!(cleared, "the application name should clear after exit");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "manual Windows ConPTY process-name smoke test"]
+    fn running_application_is_detected_and_cleared_in_each_real_shell() {
+        use crate::terminal_program::{ProgramProbe, SustainedProgram};
+        use std::time::{Duration, Instant};
+
+        for shell in ShellKind::ALL {
+            let controller = TerminalController::with_shell(shell);
+            let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
+            controller.restart(
+                shell,
+                None,
+                TerminalSize {
+                    rows: 12,
+                    cols: 80,
+                    pixel_width: 560,
+                    pixel_height: 228,
+                },
+                application.clone(),
+            );
+            let command: &[u8] = match shell {
+                ShellKind::PowerShell => b"ping.exe -n 4 127.0.0.1 | Out-Null\r",
+                ShellKind::Cmd => b"ping.exe -n 4 127.0.0.1 >nul\r",
+                ShellKind::Bash => b"ping.exe -n 4 127.0.0.1 >/dev/null\r",
+            };
+            controller.write(command);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut tracker = SustainedProgram::default();
+            let mut saw_program = false;
+            let mut returned_to_idle = false;
+            while Instant::now() < deadline {
+                let probe = ProgramProbe::new();
+                let candidate =
+                    controller.program_candidate(&probe, tracker.sustained_pid(Instant::now()));
+                let name = tracker.observe(candidate.clone(), Instant::now());
+                if name
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("ping"))
+                {
+                    saw_program = true;
+                }
+                if saw_program && candidate.is_none() && name.is_none() {
+                    returned_to_idle = true;
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            controller.terminate(&application);
+            assert!(
+                saw_program,
+                "{} did not identify its sustained application",
+                shell.label()
+            );
+            assert!(
+                returned_to_idle,
+                "{} did not clear its application after exit",
+                shell.label()
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]

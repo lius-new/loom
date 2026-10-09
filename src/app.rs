@@ -46,6 +46,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             &session.terminal_groups,
         );
         tabs.restore_widths(&session.terminal_widths);
+        tabs.restore_purposes(&session.terminal_purposes);
         tabs
     });
     let terminal_cursor_blink = cx.state(true);
@@ -55,12 +56,81 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_shells = terminal_tab_snapshot.shells();
     let terminal_groups = terminal_tab_snapshot.saved_groups();
     let terminal_widths = terminal_tab_snapshot.widths();
+    let terminal_purposes = terminal_tab_snapshot.purposes();
     let active_terminal_index = terminal_tab_snapshot.active_index();
     let terminal_controller = terminal_tab_snapshot
         .active()
         .map(|tab| tab.controller.clone());
     let application_context = cx.application();
     let application = application_context.resource::<ApplicationHandle>();
+    let program_sessions = terminal_tab_snapshot
+        .tabs()
+        .iter()
+        .map(|tab| (tab.id, tab.controller.clone(), tab.running_program.clone()))
+        .collect::<Vec<_>>();
+    let program_tabs = terminal_tabs.clone();
+    let program_application = application.as_ref().clone();
+    cx.use_effect(
+        program_sessions
+            .iter()
+            .map(|(id, _, _)| *id)
+            .collect::<Vec<_>>(),
+        move || {
+            let (stop_sender, stop_receiver) = mpsc::channel();
+            let notifications = crate::background_ui::LatestNotification::new(
+                program_application,
+                move |programs: Vec<(u64, Option<String>)>| {
+                    program_tabs.update(|tabs| tabs.update_programs(&programs));
+                },
+            );
+            let worker = thread::Builder::new()
+                .name("loom-terminal-programs".into())
+                .spawn(move || {
+                    let mut trackers = program_sessions
+                        .iter()
+                        .map(|_| crate::terminal_program::SustainedProgram::default())
+                        .collect::<Vec<_>>();
+                    let mut previous = program_sessions
+                        .iter()
+                        .map(|(id, _, name)| (*id, name.clone()))
+                        .collect::<Vec<_>>();
+                    while let Err(RecvTimeoutError::Timeout) =
+                        stop_receiver.recv_timeout(Duration::from_millis(250))
+                    {
+                        if program_sessions.is_empty() {
+                            continue;
+                        }
+                        let now = std::time::Instant::now();
+                        let probe = crate::terminal_program::ProgramProbe::new();
+                        let programs = program_sessions
+                            .iter()
+                            .zip(&mut trackers)
+                            .map(|((id, controller, _), tracker)| {
+                                (
+                                    *id,
+                                    tracker.observe(
+                                        controller
+                                            .program_candidate(&probe, tracker.sustained_pid(now)),
+                                        now,
+                                    ),
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        if programs != previous {
+                            notifications.send(programs.clone());
+                            previous = programs;
+                        }
+                    }
+                })
+                .ok();
+            move || {
+                let _ = stop_sender.send(());
+                if let Some(worker) = worker {
+                    let _ = worker.join();
+                }
+            }
+        },
+    );
     let dispatch_state = state.clone();
     let dispatch_handle = application.as_ref().clone();
     cx.use_effect((), move || {
@@ -297,6 +367,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_shells.clone(),
             terminal_groups.clone(),
             terminal_widths.clone(),
+            terminal_purposes.clone(),
             s.terminal_split_drag,
             active_terminal_index,
             show_term,
@@ -308,6 +379,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     &terminal_shells,
                     &terminal_groups,
                     &terminal_widths,
+                    &terminal_purposes,
                     active_terminal_index,
                     show_term,
                     s.terminal_h,

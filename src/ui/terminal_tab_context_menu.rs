@@ -4,13 +4,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use lgui::ApplicationHandle;
-use lgui::core::{CursorIcon, EventPolicy, LogicalKey, NamedKey, UiElement};
+use lgui::core::{
+    CursorIcon, EventPolicy, LogicalKey, NamedKey, SemanticRole, Semantics, UiElement,
+};
 use lgui::prelude::{
     Color, Element, RenderCx, ShadowStyle, State, UiRect, VisualStyle, panel, text,
 };
 
-use crate::state::AppState;
-use crate::terminal_session::TerminalTabs;
+use crate::state::{AppState, TerminalTabMenuKind};
+use crate::terminal_session::{TERMINAL_PURPOSES as PURPOSES, TerminalTabs};
 use crate::theme;
 
 const MENU_W: f32 = 224.0;
@@ -94,6 +96,9 @@ pub fn render(
     let Some(target_tab) = tab_snapshot.tabs().iter().find(|tab| tab.id == menu.target) else {
         return panel(viewport, VisualStyle::default());
     };
+    if menu.kind != TerminalTabMenuKind::Actions {
+        return render_purpose(viewport, state, tabs, menu, target_tab.purpose.clone());
+    }
     let shell = target_tab.controller.shell();
     let cwd = target_tab
         .cwd
@@ -252,6 +257,115 @@ pub fn render(
     }
     overlay = overlay.child(surface);
     overlay
+}
+
+fn render_purpose(
+    viewport: UiRect,
+    state: State<AppState>,
+    tabs: State<TerminalTabs>,
+    menu: crate::state::TerminalTabContextMenuState,
+    current: Option<String>,
+) -> Element {
+    let target = menu.target;
+    let height = PAD * 2.0 + ITEM_H * (PURPOSES.len() + 1) as f32 + SEP_H;
+    let width = MENU_W.min(viewport.width().max(0.0));
+    let left = menu
+        .position
+        .0
+        .clamp(viewport.left, (viewport.right - width).max(viewport.left));
+    let top = menu
+        .position
+        .1
+        .clamp(viewport.top, (viewport.bottom - height).max(viewport.top));
+    let card = UiRect::new(left, top, left + width, top + height);
+    let dismiss = state.clone();
+    let escape = state.clone();
+    let overlay = Element::new(move |cx| {
+        UiElement::panel(cx.id, viewport, VisualStyle::default())
+            .auto_focus()
+            .children(cx.children)
+    })
+    .key(format!("terminal-purpose-menu-{target}"))
+    .event_policy(EventPolicy::INTERACTIVE)
+    .focus_scope()
+    .on_pointer_down_with_button(move |cx, pointer, _| {
+        if !card.contains(pointer.point) {
+            dismiss.update(|app| app.terminal_tab_context_menu = None);
+        }
+        cx.stop_propagation();
+    })
+    .on_input(|cx, _| cx.stop_propagation())
+    .on_key_down(move |cx, event| {
+        if event.key == LogicalKey::Named(NamedKey::Escape) {
+            escape.update(|app| app.terminal_tab_context_menu = None);
+        }
+        cx.prevent_default();
+        cx.stop_propagation();
+    });
+    let mut surface = theme::bordered(card, theme::c().surface, theme::c().border, 6.0, 1.0)
+        .shadow(
+            ShadowStyle::new(Color::BLACK)
+                .alpha(theme::c().shadow_alpha)
+                .offset(0.0, 2.0)
+                .blur(3.0),
+        );
+    let mut y = card.top + PAD;
+    for &purpose in PURPOSES {
+        let row = UiRect::new(card.left + 1.0, y, card.right - 1.0, y + ITEM_H);
+        let choose_tabs = tabs.clone();
+        let choose_state = state.clone();
+        surface = surface.child(
+            purpose_row(row, purpose, current.as_deref() == Some(purpose)).on_click(move || {
+                choose_tabs.update(|tabs| tabs.set_purpose(target, Some(purpose)));
+                choose_state.update(|app| app.terminal_tab_context_menu = None);
+            }),
+        );
+        y += ITEM_H;
+    }
+    surface = surface.child(panel(
+        UiRect::new(card.left + 10.0, y + 2.0, card.right - 10.0, y + 3.0),
+        VisualStyle::filled(theme::c().border),
+    ));
+    y += SEP_H;
+    let clear_tabs = tabs.clone();
+    let clear_state = state.clone();
+    let row = UiRect::new(card.left + 1.0, y, card.right - 1.0, y + ITEM_H);
+    surface = surface.child(
+        purpose_row(row, "Automatic name", current.is_none()).on_click(move || {
+            clear_tabs.update(|tabs| tabs.set_purpose(target, None));
+            clear_state.update(|app| app.terminal_tab_context_menu = None);
+        }),
+    );
+    overlay.child(surface)
+}
+
+fn purpose_row(row: UiRect, label: &str, selected: bool) -> Element {
+    Element::new(move |cx| {
+        let hovered = cx.context.interaction_flags(&cx.id).hovered;
+        UiElement::panel(
+            cx.id,
+            row,
+            if hovered {
+                VisualStyle::filled(theme::c().selection)
+            } else {
+                VisualStyle::default()
+            },
+        )
+        .children(cx.children)
+    })
+    .key(label.to_owned())
+    .event_policy(EventPolicy::INTERACTIVE)
+    .cursor(CursorIcon::Pointer)
+    .semantics(Semantics::new(SemanticRole::Button).name(label))
+    .child(text(
+        UiRect::new(row.left + 10.0, row.top, row.right - 10.0, row.bottom),
+        if selected {
+            format!("✓ {label}")
+        } else {
+            format!("  {label}")
+        },
+        theme::mono(theme::c().text, theme::SMALL),
+    ))
 }
 
 #[cfg(test)]

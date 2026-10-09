@@ -113,6 +113,13 @@ pub struct TabContextMenuState {
 pub struct TerminalTabContextMenuState {
     pub position: (f32, f32),
     pub target: u64,
+    pub kind: TerminalTabMenuKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalTabMenuKind {
+    Actions,
+    Purpose,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
