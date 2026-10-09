@@ -3,16 +3,36 @@
 //! The bar is marked as a native window drag region; interactive children
 //! (the buttons) are excluded automatically by hit testing.
 
-use lgui::core::{Color, IconStyle, UiElement, UiEventContext, UiId, precompiled};
+use lgui::core::{
+    Color, IconStyle, PhysicalRect, UiElement, UiEventContext, UiId, UiScale, precompiled,
+};
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
 
 use crate::input::action::Action;
 use crate::state::AppState;
 use crate::theme;
+use crate::window_geometry;
 
 /// A color-tinted, resolution-independent SVG icon (rasterized at physical pixels).
 fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Element {
     precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
+}
+
+/// Keep the SVG bitmap and its destination on the same physical pixel grid.
+/// Auto scaling can shrink the UI below 100%; caption glyphs still need at least
+/// their native 12px canvas, or a 1px edge becomes a faint fractional pixel.
+fn window_icon(id: &'static str, key: &'static str, button: UiRect) -> Element {
+    Element::new(move |cx| {
+        let rect = window_icon_rect(button, cx.context.scale());
+        UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(theme::c().text_soft))
+    })
+}
+
+fn window_icon_rect(button: UiRect, scale: UiScale) -> UiRect {
+    let size = scale.physical_length(12.0).max(12);
+    let left = scale.physical_value((button.left + button.right) / 2.0) - size / 2;
+    let top = scale.physical_value((button.top + button.bottom) / 2.0) - size / 2;
+    scale.logical_rect(PhysicalRect::new(left, top, left + size, top + size))
 }
 
 pub fn render(rect: UiRect, state: State<AppState>) -> Element {
@@ -31,12 +51,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .child(icon(
             "titlebar.settings",
             "settings",
-            UiRect::new(
-                settings_r.left + 9.0,
-                rect.top + 9.0,
-                settings_r.right - 9.0,
-                rect.top + 23.0,
-            ),
+            theme::icon_rect(settings_r),
             if settings_open {
                 theme::c().accent
             } else {
@@ -56,17 +71,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .on_click(|ctx: &mut UiEventContext| {
             let _ = ctx.window().minimize();
         })
-        .child(icon(
-            "titlebar.minimize",
-            "minus",
-            UiRect::new(
-                min_r.left + 12.0,
-                rect.top + 10.0,
-                min_r.right - 12.0,
-                rect.top + 22.0,
-            ),
-            theme::c().text_muted,
-        ));
+        .child(window_icon("titlebar.minimize", "window-minimize", min_r));
     bar = bar.child(min_btn);
 
     // Maximize / restore (toggles between maximized and windowed)
@@ -75,16 +80,14 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .on_click(|ctx: &mut UiEventContext| {
             let _ = ctx.window().toggle_maximize();
         })
-        .child(icon(
+        .child(window_icon(
             "titlebar.maximize",
-            "square",
-            UiRect::new(
-                max_r.left + 12.0,
-                rect.top + 10.0,
-                max_r.right - 12.0,
-                rect.top + 22.0,
-            ),
-            theme::c().text_muted,
+            if window_geometry::is_maximized() {
+                "window-restore"
+            } else {
+                "window-maximize"
+            },
+            max_r,
         ));
     bar = bar.child(max_btn);
 
@@ -94,17 +97,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .on_click(|ctx: &mut UiEventContext| {
             let _ = ctx.window().request_close();
         })
-        .child(icon(
-            "titlebar.close",
-            "close",
-            UiRect::new(
-                close_r.left + 12.0,
-                rect.top + 10.0,
-                close_r.right - 12.0,
-                rect.top + 22.0,
-            ),
-            theme::c().text_muted,
-        ));
+        .child(window_icon("titlebar.close", "window-close", close_r));
     bar = bar.child(close_btn);
 
     // Hairline bottom border

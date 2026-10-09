@@ -88,6 +88,20 @@ pub fn handle_close_requested(context: &mut UiEventContext) {
     context.request_frame();
 }
 
+/// lgui does not report maximize changes, so query the native window directly.
+/// Toggling maximize resizes the viewport, which re-renders the caller.
+pub fn is_maximized() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::IsZoomed;
+        main_window().is_some_and(|hwnd| unsafe { IsZoomed(hwnd) } != 0)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 pub fn remember_native_window() {
     #[cfg(target_os = "windows")]
     let _ = main_window();

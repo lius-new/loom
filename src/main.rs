@@ -63,38 +63,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
         .svg_icons(file_icons::register(
+            // Codicons are drawn on a 16px grid; render them at theme::ICON_SIZE
+            // so their 1px strokes land on whole pixels.
             SvgIconRegistry::new()
-                .with_icon("panel-left", icondata::LuPanelLeft)
+                .with_icon("panel-left", icondata::VsLayoutSidebarLeft)
+                .with_icon("check", icondata::VsCheck)
+                .with_icon("terminal", icondata::VsTerminal)
+                .with_icon("plus", icondata::VsAdd)
+                .with_icon("chevron-down", icondata::VsChevronDown)
+                .with_icon("chevron-right", icondata::VsChevronRight)
+                .with_icon("explorer", icondata::VsFiles)
+                .with_icon("settings", icondata::VsSettingsGear)
+                .with_icon("close", icondata::VsClose)
+                .with_icon("minus", icondata::VsRemove)
+                // No Codicon equivalent yet.
                 .with_icon("git-branch", icondata::LuGitBranch)
-                .with_icon("check", icondata::LuCheck)
-                .with_icon("search", icondata::LuSearch)
                 .with_icon("command", icondata::LuCommand)
-                .with_icon("play", icondata::LuPlay)
-                .with_icon("terminal", icondata::LuTerminal)
-                .with_icon("plus", icondata::LuPlus)
-                .with_icon("chevron-down", icondata::LuChevronDown)
-                .with_icon("split-terminal", icondata::LuColumns2)
-                .with_icon("trash", icondata::LuTrash2)
-                .with_icon("maximize", icondata::LuMaximize2)
-                .with_icon("square", icondata::LuSquare)
-                .with_icon("explorer", icondata::LuLayers)
-                .with_icon("chevron-right", icondata::LuChevronRight)
-                .with_icon("settings", icondata::LuSettings)
-                // X strokes: a 1px round cap (radius 0.5px) lands between pixel centers,
-                // leaving the tips faint. Use butt caps and extend the endpoints outward
-                // so each diagonal terminates on a solid pixel.
+                // Filled caption silhouettes avoid fragile subpixel SVG strokes.
                 .with_icon(
-                    "close",
-                    r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="butt" stroke-linejoin="round" opacity="currentOpacity"><path d="M19.5 4.5 4.5 19.5"/><path d="m4.5 4.5 15 15"/></svg>"#,
+                    "window-minimize",
+                    include_str!("../assets/icons/window-minimize.svg"),
                 )
-                // y=11 (not 12) so the 1px stroke snaps to a single pixel row at 12px size.
                 .with_icon(
-                    "minus",
-                    r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="currentOpacity"><path d="M5 11h14"/></svg>"#,
+                    "window-maximize",
+                    include_str!("../assets/icons/window-maximize.svg"),
+                )
+                .with_icon(
+                    "window-restore",
+                    include_str!("../assets/icons/window-restore.svg"),
+                )
+                .with_icon(
+                    "window-close",
+                    include_str!("../assets/icons/window-close.svg"),
                 ),
         ))
         .provide(RendererKind::Skia(GraphicsPreference::Auto))
-        .memory_options(MemoryOptions::unbounded(ImageCachePolicy::WhileVisible, false))
+        .memory_options(MemoryOptions::unbounded(
+            ImageCachePolicy::WhileVisible,
+            false,
+        ))
         .window_options(window_options)
         .run(app::app)?;
     Ok(())

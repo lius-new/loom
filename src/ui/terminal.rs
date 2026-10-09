@@ -423,12 +423,12 @@ fn render_view(
         .child(icon(
             "terminal.new.icon",
             "plus",
-            UiRect::new(
-                add_center_x - 6.0,
-                add_center_y - 6.0,
-                add_center_x + 6.0,
-                add_center_y + 6.0,
-            ),
+            theme::icon_rect(UiRect::new(
+                add_center_x,
+                add_center_y,
+                add_center_x,
+                add_center_y,
+            )),
             theme::c().text_soft,
         )),
     );
@@ -480,12 +480,12 @@ fn render_view(
         .child(icon(
             "terminal.instance.icon",
             "terminal",
-            UiRect::new(
+            theme::icon_rect(UiRect::new(
                 instance_rect.left + 7.0,
                 instance_rect.top + 5.0,
                 instance_rect.left + 19.0,
                 instance_rect.top + 17.0,
-            ),
+            )),
             theme::c().text_muted,
         ))
         .child(text(
@@ -501,12 +501,12 @@ fn render_view(
         .child(icon(
             "terminal.instance.chevron",
             "chevron-down",
-            UiRect::new(
+            theme::icon_rect(UiRect::new(
                 instance_rect.right - 17.0,
                 instance_rect.top + 5.0,
                 instance_rect.right - 5.0,
                 instance_rect.top + 17.0,
-            ),
+            )),
             theme::c().text_dim,
         )),
     );

@@ -144,7 +144,12 @@ pub fn render(
                 .child(super::sidebar::drawer_icon(
                     section_icon_id,
                     section_icon,
-                    UiRect::new(rect.left + 9.0, y + 5.0, rect.left + 21.0, y + 17.0),
+                    theme::icon_rect(UiRect::new(
+                        rect.left + 9.0,
+                        y + 5.0,
+                        rect.left + 21.0,
+                        y + 17.0,
+                    )),
                     theme::c().text_ghost,
                 ))
                 .child(text(
@@ -508,12 +513,7 @@ fn commit_button(rect: UiRect, state: State<AppState>, store: State<GitStoreSnap
     .child(super::sidebar::drawer_icon(
         "git-commit-button-icon",
         "check",
-        UiRect::new(
-            rect.left + 7.0,
-            rect.top + 7.0,
-            rect.right - 7.0,
-            rect.bottom - 7.0,
-        ),
+        theme::icon_rect(rect),
         if has_message {
             theme::c().text
         } else {

@@ -343,12 +343,12 @@ pub(super) fn drawer_icon(
 
 fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
     let mut header = panel(rect, VisualStyle::filled(theme::c().sidebar));
-    let icon_top = rect.top + (rect.height() - 14.0) / 2.0;
+    let icon_top = rect.top + (rect.height() - theme::ICON_SIZE) / 2.0;
     let explorer_icon = UiRect::new(
         rect.left + 12.0,
         icon_top,
-        rect.left + 26.0,
-        icon_top + 14.0,
+        rect.left + 12.0 + theme::ICON_SIZE,
+        icon_top + theme::ICON_SIZE,
     );
     header = header.child(drawer_icon(
         "sidebar.explorer",
@@ -373,12 +373,12 @@ fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
         rect.right - 4.0,
         rect.bottom,
     );
-    let collapse_icon = UiRect::new(
+    let collapse_icon = theme::icon_rect(UiRect::new(
         collapse_hit.left + 7.0,
-        icon_top,
+        rect.top,
         collapse_hit.left + 21.0,
-        icon_top + 14.0,
-    );
+        rect.bottom,
+    ));
     let collapse_state = state;
     header = header.child(
         panel(collapse_hit, VisualStyle::default().radius(3.0))

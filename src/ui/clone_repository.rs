@@ -92,12 +92,12 @@ pub fn render(
         .child(super::sidebar::drawer_icon(
             "clone-dialog.close",
             "close",
-            UiRect::new(
+            theme::icon_rect(UiRect::new(
                 card.right - 29.0,
                 card.top + 17.0,
                 card.right - 17.0,
                 card.top + 29.0,
-            ),
+            )),
             theme::c().text_dim,
         )),
     );

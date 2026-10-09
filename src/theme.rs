@@ -439,6 +439,15 @@ pub const GUTTER_W: f32 = 48.0;
 pub const LINE_H: f32 = 24.0;
 pub const CODE_PAD: f32 = 16.0;
 pub const CHAR_W: f32 = 7.2; // monospace advance at CODE_SIZE
+/// UI glyph size. Codicons use a 16px grid, so any other size smears strokes.
+pub const ICON_SIZE: f32 = 16.0;
+
+/// An `ICON_SIZE` square sharing `slot`'s center.
+pub fn icon_rect(slot: UiRect) -> UiRect {
+    let left = (slot.left + slot.right - ICON_SIZE) / 2.0;
+    let top = (slot.top + slot.bottom - ICON_SIZE) / 2.0;
+    UiRect::new(left, top, left + ICON_SIZE, top + ICON_SIZE)
+}
 pub const MONO_FAMILIES: &[&str] = &["Cascadia Mono", "Cascadia Code", "Consolas", "Courier New"];
 
 // ---- Font sizes --------------------------------------------------------

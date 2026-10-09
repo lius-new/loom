@@ -48,8 +48,13 @@ pub fn render(
     let terminal_sessions = terminal_tabs;
     let editor_target = editor_focus;
     let terminal_target = terminal_focus;
-    let top = rect.top + (rect.height() - 14.0) / 2.0;
-    let icon_r = UiRect::new(rect.left + 10.0, top, rect.left + 24.0, top + 14.0);
+    let top = rect.top + (rect.height() - theme::ICON_SIZE) / 2.0;
+    let icon_r = UiRect::new(
+        rect.left + 10.0,
+        top,
+        rect.left + 10.0 + theme::ICON_SIZE,
+        top + theme::ICON_SIZE,
+    );
     let color = if s.default_terminal_open() {
         theme::c().accent
     } else {
