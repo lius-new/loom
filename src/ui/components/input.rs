@@ -133,6 +133,15 @@ pub fn render<T>(
 where
     T: Clone + Send + 'static,
 {
+    // Minimize transitions can leave less room than the parent's fixed padding.
+    // Keep the input and its inset content ordered even when that room is zero.
+    let rect = UiRect::new(
+        rect.left,
+        rect.top,
+        rect.right.max(rect.left),
+        rect.bottom.max(rect.top),
+    );
+    let text_inset = TEXT_INSET.min(rect.width() / 2.0);
     let snapshot = binding.get();
     let style = options.style;
     let label = options.label;
@@ -143,9 +152,9 @@ where
     let action_state = binding.state.clone();
     let blur_action_state = binding.state.clone();
     let content = UiRect::new(
-        rect.left + TEXT_INSET,
+        rect.left + text_inset,
         rect.top,
-        rect.right - TEXT_INSET,
+        (rect.right - text_inset).max(rect.left + text_inset),
         rect.bottom,
     );
     let text_bounds = UiRect::new(
@@ -470,6 +479,69 @@ mod tests {
             |_| {},
         );
         session.render_view(view, viewport, UiScale::ONE);
+    }
+
+    #[test]
+    fn commit_input_survives_minimized_width_and_restores_its_text_and_caret() {
+        let exposed = Arc::new(Mutex::new(None::<State<Harness>>));
+        let output = exposed.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state_with(|| {
+                let mut input = InputState::new("commit message");
+                input.focused = true;
+                input.selection.anchor = Some(0);
+                input.preedit = "你好".to_owned();
+                input.preedit_cursor = Some("你好".len().."你好".len());
+                Harness { input }
+            });
+            *output.lock().unwrap() = Some(state.clone());
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id.clone());
+            // Match the Git panel's commit input, including its fixed margins.
+            let viewport = cx.viewport();
+            render(
+                UiRect::new(6.0, 0.0, viewport.right - 38.0, 38.0),
+                id,
+                focus,
+                InputBinding::new(state, read, write),
+                InputOptions {
+                    label: "Commit message",
+                    placeholder: "Commit message",
+                    style: InputStyle {
+                        text: TextStyle::new(Color::WHITE, 10.0, 400),
+                        placeholder: TextStyle::new(Color::WHITE, 10.0, 400),
+                        caret: Color::WHITE,
+                        selection: Color::WHITE,
+                    },
+                    on_submit: None,
+                    on_cancel: None,
+                    on_blur: None,
+                },
+            )
+        });
+        let mut session = UiSession::new();
+        let application = ApplicationContext::empty(Default::default());
+        let _text = lgui::backend::install_text_environment(
+            &application,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        for width in [240.0, 55.0, 44.0, 36.0, 0.0, 240.0] {
+            session.invalidate_all();
+            session.render_view(&view, UiRect::new(0.0, 0.0, width, 38.0), UiScale::ONE);
+            let caret = session
+                .tree()
+                .nodes()
+                .iter()
+                .find_map(|node| node.ime_cursor_rect)
+                .unwrap();
+            assert!(caret.left.is_finite(), "width={width}, caret={caret:?}");
+            assert!(caret.left >= 6.0 && caret.left <= (width - 38.0).max(6.0));
+            let state = exposed.lock().unwrap().clone().unwrap().get();
+            assert_eq!(state.input.text(), "commit message");
+            assert_eq!(state.input.selection.anchor, Some(0));
+            assert_eq!(state.input.selection.cursor, "commit message".len());
+            assert_eq!(state.input.preedit, "你好");
+        }
     }
 
     #[test]
