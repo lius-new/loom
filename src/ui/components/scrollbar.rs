@@ -9,15 +9,10 @@ pub const SIZE: f32 = 12.0;
 pub const INSET: f32 = 2.0;
 pub const MIN_THUMB_LENGTH: f32 = 28.0;
 
+/// The track stays transparent, even on hover, so it never covers content.
 pub fn track(rect: UiRect) -> Element {
     Element::new(move |cx| {
-        let flags = cx.context.interaction_flags(&cx.id);
-        let style = if flags.hovered || flags.pressed {
-            VisualStyle::filled(theme::c().text_dim).alpha(18)
-        } else {
-            VisualStyle::default()
-        };
-        UiElement::panel(cx.id, rect, style).children(cx.children)
+        UiElement::panel(cx.id, rect, VisualStyle::default()).children(cx.children)
     })
     .cursor(CursorIcon::Default)
 }

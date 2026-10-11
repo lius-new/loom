@@ -175,16 +175,11 @@ pub fn render(
         ));
     }
 
-    let content_rect = UiRect::new(
-        body_rect.left,
-        body_rect.top,
-        body_rect.right - if max_y > 0.0 { SCROLLBAR_SIZE } else { 0.0 },
-        body_rect.bottom - if max_x > 0.0 { SCROLLBAR_SIZE } else { 0.0 },
-    );
+    // Rows run under the overlay scrollbars, whose tracks are transparent.
     root = if let Some(overview) = &overview {
         root.child(render_changes(
             pane,
-            content_rect,
+            body_rect,
             document,
             overview,
             split,
@@ -197,7 +192,7 @@ pub fn render(
         ))
     } else if split {
         root.child(render_split(
-            content_rect,
+            body_rect,
             &document.split_rows,
             scroll_x,
             scroll_y,
@@ -205,7 +200,7 @@ pub fn render(
         ))
     } else {
         root.child(render_inline(
-            content_rect,
+            body_rect,
             &document.rows,
             scroll_x,
             scroll_y,
@@ -214,7 +209,7 @@ pub fn render(
 
     if !document.blocks.is_empty() {
         root = root.child(block_buttons(
-            content_rect,
+            body_rect,
             document,
             &starts,
             scroll_y,
@@ -229,21 +224,21 @@ pub fn render(
         let up = state.clone();
         root = root.child(crate::ui::pane_sash::horizontal(
             format!("git-split-{}", pane.get()),
-            split_middle(content_rect, app.git_split_ratio),
-            (content_rect.top, content_rect.bottom),
+            split_middle(body_rect, app.git_split_ratio),
+            (body_rect.top, body_rect.bottom),
             app.git_split_drag == Some(pane),
             move || down.update(|app| app.git_split_drag = Some(pane)),
             move |x| {
                 moving.try_update(|app| {
-                    if app.git_split_drag != Some(pane) || content_rect.width() <= 0.0 {
+                    if app.git_split_drag != Some(pane) || body_rect.width() <= 0.0 {
                         return false;
                     }
                     let position = crate::ui::pane_sash::split_position(
-                        content_rect.left,
-                        content_rect.right,
+                        body_rect.left,
+                        body_rect.right,
                         x,
                     );
-                    app.git_split_ratio = (position - content_rect.left) / content_rect.width();
+                    app.git_split_ratio = (position - body_rect.left) / body_rect.width();
                     true
                 });
             },
@@ -278,6 +273,9 @@ pub fn render(
             state,
         ));
     }
+    if max_x > 0.0 && max_y > 0.0 {
+        root = root.child(editor_view::scrollbar_corner(pane, body_rect));
+    }
 
     root
 }
@@ -307,18 +305,18 @@ fn scroll_metrics(
     let mut viewport_h = rect.height().max(1.0);
     let mut viewport_w = 1.0;
     for _ in 0..3 {
-        let width = rect.width()
-            - if content_h > viewport_h {
-                SCROLLBAR_SIZE
-            } else {
-                0.0
-            };
-        viewport_w = (if split {
-            let bounds = UiRect::new(rect.left, rect.top, rect.left + width, rect.bottom);
-            let left_width = split_middle(bounds, ratio) - rect.left;
-            left_width.min(width - left_width) - NUMBER_W
+        // Columns span the full width; only the text under the vertical
+        // scrollbar must still scroll into view.
+        let reserved = if content_h > viewport_h {
+            SCROLLBAR_SIZE
         } else {
-            width - NUMBER_W * 2.0 - MARKER_W
+            0.0
+        };
+        viewport_w = (if split {
+            let middle = split_middle(rect, ratio);
+            (middle - rect.left).min(rect.right - middle - reserved) - NUMBER_W
+        } else {
+            rect.width() - reserved - NUMBER_W * 2.0 - MARKER_W
         })
         .max(1.0);
         viewport_h = (rect.height()
@@ -529,7 +527,7 @@ fn block_buttons(
         if top + row_h() < rect.top || top > rect.bottom {
             continue;
         }
-        let mut right = rect.right - 6.0;
+        let mut right = rect.right - SCROLLBAR_SIZE - 6.0;
         for &(action, label) in actions.iter().rev() {
             let width = super::tabs::measure(label, theme::SMALL, 400) + 14.0;
             let button = UiRect::new(right - width, top + 2.0, right, top + row_h() - 2.0);
@@ -616,9 +614,9 @@ fn render_changes(
         let collapsed = item.body_rows == 0;
         let action_w = if rect.width() < 360.0 { 66.0 } else { 100.0 };
         let action_rect = UiRect::new(
-            rect.right - action_w - 8.0,
+            rect.right - SCROLLBAR_SIZE - action_w - 8.0,
             top + 9.0,
-            rect.right - 8.0,
+            rect.right - SCROLLBAR_SIZE - 8.0,
             top + 31.0,
         );
         let stats_right = action_rect.left - 10.0;
@@ -1333,12 +1331,7 @@ mod tests {
         let body_top = TOOLBAR_H;
 
         if split {
-            let body = UiRect::new(
-                0.0,
-                TOOLBAR_H,
-                viewport.right - SCROLLBAR_SIZE,
-                viewport.bottom - SCROLLBAR_SIZE,
-            );
+            let body = UiRect::new(0.0, TOOLBAR_H, viewport.right, viewport.bottom);
             let middle = split_middle(body, 0.5);
             send(InputEvent::PointerDown {
                 pointer: pointer(middle, 80.0),

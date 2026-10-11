@@ -143,7 +143,7 @@ pub fn render(
         let (stored_x, stored_y) = s.workspace.scroll(pane);
         let scroll_x = stored_x.clamp(0.0, metrics.max_x);
         let scroll_y = stored_y.clamp(0.0, metrics.max_y);
-        let visible_lines = visible_line_range(scroll_y, metrics.viewport_h, lines.len());
+        let visible_lines = visible_line_range(scroll_y, rect.height(), lines.len());
         let has_vertical = metrics.max_y > 0.0;
         let has_horizontal = metrics.max_x > 0.0;
 
@@ -273,13 +273,8 @@ pub fn render(
 
         // Default cursors inherit from ancestors in lgui. Keep the text cursor
         // on the content subtree so sibling scrollbars retain the arrow cursor.
-        let content_rect = UiRect::new(
-            rect.left,
-            rect.top,
-            rect.right - if has_vertical { SCROLLBAR_SIZE } else { 0.0 },
-            rect.bottom - if has_horizontal { SCROLLBAR_SIZE } else { 0.0 },
-        );
-        let mut content = clip(content_rect, 0.0, 0.0)
+        // Content runs under the overlay scrollbars, whose tracks are transparent.
+        let mut content = clip(rect, 0.0, 0.0)
             .key(format!("editor-content-{}", pane.get()))
             .cursor(CursorIcon::Text);
         if visible_lines.contains(&cursor_line) {
@@ -376,12 +371,7 @@ pub fn render(
             }
         });
 
-        let code_viewport = UiRect::new(
-            code_left,
-            code_top,
-            code_left + metrics.viewport_w,
-            code_top + metrics.viewport_h,
-        );
+        let code_viewport = UiRect::new(code_left, code_top, rect.right, rect.bottom);
         let layout_right = code_left + metrics.content_w;
         let mut code = group(UiRect::new(
             code_left,
@@ -605,6 +595,9 @@ pub fn render(
                 state.clone(),
             ));
         }
+        if has_vertical && has_horizontal {
+            root = root.child(scrollbar_corner(pane, rect));
+        }
     }
 
     let st_input = state.clone();
@@ -783,6 +776,19 @@ pub(crate) fn vertical_scrollbar(
         .key(format!("editor-vertical-scrollbar-{}", pane.get()))
         .child(track_hit)
         .child(thumb)
+}
+
+/// The square where both scrollbars meet. It keeps the arrow cursor over the
+/// content that runs beneath it and swallows clicks there.
+pub(crate) fn scrollbar_corner(pane: PaneId, rect: UiRect) -> Element {
+    scrollbar_track(UiRect::new(
+        rect.right - SCROLLBAR_SIZE,
+        rect.bottom - SCROLLBAR_SIZE,
+        rect.right,
+        rect.bottom,
+    ))
+    .key(format!("editor-scrollbar-corner-{}", pane.get()))
+    .event_policy(EventPolicy::INTERACTIVE)
 }
 
 #[allow(clippy::too_many_arguments)]
