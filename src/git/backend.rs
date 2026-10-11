@@ -390,7 +390,8 @@ impl CliGitBackend {
         output
             .stdout
             .split(|byte| *byte == 0)
-            .filter(|record| !record.is_empty())
+            // Each record ends `\0\n`, leaving a newline after the last one.
+            .filter(|record| !record.trim_ascii().is_empty())
             .map(|record| {
                 let text = String::from_utf8_lossy(record);
                 let fields = text.trim().split('\x1f').collect::<Vec<_>>();
