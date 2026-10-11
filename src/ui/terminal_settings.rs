@@ -5,13 +5,27 @@ use crate::terminal_profiles::{ShellProfile, format_arguments, parse_arguments, 
 use crate::terminal_session::ShellKind;
 use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
-use crate::ui::tabs::ellipsize;
+use crate::ui::tabs::{TEXT_MARGIN, ellipsize, measure};
 use lgui::core::{CursorIcon, EventPolicy};
-use lgui::prelude::{Element, State, UiRect, VisualStyle, component, group, panel, text};
+use lgui::prelude::{
+    Element, State, TextAlign, UiRect, VisualStyle, component, group, panel, text,
+};
 use std::path::PathBuf;
 
-const ROW: f32 = 44.0;
-const FORM_H: f32 = 250.0;
+/// Label and description, matching the other settings rows.
+const HEADER: f32 = 58.0;
+/// Space below the terminal list before the next setting.
+const FOOTER: f32 = 20.0;
+const ROW: f32 = 48.0;
+const RADIO: f32 = 14.0;
+const BUTTON_H: f32 = 28.0;
+const BUTTON_PAD_X: f32 = 12.0;
+const ADD_LABEL: &str = "Add terminal";
+const LABEL_W: f32 = 96.0;
+const FORM_TITLE_H: f32 = 44.0;
+const FIELD_H: f32 = 30.0;
+const FIELD_STRIDE: f32 = 40.0;
+const FORM_H: f32 = FORM_TITLE_H + FIELD_STRIDE * 2.0 + FIELD_H + 14.0 + BUTTON_H + 16.0;
 
 #[derive(Clone)]
 pub struct ProfileEditor {
@@ -131,177 +145,278 @@ fn close_editor(app: &mut AppState) {
 }
 
 pub fn height(app: &AppState) -> f32 {
-    58.0 + ROW * app.shell_options.len().max(1) as f32
-        + 38.0
-        + if app.shell_editor.as_ref().is_some_and(|e| e.open) {
-            FORM_H
-        } else {
-            0.0
-        }
+    HEADER + card_height(app) + FOOTER
+}
+
+fn card_height(app: &AppState) -> f32 {
+    let editing = app.shell_editor.as_ref().filter(|e| e.open);
+    let rows = app.shell_options.len().max(1) as f32 * ROW;
+    let form = match editing {
+        Some(editor) if editor.id.is_none() => FORM_H,
+        // An edited row is replaced by its form.
+        Some(_) => FORM_H - ROW,
+        None => 0.0,
+    };
+    rows + form + 2.0
 }
 
 pub fn render(rect: UiRect, app: &AppState, state: State<AppState>) -> Element {
-    let mut root = group(rect)
+    let add_w = measure(ADD_LABEL, theme::UI_SIZE, 400) + BUTTON_PAD_X * 2.0;
+    let add_rect = UiRect::new(
+        (rect.right - add_w).max(rect.left),
+        rect.top + 14.0,
+        rect.right,
+        rect.top + 14.0 + BUTTON_H,
+    );
+    let text_right = (add_rect.left - 24.0).max(rect.left);
+    let add = state.clone();
+    let root = group(rect)
         .child(text(
-            UiRect::new(rect.left, rect.top + 11.0, rect.right, rect.top + 29.0),
-            "Default terminal",
+            UiRect::new(rect.left, rect.top + 11.0, text_right, rect.top + 29.0),
+            "Default shell",
             theme::sans(theme::c().text, theme::UI_SIZE),
         ))
         .child(text(
-            UiRect::new(rect.left, rect.top + 30.0, rect.right, rect.top + 48.0),
-            "Choose a default, or add another shell with its own launch arguments.",
+            UiRect::new(rect.left, rect.top + 30.0, text_right, rect.top + 48.0),
+            "Used when a new terminal opens without picking a shell.",
             theme::sans(theme::c().text_dim, theme::SMALL + 1.0),
-        ));
-    let mut top = rect.top + 58.0;
-    for option in &app.shell_options {
-        let row = UiRect::new(rect.left, top, rect.right, top + ROW - 2.0);
-        let available = option.available();
-        let active = option.kind == app.default_shell;
-        let custom = matches!(option.kind, ShellKind::Custom(_));
-        let controls = if custom { 112.0 } else { 0.0 };
-        let name_right = (row.right - controls - 8.0).max(row.left + 24.0);
-        let name = if available {
-            option.name.clone()
-        } else if active && app.effective_shell() != option.kind {
-            format!(
-                "{} (unavailable; using {})",
-                option.name,
-                app.shell_name(app.effective_shell())
-            )
+        ))
+        .child(button(add_rect, ADD_LABEL, "shell-add", false, move || {
+            add.update(|app| edit(app, None))
+        }));
+
+    let card = UiRect::new(
+        rect.left,
+        rect.top + HEADER,
+        rect.right,
+        rect.top + HEADER + card_height(app),
+    );
+    let mut list = theme::bordered(card, theme::c().surface, theme::c().border, 6.0, 1.0);
+    let inner_left = card.left + 1.0;
+    let inner_right = card.right - 1.0;
+    let editor = app.shell_editor.as_ref().filter(|e| e.open);
+    let mut top = card.top + 1.0;
+    let mut first = true;
+    let divider = |list: Element, top: f32, first: &mut bool| {
+        let list = if *first {
+            list
         } else {
-            format!("{} (unavailable)", option.name)
+            list.child(panel(
+                UiRect::new(inner_left, top, inner_right, top + 1.0),
+                VisualStyle::filled(theme::c().border),
+            ))
         };
-        let path = option
-            .program
-            .as_ref()
-            .map(|p| crate::ui::display_path(p))
-            .unwrap_or_else(|| "Update the executable path to use this terminal.".into());
-        let mut item = panel(
-            row,
-            if active {
-                VisualStyle::filled(theme::c().selection).radius(3.0)
-            } else {
-                VisualStyle::default()
-            },
-        )
-        .key(format!("settings-shell-{:?}", option.kind));
-        if available {
-            let select = state.clone();
-            let kind = option.kind;
-            item = item
-                .event_policy(EventPolicy::INTERACTIVE)
-                .cursor(CursorIcon::Pointer)
-                .on_click(move || select.update(|app| app.default_shell = kind));
+        *first = false;
+        list
+    };
+    for option in &app.shell_options {
+        list = divider(list, top, &mut first);
+        let editing_this = matches!(
+            (editor.and_then(|e| e.id), option.kind),
+            (Some(id), ShellKind::Custom(kind)) if id == kind
+        );
+        if editing_this {
+            let form = UiRect::new(inner_left, top, inner_right, top + FORM_H);
+            list = list.child(editor_form(form, state.clone(), editor.unwrap()));
+            top += FORM_H;
+        } else {
+            let row = UiRect::new(inner_left, top, inner_right, top + ROW);
+            list = list.child(shell_row(row, option, app, state.clone()));
+            top += ROW;
         }
-        item = item
-            .child(text(
-                UiRect::new(
-                    row.left + 4.0,
-                    row.top + 6.0,
-                    row.left + 22.0,
-                    row.top + 26.0,
-                ),
-                if active { "●" } else { "○" },
-                theme::sans(theme::c().accent, theme::UI_SIZE),
-            ))
-            .child(text(
-                UiRect::new(row.left + 26.0, row.top + 3.0, name_right, row.top + 22.0),
-                ellipsize(
-                    &name,
-                    (name_right - row.left - 26.0).max(0.0),
-                    theme::UI_SIZE,
-                    400,
-                ),
-                theme::sans(
-                    if available {
-                        theme::c().text
-                    } else {
-                        theme::c().text_dim
-                    },
-                    theme::UI_SIZE,
-                ),
-            ))
-            .child(text(
-                UiRect::new(row.left + 26.0, row.top + 23.0, name_right, row.bottom),
-                ellipsize(
-                    &path,
-                    (name_right - row.left - 26.0).max(0.0),
-                    theme::SMALL,
-                    400,
-                ),
-                theme::sans(theme::c().text_dim, theme::SMALL),
-            ));
-        if let ShellKind::Custom(id) = option.kind {
-            let edit_state = state.clone();
-            let delete_state = state.clone();
-            item = item
-                .child(button(
-                    UiRect::new(
-                        row.right - 108.0,
-                        row.top + 6.0,
-                        row.right - 60.0,
-                        row.top + 34.0,
-                    ),
-                    "Edit",
-                    format!("shell-edit-{id}"),
-                    move || edit_state.update(|app| edit(app, Some(id))),
-                ))
-                .child(button(
-                    UiRect::new(
-                        row.right - 56.0,
-                        row.top + 6.0,
-                        row.right - 2.0,
-                        row.top + 34.0,
-                    ),
-                    "Delete",
-                    format!("shell-delete-{id}"),
-                    move || delete_state.update(|app| remove(app, id)),
-                ));
-        }
-        root = root.child(item);
-        top += ROW;
     }
     if app.shell_options.is_empty() {
-        root = root.child(text(
-            UiRect::new(rect.left, top, rect.right, top + ROW),
-            "No system shell found. Add a terminal below.",
+        list = list.child(text(
+            UiRect::new(inner_left + 16.0, top, inner_right - 16.0, top + ROW),
+            "No shell was found. Add a terminal to get started.",
             theme::sans(theme::c().text_dim, theme::UI_SIZE),
         ));
+        first = false;
         top += ROW;
     }
-    let add = state.clone();
-    let refresh = state.clone();
-    root = root
-        .child(button(
-            UiRect::new(rect.left, top + 2.0, rect.left + 108.0, top + 30.0),
-            "Add terminal",
-            "shell-add".into(),
-            move || add.update(|app| edit(app, None)),
+    if let Some(editor) = editor.filter(|e| e.id.is_none()) {
+        list = divider(list, top, &mut first);
+        let form = UiRect::new(inner_left, top, inner_right, top + FORM_H);
+        list = list.child(editor_form(form, state, editor));
+    }
+    root.child(list)
+}
+
+fn shell_row(
+    row: UiRect,
+    option: &crate::terminal_profiles::ShellOption,
+    app: &AppState,
+    state: State<AppState>,
+) -> Element {
+    let available = option.available();
+    let active = option.kind == app.default_shell;
+    let custom = match option.kind {
+        ShellKind::Custom(id) => Some(id),
+        _ => None,
+    };
+    let actions_w = if custom.is_some() { 132.0 } else { 0.0 };
+    let text_left = row.left + 44.0;
+    let text_right = (row.right - actions_w - 16.0).max(text_left);
+
+    let mut item = panel(
+        row,
+        if active {
+            VisualStyle::filled(theme::c().active_line)
+        } else {
+            VisualStyle::default()
+        },
+    )
+    .key(format!("settings-shell-{:?}", option.kind));
+    if available {
+        let select = state.clone();
+        let kind = option.kind;
+        item = item
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || select.update(|app| app.default_shell = kind));
+    }
+    item = item.child(radio(
+        UiRect::new(
+            row.left + 16.0,
+            row.top + (ROW - RADIO) / 2.0,
+            row.left + 16.0 + RADIO,
+            row.top + (ROW + RADIO) / 2.0,
+        ),
+        active,
+        available,
+    ));
+
+    // Name, then a status tag that only appears when it says something.
+    let name_w = measure(&option.name, theme::UI_SIZE, 400) + TEXT_MARGIN;
+    let tag = if !available && active && app.effective_shell() != option.kind {
+        Some((
+            format!(
+                "Unavailable · using {}",
+                app.shell_name(app.effective_shell())
+            ),
+            theme::c().warning,
         ))
-        .child(button(
-            UiRect::new(rect.left + 116.0, top + 2.0, rect.left + 184.0, top + 30.0),
-            "Refresh",
-            "shell-refresh".into(),
-            move || refresh.update(AppState::refresh_shells),
-        ));
-    top += 38.0;
-    if let Some(editor) = app.shell_editor.as_ref().filter(|e| e.open) {
-        root = root.child(editor_form(
-            UiRect::new(rect.left, top, rect.right, top + FORM_H),
-            state,
-            editor.error.as_deref(),
+    } else if !available {
+        Some(("Unavailable".to_owned(), theme::c().warning))
+    } else if active {
+        Some(("Default".to_owned(), theme::c().accent))
+    } else {
+        None
+    };
+    let name_right = (text_left + name_w).min(text_right);
+    item = item.child(text(
+        UiRect::new(text_left, row.top + 7.0, name_right, row.top + 25.0),
+        ellipsize(
+            &option.name,
+            (name_right - text_left).max(0.0),
+            theme::UI_SIZE,
+            400,
+        ),
+        theme::sans(
+            if available {
+                theme::c().text_bright
+            } else {
+                theme::c().text_muted
+            },
+            theme::UI_SIZE,
+        ),
+    ));
+    if let Some((tag, color)) = tag {
+        let left = (name_right - TEXT_MARGIN + 4.0).max(text_left);
+        item = item.child(text(
+            UiRect::new(left, row.top + 8.0, text_right.max(left), row.top + 25.0),
+            ellipsize(&tag, (text_right - left).max(0.0), theme::SMALL, 400),
+            theme::sans(color, theme::SMALL),
         ));
     }
-    root
+
+    let mut detail = option
+        .program
+        .as_ref()
+        .map(|p| crate::ui::display_path(p))
+        .unwrap_or_else(|| "Edit the executable path to use this terminal.".into());
+    if !option.args.is_empty() {
+        detail = format!("{detail}  {}", format_arguments(&option.args));
+    }
+    item = item.child(text(
+        UiRect::new(text_left, row.top + 25.0, text_right, row.top + 42.0),
+        ellipsize(
+            &detail,
+            (text_right - text_left).max(0.0),
+            theme::SMALL,
+            400,
+        ),
+        theme::mono(theme::c().text_dim, theme::SMALL),
+    ));
+
+    if let Some(id) = custom {
+        let edit_state = state.clone();
+        let top = row.top + (ROW - BUTTON_H) / 2.0;
+        item = item
+            .child(button(
+                UiRect::new(row.right - 136.0, top, row.right - 80.0, top + BUTTON_H),
+                "Edit",
+                &format!("shell-edit-{id}"),
+                false,
+                move || edit_state.update(|app| edit(app, Some(id))),
+            ))
+            .child(button(
+                UiRect::new(row.right - 74.0, top, row.right - 12.0, top + BUTTON_H),
+                "Remove",
+                &format!("shell-delete-{id}"),
+                false,
+                move || state.update(|app| remove(app, id)),
+            ));
+    }
+    item
+}
+
+fn radio(rect: UiRect, on: bool, enabled: bool) -> Element {
+    let ring = if on {
+        theme::c().accent
+    } else if enabled {
+        theme::c().text_dim
+    } else {
+        theme::c().text_ghost
+    };
+    let mut radio = theme::bordered(rect, theme::c().surface, ring, RADIO / 2.0, 1.5);
+    if on {
+        let inset = (RADIO - 6.0) / 2.0;
+        radio = radio.child(panel(
+            UiRect::new(
+                rect.left + inset,
+                rect.top + inset,
+                rect.right - inset,
+                rect.bottom - inset,
+            ),
+            VisualStyle::filled(theme::c().accent).radius(3.0),
+        ));
+    }
+    radio
 }
 
 fn button(
     rect: UiRect,
     label: &'static str,
-    key: String,
+    key: &str,
+    primary: bool,
     click: impl Fn() + Send + Sync + 'static,
 ) -> Element {
-    theme::bordered(rect, theme::c().surface, theme::c().border, 3.0, 1.0)
+    let mut label_style = theme::sans(
+        if primary {
+            theme::c().on_accent
+        } else {
+            theme::c().text
+        },
+        theme::UI_SIZE,
+    );
+    label_style.align = TextAlign::Center;
+    let frame = if primary {
+        panel(rect, VisualStyle::filled(theme::c().accent).radius(4.0))
+    } else {
+        theme::bordered(rect, theme::c().surface, theme::c().border, 4.0, 1.0)
+    };
+    frame
         .key(key)
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
@@ -309,20 +424,25 @@ fn button(
             click();
             cx.stop_propagation();
         })
-        .child(text(
-            UiRect::new(
-                rect.left + 6.0,
-                rect.top + 5.0,
-                rect.right - 4.0,
-                rect.bottom,
-            ),
-            label,
-            theme::sans(theme::c().text, theme::UI_SIZE),
-        ))
+        .child(text(rect, label, label_style))
 }
 
-fn editor_form(rect: UiRect, state: State<AppState>, error: Option<&str>) -> Element {
-    let mut root = theme::bordered(rect, theme::c().surface, theme::c().border, 4.0, 1.0);
+fn editor_form(rect: UiRect, state: State<AppState>, editor: &ProfileEditor) -> Element {
+    let mut root = panel(rect, VisualStyle::filled(theme::c().bg));
+    root = root.child(text(
+        UiRect::new(
+            rect.left + 16.0,
+            rect.top + 12.0,
+            rect.right - 16.0,
+            rect.top + 30.0,
+        ),
+        if editor.id.is_some() {
+            "Edit terminal"
+        } else {
+            "New terminal"
+        },
+        theme::sans_semibold(theme::c().text_bright, theme::UI_SIZE),
+    ));
     type Read = fn(&AppState) -> &InputState;
     type Write = fn(&mut AppState) -> &mut InputState;
     let fields: [(&str, &'static str, Read, Write); 3] = [
@@ -334,109 +454,122 @@ fn editor_form(rect: UiRect, state: State<AppState>, error: Option<&str>) -> Ele
         ),
         (
             "Executable",
-            "Program path or command name",
+            "Path or command name, e.g. nu",
             |app| &app.shell_editor.as_ref().unwrap().program,
             |app| &mut app.shell_editor.as_mut().unwrap().program,
         ),
         (
             "Arguments",
-            "Optional; quote arguments containing spaces",
+            "Optional, e.g. --login \"-c some command\"",
             |app| &app.shell_editor.as_ref().unwrap().args,
             |app| &mut app.shell_editor.as_mut().unwrap().args,
         ),
     ];
+    let label_w = (rect.width() * 0.25).clamp(0.0, LABEL_W);
+    let input_left = rect.left + 16.0 + label_w;
+    let input_right = (rect.right - 16.0).max(input_left);
     for (index, (label, placeholder, read, write)) in fields.into_iter().enumerate() {
-        let top = rect.top + 9.0 + index as f32 * 58.0;
+        let top = rect.top + FORM_TITLE_H + index as f32 * FIELD_STRIDE;
         root = root.child(text(
-            UiRect::new(rect.left + 12.0, top, rect.right - 12.0, top + 19.0),
+            UiRect::new(rect.left + 16.0, top, input_left, top + FIELD_H),
             label,
-            theme::sans(theme::c().text_muted, theme::SMALL),
+            theme::sans(theme::c().text_muted, theme::UI_SIZE),
         ));
-        let input_rect = UiRect::new(
-            rect.left + 12.0,
-            top + 21.0,
-            (rect.right - 12.0).max(rect.left + 12.0),
-            top + 51.0,
-        );
+        let frame = UiRect::new(input_left, top, input_right, top + FIELD_H);
         let input_state = state.clone();
         root = root.child(
-            component(input_rect, move |cx, &rect| {
-                let id = cx.use_stable_id();
-                let focus = cx.focus_handle(id.clone());
-                let focus_state = input_state.clone();
-                if index == 0 {
-                    let mounted = focus.clone();
-                    cx.use_effect((), move || {
-                        mounted.focus();
-                    });
-                }
-                input::render(
-                    rect,
-                    id,
-                    focus,
-                    InputBinding::new(input_state.clone(), read, write),
-                    InputOptions {
-                        label: placeholder,
-                        placeholder,
-                        style: InputStyle {
-                            text: theme::mono(theme::c().text, theme::UI_SIZE),
-                            placeholder: theme::sans(theme::c().text_dim, theme::UI_SIZE),
-                            caret: theme::c().text,
-                            selection: theme::c().selection,
-                        },
-                        on_submit: Some(|state| {
-                            state.update(|app| {
-                                save_editor(app);
-                            })
-                        }),
-                        on_cancel: Some(|state| state.update(close_editor)),
-                        on_blur: None,
+            theme::bordered(frame, theme::c().surface, theme::c().border, 4.0, 1.0).child(
+                component(
+                    UiRect::new(
+                        frame.left + 4.0,
+                        frame.top + 1.0,
+                        (frame.right - 4.0).max(frame.left + 4.0),
+                        frame.bottom - 1.0,
+                    ),
+                    move |cx, &rect| {
+                        let id = cx.use_stable_id();
+                        let focus = cx.focus_handle(id.clone());
+                        let focus_state = input_state.clone();
+                        if index == 0 {
+                            let mounted = focus.clone();
+                            cx.use_effect((), move || {
+                                mounted.focus();
+                            });
+                        }
+                        input::render(
+                            rect,
+                            id,
+                            focus,
+                            InputBinding::new(input_state.clone(), read, write),
+                            InputOptions {
+                                label: placeholder,
+                                placeholder,
+                                style: InputStyle {
+                                    text: theme::mono(theme::c().text, theme::UI_SIZE),
+                                    placeholder: theme::mono(theme::c().text_faint, theme::UI_SIZE),
+                                    caret: theme::c().text,
+                                    selection: theme::c().selection,
+                                },
+                                on_submit: Some(|state| {
+                                    state.update(|app| {
+                                        save_editor(app);
+                                    })
+                                }),
+                                on_cancel: Some(|state| state.update(close_editor)),
+                                on_blur: None,
+                            },
+                        )
+                        .on_focus(move |_| focus_state.update(|app| app.terminal_focused = false))
                     },
                 )
-                .on_focus(move |_| focus_state.update(|app| app.terminal_focused = false))
-            })
-            .key(format!("shell-profile-input-{index}")),
+                .key(format!("shell-profile-input-{index}")),
+            ),
         );
     }
-    if let Some(error) = error {
+
+    let footer = rect.bottom - 16.0 - BUTTON_H;
+    let save_rect = UiRect::new(
+        (rect.right - 16.0 - 72.0).max(rect.left),
+        footer,
+        rect.right - 16.0,
+        footer + BUTTON_H,
+    );
+    let cancel_rect = UiRect::new(
+        (save_rect.left - 8.0 - 72.0).max(rect.left),
+        footer,
+        save_rect.left - 8.0,
+        footer + BUTTON_H,
+    );
+    if let Some(error) = &editor.error {
         root = root.child(text(
             UiRect::new(
-                rect.left + 12.0,
-                rect.top + 186.0,
-                rect.right - 12.0,
-                rect.top + 208.0,
+                input_left,
+                footer,
+                (cancel_rect.left - 12.0).max(input_left),
+                footer + BUTTON_H,
             ),
-            error.to_owned(),
-            theme::sans(theme::c().text, theme::SMALL),
+            ellipsize(
+                error,
+                (cancel_rect.left - 12.0 - input_left).max(0.0),
+                theme::SMALL + 1.0,
+                400,
+            ),
+            theme::sans(theme::c().error_text, theme::SMALL + 1.0),
         ));
     }
     let save = state.clone();
     root.child(button(
-        UiRect::new(
-            rect.left + 12.0,
-            rect.top + 212.0,
-            rect.left + 72.0,
-            rect.top + 240.0,
-        ),
-        "Save",
-        "shell-save".into(),
-        move || {
-            save.update(|app| {
-                save_editor(app);
-            })
-        },
-    ))
-    .child(button(
-        UiRect::new(
-            rect.left + 80.0,
-            rect.top + 212.0,
-            rect.left + 148.0,
-            rect.top + 240.0,
-        ),
+        cancel_rect,
         "Cancel",
-        "shell-cancel".into(),
+        "shell-cancel",
+        false,
         move || state.update(close_editor),
     ))
+    .child(button(save_rect, "Save", "shell-save", true, move || {
+        save.update(|app| {
+            save_editor(app);
+        })
+    }))
 }
 
 #[cfg(test)]
@@ -615,19 +748,37 @@ mod tests {
             session.render_view(view, viewport, UiScale::ONE);
             session.runtime().run_effects();
         }
-        let name_point = Point::new(60.0, 182.0);
-        for event in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(name_point),
-                button: PointerButton::Left,
-            },
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(name_point),
-                button: PointerButton::Left,
-            },
-        ] {
-            send(&mut session, &context, &view, viewport, event);
+        fn click(
+            session: &mut UiSession,
+            context: &ApplicationContext,
+            view: &AppView,
+            viewport: UiRect,
+            label: &str,
+        ) {
+            let node = session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|n| n.text.as_deref() == Some(label))
+                .unwrap_or_else(|| panic!("missing label {label}"));
+            let point = Point::new(
+                (node.layout_rect.left + node.layout_rect.right) * 0.5,
+                (node.layout_rect.top + node.layout_rect.bottom) * 0.5,
+            );
+            for event in [
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            ] {
+                send(session, context, view, viewport, event);
+            }
         }
+        click(&mut session, &context, &view, viewport, "My shell");
         send(
             &mut session,
             &context,
@@ -647,42 +798,22 @@ mod tests {
             draft.args.set_text("--login");
         });
         session.render_view(&view, viewport, UiScale::ONE);
-        let save_point = Point::new(40.0, 58.0 + ROW + 38.0 + 224.0);
-        for event in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(save_point),
-                button: PointerButton::Left,
-            },
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(save_point),
-                button: PointerButton::Left,
-            },
-        ] {
-            send(&mut session, &context, &view, viewport, event);
-        }
+        click(&mut session, &context, &view, viewport, "Save");
         assert_eq!(state.get().terminal_profiles.len(), 1);
         let id = state.get().terminal_profiles[0].id;
         state.update(|app| app.default_shell = ShellKind::Custom(id));
         session.render_view(&view, viewport, UiScale::ONE);
-        let index = state
-            .get()
-            .shell_options
-            .iter()
-            .position(|p| p.kind == ShellKind::Custom(id))
-            .unwrap();
-        let delete_point = Point::new(680.0, 58.0 + index as f32 * ROW + 20.0);
-        for event in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(delete_point),
-                button: PointerButton::Left,
-            },
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(delete_point),
-                button: PointerButton::Left,
-            },
-        ] {
-            send(&mut session, &context, &view, viewport, event);
-        }
+        // Editing replaces the row with its form; the form's title confirms it.
+        click(&mut session, &context, &view, viewport, "Edit");
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|n| n.text.as_deref() == Some("Edit terminal"))
+        );
+        click(&mut session, &context, &view, viewport, "Cancel");
+        click(&mut session, &context, &view, viewport, "Remove");
         assert!(state.get().terminal_profiles.is_empty());
         assert_ne!(state.get().default_shell, ShellKind::Custom(id));
     }

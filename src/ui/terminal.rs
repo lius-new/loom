@@ -1287,14 +1287,14 @@ fn shell_menu(
 ) -> Element {
     let options = state.get().shell_options.clone();
     let space = (bounds.bottom - instance_rect.bottom).max(instance_rect.top - bounds.top);
-    let visible = (((space - 40.0) / SHELL_MENU_ROW_H).floor() as usize)
+    let visible = (((space - 12.0) / SHELL_MENU_ROW_H).floor() as usize)
         .clamp(1, 7)
         .min(options.len().max(1));
     let offset = state
         .get()
         .terminal_shell_scroll
         .min(options.len().saturating_sub(visible));
-    let height = 8.0 + SHELL_MENU_ROW_H * (options.len().min(visible) + 1) as f32;
+    let height = 8.0 + SHELL_MENU_ROW_H * options.len().min(visible).max(1) as f32;
     let top = if instance_rect.bottom + 4.0 + height <= bounds.bottom {
         instance_rect.bottom + 4.0
     } else {
@@ -1385,31 +1385,7 @@ fn shell_menu(
         ));
         menu = menu.child(item);
     }
-    let manage_top = menu_rect.top + 4.0 + options.len().min(visible) as f32 * SHELL_MENU_ROW_H;
-    let manage = UiRect::new(
-        menu_rect.left + 4.0,
-        manage_top,
-        menu_rect.right - 4.0,
-        manage_top + SHELL_MENU_ROW_H,
-    );
-    menu.child(
-        panel(manage, VisualStyle::default())
-            .key("terminal-manage-profiles")
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                state.update(|app| {
-                    app.terminal_shell_menu = false;
-                    app.terminal_focused = false;
-                    app.apply(crate::input::action::Action::OpenSettings);
-                })
-            })
-            .child(text(
-                manage,
-                "Manage terminals…",
-                theme::sans(theme::c().accent, theme::UI_SIZE),
-            )),
-    )
+    menu
 }
 
 fn terminal_cursor_rect(content: UiRect, cursor: (u16, u16), rows: u16, cols: u16) -> UiRect {

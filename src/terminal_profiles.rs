@@ -241,7 +241,16 @@ pub fn parse_arguments(value: &str) -> Result<Vec<String>, String> {
 
 pub fn format_arguments(args: &[String]) -> String {
     args.iter()
-        .map(|arg| format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\"")))
+        .map(|arg| {
+            // Backslashes are literal outside quotes, so plain paths stay readable.
+            if !arg.is_empty()
+                && !arg.contains(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+            {
+                arg.clone()
+            } else {
+                format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\""))
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }

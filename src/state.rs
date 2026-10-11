@@ -545,6 +545,7 @@ impl AppState {
                 self.workspace.activate_last();
             }
             Action::OpenSettings => {
+                self.refresh_shells();
                 self.workspace.open_settings();
             }
             Action::OpenKeymap => {
