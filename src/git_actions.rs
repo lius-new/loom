@@ -1268,5 +1268,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 }
-            operation_step: None,
-            stashes: Default::default(),
