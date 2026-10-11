@@ -1175,6 +1175,66 @@ fn folder_row(
     row
 }
 
+/// `path`'s file name, then its folder dimmed when `show_folder`, clipped
+/// to `viewport`. The name leads so a deep path still shows which file it
+/// is; a long folder is cut at the right.
+fn path_label(
+    viewport: UiRect,
+    path: &std::path::Path,
+    show_folder: bool,
+    emphasized: bool,
+) -> Element {
+    let (name, folder) = split_path(path);
+    let name_style = theme::mono(
+        if emphasized {
+            theme::c().text
+        } else {
+            theme::c().text_soft
+        },
+        theme::SMALL,
+    );
+    let folder_style = theme::mono(theme::c().text_ghost, theme::SMALL);
+    // Lay each text out at its natural width and let the viewport clip it.
+    // Narrower rects make the text engine wrap at path separators instead.
+    let name_w = super::tabs::measure(&name, theme::SMALL, 400) + TEXT_PAD;
+    let mut label = clip(viewport, 0.0, 0.0).child(text(
+        UiRect::new(
+            viewport.left,
+            viewport.top,
+            viewport.left + name_w,
+            viewport.bottom,
+        ),
+        name,
+        name_style,
+    ));
+    if let Some(folder) = folder.filter(|_| show_folder) {
+        let left = viewport.left + name_w + 4.0;
+        let folder_w = super::tabs::measure(&folder, theme::SMALL, 400) + TEXT_PAD;
+        label = label.child(text(
+            UiRect::new(left, viewport.top, left + folder_w, viewport.bottom),
+            folder,
+            folder_style,
+        ));
+    }
+    label
+}
+
+/// Extra width past a measured text so its last glyph is never clipped.
+const TEXT_PAD: f32 = 6.0;
+
+/// `path` as its file name and its folder, `None` at the repository root.
+fn split_path(path: &std::path::Path) -> (String, Option<String>) {
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let folder = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| parent.display().to_string());
+    (name, folder)
+}
+
 /// A row of the history section.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum HistoryRow {
@@ -1349,25 +1409,12 @@ fn history_row(
                     kind.indicator(),
                     theme::mono_bold(color, theme::SMALL),
                 ))
-                .child(
-                    clip(
-                        UiRect::new(rect.left + 44.0, rect.top, rect.right - 12.0, rect.bottom),
-                        0.0,
-                        0.0,
-                    )
-                    .child(text(
-                        UiRect::new(rect.left + 44.0, rect.top, rect.left + 2000.0, rect.bottom),
-                        path.display().to_string(),
-                        theme::mono(
-                            if hovered {
-                                theme::c().text
-                            } else {
-                                theme::c().text_dim
-                            },
-                            theme::SMALL,
-                        ),
-                    )),
-                )
+                .child(path_label(
+                    UiRect::new(rect.left + 44.0, rect.top, rect.right - 12.0, rect.bottom),
+                    path,
+                    true,
+                    hovered,
+                ))
         }
     }
 }
@@ -2005,29 +2052,9 @@ fn file_row(
     } else {
         52.0
     };
-    let name = if nested {
-        path.file_name().map_or_else(
-            || path.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        )
-    } else {
-        path.display().to_string()
-    };
     let indent = if nested { 14.0 } else { 0.0 };
     let name_left = rect.left + 30.0 + indent;
     let name_viewport = UiRect::new(name_left, rect.top, rect.right - trailing_w, rect.bottom);
-    // Match the editor: lay the full single-line content out at its natural
-    // width, then clip the viewport. Giving the text only the viewport width
-    // makes the text engine choose path separators as word-break points and
-    // can hide an entire trailing path segment at once.
-    let name_width =
-        name.chars().count() as f32 * theme::CHAR_W * (theme::SMALL / theme::CODE_SIZE) + 12.0;
-    let name_content = UiRect::new(
-        name_left,
-        rect.top,
-        name_left + name_width.max(name_viewport.width()),
-        rect.bottom,
-    );
     let row_key = format!("git-file-{target:?}-{}", path.display());
     let menu_state = state.clone();
     let menu_repository = repository_root.clone();
@@ -2092,18 +2119,13 @@ fn file_row(
         indicator,
         theme::mono_bold(indicator_color, theme::SMALL),
     ))
-    .child(clip(name_viewport, 0.0, 0.0).child(text(
-        name_content,
-        name,
-        theme::mono(
-            if active || hovered {
-                theme::c().text
-            } else {
-                theme::c().text_dim
-            },
-            theme::SMALL,
-        ),
-    )));
+    .child(path_label(
+        name_viewport,
+        &path,
+        // Grouped rows sit under their folder row already.
+        !nested,
+        active || hovered,
+    ));
     if !hovered {
         return row.child(text(
             UiRect::new(rect.right - 46.0, rect.top, rect.right - 12.0, rect.bottom),
@@ -2178,6 +2200,18 @@ mod action_tests {
                 "[src/ui] 1",
                 "  src/ui/b.rs"
             ]
+        );
+    }
+
+    #[test]
+    fn paths_lead_with_the_file_name() {
+        assert_eq!(
+            split_path(std::path::Path::new("src/api/client.ts")),
+            ("client.ts".to_owned(), Some("src/api".to_owned()))
+        );
+        assert_eq!(
+            split_path(std::path::Path::new("README.md")),
+            ("README.md".to_owned(), None)
         );
     }
 

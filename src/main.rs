@@ -90,7 +90,9 @@ fn svg_icons() -> SvgIconRegistry {
             .with_icon("explorer", icondata::VsLayers)
             .with_icon("settings", icondata::VsSettingsGear)
             .with_icon("close", icondata::VsClose)
-            .with_icon("minus", icondata::VsRemove)
+            // Codicon's `remove` spans 14 of 16 px and reads wider than
+            // `plus` beside it; this one matches the plus visually.
+            .with_icon("minus", include_str!("../assets/icons/minus.svg"))
             .with_icon("source-control", icondata::VsSourceControl)
             .with_icon("arrow-up", icondata::VsArrowUp)
             .with_icon("arrow-down", icondata::VsArrowDown)
