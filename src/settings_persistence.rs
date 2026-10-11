@@ -9,6 +9,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::fonts::FontSettings;
 use crate::terminal_session::ShellKind;
 use crate::theme::ThemeId;
 use crate::workspace_persistence::{config_path, session_path, write_json};
@@ -35,6 +36,10 @@ pub struct Settings {
     pub git_tree_view: bool,
     #[serde(default)]
     pub vim: VimSettings,
+    #[serde(default)]
+    pub editor_font: FontSettings,
+    #[serde(default = "default_terminal_font")]
+    pub terminal_font: FontSettings,
 }
 
 /// Preferences for Vim editing (`"vim"` in `settings.json`).
@@ -82,12 +87,18 @@ impl Default for Settings {
             git_split_diff: false,
             git_tree_view: false,
             vim: VimSettings::default(),
+            editor_font: FontSettings::EDITOR,
+            terminal_font: FontSettings::TERMINAL,
         }
     }
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_terminal_font() -> FontSettings {
+    FontSettings::TERMINAL
 }
 
 pub fn load() -> Settings {
@@ -149,6 +160,15 @@ mod tests {
                 smart_case: true,
                 ..VimSettings::default()
             },
+            editor_font: FontSettings {
+                family: "Fira Code".into(),
+                size: 14,
+                line_height: 150,
+            },
+            terminal_font: FontSettings {
+                size: 13,
+                ..FontSettings::TERMINAL
+            },
         };
 
         let json = serde_json::to_string(&settings).unwrap();
@@ -189,6 +209,8 @@ mod tests {
                 git_split_diff: false,
                 git_tree_view: true,
                 vim: VimSettings::default(),
+                editor_font: FontSettings::EDITOR,
+                terminal_font: FontSettings::TERMINAL,
             }
         );
     }

@@ -1,6 +1,5 @@
 //! Bottom terminal panel backed by a real platform PTY.
 
-use std::cell::Cell;
 use std::sync::Arc;
 
 use lgui::ApplicationHandle;
@@ -10,8 +9,8 @@ use lgui::core::{
 };
 use lgui::prelude::{Color, Element, State, UiRect, VisualStyle, component, group, panel, text};
 use lgui::services::{Clipboard, ClipboardError, ServicesContextExt};
-use lgui::text::{self as text_layout, TextLayoutRequest};
 
+use crate::fonts;
 use crate::state::AppState;
 #[cfg(test)]
 use crate::terminal_session::ShellKind;
@@ -27,42 +26,16 @@ use crate::ui::tabs::{
 const HEADER_H: f32 = 34.0;
 const BODY_PAD_X: f32 = 12.0;
 const BODY_PAD_Y: f32 = 6.0;
-const TERMINAL_FONT_SIZE: f32 = 12.0;
-const FALLBACK_CHAR_W: f32 = TERMINAL_FONT_SIZE * 0.6;
-const TERMINAL_LINE_H: f32 = 19.0;
 const RESIZE_HIT_H: f32 = 8.0;
 const SHELL_MENU_W: f32 = 172.0;
 const SHELL_MENU_ROW_H: f32 = 28.0;
 
-thread_local! {
-    // Only cache a renderer measurement. An early call without a text system
-    // must not pin the fallback width for the lifetime of the window.
-    static CELL_WIDTH: Cell<Option<f32>> = const { Cell::new(None) };
+fn terminal_cell_width() -> f32 {
+    fonts::terminal().char_w
 }
 
-fn terminal_cell_width() -> f32 {
-    CELL_WIDTH.with(|cached| {
-        if let Some(width) = cached.get() {
-            return width;
-        }
-        const SAMPLE: &str = "0000000000000000";
-        let mut request = TextLayoutRequest::single_line(
-            SAMPLE,
-            UiRect::new(0.0, 0.0, 10_000.0, TERMINAL_LINE_H),
-            TERMINAL_FONT_SIZE,
-            400,
-        );
-        request.font_families = theme::MONO_FAMILIES;
-        let measured = text_layout::layout(&request)
-            .map(|layout| layout.width / SAMPLE.len() as f32)
-            .filter(|width| width.is_finite() && *width > 0.0);
-        if let Some(width) = measured {
-            cached.set(Some(width));
-            width
-        } else {
-            FALLBACK_CHAR_W
-        }
-    })
+fn terminal_line_h() -> f32 {
+    fonts::terminal().line_h
 }
 
 /// Toggle only the default terminal region. Detached sessions retain their
@@ -191,14 +164,14 @@ fn weighted_pane_rects(rect: UiRect, weights: &[f32]) -> Vec<UiRect> {
 pub fn pty_size_for_body(rect: UiRect) -> TerminalSize {
     let cell_width = terminal_cell_width();
     let body_w = (rect.width() - BODY_PAD_X * 2.0).max(cell_width);
-    let body_h = (rect.height() - BODY_PAD_Y * 2.0).max(TERMINAL_LINE_H);
+    let body_h = (rect.height() - BODY_PAD_Y * 2.0).max(terminal_line_h());
     TerminalSize {
-        rows: (body_h / TERMINAL_LINE_H)
+        rows: (body_h / terminal_line_h())
             .floor()
             .clamp(1.0, u16::MAX as f32) as u16,
         cols: (body_w / cell_width).floor().clamp(2.0, u16::MAX as f32) as u16,
         pixel_width: cell_width.round().max(1.0) as u16,
-        pixel_height: TERMINAL_LINE_H.round() as u16,
+        pixel_height: terminal_line_h().round() as u16,
     }
 }
 
@@ -742,7 +715,7 @@ fn render_session(
     terminal = terminal.on_wheel(move |cx, delta| {
         let lines = match delta.unit {
             WheelUnit::Lines => delta.y,
-            WheelUnit::Pixels => delta.y / (TERMINAL_LINE_H * 3.0),
+            WheelUnit::Pixels => delta.y / (terminal_line_h() * 3.0),
         };
         if lines.is_finite() && lines != 0.0 {
             wheel_controller.wheel(lines, wheel_state.get().editor.modifiers);
@@ -1088,7 +1061,7 @@ fn render_screen(
 ) -> Element {
     let mut screen = group(content);
     for (row, runs) in snapshot.lines.iter().enumerate() {
-        let top = content.top + row as f32 * TERMINAL_LINE_H;
+        let top = content.top + row as f32 * terminal_line_h();
         if top >= content.bottom {
             break;
         }
@@ -1096,7 +1069,7 @@ fn render_screen(
             if let Some(background) = run.style.background {
                 let (left, right) = run_span(content, run);
                 screen = screen.child(panel(
-                    UiRect::new(left, top, right, top + TERMINAL_LINE_H),
+                    UiRect::new(left, top, right, top + terminal_line_h()),
                     VisualStyle::filled(Color(background)),
                 ));
             }
@@ -1111,19 +1084,19 @@ fn render_screen(
             let right =
                 (content.left + f32::from(end_col) * terminal_cell_width()).min(content.right);
             screen = screen.child(panel(
-                UiRect::new(left, top, right, top + TERMINAL_LINE_H),
+                UiRect::new(left, top, right, top + terminal_line_h()),
                 VisualStyle::filled(theme::c().selection),
             ));
         }
         for run in runs {
             let (left, right) = run_span(content, run);
-            let run_rect = UiRect::new(left, top, right, top + TERMINAL_LINE_H);
+            let run_rect = UiRect::new(left, top, right, top + terminal_line_h());
             if !run.text.is_empty() {
                 let foreground = run.style.foreground.map(Color).unwrap_or(theme::c().text);
                 let mut style = if run.style.bold {
-                    theme::mono_bold(foreground, TERMINAL_FONT_SIZE)
+                    fonts::terminal().bold(foreground)
                 } else {
-                    theme::mono(foreground, TERMINAL_FONT_SIZE)
+                    fonts::terminal().style(foreground)
                 };
                 if run.style.dim {
                     style = style.alpha(0x90);
@@ -1132,14 +1105,14 @@ fn render_screen(
                 // makes its natural width slightly exceed the allocated cells.
                 let measured = crate::ui::components::text::SingleLineText::new(
                     run.text.clone(),
-                    UiRect::new(left, top, left + 100_000.0, top + TERMINAL_LINE_H),
+                    UiRect::new(left, top, left + 100_000.0, top + terminal_line_h()),
                     style,
                 );
                 let text_rect = UiRect::new(
                     left,
                     top,
                     left + measured.width().max(right - left) + 2.0,
-                    top + TERMINAL_LINE_H,
+                    top + terminal_line_h(),
                 );
                 screen = screen.child(clip(run_rect, 0.0, 0.0).child(text(
                     text_rect,
@@ -1150,9 +1123,9 @@ fn render_screen(
                     screen = screen.child(panel(
                         UiRect::new(
                             left,
-                            top + TERMINAL_LINE_H - 3.0,
+                            top + terminal_line_h() - 3.0,
                             right,
-                            top + TERMINAL_LINE_H - 2.0,
+                            top + terminal_line_h() - 2.0,
                         ),
                         VisualStyle::filled(foreground),
                     ));
@@ -1176,9 +1149,9 @@ fn render_screen(
         .message()
         .or_else(|| snapshot.notice.clone())
     {
-        let top = (content.bottom - TERMINAL_LINE_H).max(content.top);
+        let top = (content.bottom - terminal_line_h()).max(content.top);
         screen = screen.child(text(
-            UiRect::new(content.left, top, content.right, top + TERMINAL_LINE_H),
+            UiRect::new(content.left, top, content.right, top + terminal_line_h()),
             message,
             theme::mono(theme::c().text_dim, theme::SMALL),
         ));
@@ -1196,7 +1169,7 @@ fn run_span(content: UiRect, run: &TerminalRun) -> (f32, f32) {
 
 /// Maps a pointer to the nearest cell boundary, clamped to the screen.
 fn cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u16) {
-    let row = ((point.y - content.top) / TERMINAL_LINE_H)
+    let row = ((point.y - content.top) / terminal_line_h())
         .floor()
         .clamp(0.0, f32::from(rows.saturating_sub(1)));
     let col = ((point.x - content.left) / terminal_cell_width())
@@ -1206,7 +1179,7 @@ fn cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u16) {
 }
 
 fn mouse_cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u16) {
-    let row = ((point.y - content.top) / TERMINAL_LINE_H)
+    let row = ((point.y - content.top) / terminal_line_h())
         .floor()
         .clamp(0.0, f32::from(rows.saturating_sub(1)));
     let col = ((point.x - content.left) / terminal_cell_width())
@@ -1393,12 +1366,12 @@ fn terminal_cursor_rect(content: UiRect, cursor: (u16, u16), rows: u16, cols: u1
     // vt100 keeps col == cols while a full line waits for the next character
     // to trigger wrapping. The visible cursor stays on the last cell meanwhile.
     let left = content.left + f32::from(cursor.1.min(cols.saturating_sub(1))) * cell_width;
-    let top = content.top + f32::from(cursor.0.min(rows.saturating_sub(1))) * TERMINAL_LINE_H;
+    let top = content.top + f32::from(cursor.0.min(rows.saturating_sub(1))) * terminal_line_h();
     UiRect::new(
         left,
         top + 2.0,
         left + cell_width,
-        top + TERMINAL_LINE_H - 2.0,
+        top + terminal_line_h() - 2.0,
     )
 }
 
@@ -1615,7 +1588,7 @@ mod tests {
         let content = UiRect::new(12.0, 6.0, 500.0, 400.0);
         let point = Point::new(
             content.left + terminal_cell_width() * 3.75,
-            content.top + TERMINAL_LINE_H * 2.5,
+            content.top + terminal_line_h() * 2.5,
         );
         assert_eq!(mouse_cell_at(content, point, 10, 20), (2, 3));
         assert_eq!(cell_at(content, point, 10, 20), (2, 4));
@@ -2152,14 +2125,11 @@ mod tests {
 
     #[test]
     fn measured_cell_width_drives_cursor_runs_hit_testing_and_pty_size() {
-        struct RestoreWidth(Option<f32>);
-        impl Drop for RestoreWidth {
-            fn drop(&mut self) {
-                CELL_WIDTH.with(|cached| cached.set(self.0));
-            }
-        }
         // Simulate a renderer font advance that differs from the old 7.2px.
-        let _restore = RestoreWidth(CELL_WIDTH.with(|cached| cached.replace(Some(6.25))));
+        let _restore = fonts::override_terminal(fonts::Metrics {
+            char_w: 6.25,
+            ..fonts::terminal()
+        });
         let content = UiRect::new(10.0, 20.0, 2010.0, 100.0);
         let mut parser = vt100::Parser::new(4, 300, 0);
         for count in 1..=200 {
@@ -2184,7 +2154,7 @@ mod tests {
     #[test]
     fn cursor_remains_visible_while_a_full_line_waits_to_wrap() {
         let width = terminal_cell_width();
-        let content = UiRect::new(0.0, 0.0, width * 8.0, TERMINAL_LINE_H * 2.0);
+        let content = UiRect::new(0.0, 0.0, width * 8.0, terminal_line_h() * 2.0);
         let mut parser = vt100::Parser::new(2, 8, 0);
         parser.process(b"12345678");
         assert_eq!(parser.screen().cursor_position(), (0, 8));
@@ -2194,7 +2164,7 @@ mod tests {
         parser.process(b"9");
         let cursor = terminal_cursor_rect(content, parser.screen().cursor_position(), 2, 8);
         assert_eq!(cursor.left, width);
-        assert_eq!(cursor.top, TERMINAL_LINE_H + 2.0);
+        assert_eq!(cursor.top, terminal_line_h() + 2.0);
     }
 
     #[test]
@@ -2261,7 +2231,7 @@ mod tests {
                 content,
                 point(
                     10.0 + terminal_cell_width() * 2.6,
-                    20.0 + TERMINAL_LINE_H * 1.5
+                    20.0 + terminal_line_h() * 1.5
                 ),
                 5,
                 40

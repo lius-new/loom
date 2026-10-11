@@ -109,7 +109,7 @@ pub(crate) fn measure(s: &str, size: f32, weight: i32) -> f32 {
             });
             layout.width
         }
-        None => s.chars().count() as f32 * theme::CHAR_W * (size / theme::CODE_SIZE),
+        None => s.chars().count() as f32 * size * 0.6,
     }
 }
 

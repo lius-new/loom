@@ -100,7 +100,10 @@ impl Ui {
             viewport,
         };
         // Focus the editor with a click at the start of the text.
-        let point = PointerData::mouse(Point::new(theme::GUTTER_W + theme::CODE_PAD, 5.0));
+        let point = PointerData::mouse(Point::new(
+            crate::fonts::editor().gutter_w() + theme::CODE_PAD,
+            5.0,
+        ));
         ui.send(InputEvent::PointerDown {
             pointer: point,
             button: PointerButton::Left,

@@ -9,6 +9,7 @@ use lgui::core::{
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
 use crate::editor::editor_view::{self, SCROLLBAR_SIZE, ScrollMetrics};
+use crate::fonts;
 use crate::git::{DiffTarget, GitStoreSnapshot};
 use crate::git_actions::{self, BlockAction};
 use crate::model::diff_document::{
@@ -19,11 +20,14 @@ use crate::state::AppState;
 use crate::theme;
 
 const TOOLBAR_H: f32 = 34.0;
-const ROW_H: f32 = 20.0;
 const NUMBER_W: f32 = 44.0;
 const MARKER_W: f32 = 20.0;
 const BUTTON_H: f32 = 22.0;
 const BUTTON_GAP: f32 = 4.0;
+
+fn row_h() -> f32 {
+    crate::model::diff_document::row_height()
+}
 
 /// Render the diff shown by `pane` into `rect`.
 pub fn render(
@@ -69,7 +73,7 @@ pub fn render(
     let additions = document.additions();
     let deletions = document.deletions();
     let (stored_x, stored_y) = app.workspace.scroll(pane);
-    let current_line = (stored_y / ROW_H).floor() as usize;
+    let current_line = (stored_y / row_h()).floor() as usize;
     let current_change = current_change_number(&starts, current_line);
 
     let body_top = rect.top + TOOLBAR_H;
@@ -99,7 +103,7 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .on_wheel(move |cx, delta| {
             let (step_x, step_y) = match delta.unit {
-                WheelUnit::Lines => (delta.x * ROW_H * 3.0, delta.y * ROW_H * 3.0),
+                WheelUnit::Lines => (delta.x * row_h() * 3.0, delta.y * row_h() * 3.0),
                 WheelUnit::Pixels => (delta.x, delta.y),
             };
             wheel_state.update(move |app| {
@@ -298,8 +302,8 @@ fn scroll_metrics(
     longest_line: usize,
     ratio: f32,
 ) -> ScrollMetrics {
-    let content_h = rows as f32 * ROW_H;
-    let content_w = longest_line as f32 * theme::CHAR_W + theme::CODE_PAD * 2.0;
+    let content_h = rows as f32 * row_h();
+    let content_w = longest_line as f32 * fonts::editor().char_w + theme::CODE_PAD * 2.0;
     let mut viewport_h = rect.height().max(1.0);
     let mut viewport_w = 1.0;
     for _ in 0..3 {
@@ -494,7 +498,7 @@ fn toolbar(
         UiRect::new(
             path_rect.left,
             path_rect.top,
-            path_rect.left + path.chars().count() as f32 * theme::CHAR_W + 12.0,
+            path_rect.left + path.chars().count() as f32 * theme::UI_CHAR_W + 12.0,
             path_rect.bottom,
         ),
         path,
@@ -521,14 +525,14 @@ fn block_buttons(
     };
     let mut layer = clip(rect, 0.0, 0.0);
     for (&row, &block) in starts.iter().zip(&document.blocks) {
-        let top = rect.top + row as f32 * ROW_H - scroll_y;
-        if top + ROW_H < rect.top || top > rect.bottom {
+        let top = rect.top + row as f32 * row_h() - scroll_y;
+        if top + row_h() < rect.top || top > rect.bottom {
             continue;
         }
         let mut right = rect.right - 6.0;
         for &(action, label) in actions.iter().rev() {
             let width = super::tabs::measure(label, theme::SMALL, 400) + 14.0;
-            let button = UiRect::new(right - width, top + 2.0, right, top + ROW_H - 2.0);
+            let button = UiRect::new(right - width, top + 2.0, right, top + row_h() - 2.0);
             right = button.left - 4.0;
             let click_state = state.clone();
             let click_store = store.clone();
@@ -590,22 +594,22 @@ fn render_changes(
     let mut body = clip(rect, 0.0, 0.0);
     let first = layout
         .sections
-        .partition_point(|item| (item.body_top + item.body_rows) as f32 * ROW_H < scroll_y);
+        .partition_point(|item| (item.body_top + item.body_rows) as f32 * row_h() < scroll_y);
     for item in layout.sections.iter().skip(first) {
-        let top = rect.top + item.top as f32 * ROW_H - scroll_y;
-        if top - ROW_H > rect.bottom {
+        let top = rect.top + item.top as f32 * row_h() - scroll_y;
+        if top - row_h() > rect.bottom {
             break;
         }
         let section = &sections[item.index];
         let document = &section.document;
         if item.group_header {
             body = body.child(text(
-                UiRect::new(rect.left + 12.0, top - ROW_H, rect.right - 12.0, top),
+                UiRect::new(rect.left + 12.0, top - row_h(), rect.right - 12.0, top),
                 section.group.label(),
                 theme::mono_bold(theme::c().text_dim, theme::SMALL),
             ));
         }
-        let header = UiRect::new(rect.left, top, rect.right, top + ROW_H * 2.0);
+        let header = UiRect::new(rect.left, top, rect.right, top + row_h() * 2.0);
         let toggle_state = state.clone();
         let request = section.request();
         let toggle_request = request.clone();
@@ -726,8 +730,8 @@ fn render_changes(
         if collapsed {
             continue;
         }
-        let body_top = rect.top + item.body_top as f32 * ROW_H - scroll_y;
-        let body_bottom = body_top + item.body_rows as f32 * ROW_H;
+        let body_top = rect.top + item.body_top as f32 * row_h() - scroll_y;
+        let body_bottom = body_top + item.body_rows as f32 * row_h();
         let visible = UiRect::new(
             rect.left,
             body_top.max(rect.top),
@@ -807,13 +811,13 @@ fn toolbar_button(rect: UiRect, label: &'static str, active: bool) -> Element {
 fn render_inline(rect: UiRect, rows: &[DiffRow], scroll_x: f32, scroll_y: f32) -> Element {
     let text_left = rect.left + NUMBER_W * 2.0 + MARKER_W;
     let text_viewport = UiRect::new(text_left, rect.top, rect.right, rect.bottom);
-    let start = (scroll_y / ROW_H).floor() as usize;
-    let end = (((scroll_y + rect.height()) / ROW_H).ceil() as usize + 1).min(rows.len());
+    let start = (scroll_y / row_h()).floor() as usize;
+    let end = (((scroll_y + rect.height()) / row_h()).ceil() as usize + 1).min(rows.len());
     let mut body = clip(rect, 0.0, 0.0);
 
     for (index, row) in rows.iter().enumerate().take(end).skip(start) {
-        let top = rect.top + index as f32 * ROW_H - scroll_y;
-        let row_rect = UiRect::new(rect.left, top, rect.right, top + ROW_H);
+        let top = rect.top + index as f32 * row_h() - scroll_y;
+        let row_rect = UiRect::new(rect.left, top, rect.right, top + row_h());
         let (background, foreground, marker) = match row.kind {
             DiffRowKind::Context => (None, theme::c().text_soft, ""),
             DiffRowKind::Addition => (Some(theme::c().diff.add_bg), theme::c().diff.add_fg, "+"),
@@ -825,7 +829,7 @@ fn render_inline(rect: UiRect, rows: &[DiffRow], scroll_x: f32, scroll_y: f32) -
         }
         if row.kind == DiffRowKind::Hunk {
             body = body.child(text(
-                UiRect::new(rect.left + 10.0, top, rect.right - 10.0, top + ROW_H),
+                UiRect::new(rect.left + 10.0, top, rect.right - 10.0, top + row_h()),
                 row.text.clone(),
                 theme::mono(theme::c().text_dim, theme::SMALL),
             ));
@@ -836,9 +840,9 @@ fn render_inline(rect: UiRect, rows: &[DiffRow], scroll_x: f32, scroll_y: f32) -
             .child(line_number(rect.left, top, row.old_line))
             .child(line_number(rect.left + NUMBER_W, top, row.new_line))
             .child(text(
-                UiRect::new(rect.left + NUMBER_W * 2.0, top, text_left, top + ROW_H),
+                UiRect::new(rect.left + NUMBER_W * 2.0, top, text_left, top + row_h()),
                 marker,
-                theme::mono(foreground, theme::CODE_SIZE),
+                fonts::editor().style(foreground),
             ))
             .child(code_line(
                 text_viewport,
@@ -865,20 +869,20 @@ fn render_split(
     let new_text_left = middle + NUMBER_W;
     let old_viewport = UiRect::new(old_text_left, rect.top, middle, rect.bottom);
     let new_viewport = UiRect::new(new_text_left, rect.top, rect.right, rect.bottom);
-    let start = (scroll_y / ROW_H).floor() as usize;
-    let end = (((scroll_y + rect.height()) / ROW_H).ceil() as usize + 1).min(rows.len());
+    let start = (scroll_y / row_h()).floor() as usize;
+    let end = (((scroll_y + rect.height()) / row_h()).ceil() as usize + 1).min(rows.len());
     let mut body = clip(rect, 0.0, 0.0);
 
     for (index, row) in rows.iter().enumerate().take(end).skip(start) {
-        let top = rect.top + index as f32 * ROW_H - scroll_y;
+        let top = rect.top + index as f32 * row_h() - scroll_y;
         if let Some(hunk) = row.hunk.as_ref() {
             body = body
                 .child(panel(
-                    UiRect::new(rect.left, top, rect.right, top + ROW_H),
+                    UiRect::new(rect.left, top, rect.right, top + row_h()),
                     VisualStyle::filled(theme::c().surface),
                 ))
                 .child(text(
-                    UiRect::new(rect.left + 10.0, top, rect.right - 10.0, top + ROW_H),
+                    UiRect::new(rect.left + 10.0, top, rect.right - 10.0, top + row_h()),
                     hunk.clone(),
                     theme::mono(theme::c().text_dim, theme::SMALL),
                 ));
@@ -887,13 +891,13 @@ fn render_split(
 
         if row.changed && row.old_text.is_some() {
             body = body.child(panel(
-                UiRect::new(rect.left, top, middle, top + ROW_H),
+                UiRect::new(rect.left, top, middle, top + row_h()),
                 VisualStyle::filled(theme::c().diff.del_bg),
             ));
         }
         if row.changed && row.new_text.is_some() {
             body = body.child(panel(
-                UiRect::new(middle, top, rect.right, top + ROW_H),
+                UiRect::new(middle, top, rect.right, top + row_h()),
                 VisualStyle::filled(theme::c().diff.add_bg),
             ));
         }
@@ -938,7 +942,7 @@ fn render_split(
 
 fn line_number(left: f32, top: f32, number: Option<usize>) -> Element {
     text(
-        UiRect::new(left, top, left + NUMBER_W - 8.0, top + ROW_H),
+        UiRect::new(left, top, left + NUMBER_W - 8.0, top + row_h()),
         number.map(|line| line.to_string()).unwrap_or_default(),
         theme::mono_right(theme::c().text_faint, theme::SMALL),
     )
@@ -953,11 +957,11 @@ fn code_line(
     color: lgui::core::Color,
 ) -> Element {
     let (display, _, columns) = editor_view::expand_tabs(value, 0);
-    let width = (columns as f32 * theme::CHAR_W + 16.0).max(viewport.width());
+    let width = (columns as f32 * fonts::editor().char_w + 16.0).max(viewport.width());
     clip(viewport, 0.0, 0.0).child(text(
-        UiRect::new(left, top, left + width, top + ROW_H),
+        UiRect::new(left, top, left + width, top + row_h()),
         display,
-        theme::mono(color, theme::CODE_SIZE),
+        fonts::editor().style(color),
     ))
 }
 
@@ -985,7 +989,7 @@ fn navigate_change(app: &mut AppState, starts: &[usize], next: bool) {
         return;
     }
     let (x, y) = app.workspace.active_scroll();
-    let current = (y / ROW_H).floor() as usize;
+    let current = (y / row_h()).floor() as usize;
     let target = if next {
         starts
             .iter()
@@ -1000,7 +1004,7 @@ fn navigate_change(app: &mut AppState, starts: &[usize], next: bool) {
             .find(|start| *start < current)
             .unwrap_or(*starts.last().expect("change list is not empty"))
     };
-    app.workspace.set_active_scroll(x, target as f32 * ROW_H);
+    app.workspace.set_active_scroll(x, target as f32 * row_h());
 }
 
 #[cfg(test)]
@@ -1426,11 +1430,11 @@ mod tests {
         let mut app = AppState::new();
         app.workspace.open_path("a.txt".into(), "text".into());
         navigate_change(&mut app, &[2, 8], true);
-        assert_eq!(app.workspace.active_scroll().1, 2.0 * ROW_H);
-        app.workspace.set_active_scroll(0.0, 8.0 * ROW_H);
+        assert_eq!(app.workspace.active_scroll().1, 2.0 * row_h());
+        app.workspace.set_active_scroll(0.0, 8.0 * row_h());
         navigate_change(&mut app, &[2, 8], true);
-        assert_eq!(app.workspace.active_scroll().1, 2.0 * ROW_H);
+        assert_eq!(app.workspace.active_scroll().1, 2.0 * row_h());
         navigate_change(&mut app, &[2, 8], false);
-        assert_eq!(app.workspace.active_scroll().1, 8.0 * ROW_H);
+        assert_eq!(app.workspace.active_scroll().1, 8.0 * row_h());
     }
 }

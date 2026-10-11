@@ -435,10 +435,12 @@ pub const TERMINAL_H: f32 = 176.0;
 pub const TERMINAL_MIN_H: f32 = 120.0;
 pub const TERMINAL_MAX_H: f32 = 480.0;
 pub const EDITOR_MIN_H: f32 = 96.0;
+/// Minimum editor gutter width; see `fonts::Metrics::gutter_w`.
 pub const GUTTER_W: f32 = 48.0;
-pub const LINE_H: f32 = 24.0;
 pub const CODE_PAD: f32 = 16.0;
-pub const CHAR_W: f32 = 7.2; // monospace advance at CODE_SIZE
+/// Estimated monospace advance of UI text at `UI_SIZE`. Code surfaces use
+/// the measured `fonts::Metrics::char_w` instead.
+pub const UI_CHAR_W: f32 = UI_SIZE * 0.6;
 /// UI glyph size. Codicons use a 16px grid, so any other size smears strokes.
 pub const ICON_SIZE: f32 = 16.0;
 
@@ -451,7 +453,6 @@ pub fn icon_rect(slot: UiRect) -> UiRect {
 pub const MONO_FAMILIES: &[&str] = &["Cascadia Mono", "Cascadia Code", "Consolas", "Courier New"];
 
 // ---- Font sizes --------------------------------------------------------
-pub const CODE_SIZE: f32 = 12.0;
 pub const UI_SIZE: f32 = 12.0;
 pub const SMALL: f32 = 10.0;
 

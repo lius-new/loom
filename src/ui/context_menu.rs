@@ -291,8 +291,7 @@ fn reveal_in_file_manager(path: &Path, kind: ExplorerTargetKind) -> std::io::Res
 /// monospace column width as a floor to avoid clipping long labels.
 fn measure(s: &str) -> f32 {
     let bounds = UiRect::new(0.0, 0.0, 10_000.0, theme::UI_SIZE);
-    let mono_width =
-        UnicodeWidthStr::width(s) as f32 * theme::CHAR_W * (theme::UI_SIZE / theme::CODE_SIZE);
+    let mono_width = UnicodeWidthStr::width(s) as f32 * theme::UI_CHAR_W;
     measure_width(s, bounds, theme::UI_SIZE, 400).map_or(mono_width, |width| width.max(mono_width))
 }
 
@@ -730,9 +729,7 @@ mod tests {
     #[test]
     fn long_menu_labels_reserve_at_least_their_monospace_width() {
         let label = "Remove Folder From Workspace";
-        let mono_width = UnicodeWidthStr::width(label) as f32
-            * theme::CHAR_W
-            * (theme::UI_SIZE / theme::CODE_SIZE);
+        let mono_width = UnicodeWidthStr::width(label) as f32 * theme::UI_CHAR_W;
 
         assert!(measure(label) >= mono_width);
     }

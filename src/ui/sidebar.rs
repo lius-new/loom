@@ -1173,7 +1173,7 @@ fn extend_content_right(dir_key: &str, depth: usize, s: &AppState, left: f32, ri
 }
 
 fn row_content_right(left: f32, depth: usize, name: &str) -> f32 {
-    let label_width = name.chars().count() as f32 * theme::CHAR_W;
+    let label_width = name.chars().count() as f32 * theme::UI_CHAR_W;
     left + INDENT + depth as f32 * INDENT + TREE_LABEL_OFFSET + label_width + 12.0
 }
 

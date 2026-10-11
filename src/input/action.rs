@@ -76,6 +76,9 @@ actions! {
     OpenSettings => "workspace::OpenSettings", "Open the Settings page";
     OpenKeymap => "workspace::OpenKeymap", "Open the Keymap page";
     OpenKeymapFile => "workspace::OpenKeymapFile", "Open the user keymap.json";
+    IncreaseFontSize => "workspace::IncreaseFontSize", "Increase the editor font size";
+    DecreaseFontSize => "workspace::DecreaseFontSize", "Decrease the editor font size";
+    ResetFontSize => "workspace::ResetFontSize", "Reset the editor font size";
     CloneRepository => "workspace::CloneRepository", "Clone a Git repository";
     CloseOverlay => "workspace::CloseOverlay", "Close menus and transient overlays";
     ActivatePaneLeft => "workspace::ActivatePaneLeft", "Focus the pane to the left";

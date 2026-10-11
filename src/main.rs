@@ -23,6 +23,7 @@ mod editor;
 mod file_icons;
 mod file_tree;
 mod file_watcher;
+mod fonts;
 mod git;
 mod git_actions;
 mod input;

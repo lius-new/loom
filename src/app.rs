@@ -345,6 +345,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let s = state.get();
     layout_map::refresh(&s, &layout_map_store, content_area, session_ids.clone());
     theme::set(s.theme);
+    crate::fonts::set(&s.editor_font, &s.terminal_font);
     let editor_layout = crate::workspace_actions::saved_editor_layout(&s.workspace);
     let git_roots = s.workspace_folders.clone();
     let mut git_target = s.workspace.git_poll_target();
@@ -499,6 +500,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         git_split_diff: s.git_split_diff,
         git_tree_view: s.git_tree_view,
         vim: s.vim.options.into(),
+        editor_font: s.editor_font.clone(),
+        terminal_font: s.terminal_font.clone(),
     };
     cx.use_effect(settings.clone(), move || {
         let _ = settings_persistence::save(&settings);

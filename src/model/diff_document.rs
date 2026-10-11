@@ -53,7 +53,19 @@ pub struct DiffDocument {
     metrics: DiffMetrics,
 }
 
-pub const DIFF_ROW_HEIGHT: f32 = 20.0;
+/// Diff row height at the default 12px code size.
+const MIN_ROW_HEIGHT: f32 = 20.0;
+
+/// Height of one diff row; rows grow with the editor font size.
+pub fn row_height() -> f32 {
+    row_height_for(crate::fonts::editor().size)
+}
+
+pub fn row_height_for(font_size: f32) -> f32 {
+    (font_size * MIN_ROW_HEIGHT / 12.0)
+        .round()
+        .max(MIN_ROW_HEIGHT)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiffSection {

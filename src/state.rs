@@ -200,6 +200,11 @@ pub struct AppState {
     pub default_shell_fallback: Option<ShellKind>,
     pub terminal_cursor_blink: bool,
     pub smooth_caret: bool,
+    pub editor_font: crate::fonts::FontSettings,
+    pub terminal_font: crate::fonts::FontSettings,
+    /// Font family fields on the Settings page; committed on Enter or blur.
+    pub editor_font_input: crate::ui::components::input::InputState,
+    pub terminal_font_input: crate::ui::components::input::InputState,
     /// Horizontal scroll offset of each pane's tab strip, in logical pixels.
     pub tab_scroll: HashMap<PaneId, f32>,
     /// Open tab currently under the pointer.
@@ -383,6 +388,10 @@ impl AppState {
             default_shell_fallback: None,
             terminal_cursor_blink: true,
             smooth_caret: true,
+            editor_font: crate::fonts::FontSettings::EDITOR,
+            terminal_font: crate::fonts::FontSettings::TERMINAL,
+            editor_font_input: Default::default(),
+            terminal_font_input: Default::default(),
             tab_scroll: HashMap::new(),
             tab_hovered: None,
             tab_strip_hovered: None,
@@ -491,11 +500,39 @@ impl AppState {
         app.refresh_shells();
         app.terminal_cursor_blink = settings.terminal_cursor_blink;
         app.smooth_caret = settings.smooth_caret;
+        app.set_editor_font(settings.editor_font);
+        app.set_terminal_font(settings.terminal_font);
         app.vim.options = settings.vim.into();
         crate::workspace_actions::hydrate_workspace_folders(&mut app);
         crate::workspace_actions::hydrate_editor_layout(&mut app, session.editor_layout);
         crate::workspace_actions::open_launch_paths(&mut app, crate::launch::take_paths());
         app
+    }
+
+    /// Applies an editor font preference, keeping open views on the same line.
+    pub fn set_editor_font(&mut self, font: crate::fonts::FontSettings) {
+        use crate::model::diff_document::row_height_for;
+        let font = font.clamped();
+        if font.family != self.editor_font.family {
+            self.editor_font_input.set_text(font.family.clone());
+        }
+        if font == self.editor_font {
+            return;
+        }
+        let (old_size, new_size) = (f32::from(self.editor_font.size), f32::from(font.size));
+        self.workspace.rescale_code_scroll(
+            font.line_px() / self.editor_font.line_px(),
+            row_height_for(new_size) / row_height_for(old_size),
+        );
+        self.editor_font = font;
+    }
+
+    pub fn set_terminal_font(&mut self, font: crate::fonts::FontSettings) {
+        let font = font.clamped();
+        if font.family != self.terminal_font.family {
+            self.terminal_font_input.set_text(font.family.clone());
+        }
+        self.terminal_font = font;
     }
 
     /// Re-discovers shells. The saved default is never rewritten here, so a
@@ -600,6 +637,17 @@ impl AppState {
             }
             Action::OpenKeymap => {
                 self.workspace.open_keymap();
+            }
+            Action::IncreaseFontSize | Action::DecreaseFontSize | Action::ResetFontSize => {
+                let size = match action {
+                    Action::IncreaseFontSize => self.editor_font.size.saturating_add(1),
+                    Action::DecreaseFontSize => self.editor_font.size.saturating_sub(1),
+                    _ => crate::fonts::FontSettings::EDITOR.size,
+                };
+                self.set_editor_font(crate::fonts::FontSettings {
+                    size,
+                    ..self.editor_font.clone()
+                });
             }
             Action::SplitRight => self.split_focused(Direction::Right),
             Action::SplitLeft => self.split_focused(Direction::Left),

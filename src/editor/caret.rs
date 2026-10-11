@@ -6,9 +6,9 @@ use lgui::core::{
 use lgui::prelude::{Element, UiRect, VisualStyle};
 use std::time::Instant;
 
+use crate::fonts;
 use crate::model::document::FileId;
 use crate::model::pane_layout::PaneId;
-use crate::theme;
 
 const DURATION_MS: f32 = 80.0;
 const FRAME_INTERVAL_MS: u64 = 8;
@@ -62,7 +62,7 @@ pub(super) fn bar(cell: [f32; 2]) -> UiRect {
         cell[0],
         cell[1] + 3.0,
         cell[0] + 2.0,
-        cell[1] + theme::LINE_H - 3.0,
+        cell[1] + fonts::editor().line_h - 3.0,
     )
 }
 
@@ -188,7 +188,7 @@ mod tests {
     use super::*;
 
     fn caret_at(rect: UiRect, context: CaretContext) -> Element {
-        let style = VisualStyle::filled(theme::c().accent);
+        let style = VisualStyle::filled(crate::theme::c().accent);
         render(rect, [rect.left, rect.top], style, context, true)
     }
 

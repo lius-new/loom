@@ -11,6 +11,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
+use crate::fonts;
 use crate::git::{DiffTarget, GitStoreSnapshot, LineChange};
 use crate::git_actions::{self, BlockAction};
 use crate::model::diff_document::{ChangeBlock, DiffDocument, DiffRow, DiffRowKind};
@@ -220,10 +221,11 @@ pub fn render(
     let shown_rows = hunk.map_or(0, |hunk| hunk.rows.len().min(MAX_ROWS));
     let more = hunk.map_or(0, |hunk| hunk.rows.len().saturating_sub(MAX_ROWS));
     let body_rows = shown_rows.max(1) + usize::from(more > 0);
-    let height = HEADER_H + body_rows as f32 * theme::LINE_H + 6.0;
+    let height = HEADER_H + body_rows as f32 * fonts::editor().line_h + 6.0;
 
     let lines = hunk.map_or(peek.line..=peek.line, |hunk| hunk.lines.clone());
-    let line_top = |line: usize| cx.rect.top + (line - 1) as f32 * theme::LINE_H - cx.scroll_y;
+    let line_top =
+        |line: usize| cx.rect.top + (line - 1) as f32 * fonts::editor().line_h - cx.scroll_y;
     let below = line_top(*lines.end() + 1) + 2.0;
     let top = if below + height <= cx.rect.bottom {
         below
@@ -303,7 +305,8 @@ pub fn render(
             let Some(line) = target else { return };
             nav_state.update(|app| {
                 let (x, _) = app.workspace.scroll(pane);
-                let y = ((line - 1) as f32 * theme::LINE_H - viewport_h / 3.0).clamp(0.0, max_y);
+                let y = ((line - 1) as f32 * fonts::editor().line_h - viewport_h / 3.0)
+                    .clamp(0.0, max_y);
                 app.workspace.set_scroll(pane, x, y);
             });
             open_at(
@@ -391,8 +394,8 @@ pub fn render(
     );
     let mut rows = clip(body, 0.0, 0.0);
     let row_rect = |index: usize| {
-        let top = body.top + index as f32 * theme::LINE_H;
-        UiRect::new(body.left, top, body.right, top + theme::LINE_H)
+        let top = body.top + index as f32 * fonts::editor().line_h;
+        UiRect::new(body.left, top, body.right, top + fonts::editor().line_h)
     };
     if let Some(message) = message {
         rows = rows.child(text(
@@ -417,12 +420,12 @@ pub fn render(
                 .child(text(
                     UiRect::new(rect.left + 8.0, rect.top, rect.left + 20.0, rect.bottom),
                     sign,
-                    theme::mono(fg, theme::CODE_SIZE),
+                    fonts::editor().style(fg),
                 ))
                 .child(text(
                     UiRect::new(rect.left + 22.0, rect.top, rect.right + 2000.0, rect.bottom),
                     row.text.replace('\t', "    "),
-                    theme::mono(theme::c().text, theme::CODE_SIZE),
+                    fonts::editor().style(theme::c().text),
                 ));
         }
         if more > 0 {

@@ -3,12 +3,16 @@
 //! Every control writes straight to `AppState`; app-level effects persist the
 //! values, so there is no separate apply/save step.
 
-use lgui::core::{CursorIcon, EventPolicy, WheelUnit, clip};
-use lgui::prelude::{Color, Element, State, TextAlign, UiRect, VisualStyle, group, panel, text};
+use lgui::core::{CursorIcon, EventPolicy, TextStyle, WheelUnit, clip};
+use lgui::prelude::{
+    Color, Element, State, TextAlign, UiRect, VisualStyle, component, group, panel, text,
+};
 
+use crate::fonts::{self, FontSettings};
 use crate::input::action::Action;
 use crate::state::AppState;
 use crate::theme::{self, ThemeId};
+use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::ui::tabs::{TEXT_MARGIN, measure};
 
 const MAX_PAGE_W: f32 = 720.0;
@@ -30,10 +34,36 @@ const THEME_CARD_MAX_W: f32 = 168.0;
 const THEME_CARD_GAP: f32 = 12.0;
 const THEME_NAME_H: f32 = 24.0;
 const THEME_ROW_H: f32 = ROW_H + THEME_CARD_H + 18.0;
+const FAMILY_INPUT_W: f32 = 220.0;
+const FAMILY_INPUT_H: f32 = 26.0;
+const PRESET_H: f32 = 24.0;
+const PRESET_GAP: f32 = 8.0;
+const FAMILY_ROW_H: f32 = ROW_H + PRESET_H + 12.0;
+const STEP_BUTTON_W: f32 = 26.0;
+const STEP_VALUE_W: f32 = 44.0;
+const STEPPER_W: f32 = STEP_BUTTON_W * 2.0 + STEP_VALUE_W;
+const STEPPER_H: f32 = 26.0;
+
+/// Families offered as one-click choices under the font family field. They
+/// are only suggestions: one that is not installed falls back to the
+/// built-in monospace stack.
+const FONT_PRESETS: [&str; 5] = [
+    "Cascadia Code",
+    "Consolas",
+    "JetBrains Mono",
+    "Fira Code",
+    "Source Code Pro",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Setting {
     Theme,
+    EditorFontFamily,
+    EditorFontSize,
+    EditorLineHeight,
+    TerminalFontFamily,
+    TerminalFontSize,
+    TerminalLineHeight,
     DefaultShell,
     TerminalCursorBlink,
     SmoothCaret,
@@ -49,6 +79,9 @@ const SECTIONS: [(&str, &[Setting]); 4] = [
     (
         "EDITOR",
         &[
+            Setting::EditorFontFamily,
+            Setting::EditorFontSize,
+            Setting::EditorLineHeight,
             Setting::SmoothCaret,
             Setting::VimMode,
             Setting::VimSystemClipboard,
@@ -56,7 +89,13 @@ const SECTIONS: [(&str, &[Setting]); 4] = [
     ),
     (
         "TERMINAL",
-        &[Setting::DefaultShell, Setting::TerminalCursorBlink],
+        &[
+            Setting::TerminalFontFamily,
+            Setting::TerminalFontSize,
+            Setting::TerminalLineHeight,
+            Setting::DefaultShell,
+            Setting::TerminalCursorBlink,
+        ],
     ),
     (
         "SOURCE CONTROL",
@@ -68,6 +107,9 @@ impl Setting {
     fn label(self) -> &'static str {
         match self {
             Self::Theme => "Color theme",
+            Self::EditorFontFamily | Self::TerminalFontFamily => "Font family",
+            Self::EditorFontSize | Self::TerminalFontSize => "Font size",
+            Self::EditorLineHeight | Self::TerminalLineHeight => "Line height",
             Self::DefaultShell => "Default shell",
             Self::TerminalCursorBlink => "Cursor blinking",
             Self::SmoothCaret => "Smooth caret movement",
@@ -82,6 +124,18 @@ impl Setting {
     fn description(self) -> &'static str {
         match self {
             Self::Theme => "Colors used across the editor, panels and terminal.",
+            Self::EditorFontFamily => {
+                "Font for code, diffs and change previews. Leave empty for the default."
+            }
+            Self::EditorFontSize => "Size of code text in pixels.",
+            Self::EditorLineHeight => "Height of each code line, as a multiple of the font size.",
+            Self::TerminalFontFamily => {
+                "Font for terminal text. Leave empty to use the editor font."
+            }
+            Self::TerminalFontSize => "Size of terminal text in pixels.",
+            Self::TerminalLineHeight => {
+                "Height of each terminal row, as a multiple of the font size."
+            }
             Self::DefaultShell => "Used when a new terminal opens without picking a shell.",
             Self::TerminalCursorBlink => "Blink the terminal cursor while it has focus.",
             Self::SmoothCaret => "Animate the editor caret when typing, navigating or clicking.",
@@ -99,6 +153,12 @@ impl Setting {
     fn enabled(self, app: &AppState) -> Option<bool> {
         match self {
             Self::Theme | Self::DefaultShell => None,
+            Self::EditorFontFamily
+            | Self::EditorFontSize
+            | Self::EditorLineHeight
+            | Self::TerminalFontFamily
+            | Self::TerminalFontSize
+            | Self::TerminalLineHeight => None,
             Self::TerminalCursorBlink => Some(app.terminal_cursor_blink),
             Self::SmoothCaret => Some(app.smooth_caret),
             Self::InlineBlame => Some(app.git_inline_blame),
@@ -112,6 +172,12 @@ impl Setting {
     fn toggle(self, app: &mut AppState) {
         match self {
             Self::Theme | Self::DefaultShell => {}
+            Self::EditorFontFamily
+            | Self::EditorFontSize
+            | Self::EditorLineHeight
+            | Self::TerminalFontFamily
+            | Self::TerminalFontSize
+            | Self::TerminalLineHeight => {}
             Self::TerminalCursorBlink => app.terminal_cursor_blink ^= true,
             Self::SmoothCaret => app.smooth_caret ^= true,
             Self::InlineBlame => app.git_inline_blame ^= true,
@@ -128,9 +194,141 @@ impl Setting {
     fn height(self, app: &AppState) -> f32 {
         match self {
             Self::Theme => THEME_ROW_H,
+            Self::EditorFontFamily | Self::TerminalFontFamily => FAMILY_ROW_H,
             Self::DefaultShell => crate::ui::terminal_settings::height(app),
             _ => ROW_H,
         }
+    }
+
+    /// The font a font setting edits and the part of it this row controls.
+    fn font(self) -> Option<(FontTarget, FontField)> {
+        Some(match self {
+            Self::EditorFontFamily => (FontTarget::Editor, FontField::Family),
+            Self::EditorFontSize => (FontTarget::Editor, FontField::Size),
+            Self::EditorLineHeight => (FontTarget::Editor, FontField::LineHeight),
+            Self::TerminalFontFamily => (FontTarget::Terminal, FontField::Family),
+            Self::TerminalFontSize => (FontTarget::Terminal, FontField::Size),
+            Self::TerminalLineHeight => (FontTarget::Terminal, FontField::LineHeight),
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FontTarget {
+    Editor,
+    Terminal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FontField {
+    Family,
+    Size,
+    LineHeight,
+}
+
+impl FontTarget {
+    fn get(self, app: &AppState) -> &FontSettings {
+        match self {
+            Self::Editor => &app.editor_font,
+            Self::Terminal => &app.terminal_font,
+        }
+    }
+
+    fn set(self, app: &mut AppState, font: FontSettings) {
+        match self {
+            Self::Editor => app.set_editor_font(font),
+            Self::Terminal => app.set_terminal_font(font),
+        }
+    }
+
+    fn set_family(self, app: &mut AppState, family: &str) {
+        let font = FontSettings {
+            family: family.trim().to_owned(),
+            ..self.get(app).clone()
+        };
+        self.set(app, font);
+        // Normalize the field even when the stored family did not change.
+        let family = self.get(app).family.clone();
+        self.input_mut(app).set_text(family);
+    }
+
+    fn input(self, app: &AppState) -> &InputState {
+        match self {
+            Self::Editor => &app.editor_font_input,
+            Self::Terminal => &app.terminal_font_input,
+        }
+    }
+
+    fn input_mut(self, app: &mut AppState) -> &mut InputState {
+        match self {
+            Self::Editor => &mut app.editor_font_input,
+            Self::Terminal => &mut app.terminal_font_input,
+        }
+    }
+
+    fn commit_input(self, app: &mut AppState) {
+        let family = self.input(app).text().to_owned();
+        self.set_family(app, &family);
+    }
+
+    fn revert_input(self, app: &mut AppState) {
+        let family = self.get(app).family.clone();
+        self.input_mut(app).set_text(family);
+    }
+}
+
+/// A line-height percentage as a multiplier, e.g. 160 → "1.6", 155 → "1.55".
+fn line_height_label(percent: u16) -> String {
+    let (whole, hundredths) = (percent / 100, percent % 100);
+    if hundredths % 10 == 0 {
+        format!("{whole}.{}", hundredths / 10)
+    } else {
+        format!("{whole}.{hundredths:02}")
+    }
+}
+
+impl FontField {
+    /// Displayed value and whether it can step down / up.
+    fn value(self, font: &FontSettings) -> (String, bool, bool) {
+        match self {
+            Self::Family => (font.family.clone(), false, false),
+            Self::Size => (
+                font.size.to_string(),
+                font.size > fonts::MIN_SIZE,
+                font.size < fonts::MAX_SIZE,
+            ),
+            Self::LineHeight => (
+                line_height_label(font.line_height),
+                font.line_height > fonts::MIN_LINE_HEIGHT,
+                font.line_height < fonts::MAX_LINE_HEIGHT,
+            ),
+        }
+    }
+
+    fn step(self, font: &FontSettings, up: bool) -> FontSettings {
+        let mut font = font.clone();
+        let step = |value: u16, by: u16| {
+            if up {
+                value.saturating_add(by)
+            } else {
+                value.saturating_sub(by)
+            }
+        };
+        match self {
+            Self::Family => {}
+            Self::Size => font.size = step(font.size, 1),
+            Self::LineHeight => {
+                // Snap to the step grid so a hand-edited value lines up again.
+                let snapped = font.line_height / fonts::LINE_HEIGHT_STEP * fonts::LINE_HEIGHT_STEP;
+                font.line_height = if up || snapped == font.line_height {
+                    step(snapped, fonts::LINE_HEIGHT_STEP)
+                } else {
+                    snapped
+                };
+            }
+        }
+        font.clamped()
     }
 }
 
@@ -275,11 +473,12 @@ fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppSt
     if setting == Setting::DefaultShell {
         return crate::ui::terminal_settings::render(row, app, state);
     }
-    let control_w = match setting {
+    let control_w = match setting.font() {
+        Some((_, FontField::Family)) => FAMILY_INPUT_W,
+        Some(_) => STEPPER_W,
         // The theme cards sit below the label, so the text spans the row.
-        Setting::Theme => 0.0,
-        Setting::DefaultShell => 0.0,
-        _ => SWITCH_W,
+        None if setting == Setting::Theme => 0.0,
+        None => SWITCH_W,
     };
     let control_left = row.right - control_w;
     let text_right = (control_left - CONTROL_GAP).max(row.left);
@@ -325,7 +524,227 @@ fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppSt
                 state,
             ));
         }
-        None => {}
+        None => {
+            let Some((target, field)) = setting.font() else {
+                return element;
+            };
+            let control_top = row.top + (ROW_H - STEPPER_H) / 2.0;
+            if field == FontField::Family {
+                element = element
+                    .child(family_input(
+                        UiRect::new(
+                            control_left,
+                            control_top,
+                            row.right,
+                            control_top + FAMILY_INPUT_H,
+                        ),
+                        target,
+                        state.clone(),
+                    ))
+                    .child(font_presets(
+                        UiRect::new(
+                            row.left,
+                            row.top + ROW_H - 6.0,
+                            row.right,
+                            row.top + ROW_H - 6.0 + PRESET_H,
+                        ),
+                        target,
+                        &target.get(app).family,
+                        state,
+                    ));
+            } else {
+                element = element.child(stepper(
+                    UiRect::new(
+                        control_left,
+                        control_top,
+                        row.right,
+                        control_top + STEPPER_H,
+                    ),
+                    target,
+                    field,
+                    target.get(app),
+                    state,
+                ));
+            }
+        }
+    }
+    element
+}
+
+/// Free-form family name, committed on Enter or when focus leaves.
+fn family_input(frame: UiRect, target: FontTarget, state: State<AppState>) -> Element {
+    type Read = fn(&AppState) -> &InputState;
+    type Write = fn(&mut AppState) -> &mut InputState;
+    type Action = fn(&State<AppState>);
+    let (read, write, commit, cancel, placeholder): (Read, Write, Action, Action, &str) =
+        match target {
+            FontTarget::Editor => (
+                |app| &app.editor_font_input,
+                |app| &mut app.editor_font_input,
+                |state| state.update(|app| FontTarget::Editor.commit_input(app)),
+                |state| state.update(|app| FontTarget::Editor.revert_input(app)),
+                "Default (Cascadia Mono)",
+            ),
+            FontTarget::Terminal => (
+                |app| &app.terminal_font_input,
+                |app| &mut app.terminal_font_input,
+                |state| state.update(|app| FontTarget::Terminal.commit_input(app)),
+                |state| state.update(|app| FontTarget::Terminal.revert_input(app)),
+                "Same as editor",
+            ),
+        };
+    let input_state = state;
+    theme::bordered(frame, theme::c().surface, theme::c().border, 4.0, 1.0).child(
+        component(
+            UiRect::new(
+                frame.left + 4.0,
+                frame.top + 1.0,
+                (frame.right - 4.0).max(frame.left + 4.0),
+                frame.bottom - 1.0,
+            ),
+            move |cx, &rect| {
+                let id = cx.use_stable_id();
+                let focus = cx.focus_handle(id.clone());
+                let focus_state = input_state.clone();
+                input::render(
+                    rect,
+                    id,
+                    focus,
+                    InputBinding::new(input_state.clone(), read, write),
+                    InputOptions {
+                        label: "Font family",
+                        placeholder,
+                        style: InputStyle {
+                            text: theme::mono(theme::c().text, theme::UI_SIZE),
+                            placeholder: theme::mono(theme::c().text_faint, theme::UI_SIZE),
+                            caret: theme::c().text,
+                            selection: theme::c().selection,
+                        },
+                        on_submit: Some(commit),
+                        on_cancel: Some(cancel),
+                        on_blur: Some(commit),
+                    },
+                )
+                .on_focus(move |_| focus_state.update(|app| app.terminal_focused = false))
+            },
+        )
+        .key(match target {
+            FontTarget::Editor => "settings-editor-font-family",
+            FontTarget::Terminal => "settings-terminal-font-family",
+        }),
+    )
+}
+
+/// One-click family choices, each drawn in its own font. The first chip
+/// clears the field back to the inherited family.
+fn font_presets(
+    rect: UiRect,
+    target: FontTarget,
+    current: &str,
+    state: State<AppState>,
+) -> Element {
+    let default_label = match target {
+        FontTarget::Editor => "Default",
+        FontTarget::Terminal => "Same as editor",
+    };
+    let mut row = group(rect);
+    let mut left = rect.left;
+    for (family, label) in std::iter::once(("", default_label))
+        .chain(FONT_PRESETS.iter().map(|family| (*family, *family)))
+    {
+        let width = measure(label, theme::SMALL + 1.0, 400) + 20.0;
+        if left + width > rect.right {
+            break;
+        }
+        let chip = UiRect::new(left, rect.top, left + width, rect.bottom);
+        let active = current.eq_ignore_ascii_case(family);
+        let (fill, border, color) = if active {
+            (
+                theme::c().selection,
+                theme::c().accent,
+                theme::c().text_bright,
+            )
+        } else {
+            (theme::c().surface, theme::c().border, theme::c().text_muted)
+        };
+        let mut text_style =
+            TextStyle::new(color, theme::SMALL + 1.0, 400).font_families(fonts::families(family));
+        text_style.align = TextAlign::Center;
+        let select_state = state.clone();
+        row = row.child(
+            theme::bordered(chip, fill, border, 4.0, 1.0)
+                .key(format!("settings-font-preset-{target:?}-{label}"))
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || select_state.update(move |app| target.set_family(app, family)))
+                .child(text(chip, label, text_style)),
+        );
+        left += width + PRESET_GAP;
+    }
+    row
+}
+
+/// `[−] value [+]` for a numeric font setting.
+fn stepper(
+    rect: UiRect,
+    target: FontTarget,
+    field: FontField,
+    font: &FontSettings,
+    state: State<AppState>,
+) -> Element {
+    let (value, can_down, can_up) = field.value(font);
+    let mut value_style = theme::mono(theme::c().text, theme::UI_SIZE);
+    value_style.align = TextAlign::Center;
+    let mut element =
+        theme::bordered(rect, theme::c().surface, theme::c().border, 4.0, 1.0).child(text(
+            UiRect::new(
+                rect.left + STEP_BUTTON_W,
+                rect.top,
+                rect.right - STEP_BUTTON_W,
+                rect.bottom,
+            ),
+            value,
+            value_style,
+        ));
+    for (up, enabled) in [(false, can_down), (true, can_up)] {
+        let button = if up {
+            UiRect::new(
+                rect.right - STEP_BUTTON_W,
+                rect.top,
+                rect.right,
+                rect.bottom,
+            )
+        } else {
+            UiRect::new(rect.left, rect.top, rect.left + STEP_BUTTON_W, rect.bottom)
+        };
+        let mut glyph_style = theme::mono(
+            if enabled {
+                theme::c().text
+            } else {
+                theme::c().text_ghost
+            },
+            theme::UI_SIZE + 2.0,
+        );
+        glyph_style.align = TextAlign::Center;
+        let mut control = panel(button, VisualStyle::default())
+            .key(format!(
+                "settings-font-{target:?}-{field:?}-{}",
+                if up { "up" } else { "down" }
+            ))
+            .child(text(button, if up { "+" } else { "\u{2212}" }, glyph_style));
+        if enabled {
+            let step_state = state.clone();
+            control = control
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || {
+                    step_state.update(move |app| {
+                        let font = field.step(target.get(app), up);
+                        target.set(app, font);
+                    })
+                });
+        }
+        element = element.child(control);
     }
     element
 }
@@ -482,5 +901,98 @@ mod tests {
         assert_eq!(Setting::Theme.enabled(&app), None);
         Setting::Theme.toggle(&mut app);
         assert_eq!(app.theme, before);
+    }
+
+    #[test]
+    fn font_steppers_move_within_their_range() {
+        let font = FontSettings::EDITOR;
+        assert_eq!(FontField::Size.step(&font, true).size, 13);
+        assert_eq!(FontField::Size.step(&font, false).size, 11);
+        assert_eq!(FontField::LineHeight.step(&font, true).line_height, 210);
+
+        let smallest = FontSettings {
+            size: fonts::MIN_SIZE,
+            line_height: fonts::MIN_LINE_HEIGHT,
+            ..font.clone()
+        };
+        assert_eq!(FontField::Size.step(&smallest, false).size, fonts::MIN_SIZE);
+        let (_, can_down, can_up) = FontField::Size.value(&smallest);
+        assert!(!can_down && can_up);
+        assert_eq!(
+            FontField::LineHeight.step(&smallest, false).line_height,
+            fonts::MIN_LINE_HEIGHT
+        );
+
+        let off_grid = FontSettings {
+            line_height: 155,
+            ..font.clone()
+        };
+        assert_eq!(
+            FontField::LineHeight.step(&off_grid, false).line_height,
+            150
+        );
+        assert_eq!(FontField::LineHeight.step(&off_grid, true).line_height, 160);
+        assert_eq!(FontField::LineHeight.value(&off_grid).0, "1.55");
+        assert_eq!(FontField::LineHeight.value(&font).0, "2.0");
+    }
+
+    #[test]
+    fn family_input_commits_trimmed_and_reverts_on_cancel() {
+        let mut app = AppState::new();
+        app.editor_font_input.set_text("  Fira Code ");
+        FontTarget::Editor.commit_input(&mut app);
+        assert_eq!(app.editor_font.family, "Fira Code");
+        assert_eq!(app.editor_font_input.text(), "Fira Code");
+
+        app.editor_font_input.set_text("Typo");
+        FontTarget::Editor.revert_input(&mut app);
+        assert_eq!(app.editor_font_input.text(), "Fira Code");
+
+        FontTarget::Terminal.set_family(&mut app, "Consolas");
+        assert_eq!(app.terminal_font.family, "Consolas");
+        assert_eq!(app.terminal_font_input.text(), "Consolas");
+        assert_eq!(app.editor_font.family, "Fira Code");
+    }
+
+    #[test]
+    fn font_settings_are_choices_not_toggles() {
+        let mut app = AppState::new();
+        for setting in [
+            Setting::EditorFontFamily,
+            Setting::EditorFontSize,
+            Setting::EditorLineHeight,
+            Setting::TerminalFontFamily,
+            Setting::TerminalFontSize,
+            Setting::TerminalLineHeight,
+        ] {
+            assert_eq!(setting.enabled(&app), None, "{setting:?}");
+            assert!(setting.font().is_some(), "{setting:?}");
+            setting.toggle(&mut app);
+        }
+        assert_eq!(app.editor_font, FontSettings::EDITOR);
+        assert_eq!(app.terminal_font, FontSettings::TERMINAL);
+    }
+
+    #[test]
+    fn font_size_actions_zoom_and_keep_the_top_line() {
+        let mut app = AppState::new();
+        app.workspace.open_path(
+            "zoom.rs".into(),
+            "fn main() {}
+"
+            .repeat(100),
+        );
+        app.workspace.set_active_scroll(0.0, 240.0);
+        app.apply(Action::IncreaseFontSize);
+        assert_eq!(app.editor_font.size, 13);
+        // 13px at 200% rounds to 26px lines: line 10 stays at the top.
+        assert_eq!(app.workspace.active_scroll().1, 260.0);
+        app.apply(Action::ResetFontSize);
+        assert_eq!(app.editor_font, FontSettings::EDITOR);
+        assert_eq!(app.workspace.active_scroll().1, 240.0);
+        for _ in 0..40 {
+            app.apply(Action::DecreaseFontSize);
+        }
+        assert_eq!(app.editor_font.size, fonts::MIN_SIZE);
     }
 }

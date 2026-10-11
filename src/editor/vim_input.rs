@@ -8,8 +8,8 @@ use lgui::prelude::{State, UiRect};
 use lgui::services::Clipboard as SystemClipboard;
 
 use super::editor_view::{page_lines, reveal_cursor};
+use crate::fonts;
 use crate::state::AppState;
-use crate::theme;
 use crate::vim::{self, Key, Request, ScrollPosition};
 
 /// The application as Vim's host for one key or command.
@@ -88,8 +88,8 @@ pub fn set_enabled(app: &mut AppState, enabled: bool) {
 
 fn visible_lines(app: &AppState, rect: UiRect) -> Range<usize> {
     let (_, scroll_y) = app.workspace.active_scroll();
-    let first = (scroll_y / theme::LINE_H).ceil() as usize;
-    let last = ((scroll_y + rect.height()) / theme::LINE_H).floor() as usize;
+    let first = (scroll_y / fonts::editor().line_h).ceil() as usize;
+    let last = ((scroll_y + rect.height()) / fonts::editor().line_h).floor() as usize;
     first..last.max(first + 1)
 }
 
@@ -163,7 +163,7 @@ pub fn handle_key(
                 .map(|editor| editor.line_of(editor.cursor()));
             if let (Some(before), Some(after)) = (before, after) {
                 let (x, y) = app.workspace.active_scroll();
-                let delta = (after as f32 - before as f32) * theme::LINE_H;
+                let delta = (after as f32 - before as f32) * fonts::editor().line_h;
                 app.workspace.set_active_scroll(x, (y + delta).max(0.0));
                 reveal_cursor(app, rect);
             }
@@ -294,12 +294,12 @@ fn scroll_cursor(app: &mut AppState, rect: UiRect, position: ScrollPosition) {
     else {
         return;
     };
-    let top = line as f32 * theme::LINE_H;
+    let top = line as f32 * fonts::editor().line_h;
     let height = rect.height();
     let y = match position {
         ScrollPosition::Top => top,
-        ScrollPosition::Center => top - (height - theme::LINE_H) / 2.0,
-        ScrollPosition::Bottom => top + theme::LINE_H - height,
+        ScrollPosition::Center => top - (height - fonts::editor().line_h) / 2.0,
+        ScrollPosition::Bottom => top + fonts::editor().line_h - height,
     };
     let (x, _) = app.workspace.active_scroll();
     app.workspace.set_active_scroll(x, y.max(0.0));

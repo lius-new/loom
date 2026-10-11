@@ -891,7 +891,7 @@ impl Workspace {
             .find(|item| sections[item.index].request() == *request)
             && let Some(view) = document.views.get_mut(&pane)
         {
-            view.scroll_y = section.top as f32 * crate::model::diff_document::DIFF_ROW_HEIGHT;
+            view.scroll_y = section.top as f32 * crate::model::diff_document::row_height();
         }
     }
 
@@ -936,6 +936,21 @@ impl Workspace {
 
     pub fn active_scroll(&self) -> (f32, f32) {
         self.scroll(self.active_pane)
+    }
+
+    /// Keeps every code view on the same line after the code font changes.
+    /// `text` and `diff` are the new-to-old ratios of the editor line height
+    /// and the diff row height.
+    pub fn rescale_code_scroll(&mut self, text: f32, diff: f32) {
+        for document in self.documents.values_mut() {
+            if document.page.is_some() {
+                continue;
+            }
+            let factor = if document.diff.is_some() { diff } else { text };
+            for view in document.views.values_mut() {
+                view.scroll_y *= factor;
+            }
+        }
     }
 
     pub fn set_active_scroll(&mut self, x: f32, y: f32) {
@@ -1329,7 +1344,7 @@ impl Workspace {
                     let old_layout = current.changes_layout(split, &document.collapsed_diffs);
                     let new_layout = next.changes_layout(split, &document.collapsed_diffs);
                     for view in document.views.values_mut() {
-                        let row = view.scroll_y / crate::model::diff_document::DIFF_ROW_HEIGHT;
+                        let row = view.scroll_y / crate::model::diff_document::row_height();
                         if let Some(old) = old_layout
                             .sections
                             .iter()
@@ -1342,7 +1357,7 @@ impl Workspace {
                                 .find(|item| new_sections[item.index].request() == request)
                             {
                                 view.scroll_y = (new.top as f32 + row - old.top as f32).max(0.0)
-                                    * crate::model::diff_document::DIFF_ROW_HEIGHT;
+                                    * crate::model::diff_document::row_height();
                             }
                         }
                     }
@@ -2232,7 +2247,7 @@ mod tests {
         assert_eq!(workspace.apply_prepared_git_diffs(&diffs, false).len(), 1);
         assert_eq!(
             workspace.active_scroll().1,
-            y + 25.0 + 20.0 * crate::model::diff_document::DIFF_ROW_HEIGHT
+            y + 25.0 + 20.0 * crate::model::diff_document::row_height()
         );
         assert!(workspace.collapsed_diffs(pane).contains(&third));
         assert_eq!(workspace.git_poll_target().diffs, [request]);

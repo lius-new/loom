@@ -18,6 +18,7 @@ use super::interaction::{DragSelection, ImeSession, SelectionUnit};
 use crate::editor::gutter;
 use crate::editor::normal;
 use crate::editor::syntax;
+use crate::fonts;
 use crate::git::{GitStoreSnapshot, LineChange};
 use crate::model::pane_layout::PaneId;
 use crate::model::text::TextBuffer;
@@ -137,7 +138,7 @@ pub fn render(
         let lines = document_lines(&buffer);
         let (cursor_line, cursor_col) = buffer.line_col();
         let code_top = rect.top;
-        let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
+        let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
         let metrics = scroll_metrics(rect, code_left, &buffer);
         let (stored_x, stored_y) = s.workspace.scroll(pane);
         let scroll_x = stored_x.clamp(0.0, metrics.max_x);
@@ -248,7 +249,10 @@ pub fn render(
         let st_wheel = state.clone();
         root = root.on_wheel(move |cx, delta| {
             let (step_x, step_y) = match delta.unit {
-                WheelUnit::Lines => (delta.x * theme::LINE_H * 3.0, delta.y * theme::LINE_H * 3.0),
+                WheelUnit::Lines => (
+                    delta.x * fonts::editor().line_h * 3.0,
+                    delta.y * fonts::editor().line_h * 3.0,
+                ),
                 WheelUnit::Pixels => (delta.x, delta.y),
             };
             st_wheel.update(move |app| {
@@ -279,13 +283,13 @@ pub fn render(
             .key(format!("editor-content-{}", pane.get()))
             .cursor(CursorIcon::Text);
         if visible_lines.contains(&cursor_line) {
-            let highlight_y = code_top + cursor_line as f32 * theme::LINE_H;
+            let highlight_y = code_top + cursor_line as f32 * fonts::editor().line_h;
             let highlight = panel(
                 UiRect::new(
-                    rect.left + theme::GUTTER_W,
+                    rect.left + fonts::editor().gutter_w(),
                     highlight_y,
                     rect.right,
-                    highlight_y + theme::LINE_H,
+                    highlight_y + fonts::editor().line_h,
                 ),
                 VisualStyle::filled(theme::c().active_line),
             );
@@ -295,7 +299,7 @@ pub fn render(
         let gutter_viewport = UiRect::new(
             rect.left,
             code_top,
-            rect.left + theme::GUTTER_W,
+            rect.left + fonts::editor().gutter_w(),
             rect.bottom,
         );
         let gutter_content = UiRect::new(
@@ -325,9 +329,9 @@ pub fn render(
             && let Some(line) = gutter_hover
             && let Some((root_path, relative)) = repository.clone()
         {
-            let top = (code_top + (*run.start() - 1) as f32 * theme::LINE_H - scroll_y)
+            let top = (code_top + (*run.start() - 1) as f32 * fonts::editor().line_h - scroll_y)
                 .max(gutter_viewport.top);
-            let bottom = (code_top + *run.end() as f32 * theme::LINE_H - scroll_y)
+            let bottom = (code_top + *run.end() as f32 * fonts::editor().line_h - scroll_y)
                 .min(gutter_viewport.bottom);
             let st_peek = state.clone();
             let path = meta.path.clone();
@@ -359,7 +363,8 @@ pub fn render(
             if let UiEventPayload::PointerMove { pointer } = payload {
                 let point = pointer.point;
                 let hovered = gutter_viewport.contains(point).then(|| {
-                    let line = ((point.y - code_top + scroll_y) / theme::LINE_H).floor() as usize;
+                    let line =
+                        ((point.y - code_top + scroll_y) / fonts::editor().line_h).floor() as usize;
                     (pane, line + 1)
                 });
                 let hovered = hovered.filter(|(_, line)| *line <= line_count + 1);
@@ -397,7 +402,7 @@ pub fn render(
             Vec::new()
         };
         for line_index in visible_lines.clone() {
-            let y = code_top + line_index as f32 * theme::LINE_H;
+            let y = code_top + line_index as f32 * fonts::editor().line_h;
             let line = lines[line_index];
             let layout = layout_line(line, code_left, y, layout_right);
             let (start, end) = (buffer.line_start(line_index), buffer.line_end(line_index));
@@ -414,13 +419,13 @@ pub fn render(
                 let mut right = caret_x(layout.as_ref(), buffer.text()[start..to].chars().count())
                     .unwrap_or(left);
                 if range.end > end {
-                    right += theme::CHAR_W;
+                    right += fonts::editor().char_w;
                 }
                 Some(UiRect::new(
                     left,
                     y,
                     right.max(left + 2.0),
-                    y + theme::LINE_H,
+                    y + fonts::editor().line_h,
                 ))
             };
             for found in &matches {
@@ -439,15 +444,11 @@ pub fn render(
             for (span, color) in syntax::highlight_line(line, meta.lang) {
                 char_offset += span.chars().count();
                 let next_x = caret_x(layout.as_ref(), char_offset)
-                    .unwrap_or_else(|| x + span.chars().count() as f32 * theme::CHAR_W);
-                let span_rect = UiRect::new(x, y, next_x.max(x) + 4.0, y + theme::LINE_H);
+                    .unwrap_or_else(|| x + span.chars().count() as f32 * fonts::editor().char_w);
+                let span_rect = UiRect::new(x, y, next_x.max(x) + 4.0, y + fonts::editor().line_h);
                 let (display, _, column) = expand_tabs(&span, display_column);
                 display_column = column;
-                code = code.child(text(
-                    span_rect,
-                    display,
-                    theme::mono(color, theme::CODE_SIZE),
-                ));
+                code = code.child(text(span_rect, display, fonts::editor().style(color)));
                 x = next_x;
             }
         }
@@ -455,10 +456,10 @@ pub fn render(
         // Only the editor that owns keyboard focus shows a caret.
         let editor_focused = s.focused && focused_pane;
         if editor_focused && visible_lines.contains(&cursor_line) {
-            let cursor_y = code_top + cursor_line as f32 * theme::LINE_H;
+            let cursor_y = code_top + cursor_line as f32 * fonts::editor().line_h;
             let cursor_layout = layout_line(lines[cursor_line], code_left, cursor_y, layout_right);
             let cursor_x = caret_x(cursor_layout.as_ref(), cursor_col)
-                .unwrap_or(code_left + cursor_col as f32 * theme::CHAR_W);
+                .unwrap_or(code_left + cursor_col as f32 * fonts::editor().char_w);
             let shape = if vim_view {
                 s.vim.cursor_shape()
             } else {
@@ -479,15 +480,20 @@ pub fn render(
                 let right = (chars > 0)
                     .then(|| caret_x(cursor_layout.as_ref(), cursor_col + chars))
                     .flatten()
-                    .unwrap_or(cursor_x + theme::CHAR_W)
+                    .unwrap_or(cursor_x + fonts::editor().char_w)
                     .max(cursor_x + 2.0);
                 let top = match shape {
-                    CursorShape::Underline => cursor_y + theme::LINE_H - 3.0,
-                    CursorShape::HalfBlock => cursor_y + theme::LINE_H / 2.0,
+                    CursorShape::Underline => cursor_y + fonts::editor().line_h - 3.0,
+                    CursorShape::HalfBlock => cursor_y + fonts::editor().line_h / 2.0,
                     _ => cursor_y + 1.0,
                 };
                 (
-                    UiRect::new(cursor_x, top, right, cursor_y + theme::LINE_H - 1.0),
+                    UiRect::new(
+                        cursor_x,
+                        top,
+                        right,
+                        cursor_y + fonts::editor().line_h - 1.0,
+                    ),
                     VisualStyle::filled(theme::c().accent).alpha(140),
                 )
             };
@@ -517,14 +523,14 @@ pub fn render(
                     cursor_x,
                     cursor_y,
                     cursor_x + width + 4.0,
-                    cursor_y + theme::LINE_H,
+                    cursor_y + fonts::editor().line_h,
                 );
                 code = code.child(
                     panel(r, VisualStyle::filled(theme::c().surface))
                         .child(text(
                             r,
                             session.text.clone(),
-                            theme::mono(theme::c().text_bright, theme::CODE_SIZE),
+                            fonts::editor().style(theme::c().text_bright),
                         ))
                         .child(panel(
                             UiRect::new(r.left, r.bottom - 2.0, r.right, r.bottom - 1.0),
@@ -660,9 +666,9 @@ fn overview_ruler(
         ))
     };
     for mark in marks {
-        let top = (lane.top + mark.first as f32 * theme::LINE_H * scale)
+        let top = (lane.top + mark.first as f32 * fonts::editor().line_h * scale)
             .min(lane.bottom - MIN_MARK_LENGTH);
-        let bottom = (lane.top + (mark.first + mark.lines) as f32 * theme::LINE_H * scale)
+        let bottom = (lane.top + (mark.first + mark.lines) as f32 * fonts::editor().line_h * scale)
             .max(top + MIN_MARK_LENGTH);
         // Marks closer than a pixel draw as one, so huge files stay cheap.
         match &mut last {
@@ -887,7 +893,7 @@ pub fn drag_scrollbars(app: &mut AppState, rect: UiRect, pointer_x: f32, pointer
         return false;
     }
 
-    let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
+    let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
     let Some(metrics) = app
         .workspace
         .active_editor()
@@ -970,8 +976,10 @@ fn document_lines(buffer: &TextBuffer) -> Vec<&str> {
 fn scroll_metrics(rect: UiRect, code_left: f32, buffer: &TextBuffer) -> ScrollMetrics {
     let mut viewport_w = (rect.right - code_left).max(1.0);
     let mut viewport_h = rect.height().max(1.0);
-    let natural_w = buffer.max_line_display_width() as f32 * theme::CHAR_W + TRAILING_CODE_SPACE;
-    let content_h = (buffer.line_count() as f32 * theme::LINE_H).max(theme::LINE_H);
+    let natural_w =
+        buffer.max_line_display_width() as f32 * fonts::editor().char_w + TRAILING_CODE_SPACE;
+    let content_h =
+        (buffer.line_count() as f32 * fonts::editor().line_h).max(fonts::editor().line_h);
     // A scrollbar may make the other axis overflow; reserve both before revealing the caret.
     for _ in 0..2 {
         viewport_w = (rect.right
@@ -1006,8 +1014,9 @@ fn visual_columns(line: &str) -> usize {
 }
 
 fn visible_line_range(scroll_y: f32, viewport_h: f32, line_count: usize) -> Range<usize> {
-    let first = ((scroll_y / theme::LINE_H).floor() as usize).saturating_sub(1);
-    let last = (((scroll_y + viewport_h) / theme::LINE_H).ceil() as usize + 1).min(line_count);
+    let first = ((scroll_y / fonts::editor().line_h).floor() as usize).saturating_sub(1);
+    let last =
+        (((scroll_y + viewport_h) / fonts::editor().line_h).ceil() as usize + 1).min(line_count);
     first.min(last)..last
 }
 
@@ -1074,9 +1083,14 @@ pub(crate) fn expand_tabs(line: &str, initial_column: usize) -> (String, Vec<usi
 }
 fn layout_line(line: &str, left: f32, top: f32, right: f32) -> Option<LineLayout> {
     let (display, source_to_display, _) = expand_tabs(line, 0);
-    let bounds = UiRect::new(left, top, right.max(left + 1.0), top + theme::LINE_H);
-    let mut request = TextLayoutRequest::single_line(&display, bounds, theme::CODE_SIZE, 400);
-    request.font_families = theme::MONO_FAMILIES;
+    let bounds = UiRect::new(
+        left,
+        top,
+        right.max(left + 1.0),
+        top + fonts::editor().line_h,
+    );
+    let mut request = TextLayoutRequest::single_line(&display, bounds, fonts::editor().size, 400);
+    request.font_families = fonts::editor().families;
     text::layout(&request).map(|layout| LineLayout {
         width: layout.width,
         layout,
@@ -1109,7 +1123,7 @@ fn fallback_hit_column(line: &str, x: f32) -> usize {
         } else {
             UnicodeWidthStr::width(g)
         };
-        if x < (column as f32 + width as f32 / 2.0) * theme::CHAR_W {
+        if x < (column as f32 + width as f32 / 2.0) * fonts::editor().char_w {
             return chars;
         }
         column += width;
@@ -1133,7 +1147,7 @@ fn cursor_offset_from_point(
     let line_text = buffer.line(line);
     let content_x = point_x + scroll_x;
     let content_y = point_y + scroll_y;
-    let line_top = rect.top + line as f32 * theme::LINE_H;
+    let line_top = rect.top + line as f32 * fonts::editor().line_h;
     let char_index = layout_line(
         line_text,
         code_left,
@@ -1160,7 +1174,7 @@ fn line_index_from_point(
     if line_count == 0 {
         return 0;
     }
-    (((point_y - viewport_top + scroll_y) / theme::LINE_H)
+    (((point_y - viewport_top + scroll_y) / fonts::editor().line_h)
         .floor()
         .max(0.0) as usize)
         .min(line_count - 1)
@@ -1171,12 +1185,12 @@ pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
         return;
     };
     let (line, column) = buffer.line_col();
-    let code_left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
+    let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
     let metrics = scroll_metrics(rect, code_left, &buffer);
     let (mut scroll_x, mut scroll_y) = app.workspace.active_scroll();
 
-    let line_top = line as f32 * theme::LINE_H;
-    let line_bottom = line_top + theme::LINE_H;
+    let line_top = line as f32 * fonts::editor().line_h;
+    let line_bottom = line_top + fonts::editor().line_h;
     if line_top < scroll_y {
         scroll_y = line_top;
     } else if line_bottom > scroll_y + metrics.viewport_h {
@@ -1190,7 +1204,7 @@ pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
         code_left + metrics.content_w,
     );
     let caret = caret_x(layout.as_ref(), column)
-        .unwrap_or(code_left + column as f32 * theme::CHAR_W)
+        .unwrap_or(code_left + column as f32 * fonts::editor().char_w)
         - code_left;
     if caret < scroll_x + CURSOR_REVEAL_MARGIN {
         scroll_x = (caret - CURSOR_REVEAL_MARGIN).max(0.0);
@@ -1334,8 +1348,8 @@ fn ime_cursor_rect(app: &AppState, rect: UiRect) -> UiRect {
     };
     let (line, col) = buffer.line_col();
     let (sx, sy) = app.workspace.active_scroll();
-    let left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
-    let top = rect.top + line as f32 * theme::LINE_H - sy;
+    let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+    let top = rect.top + line as f32 * fonts::editor().line_h - sy;
     let layout = layout_line(buffer.line(line), left, top, left + 100000.0);
     let mut x = caret_x(layout.as_ref(), col).unwrap_or(left) - sx;
     let pane = app.workspace.active_pane();
@@ -1353,8 +1367,11 @@ fn ime_cursor_rect(app: &AppState, rect: UiRect) -> UiRect {
         x += layout_line(prefix, 0.0, 0.0, 100000.0).map_or(0.0, |l| l.width);
     }
     let x = x.clamp(left, rect.right.max(left));
-    let top = top.clamp(rect.top, (rect.bottom - theme::LINE_H).max(rect.top));
-    UiRect::new(x, top, x + 2.0, top + theme::LINE_H)
+    let top = top.clamp(
+        rect.top,
+        (rect.bottom - fonts::editor().line_h).max(rect.top),
+    );
+    UiRect::new(x, top, x + 2.0, top + fonts::editor().line_h)
 }
 
 fn update_drag_selection(app: &mut AppState, rect: UiRect) {
@@ -1366,7 +1383,7 @@ fn update_drag_selection(app: &mut AppState, rect: UiRect) {
         return;
     }
     let (sx, sy) = app.workspace.active_scroll();
-    let left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
+    let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
     if let Some(mut buffer) = app.workspace.active_editor_mut() {
         let metrics = scroll_metrics(rect, left, &buffer);
         let cursor = cursor_offset_from_point(
@@ -1417,7 +1434,7 @@ pub fn drag_scroll_tick(app: &mut AppState, rect: UiRect) -> bool {
         app.editor.drag = None;
         return true;
     }
-    let left = rect.left + theme::GUTTER_W + theme::CODE_PAD;
+    let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
     let speed = |p: f32, low: f32, high: f32| {
         if p < low {
             -(low - p).clamp(4.0, 80.0)
@@ -1530,7 +1547,7 @@ pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
 
 /// Lines in one page of an editor of this size, for page movements.
 pub fn page_lines(rect: UiRect) -> usize {
-    (rect.height() / theme::LINE_H).floor().max(1.0) as usize
+    (rect.height() / fonts::editor().line_h).floor().max(1.0) as usize
 }
 
 #[cfg(test)]
@@ -1652,9 +1669,10 @@ mod tests {
             session.render_view(&view, viewport, UiScale::ONE);
             prevented
         };
-        let left = theme::GUTTER_W + theme::CODE_PAD;
-        let pointer =
-            |column: f32| PointerData::mouse(Point::new(left + column * theme::CHAR_W, 5.0));
+        let left = fonts::editor().gutter_w() + theme::CODE_PAD;
+        let pointer = |column: f32| {
+            PointerData::mouse(Point::new(left + column * fonts::editor().char_w, 5.0))
+        };
         send(InputEvent::PointerDown {
             pointer: pointer(0.0),
             button: PointerButton::Left,
@@ -1792,19 +1810,20 @@ mod tests {
             let app = state.get();
             let buffer = app.workspace.active_editor().unwrap();
             let (line, col) = buffer.line_col();
-            let left = viewport.left + theme::GUTTER_W + theme::CODE_PAD;
+            let left = viewport.left + fonts::editor().gutter_w() + theme::CODE_PAD;
             let layout = layout_line(
                 buffer.line(line),
                 left,
-                line as f32 * theme::LINE_H,
+                line as f32 * fonts::editor().line_h,
                 viewport.right,
             );
-            (caret_x(layout.as_ref(), col).unwrap_or(left + col as f32 * theme::CHAR_W)
+            (caret_x(layout.as_ref(), col).unwrap_or(left + col as f32 * fonts::editor().char_w)
                 - app.workspace.active_scroll().0)
                 .round()
         };
-        let left = theme::GUTTER_W + theme::CODE_PAD;
-        let pointer = |column| PointerData::mouse(Point::new(left + column * theme::CHAR_W, 5.0));
+        let left = fonts::editor().gutter_w() + theme::CODE_PAD;
+        let pointer =
+            |column| PointerData::mouse(Point::new(left + column * fonts::editor().char_w, 5.0));
         send(
             &mut session,
             InputEvent::PointerDown {
@@ -2172,8 +2191,11 @@ mod tests {
         assert_eq!(display, "a   中  b");
         assert_eq!(mapping, vec![0, 1, 4, 5, 7, 8]);
         assert_eq!(width, 9);
-        assert_eq!(fallback_hit_column("a\t中\tb", 5.9 * theme::CHAR_W), 3);
-        assert_eq!(fallback_hit_column("👩‍💻x", 1.5 * theme::CHAR_W), 3);
+        assert_eq!(
+            fallback_hit_column("a\t中\tb", 5.9 * fonts::editor().char_w),
+            3
+        );
+        assert_eq!(fallback_hit_column("👩‍💻x", 1.5 * fonts::editor().char_w), 3);
     }
 
     #[test]
@@ -2248,7 +2270,7 @@ mod tests {
             app.workspace.active_editor().unwrap().selected_text(),
             Some("one\ntwo\n")
         );
-        app.editor.drag.as_mut().unwrap().point.1 = theme::LINE_H * 2.0 + 1.0;
+        app.editor.drag.as_mut().unwrap().point.1 = fonts::editor().line_h * 2.0 + 1.0;
         update_drag_selection(&mut app, rect);
         assert_eq!(
             app.workspace.active_editor().unwrap().selected_text(),
@@ -2347,7 +2369,7 @@ mod tests {
         reveal_cursor(&mut app, UiRect::new(0.0, 0.0, 400.0, 100.0));
         assert_eq!(
             app.workspace.active_scroll().1,
-            101.0 * theme::LINE_H - 100.0
+            101.0 * fonts::editor().line_h - 100.0
         );
     }
 
@@ -2386,7 +2408,7 @@ mod tests {
     #[test]
     fn pointer_line_accounts_for_vertical_scroll_and_clamps_to_document() {
         assert_eq!(
-            line_index_from_point(100.0, 100.0, theme::LINE_H * 2.0, 10),
+            line_index_from_point(100.0, 100.0, fonts::editor().line_h * 2.0, 10),
             2
         );
         assert_eq!(line_index_from_point(50.0, 100.0, 0.0, 10), 0);

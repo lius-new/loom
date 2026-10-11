@@ -6,6 +6,7 @@ use std::ops::{Range, RangeInclusive};
 use lgui::core::ellipse;
 use lgui::prelude::{Color, Element, UiRect, VisualStyle, group, text};
 
+use crate::fonts;
 use crate::theme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +67,7 @@ pub fn render(
     let hovered_run = hovered_run(decorations, hovered);
 
     for i in visible_lines {
-        let y = rect.top + i as f32 * theme::LINE_H;
+        let y = rect.top + i as f32 * fonts::editor().line_h;
         let line_decorations = decorations.get(&(i + 1));
         let has_bp =
             line_decorations.is_some_and(|values| values.contains(&GutterDecoration::Breakpoint));
@@ -76,11 +77,11 @@ pub fn render(
         } else {
             theme::c().text_faint
         };
-        let num_rect = UiRect::new(rect.left, y, rect.right - 10.0, y + theme::LINE_H);
+        let num_rect = UiRect::new(rect.left, y, rect.right - 10.0, y + fonts::editor().line_h);
         g = g.child(text(
             num_rect,
             (i + 1).to_string(),
-            theme::mono_right(color, theme::CODE_SIZE),
+            fonts::editor().right(color),
         ));
 
         if has_bp {
@@ -106,7 +107,7 @@ pub fn render(
                     rect.right - width,
                     y + 2.0,
                     rect.right,
-                    y + theme::LINE_H - 2.0,
+                    y + fonts::editor().line_h - 2.0,
                 ),
                 VisualStyle::filled(color),
             ));
