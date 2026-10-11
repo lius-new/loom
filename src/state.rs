@@ -279,6 +279,11 @@ pub struct AppState {
     pub horizontal_scrollbar_drag_offset: f32,
     /// Whether the pointer is currently inside the visible code editor.
     pub editor_hovered: Option<PaneId>,
+    /// The 1-based line under the pointer in a pane's gutter, which
+    /// thickens that line's Git change bar.
+    pub editor_gutter_hover: Option<(PaneId, usize)>,
+    /// The Git change peeked at from its gutter bar.
+    pub editor_hunk_peek: Option<crate::editor::hunk_peek::HunkPeek>,
     /// True while the editor's vertical overlay scrollbar is being dragged.
     pub editor_vertical_scrollbar_dragging: bool,
     /// Pointer y offset from the editor vertical thumb's top.
@@ -422,6 +427,8 @@ impl AppState {
             horizontal_scrollbar_dragging: false,
             horizontal_scrollbar_drag_offset: 0.0,
             editor_hovered: None,
+            editor_gutter_hover: None,
+            editor_hunk_peek: None,
             editor_vertical_scrollbar_dragging: false,
             editor_vertical_scrollbar_drag_offset: 0.0,
             editor_horizontal_scrollbar_dragging: false,

@@ -7,6 +7,7 @@ pub mod commands;
 pub mod edit_menu;
 pub mod editor_view;
 pub mod gutter;
+pub mod hunk_peek;
 pub mod interaction;
 pub mod normal;
 pub mod syntax;

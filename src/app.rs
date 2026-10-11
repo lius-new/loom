@@ -911,10 +911,19 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 .find(|(_, rect)| rect.contains(pointer.point))
                 .map(|(pane, _)| *pane);
             st_editor_hover.try_update(move |app| {
-                let changed = app.editor_hovered != hovered
+                let mut changed = app.editor_hovered != hovered
                     || (hovered.is_none()
                         && (app.welcome_hover.is_some() || app.workspace_home_hover.is_some()));
                 app.editor_hovered = hovered;
+                // A pane's gutter only sees moves inside it; drop its hover
+                // once the pointer leaves the pane.
+                if app
+                    .editor_gutter_hover
+                    .is_some_and(|(pane, _)| Some(pane) != hovered)
+                {
+                    app.editor_gutter_hover = None;
+                    changed = true;
+                }
                 if hovered.is_none() {
                     app.welcome_hover = None;
                     app.workspace_home_hover = None;

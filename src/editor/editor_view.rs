@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use lgui::core::{
     CursorIcon, EventPolicy, KeyState, PointerButton, SemanticRole, Semantics, UiElement,
-    UiFocusHandle, UiId, WheelUnit, clip,
+    UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel, text};
 use lgui::text::{self, TextLayout, TextLayoutRequest};
@@ -163,6 +163,7 @@ pub fn render(
             pointer_focus.focus();
             st_pointer.update(move |app| {
                 app.editor.caret_dragging = false;
+                app.editor_hunk_peek = None;
                 app.workspace.activate_pane(pane);
                 let (scroll_x, scroll_y) = app.workspace.scroll(pane);
                 let cursor = app.workspace.active_editor().map(|buffer| {
@@ -303,11 +304,72 @@ pub fn render(
             gutter_viewport.right,
             code_top + metrics.content_h,
         );
+        let gutter_hover = s
+            .editor_gutter_hover
+            .filter(|(hovered_pane, _)| *hovered_pane == pane)
+            .map(|(_, line)| line);
         content = content.child(clip(gutter_viewport, 0.0, -scroll_y).child(gutter::render(
             gutter_content,
             visible_lines.clone(),
             &decorations,
+            gutter_hover,
         )));
+        let repository = git.repository_for_path(&meta.path).and_then(|repository| {
+            Some((
+                repository.worktree_root.clone(),
+                repository.relative_path(&meta.path)?,
+            ))
+        });
+        // The hovered change bar opens its peek, like a link.
+        if let Some(run) = gutter::hovered_run(&decorations, gutter_hover)
+            && let Some(line) = gutter_hover
+            && let Some((root_path, relative)) = repository.clone()
+        {
+            let top = (code_top + (*run.start() - 1) as f32 * theme::LINE_H - scroll_y)
+                .max(gutter_viewport.top);
+            let bottom = (code_top + *run.end() as f32 * theme::LINE_H - scroll_y)
+                .min(gutter_viewport.bottom);
+            let st_peek = state.clone();
+            let path = meta.path.clone();
+            content = content.child(
+                panel(
+                    UiRect::new(gutter_viewport.left, top, gutter_viewport.right, bottom),
+                    VisualStyle::default(),
+                )
+                .key(format!("gutter-change-{}", pane.get()))
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .semantics(Semantics::new(SemanticRole::Button).name("Show change"))
+                .on_pointer_down(move |cx, _pointer| {
+                    cx.stop_propagation();
+                    super::hunk_peek::toggle(
+                        &st_peek,
+                        pane,
+                        path.clone(),
+                        root_path.clone(),
+                        relative.clone(),
+                        line,
+                    );
+                }),
+            );
+        }
+        let st_gutter_hover = state.clone();
+        let line_count = lines.len();
+        root = root.on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
+            if let UiEventPayload::PointerMove { pointer } = payload {
+                let point = pointer.point;
+                let hovered = gutter_viewport.contains(point).then(|| {
+                    let line = ((point.y - code_top + scroll_y) / theme::LINE_H).floor() as usize;
+                    (pane, line + 1)
+                });
+                let hovered = hovered.filter(|(_, line)| *line <= line_count + 1);
+                st_gutter_hover.try_update(move |app| {
+                    let changed = app.editor_gutter_hover != hovered;
+                    app.editor_gutter_hover = hovered;
+                    changed
+                });
+            }
+        });
 
         let code_viewport = UiRect::new(
             code_left,
@@ -474,6 +536,31 @@ pub fn render(
 
         content = content.child(clip(code_viewport, -scroll_x, -scroll_y).child(code));
         root = root.child(content);
+        if let Some(peek) = s
+            .editor_hunk_peek
+            .as_ref()
+            .filter(|peek| peek.pane == pane && peek.path == meta.path)
+            && let Some((root_path, relative)) = &repository
+        {
+            root = root.child(super::hunk_peek::render(
+                peek,
+                super::hunk_peek::PeekContext {
+                    pane,
+                    rect: UiRect::new(rect.left, code_top, rect.right, rect.bottom),
+                    code_left,
+                    code_right: rect.right - SCROLLBAR_SIZE,
+                    scroll_y,
+                    max_y: metrics.max_y,
+                    viewport_h: metrics.viewport_h,
+                    path: &meta.path,
+                    root: root_path,
+                    relative,
+                    changes: git.line_changes.get(&meta.path),
+                },
+                &state,
+                &git_store,
+            ));
+        }
 
         let emphasized = s.editor_hovered == Some(pane)
             || (focused_pane
@@ -1124,7 +1211,9 @@ pub fn execute_command(
     clipboard: lgui::services::ClipboardHandle,
 ) {
     state.update(|app| {
-        if command == Command::Escape && app.editor.menu.take().is_some() {
+        if command == Command::Escape
+            && (app.editor.menu.take().is_some() || app.editor_hunk_peek.take().is_some())
+        {
             return;
         }
         app.editor.menu = None;
