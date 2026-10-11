@@ -195,7 +195,8 @@ impl TabBadge {
         }
     }
 
-    fn render(self, left: f32, pill: UiRect) -> Element {
+    /// `key` names the tab, so icon element ids stay unique per tab.
+    fn render(self, left: f32, pill: UiRect, key: &str) -> Element {
         match self {
             Self::Text(label, color) => text(
                 UiRect::new(
@@ -208,13 +209,11 @@ impl TabBadge {
                 theme::mono_bold(color, theme::SMALL),
             )
             .into(),
-            Self::Icon(key, color) => {
+            Self::Icon(icon_key, color) => {
                 let top = pill.top + (pill.height() - BADGE_ICON) / 2.0;
-                // Icon badges belong to built-in pages, which have one tab
-                // each, so the icon name keeps the element id unique.
                 icon(
                     UiId::owned(format!("tabs.badge.{key}")),
-                    key,
+                    icon_key,
                     UiRect::new(left, top, left + BADGE_ICON, top + BADGE_ICON),
                     color,
                 )
@@ -230,8 +229,14 @@ fn tab_badge(app: &AppState, id: FileId, meta: &FileMeta) -> TabBadge {
             AppPage::Keymap => "command",
         };
         TabBadge::Icon(icon, theme::c().text_muted)
-    } else if app.workspace.is_diff(id) {
-        TabBadge::Text("Δ", theme::c().badge.diff)
+    } else if let Some(diff) = app.workspace.diff_of(id) {
+        // A commit's all-files tab, or a file or repository changes diff.
+        let icon = if diff.revision.is_some() && diff.sections.is_some() {
+            "git-commit"
+        } else {
+            "diff"
+        };
+        TabBadge::Icon(icon, theme::c().badge.diff)
     } else {
         TabBadge::Text(meta.lang.badge(), meta.lang.badge_color())
     }
@@ -903,7 +908,7 @@ pub fn render(
             cx.stop_propagation();
         });
 
-        tab_el = tab_el.child(badge.render(badge_left, pill));
+        tab_el = tab_el.child(badge.render(badge_left, pill, &format!("{}-{id:?}", pane.get())));
         tab_el = tab_el.child(text(
             UiRect::new(name_left, pill.top, name_left + name_slot_w, pill.bottom),
             display_name,

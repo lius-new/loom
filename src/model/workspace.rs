@@ -974,6 +974,11 @@ impl Workspace {
         self.documents.get(&id).map(|document| &document.meta)
     }
 
+    /// The diff shown by tab `id`, if it is a diff tab.
+    pub fn diff_of(&self, id: FileId) -> Option<&DiffDocument> {
+        self.documents.get(&id)?.diff.as_deref()
+    }
+
     pub fn is_diff(&self, id: FileId) -> bool {
         self.documents
             .get(&id)

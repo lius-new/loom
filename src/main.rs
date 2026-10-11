@@ -114,6 +114,7 @@ fn svg_icons() -> SvgIconRegistry {
             .with_icon("worktree-open", icondata::VsFolderOpened)
             .with_icon("repo", icondata::VsRepo)
             .with_icon("git-commit", icondata::VsGitCommit)
+            .with_icon("diff", icondata::LuArrowLeftRight)
             // No Codicon equivalent yet.
             .with_icon("git-branch", icondata::LuGitBranch)
             .with_icon("command", icondata::LuCommand)
