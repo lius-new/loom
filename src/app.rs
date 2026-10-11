@@ -61,7 +61,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         tabs.restore_widths(&session.terminal_widths);
         tabs.restore_purposes(&session.terminal_purposes);
         tabs.restore_directories(&session.terminal_directories);
+        tabs.set_profiles(&state.get().terminal_profiles);
         tabs
+    });
+    let profile_tabs = terminal_tabs.clone();
+    let terminal_profiles = state.get().terminal_profiles.clone();
+    cx.use_effect(terminal_profiles.clone(), move || {
+        profile_tabs.update(|tabs| tabs.set_profiles(&terminal_profiles));
     });
     let terminal_cursor_blink = cx.state(true);
     let terminal_cursor_visible = terminal_cursor_blink.get();
@@ -445,6 +451,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let settings = Settings {
         theme: s.theme,
         default_shell: s.default_shell,
+        terminal_profiles: s.terminal_profiles.clone(),
         terminal_cursor_blink: s.terminal_cursor_blink,
         smooth_caret: s.smooth_caret,
         git_inline_blame: s.git_inline_blame,
@@ -452,7 +459,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         git_tree_view: s.git_tree_view,
         vim: s.vim.options.into(),
     };
-    cx.use_effect(settings, move || {
+    cx.use_effect(settings.clone(), move || {
         let _ = settings_persistence::save(&settings);
         || {}
     });

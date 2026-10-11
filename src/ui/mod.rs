@@ -20,6 +20,7 @@ pub mod tab_context_menu;
 pub mod tab_layout;
 pub mod tabs;
 pub mod terminal;
+pub mod terminal_settings;
 pub mod terminal_tab_context_menu;
 pub mod titlebar;
 pub mod toast;

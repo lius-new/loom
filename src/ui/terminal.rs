@@ -13,8 +13,10 @@ use lgui::services::{Clipboard, ClipboardError, ServicesContextExt};
 use lgui::text::{self as text_layout, TextLayoutRequest};
 
 use crate::state::AppState;
+#[cfg(test)]
+use crate::terminal_session::ShellKind;
 use crate::terminal_session::{
-    ShellKind, TerminalController, TerminalRun, TerminalSize, TerminalTab, TerminalTabs,
+    TerminalController, TerminalRun, TerminalSize, TerminalTab, TerminalTabs,
 };
 use crate::theme;
 use crate::ui::tabs::{
@@ -85,7 +87,7 @@ pub fn toggle_panel(
         });
     let mut selected = default_session;
     if opening && selected.is_none() {
-        let shell = app.default_shell;
+        let shell = app.effective_shell();
         let cwd = app.workspace_folders.first().cloned();
         terminal_tabs.update(|tabs| {
             selected = Some(tabs.add_at(shell, cwd));
@@ -432,10 +434,20 @@ fn render_view(
             theme::c().text_soft,
         )),
     );
-    let shell_label = snapshot.shell.short_label();
+    let available_width = (tool_right - rect.left).max(0.0);
+    let max_instance_width = (available_width * 0.5)
+        .clamp(52.0, 220.0)
+        .min(available_width);
+    let shell_label = ellipsize(
+        &controller.short_label(),
+        (max_instance_width - 47.0 - TEXT_MARGIN).max(0.0),
+        theme::SMALL,
+        400,
+    );
     // Reserve the leading icon and trailing arrow around the shaped label.
-    let instance_width =
-        (25.0 + measure(shell_label, theme::SMALL, 400) + TEXT_MARGIN + 22.0).ceil();
+    let instance_width = (25.0 + measure(&shell_label, theme::SMALL, 400) + TEXT_MARGIN + 22.0)
+        .ceil()
+        .min(max_instance_width);
     let instance_rect = UiRect::new(
         tool_right - instance_width,
         header.top + 5.0,
@@ -474,7 +486,13 @@ fn render_view(
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
             menu_tabs.update(|tabs| tabs.select(active_tab_id));
-            menu_state.update(|app| app.terminal_shell_menu = !app.terminal_shell_menu);
+            menu_state.update(|app| {
+                app.terminal_shell_menu = !app.terminal_shell_menu;
+                if app.terminal_shell_menu {
+                    app.terminal_shell_scroll = 0;
+                    app.refresh_shells();
+                }
+            });
             menu_focus.focus();
         })
         .child(icon(
@@ -567,6 +585,7 @@ fn render_view(
     if shell_menu_open {
         terminal = terminal.child(shell_menu(
             instance_rect,
+            rect,
             state.clone(),
             terminal_focus.clone(),
             terminal_tabs.clone(),
@@ -637,7 +656,7 @@ fn render_session(
     );
     let cursor_rect = terminal_cursor_rect(content, snapshot.cursor, snapshot.rows, snapshot.cols);
     let mut semantics = Semantics::new(SemanticRole::TextInput)
-        .name(format!("{} terminal", snapshot.shell.label()))
+        .name(format!("{} terminal", snapshot.shell_name))
         .description("Interactive integrated terminal");
     semantics.state.multiline = true;
 
@@ -1152,7 +1171,11 @@ fn render_screen(
         screen = screen.child(panel(cursor, cursor_style));
     }
 
-    if let Some(message) = snapshot.status.message() {
+    if let Some(message) = snapshot
+        .status
+        .message()
+        .or_else(|| snapshot.notice.clone())
+    {
         let top = (content.bottom - TERMINAL_LINE_H).max(content.top);
         screen = screen.child(text(
             UiRect::new(content.left, top, content.right, top + TERMINAL_LINE_H),
@@ -1257,18 +1280,48 @@ fn cursor_is_drawn(pty_visible: bool, focused: bool, blink_visible: bool) -> boo
 
 fn shell_menu(
     instance_rect: UiRect,
+    bounds: UiRect,
     state: State<AppState>,
     focus: UiFocusHandle,
     terminal_tabs: State<TerminalTabs>,
 ) -> Element {
-    let menu_rect = UiRect::new(
-        instance_rect.right - SHELL_MENU_W,
-        instance_rect.bottom + 4.0,
-        instance_rect.right,
-        instance_rect.bottom + 4.0 + SHELL_MENU_ROW_H * ShellKind::ALL.len() as f32 + 8.0,
-    );
+    let options = state.get().shell_options.clone();
+    let space = (bounds.bottom - instance_rect.bottom).max(instance_rect.top - bounds.top);
+    let visible = (((space - 40.0) / SHELL_MENU_ROW_H).floor() as usize)
+        .clamp(1, 7)
+        .min(options.len().max(1));
+    let offset = state
+        .get()
+        .terminal_shell_scroll
+        .min(options.len().saturating_sub(visible));
+    let height = 8.0 + SHELL_MENU_ROW_H * (options.len().min(visible) + 1) as f32;
+    let top = if instance_rect.bottom + 4.0 + height <= bounds.bottom {
+        instance_rect.bottom + 4.0
+    } else {
+        (instance_rect.top - 4.0 - height).max(bounds.top)
+    };
+    let width = SHELL_MENU_W.min(bounds.width().max(0.0));
+    let left =
+        (instance_rect.right - width).clamp(bounds.left, (bounds.right - width).max(bounds.left));
+    let menu_rect = UiRect::new(left, top, left + width, top + height);
     let mut menu = theme::bordered(menu_rect, theme::c().surface, theme::c().border, 4.0, 1.0);
-    for (index, shell) in ShellKind::ALL.into_iter().enumerate() {
+    let scroll_state = state.clone();
+    let max_offset = options.len().saturating_sub(visible);
+    menu = menu
+        .event_policy(EventPolicy::INTERACTIVE)
+        .on_wheel(move |cx, delta| {
+            let step = delta.y.abs().ceil().max(1.0) as usize;
+            scroll_state.update(|app| {
+                app.terminal_shell_scroll = if delta.y > 0.0 {
+                    offset.saturating_sub(step)
+                } else {
+                    offset.saturating_add(step).min(max_offset)
+                }
+            });
+            cx.stop_propagation();
+        });
+    for (index, option) in options.iter().skip(offset).take(visible).enumerate() {
+        let shell = option.kind;
         let top = menu_rect.top + 4.0 + index as f32 * SHELL_MENU_ROW_H;
         let row = UiRect::new(
             menu_rect.left + 4.0,
@@ -1279,29 +1332,84 @@ fn shell_menu(
         let row_state = state.clone();
         let row_focus = focus.clone();
         let row_tabs = terminal_tabs.clone();
-        let item = panel(row, VisualStyle::default().radius(3.0))
-            .key(format!("terminal-shell-{}", shell.short_label()))
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                let cwd = row_tabs
-                    .get()
-                    .active()
-                    .and_then(TerminalTab::working_directory);
-                row_tabs.update(move |tabs| {
-                    tabs.add_at(shell, cwd);
+        let mut item =
+            panel(row, VisualStyle::default().radius(3.0)).key(format!("terminal-shell-{shell:?}"));
+        if option.available() {
+            item = item
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || {
+                    let cwd = row_tabs
+                        .get()
+                        .active()
+                        .and_then(TerminalTab::working_directory);
+                    let mut id = None;
+                    row_tabs.update(|tabs| {
+                        id = Some(tabs.add_at(shell, cwd));
+                    });
+                    row_state.update(|app| {
+                        app.terminal_shell_menu = false;
+                        if let Some(id) = id
+                            && let Some(layout) = &mut app.application_layout
+                        {
+                            layout.attach(id);
+                        }
+                    });
+                    row_focus.focus();
                 });
-                row_state.update(|app| app.terminal_shell_menu = false);
-                row_focus.focus();
-            });
+        }
         let item = item.child(text(
             UiRect::new(row.left + 8.0, row.top, row.right - 8.0, row.bottom),
-            shell.label(),
-            theme::mono(theme::c().text, theme::UI_SIZE),
+            ellipsize(
+                &format!(
+                    "{}{}",
+                    option.name,
+                    if option.available() {
+                        ""
+                    } else {
+                        " (unavailable)"
+                    }
+                ),
+                (row.width() - 16.0).max(0.0),
+                theme::UI_SIZE,
+                400,
+            ),
+            theme::mono(
+                if option.available() {
+                    theme::c().text
+                } else {
+                    theme::c().text_dim
+                },
+                theme::UI_SIZE,
+            ),
         ));
         menu = menu.child(item);
     }
-    menu
+    let manage_top = menu_rect.top + 4.0 + options.len().min(visible) as f32 * SHELL_MENU_ROW_H;
+    let manage = UiRect::new(
+        menu_rect.left + 4.0,
+        manage_top,
+        menu_rect.right - 4.0,
+        manage_top + SHELL_MENU_ROW_H,
+    );
+    menu.child(
+        panel(manage, VisualStyle::default())
+            .key("terminal-manage-profiles")
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                state.update(|app| {
+                    app.terminal_shell_menu = false;
+                    app.terminal_focused = false;
+                    app.apply(crate::input::action::Action::OpenSettings);
+                })
+            })
+            .child(text(
+                manage,
+                "Manage terminals…",
+                theme::sans(theme::c().accent, theme::UI_SIZE),
+            )),
+    )
 }
 
 fn terminal_cursor_rect(content: UiRect, cursor: (u16, u16), rows: u16, cols: u16) -> UiRect {
@@ -1411,6 +1519,122 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shell_menu_keeps_missing_profiles_disabled_and_creates_custom_sessions_in_layout() {
+        use crate::model::application_layout::ApplicationLayout;
+        use crate::terminal_profiles::{ShellOption, ShellProfile};
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, PointerData, UiScale, dispatch_runtime_output};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+        let viewport = UiRect::new(0.0, 0.0, 400.0, 400.0);
+        let exposed = Arc::new(Mutex::new(None::<(State<AppState>, State<TerminalTabs>)>));
+        let output = exposed.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state_with(|| {
+                let mut app = AppState::new();
+                app.terminal_profiles = (1..=10)
+                    .map(|id| ShellProfile {
+                        id,
+                        name: format!("Custom {id}"),
+                        program: std::env::current_exe().unwrap(),
+                        args: vec![format!("--profile={id}")],
+                    })
+                    .collect();
+                app.shell_options = app
+                    .terminal_profiles
+                    .iter()
+                    .map(ShellOption::custom)
+                    .collect();
+                app.shell_options[0].program = None;
+                let mut layout = ApplicationLayout::initial(viewport, 40.0, 40.0, 200.0);
+                layout.attach(1);
+                app.application_layout = Some(layout);
+                app.terminal_shell_menu = true;
+                app
+            });
+            let tabs = cx.state_with(|| {
+                let mut tabs = TerminalTabs::new();
+                tabs.set_profiles(&state.get().terminal_profiles);
+                tabs
+            });
+            *output.lock().unwrap() = Some((state.clone(), tabs.clone()));
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id);
+            group(viewport).child(shell_menu(
+                UiRect::new(300.0, 0.0, 390.0, 30.0),
+                viewport,
+                state,
+                focus,
+                tabs,
+            ))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let (state, tabs) = exposed.lock().unwrap().clone().unwrap();
+        let context = ApplicationContext::empty(Default::default());
+        fn click_label(
+            session: &mut UiSession,
+            context: &ApplicationContext,
+            view: &AppView,
+            viewport: UiRect,
+            label: &str,
+        ) {
+            let node = session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|n| {
+                    n.text
+                        .as_deref()
+                        .is_some_and(|text| text.starts_with(label))
+                })
+                .unwrap_or_else(|| panic!("missing menu label {label}"));
+            let point = Point::new(
+                (node.layout_rect.left + node.layout_rect.right) * 0.5,
+                (node.layout_rect.top + node.layout_rect.bottom) * 0.5,
+            );
+            for event in [
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            ] {
+                let events = session.handle_input(event);
+                dispatch_runtime_output(
+                    events,
+                    context,
+                    &lgui::window::WindowId::new("shell-menu-test"),
+                    |action| session.handle_default_action(action),
+                    |_| {},
+                );
+                session.render_view(view, viewport, UiScale::ONE);
+            }
+        }
+        click_label(&mut session, &context, &view, viewport, "Custom 1");
+        assert_eq!(tabs.get().tabs().len(), 1);
+        state.update(|app| app.terminal_shell_scroll = 9);
+        session.render_view(&view, viewport, UiScale::ONE);
+        click_label(&mut session, &context, &view, viewport, "Custom 10");
+        let tab = tabs.get().active().unwrap().clone();
+        assert_eq!(tab.controller.shell(), ShellKind::Custom(10));
+        assert_eq!(tab.controller.short_label(), "Custom 10");
+        assert_eq!(
+            state
+                .get()
+                .application_layout
+                .as_ref()
+                .unwrap()
+                .default_terminal_active(),
+            Some(tab.id)
+        );
+        assert!(!state.get().terminal_shell_menu);
+    }
+
+    #[test]
     fn mouse_coordinates_use_cells_instead_of_selection_boundaries() {
         let content = UiRect::new(12.0, 6.0, 500.0, 400.0);
         let point = Point::new(
@@ -1516,7 +1740,7 @@ mod tests {
                 .tree()
                 .nodes()
                 .iter()
-                .filter(|node| node.text.as_deref() == Some("pwsh"))
+                .filter(|node| node.text.as_deref() == Some(ShellKind::default().short_label()))
                 .count(),
             3 // Two tab labels and the shell selector in the terminal header.
         );

@@ -43,6 +43,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [target.'cfg(not(windows))'.dependencies]
+libc = "0.2"
 portable-pty = "0.9"
 
 [target.'cfg(windows)'.build-dependencies]

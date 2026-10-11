@@ -56,7 +56,21 @@ keyboard handling. On macOS, Command takes the place of Ctrl.
 
 ### Terminal sessions
 
-PowerShell, Command Prompt and Bash report their working directory to Loom.
+On Windows, Loom offers installed PowerShell, Command Prompt and Bash (with
+Git Bash preferred). On Linux and macOS, the system default follows `$SHELL`,
+then the account's login shell, then `/bin/sh`.
+
+Settings → Terminal lets you add, edit and remove custom terminals by name,
+executable and launch arguments, and choose a default. Unavailable custom
+terminals keep their configuration and are disabled until their path is fixed.
+An unavailable saved default is kept, and new terminals use the first available
+shell until its path is fixed. Restored terminals whose shell is unavailable
+start a fallback shell with a notice, and launch their own shell again the next
+time they start after it is repaired. Deleting the default terminal resets the default.
+
+PowerShell, Command Prompt, Bash, zsh, fish and POSIX shells can report their
+working directory to Loom. Custom commands and startup-file arguments take
+precedence over automatic integration and may provide their own directory reports.
 Each terminal remembers its latest directory after `cd` and restores it when
 the application restarts. New tabs and splits inherit the current terminal's
 directory. If a saved directory no longer exists, Loom falls back to the first

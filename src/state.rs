@@ -185,6 +185,7 @@ pub struct AppState {
     pub terminal_focused: bool,
     /// Whether the terminal shell selector is expanded.
     pub terminal_shell_menu: bool,
+    pub terminal_shell_scroll: usize,
     pub terminal_tab_context_menu: Option<TerminalTabContextMenuState>,
     pub application_layout: Option<crate::model::application_layout::ApplicationLayout>,
     pub application_sash_drag: Option<crate::model::application_layout::Divider>,
@@ -192,6 +193,11 @@ pub struct AppState {
     /// Active color theme, applied at the start of every frame.
     pub theme: ThemeId,
     pub default_shell: ShellKind,
+    pub terminal_profiles: Vec<crate::terminal_profiles::ShellProfile>,
+    pub shell_options: Vec<crate::terminal_profiles::ShellOption>,
+    pub shell_editor: Option<crate::ui::terminal_settings::ProfileEditor>,
+    /// The shell standing in for an unavailable default, if any.
+    pub default_shell_fallback: Option<ShellKind>,
     pub terminal_cursor_blink: bool,
     pub smooth_caret: bool,
     /// Horizontal scroll offset of each pane's tab strip, in logical pixels.
@@ -336,11 +342,16 @@ impl AppState {
             selecting_terminal: false,
             terminal_focused: false,
             terminal_shell_menu: false,
+            terminal_shell_scroll: 0,
             terminal_tab_context_menu: None,
             application_layout: None,
             application_sash_drag: None,
             theme: ThemeId::default(),
             default_shell: ShellKind::default(),
+            terminal_profiles: Vec::new(),
+            shell_options: crate::terminal_profiles::options(&[]),
+            shell_editor: None,
+            default_shell_fallback: None,
             terminal_cursor_blink: true,
             smooth_caret: true,
             tab_scroll: HashMap::new(),
@@ -434,6 +445,8 @@ impl AppState {
         app.git_inline_blame = settings.git_inline_blame;
         app.theme = settings.theme;
         app.default_shell = settings.default_shell;
+        app.terminal_profiles = settings.terminal_profiles;
+        app.refresh_shells();
         app.terminal_cursor_blink = settings.terminal_cursor_blink;
         app.smooth_caret = settings.smooth_caret;
         app.vim.options = settings.vim.into();
@@ -441,6 +454,37 @@ impl AppState {
         crate::workspace_actions::hydrate_editor_layout(&mut app, session.editor_layout);
         crate::workspace_actions::open_launch_paths(&mut app, crate::launch::take_paths());
         app
+    }
+
+    /// Re-discovers shells. The saved default is never rewritten here, so a
+    /// repaired profile becomes the default again once it is available.
+    pub fn refresh_shells(&mut self) {
+        self.shell_options = crate::terminal_profiles::options(&self.terminal_profiles);
+        let fallback = Some(self.effective_shell()).filter(|kind| *kind != self.default_shell);
+        if fallback != self.default_shell_fallback
+            && let Some(fallback) = fallback
+        {
+            let name = self.shell_name(fallback);
+            self.show_toast(format!(
+                "The default terminal is unavailable; using {name}."
+            ));
+        }
+        self.default_shell_fallback = fallback;
+    }
+
+    /// The shell new terminals launch: the saved default when available,
+    /// otherwise the first available option.
+    pub fn effective_shell(&self) -> ShellKind {
+        crate::terminal_profiles::effective_default(self.default_shell, &self.shell_options)
+            .unwrap_or(self.default_shell)
+    }
+
+    pub fn shell_name(&self, kind: ShellKind) -> String {
+        self.shell_options
+            .iter()
+            .find(|s| s.kind == kind)
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| kind.label().into())
     }
 
     /// Whether the default terminal region currently owns visible sessions.

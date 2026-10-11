@@ -33,6 +33,7 @@ mod settings_persistence;
 mod state;
 mod terminal_directory;
 mod terminal_mouse;
+mod terminal_profiles;
 mod terminal_program;
 mod terminal_session;
 mod theme;

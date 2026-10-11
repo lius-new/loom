@@ -15,12 +15,14 @@ use crate::workspace_persistence::{config_path, session_path, write_json};
 
 const FILE_NAME: &str = "settings.json";
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Settings {
     #[serde(default)]
     pub theme: ThemeId,
     #[serde(default)]
     pub default_shell: ShellKind,
+    #[serde(default)]
+    pub terminal_profiles: Vec<crate::terminal_profiles::ShellProfile>,
     #[serde(default = "default_true")]
     pub terminal_cursor_blink: bool,
     #[serde(default = "default_true")]
@@ -73,6 +75,7 @@ impl Default for Settings {
         Self {
             theme: ThemeId::default(),
             default_shell: ShellKind::default(),
+            terminal_profiles: Vec::new(),
             terminal_cursor_blink: true,
             smooth_caret: true,
             git_inline_blame: false,
@@ -130,6 +133,12 @@ mod tests {
         let settings = Settings {
             theme: ThemeId::parse("ember").unwrap(),
             default_shell: ShellKind::Bash,
+            terminal_profiles: vec![crate::terminal_profiles::ShellProfile {
+                id: 7,
+                name: "My shell".into(),
+                program: "/custom/fish".into(),
+                args: vec!["--login".into()],
+            }],
             terminal_cursor_blink: false,
             smooth_caret: false,
             git_inline_blame: true,
@@ -173,6 +182,7 @@ mod tests {
             Settings {
                 theme: ThemeId::default(),
                 default_shell: ShellKind::Bash,
+                terminal_profiles: Vec::new(),
                 terminal_cursor_blink: false,
                 smooth_caret: true,
                 git_inline_blame: true,
@@ -180,6 +190,31 @@ mod tests {
                 git_tree_view: true,
                 vim: VimSettings::default(),
             }
+        );
+    }
+
+    #[test]
+    fn custom_default_keeps_its_id_across_settings_and_workspace_json() {
+        let settings = Settings {
+            default_shell: ShellKind::Custom(7),
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
+        let session = crate::workspace_persistence::WorkspaceSession {
+            terminal_tabs: vec![
+                ShellKind::PowerShell,
+                ShellKind::System,
+                ShellKind::Custom(7),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::from_str::<crate::workspace_persistence::WorkspaceSession>(
+                &serde_json::to_string(&session).unwrap()
+            )
+            .unwrap(),
+            session
         );
     }
 }

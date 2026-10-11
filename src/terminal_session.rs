@@ -35,13 +35,24 @@ pub struct TerminalSize {
     pub pixel_height: u16,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellKind {
-    #[default]
     PowerShell,
     Cmd,
     Bash,
+    System,
+    Custom(u64),
+}
+
+impl Default for ShellKind {
+    fn default() -> Self {
+        if cfg!(windows) {
+            Self::PowerShell
+        } else {
+            Self::System
+        }
+    }
 }
 
 impl ShellKind {
@@ -52,6 +63,8 @@ impl ShellKind {
             Self::PowerShell => "PowerShell",
             Self::Cmd => "Command Prompt",
             Self::Bash => "Bash",
+            Self::System => "System default",
+            Self::Custom(_) => "Custom terminal",
         }
     }
 
@@ -60,6 +73,8 @@ impl ShellKind {
             Self::PowerShell => "pwsh",
             Self::Cmd => "cmd",
             Self::Bash => "bash",
+            Self::System => "shell",
+            Self::Custom(_) => "custom",
         }
     }
 
@@ -68,10 +83,16 @@ impl ShellKind {
             Self::PowerShell => &["pwsh.exe", "powershell.exe", "pwsh", "powershell"],
             Self::Cmd => &["cmd.exe", "cmd"],
             Self::Bash => &["bash.exe", "bash"],
+            Self::System | Self::Custom(_) => &[],
         }
     }
 
     fn command(self) -> PathBuf {
+        if self == Self::System {
+            return crate::terminal_profiles::builtin(self)
+                .and_then(|p| p.program)
+                .unwrap_or_else(|| "/bin/sh".into());
+        }
         #[cfg(windows)]
         if self == Self::Bash
             && let Some(git_bash) = find_git_bash()
@@ -81,7 +102,7 @@ impl ShellKind {
         self.candidates()
             .iter()
             .find_map(|candidate| find_executable(candidate))
-            .unwrap_or_else(|| PathBuf::from(self.candidates()[0]))
+            .unwrap_or_else(|| PathBuf::from(self.candidates().first().copied().unwrap_or("")))
     }
 }
 
@@ -127,6 +148,8 @@ pub struct TerminalRun {
 #[derive(Clone, Debug)]
 pub struct TerminalSnapshot {
     pub shell: ShellKind,
+    pub shell_name: String,
+    pub notice: Option<String>,
     pub status: TerminalStatus,
     pub rows: u16,
     pub cols: u16,
@@ -188,7 +211,7 @@ impl TerminalTab {
     }
 
     pub fn label(&self) -> String {
-        let shell = self.controller.shell().short_label();
+        let shell = self.controller.short_label();
         match self.purpose.as_ref().or(self.running_program.as_ref()) {
             Some(name) => format!("{shell} · {name}"),
             None => shell.to_owned(),
@@ -201,6 +224,7 @@ pub struct TerminalTabs {
     tabs: Vec<TerminalTab>,
     active_id: Option<u64>,
     next_id: u64,
+    profiles: Vec<crate::terminal_profiles::ShellProfile>,
 }
 
 impl TerminalTabs {
@@ -245,6 +269,7 @@ impl TerminalTabs {
             tabs: Vec::new(),
             active_id: None,
             next_id: 1,
+            profiles: Vec::new(),
         }
     }
 
@@ -293,6 +318,7 @@ impl TerminalTabs {
             tabs,
             active_id,
             next_id: self.next_id,
+            profiles: self.profiles.clone(),
         }
     }
 
@@ -356,6 +382,29 @@ impl TerminalTabs {
         }
     }
 
+    pub fn set_profiles(&mut self, profiles: &[crate::terminal_profiles::ShellProfile]) {
+        self.profiles = profiles.to_vec();
+        for tab in &self.tabs {
+            tab.controller.set_profile(
+                profiles
+                    .iter()
+                    .find(|profile| tab.controller.shell() == ShellKind::Custom(profile.id))
+                    .cloned(),
+            );
+        }
+    }
+
+    fn controller_for(&self, shell: ShellKind) -> TerminalController {
+        let controller = TerminalController::with_shell(shell);
+        controller.set_profile(
+            self.profiles
+                .iter()
+                .find(|p| shell == ShellKind::Custom(p.id))
+                .cloned(),
+        );
+        controller
+    }
+
     pub fn update_directories(&mut self, directories: &[(u64, Option<PathBuf>)]) {
         for (id, cwd) in directories {
             if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == *id) {
@@ -407,7 +456,7 @@ impl TerminalTabs {
                 id,
                 group_id,
                 width_weight,
-                controller: TerminalController::with_shell(shell),
+                controller: self.controller_for(shell),
                 cwd,
                 purpose: None,
                 running_program: None,
@@ -441,7 +490,7 @@ impl TerminalTabs {
             id,
             group_id: id,
             width_weight: 1.0,
-            controller: TerminalController::with_shell(shell),
+            controller: self.controller_for(shell),
             cwd,
             purpose: None,
             running_program: None,
@@ -522,6 +571,8 @@ struct TerminalInner {
     mouse: Mutex<crate::terminal_mouse::TerminalMouse>,
     generation: AtomicU64,
     cwd: Mutex<Option<PathBuf>>,
+    profile: Mutex<Option<crate::terminal_profiles::ShellProfile>>,
+    notice: Mutex<Option<String>>,
 }
 
 struct RunningProcess {
@@ -562,6 +613,8 @@ impl TerminalController {
                 mouse: Mutex::new(crate::terminal_mouse::TerminalMouse::default()),
                 generation: AtomicU64::new(0),
                 cwd: Mutex::new(None),
+                profile: Mutex::new(None),
+                notice: Mutex::new(None),
             }),
         }
     }
@@ -582,6 +635,24 @@ impl TerminalController {
 
     pub fn shell(&self) -> ShellKind {
         *lock(&self.inner.shell)
+    }
+
+    fn set_profile(&self, profile: Option<crate::terminal_profiles::ShellProfile>) {
+        *lock(&self.inner.profile) = profile;
+    }
+
+    pub fn shell_name(&self) -> String {
+        lock(&self.inner.profile)
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| self.shell().label().into())
+    }
+
+    pub fn short_label(&self) -> String {
+        lock(&self.inner.profile)
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| self.shell().short_label().into())
     }
 
     pub fn working_directory(&self) -> Option<PathBuf> {
@@ -642,7 +713,39 @@ impl TerminalController {
         let cwd = crate::terminal_directory::starting_directory(cwd, None);
         *lock(&self.inner.mouse) = crate::terminal_mouse::TerminalMouse::default();
         *lock(&self.inner.cwd) = cwd.clone();
-        match spawn_shell(shell, cwd.as_deref(), size) {
+        let selected = if matches!(shell, ShellKind::Custom(_)) {
+            lock(&self.inner.profile)
+                .as_ref()
+                .map(crate::terminal_profiles::ShellOption::custom)
+        } else {
+            crate::terminal_profiles::builtin(shell)
+        };
+        let available = selected
+            .clone()
+            .filter(crate::terminal_profiles::ShellOption::available);
+        let launch = available
+            .clone()
+            .or_else(|| crate::terminal_profiles::defaults().into_iter().next());
+        *lock(&self.inner.notice) = if available.is_none() {
+            launch.as_ref().map(|fallback| {
+                format!(
+                    "{} is unavailable; using {}.",
+                    selected
+                        .as_ref()
+                        .map(|s| s.name.as_str())
+                        .unwrap_or(shell.label()),
+                    fallback.name
+                )
+            })
+        } else {
+            None
+        };
+        // The tab keeps its configured shell, so a restored session or a
+        // restart after the profile is repaired launches that shell again.
+        let spawned = launch
+            .ok_or_else(|| "No usable shell was found. Add a terminal in Settings.".to_owned())
+            .and_then(|launch| spawn_shell_option(&launch, cwd.as_deref(), size));
+        match spawned {
             Ok(spawned) => {
                 let mut reader = spawned.reader;
                 #[cfg(not(windows))]
@@ -821,6 +924,8 @@ impl TerminalController {
             .unwrap_or_default();
         TerminalSnapshot {
             shell: self.shell(),
+            shell_name: self.shell_name(),
+            notice: lock(&self.inner.notice).clone(),
             status: lock(&self.inner.status).clone(),
             rows,
             cols,
@@ -866,11 +971,40 @@ fn spawn_shell(
 }
 
 #[cfg(windows)]
+fn spawn_shell_option(
+    option: &crate::terminal_profiles::ShellOption,
+    cwd: Option<&Path>,
+    size: TerminalSize,
+) -> Result<SpawnedShell, String> {
+    spawn_shell_program_args(
+        option.kind,
+        cwd,
+        size,
+        option
+            .program
+            .as_deref()
+            .ok_or("Shell program is unavailable")?,
+        &option.args,
+    )
+}
+
+#[cfg(windows)]
 fn spawn_shell_program(
     shell: ShellKind,
     cwd: Option<&Path>,
     size: TerminalSize,
     program: &Path,
+) -> Result<SpawnedShell, String> {
+    spawn_shell_program_args(shell, cwd, size, program, &[])
+}
+
+#[cfg(windows)]
+fn spawn_shell_program_args(
+    _shell: ShellKind,
+    cwd: Option<&Path>,
+    size: TerminalSize,
+    program: &Path,
+    args: &[String],
 ) -> Result<SpawnedShell, String> {
     // conpty 0.7 concatenates Command arguments without quoting. Quote paths
     // explicitly, including executables installed under Program Files.
@@ -878,7 +1012,7 @@ fn spawn_shell_program(
     executable.push(program.as_os_str());
     executable.push("\"");
     let mut command = std::process::Command::new(executable);
-    let integration = configure_std_command(&mut command, shell, cwd)?;
+    let integration = configure_std_command(&mut command, program, args, cwd)?;
 
     let mut options = conpty::ProcessOptions::default();
     options.set_console_size(Some((
@@ -907,21 +1041,16 @@ fn spawn_shell_program(
 #[cfg(windows)]
 fn configure_std_command(
     command: &mut std::process::Command,
-    shell: ShellKind,
+    program: &Path,
+    args: &[String],
     cwd: Option<&Path>,
 ) -> Result<crate::terminal_directory::ShellIntegration, String> {
     let cwd = cwd.map(shell_friendly_path);
-    let integration = crate::terminal_directory::ShellIntegration::new(shell, cwd.as_deref())
-        .map_err(|error| format!("shell integration: {error}"))?;
-    for arg in &integration.args {
-        if arg.to_string_lossy().chars().any(char::is_whitespace) {
-            let mut quoted = std::ffi::OsString::from("\"");
-            quoted.push(arg);
-            quoted.push("\"");
-            command.arg(quoted);
-        } else {
-            command.arg(arg);
-        }
+    let integration =
+        crate::terminal_directory::ShellIntegration::for_launch(program, args, cwd.as_deref())
+            .map_err(|error| format!("shell integration: {error}"))?;
+    for arg in integration.launch_args(args) {
+        command.arg(quote_windows_argument(&arg));
     }
     if let Some(cwd) = &cwd {
         command.current_dir(cwd);
@@ -934,6 +1063,28 @@ fn configure_std_command(
     command.env("COLORTERM", "truecolor");
     command.env("TERM_PROGRAM", "loom");
     Ok(integration)
+}
+
+#[cfg(windows)]
+fn quote_windows_argument(arg: &std::ffi::OsStr) -> std::ffi::OsString {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    let mut quoted = vec![34u16];
+    let mut slashes = 0;
+    for unit in arg.encode_wide() {
+        if unit == 92 {
+            slashes += 1;
+            continue;
+        }
+        quoted.extend(std::iter::repeat_n(
+            92,
+            if unit == 34 { slashes * 2 + 1 } else { slashes },
+        ));
+        quoted.push(unit);
+        slashes = 0;
+    }
+    quoted.extend(std::iter::repeat_n(92, slashes * 2));
+    quoted.push(34);
+    std::ffi::OsString::from_wide(&quoted)
 }
 
 /// `fs::canonicalize` yields verbatim paths (`\\?\D:\dir`). Shells keep that
@@ -956,8 +1107,8 @@ fn shell_friendly_path(path: &Path) -> PathBuf {
 }
 
 #[cfg(not(windows))]
-fn spawn_shell(
-    shell: ShellKind,
+fn spawn_shell_option(
+    option: &crate::terminal_profiles::ShellOption,
     cwd: Option<&Path>,
     size: TerminalSize,
 ) -> Result<SpawnedShell, String> {
@@ -969,11 +1120,15 @@ fn spawn_shell(
         pixel_height: size.pixel_height,
     };
     let pair = pty.openpty(pty_size).map_err(|error| error.to_string())?;
-    let program = shell.command();
+    let program = option
+        .program
+        .as_deref()
+        .ok_or("Shell program is unavailable")?;
     let mut command = CommandBuilder::new(&program);
-    let integration = crate::terminal_directory::ShellIntegration::new(shell, cwd)
-        .map_err(|error| format!("shell integration: {error}"))?;
-    command.args(&integration.args);
+    let integration =
+        crate::terminal_directory::ShellIntegration::for_launch(program, &option.args, cwd)
+            .map_err(|error| format!("shell integration: {error}"))?;
+    command.args(integration.launch_args(&option.args));
     for (key, value) in &integration.env {
         command.env(key, value);
     }
@@ -1331,7 +1486,7 @@ fn find_executable(command: &str) -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-fn find_git_bash() -> Option<PathBuf> {
+pub(crate) fn find_git_bash() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(program_files) = env::var_os("ProgramFiles") {
         candidates.push(PathBuf::from(program_files).join("Git\\bin\\bash.exe"));
@@ -1353,6 +1508,123 @@ fn find_git_bash() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn custom_profiles_preserve_arguments_split_configuration_and_missing_path_fallback() {
+        use crate::terminal_profiles::ShellProfile;
+        use std::time::{Instant, SystemTime, UNIX_EPOCH};
+        let root = env::temp_dir().join(format!(
+            "loom-custom-shell-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        let source = root.join("probe.rs");
+        let program = root.join("中文 custom shell.exe");
+        std::fs::write(&source, r#"use std::io::Write; fn main() { for (i, arg) in std::env::args().skip(1).enumerate() { println!("ARG{i}={arg:?}"); } std::io::stdout().flush().unwrap(); let mut line = String::new(); let _ = std::io::stdin().read_line(&mut line); }"#).unwrap();
+        let built = std::process::Command::new("rustc")
+            .arg("--crate-name=loom_custom_shell_probe")
+            .arg(&source)
+            .arg("-o")
+            .arg(&program)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let profile = ShellProfile {
+            id: 123,
+            name: "Custom shell".into(),
+            program,
+            args: vec![
+                "".into(),
+                "space path".into(),
+                "literal \"quotes\"".into(),
+                "C:\\trailing path\\".into(),
+                "中文 $() ` &".into(),
+            ],
+        };
+        let mut tabs = TerminalTabs::restored(vec![], None);
+        tabs.set_profiles(std::slice::from_ref(&profile));
+        let first = tabs.add_at(ShellKind::Custom(profile.id), Some(root.clone()));
+        let controller = tabs.active().unwrap().controller.clone();
+        let second = tabs.split(first).unwrap();
+        assert_eq!(
+            *lock(&tabs.active().unwrap().controller.inner.profile),
+            Some(profile.clone())
+        );
+        assert_eq!(tabs.active_id(), Some(second));
+        let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
+        let size = TerminalSize {
+            rows: 24,
+            cols: 120,
+            pixel_width: 840,
+            pixel_height: 456,
+        };
+        controller.restart(
+            ShellKind::Custom(profile.id),
+            Some(&root),
+            size,
+            application.clone(),
+        );
+        let expected = profile
+            .args
+            .iter()
+            .enumerate()
+            .map(|(i, arg)| format!("ARG{i}={arg:?}"))
+            .collect::<Vec<_>>();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let output = lock(&controller.inner.parser).screen().contents();
+            if expected.iter().all(|arg| output.contains(arg)) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "custom args: {output:?}; expected: {expected:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(controller.shell(), ShellKind::Custom(profile.id));
+        controller.terminate(&application);
+        let mut missing = profile.clone();
+        missing.program = root.join("missing.exe");
+        tabs.set_profiles(std::slice::from_ref(&missing));
+        controller.restart(
+            ShellKind::Custom(profile.id),
+            Some(&root),
+            size,
+            application.clone(),
+        );
+        assert_eq!(controller.shell(), ShellKind::Custom(profile.id));
+        assert_eq!(controller.short_label(), missing.name);
+        assert!(matches!(
+            controller.snapshot().status,
+            TerminalStatus::Running
+        ));
+        assert!(
+            controller
+                .snapshot()
+                .notice
+                .unwrap()
+                .contains("Custom shell is unavailable")
+        );
+        assert_eq!(tabs.profiles, vec![missing]);
+        controller.terminate(&application);
+    }
 
     #[cfg(windows)]
     #[test]
@@ -1600,6 +1872,7 @@ mod tests {
                         .replace('\\', "/")
                         .replace('\'', "'\\''")
                 ),
+                ShellKind::System | ShellKind::Custom(_) => unreachable!("Windows builtin test"),
             };
             controller.write(command.as_bytes());
             wait_for_directory(&controller, &changed, shell);
@@ -2204,6 +2477,7 @@ mod tests {
                 ShellKind::PowerShell => b"ping.exe -n 4 127.0.0.1 | Out-Null\r",
                 ShellKind::Cmd => b"ping.exe -n 4 127.0.0.1 >nul\r",
                 ShellKind::Bash => b"ping.exe -n 4 127.0.0.1 >/dev/null\r",
+                ShellKind::System | ShellKind::Custom(_) => unreachable!("Windows builtin test"),
             };
             controller.write(command);
             let deadline = Instant::now() + Duration::from_secs(10);

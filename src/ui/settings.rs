@@ -8,7 +8,6 @@ use lgui::prelude::{Color, Element, State, TextAlign, UiRect, VisualStyle, group
 
 use crate::input::action::Action;
 use crate::state::AppState;
-use crate::terminal_session::ShellKind;
 use crate::theme::{self, ThemeId};
 use crate::ui::tabs::{TEXT_MARGIN, measure};
 
@@ -126,19 +125,20 @@ impl Setting {
         }
     }
 
-    fn height(self) -> f32 {
+    fn height(self, app: &AppState) -> f32 {
         match self {
             Self::Theme => THEME_ROW_H,
+            Self::DefaultShell => crate::ui::terminal_settings::height(app),
             _ => ROW_H,
         }
     }
 }
 
-fn content_height() -> f32 {
+fn content_height(app: &AppState) -> f32 {
     let rows: f32 = SECTIONS
         .iter()
         .flat_map(|(_, settings)| settings.iter())
-        .map(|setting| setting.height())
+        .map(|setting| setting.height(app))
         .sum();
     // The trailing KEYBOARD section holds a single link row.
     PAGE_PAD_TOP
@@ -150,7 +150,7 @@ fn content_height() -> f32 {
 
 pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     let app = state.get();
-    let max_scroll = (content_height() - rect.height()).max(0.0);
+    let max_scroll = (content_height(&app) - rect.height()).max(0.0);
     let scroll_y = app.workspace.active_scroll().1.clamp(0.0, max_scroll);
 
     let page_w = (rect.width() - PAGE_PAD_X * 2.0).clamp(0.0, MAX_PAGE_W);
@@ -197,9 +197,9 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         content = content.child(section_title(page_left, page_right, top, title));
         top += SECTION_TITLE_H;
         for &setting in settings {
-            let row = UiRect::new(page_left, top, page_right, top + setting.height());
+            let row = UiRect::new(page_left, top, page_right, top + setting.height(&app));
             content = content.child(setting_row(row, setting, &app, state.clone()));
-            top += setting.height();
+            top += setting.height(&app);
         }
         top += SECTION_GAP;
     }
@@ -272,10 +272,13 @@ fn keymap_link_row(row: UiRect, state: State<AppState>) -> Element {
 }
 
 fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppState>) -> Element {
+    if setting == Setting::DefaultShell {
+        return crate::ui::terminal_settings::render(row, app, state);
+    }
     let control_w = match setting {
         // The theme cards sit below the label, so the text spans the row.
         Setting::Theme => 0.0,
-        Setting::DefaultShell => SEGMENT_W * ShellKind::ALL.len() as f32,
+        Setting::DefaultShell => 0.0,
         _ => SWITCH_W,
     };
     let control_left = row.right - control_w;
@@ -322,18 +325,7 @@ fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppSt
                 state,
             ));
         }
-        None => {
-            element = element.child(shell_selector(
-                UiRect::new(
-                    control_left,
-                    row.top + (row.height() - SEGMENT_H) / 2.0,
-                    row.right,
-                    row.top + (row.height() + SEGMENT_H) / 2.0,
-                ),
-                app.default_shell,
-                state,
-            ));
-        }
+        None => {}
     }
     element
 }
@@ -364,47 +356,6 @@ fn switch(rect: UiRect, on: bool) -> Element {
         })
         .radius(KNOB / 2.0),
     ))
-}
-
-fn shell_selector(rect: UiRect, selected: ShellKind, state: State<AppState>) -> Element {
-    let mut selector = theme::bordered(rect, theme::c().surface, theme::c().border, 4.0, 1.0);
-    for (index, shell) in ShellKind::ALL.into_iter().enumerate() {
-        let left = rect.left + index as f32 * SEGMENT_W;
-        let segment = UiRect::new(left, rect.top, left + SEGMENT_W, rect.bottom);
-        let active = shell == selected;
-        let fill = if active {
-            VisualStyle::filled(theme::c().selection).radius(3.0)
-        } else {
-            VisualStyle::default()
-        };
-        let mut label = theme::mono(
-            if active {
-                theme::c().text_bright
-            } else {
-                theme::c().text_muted
-            },
-            theme::UI_SIZE,
-        );
-        label.align = TextAlign::Center;
-        let select_state = state.clone();
-        selector = selector.child(
-            panel(
-                UiRect::new(
-                    segment.left + 2.0,
-                    segment.top + 2.0,
-                    segment.right - 2.0,
-                    segment.bottom - 2.0,
-                ),
-                fill,
-            )
-            .key(format!("settings-shell-{}", shell.short_label()))
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || select_state.update(move |app| app.default_shell = shell))
-            .child(text(segment, shell.short_label(), label)),
-        );
-    }
-    selector
 }
 
 /// One card per built-in theme, each drawn in its own palette with a tiny
