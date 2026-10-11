@@ -6,7 +6,9 @@ use lgui::core::{CursorIcon, EventPolicy, UiFocusHandle, WheelUnit, clip};
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
 use crate::editor::editor_view::{self, SCROLLBAR_SIZE, ScrollMetrics};
-use crate::model::diff_document::{DiffRow, DiffRowKind, SplitDiffRow};
+use crate::git::{DiffTarget, GitStoreSnapshot};
+use crate::git_actions::{self, BlockAction};
+use crate::model::diff_document::{DiffDocument, DiffRow, DiffRowKind, SplitDiffRow};
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
@@ -23,6 +25,7 @@ pub fn render(
     pane: PaneId,
     rect: UiRect,
     state: State<AppState>,
+    store: State<GitStoreSnapshot>,
     editor_focus: UiFocusHandle,
 ) -> Element {
     let app = state.get();
@@ -102,7 +105,7 @@ pub fn render(
         additions,
         deletions,
         split,
-        starts,
+        starts.clone(),
         current_change,
         absolute_path,
     ));
@@ -148,6 +151,17 @@ pub fn render(
             scroll_y,
         ))
     };
+
+    if !document.blocks.is_empty() {
+        root = root.child(block_buttons(
+            content_rect,
+            document,
+            &starts,
+            scroll_y,
+            &state,
+            &store,
+        ));
+    }
 
     if split {
         let down = state.clone();
@@ -421,6 +435,74 @@ fn toolbar(
         path,
         theme::mono(theme::c().text_soft, theme::UI_SIZE),
     )))
+}
+
+/// Stage, unstage or discard buttons at the right of each change block's
+/// first row. `starts` lists those rows in block order.
+fn block_buttons(
+    rect: UiRect,
+    document: &DiffDocument,
+    starts: &[usize],
+    scroll_y: f32,
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+) -> Element {
+    let actions: &[(BlockAction, &str)] = match document.target {
+        DiffTarget::HeadToIndex => &[(BlockAction::Unstage, "Unstage")],
+        _ => &[
+            (BlockAction::Discard, "Discard"),
+            (BlockAction::Stage, "Stage"),
+        ],
+    };
+    let mut layer = clip(rect, 0.0, 0.0);
+    for (&row, &block) in starts.iter().zip(&document.blocks) {
+        let top = rect.top + row as f32 * ROW_H - scroll_y;
+        if top + ROW_H < rect.top || top > rect.bottom {
+            continue;
+        }
+        let mut right = rect.right - 6.0;
+        for &(action, label) in actions.iter().rev() {
+            let width = super::tabs::measure(label, theme::SMALL, 400) + 14.0;
+            let button = UiRect::new(right - width, top + 2.0, right, top + ROW_H - 2.0);
+            right = button.left - 4.0;
+            let click_state = state.clone();
+            let click_store = store.clone();
+            let root = document.repository_root.clone();
+            let path = document.path.clone();
+            let target = document.target;
+            let mut style = theme::mono(theme::c().text_soft, theme::SMALL);
+            style.align = TextAlign::Center;
+            layer = layer.child(
+                theme::bordered(button, theme::c().surface, theme::c().border, 3.0, 1.0)
+                    .key(format!("diff-block-{row}-{label}"))
+                    .event_policy(EventPolicy::INTERACTIVE)
+                    .cursor(CursorIcon::Pointer)
+                    .on_click(move |cx: &mut lgui::core::UiEventContext| {
+                        if action == BlockAction::Discard {
+                            git_actions::request_discard_block(
+                                &click_state,
+                                root.clone(),
+                                path.clone(),
+                                block,
+                            );
+                        } else {
+                            git_actions::apply_block(
+                                &click_state,
+                                &click_store,
+                                &root,
+                                path.clone(),
+                                target,
+                                block,
+                                action,
+                            );
+                        }
+                        cx.stop_propagation();
+                    })
+                    .child(text(button, label, style)),
+            );
+        }
+    }
+    layer
 }
 
 fn take_button_rect(right: &mut f32, top: f32, width: f32) -> UiRect {
@@ -758,7 +840,13 @@ mod tests {
                 .on_event_capture(UiEventKind::PointerUp, move |_, _| {
                     up_state.try_update(editor_view::finish_scrollbar_drag);
                 })
-                .child(render(PaneId::new(1), viewport, state, focus))
+                .child(render(
+                    PaneId::new(1),
+                    viewport,
+                    state,
+                    cx.state(crate::git::GitStoreSnapshot::default()),
+                    focus,
+                ))
         });
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);

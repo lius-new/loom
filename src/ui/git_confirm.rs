@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId};
 use lgui::prelude::{Element, State, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::git::{GitStoreSnapshot, RepositoryState};
+use crate::git::{DiffTarget, GitStoreSnapshot, RepositoryState};
 use crate::git_actions;
 use crate::input::action::Action;
+use crate::model::diff_document::ChangeBlock;
 use crate::state::AppState;
 use crate::theme;
 
@@ -31,6 +32,11 @@ pub enum GitConfirmAction {
     DropStash {
         repository: PathBuf,
         oid: String,
+    },
+    DiscardBlock {
+        repository: PathBuf,
+        path: PathBuf,
+        block: ChangeBlock,
     },
 }
 
@@ -74,6 +80,21 @@ fn resolve(state: &State<AppState>, store: &State<GitStoreSnapshot>, confirmed: 
         }
         GitConfirmAction::DropStash { repository, oid } => {
             git_actions::drop_stash(state, store, &repository, oid);
+        }
+        GitConfirmAction::DiscardBlock {
+            repository,
+            path,
+            block,
+        } => {
+            git_actions::apply_block(
+                state,
+                store,
+                &repository,
+                path,
+                DiffTarget::IndexToWorktree,
+                block,
+                git_actions::BlockAction::Discard,
+            );
         }
     }
 }

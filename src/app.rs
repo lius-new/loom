@@ -347,7 +347,37 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     theme::set(s.theme);
     let editor_layout = crate::workspace_actions::saved_editor_layout(&s.workspace);
     let git_roots = s.workspace_folders.clone();
-    let git_target = s.workspace.git_poll_target();
+    let mut git_target = s.workspace.git_poll_target();
+    // A repository chosen in Source Control holds until the active file changes.
+    git_target.pinned_repository = s
+        .git_pinned_repository
+        .as_ref()
+        .filter(|(_, active_path)| *active_path == git_target.active_path)
+        .map(|(root, _)| root.clone());
+    // Keep the history of the active repository's HEAD while it is shown.
+    let history_key = {
+        let git = git_store.get();
+        git.active()
+            .filter(|_| {
+                s.show_source_control
+                    && !s
+                        .git_collapsed_sections
+                        .contains(&crate::ui::git_panel::HISTORY)
+            })
+            .map(|repository| {
+                (
+                    repository.worktree_root.clone(),
+                    repository.head_oid.clone(),
+                )
+            })
+    };
+    let history_state = state.clone();
+    cx.use_effect(history_key.clone(), move || {
+        if let Some((root, head)) = history_key {
+            crate::git_actions::load_history(&history_state, root, head);
+        }
+        || {}
+    });
     let file_watch_state = state.clone();
     let file_watch_roots = git_roots.clone();
     let file_watch_application = application.as_ref().clone();
@@ -1035,9 +1065,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 keymap_search_id.clone(),
                 keymap_search_focus.clone(),
             ),
-            MainSurface::Diff => {
-                diff_editor::render(pane, body, state.clone(), editor_focus.clone())
-            }
+            MainSurface::Diff => diff_editor::render(
+                pane,
+                body,
+                state.clone(),
+                git_store.clone(),
+                editor_focus.clone(),
+            ),
             MainSurface::Editor => editor_view::render(
                 pane,
                 body,

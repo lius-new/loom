@@ -330,6 +330,13 @@ pub struct AppState {
     pub git_menu: Option<crate::ui::git_menu::GitMenu>,
     /// A Source Control action awaiting confirmation.
     pub git_confirm: Option<crate::ui::git_confirm::GitConfirm>,
+    /// Recent commits of the active repository, for the history section.
+    pub git_history: Option<crate::ui::git_panel::GitHistory>,
+    /// The history commit expanded to list its files.
+    pub git_history_commit: Option<crate::ui::git_panel::ExpandedCommit>,
+    /// A repository chosen in Source Control, with the active file at the
+    /// time; it stays active until the active file changes.
+    pub git_pinned_repository: Option<(PathBuf, Option<PathBuf>)>,
     /// Keystrokes of a key sequence waiting for its next key.
     pub pending_keystrokes: Vec<Keystroke>,
     /// Bumped whenever `pending_keystrokes` changes, restarting its timeout.
@@ -440,6 +447,9 @@ impl AppState {
             git_hover: None,
             git_menu: None,
             git_confirm: None,
+            git_history: None,
+            git_history_commit: None,
+            git_pinned_repository: None,
             pending_keystrokes: Vec::new(),
             pending_keystrokes_seq: 0,
             keymap_version: 0,

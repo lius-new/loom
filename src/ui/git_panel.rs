@@ -9,8 +9,8 @@ use lgui::core::{
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
 use crate::git::{
-    ChangeKind, ConflictSide, DiffTarget, FileState, GitStoreSnapshot, RepositorySnapshot,
-    RepositoryState, StashInfo,
+    ChangeKind, CommitSummary, ConflictSide, DiffTarget, FileState, GitStoreSnapshot,
+    RepositorySnapshot, RepositoryState, StashInfo,
 };
 use crate::state::AppState;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
@@ -38,6 +38,7 @@ pub fn render(
 
     // Compact topline: the branch lives in the title bar badge, while this
     // drawer only exposes change and sync state.
+    let topline = UiRect::new(rect.left, rect.top, rect.right, rect.top + TOPLINE_H);
     root = root.child(text(
         UiRect::new(
             rect.left + 12.0,
@@ -48,6 +49,102 @@ pub fn render(
         "CHANGES",
         theme::mono_bold(theme::c().text_soft, theme::SMALL).tracking(0.8),
     ));
+    let grouped = app.git_tree_view;
+    let group_state = state.clone();
+    root = root.child(row_buttons(
+        lgui::prelude::group(topline),
+        UiRect::new(
+            topline.left,
+            topline.top + 4.0,
+            topline.right,
+            topline.bottom - 4.0,
+        ),
+        topline.right - 8.0,
+        vec![RowButton {
+            key: "git-group-by-folder".into(),
+            icon: if grouped { "list-flat" } else { "list-tree" },
+            name: if grouped {
+                "View as List"
+            } else {
+                "Group by Folder"
+            },
+            on_click: Box::new(move || {
+                group_state.update(|app| app.git_tree_view = !app.git_tree_view);
+            }),
+        }],
+    ));
+    // With several repositories, name the active one and offer the others.
+    if git.repositories.len() > 1
+        && let Some(repository) = git.active()
+    {
+        let name = repository_name(&repository.worktree_root);
+        let label_left =
+            rect.left + 12.0 + super::tabs::measure("CHANGES", theme::SMALL, 700) + 14.0;
+        let picker = UiRect::new(
+            label_left - 4.0,
+            topline.top + 4.0,
+            (label_left + super::tabs::measure(&name, theme::SMALL, 400) + 26.0)
+                .min(topline.right - 36.0),
+            topline.bottom - 4.0,
+        );
+        let picker_state = state.clone();
+        root = root.child(
+            Element::new(move |cx| {
+                let style = if cx.context.interaction_flags(&cx.id).hovered {
+                    VisualStyle::filled(theme::c().active_line).radius(3.0)
+                } else {
+                    VisualStyle::default()
+                };
+                UiElement::panel(cx.id, picker, style).children(cx.children)
+            })
+            .key("git-repository-picker")
+            .event_policy(EventPolicy::INTERACTIVE)
+            .semantics(Semantics::new(SemanticRole::Button).name("Choose repository"))
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                picker_state.update(|app| {
+                    app.git_menu = Some(GitMenu {
+                        pos: (picker.left, picker.bottom + 2.0),
+                        target: GitMenuTarget::Repositories,
+                        hover: None,
+                    });
+                });
+            })
+            .child(
+                clip(
+                    UiRect::new(
+                        picker.left + 4.0,
+                        picker.top,
+                        picker.right - 18.0,
+                        picker.bottom,
+                    ),
+                    0.0,
+                    0.0,
+                )
+                .child(text(
+                    UiRect::new(
+                        picker.left + 4.0,
+                        picker.top,
+                        picker.left + 1000.0,
+                        picker.bottom,
+                    ),
+                    name,
+                    theme::mono(theme::c().text_muted, theme::SMALL),
+                )),
+            )
+            .child(super::sidebar::drawer_icon(
+                "git-repository-picker-chevron",
+                "chevron-down",
+                UiRect::new(
+                    picker.right - 16.0,
+                    picker.top + (picker.height() - 12.0) / 2.0,
+                    picker.right - 4.0,
+                    picker.top + (picker.height() + 12.0) / 2.0,
+                ),
+                theme::c().text_dim,
+            )),
+        );
+    }
     root = root.child(panel(
         UiRect::new(
             rect.left,
@@ -104,42 +201,51 @@ pub fn render(
     }
     let content_rect = UiRect::new(rect.left, banner_bottom, rect.right - 8.0, prompt_top);
     let mut content = Vec::new();
-    let section_height = |filter: u8, count: usize| {
-        if count == 0 {
-            0.0
-        } else {
-            SECTION_H
-                + 10.0
-                + if app.git_collapsed_sections.contains(&filter) {
-                    0.0
-                } else {
-                    count as f32 * ROW_H
-                }
-        }
+    // Every section's rows, laid out before drawing so the content height
+    // and scroll range are known.
+    let change_sections = [
+        ("CONFLICTS", CONFLICTS),
+        ("STAGED", STAGED),
+        ("UNSTAGED", UNSTAGED),
+        ("UNTRACKED", UNTRACKED),
+    ]
+    .map(|(title, filter)| {
+        let files = sections.map_or(&[][..], |sections| sections[filter as usize].as_slice());
+        (title, filter, files, change_rows(files, app.git_tree_view))
+    });
+    let history = app
+        .git_history
+        .as_ref()
+        .filter(|history| history.repository == repository.worktree_root);
+    let history_rows = history_rows(history, app.git_history_commit.as_ref());
+    let section_height = |filter: u8, rows: usize| {
+        SECTION_H
+            + 10.0
+            + if app.git_collapsed_sections.contains(&filter) {
+                0.0
+            } else {
+                rows as f32 * ROW_H
+            }
     };
     let content_height = 8.0
-        + [CONFLICTS, STAGED, UNSTAGED, UNTRACKED]
-            .into_iter()
-            .map(|filter| {
-                section_height(
-                    filter,
-                    sections.map_or(0, |sections| sections[filter as usize].len()),
-                )
-            })
+        + change_sections
+            .iter()
+            .filter(|(_, _, files, _)| !files.is_empty())
+            .map(|(_, filter, _, rows)| section_height(*filter, rows.len()))
             .sum::<f32>()
-        + section_height(STASHES, repository.stashes.len());
+        + if repository.stashes.is_empty() {
+            0.0
+        } else {
+            section_height(STASHES, repository.stashes.len())
+        }
+        + section_height(HISTORY, history_rows.len());
     let max_scroll = (content_height - content_rect.height()).max(0.0);
     let scroll = app.git_scroll.clamp(0.0, max_scroll);
     let mut y = content_rect.top + 8.0;
     // Rows the pointer can hover, in content coordinates (before scrolling).
     let mut hover_targets = Vec::new();
-    for (title, filter) in [
-        ("CONFLICTS", CONFLICTS),
-        ("STAGED", STAGED),
-        ("UNSTAGED", UNSTAGED),
-        ("UNTRACKED", UNTRACKED),
-    ] {
-        let files = sections.map_or(&[][..], |sections| sections[filter as usize].as_slice());
+    for (title, filter, files, rows) in &change_sections {
+        let (title, filter) = (*title, *filter);
         if files.is_empty() {
             continue;
         }
@@ -147,22 +253,7 @@ pub fn render(
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
         hover_targets.push((section_rect, GitHover::Section(filter)));
         let buttons = if app.git_hover == Some(GitHover::Section(filter)) {
-            section_actions(filter)
-                .iter()
-                .map(|&action| {
-                    let action_state = state.clone();
-                    let action_store = store.clone();
-                    let paths = files.to_vec();
-                    RowButton {
-                        key: format!("git-section-{filter}-{action:?}"),
-                        icon: action.icon(),
-                        name: action.section_name(filter),
-                        on_click: Box::new(move || {
-                            action.run(&action_state, &action_store, filter, paths.clone());
-                        }),
-                    }
-                })
-                .collect()
+            group_buttons(filter, files.to_vec(), "section", &state, &store)
         } else {
             Vec::new()
         };
@@ -185,39 +276,57 @@ pub fn render(
             rows_top,
             content_rect.top + scroll,
             content_rect.bottom + scroll,
-            files.len(),
+            rows.len(),
         );
-        y += files.len() as f32 * ROW_H;
+        y += rows.len() as f32 * ROW_H;
         for index in visible {
-            let path = &files[index];
-            let file_state = &repository.files[path];
             let row_y = rows_top + index as f32 * ROW_H;
             let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
-            let hover = GitHover::File(filter, path.clone());
-            let hovered = app.git_hover.as_ref() == Some(&hover);
-            hover_targets.push((row_rect, hover));
-            let target = if filter == STAGED {
-                DiffTarget::HeadToIndex
-            } else {
-                DiffTarget::IndexToWorktree
-            };
-            let active = app
-                .workspace
-                .active_diff()
-                .is_some_and(|diff| diff.matches(&repository.worktree_root, path, target));
-            content.push(file_row(
-                row_rect,
-                path.clone(),
-                file_state.clone(),
-                filter,
-                target,
-                active,
-                hovered,
-                repository.worktree_root.clone(),
-                state.clone(),
-                store.clone(),
-                editor_focus.clone(),
-            ));
+            match &rows[index] {
+                ChangeRow::Folder { path, files } => {
+                    let hover = GitHover::Folder(filter, path.clone());
+                    let hovered = app.git_hover.as_ref() == Some(&hover);
+                    hover_targets.push((row_rect, hover));
+                    content.push(folder_row(
+                        row_rect,
+                        filter,
+                        path,
+                        files.clone(),
+                        hovered,
+                        &state,
+                        &store,
+                    ));
+                }
+                &ChangeRow::File { path, nested } => {
+                    let file_state = &repository.files[path];
+                    let hover = GitHover::File(filter, path.clone());
+                    let hovered = app.git_hover.as_ref() == Some(&hover);
+                    hover_targets.push((row_rect, hover));
+                    let target = if filter == STAGED {
+                        DiffTarget::HeadToIndex
+                    } else {
+                        DiffTarget::IndexToWorktree
+                    };
+                    let active = app
+                        .workspace
+                        .active_diff()
+                        .is_some_and(|diff| diff.matches(&repository.worktree_root, path, target));
+                    content.push(file_row(
+                        row_rect,
+                        path.clone(),
+                        nested,
+                        file_state.clone(),
+                        filter,
+                        target,
+                        active,
+                        hovered,
+                        repository.worktree_root.clone(),
+                        state.clone(),
+                        store.clone(),
+                        editor_focus.clone(),
+                    ));
+                }
+            }
         }
         y += 10.0;
     }
@@ -257,6 +366,63 @@ pub fn render(
                     hovered,
                     state.clone(),
                     store.clone(),
+                ));
+            }
+        }
+        y += 10.0;
+    }
+    {
+        let collapsed = app.git_collapsed_sections.contains(&HISTORY);
+        let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
+        hover_targets.push((section_rect, GitHover::Section(HISTORY)));
+        let count = history
+            .and_then(|history| history.commits.as_ref().ok())
+            .map_or(0, Vec::len);
+        content.push(section_header(
+            section_rect,
+            HISTORY,
+            "COMMITS",
+            count,
+            collapsed,
+            Vec::new(),
+            state.clone(),
+        ));
+        y += SECTION_H;
+        if !collapsed {
+            let rows_top = y;
+            let visible = visible_rows(
+                rows_top,
+                content_rect.top + scroll,
+                content_rect.bottom + scroll,
+                history_rows.len(),
+            );
+            y += history_rows.len() as f32 * ROW_H;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs() as i64);
+            for index in visible {
+                let row_y = rows_top + index as f32 * ROW_H;
+                let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
+                let row = &history_rows[index];
+                let hover = match row {
+                    HistoryRow::Commit(commit, _) => Some(GitHover::Commit(commit.oid.clone())),
+                    HistoryRow::File { oid, path, .. } => {
+                        Some(GitHover::CommitFile(oid.clone(), path.clone()))
+                    }
+                    HistoryRow::Message(_) => None,
+                };
+                let hovered = hover.is_some() && app.git_hover == hover;
+                if let Some(hover) = hover {
+                    hover_targets.push((row_rect, hover));
+                }
+                content.push(history_row(
+                    row_rect,
+                    row,
+                    hovered,
+                    now,
+                    &repository.worktree_root,
+                    &state,
+                    &editor_focus,
                 ));
             }
         }
@@ -667,17 +833,373 @@ pub const UNSTAGED: u8 = 2;
 pub const UNTRACKED: u8 = 3;
 /// Listed after the change sections; its rows come from the snapshot.
 pub const STASHES: u8 = 4;
+/// The recent commits, last in the drawer.
+pub const HISTORY: u8 = 5;
 
 /// The drawer row under the pointer, which shows its action buttons.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitHover {
     Section(u8),
     File(u8, PathBuf),
+    /// A folder row of a section grouped by folder.
+    Folder(u8, PathBuf),
     /// A stash, by commit id.
     Stash(String),
+    /// A history commit, by commit id.
+    Commit(String),
+    /// A file of an expanded history commit.
+    CommitFile(String, PathBuf),
+}
+
+/// Recent commits of a repository's HEAD.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitHistory {
+    pub repository: PathBuf,
+    /// The commit HEAD was at when these were listed.
+    pub head: Option<String>,
+    pub commits: Result<Vec<CommitSummary>, String>,
+}
+
+/// A history commit expanded to list the files it changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExpandedCommit {
+    pub oid: String,
+    /// `None` while loading.
+    pub files: Option<Result<Vec<(ChangeKind, PathBuf)>, String>>,
 }
 
 const BANNER_H: f32 = 30.0;
+
+/// The folder name shown for a repository.
+fn repository_name(root: &std::path::Path) -> String {
+    root.file_name().map_or_else(
+        || super::display_path(root),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// A row of a change section.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ChangeRow<'a> {
+    /// A folder and the section's files directly in it.
+    Folder { path: PathBuf, files: Vec<PathBuf> },
+    /// A file; `nested` when listed under its folder row.
+    File { path: &'a PathBuf, nested: bool },
+}
+
+/// `files` as rows: as given, or grouped under one row per folder (files
+/// at the repository root first, without a folder row).
+fn change_rows(files: &[PathBuf], grouped: bool) -> Vec<ChangeRow<'_>> {
+    if !grouped {
+        return files
+            .iter()
+            .map(|path| ChangeRow::File {
+                path,
+                nested: false,
+            })
+            .collect();
+    }
+    let mut folders = std::collections::BTreeMap::<PathBuf, Vec<&PathBuf>>::new();
+    let mut rows = Vec::new();
+    for path in files {
+        match path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            Some(parent) => folders.entry(parent.to_path_buf()).or_default().push(path),
+            None => rows.push(ChangeRow::File {
+                path,
+                nested: false,
+            }),
+        }
+    }
+    for (folder, paths) in folders {
+        rows.push(ChangeRow::Folder {
+            path: folder,
+            files: paths.iter().map(|path| (*path).clone()).collect(),
+        });
+        rows.extend(
+            paths
+                .into_iter()
+                .map(|path| ChangeRow::File { path, nested: true }),
+        );
+    }
+    rows
+}
+
+/// A section's bulk actions for `paths`, as buttons.
+fn group_buttons(
+    filter: u8,
+    paths: Vec<PathBuf>,
+    key: &str,
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+) -> Vec<RowButton> {
+    section_actions(filter)
+        .iter()
+        .map(|&action| {
+            let action_state = state.clone();
+            let action_store = store.clone();
+            let paths = paths.clone();
+            RowButton {
+                key: format!("git-{key}-{filter}-{action:?}"),
+                icon: action.icon(),
+                name: action.section_name(filter),
+                on_click: Box::new(move || {
+                    action.run(&action_state, &action_store, filter, paths.clone());
+                }),
+            }
+        })
+        .collect()
+}
+
+/// A folder of a grouped section, with the section's actions for its files.
+fn folder_row(
+    rect: UiRect,
+    filter: u8,
+    path: &std::path::Path,
+    files: Vec<PathBuf>,
+    hovered: bool,
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+) -> Element {
+    let label = path.display().to_string();
+    let key = format!("folder-{}", label);
+    let mut row = panel(
+        rect,
+        if hovered {
+            VisualStyle::filled(theme::c().surface)
+        } else {
+            VisualStyle::default()
+        },
+    )
+    .key(format!("git-{key}-{filter}"))
+    .child(super::sidebar::drawer_icon(
+        "git-folder-row-icon",
+        "folder",
+        UiRect::new(
+            rect.left + 11.0,
+            rect.top + (rect.height() - 12.0) / 2.0,
+            rect.left + 23.0,
+            rect.top + (rect.height() + 12.0) / 2.0,
+        ),
+        theme::c().text_ghost,
+    ))
+    .child(
+        clip(
+            UiRect::new(rect.left + 30.0, rect.top, rect.right - 52.0, rect.bottom),
+            0.0,
+            0.0,
+        )
+        .child(text(
+            UiRect::new(rect.left + 30.0, rect.top, rect.left + 2000.0, rect.bottom),
+            label,
+            theme::mono(theme::c().text_muted, theme::SMALL),
+        )),
+    );
+    if hovered {
+        let buttons = group_buttons(filter, files, &key, state, store);
+        row = row_buttons(row, rect, rect.right - 8.0, buttons);
+    }
+    row
+}
+
+/// A row of the history section.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum HistoryRow {
+    /// A commit, and whether it is expanded.
+    Commit(CommitSummary, bool),
+    /// A file changed by the expanded commit `oid`.
+    File {
+        oid: String,
+        kind: ChangeKind,
+        path: PathBuf,
+    },
+    /// Loading, empty or failure text.
+    Message(String),
+}
+
+fn history_rows(
+    history: Option<&GitHistory>,
+    expanded: Option<&ExpandedCommit>,
+) -> Vec<HistoryRow> {
+    let commits = match history.map(|history| &history.commits) {
+        None => return vec![HistoryRow::Message("Loading commits…".into())],
+        Some(Err(error)) => return vec![HistoryRow::Message(error.clone())],
+        Some(Ok(commits)) if commits.is_empty() => {
+            return vec![HistoryRow::Message("No commits yet.".into())];
+        }
+        Some(Ok(commits)) => commits,
+    };
+    let mut rows = Vec::new();
+    for commit in commits {
+        let open = expanded.filter(|expanded| expanded.oid == commit.oid);
+        rows.push(HistoryRow::Commit(commit.clone(), open.is_some()));
+        let Some(open) = open else {
+            continue;
+        };
+        match &open.files {
+            None => rows.push(HistoryRow::Message("Loading files…".into())),
+            Some(Err(error)) => rows.push(HistoryRow::Message(error.clone())),
+            Some(Ok(files)) => rows.extend(files.iter().map(|(kind, path)| HistoryRow::File {
+                oid: commit.oid.clone(),
+                kind: *kind,
+                path: path.clone(),
+            })),
+        }
+    }
+    rows
+}
+
+/// `timestamp` (Unix seconds) as a short age relative to `now`.
+fn relative_time(now: i64, timestamp: i64) -> String {
+    let seconds = (now - timestamp).max(0);
+    match seconds {
+        0..60 => "now".into(),
+        60..3_600 => format!("{}m", seconds / 60),
+        3_600..86_400 => format!("{}h", seconds / 3_600),
+        86_400..604_800 => format!("{}d", seconds / 86_400),
+        604_800..2_592_000 => format!("{}w", seconds / 604_800),
+        2_592_000..31_536_000 => format!("{}mo", seconds / 2_592_000),
+        _ => format!("{}y", seconds / 31_536_000),
+    }
+}
+
+fn history_row(
+    rect: UiRect,
+    row: &HistoryRow,
+    hovered: bool,
+    now: i64,
+    repository: &std::path::Path,
+    state: &State<AppState>,
+    editor_focus: &UiFocusHandle,
+) -> Element {
+    let background = if hovered {
+        VisualStyle::filled(theme::c().surface)
+    } else {
+        VisualStyle::default()
+    };
+    match row {
+        HistoryRow::Message(message) => panel(rect, VisualStyle::default()).child(text(
+            UiRect::new(rect.left + 30.0, rect.top, rect.right - 12.0, rect.bottom),
+            message.clone(),
+            theme::mono(theme::c().text_ghost, theme::SMALL),
+        )),
+        HistoryRow::Commit(commit, open) => {
+            let toggle_state = state.clone();
+            let root = repository.to_path_buf();
+            let oid = commit.oid.clone();
+            let age = relative_time(now, commit.timestamp);
+            let age_w = super::tabs::measure(&age, 9.0, 400) + 6.0;
+            panel(rect, background)
+                .key(format!("git-commit-{}", commit.oid))
+                .event_policy(EventPolicy::INTERACTIVE)
+                .semantics(Semantics::new(SemanticRole::Button).name(commit.subject.clone()))
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || {
+                    git_actions::toggle_commit(&toggle_state, root.clone(), oid.clone());
+                })
+                .child(super::sidebar::drawer_icon(
+                    "git-commit-row-chevron",
+                    if *open {
+                        "chevron-down"
+                    } else {
+                        "chevron-right"
+                    },
+                    UiRect::new(
+                        rect.left + 11.0,
+                        rect.top + (rect.height() - 12.0) / 2.0,
+                        rect.left + 23.0,
+                        rect.top + (rect.height() + 12.0) / 2.0,
+                    ),
+                    theme::c().text_ghost,
+                ))
+                .child(
+                    clip(
+                        UiRect::new(
+                            rect.left + 30.0,
+                            rect.top,
+                            rect.right - 14.0 - age_w,
+                            rect.bottom,
+                        ),
+                        0.0,
+                        0.0,
+                    )
+                    .child(text(
+                        UiRect::new(rect.left + 30.0, rect.top, rect.left + 2000.0, rect.bottom),
+                        commit.subject.clone(),
+                        theme::mono(
+                            if hovered {
+                                theme::c().text
+                            } else {
+                                theme::c().text_dim
+                            },
+                            theme::SMALL,
+                        ),
+                    )),
+                )
+                .child(text(
+                    UiRect::new(
+                        rect.right - 12.0 - age_w,
+                        rect.top,
+                        rect.right - 12.0,
+                        rect.bottom,
+                    ),
+                    age,
+                    theme::mono_right(theme::c().text_ghost, 9.0),
+                ))
+        }
+        HistoryRow::File { oid, kind, path } => {
+            let open_state = state.clone();
+            let open_focus = editor_focus.clone();
+            let root = repository.to_path_buf();
+            let open_oid = oid.clone();
+            let open_path = path.clone();
+            let color = match kind {
+                ChangeKind::Added | ChangeKind::Copied => theme::c().git.added,
+                ChangeKind::Deleted => theme::c().git.deleted,
+                _ => theme::c().git.modified,
+            };
+            panel(rect, background)
+                .key(format!("git-commit-{oid}-{}", path.display()))
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || {
+                    git_actions::open_commit_diff(
+                        &open_state,
+                        root.clone(),
+                        open_oid.clone(),
+                        open_path.clone(),
+                    );
+                    open_focus.focus();
+                })
+                .child(text(
+                    UiRect::new(rect.left + 30.0, rect.top, rect.left + 42.0, rect.bottom),
+                    kind.indicator(),
+                    theme::mono_bold(color, theme::SMALL),
+                ))
+                .child(
+                    clip(
+                        UiRect::new(rect.left + 44.0, rect.top, rect.right - 12.0, rect.bottom),
+                        0.0,
+                        0.0,
+                    )
+                    .child(text(
+                        UiRect::new(rect.left + 44.0, rect.top, rect.left + 2000.0, rect.bottom),
+                        path.display().to_string(),
+                        theme::mono(
+                            if hovered {
+                                theme::c().text
+                            } else {
+                                theme::c().text_dim
+                            },
+                            theme::SMALL,
+                        ),
+                    )),
+                )
+        }
+    }
+}
 
 /// A collapsible section title with its count, and `buttons` on its right.
 fn section_header(
@@ -694,7 +1216,8 @@ fn section_header(
         STAGED => "git-section-staged-chevron",
         UNSTAGED => "git-section-unstaged-chevron",
         UNTRACKED => "git-section-untracked-chevron",
-        _ => "git-section-stashes-chevron",
+        STASHES => "git-section-stashes-chevron",
+        _ => "git-section-history-chevron",
     };
     let section = panel(rect, VisualStyle::default())
         .key(format!("git-section-{filter}"))
@@ -1124,6 +1647,8 @@ fn row_buttons(mut row: Element, rect: UiRect, right: f32, buttons: Vec<RowButto
 fn file_row(
     rect: UiRect,
     path: PathBuf,
+    // Listed under its folder row: indented, by file name.
+    nested: bool,
     file_state: FileState,
     section: u8,
     target: DiffTarget,
@@ -1176,8 +1701,16 @@ fn file_row(
     } else {
         52.0
     };
-    let name = path.display().to_string();
-    let name_left = rect.left + 30.0;
+    let name = if nested {
+        path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    } else {
+        path.display().to_string()
+    };
+    let indent = if nested { 14.0 } else { 0.0 };
+    let name_left = rect.left + 30.0 + indent;
     let name_viewport = UiRect::new(name_left, rect.top, rect.right - trailing_w, rect.bottom);
     // Match the editor: lay the full single-line content out at its natural
     // width, then clip the viewport. Giving the text only the viewport width
@@ -1246,7 +1779,12 @@ fn file_row(
         }
     })
     .child(text(
-        UiRect::new(rect.left + 12.0, rect.top, rect.left + 24.0, rect.bottom),
+        UiRect::new(
+            rect.left + 12.0 + indent,
+            rect.top,
+            rect.left + 24.0 + indent,
+            rect.bottom,
+        ),
         indicator,
         theme::mono_bold(indicator_color, theme::SMALL),
     ))
@@ -1309,6 +1847,84 @@ fn file_row(
 #[cfg(test)]
 mod action_tests {
     use super::*;
+
+    #[test]
+    fn grouping_lists_root_files_then_each_folder_with_its_files() {
+        let files = ["README.md", "src/a.rs", "src/ui/b.rs", "src/c.rs"].map(PathBuf::from);
+        let describe = |rows: Vec<ChangeRow>| {
+            rows.into_iter()
+                .map(|row| match row {
+                    ChangeRow::Folder { path, files } => {
+                        format!("[{}] {}", path.display(), files.len())
+                    }
+                    ChangeRow::File { path, nested } => {
+                        format!("{}{}", if nested { "  " } else { "" }, path.display())
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(describe(change_rows(&files, false)).len(), 4);
+        assert_eq!(
+            describe(change_rows(&files, true)),
+            [
+                "README.md",
+                "[src] 2",
+                "  src/a.rs",
+                "  src/c.rs",
+                "[src/ui] 1",
+                "  src/ui/b.rs"
+            ]
+        );
+    }
+
+    #[test]
+    fn ages_are_short_and_never_negative() {
+        let now = 1_000_000_000;
+        assert_eq!(relative_time(now, now + 30), "now");
+        assert_eq!(relative_time(now, now - 90), "1m");
+        assert_eq!(relative_time(now, now - 7_200), "2h");
+        assert_eq!(relative_time(now, now - 3 * 86_400), "3d");
+        assert_eq!(relative_time(now, now - 14 * 86_400), "2w");
+        assert_eq!(relative_time(now, now - 400 * 86_400), "1y");
+    }
+
+    #[test]
+    fn history_rows_show_state_and_the_expanded_commit_files() {
+        let commit = |oid: &str| CommitSummary {
+            oid: oid.into(),
+            parents: Vec::new(),
+            author: "a".into(),
+            author_email: "a@b".into(),
+            timestamp: 0,
+            subject: oid.into(),
+            decorations: Vec::new(),
+        };
+        assert_eq!(
+            history_rows(None, None),
+            [HistoryRow::Message("Loading commits…".into())]
+        );
+        let history = GitHistory {
+            repository: PathBuf::from("repo"),
+            head: Some("b".into()),
+            commits: Ok(vec![commit("b"), commit("a")]),
+        };
+        let expanded = ExpandedCommit {
+            oid: "b".into(),
+            files: Some(Ok(vec![(ChangeKind::Modified, PathBuf::from("f"))])),
+        };
+        assert_eq!(
+            history_rows(Some(&history), Some(&expanded)),
+            [
+                HistoryRow::Commit(commit("b"), true),
+                HistoryRow::File {
+                    oid: "b".into(),
+                    kind: ChangeKind::Modified,
+                    path: PathBuf::from("f"),
+                },
+                HistoryRow::Commit(commit("a"), false),
+            ]
+        );
+    }
 
     #[test]
     fn the_banner_names_the_operation_and_rebase_progress() {

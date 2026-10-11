@@ -12,9 +12,11 @@ use crate::git::{
     CliGitBackend, ConflictSide, GitError, GitResult, GitService, GitStoreSnapshot, HeadState,
     OperationKind, RemoteInfo, RepositorySnapshot, RepositoryState,
 };
+use crate::model::diff_document::{ChangeBlock, DiffDocument};
 use crate::state::AppState;
 use crate::ui::branch_picker::{BranchListing, Checkout};
 use crate::ui::git_confirm::{GitConfirm, GitConfirmAction};
+use crate::ui::git_panel::{ExpandedCommit, GitHistory};
 use crate::ui::stash_switch::StashSwitchRequest;
 
 pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untracked: bool) {
@@ -630,6 +632,251 @@ pub fn drop_stash(
     )
 }
 
+/// What to do with one change block of an open diff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockAction {
+    Stage,
+    Unstage,
+    Discard,
+}
+
+/// Apply `action` to `block` of `path`'s `target` diff. The change is cut
+/// from a fresh zero-context diff, so it applies exactly as Git sees it now.
+pub fn apply_block(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    path: PathBuf,
+    target: crate::git::DiffTarget,
+    block: ChangeBlock,
+    action: BlockAction,
+) -> bool {
+    let Some(repository) = store.get().repository_for_path(root).cloned() else {
+        return false;
+    };
+    if action == BlockAction::Discard
+        && unsaved(
+            state,
+            &repository.worktree_root,
+            std::slice::from_ref(&path),
+        )
+    {
+        state.update(|app| {
+            app.show_toast("Save or revert the open editor changes before discarding.")
+        });
+        return false;
+    }
+    let (kind, message) = match action {
+        BlockAction::Stage => (OperationKind::Stage, "Staging change…"),
+        BlockAction::Unstage => (OperationKind::Unstage, "Unstaging change…"),
+        BlockAction::Discard => (OperationKind::Restore, "Discarding change…"),
+    };
+    run(
+        state,
+        store,
+        repository,
+        kind,
+        message,
+        move |service, root| {
+            service.write(root, |backend| {
+                apply_block_with(backend, root, &path, target, block, action)
+            })
+        },
+    )
+}
+
+/// [`apply_block`]'s Git work.
+fn apply_block_with(
+    backend: &CliGitBackend,
+    root: &Path,
+    path: &Path,
+    target: crate::git::DiffTarget,
+    block: ChangeBlock,
+    action: BlockAction,
+) -> GitResult<()> {
+    let raw = backend.zero_context_diff(root, target, path)?;
+    let diff = crate::git::diff::split_raw_diff(&raw)?;
+    let hunk = diff
+        .hunks
+        .iter()
+        .find(|hunk| {
+            (
+                hunk.old_start,
+                hunk.old_lines,
+                hunk.new_start,
+                hunk.new_lines,
+            ) == (
+                block.old_start,
+                block.old_lines,
+                block.new_start,
+                block.new_lines,
+            )
+        })
+        .ok_or_else(|| {
+            GitError::new(
+                GitErrorKind::Conflict,
+                "The change moved since the diff was shown. Try again.",
+            )
+        })?;
+    let patch = diff.patch(hunk).ok_or_else(|| {
+        GitError::new(
+            GitErrorKind::Unsupported,
+            "New, deleted and renamed files are staged as a whole.",
+        )
+    })?;
+    let (to_index, reverse) = match action {
+        BlockAction::Stage => (true, false),
+        BlockAction::Unstage => (true, true),
+        BlockAction::Discard => (false, true),
+    };
+    backend.apply_zero_context_patch(root, &patch, to_index, reverse)
+}
+
+/// Ask before discarding one change block.
+pub fn request_discard_block(
+    state: &State<AppState>,
+    root: PathBuf,
+    path: PathBuf,
+    block: ChangeBlock,
+) {
+    let lines = block.new_lines.max(block.old_lines);
+    let message = format!(
+        "The change to {} line{} in {} will be lost. This cannot be undone.",
+        lines,
+        if lines == 1 { "" } else { "s" },
+        file_name(&path)
+    );
+    state.update(move |app| {
+        app.git_confirm = Some(GitConfirm {
+            title: "Discard this change?".into(),
+            message,
+            confirm_label: "Discard",
+            destructive: true,
+            action: GitConfirmAction::DiscardBlock {
+                repository: root,
+                path,
+                block,
+            },
+            restore_terminal: app.terminal_focused,
+        });
+    });
+}
+
+/// How many commits the history section lists.
+pub const HISTORY_LIMIT: usize = 50;
+
+/// Load the newest commits of `root`'s HEAD, which is at `head`, into the
+/// Source Control history. Read-only, so it runs beside any operation.
+pub fn load_history(state: &State<AppState>, root: PathBuf, head: Option<String>) {
+    let Some(application) = state.get().git_application else {
+        return;
+    };
+    let worker_state = state.clone();
+    let _ = thread::Builder::new()
+        .name("loom-git-history".into())
+        .spawn(move || {
+            let commits = if head.is_none() {
+                Ok(Vec::new())
+            } else {
+                crate::git::service()
+                    .and_then(|service| {
+                        service
+                            .backend()
+                            .history(&root, None, None, 0, HISTORY_LIMIT)
+                    })
+                    .map_err(|error| error.user_message())
+            };
+            application.post(move || {
+                worker_state.update(move |app| {
+                    app.git_history = Some(GitHistory {
+                        repository: root,
+                        head,
+                        commits,
+                    });
+                });
+            });
+        });
+}
+
+/// Expand commit `oid` in the history, loading the files it changed.
+/// Expanding it again collapses it.
+pub fn toggle_commit(state: &State<AppState>, root: PathBuf, oid: String) {
+    let app = state.get();
+    let collapse = app
+        .git_history_commit
+        .as_ref()
+        .is_some_and(|commit| commit.oid == oid);
+    let application = app.git_application;
+    let toggled = oid.clone();
+    state.update(move |app| {
+        app.git_history_commit = (!collapse).then_some(ExpandedCommit {
+            oid: toggled,
+            files: None,
+        });
+    });
+    let Some(application) = application.filter(|_| !collapse) else {
+        return;
+    };
+    let worker_state = state.clone();
+    let _ = thread::Builder::new()
+        .name("loom-git-commit-files".into())
+        .spawn(move || {
+            let files = crate::git::service()
+                .and_then(|service| service.backend().commit_files(&root, &oid))
+                .map_err(|error| error.user_message());
+            application.post(move || {
+                worker_state.update(move |app| {
+                    if let Some(commit) = app
+                        .git_history_commit
+                        .as_mut()
+                        .filter(|commit| commit.oid == oid)
+                    {
+                        commit.files = Some(files);
+                    }
+                });
+            });
+        });
+}
+
+/// Open `path`'s diff in commit `oid`.
+pub fn open_commit_diff(state: &State<AppState>, root: PathBuf, oid: String, path: PathBuf) {
+    let Some(application) = state.get().git_application else {
+        return;
+    };
+    let worker_state = state.clone();
+    let _ = thread::Builder::new()
+        .name("loom-git-commit-diff".into())
+        .spawn(move || {
+            let result = crate::git::service().and_then(|service| {
+                let diff = service.backend().commit_full_diff(&root, &oid, &path)?;
+                Ok(Arc::new(DiffDocument::commit(root, path, oid, diff)))
+            });
+            application.post(move || {
+                let mut result = Some(result);
+                worker_state.update(|app| match result.take().unwrap() {
+                    Ok(document) => {
+                        app.workspace.open_prepared_diff(document);
+                    }
+                    Err(error) => app.show_error(error.user_message()),
+                });
+                crate::background_ui::retire(result);
+            });
+        });
+}
+
+/// Make the repository at `root` active in Source Control until the
+/// active file changes.
+pub fn select_repository(state: &State<AppState>, store: &State<GitStoreSnapshot>, root: PathBuf) {
+    let pinned = root.clone();
+    state.update(move |app| {
+        app.git_pinned_repository =
+            Some((pinned, app.workspace.active_path().map(Path::to_path_buf)));
+        app.git_history_commit = None;
+        app.git_scroll = 0.0;
+    });
+    store.update(move |snapshot| snapshot.pin_active(Some(&root)));
+}
+
 /// Undo the last commit, keeping its changes staged, and offer its message
 /// for the next commit.
 pub fn undo_last_commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
@@ -1172,6 +1419,120 @@ mod tests {
         );
         assert_eq!(error.kind, GitErrorKind::DirtyWorktree);
         assert_eq!(overwritten_files(&error), ["src/main.rs", "README.md"]);
+    }
+
+    #[test]
+    fn real_repository_stages_unstages_and_discards_single_changes() {
+        use crate::git::DiffTarget;
+        let Some((root, backend)) = crate::git::backend::tests::repository() else {
+            return;
+        };
+        let path = PathBuf::from("lines.txt");
+        let file = root.join(&path);
+        // CRLF content must survive patches cut from it, so keep it CRLF in
+        // the index whatever the machine's `core.autocrlf`.
+        backend
+            .runner()
+            .run(crate::git::command::GitCommand::new().cwd(&root).args([
+                "config",
+                "core.autocrlf",
+                "false",
+            ]))
+            .unwrap();
+        std::fs::write(&file, "a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh\r\n").unwrap();
+        backend.stage(&root, std::slice::from_ref(&path)).unwrap();
+        backend.commit(&root, "lines", false, false).unwrap();
+        // Change b, insert after d, delete g: three separate blocks.
+        std::fs::write(&file, "a\r\nB\r\nc\r\nd\r\nd2\r\ne\r\nf\r\nh\r\n").unwrap();
+        let document = |target| {
+            DiffDocument::from_unified(
+                root.clone(),
+                path.clone(),
+                target,
+                backend
+                    .parsed_full_diff(&root, target, std::slice::from_ref(&path))
+                    .unwrap(),
+            )
+        };
+        let staged = |backend: &CliGitBackend| {
+            backend
+                .diff(&root, DiffTarget::HeadToIndex, std::slice::from_ref(&path))
+                .unwrap()
+        };
+        let worktree = document(DiffTarget::IndexToWorktree);
+        assert_eq!(worktree.blocks.len(), 3);
+
+        // Stage the insertion only.
+        apply_block_with(
+            &backend,
+            &root,
+            &path,
+            DiffTarget::IndexToWorktree,
+            worktree.blocks[1],
+            BlockAction::Stage,
+        )
+        .unwrap();
+        let cached = staged(&backend);
+        assert!(cached.contains("\n+d2\r\n"), "{cached:?}");
+        assert!(
+            !cached.contains("\n+B") && !cached.contains("\n-g"),
+            "{cached:?}"
+        );
+
+        // A block that no longer matches is refused.
+        assert_eq!(
+            apply_block_with(
+                &backend,
+                &root,
+                &path,
+                DiffTarget::IndexToWorktree,
+                worktree.blocks[1],
+                BlockAction::Stage,
+            )
+            .unwrap_err()
+            .kind,
+            GitErrorKind::Conflict
+        );
+
+        // Unstage it again from the index's own diff.
+        let index = document(DiffTarget::HeadToIndex);
+        apply_block_with(
+            &backend,
+            &root,
+            &path,
+            DiffTarget::HeadToIndex,
+            index.blocks[0],
+            BlockAction::Unstage,
+        )
+        .unwrap();
+        assert!(staged(&backend).is_empty());
+
+        // Discard the first change from the worktree; the others stay.
+        apply_block_with(
+            &backend,
+            &root,
+            &path,
+            DiffTarget::IndexToWorktree,
+            worktree.blocks[0],
+            BlockAction::Discard,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "a\r\nb\r\nc\r\nd\r\nd2\r\ne\r\nf\r\nh\r\n"
+        );
+
+        // History lists the commit's files and its diff.
+        let head = backend.history(&root, None, None, 0, 1).unwrap()[0]
+            .oid
+            .clone();
+        assert_eq!(
+            backend.commit_files(&root, &head).unwrap(),
+            [(crate::git::ChangeKind::Added, path.clone())]
+        );
+        let shown = backend.commit_full_diff(&root, &head, &path).unwrap();
+        assert_eq!(shown.files[0].hunks[0].new_lines, 8);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -28,6 +28,8 @@ pub enum GitMenuTarget {
         section: u8,
     },
     Commit,
+    /// The workspace's repositories, to choose the active one.
+    Repositories,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -54,11 +56,13 @@ enum MenuAction {
     StashAll,
     KeepCurrent,
     TakeIncoming,
+    /// Make the `n`th repository, in snapshot order, active.
+    SelectRepository(usize),
 }
 
 enum Entry {
     Item {
-        label: &'static str,
+        label: String,
         /// `Some` for a checkable item.
         checked: Option<bool>,
         action: MenuAction,
@@ -66,15 +70,15 @@ enum Entry {
     Separator,
 }
 
-fn item(label: &'static str, action: MenuAction) -> Entry {
+fn item(label: &str, action: MenuAction) -> Entry {
     Entry::Item {
-        label,
+        label: label.into(),
         checked: None,
         action,
     }
 }
 
-fn entries(target: &GitMenuTarget, app: &AppState) -> Vec<Entry> {
+fn entries(target: &GitMenuTarget, app: &AppState, git: &GitStoreSnapshot) -> Vec<Entry> {
     match target {
         GitMenuTarget::File { section, .. } => {
             let mut entries = vec![
@@ -111,12 +115,12 @@ fn entries(target: &GitMenuTarget, app: &AppState) -> Vec<Entry> {
         }
         GitMenuTarget::Commit => vec![
             Entry::Item {
-                label: "Amend Last Commit",
+                label: "Amend Last Commit".into(),
                 checked: Some(app.git_commit_amend),
                 action: MenuAction::ToggleAmend,
             },
             Entry::Item {
-                label: "Sign Off",
+                label: "Sign Off".into(),
                 checked: Some(app.git_commit_signoff),
                 action: MenuAction::ToggleSignoff,
             },
@@ -124,6 +128,18 @@ fn entries(target: &GitMenuTarget, app: &AppState) -> Vec<Entry> {
             item("Undo Last Commit", MenuAction::UndoCommit),
             item("Stash All Changes", MenuAction::StashAll),
         ],
+        GitMenuTarget::Repositories => {
+            let active = git.active().map(|repository| repository.id);
+            git.repositories
+                .values()
+                .enumerate()
+                .map(|(index, repository)| Entry::Item {
+                    label: super::display_path(&repository.worktree_root),
+                    checked: Some(Some(repository.id) == active),
+                    action: MenuAction::SelectRepository(index),
+                })
+                .collect()
+        }
     }
 }
 
@@ -208,7 +224,8 @@ fn perform(
             MenuAction::ToggleAmend
             | MenuAction::ToggleSignoff
             | MenuAction::UndoCommit
-            | MenuAction::StashAll => {}
+            | MenuAction::StashAll
+            | MenuAction::SelectRepository(_) => {}
         }
         return;
     }
@@ -222,6 +239,17 @@ fn perform(
         }
         MenuAction::StashAll => {
             git_actions::stash_all(state, store);
+        }
+        MenuAction::SelectRepository(index) => {
+            let root = store
+                .get()
+                .repositories
+                .values()
+                .nth(index)
+                .map(|repository| repository.worktree_root.clone());
+            if let Some(root) = root {
+                git_actions::select_repository(state, store, root);
+            }
         }
         _ => {}
     }
@@ -239,7 +267,7 @@ pub fn render(
     editor_focus: UiFocusHandle,
 ) -> Element {
     let app = state.get();
-    let entries = entries(&menu.target, &app);
+    let entries = entries(&menu.target, &app, &store.get());
     let checkable = entries.iter().any(|entry| {
         matches!(
             entry,
@@ -402,8 +430,8 @@ mod tests {
     use super::*;
     use crate::ui::git_panel::UNSTAGED;
 
-    fn labels(target: &GitMenuTarget, app: &AppState) -> Vec<&'static str> {
-        entries(target, app)
+    fn labels(target: &GitMenuTarget, app: &AppState) -> Vec<String> {
+        entries(target, app, &GitStoreSnapshot::default())
             .into_iter()
             .filter_map(|entry| match entry {
                 Entry::Item { label, .. } => Some(label),
@@ -423,14 +451,30 @@ mod tests {
     #[test]
     fn file_menus_offer_the_section_actions() {
         let app = AppState::new();
-        assert!(labels(&file(STAGED), &app).contains(&"Unstage Changes"));
-        assert!(!labels(&file(STAGED), &app).contains(&"Discard Changes"));
+        assert!(
+            labels(&file(STAGED), &app)
+                .iter()
+                .any(|label| label == "Unstage Changes")
+        );
+        assert!(
+            !labels(&file(STAGED), &app)
+                .iter()
+                .any(|label| label == "Discard Changes")
+        );
         let unstaged = labels(&file(UNSTAGED), &app);
-        assert!(unstaged.contains(&"Stage Changes") && unstaged.contains(&"Discard Changes"));
-        assert!(labels(&file(UNTRACKED), &app).contains(&"Delete File"));
+        assert!(
+            unstaged.iter().any(|label| label == "Stage Changes")
+                && unstaged.iter().any(|label| label == "Discard Changes")
+        );
+        assert!(
+            labels(&file(UNTRACKED), &app)
+                .iter()
+                .any(|label| label == "Delete File")
+        );
         let conflicts = labels(&file(CONFLICTS), &app);
         assert!(
-            conflicts.contains(&"Keep Current (Ours)") && conflicts.contains(&"Mark as Resolved")
+            conflicts.iter().any(|label| label == "Keep Current (Ours)")
+                && conflicts.iter().any(|label| label == "Mark as Resolved")
         );
     }
 
@@ -438,7 +482,7 @@ mod tests {
     fn commit_menu_reflects_the_options() {
         let mut app = AppState::new();
         app.git_commit_amend = true;
-        let entries = entries(&GitMenuTarget::Commit, &app);
+        let entries = entries(&GitMenuTarget::Commit, &app, &GitStoreSnapshot::default());
         let checked = entries
             .iter()
             .filter_map(|entry| match entry {
@@ -446,7 +490,7 @@ mod tests {
                     label,
                     checked: Some(checked),
                     ..
-                } => Some((*label, *checked)),
+                } => Some((label.as_str(), *checked)),
                 _ => None,
             })
             .collect::<Vec<_>>();
