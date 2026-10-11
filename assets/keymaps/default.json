@@ -6,9 +6,11 @@
 //       Vim mode=normal|visual|insert|replace   Vim mode is on (Settings)
 //     Terminal            the terminal has focus
 //     Input                a single-line text field has focus
-//     Menu                 an editor, Explorer or tab menu is open (deepest)
+//                          (Input CommitMessage: the Source Control message)
+//     Menu                 an editor, Explorer, tab or Source Control menu
+//                          is open (deepest)
 //   Dialog CloseConfirmation | Dialog CloneRepository | Dialog StashSwitch
-//     | Dialog BranchPicker   (modal, separate roots)
+//     | Dialog GitConfirm | Dialog BranchPicker   (modal, separate roots)
 //
 // Users override these in keymap.json: open the Keymap page
 // (workspace::OpenKeymap) and choose "Edit keymap.json".
@@ -177,6 +179,13 @@
     }
   },
   {
+    "context": "CommitMessage",
+    "bindings": {
+      "enter": "git::Commit",
+      "secondary-enter": "git::Commit"
+    }
+  },
+  {
     "context": "Menu",
     "bindings": {
       "escape": "menu::Cancel"
@@ -192,6 +201,13 @@
   },
   {
     "context": "CloneRepository",
+    "bindings": {
+      "enter": "dialog::Confirm",
+      "escape": "dialog::Cancel"
+    }
+  },
+  {
+    "context": "GitConfirm",
     "bindings": {
       "enter": "dialog::Confirm",
       "escape": "dialog::Cancel"

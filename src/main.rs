@@ -87,6 +87,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_icon("refresh", icondata::VsRefresh)
                 .with_icon("sync", icondata::VsSync)
                 .with_icon("search", icondata::VsSearch)
+                .with_icon("discard", icondata::VsDiscard)
+                .with_icon("go-to-file", icondata::VsGoToFile)
                 // No Codicon equivalent yet.
                 .with_icon("git-branch", icondata::LuGitBranch)
                 .with_icon("command", icondata::LuCommand)

@@ -148,6 +148,8 @@ actions! {
     MenuSelectPrevious => "menu::SelectPrevious", "Select the previous menu item";
     MenuConfirm => "menu::Confirm", "Choose the selected menu item";
 
+    GitCommit => "git::Commit", "Commit the staged changes";
+
     DialogConfirm => "dialog::Confirm", "Confirm the open dialog";
     DialogCancel => "dialog::Cancel", "Dismiss the open dialog";
     DialogSecondary => "dialog::Secondary", "Choose the dialog's secondary option";

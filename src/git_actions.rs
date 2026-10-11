@@ -14,6 +14,7 @@ use crate::git::{
 };
 use crate::state::AppState;
 use crate::ui::branch_picker::{BranchListing, Checkout};
+use crate::ui::git_confirm::{GitConfirm, GitConfirmAction};
 use crate::ui::stash_switch::StashSwitchRequest;
 
 pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untracked: bool) {
@@ -91,112 +92,299 @@ pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untr
     }
 }
 
-pub fn stage_all(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
-    let Some(repository) = active_repository(store) else {
-        return false;
-    };
-    let files = repository.files.clone();
-    run(
-        state,
-        store,
-        repository,
-        OperationKind::Stage,
-        "Staging changes…",
-        move |service, root| {
-            let paths = files.keys().cloned().collect::<Vec<_>>();
-            service.write(root, |backend| backend.stage(root, &paths))
-        },
-    )
+/// The active repository's change sections: conflicts, staged, unstaged and
+/// untracked, as the Source Control drawer lists them.
+fn sections(store: &State<GitStoreSnapshot>, repository: &RepositorySnapshot) -> [Vec<PathBuf>; 4] {
+    store
+        .get()
+        .presentation
+        .repositories
+        .get(&repository.id)
+        .map(|prepared| prepared.sections.clone())
+        .unwrap_or_default()
 }
 
-pub fn stage_path(state: &State<AppState>, store: &State<GitStoreSnapshot>, path: PathBuf) -> bool {
-    let Some(repository) = active_repository(store) else {
-        return false;
-    };
-    run(
-        state,
-        store,
-        repository,
-        OperationKind::Stage,
-        "Staging file…",
-        move |service, root| service.write(root, |backend| backend.stage(root, &[path])),
-    )
+/// Whether any of `paths` (relative to `root`) has unsaved editor changes.
+fn unsaved(state: &State<AppState>, root: &Path, paths: &[PathBuf]) -> bool {
+    let dirty = state.get().workspace.dirty_paths();
+    paths
+        .iter()
+        .any(|path| dirty.iter().any(|dirty| dirty == &root.join(path)))
 }
 
-pub fn unstage_path(
+fn count_label(paths: &[PathBuf], one: &str) -> String {
+    match paths {
+        [path] => format!("{one} {}…", file_name(path)),
+        _ => format!("{one} {} files…", paths.len()),
+    }
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub fn stage_paths(
     state: &State<AppState>,
     store: &State<GitStoreSnapshot>,
-    path: PathBuf,
+    paths: Vec<PathBuf>,
 ) -> bool {
     let Some(repository) = active_repository(store) else {
         return false;
     };
+    if paths.is_empty() {
+        return false;
+    }
+    let message = count_label(&paths, "Staging");
+    run(
+        state,
+        store,
+        repository,
+        OperationKind::Stage,
+        message,
+        move |service, root| service.write(root, |backend| backend.stage(root, &paths)),
+    )
+}
+
+pub fn unstage_paths(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    paths: Vec<PathBuf>,
+) -> bool {
+    let Some(repository) = active_repository(store) else {
+        return false;
+    };
+    if paths.is_empty() {
+        return false;
+    }
+    let message = count_label(&paths, "Unstaging");
     run(
         state,
         store,
         repository,
         OperationKind::Unstage,
-        "Unstaging file…",
-        move |service, root| service.write(root, |backend| backend.unstage(root, &[path])),
+        message,
+        move |service, root| service.write(root, |backend| backend.unstage(root, &paths)),
     )
 }
 
-pub fn restore_path(
+/// Ask before discarding: worktree changes to `tracked` files are lost and
+/// `untracked` files go to the system trash.
+pub fn request_discard(
     state: &State<AppState>,
     store: &State<GitStoreSnapshot>,
-    path: PathBuf,
+    tracked: Vec<PathBuf>,
+    untracked: Vec<PathBuf>,
 ) -> bool {
     let Some(repository) = active_repository(store) else {
         return false;
     };
-    let absolute = repository.worktree_root.join(&path);
-    if state
-        .get()
-        .workspace
-        .dirty_paths()
+    let root = repository.worktree_root;
+    let all = tracked
         .iter()
-        .any(|dirty| dirty == &absolute)
-    {
+        .chain(&untracked)
+        .cloned()
+        .collect::<Vec<_>>();
+    if all.is_empty() {
+        return false;
+    }
+    if unsaved(state, &root, &all) {
         state.update(|app| {
-            app.show_toast("Save or discard the editor buffer before restoring this file.")
+            app.show_toast("Save or revert the open editor changes before discarding.")
         });
         return false;
     }
-    run(
+    let title = match all.as_slice() {
+        [path] if untracked.is_empty() => format!("Discard changes to {}?", file_name(path)),
+        [path] => format!("Delete {}?", file_name(path)),
+        _ => format!("Discard changes to {} files?", all.len()),
+    };
+    let message = match (tracked.is_empty(), untracked.is_empty()) {
+        (false, true) => "Your changes will be lost. This cannot be undone.",
+        (true, false) => "Untracked files are moved to the trash.",
+        _ => "Changes to tracked files will be lost; untracked files are moved to the trash.",
+    };
+    state.update(move |app| {
+        app.git_confirm = Some(GitConfirm {
+            title,
+            message: message.to_owned(),
+            confirm_label: if untracked.is_empty() {
+                "Discard"
+            } else {
+                "Discard and Delete"
+            },
+            destructive: true,
+            action: GitConfirmAction::Discard {
+                repository: root,
+                tracked,
+                untracked,
+            },
+            restore_terminal: app.terminal_focused,
+        });
+    });
+    true
+}
+
+/// Discard confirmed changes: restore `tracked` files from the index and
+/// move `untracked` files to the trash.
+pub fn discard_paths(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    tracked: Vec<PathBuf>,
+    untracked: Vec<PathBuf>,
+) -> bool {
+    let Some(repository) = store.get().repository_for_path(root).cloned() else {
+        return false;
+    };
+    let all = tracked
+        .iter()
+        .chain(&untracked)
+        .cloned()
+        .collect::<Vec<_>>();
+    let message = count_label(&all, "Discarding");
+    run_with(
         state,
         store,
         repository,
         OperationKind::Restore,
-        "Restoring file…",
-        move |service, root| service.write(root, |backend| backend.restore_worktree(root, &[path])),
+        message,
+        move |service, root| {
+            service.write(root, |backend| {
+                backend.restore_worktree(root, &tracked)?;
+                let mut deleted = Vec::new();
+                for path in &untracked {
+                    let path = root.join(path);
+                    match crate::workspace_actions::move_path_to_trash(&path) {
+                        Ok(true) => deleted.push(path),
+                        Ok(false) => {}
+                        Err(error) => return Err(GitError::new(GitErrorKind::Io, error)),
+                    }
+                }
+                Ok(deleted)
+            })
+        },
+        |app, deleted| {
+            for path in deleted {
+                crate::workspace_actions::apply_deleted_path_state(app, &path);
+            }
+        },
     )
 }
 
+/// Commit the staged changes. With nothing staged, offer to stage every
+/// tracked change first; amending needs no staged changes.
 pub fn commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
     let app = state.get();
     let message = app.git_commit_input.text().trim().to_owned();
     let amend = app.git_commit_amend;
-    let signoff = app.git_commit_signoff;
     drop(app);
-    if message.is_empty() {
+    if message.is_empty() && !amend {
         state.update(|app| app.show_toast("Enter a commit message."));
         return false;
     }
     let Some(repository) = active_repository(store) else {
         return false;
     };
-    run(
+    let [conflicts, staged, unstaged, untracked] = sections(store, &repository);
+    if !conflicts.is_empty() {
+        state.update(|app| app.show_toast("Resolve and stage the conflicted files first."));
+        return false;
+    }
+    if staged.is_empty() && !amend {
+        if unstaged.is_empty() {
+            let hint = if untracked.is_empty() {
+                "There are no changes to commit."
+            } else {
+                "Stage the new files you want to commit."
+            };
+            state.update(move |app| app.show_toast(hint));
+            return false;
+        }
+        let count = unstaged.len();
+        state.update(move |app| {
+            app.git_confirm = Some(GitConfirm {
+                title: "Commit all changes?".into(),
+                message: format!(
+                    "Nothing is staged. Stage the {count} changed file{} and commit? Untracked \
+                     files are not included.",
+                    if count == 1 { "" } else { "s" }
+                ),
+                confirm_label: "Stage and Commit",
+                destructive: false,
+                action: GitConfirmAction::StageAllAndCommit,
+                restore_terminal: app.terminal_focused,
+            });
+        });
+        return false;
+    }
+    commit_paths(state, store, repository, message, Vec::new())
+}
+
+/// Stage every tracked change, then commit.
+pub fn commit_all(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+    let message = state.get().git_commit_input.text().trim().to_owned();
+    let Some(repository) = active_repository(store) else {
+        return false;
+    };
+    let [_, _, unstaged, _] = sections(store, &repository);
+    commit_paths(state, store, repository, message, unstaged)
+}
+
+/// Stage `stage`, then commit with the drawer's options.
+fn commit_paths(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    repository: RepositorySnapshot,
+    message: String,
+    stage: Vec<PathBuf>,
+) -> bool {
+    let app = state.get();
+    let amend = app.git_commit_amend;
+    let signoff = app.git_commit_signoff;
+    drop(app);
+    run_with(
         state,
         store,
         repository,
         OperationKind::Commit,
-        "Committing…",
+        if amend {
+            "Amending…"
+        } else {
+            "Committing…"
+        },
         move |service, root| {
-            service
-                .write(root, |backend| {
-                    backend.commit(root, &message, amend, signoff)
-                })
-                .map(|_| ())
+            service.write(root, |backend| {
+                backend.stage(root, &stage)?;
+                backend.commit(root, &message, amend, signoff)
+            })
+        },
+        |app, _| app.git_commit_amend = false,
+    )
+}
+
+/// Undo the last commit, keeping its changes staged, and offer its message
+/// for the next commit.
+pub fn undo_last_commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+    let Some(repository) = active_repository(store) else {
+        return false;
+    };
+    run_with(
+        state,
+        store,
+        repository,
+        OperationKind::Other,
+        "Undoing last commit…",
+        |service, root| service.write(root, |backend| backend.undo_commit(root)),
+        |app, message| {
+            if app.git_commit_input.text().trim().is_empty() {
+                // The input is single-line: keep the subject.
+                app.git_commit_input
+                    .set_text(message.lines().next().unwrap_or_default());
+            }
+            app.show_success("Undid the last commit. Its changes are staged.");
         },
     )
 }

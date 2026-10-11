@@ -20,10 +20,10 @@ use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDr
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::{
-    branch_picker, clone_repository, close_confirmation, context_menu, diff_editor, git_panel,
-    keymap_page, layout_map, pane_sash, settings, sidebar, stash_switch, statusbar,
-    tab_context_menu, tabs, terminal, terminal_tab_context_menu, titlebar, toast, welcome,
-    workspace_home,
+    branch_picker, clone_repository, close_confirmation, context_menu, diff_editor, git_confirm,
+    git_menu, git_panel, keymap_page, layout_map, pane_sash, settings, sidebar, stash_switch,
+    statusbar, tab_context_menu, tabs, terminal, terminal_tab_context_menu, titlebar, toast,
+    welcome, workspace_home,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -231,6 +231,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let branch_picker_input_focus = cx.focus_handle(branch_picker_input_id.clone());
     let stash_switch_id = cx.use_stable_id();
     let stash_switch_focus = cx.focus_handle(stash_switch_id.clone());
+    let git_confirm_id = cx.use_stable_id();
+    let git_confirm_focus = cx.focus_handle(git_confirm_id.clone());
     let close_dialog_id = cx.use_stable_id();
     let close_dialog_focus = cx.focus_handle(close_dialog_id.clone());
     let keymap_search_id = cx.use_stable_id();
@@ -298,6 +300,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 app.show_clone_dialog = false;
                 app.branch_picker = None;
                 app.stash_switch = None;
+                app.git_confirm = None;
+                app.git_menu = None;
                 app.editor.menu = None;
             });
         }
@@ -671,6 +675,15 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         terminal_focus.clone(),
         editor_focus.clone(),
     );
+    crate::ui::hold_focus(
+        cx,
+        s.git_confirm
+            .as_ref()
+            .map(|confirm| confirm.restore_terminal),
+        git_confirm_focus.clone(),
+        terminal_focus.clone(),
+        editor_focus.clone(),
+    );
     // The close confirmation takes keyboard focus while open so Enter/Esc go
     // to the dialog rather than the editor; it hands focus back on resolve.
     let showing_close_request = s.close_request.is_some();
@@ -846,8 +859,14 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         if let UiEventPayload::PointerMove { pointer } = payload {
             let hovered = source_control_left && source_control_rect.contains(pointer.point);
             st_git_hover.try_update(move |app| {
-                let changed = app.git_sidebar_hovered != hovered;
+                let mut changed = app.git_sidebar_hovered != hovered;
                 app.git_sidebar_hovered = hovered;
+                // Leaving the drawer drops its row hover; the drawer only
+                // tracks moves inside itself.
+                if !hovered && app.git_hover.is_some() {
+                    app.git_hover = None;
+                    changed = true;
+                }
                 changed
             });
         }
@@ -894,6 +913,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     || app.terminal_tab_context_menu.is_some()
                     || app.branch_picker.is_some()
                     || app.stash_switch.is_some()
+                    || app.git_menu.is_some()
+                    || app.git_confirm.is_some()
                     || app.close_request.is_some()
                     || app.show_clone_dialog;
                 !overlay && app.workspace.activate_pane(pane)
@@ -1099,6 +1120,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         && s.terminal_tab_context_menu.is_none()
         && s.branch_picker.is_none()
         && s.stash_switch.is_none()
+        && s.git_menu.is_none()
+        && s.git_confirm.is_none()
         && !show_clone_dialog
         && s.close_request.is_none()
         && let Some(tooltip) = tabs::render_tooltip(vp, &strips, &s)
@@ -1156,6 +1179,24 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             state.clone(),
             git_store.clone(),
             stash_switch_id.clone(),
+        ));
+    }
+    if let Some(menu) = &s.git_menu {
+        root = root.child(git_menu::render(
+            vp,
+            menu,
+            state.clone(),
+            git_store.clone(),
+            editor_focus.clone(),
+        ));
+    }
+    if let Some(confirm) = &s.git_confirm {
+        root = root.child(git_confirm::render(
+            vp,
+            confirm,
+            state.clone(),
+            git_store.clone(),
+            git_confirm_id.clone(),
         ));
     }
     if show_clone_dialog {

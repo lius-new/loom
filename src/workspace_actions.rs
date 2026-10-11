@@ -659,7 +659,7 @@ pub fn delete_explorer_item(state: &State<AppState>, path: PathBuf) {
 }
 
 #[cfg(target_os = "windows")]
-fn move_path_to_trash(path: &Path) -> Result<bool, String> {
+pub(crate) fn move_path_to_trash(path: &Path) -> Result<bool, String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::Shell::{
         FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_WANTNUKEWARNING, SHFILEOPSTRUCTW,
@@ -689,7 +689,7 @@ fn move_path_to_trash(path: &Path) -> Result<bool, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn move_path_to_trash(path: &Path) -> Result<bool, String> {
+pub(crate) fn move_path_to_trash(path: &Path) -> Result<bool, String> {
     let status = std::process::Command::new("osascript")
         .args([
             "-e",
@@ -711,7 +711,7 @@ fn move_path_to_trash(path: &Path) -> Result<bool, String> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn move_path_to_trash(path: &Path) -> Result<bool, String> {
+pub(crate) fn move_path_to_trash(path: &Path) -> Result<bool, String> {
     let status = std::process::Command::new("gio")
         .args(["trash", "--"])
         .arg(path)
@@ -736,7 +736,7 @@ fn windows_shell_path(path: &Path) -> String {
     }
 }
 
-fn apply_deleted_path_state(app: &mut AppState, path: &Path) {
+pub(crate) fn apply_deleted_path_state(app: &mut AppState, path: &Path) {
     app.workspace.close_paths_under(path);
     let original_root_count = app.workspace_folders.len();
     let original_recent_count = app.recent_folders.len();

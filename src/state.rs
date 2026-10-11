@@ -324,6 +324,12 @@ pub struct AppState {
     pub branch_picker_input: InputState,
     /// A branch switch blocked by local changes, awaiting a stash choice.
     pub stash_switch: Option<crate::ui::stash_switch::StashSwitchRequest>,
+    /// The Source Control row under the pointer, showing its action buttons.
+    pub git_hover: Option<crate::ui::git_panel::GitHover>,
+    /// A Source Control file or commit options menu, while open.
+    pub git_menu: Option<crate::ui::git_menu::GitMenu>,
+    /// A Source Control action awaiting confirmation.
+    pub git_confirm: Option<crate::ui::git_confirm::GitConfirm>,
     /// Keystrokes of a key sequence waiting for its next key.
     pub pending_keystrokes: Vec<Keystroke>,
     /// Bumped whenever `pending_keystrokes` changes, restarting its timeout.
@@ -431,6 +437,9 @@ impl AppState {
             branch_picker: None,
             branch_picker_input: InputState::default(),
             stash_switch: None,
+            git_hover: None,
+            git_menu: None,
+            git_confirm: None,
             pending_keystrokes: Vec::new(),
             pending_keystrokes_seq: 0,
             keymap_version: 0,
@@ -630,6 +639,7 @@ impl AppState {
         self.tab_context_menu = None;
         self.terminal_tab_context_menu = None;
         self.branch_picker = None;
+        self.git_menu = None;
     }
 
     /// Split the focused pane, dropping pointer gestures tied to the old layout.

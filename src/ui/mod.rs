@@ -11,6 +11,8 @@ pub mod components;
 pub mod context_menu;
 pub mod diff_editor;
 pub mod git_badge;
+pub mod git_confirm;
+pub mod git_menu;
 pub mod git_panel;
 pub mod keymap_page;
 pub mod layout_map;

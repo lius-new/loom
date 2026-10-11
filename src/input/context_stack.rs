@@ -16,6 +16,8 @@ pub const CLOSE_CONFIRMATION: &str = "CloseConfirmation";
 pub const CLONE_REPOSITORY: &str = "CloneRepository";
 pub const BRANCH_PICKER: &str = "BranchPicker";
 pub const STASH_SWITCH: &str = "StashSwitch";
+pub const GIT_CONFIRM: &str = "GitConfirm";
+pub const COMMIT_MESSAGE: &str = "CommitMessage";
 pub const VIM: &str = "Vim";
 
 pub fn os_name() -> &'static str {
@@ -90,6 +92,11 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         dialog.add(STASH_SWITCH);
         return vec![dialog];
     }
+    if app.git_confirm.is_some() {
+        let mut dialog = KeyContext::new(DIALOG);
+        dialog.add(GIT_CONFIRM);
+        return vec![dialog];
+    }
     // The picker's filter takes typing, so workspace shortcuts stay out.
     if app.branch_picker.is_some() {
         let mut dialog = KeyContext::new(DIALOG);
@@ -98,8 +105,11 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
     }
 
     let mut stack = vec![workspace_context(app)];
-    if app.explorer_create_input.focused
-        || app.git_commit_input.focused
+    if app.git_commit_input.focused {
+        let mut input = KeyContext::new(INPUT);
+        input.add(COMMIT_MESSAGE);
+        stack.push(input);
+    } else if app.explorer_create_input.focused
         || (app.keymap_search.focused && app.main_surface() == MainSurface::Keymap)
     {
         stack.push(KeyContext::new(INPUT));
@@ -115,6 +125,7 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         || app.context_menu.is_some()
         || app.tab_context_menu.is_some()
         || app.terminal_tab_context_menu.is_some()
+        || app.git_menu.is_some()
     {
         stack.push(KeyContext::new(MENU));
     }
