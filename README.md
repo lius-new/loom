@@ -54,6 +54,15 @@ movement, paste, indentation, saving and focus changes separate undo groups.
 Editor shortcuts apply while the editor has focus; the terminal keeps its own
 keyboard handling. On macOS, Command takes the place of Ctrl.
 
+### Terminal sessions
+
+PowerShell, Command Prompt and Bash report their working directory to Loom.
+Each terminal remembers its latest directory after `cd` and restores it when
+the application restarts. New tabs and splits inherit the current terminal's
+directory. If a saved directory no longer exists, Loom falls back to the first
+workspace folder, then the application's working directory. Shell profiles
+and custom prompts are loaded without modifying user configuration files.
+
 ### Customizing key bindings
 
 Shortcuts come from a Zed-style keymap. The **Keymap** page (Ctrl + K Ctrl + S,

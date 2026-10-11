@@ -181,6 +181,12 @@ pub struct TerminalTab {
 }
 
 impl TerminalTab {
+    pub fn working_directory(&self) -> Option<PathBuf> {
+        self.controller
+            .working_directory()
+            .or_else(|| self.cwd.clone())
+    }
+
     pub fn label(&self) -> String {
         let shell = self.controller.shell().short_label();
         match self.purpose.as_ref().or(self.running_program.as_ref()) {
@@ -337,6 +343,27 @@ impl TerminalTabs {
         self.tabs.iter().map(|tab| tab.purpose.clone()).collect()
     }
 
+    pub fn directories(&self) -> Vec<Option<PathBuf>> {
+        self.tabs
+            .iter()
+            .map(TerminalTab::working_directory)
+            .collect()
+    }
+
+    pub fn restore_directories(&mut self, directories: &[Option<PathBuf>]) {
+        for (tab, cwd) in self.tabs.iter_mut().zip(directories) {
+            tab.cwd = cwd.clone();
+        }
+    }
+
+    pub fn update_directories(&mut self, directories: &[(u64, Option<PathBuf>)]) {
+        for (id, cwd) in directories {
+            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == *id) {
+                tab.cwd = cwd.clone();
+            }
+        }
+    }
+
     pub fn restore_purposes(&mut self, purposes: &[Option<String>]) {
         for (tab, purpose) in self.tabs.iter_mut().zip(purposes) {
             tab.purpose = normalized_purpose(purpose.as_deref());
@@ -369,7 +396,7 @@ impl TerminalTabs {
         let index = self.tabs.iter().position(|tab| tab.id == target)?;
         let group_id = self.tabs[index].group_id;
         let shell = self.tabs[index].controller.shell();
-        let cwd = self.tabs[index].cwd.clone();
+        let cwd = self.tabs[index].working_directory();
         let width_weight = self.tabs[index].width_weight * 0.5;
         self.tabs[index].width_weight = width_weight;
         let id = self.next_id;
@@ -493,9 +520,11 @@ struct TerminalInner {
     status: Mutex<TerminalStatus>,
     selection: Mutex<Option<Selection>>,
     generation: AtomicU64,
+    cwd: Mutex<Option<PathBuf>>,
 }
 
 struct RunningProcess {
+    _integration: crate::terminal_directory::ShellIntegration,
     pid: u32,
     #[cfg(windows)]
     console: Option<Arc<crate::terminal_program::SessionConsole>>,
@@ -530,6 +559,7 @@ impl TerminalController {
                 status: Mutex::new(TerminalStatus::Idle),
                 selection: Mutex::new(None),
                 generation: AtomicU64::new(0),
+                cwd: Mutex::new(None),
             }),
         }
     }
@@ -550,6 +580,10 @@ impl TerminalController {
 
     pub fn shell(&self) -> ShellKind {
         *lock(&self.inner.shell)
+    }
+
+    pub fn working_directory(&self) -> Option<PathBuf> {
+        lock(&self.inner.cwd).clone()
     }
 
     /// Inspect the OS process outside reactive UI state locks.
@@ -603,7 +637,9 @@ impl TerminalController {
         *lock(&self.inner.parser) = vt100::Parser::new(size.rows, size.cols, SCROLLBACK_ROWS);
         *lock(&self.inner.selection) = None;
 
-        match spawn_shell(shell, cwd, size) {
+        let cwd = crate::terminal_directory::starting_directory(cwd, None);
+        *lock(&self.inner.cwd) = cwd.clone();
+        match spawn_shell(shell, cwd.as_deref(), size) {
             Ok(spawned) => {
                 let mut reader = spawned.reader;
                 #[cfg(not(windows))]
@@ -618,6 +654,8 @@ impl TerminalController {
                     .name("loom-terminal-output".to_owned())
                     .spawn(move || {
                         let mut bytes = [0_u8; 8 * 1024];
+                        let mut directories =
+                            crate::terminal_directory::DirectoryReports::default();
                         loop {
                             let count = match reader.read(&mut bytes) {
                                 Ok(count) => count,
@@ -637,6 +675,9 @@ impl TerminalController {
                             let Some(inner) = current_inner(&reader_inner, generation) else {
                                 break;
                             };
+                            if let Some(cwd) = directories.process(&bytes[..count]) {
+                                *lock(&inner.cwd) = Some(cwd);
+                            }
                             lock(&inner.parser).process(&bytes[..count]);
                             reader_application.request_frame();
                         }
@@ -820,8 +861,13 @@ fn spawn_shell_program(
     size: TerminalSize,
     program: &Path,
 ) -> Result<SpawnedShell, String> {
-    let mut command = std::process::Command::new(&program);
-    configure_std_command(&mut command, shell, cwd);
+    // conpty 0.7 concatenates Command arguments without quoting. Quote paths
+    // explicitly, including executables installed under Program Files.
+    let mut executable = std::ffi::OsString::from("\"");
+    executable.push(program.as_os_str());
+    executable.push("\"");
+    let mut command = std::process::Command::new(executable);
+    let integration = configure_std_command(&mut command, shell, cwd)?;
 
     let mut options = conpty::ProcessOptions::default();
     options.set_console_size(Some((
@@ -836,6 +882,7 @@ fn spawn_shell_program(
     let console = crate::terminal_program::SessionConsole::new(process.pid()).map(Arc::new);
     Ok(SpawnedShell {
         process: RunningProcess {
+            _integration: integration,
             pid: process.pid(),
             console,
             process,
@@ -851,25 +898,31 @@ fn configure_std_command(
     command: &mut std::process::Command,
     shell: ShellKind,
     cwd: Option<&Path>,
-) {
-    match shell {
-        ShellKind::PowerShell => {
-            command.arg("-NoLogo");
-        }
-        ShellKind::Cmd => {}
-        ShellKind::Bash => {
-            command.arg("--login");
+) -> Result<crate::terminal_directory::ShellIntegration, String> {
+    let cwd = cwd.map(shell_friendly_path);
+    let integration = crate::terminal_directory::ShellIntegration::new(shell, cwd.as_deref())
+        .map_err(|error| format!("shell integration: {error}"))?;
+    for arg in &integration.args {
+        if arg.to_string_lossy().chars().any(char::is_whitespace) {
+            let mut quoted = std::ffi::OsString::from("\"");
+            quoted.push(arg);
+            quoted.push("\"");
+            command.arg(quoted);
+        } else {
+            command.arg(arg);
         }
     }
-    if let Some(cwd) = cwd {
-        command.current_dir(shell_friendly_path(cwd));
+    if let Some(cwd) = &cwd {
+        command.current_dir(cwd);
     }
     // conpty builds an explicit environment block when any override exists,
     // so copy the inherited environment before adding terminal capabilities.
     command.envs(env::vars_os());
+    command.envs(integration.env.iter().cloned());
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("TERM_PROGRAM", "loom");
+    Ok(integration)
 }
 
 /// `fs::canonicalize` yields verbatim paths (`\\?\D:\dir`). Shells keep that
@@ -907,10 +960,11 @@ fn spawn_shell(
     let pair = pty.openpty(pty_size).map_err(|error| error.to_string())?;
     let program = shell.command();
     let mut command = CommandBuilder::new(&program);
-    match shell {
-        ShellKind::PowerShell => command.arg("-NoLogo"),
-        ShellKind::Cmd => {}
-        ShellKind::Bash => command.arg("--login"),
+    let integration = crate::terminal_directory::ShellIntegration::new(shell, cwd)
+        .map_err(|error| format!("shell integration: {error}"))?;
+    command.args(&integration.args);
+    for (key, value) in &integration.env {
+        command.env(key, value);
     }
     if let Some(cwd) = cwd {
         command.cwd(cwd.as_os_str());
@@ -935,6 +989,7 @@ fn spawn_shell(
     let killer = child.clone_killer();
     Ok(SpawnedShell {
         process: RunningProcess {
+            _integration: integration,
             pid: child.process_id().unwrap_or(0),
             master: pair.master,
             writer,
@@ -1287,6 +1342,145 @@ fn find_git_bash() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_directories_stay_with_independent_tabs_when_siblings_close() {
+        let mut tabs = TerminalTabs::restored(vec![ShellKind::Cmd; 3], Some(1));
+        let dirs = (0..3)
+            .map(|i| Some(env::temp_dir().join(format!("cwd-{i}"))))
+            .collect::<Vec<_>>();
+        tabs.restore_directories(&dirs);
+        assert_eq!(tabs.directories(), dirs);
+        let ids = tabs.tabs().iter().map(|t| t.id).collect::<Vec<_>>();
+        let changed = env::temp_dir().join("changed-live-directory");
+        *lock(&tabs.tabs()[1].controller.inner.cwd) = Some(changed.clone());
+        assert_eq!(
+            tabs.region_view(&[ids[2], ids[1]], Some(ids[1]))
+                .directories(),
+            vec![dirs[2].clone(), Some(changed.clone())]
+        );
+        tabs.close(ids[0]);
+        assert_eq!(tabs.directories(), vec![Some(changed), dirs[2].clone()]);
+        let mut legacy = TerminalTabs::restored(tabs.shells(), tabs.active_index());
+        legacy.restore_directories(&[]);
+        assert_eq!(legacy.directories(), vec![None, None]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn real_shell_directories_follow_cd_and_survive_session_restoration() {
+        use crate::workspace_persistence::{WorkspaceSession, write_json};
+        use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+        let root = env::temp_dir().join(format!(
+            "loom-cwd-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let initial = root.join("initial");
+        let changed = root.join("中文 spaces & quote'");
+        std::fs::create_dir_all(&initial).unwrap();
+        std::fs::create_dir_all(&changed).unwrap();
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
+        let size = TerminalSize {
+            rows: 24,
+            cols: 160,
+            pixel_width: 1120,
+            pixel_height: 456,
+        };
+
+        fn wait_for_directory(controller: &TerminalController, expected: &Path, shell: ShellKind) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if controller
+                    .working_directory()
+                    .and_then(|p| p.canonicalize().ok())
+                    == expected.canonicalize().ok()
+                {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            let output = lock(&controller.inner.parser).screen().contents();
+            panic!(
+                "{} cwd={:?} status={:?} output={output:?}",
+                shell.label(),
+                controller.working_directory(),
+                controller.snapshot().status
+            );
+        }
+
+        for shell in ShellKind::ALL {
+            if !shell.command().is_file() {
+                eprintln!("{} not installed; skipping real shell test", shell.label());
+                continue;
+            }
+            let mut tabs = TerminalTabs::restored(vec![], None);
+            let first = tabs.add_at(shell, Some(initial.clone()));
+            let controller = tabs.active().unwrap().controller.clone();
+            controller.restart(shell, Some(&initial), size, application.clone());
+            let command = match shell {
+                ShellKind::PowerShell => format!(
+                    "Set-Location -LiteralPath '{}'\r",
+                    changed.display().to_string().replace('\'', "''")
+                ),
+                ShellKind::Cmd => format!("cd /d \"{}\"\r", changed.display()),
+                ShellKind::Bash => format!(
+                    "cd -- '{}'\r",
+                    changed
+                        .display()
+                        .to_string()
+                        .replace('\\', "/")
+                        .replace('\'', "'\\''")
+                ),
+            };
+            controller.write(command.as_bytes());
+            wait_for_directory(&controller, &changed, shell);
+            // Inheritance must read the controller immediately, before any UI poll.
+            assert_eq!(tabs.directories(), vec![controller.working_directory()]);
+            let second = tabs.split(first).unwrap();
+            assert_eq!(tabs.tabs()[1].cwd, controller.working_directory());
+            let session = WorkspaceSession {
+                terminal_tabs: tabs.shells(),
+                terminal_groups: tabs.saved_groups(),
+                terminal_directories: tabs.directories(),
+                active_terminal: tabs.active_index(),
+                ..Default::default()
+            };
+            let path = root.join("workspace.json");
+            write_json(&path, &session).unwrap();
+            let decoded: WorkspaceSession =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            controller.terminate(&application);
+            let mut restored = TerminalTabs::restored_with_groups(
+                decoded.terminal_tabs,
+                decoded.active_terminal,
+                &decoded.terminal_groups,
+            );
+            restored.restore_directories(&decoded.terminal_directories);
+            assert_eq!(restored.active_id(), Some(second));
+            for tab in restored.tabs() {
+                let cwd = tab.working_directory().unwrap();
+                tab.controller
+                    .restart(shell, Some(&cwd), size, application.clone());
+                // Require a new real prompt report, not just the requested spawn cwd.
+                *lock(&tab.controller.inner.cwd) = None;
+                tab.controller.write(b"\r");
+                wait_for_directory(&tab.controller, &changed, shell);
+                tab.controller.terminate(&application);
+            }
+        }
+    }
 
     #[test]
     fn shell_labels_are_stable() {

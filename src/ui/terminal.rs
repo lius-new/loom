@@ -387,7 +387,7 @@ fn render_view(
     let add_shell = snapshot.shell;
     let add_cwd = terminal_tab_snapshot
         .active()
-        .and_then(|tab| tab.cwd.clone())
+        .and_then(TerminalTab::working_directory)
         .or_else(|| app_state.workspace_folders.first().cloned());
     let add_rect = UiRect::new(
         rect.right - 32.0,
@@ -1266,8 +1266,12 @@ fn shell_menu(
             .event_policy(EventPolicy::INTERACTIVE)
             .cursor(CursorIcon::Pointer)
             .on_click(move || {
+                let cwd = row_tabs
+                    .get()
+                    .active()
+                    .and_then(TerminalTab::working_directory);
                 row_tabs.update(move |tabs| {
-                    tabs.add(shell);
+                    tabs.add_at(shell, cwd);
                 });
                 row_state.update(|app| app.terminal_shell_menu = false);
                 row_focus.focus();

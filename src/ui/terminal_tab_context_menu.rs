@@ -101,8 +101,7 @@ pub fn render(
     }
     let shell = target_tab.controller.shell();
     let cwd = target_tab
-        .cwd
-        .clone()
+        .working_directory()
         .or_else(|| snapshot.workspace_folders.first().cloned());
     let target = menu.target;
     let height = PAD * 2.0 + ITEM_H * ITEMS.len() as f32 + SEP_H;

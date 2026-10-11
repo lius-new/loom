@@ -32,6 +32,19 @@ pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     component(cx.viewport(), |cx, _| render_app(cx))
 }
 
+fn save_terminals(tabs: &TerminalTabs, visible: bool, height: f32) {
+    let _ = workspace_persistence::save_terminal_state(
+        &tabs.shells(),
+        &tabs.saved_groups(),
+        &tabs.widths(),
+        &tabs.purposes(),
+        &tabs.directories(),
+        tabs.active_index(),
+        visible,
+        height,
+    );
+}
+
 fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let state = cx.state_with(AppState::restored);
     let git_store = cx.state_with(GitStoreSnapshot::default);
@@ -47,6 +60,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         );
         tabs.restore_widths(&session.terminal_widths);
         tabs.restore_purposes(&session.terminal_purposes);
+        tabs.restore_directories(&session.terminal_directories);
         tabs
     });
     let terminal_cursor_blink = cx.state(true);
@@ -57,6 +71,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_groups = terminal_tab_snapshot.saved_groups();
     let terminal_widths = terminal_tab_snapshot.widths();
     let terminal_purposes = terminal_tab_snapshot.purposes();
+    let terminal_directories = terminal_tab_snapshot.directories();
     let active_terminal_index = terminal_tab_snapshot.active_index();
     let terminal_controller = terminal_tab_snapshot
         .active()
@@ -66,21 +81,34 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let program_sessions = terminal_tab_snapshot
         .tabs()
         .iter()
-        .map(|tab| (tab.id, tab.controller.clone(), tab.running_program.clone()))
+        .map(|tab| {
+            (
+                tab.id,
+                tab.controller.clone(),
+                tab.running_program.clone(),
+                tab.working_directory(),
+            )
+        })
         .collect::<Vec<_>>();
     let program_tabs = terminal_tabs.clone();
     let program_application = application.as_ref().clone();
     cx.use_effect(
         program_sessions
             .iter()
-            .map(|(id, _, _)| *id)
+            .map(|(id, _, _, _)| *id)
             .collect::<Vec<_>>(),
         move || {
             let (stop_sender, stop_receiver) = mpsc::channel();
             let notifications = crate::background_ui::LatestNotification::new(
                 program_application,
-                move |programs: Vec<(u64, Option<String>)>| {
-                    program_tabs.update(|tabs| tabs.update_programs(&programs));
+                move |(programs, directories): (
+                    Vec<(u64, Option<String>)>,
+                    Vec<(u64, Option<std::path::PathBuf>)>,
+                )| {
+                    program_tabs.update(|tabs| {
+                        tabs.update_programs(&programs);
+                        tabs.update_directories(&directories);
+                    });
                 },
             );
             let worker = thread::Builder::new()
@@ -92,7 +120,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                         .collect::<Vec<_>>();
                     let mut previous = program_sessions
                         .iter()
-                        .map(|(id, _, name)| (*id, name.clone()))
+                        .map(|(id, _, name, _)| (*id, name.clone()))
+                        .collect::<Vec<_>>();
+                    let mut previous_directories = program_sessions
+                        .iter()
+                        .map(|(id, _, _, cwd)| (*id, cwd.clone()))
                         .collect::<Vec<_>>();
                     while let Err(RecvTimeoutError::Timeout) =
                         stop_receiver.recv_timeout(Duration::from_millis(250))
@@ -105,7 +137,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                         let programs = program_sessions
                             .iter()
                             .zip(&mut trackers)
-                            .map(|((id, controller, _), tracker)| {
+                            .map(|((id, controller, _, _), tracker)| {
                                 (
                                     *id,
                                     tracker.observe(
@@ -116,9 +148,16 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                                 )
                             })
                             .collect::<Vec<_>>();
-                        if programs != previous {
-                            notifications.send(programs.clone());
+                        let directories = program_sessions
+                            .iter()
+                            .map(|(id, controller, _, cwd)| {
+                                (*id, controller.working_directory().or_else(|| cwd.clone()))
+                            })
+                            .collect::<Vec<_>>();
+                        if programs != previous || directories != previous_directories {
+                            notifications.send((programs.clone(), directories.clone()));
                             previous = programs;
+                            previous_directories = directories;
                         }
                     }
                 })
@@ -221,8 +260,15 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         }
     });
     let close_state = state.clone();
+    let close_terminals = terminal_tabs.clone();
     cx.use_event_once::<window_geometry::AppCloseRequested>(move |_| {
-        let workspace = close_state.get().workspace;
+        let app = close_state.get();
+        save_terminals(
+            &close_terminals.get(),
+            app.default_terminal_open(),
+            app.terminal_h,
+        );
+        let workspace = app.workspace;
         let dirty_targets = workspace
             .dirty_file_ids()
             .into_iter()
@@ -368,6 +414,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_groups.clone(),
             terminal_widths.clone(),
             terminal_purposes.clone(),
+            terminal_directories.clone(),
             s.terminal_split_drag,
             active_terminal_index,
             default_terminal_open,
@@ -380,6 +427,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     &terminal_groups,
                     &terminal_widths,
                     &terminal_purposes,
+                    &terminal_directories,
                     active_terminal_index,
                     default_terminal_open,
                     s.terminal_h,
@@ -548,7 +596,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     (
                         session.id,
                         session.controller.clone(),
-                        session.cwd.clone().or_else(|| terminal_cwd.clone()),
+                        session.working_directory().or_else(|| terminal_cwd.clone()),
                         terminal::pty_size_for_body(rect),
                     )
                 })
@@ -565,6 +613,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_visible = active_visible_terminal.is_some();
     cx.use_effect(terminal_start_key, move || {
         for (_, terminal_start, cwd, size) in terminal_starts {
+            let cwd = crate::terminal_directory::starting_directory(
+                cwd.as_deref(),
+                terminal_cwd.as_deref(),
+            );
             terminal_start.ensure_started(cwd.as_deref(), size, terminal_start_application.clone());
         }
     });

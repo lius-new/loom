@@ -13,6 +13,7 @@ name = "Loom"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
 icondata = "0.7"
 image = { version = "0.25", default-features = false, features = ["png"] }
 notify = "8.2"
