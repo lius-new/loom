@@ -468,15 +468,32 @@ impl CliGitBackend {
             .stdout_text()
     }
 
+    /// Apply (or pop) a stash, restoring its staged changes as staged. When
+    /// they no longer apply to the index, Git asks to retry without
+    /// `--index`, which brings everything back unstaged.
     pub fn stash_apply(&self, repository: &Path, index: usize, pop: bool) -> GitResult<()> {
         let reference = format!("stash@{{{index}}}");
-        self.runner.run(GitCommand::new().cwd(repository).args([
-            "stash",
-            if pop { "pop" } else { "apply" },
-            "--index",
-            &reference,
-        ]))?;
-        Ok(())
+        let run = |restore_index: bool| {
+            let mut args = vec!["stash", if pop { "pop" } else { "apply" }];
+            if restore_index {
+                args.push("--index");
+            }
+            args.push(&reference);
+            self.runner
+                .run(GitCommand::new().cwd(repository).args(args))
+                .map(|_| ())
+        };
+        match run(true) {
+            Err(error)
+                if error
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("without --index")) =>
+            {
+                run(false)
+            }
+            result => result,
+        }
     }
 
     /// Pop the newest stash onto the working tree without restoring its
@@ -680,6 +697,7 @@ impl CliGitBackend {
             RepositoryState::RebaseInProgress => vec!["rebase", "--abort"],
             RepositoryState::CherryPickInProgress => vec!["cherry-pick", "--abort"],
             RepositoryState::RevertInProgress => vec!["revert", "--abort"],
+            RepositoryState::Bisecting => vec!["bisect", "reset"],
             _ => {
                 return Err(GitError::new(
                     GitErrorKind::Unsupported,
@@ -690,6 +708,44 @@ impl CliGitBackend {
         self.runner
             .run(GitCommand::new().cwd(repository).args(args))?;
         Ok(())
+    }
+
+    /// Resolve `path`'s conflict with one side's version, then stage it. A
+    /// side that deleted the file resolves by deleting it.
+    pub fn resolve_conflict(
+        &self,
+        repository: &Path,
+        path: &Path,
+        side: ConflictSide,
+    ) -> GitResult<()> {
+        let stages = self.conflict_stages(repository)?;
+        let Some(stages) = stages.iter().find(|stages| stages.path == path) else {
+            return Err(GitError::new(
+                GitErrorKind::Other,
+                "The file has no conflict to resolve.",
+            ));
+        };
+        let (flag, present) = match side {
+            ConflictSide::Ours => ("--ours", stages.ours.is_some()),
+            ConflictSide::Theirs => ("--theirs", stages.theirs.is_some()),
+        };
+        if present {
+            self.runner.run(
+                GitCommand::new()
+                    .cwd(repository)
+                    .args([OsString::from("checkout"), flag.into(), "--".into()])
+                    .arg(path.as_os_str()),
+            )?;
+            self.stage(repository, &[path.to_path_buf()])
+        } else {
+            self.runner.run(
+                GitCommand::new()
+                    .cwd(repository)
+                    .args(["rm", "--quiet", "--"])
+                    .arg(path.as_os_str()),
+            )?;
+            Ok(())
+        }
     }
 
     pub fn merge(&self, repository: &Path, revision: &str) -> GitResult<()> {
@@ -965,6 +1021,9 @@ impl CliGitBackend {
             }
         }
         let repository_state = repository_state(repository, &parsed.head);
+        let operation_step = (repository_state == RepositoryState::RebaseInProgress)
+            .then(|| rebase_step(&repository.git_dir))
+            .flatten();
         let features = repository_features(repository);
         Ok(RepositorySnapshot {
             id,
@@ -978,6 +1037,8 @@ impl CliGitBackend {
             files: parsed.files.into(),
             ignored: parsed.ignored.into(),
             repository_state,
+            operation_step,
+            stashes: read_stashes(&repository.common_dir).into(),
             features,
             generation,
         })
@@ -1003,6 +1064,50 @@ impl CliGitBackend {
             .run(GitCommand::new().cwd(repository).args(args).read_only())?;
         parse_numstat(&output.stdout)
     }
+}
+
+/// The rebase step being applied and the total, from the rebase state
+/// directory: `rebase-merge` for the default backend, `rebase-apply` for
+/// the apply backend.
+fn rebase_step(git_dir: &Path) -> Option<(u32, u32)> {
+    let read =
+        |path: PathBuf| -> Option<u32> { std::fs::read_to_string(path).ok()?.trim().parse().ok() };
+    [
+        ("rebase-merge", "msgnum", "end"),
+        ("rebase-apply", "next", "last"),
+    ]
+    .into_iter()
+    .find_map(|(dir, step, total)| {
+        let dir = git_dir.join(dir);
+        Some((read(dir.join(step))?, read(dir.join(total))?))
+    })
+}
+
+/// Stashes, newest first, read from the stash reflog without starting Git.
+/// Each line is `<old> <new> <ident> <time> <zone>\t<message>`.
+fn read_stashes(common_dir: &Path) -> Vec<StashInfo> {
+    let Ok(log) = std::fs::read_to_string(common_dir.join("logs").join("refs").join("stash"))
+    else {
+        return Vec::new();
+    };
+    let mut stashes = log
+        .lines()
+        .filter_map(|line| {
+            let (header, message) = line.split_once('\t')?;
+            let oid = header.split(' ').nth(1)?;
+            Some((oid.to_owned(), message.to_owned()))
+        })
+        .collect::<Vec<_>>();
+    stashes.reverse();
+    stashes
+        .into_iter()
+        .enumerate()
+        .map(|(index, (oid, message))| StashInfo {
+            index,
+            oid,
+            message,
+        })
+        .collect()
 }
 
 fn repository_state(repository: &DiscoveredRepository, head: &HeadState) -> RepositoryState {
@@ -1292,6 +1397,92 @@ pub(crate) mod tests {
             backend.blame(&root, Path::new("tracked.txt")).unwrap()[0].author,
             "Loom Test"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn real_repository_resolves_conflicts_and_continues_a_rebase() {
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        let git = |args: &[&str]| {
+            backend
+                .runner()
+                .run(GitCommand::new().cwd(&root).args(args))
+        };
+        let commit = |name: &str, contents: &str, message: &str| {
+            std::fs::write(root.join(name), contents).unwrap();
+            backend.stage(&root, &[PathBuf::from(name)]).unwrap();
+            backend.commit(&root, message, false, false).unwrap();
+        };
+        let scan = |backend: &CliGitBackend| {
+            let discovered = backend.discover(std::slice::from_ref(&root)).unwrap();
+            backend.status(&discovered[0], RepositoryId(1), 1).unwrap()
+        };
+        commit("a.txt", "base\n", "base");
+        commit("b.txt", "base\n", "base b");
+        backend.create_branch(&root, "topic", None).unwrap();
+        commit("a.txt", "topic\n", "topic a");
+        commit("b.txt", "topic\n", "topic b");
+        backend.switch(&root, "main").unwrap();
+        commit("a.txt", "main\n", "main a");
+        commit("b.txt", "main\n", "main b");
+        backend.switch(&root, "topic").unwrap();
+
+        // Both topic commits conflict; the rebase stops on the first.
+        assert!(git(&["rebase", "main"]).is_err());
+        let status = scan(&backend);
+        assert_eq!(status.repository_state, RepositoryState::RebaseInProgress);
+        assert_eq!(status.operation_step, Some((1, 2)));
+        assert!(status.files[&PathBuf::from("a.txt")].conflict.is_some());
+
+        // "Ours" is the branch being rebased onto.
+        backend
+            .resolve_conflict(&root, Path::new("a.txt"), ConflictSide::Ours)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "main\n"
+        );
+        // Continuing must not wait for an editor.
+        assert!(
+            backend
+                .continue_operation(&root, RepositoryState::RebaseInProgress)
+                .is_err()
+        );
+        assert_eq!(scan(&backend).operation_step, Some((2, 2)));
+        backend
+            .resolve_conflict(&root, Path::new("b.txt"), ConflictSide::Theirs)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("b.txt")).unwrap(),
+            "topic\n"
+        );
+        backend
+            .continue_operation(&root, RepositoryState::RebaseInProgress)
+            .unwrap();
+        let status = scan(&backend);
+        assert_eq!(status.repository_state, RepositoryState::Normal);
+        assert_eq!(status.operation_step, None);
+
+        // The stash reflog read during scans matches `git stash list`.
+        std::fs::write(root.join("a.txt"), "first\n").unwrap();
+        backend
+            .stash_push(&root, Some("first"), false, false)
+            .unwrap();
+        std::fs::write(root.join("a.txt"), "second\n").unwrap();
+        backend
+            .stash_push(&root, Some("second"), false, false)
+            .unwrap();
+        let scanned = scan(&backend).stashes;
+        assert_eq!(*scanned, backend.stash_list(&root).unwrap());
+        assert_eq!(scanned[0].message, "On topic: second");
+        backend.stash_apply(&root, 1, true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "first\n"
+        );
+        assert_eq!(scan(&backend).stashes.len(), 1);
         let _ = std::fs::remove_dir_all(root);
     }
 

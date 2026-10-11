@@ -693,6 +693,8 @@ mod tests {
             files: Arc::default(),
             ignored: Default::default(),
             repository_state: RepositoryState::Normal,
+            operation_step: None,
+            stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
         };
@@ -765,6 +767,8 @@ mod tests {
                 files: Arc::default(),
                 ignored: Default::default(),
                 repository_state: RepositoryState::Normal,
+                operation_step: None,
+                stashes: Default::default(),
                 features: RepositoryFeatures::default(),
                 generation: 3,
             },
@@ -808,6 +812,8 @@ mod tests {
             files: Arc::default(),
             ignored: Default::default(),
             repository_state: RepositoryState::Normal,
+            operation_step: None,
+            stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
         };
@@ -956,6 +962,8 @@ mod tests {
             files: files.into(),
             ignored: Default::default(),
             repository_state: RepositoryState::Normal,
+            operation_step: None,
+            stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
         };

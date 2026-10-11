@@ -839,6 +839,8 @@ mod tests {
             files: Arc::new(BTreeMap::new()),
             ignored: Arc::new(BTreeSet::new()),
             repository_state: RepositoryState::Normal,
+            operation_step: None,
+            stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 0,
         }

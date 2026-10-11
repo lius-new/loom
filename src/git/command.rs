@@ -149,6 +149,10 @@ impl GitCommandRunner {
         process
             .env("GIT_PAGER", "cat")
             .env("PAGER", "cat")
+            // No terminal to edit in: `:` makes Git keep its prepared
+            // message (e.g. on `rebase --continue`) without starting an
+            // editor, where any other editor would hang the command.
+            .env("GIT_EDITOR", ":")
             .env("GIT_CONFIG_COUNT", "3")
             .env("GIT_CONFIG_KEY_0", "color.ui")
             .env("GIT_CONFIG_VALUE_0", "false")

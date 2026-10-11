@@ -198,6 +198,10 @@ pub struct RepositorySnapshot {
     /// ignored directory is listed once and covers everything below it.
     pub ignored: Arc<BTreeSet<PathBuf>>,
     pub repository_state: RepositoryState,
+    /// The rebase step being applied and the total, during a rebase.
+    pub operation_step: Option<(u32, u32)>,
+    /// Stashes, newest first.
+    pub stashes: Arc<Vec<StashInfo>>,
     pub features: RepositoryFeatures,
     pub generation: u64,
 }
@@ -226,6 +230,8 @@ impl RepositorySnapshot {
             files,
             ignored,
             repository_state,
+            operation_step,
+            stashes,
             features,
             generation: _,
         } = self;
@@ -240,6 +246,8 @@ impl RepositorySnapshot {
             && *files == other.files
             && *ignored == other.ignored
             && *repository_state == other.repository_state
+            && *operation_step == other.operation_step
+            && *stashes == other.stashes
             && *features == other.features
     }
 
@@ -446,6 +454,14 @@ pub struct ConflictStages {
     pub theirs: Option<String>,
 }
 
+/// Which version of a conflicted file to keep. During a merge `Ours` is the
+/// checked-out branch; during a rebase it is the branch being rebased onto.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictSide {
+    Ours,
+    Theirs,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineChange {
     Added,
@@ -478,6 +494,8 @@ mod tests {
                 .collect::<BTreeSet<_>>()
                 .into(),
             repository_state: RepositoryState::Normal,
+            operation_step: None,
+            stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
         }
