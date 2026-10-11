@@ -384,9 +384,13 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         "Settings",
         theme::mono_bold(theme::c().text_bright, 18.0),
     ));
+    content = content.child(settings_file_link(
+        UiRect::new(page_left, top, page_right, top + 26.0),
+        state.clone(),
+    ));
     content = content.child(text(
         UiRect::new(page_left, top + 28.0, page_right, top + 48.0),
-        "Changes apply immediately and are saved automatically.",
+        "Changes apply immediately and are saved to settings.json.",
         theme::sans(theme::c().text_dim, theme::UI_SIZE),
     ));
     top += HEADER_H;
@@ -429,6 +433,28 @@ fn section_title(left: f32, right: f32, top: f32, title: &'static str) -> Elemen
             ),
             VisualStyle::filled(theme::c().border),
         ))
+}
+
+/// "Edit in settings.json", right-aligned on the title row.
+fn settings_file_link(row: UiRect, state: State<AppState>) -> Element {
+    let label = "Edit in settings.json";
+    let width = measure(label, theme::UI_SIZE, 400) + TEXT_MARGIN;
+    let link = UiRect::new(
+        (row.right - width).max(row.left),
+        row.top,
+        row.right,
+        row.bottom,
+    );
+    let mut style = theme::sans(theme::c().accent, theme::UI_SIZE);
+    style.align = TextAlign::Right;
+    panel(link, VisualStyle::default())
+        .key("settings-open-settings-file")
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .on_click(move || {
+            crate::key_actions::open_user_settings(&state);
+        })
+        .child(text(link, label, style))
 }
 
 /// Key bindings live on their own Keymap page; Settings links to it.
@@ -994,5 +1020,24 @@ mod tests {
             app.apply(Action::DecreaseFontSize);
         }
         assert_eq!(app.editor_font.size, fonts::MIN_SIZE);
+    }
+
+    #[test]
+    fn settings_file_values_apply_and_round_trip() {
+        let mut app = AppState::new();
+        assert!(!app.apply_settings(app.settings()));
+
+        let file = crate::settings_persistence::parse(
+            r#"{ "smooth_caret": false, "vim": { "enabled": true }, "editor_font": { "family": "Consolas", "size": 99 } }"#,
+        )
+        .unwrap();
+        assert!(app.apply_settings(file.settings));
+        assert!(!app.smooth_caret);
+        assert!(app.vim.options.enabled);
+        assert_eq!(app.editor_font.family, "Consolas");
+        assert_eq!(app.editor_font_input.text(), "Consolas");
+        // Out-of-range values are clamped, so the next save normalizes them.
+        assert_eq!(app.editor_font.size, fonts::MAX_SIZE);
+        assert_eq!(app.settings().editor_font.size, fonts::MAX_SIZE);
     }
 }

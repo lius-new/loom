@@ -19,6 +19,7 @@
 
 mod app;
 mod background_ui;
+mod config_watcher;
 mod editor;
 mod file_icons;
 mod file_tree;
@@ -27,6 +28,7 @@ mod fonts;
 mod git;
 mod git_actions;
 mod input;
+mod jsonc;
 mod key_actions;
 mod launch;
 mod model;

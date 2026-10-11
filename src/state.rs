@@ -490,23 +490,58 @@ impl AppState {
         app.workspace_folders = session.open_folders;
         app.recent_folders = session.recent_folders;
         app.show_source_control = session.source_control_open;
-        let settings = crate::settings_persistence::load();
-        app.git_tree_view = settings.git_tree_view;
-        app.git_split_diff = settings.git_split_diff;
-        app.git_inline_blame = settings.git_inline_blame;
-        app.theme = settings.theme;
-        app.default_shell = settings.default_shell;
-        app.terminal_profiles = settings.terminal_profiles;
+        app.apply_settings(crate::settings_persistence::load());
         app.refresh_shells();
-        app.terminal_cursor_blink = settings.terminal_cursor_blink;
-        app.smooth_caret = settings.smooth_caret;
-        app.set_editor_font(settings.editor_font);
-        app.set_terminal_font(settings.terminal_font);
-        app.vim.options = settings.vim.into();
         crate::workspace_actions::hydrate_workspace_folders(&mut app);
         crate::workspace_actions::hydrate_editor_layout(&mut app, session.editor_layout);
         crate::workspace_actions::open_launch_paths(&mut app, crate::launch::take_paths());
         app
+    }
+
+    /// The preferences stored in `settings.json`.
+    pub fn settings(&self) -> crate::settings_persistence::Settings {
+        crate::settings_persistence::Settings {
+            theme: self.theme,
+            default_shell: self.default_shell,
+            terminal_profiles: self.terminal_profiles.clone(),
+            terminal_cursor_blink: self.terminal_cursor_blink,
+            smooth_caret: self.smooth_caret,
+            git_inline_blame: self.git_inline_blame,
+            git_split_diff: self.git_split_diff,
+            git_tree_view: self.git_tree_view,
+            vim: self.vim.options.into(),
+            editor_font: self.editor_font.clone(),
+            terminal_font: self.terminal_font.clone(),
+        }
+    }
+
+    /// Applies preferences read from `settings.json`; returns whether
+    /// anything changed.
+    pub fn apply_settings(&mut self, settings: crate::settings_persistence::Settings) -> bool {
+        if settings == self.settings() {
+            return false;
+        }
+        let shells_changed = settings.default_shell != self.default_shell
+            || settings.terminal_profiles != self.terminal_profiles;
+        self.theme = settings.theme;
+        self.default_shell = settings.default_shell;
+        self.terminal_profiles = settings.terminal_profiles;
+        self.terminal_cursor_blink = settings.terminal_cursor_blink;
+        self.smooth_caret = settings.smooth_caret;
+        self.git_inline_blame = settings.git_inline_blame;
+        self.git_split_diff = settings.git_split_diff;
+        self.git_tree_view = settings.git_tree_view;
+        self.set_editor_font(settings.editor_font);
+        self.set_terminal_font(settings.terminal_font);
+        let vim: crate::vim::Options = settings.vim.into();
+        if vim.enabled != self.vim.options.enabled {
+            crate::editor::vim_input::set_enabled(self, vim.enabled);
+        }
+        self.vim.options = vim;
+        if shells_changed {
+            self.refresh_shells();
+        }
+        true
     }
 
     /// Applies an editor font preference, keeping open views on the same line.

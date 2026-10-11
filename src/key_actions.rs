@@ -6,18 +6,16 @@
 //! claims continue to the focused element (editor text input, terminal bytes,
 //! text fields) unchanged.
 
-use std::path::Path;
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread;
 
 use lgui::ApplicationHandle;
 use lgui::application::ApplicationContext;
 use lgui::core::{KeyboardEvent, UiEventKind, UiEventPayload, UiFocusHandle};
 use lgui::prelude::{Element, State, UiRect};
 use lgui::services::ServicesContextExt;
-use notify::{RecursiveMode, Watcher};
 
+use crate::config_watcher::{self, ConfigWatcher};
 use crate::editor::editor_view;
 use crate::editor::vim_input;
 use crate::git::GitStoreSnapshot;
@@ -28,6 +26,7 @@ use crate::input::dispatcher::{self, Replay};
 use crate::input::keymap;
 use crate::input::keymap_file::{self, UserKeymap};
 use crate::input::keystroke::Keystroke;
+use crate::settings_persistence::{self, UserSettings};
 use crate::state::AppState;
 use crate::terminal_session::{TerminalController, TerminalTabs};
 use crate::ui::terminal::{self, ClipboardShortcut};
@@ -252,6 +251,10 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
             open_keymap_file(env);
             true
         }
+        Action::OpenSettingsFile => {
+            open_settings_file(env);
+            true
+        }
         Action::Save => {
             workspace_actions::save_active_document(&env.state);
             true
@@ -382,72 +385,70 @@ pub fn reload_user_keymap(state: &State<AppState>) {
     state.update(|app| app.keymap_version += 1);
 }
 
-enum WatchMessage {
-    Changed,
-    Stop,
-}
-
 /// Reloads the user keymap whenever `keymap.json` changes on disk.
-pub struct KeymapWatcher {
-    _watcher: notify::RecommendedWatcher,
-    sender: Sender<WatchMessage>,
-    worker: Option<JoinHandle<()>>,
+pub fn watch_user_keymap(state: State<AppState>) -> Option<ConfigWatcher> {
+    config_watcher::watch(keymap_file::FILE_NAME, move || reload_user_keymap(&state))
 }
 
-impl Drop for KeymapWatcher {
-    fn drop(&mut self) {
-        let _ = self.sender.send(WatchMessage::Stop);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+// ---- User settings -----------------------------------------------------------
+
+fn open_settings_file(env: &KeyEnv) {
+    if open_user_settings(&env.state) {
+        env.editor_focus.focus();
+    }
+}
+
+/// Open `settings.json` in a tab, creating it from the template first.
+pub fn open_user_settings(state: &State<AppState>) -> bool {
+    match settings_persistence::ensure_user_file() {
+        Ok(path) => {
+            state.update(move |app| workspace_actions::open_launch_paths(app, vec![path]));
+            true
+        }
+        Err(error) => {
+            state.update(move |app| {
+                app.show_error(format!("Could not open settings.json: {error}"))
+            });
+            false
         }
     }
 }
 
-const RELOAD_QUIET_WINDOW: Duration = Duration::from_millis(200);
-
-pub fn watch_user_keymap(state: State<AppState>) -> Option<KeymapWatcher> {
-    let path = keymap_file::user_path()?;
-    let directory = path.parent()?.to_path_buf();
-    std::fs::create_dir_all(&directory).ok()?;
-    let (sender, receiver) = mpsc::channel();
-    let event_sender = sender.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if let Ok(event) = event
-            && event.paths.iter().any(|changed| is_keymap_file(changed))
-        {
-            let _ = event_sender.send(WatchMessage::Changed);
+/// Apply `settings.json` to the running app. Ignored values are reported in
+/// a toast; a file that does not parse keeps the current settings.
+pub fn reload_user_settings(state: &State<AppState>) {
+    let outcome = match settings_persistence::read() {
+        UserSettings::Missing => settings_persistence::LoadOutcome::default(),
+        UserSettings::Loaded(outcome) => outcome,
+        UserSettings::Invalid(error) => {
+            state.update(move |app| {
+                app.show_error(format!("settings.json was not applied: {error}"))
+            });
+            return;
         }
-    })
-    .ok()?;
-    watcher
-        .watch(&directory, RecursiveMode::NonRecursive)
-        .ok()?;
-    let worker = thread::Builder::new()
-        .name("loom-keymap-watcher".to_owned())
-        .spawn(move || {
-            while let Ok(WatchMessage::Changed) = receiver.recv() {
-                // Editors often save in several steps; wait for them to settle.
-                loop {
-                    match receiver.recv_timeout(RELOAD_QUIET_WINDOW) {
-                        Ok(WatchMessage::Changed) => continue,
-                        Ok(WatchMessage::Stop) | Err(RecvTimeoutError::Disconnected) => return,
-                        Err(RecvTimeoutError::Timeout) => break,
-                    }
-                }
-                reload_user_keymap(&state);
-            }
-        })
-        .ok()?;
-    Some(KeymapWatcher {
-        _watcher: watcher,
-        sender,
-        worker: Some(worker),
-    })
+    };
+    if let Some(first) = outcome.errors.first() {
+        let message = match outcome.errors.len() {
+            1 => format!("settings.json: {first}"),
+            count => format!("settings.json: {first} (and {} more)", count - 1),
+        };
+        state.update(move |app| app.show_error(message));
+    }
+    let settings = outcome.settings;
+    state.try_update(move |app| app.apply_settings(settings));
 }
 
-fn is_keymap_file(path: &Path) -> bool {
-    path.file_name()
-        .is_some_and(|name| name.eq_ignore_ascii_case(keymap_file::FILE_NAME))
+/// Reloads settings whenever `settings.json` changes, except for the app's
+/// own writes from the Settings page.
+pub fn watch_user_settings(state: State<AppState>) -> Option<ConfigWatcher> {
+    config_watcher::watch(settings_persistence::FILE_NAME, move || {
+        let own_write = crate::workspace_persistence::config_path(settings_persistence::FILE_NAME)
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .is_some_and(|text| settings_persistence::is_own_write(&text));
+        if !own_write {
+            reload_user_settings(&state);
+        }
+    })
 }
 
 // ---- Labels ------------------------------------------------------------------

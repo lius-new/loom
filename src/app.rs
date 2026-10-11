@@ -15,7 +15,7 @@ use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
 use crate::model::application_layout::{ApplicationLayout, Content};
-use crate::settings_persistence::{self, Settings};
+use crate::settings_persistence;
 use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
@@ -490,19 +490,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let _ = workspace_persistence::save_source_control_open(source_control_open);
         || {}
     });
-    let settings = Settings {
-        theme: s.theme,
-        default_shell: s.default_shell,
-        terminal_profiles: s.terminal_profiles.clone(),
-        terminal_cursor_blink: s.terminal_cursor_blink,
-        smooth_caret: s.smooth_caret,
-        git_inline_blame: s.git_inline_blame,
-        git_split_diff: s.git_split_diff,
-        git_tree_view: s.git_tree_view,
-        vim: s.vim.options.into(),
-        editor_font: s.editor_font.clone(),
-        terminal_font: s.terminal_font.clone(),
-    };
+    let settings = s.settings();
     cx.use_effect(settings.clone(), move || {
         let _ = settings_persistence::save(&settings);
         || {}
@@ -796,6 +784,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     cx.use_effect((), move || {
         key_actions::reload_user_keymap(&keymap_state);
         let watcher = key_actions::watch_user_keymap(keymap_state);
+        move || drop(watcher)
+    });
+    let settings_state = state.clone();
+    cx.use_effect((), move || {
+        // The state already holds the file's values; this reports problems.
+        key_actions::reload_user_settings(&settings_state);
+        let watcher = key_actions::watch_user_settings(settings_state);
         move || drop(watcher)
     });
     let blink_focused = s.terminal_focused && s.terminal_cursor_blink;

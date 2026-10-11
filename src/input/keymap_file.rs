@@ -15,6 +15,7 @@ use super::action::Action;
 use super::context::ContextPredicate;
 use super::keymap::{Binding, BindingSource, Keymap};
 use super::keystroke::Keystroke;
+use crate::jsonc::strip as strip_jsonc;
 use crate::workspace_persistence::config_path;
 
 const DEFAULT_KEYMAP: &str = include_str!("../../assets/keymaps/default.json");
@@ -207,76 +208,6 @@ pub fn ensure_user_file() -> io::Result<PathBuf> {
     Ok(path)
 }
 
-/// Remove `//` and `/* */` comments and trailing commas, keeping line
-/// numbers intact so JSON errors still point at the right line.
-pub fn strip_jsonc(source: &str) -> String {
-    let chars = source.chars().collect::<Vec<_>>();
-    let mut out = String::with_capacity(source.len());
-    let mut index = 0;
-    let mut in_string = false;
-    while index < chars.len() {
-        let c = chars[index];
-        if in_string {
-            out.push(c);
-            if c == '\\' && index + 1 < chars.len() {
-                out.push(chars[index + 1]);
-                index += 1;
-            } else if c == '"' {
-                in_string = false;
-            }
-            index += 1;
-            continue;
-        }
-        match (c, chars.get(index + 1)) {
-            ('"', _) => {
-                in_string = true;
-                out.push(c);
-                index += 1;
-            }
-            ('/', Some('/')) => {
-                while index < chars.len() && chars[index] != '\n' {
-                    index += 1;
-                }
-            }
-            ('/', Some('*')) => {
-                index += 2;
-                while index < chars.len()
-                    && !(chars[index] == '*' && chars.get(index + 1) == Some(&'/'))
-                {
-                    if chars[index] == '\n' {
-                        out.push('\n');
-                    }
-                    index += 1;
-                }
-                index += 2;
-            }
-            (',', _) => {
-                let next = chars[index + 1..]
-                    .iter()
-                    .enumerate()
-                    .find(|(_, c)| !c.is_whitespace())
-                    .map(|(offset, c)| (index + 1 + offset, *c));
-                // Skip comments between a comma and the closing bracket.
-                let closes = match next {
-                    Some((_, '}' | ']')) => true,
-                    Some((position, '/')) => {
-                        let rest = strip_jsonc(&chars[position..].iter().collect::<String>());
-                        matches!(rest.trim_start().chars().next(), Some('}' | ']'))
-                    }
-                    _ => false,
-                };
-                out.push(if closes { ' ' } else { ',' });
-                index += 1;
-            }
-            _ => {
-                out.push(c);
-                index += 1;
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,16 +218,6 @@ mod tests {
         let outcome = parse(DEFAULT_KEYMAP, BindingSource::Default).unwrap();
         assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
         assert!(outcome.bindings.len() > 50);
-    }
-
-    #[test]
-    fn strips_comments_and_trailing_commas() {
-        let source = "[\n  // note\n  { \"a\": \"x // y\", /* c */ \"b\": [1, 2,], },\n]";
-        let value: Value = serde_json::from_str(&strip_jsonc(source)).unwrap();
-        assert_eq!(value[0]["a"], "x // y");
-        assert_eq!(value[0]["b"], serde_json::json!([1, 2]));
-        assert_eq!(strip_jsonc("{\"a\": \"\\\"//\"}"), "{\"a\": \"\\\"//\"}");
-        assert_eq!(strip_jsonc("[1, // c\n]").trim(), "[1  \n]");
     }
 
     #[test]
