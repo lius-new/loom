@@ -907,6 +907,87 @@ pub fn open_commit_diff(state: &State<AppState>, root: PathBuf, oid: String, pat
         });
 }
 
+/// Open every file of commit `oid` in one tab, scrolled to `focus` if given.
+pub fn open_commit_changes(
+    state: &State<AppState>,
+    root: PathBuf,
+    oid: String,
+    focus: Option<PathBuf>,
+) {
+    let focus = focus.map(|path| crate::git::DiffRequest {
+        repository_root: root.clone(),
+        path,
+        target: crate::git::DiffTarget::Commit,
+    });
+    let mut revealed = false;
+    state.update(|app| {
+        if let Some(id) = app.workspace.commit_changes_id(&root, &oid)
+            && let Some(pane) = app.workspace.pane_of(id)
+        {
+            app.workspace.activate(pane, id);
+            if let Some(focus) = &focus {
+                app.workspace.focus_diff_section(focus, app.git_split_diff);
+            }
+            // Invalidate a slower open still in flight.
+            app.git_open_diff_sequence += 1;
+            app.git_diff_loading = None;
+            revealed = true;
+        }
+    });
+    if revealed {
+        return;
+    }
+    let app = state.get();
+    let Some(application) = app.git_application else {
+        return;
+    };
+    let sequence = app.git_open_diff_sequence + 1;
+    let loading = crate::git::DiffRequest {
+        repository_root: root.clone(),
+        path: PathBuf::new(),
+        target: crate::git::DiffTarget::Commit,
+    };
+    state.update(|app| {
+        app.git_open_diff_sequence = sequence;
+        app.git_diff_loading = Some(loading);
+    });
+    let worker_state = state.clone();
+    let spawned = thread::Builder::new()
+        .name("loom-git-commit-changes".into())
+        .spawn(move || {
+            let result = crate::git::service().and_then(|service| {
+                let content = service.commit_changes(&root, &oid)?;
+                Ok(Arc::new(DiffDocument::commit_changes(root, oid, content)))
+            });
+            application.post(move || {
+                let mut result = Some(result);
+                worker_state.update(|app| {
+                    if app.git_open_diff_sequence != sequence {
+                        return;
+                    }
+                    app.git_diff_loading = None;
+                    match result.take().unwrap() {
+                        Ok(document) => {
+                            app.workspace.open_prepared_commit_changes(document);
+                            if let Some(focus) = &focus {
+                                app.workspace.focus_diff_section(focus, app.git_split_diff);
+                            }
+                        }
+                        Err(error) => app.show_error(error.user_message()),
+                    }
+                });
+                crate::background_ui::retire(result);
+            });
+        })
+        .is_ok();
+    if !spawned {
+        state.update(|app| {
+            app.git_diff_loading = None;
+            app.show_error("Could not start Git diff worker.");
+        });
+    }
+}
+
 /// Make the repository at `root` active in Source Control until the
 /// active file changes.
 pub fn select_repository(state: &State<AppState>, store: &State<GitStoreSnapshot>, root: PathBuf) {

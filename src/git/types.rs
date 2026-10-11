@@ -412,6 +412,8 @@ pub enum ChangeGroup {
     Staged,
     Unstaged,
     Untracked,
+    /// A file of one commit; commit tabs show no group header.
+    Commit,
 }
 
 impl ChangeGroup {
@@ -421,6 +423,7 @@ impl ChangeGroup {
             Self::Staged => "STAGED CHANGES",
             Self::Unstaged => "CHANGES",
             Self::Untracked => "UNTRACKED FILES",
+            Self::Commit => "",
         }
     }
 }

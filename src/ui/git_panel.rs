@@ -1324,6 +1324,7 @@ fn history_row(
             let toggle_state = state.clone();
             let root = repository.to_path_buf();
             let oid = commit.oid.clone();
+            let expanding = !*open;
             let age = relative_time(now, commit.timestamp);
             let age_w = super::tabs::measure(&age, 9.0, 400) + 6.0;
             panel(rect, background)
@@ -1333,6 +1334,14 @@ fn history_row(
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
                     git_actions::toggle_commit(&toggle_state, root.clone(), oid.clone());
+                    if expanding {
+                        git_actions::open_commit_changes(
+                            &toggle_state,
+                            root.clone(),
+                            oid.clone(),
+                            None,
+                        );
+                    }
                 })
                 .child(super::sidebar::drawer_icon(
                     "git-commit-row-chevron",
@@ -1400,11 +1409,11 @@ fn history_row(
                 .event_policy(EventPolicy::INTERACTIVE)
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
-                    git_actions::open_commit_diff(
+                    git_actions::open_commit_changes(
                         &open_state,
                         root.clone(),
                         open_oid.clone(),
-                        open_path.clone(),
+                        Some(open_path.clone()),
                     );
                     open_focus.focus();
                 })

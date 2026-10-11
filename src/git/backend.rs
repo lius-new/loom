@@ -185,24 +185,34 @@ impl CliGitBackend {
         commit: &str,
         path: &Path,
     ) -> GitResult<UnifiedDiff> {
+        self.commit_diff(repository, commit, &[path.to_path_buf()], Some(1_000_000))
+    }
+
+    /// `commit`'s diff against its first parent, limited to `paths` unless
+    /// empty, with git's default context unless `context` is given.
+    pub fn commit_diff(
+        &self,
+        repository: &Path,
+        commit: &str,
+        paths: &[PathBuf],
+        context: Option<usize>,
+    ) -> GitResult<UnifiedDiff> {
         validate_ref(commit)?;
+        let mut args = vec![
+            OsString::from("show"),
+            OsString::from("--format="),
+            OsString::from("--no-ext-diff"),
+        ];
+        if let Some(context) = context {
+            args.push(OsString::from(format!("--unified={context}")));
+        }
+        args.push(OsString::from("--diff-merges=first-parent"));
+        args.push(OsString::from(commit));
+        args.push(OsString::from("--"));
+        args.extend(paths.iter().map(|path| path.as_os_str().to_owned()));
         let text = self
             .runner
-            .run(
-                GitCommand::new()
-                    .cwd(repository)
-                    .args([
-                        "show",
-                        "--format=",
-                        "--no-ext-diff",
-                        "--unified=1000000",
-                        "--diff-merges=first-parent",
-                        commit,
-                        "--",
-                    ])
-                    .arg(path.as_os_str())
-                    .read_only(),
-            )?
+            .run(GitCommand::new().cwd(repository).args(args).read_only())?
             .stdout_text()?;
         parse_unified(&text)
     }
@@ -1841,6 +1851,79 @@ pub(crate) mod tests {
                 .iter()
                 .any(|section| section.document.path == Path::new("drafts/中文.txt"))
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn commit_changes_list_every_file_of_the_commit() {
+        use crate::git::GitService;
+        use crate::model::diff_document::DiffDocument;
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        std::fs::write(root.join("kept.txt"), "one\n").unwrap();
+        std::fs::write(root.join("gone.txt"), "bye\n").unwrap();
+        std::fs::write(root.join("old.txt"), "rename only\n").unwrap();
+        backend
+            .stage(
+                &root,
+                &["kept.txt".into(), "gone.txt".into(), "old.txt".into()],
+            )
+            .unwrap();
+        backend.commit(&root, "initial", false, false).unwrap();
+        std::fs::write(root.join("kept.txt"), "two\n").unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        std::fs::rename(root.join("old.txt"), root.join("renamed.txt")).unwrap();
+        std::fs::write(root.join("binary.dat"), [0, 1, 2]).unwrap();
+        backend
+            .stage(
+                &root,
+                &[
+                    "kept.txt".into(),
+                    "gone.txt".into(),
+                    "old.txt".into(),
+                    "renamed.txt".into(),
+                    "binary.dat".into(),
+                ],
+            )
+            .unwrap();
+        backend.commit(&root, "second", false, false).unwrap();
+        let head = backend.history(&root, None, None, 0, 1).unwrap()[0]
+            .oid
+            .clone();
+        let service = GitService::new(backend);
+        let content = service.commit_changes(&root, &head).unwrap();
+        let document = DiffDocument::commit_changes(root.clone(), head.clone(), content);
+        assert_eq!(document.target, DiffTarget::Commit);
+        assert!(document.title().starts_with("Commit "));
+        let sections = document.sections.as_ref().unwrap();
+        let file = |path: &str| {
+            sections
+                .iter()
+                .find(|section| section.document.path == Path::new(path))
+                .unwrap()
+        };
+        assert_eq!(sections.len(), 4);
+        assert!(
+            sections
+                .iter()
+                .all(|section| section.group == ChangeGroup::Commit
+                    && section.error.is_none()
+                    && section.document.revision.as_deref() == Some(head.as_str())
+                    && section.document.blocks.is_empty())
+        );
+        assert!(
+            file("kept.txt")
+                .document
+                .rows
+                .iter()
+                .any(|row| row.text == "two")
+        );
+        assert_eq!(file("gone.txt").document.deletions(), 1);
+        assert!(file("binary.dat").document.binary);
+        file("renamed.txt");
+        let layout = document.changes_layout(false, &Default::default());
+        assert!(layout.sections.iter().all(|item| !item.group_header));
         let _ = std::fs::remove_dir_all(root);
     }
 

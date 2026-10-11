@@ -1166,6 +1166,51 @@ impl Workspace {
         self.open_prepared_diff(diff)
     }
 
+    /// Source Control keeps one all-files commit tab per repository.
+    pub fn open_prepared_commit_changes(&mut self, diff: Arc<DiffDocument>) -> FileId {
+        if let Some((&id, document)) = self.documents.iter_mut().find(|(_, document)| {
+            document.diff.as_ref().is_some_and(|current| {
+                current.repository_root == diff.repository_root
+                    && current.sections.is_some()
+                    && current.revision.is_some()
+            })
+        }) {
+            let changed_commit = document
+                .diff
+                .as_ref()
+                .is_none_or(|current| current.revision != diff.revision);
+            document.meta.name = diff.title();
+            document.meta.path = diff.absolute_path();
+            if changed_commit {
+                document.collapsed_diffs.clear();
+                document.focused_diff = None;
+                for view in document.views.values_mut() {
+                    view.scroll_x = 0.0;
+                    view.scroll_y = 0.0;
+                }
+            }
+            crate::background_ui::retire(document.diff.replace(diff));
+            self.reveal(id);
+            return id;
+        }
+        self.open_prepared_diff(diff)
+    }
+
+    /// The open all-files tab of commit `revision`.
+    pub fn commit_changes_id(&self, repository_root: &Path, revision: &str) -> Option<FileId> {
+        self.documents.iter().find_map(|(&id, document)| {
+            document
+                .diff
+                .as_ref()
+                .is_some_and(|diff| {
+                    diff.repository_root == repository_root
+                        && diff.sections.is_some()
+                        && diff.revision.as_deref() == Some(revision)
+                })
+                .then_some(id)
+        })
+    }
+
     pub fn open_prepared_diff(&mut self, diff: Arc<DiffDocument>) -> FileId {
         if let Some((&id, document)) = self.documents.iter_mut().find(|(_, document)| {
             document

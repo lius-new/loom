@@ -623,6 +623,7 @@ impl GitService {
                             )
                     }
                     ChangeGroup::Untracked => file.worktree == ChangeKind::Untracked,
+                    ChangeGroup::Commit => false,
                 })
                 .map(|(path, _)| path.clone())
                 .collect();
@@ -673,6 +674,43 @@ impl GitService {
             }
         }
         DiffContent::Changes(files)
+    }
+
+    /// Every file `commit` changed, read in one batch with normal diff
+    /// context, in `git show --name-status` order.
+    pub fn commit_changes(&self, root: &Path, commit: &str) -> GitResult<DiffContent> {
+        let paths = self.backend.commit_files(root, commit)?;
+        let mut batch: BTreeMap<_, _> = self
+            .backend
+            .commit_diff(root, commit, &[], None)?
+            .files
+            .into_iter()
+            .filter_map(|file| {
+                let path = file.new_path.clone().or_else(|| file.old_path.clone())?;
+                Some((path, file))
+            })
+            .collect();
+        let files = paths
+            .into_iter()
+            .map(|(_, path)| {
+                let content = match batch.remove(&path) {
+                    Some(file) => Ok(super::diff::UnifiedDiff { files: vec![file] }),
+                    // Renames without hunks and binary patches may have no
+                    // ---/+++ paths. Query these individually.
+                    None => {
+                        self.backend
+                            .commit_diff(root, commit, std::slice::from_ref(&path), None)
+                    }
+                };
+                ChangeDiff {
+                    path,
+                    target: DiffTarget::Commit,
+                    group: ChangeGroup::Commit,
+                    content: content.map(DiffContent::Unified),
+                }
+            })
+            .collect();
+        Ok(DiffContent::Changes(files))
     }
 }
 

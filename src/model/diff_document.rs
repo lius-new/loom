@@ -47,7 +47,8 @@ pub struct DiffDocument {
     /// Change blocks that can be staged, unstaged or discarded on their own,
     /// in display order; empty when the diff offers no such actions.
     pub blocks: Vec<ChangeBlock>,
-    /// Present only for the repository-wide Changes tab.
+    /// Present only for the repository-wide Changes tab and a commit's
+    /// all-files tab.
     pub sections: Option<Vec<DiffSection>>,
     metrics: DiffMetrics,
 }
@@ -182,13 +183,34 @@ impl DiffDocument {
                 let mut document = Self::from_unified(
                     request.repository_root,
                     PathBuf::new(),
-                    DiffTarget::Changes,
+                    request.target,
                     UnifiedDiff::default(),
                 );
                 document.sections = Some(sections);
                 document
             }
         }
+    }
+
+    /// Every file of commit `revision`, one collapsible section each.
+    pub fn commit_changes(
+        repository_root: PathBuf,
+        revision: String,
+        content: DiffContent,
+    ) -> Self {
+        let mut document = Self::from_content(
+            DiffRequest {
+                repository_root,
+                path: PathBuf::new(),
+                target: DiffTarget::Commit,
+            },
+            content,
+        );
+        for section in document.sections.iter_mut().flatten() {
+            Arc::make_mut(&mut section.document).revision = Some(revision.clone());
+        }
+        document.revision = Some(revision);
+        document
     }
 
     pub fn request(&self) -> DiffRequest {
@@ -208,7 +230,7 @@ impl DiffDocument {
         let mut starts = Vec::new();
         let mut group = None;
         for (index, section) in self.sections.iter().flatten().enumerate() {
-            let group_header = group != Some(section.group);
+            let group_header = group != Some(section.group) && section.group != ChangeGroup::Commit;
             if group_header {
                 layout.row_count += 1;
             }
@@ -404,7 +426,10 @@ impl DiffDocument {
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy();
-            return format!("Changes ({repository})");
+            return match &self.revision {
+                Some(revision) => format!("Commit {} ({repository})", short_oid(revision)),
+                None => format!("Changes ({repository})"),
+            };
         }
         let name = self
             .path

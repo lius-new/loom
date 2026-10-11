@@ -55,7 +55,16 @@ pub fn render(
         .then(|| document.absolute_path());
     let path_label = document.sections.as_ref().map_or_else(
         || document.path.display().to_string(),
-        |_| format!("All Changes · {} files", document.changed_file_count()),
+        |_| {
+            let files = document.changed_file_count();
+            match &document.revision {
+                Some(revision) => format!(
+                    "Commit {} · {files} files",
+                    crate::model::diff_document::short_oid(revision)
+                ),
+                None => format!("All Changes · {files} files"),
+            }
+        },
     );
     let additions = document.additions();
     let deletions = document.deletions();
@@ -684,6 +693,7 @@ fn render_changes(
         let open_state = state.clone();
         let focus = editor_focus.clone();
         let untracked = section.group == crate::git::ChangeGroup::Untracked;
+        let revision = overview.revision.clone();
         file_header = file_header.child(
             toolbar_button(
                 action_rect,
@@ -700,7 +710,15 @@ fn render_changes(
             )
             .on_click(move |cx: &mut lgui::core::UiEventContext| {
                 cx.stop_propagation();
-                git_actions::open_diff(&open_state, request.clone(), untracked);
+                match &revision {
+                    Some(revision) => git_actions::open_commit_diff(
+                        &open_state,
+                        request.repository_root.clone(),
+                        revision.clone(),
+                        request.path.clone(),
+                    ),
+                    None => git_actions::open_diff(&open_state, request.clone(), untracked),
+                }
                 focus.focus();
             }),
         );
