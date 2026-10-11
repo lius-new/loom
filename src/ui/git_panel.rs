@@ -32,7 +32,7 @@ pub fn render(
     let git = store.get();
     let mut root = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
-    // Compact topline: the branch lives in the titlebar trigger, while this
+    // Compact topline: the branch lives in the status bar badge, while this
     // drawer only exposes change and sync state.
     root = root.child(text(
         UiRect::new(

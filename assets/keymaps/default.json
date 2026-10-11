@@ -7,7 +7,8 @@
 //     Terminal            the terminal has focus
 //     Input                a single-line text field has focus
 //     Menu                 an editor, Explorer or tab menu is open (deepest)
-//   Dialog CloseConfirmation | Dialog CloneRepository   (modal, separate roots)
+//   Dialog CloseConfirmation | Dialog CloneRepository | Dialog StashSwitch
+//     | Dialog BranchPicker   (modal, separate roots)
 //
 // Users override these in keymap.json: open the Keymap page
 // (workspace::OpenKeymap) and choose "Edit keymap.json".
@@ -16,7 +17,7 @@
     "context": "Workspace",
     "bindings": {
       "secondary-b": "workspace::ToggleDrawer",
-      "secondary-shift-g": "workspace::OpenSourceControl",
+      "secondary-shift-g": "workspace::ToggleSourceControl",
       "secondary-`": "workspace::ToggleTerminal",
       "secondary-,": "workspace::OpenSettings",
       "secondary-k secondary-s": "workspace::OpenKeymap",
@@ -194,6 +195,24 @@
     "bindings": {
       "enter": "dialog::Confirm",
       "escape": "dialog::Cancel"
+    }
+  },
+  {
+    // Enter stashes and switches; Bring Changes is a click.
+    "context": "StashSwitch",
+    "bindings": {
+      "enter": "dialog::Confirm",
+      "escape": "dialog::Cancel"
+    }
+  },
+  {
+    // Other keys edit the branch filter.
+    "context": "BranchPicker",
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "enter": "menu::Confirm",
+      "escape": "menu::Cancel"
     }
   }
 ]

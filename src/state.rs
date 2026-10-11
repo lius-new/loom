@@ -317,6 +317,13 @@ pub struct AppState {
     pub git_application: Option<lgui::ApplicationHandle>,
     pub git_open_diff_sequence: u64,
     pub git_diff_loading: Option<crate::git::DiffRequest>,
+    /// The status bar's branch picker, while it is open.
+    pub branch_picker: Option<crate::ui::branch_picker::BranchPicker>,
+    /// The picker's filter. Kept outside `branch_picker` so the input's
+    /// binding stays valid while the picker closes under it.
+    pub branch_picker_input: InputState,
+    /// A branch switch blocked by local changes, awaiting a stash choice.
+    pub stash_switch: Option<crate::ui::stash_switch::StashSwitchRequest>,
     /// Keystrokes of a key sequence waiting for its next key.
     pub pending_keystrokes: Vec<Keystroke>,
     /// Bumped whenever `pending_keystrokes` changes, restarting its timeout.
@@ -421,6 +428,9 @@ impl AppState {
             git_application: None,
             git_open_diff_sequence: 0,
             git_diff_loading: None,
+            branch_picker: None,
+            branch_picker_input: InputState::default(),
+            stash_switch: None,
             pending_keystrokes: Vec::new(),
             pending_keystrokes_seq: 0,
             keymap_version: 0,
@@ -509,6 +519,14 @@ impl AppState {
             Action::OpenSourceControl => {
                 self.show_source_control = true;
             }
+            Action::ToggleSourceControl => {
+                self.show_source_control = !self.show_source_control;
+                if !self.show_source_control {
+                    self.git_sidebar_hovered = false;
+                }
+            }
+            Action::MenuSelectNext => crate::ui::branch_picker::move_selection(self, 1),
+            Action::MenuSelectPrevious => crate::ui::branch_picker::move_selection(self, -1),
             Action::OpenExplorer => {
                 self.show_drawer = true;
             }
@@ -611,6 +629,7 @@ impl AppState {
         self.context_menu_hover = None;
         self.tab_context_menu = None;
         self.terminal_tab_context_menu = None;
+        self.branch_picker = None;
     }
 
     /// Split the focused pane, dropping pointer gestures tied to the old layout.

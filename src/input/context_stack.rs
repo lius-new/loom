@@ -14,6 +14,8 @@ pub const MENU: &str = "Menu";
 pub const DIALOG: &str = "Dialog";
 pub const CLOSE_CONFIRMATION: &str = "CloseConfirmation";
 pub const CLONE_REPOSITORY: &str = "CloneRepository";
+pub const BRANCH_PICKER: &str = "BranchPicker";
+pub const STASH_SWITCH: &str = "StashSwitch";
 pub const VIM: &str = "Vim";
 
 pub fn os_name() -> &'static str {
@@ -81,6 +83,17 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
     if app.show_clone_dialog {
         let mut dialog = KeyContext::new(DIALOG);
         dialog.add(CLONE_REPOSITORY);
+        return vec![dialog];
+    }
+    if app.stash_switch.is_some() {
+        let mut dialog = KeyContext::new(DIALOG);
+        dialog.add(STASH_SWITCH);
+        return vec![dialog];
+    }
+    // The picker's filter takes typing, so workspace shortcuts stay out.
+    if app.branch_picker.is_some() {
+        let mut dialog = KeyContext::new(DIALOG);
+        dialog.add(BRANCH_PICKER);
         return vec![dialog];
     }
 
@@ -198,6 +211,34 @@ mod tests {
     }
 
     #[test]
+    fn branch_picker_owns_navigation_and_leaves_typing_to_its_filter() {
+        let mut app = editor_app();
+        app.branch_picker = Some(crate::ui::branch_picker::BranchPicker {
+            repository: "repo".into(),
+            repository_name: "repo".into(),
+            anchor_x: 0.0,
+            listing: crate::ui::branch_picker::BranchListing::Loading,
+            selected: 0,
+            scroll: 0.0,
+            query: String::new(),
+            sequence: 1,
+            restore_terminal: false,
+        });
+        assert_eq!(describe(&context_stack(&app)), "Dialog BranchPicker");
+        let none = KeyModifiers::empty();
+        for (key, expected) in [
+            (NamedKey::ArrowUp, Action::MenuSelectPrevious),
+            (NamedKey::ArrowDown, Action::MenuSelectNext),
+            (NamedKey::Enter, Action::MenuConfirm),
+            (NamedKey::Escape, Action::MenuCancel),
+        ] {
+            assert_eq!(action(&app, named(key, none)), Some(expected), "{key:?}");
+        }
+        assert_eq!(action(&app, character("a", none)), None);
+        assert_eq!(action(&app, character("w", secondary())), None);
+    }
+
+    #[test]
     fn workspace_shortcuts_match_the_previous_hardcoded_keymap() {
         let app = AppState::new();
         let s = secondary();
@@ -205,7 +246,7 @@ mod tests {
             (character("b", s), Action::ToggleDrawer),
             (
                 character("G", s | KeyModifiers::SHIFT),
-                Action::OpenSourceControl,
+                Action::ToggleSourceControl,
             ),
             (character("`", s), Action::ToggleTerminal),
             (character("w", s), Action::CloseActiveItem),

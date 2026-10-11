@@ -4,6 +4,7 @@
 //! Components read `AppState` through `State<AppState>` and never talk to
 //! each other directly — the root (`app.rs`) owns layout and composition.
 
+pub mod branch_picker;
 pub mod clone_repository;
 pub mod close_confirmation;
 pub mod components;
@@ -15,6 +16,7 @@ pub mod layout_map;
 pub mod pane_sash;
 pub mod settings;
 pub mod sidebar;
+pub mod stash_switch;
 pub mod statusbar;
 pub mod tab_context_menu;
 pub mod tab_layout;
@@ -26,6 +28,37 @@ pub mod titlebar;
 pub mod toast;
 pub mod welcome;
 pub mod workspace_home;
+
+/// Give `target` keyboard focus while an overlay is open, then hand focus
+/// back to the terminal or editor it was taken from. `restore_terminal` is
+/// `Some` while the overlay is open, holding whether the terminal had focus.
+pub(crate) fn hold_focus(
+    cx: &mut lgui::prelude::RenderCx<'_, '_>,
+    restore_terminal: Option<bool>,
+    target: lgui::core::UiFocusHandle,
+    terminal_focus: lgui::core::UiFocusHandle,
+    editor_focus: lgui::core::UiFocusHandle,
+) {
+    use std::sync::{Arc, Mutex};
+
+    let opened = cx.state_with(|| Arc::new(Mutex::new(None::<bool>))).get();
+    let open = restore_terminal.is_some();
+    cx.use_effect(open, move || {
+        let was = std::mem::replace(
+            &mut *opened.lock().unwrap_or_else(|error| error.into_inner()),
+            restore_terminal,
+        );
+        if open {
+            target.focus();
+        } else if let Some(restore_terminal) = was {
+            if restore_terminal {
+                terminal_focus.focus();
+            } else {
+                editor_focus.focus();
+            }
+        }
+    });
+}
 
 /// These surfaces share an identity, so switching between them does not emit
 /// another focus event. Track focus on every surface, including the home pages.

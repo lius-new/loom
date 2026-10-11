@@ -1407,6 +1407,7 @@ mod tests {
             // Shortcuts reach the editor through the keymap, as in the app root.
             let env = crate::key_actions::KeyEnv {
                 state: state.clone(),
+                git_store: git_store.clone(),
                 application: view_app.clone(),
                 editor_focus: focus.clone(),
                 editor_rect: viewport,
@@ -1543,6 +1544,7 @@ mod tests {
             let focus = cx.focus_handle(id.clone());
             let env = crate::key_actions::KeyEnv {
                 state: state.clone(),
+                git_store: git.clone(),
                 application: view_app.clone(),
                 editor_focus: focus.clone(),
                 editor_rect: viewport,

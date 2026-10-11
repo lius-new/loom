@@ -71,6 +71,7 @@ actions! {
     ToggleDrawer => "workspace::ToggleDrawer", "Show or hide the Explorer drawer";
     OpenExplorer => "workspace::OpenExplorer", "Show the Explorer drawer";
     OpenSourceControl => "workspace::OpenSourceControl", "Show the Source Control panel";
+    ToggleSourceControl => "workspace::ToggleSourceControl", "Show or hide the Source Control panel";
     ToggleTerminal => "workspace::ToggleTerminal", "Show or hide the terminal panel";
     OpenSettings => "workspace::OpenSettings", "Open the Settings page";
     OpenKeymap => "workspace::OpenKeymap", "Open the Keymap page";
@@ -143,6 +144,9 @@ actions! {
     TerminalPaste => "terminal::Paste", "Paste into the terminal";
 
     MenuCancel => "menu::Cancel", "Close the open menu";
+    MenuSelectNext => "menu::SelectNext", "Select the next menu item";
+    MenuSelectPrevious => "menu::SelectPrevious", "Select the previous menu item";
+    MenuConfirm => "menu::Confirm", "Choose the selected menu item";
 
     DialogConfirm => "dialog::Confirm", "Confirm the open dialog";
     DialogCancel => "dialog::Cancel", "Dismiss the open dialog";

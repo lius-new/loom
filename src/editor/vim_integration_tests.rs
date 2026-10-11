@@ -60,6 +60,7 @@ impl Ui {
             let terminal_focus = cx.focus_handle(terminal_id);
             let env = crate::key_actions::KeyEnv {
                 state: state.clone(),
+                git_store: git_store.clone(),
                 application: view_app.clone(),
                 editor_focus: focus.clone(),
                 editor_rect: viewport,

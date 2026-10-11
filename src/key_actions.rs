@@ -20,6 +20,7 @@ use notify::{RecursiveMode, Watcher};
 
 use crate::editor::editor_view;
 use crate::editor::vim_input;
+use crate::git::GitStoreSnapshot;
 use crate::input::action::Action;
 use crate::input::context::KeyContext;
 use crate::input::context_stack::{self, EDITOR, TERMINAL, VIM};
@@ -30,13 +31,14 @@ use crate::input::keystroke::Keystroke;
 use crate::state::AppState;
 use crate::terminal_session::{TerminalController, TerminalTabs};
 use crate::ui::terminal::{self, ClipboardShortcut};
-use crate::ui::{clone_repository, close_confirmation};
+use crate::ui::{branch_picker, clone_repository, close_confirmation, stash_switch};
 use crate::workspace_actions;
 
 /// Everything actions need to act on, captured once per frame.
 #[derive(Clone)]
 pub struct KeyEnv {
     pub state: State<AppState>,
+    pub git_store: State<GitStoreSnapshot>,
     pub application: ApplicationContext,
     pub editor_focus: UiFocusHandle,
     /// Bounds of the main editor surface, for scrolling and page sizes.
@@ -78,6 +80,7 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
         composing = app.editor.is_composing()
             || !app.explorer_create_input.preedit.is_empty()
             || !app.git_commit_input.preedit.is_empty()
+            || !app.branch_picker_input.preedit.is_empty()
             || !app.keymap_search.preedit.is_empty();
         pending = app.pending_keystrokes.clone();
         stack = context_stack::context_stack(app);
@@ -275,8 +278,12 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
             true
         }
         Action::DialogConfirm | Action::DialogCancel | Action::DialogSecondary => {
-            let (close_request, clone_dialog) = read(&env.state, |app| {
-                (app.close_request.is_some(), app.show_clone_dialog)
+            let (close_request, clone_dialog, stash_switch) = read(&env.state, |app| {
+                (
+                    app.close_request.is_some(),
+                    app.show_clone_dialog,
+                    app.stash_switch.is_some(),
+                )
             });
             if close_request {
                 close_confirmation::perform(
@@ -287,10 +294,13 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
                 )
             } else if clone_dialog {
                 clone_repository::perform(&env.state, action)
+            } else if stash_switch {
+                stash_switch::perform(&env.state, &env.git_store, action)
             } else {
                 false
             }
         }
+        Action::MenuConfirm => branch_picker::confirm(&env.state, &env.git_store),
         _ => {
             if let Some(command) = action.editor_command(editor_view::page_lines(env.editor_rect)) {
                 editor_view::execute_command(

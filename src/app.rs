@@ -20,9 +20,10 @@ use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDr
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::{
-    clone_repository, close_confirmation, context_menu, diff_editor, git_panel, keymap_page,
-    layout_map, pane_sash, settings, sidebar, statusbar, tab_context_menu, tabs, terminal,
-    terminal_tab_context_menu, titlebar, toast, welcome, workspace_home,
+    branch_picker, clone_repository, close_confirmation, context_menu, diff_editor, git_panel,
+    keymap_page, layout_map, pane_sash, settings, sidebar, stash_switch, statusbar,
+    tab_context_menu, tabs, terminal, terminal_tab_context_menu, titlebar, toast, welcome,
+    workspace_home,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -226,6 +227,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let explorer_create_input_focus = cx.focus_handle(explorer_create_input_id.clone());
     let commit_input_id = cx.use_stable_id();
     let commit_input_focus = cx.focus_handle(commit_input_id.clone());
+    let branch_picker_input_id = cx.use_stable_id();
+    let branch_picker_input_focus = cx.focus_handle(branch_picker_input_id.clone());
+    let stash_switch_id = cx.use_stable_id();
+    let stash_switch_focus = cx.focus_handle(stash_switch_id.clone());
     let close_dialog_id = cx.use_stable_id();
     let close_dialog_focus = cx.focus_handle(close_dialog_id.clone());
     let keymap_search_id = cx.use_stable_id();
@@ -291,6 +296,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 app.tab_context_menu = None;
                 app.terminal_tab_context_menu = None;
                 app.show_clone_dialog = false;
+                app.branch_picker = None;
+                app.stash_switch = None;
                 app.editor.menu = None;
             });
         }
@@ -646,6 +653,24 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             mounted_clone_focus.focus();
         }
     });
+    crate::ui::hold_focus(
+        cx,
+        s.branch_picker
+            .as_ref()
+            .map(|picker| picker.restore_terminal),
+        branch_picker_input_focus.clone(),
+        terminal_focus.clone(),
+        editor_focus.clone(),
+    );
+    crate::ui::hold_focus(
+        cx,
+        s.stash_switch
+            .as_ref()
+            .map(|request| request.restore_terminal),
+        stash_switch_focus.clone(),
+        terminal_focus.clone(),
+        editor_focus.clone(),
+    );
     // The close confirmation takes keyboard focus while open so Enter/Esc go
     // to the dialog rather than the editor; it hands focus back on resolve.
     let showing_close_request = s.close_request.is_some();
@@ -699,6 +724,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let key_env = KeyEnv {
         state: state.clone(),
+        git_store: git_store.clone(),
         application: application_context.clone(),
         editor_focus: editor_focus.clone(),
         editor_rect: code_rect,
@@ -866,6 +892,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     || app.context_menu.is_some()
                     || app.tab_context_menu.is_some()
                     || app.terminal_tab_context_menu.is_some()
+                    || app.branch_picker.is_some()
+                    || app.stash_switch.is_some()
                     || app.close_request.is_some()
                     || app.show_clone_dialog;
                 !overlay && app.workspace.activate_pane(pane)
@@ -1066,6 +1094,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     if s.context_menu.is_none()
         && s.tab_context_menu.is_none()
         && s.terminal_tab_context_menu.is_none()
+        && s.branch_picker.is_none()
+        && s.stash_switch.is_none()
         && !show_clone_dialog
         && s.close_request.is_none()
         && let Some(tooltip) = tabs::render_tooltip(vp, &strips, &s)
@@ -1102,6 +1132,27 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             application.clone(),
             terminal_focus.clone(),
             editor_focus.clone(),
+        ));
+    }
+    if let Some(picker) = &s.branch_picker {
+        root = root.child(branch_picker::render(
+            vp,
+            statusbar_rect.top,
+            picker,
+            s.branch_picker_input.text(),
+            state.clone(),
+            git_store.clone(),
+            branch_picker_input_focus.clone(),
+            branch_picker_input_id.clone(),
+        ));
+    }
+    if let Some(request) = &s.stash_switch {
+        root = root.child(stash_switch::render(
+            vp,
+            request,
+            state.clone(),
+            git_store.clone(),
+            stash_switch_id.clone(),
         ));
     }
     if show_clone_dialog {
