@@ -662,6 +662,13 @@ fn render_session(
     });
 
     let (screen_rows, screen_cols) = (snapshot.rows, snapshot.cols);
+    // lgui wheel payloads contain the delta only. Retain the latest pointer
+    // cell in the session controller across redraws for application reports.
+    let mouse_controller = controller.clone();
+    terminal = terminal.on_pointer_move(move |_cx, pointer| {
+        let (row, col) = mouse_cell_at(content, pointer.point, screen_rows, screen_cols);
+        mouse_controller.set_mouse_position(row, col);
+    });
     let select_controller = controller.clone();
     let select_tabs = terminal_tabs.clone();
     let select_focus = terminal_focus.clone();
@@ -712,13 +719,14 @@ fn render_session(
 
     let wheel_controller = controller.clone();
     let wheel_application = application.clone();
+    let wheel_state = state.clone();
     terminal = terminal.on_wheel(move |cx, delta| {
         let lines = match delta.unit {
-            WheelUnit::Lines => (delta.y * 3.0).round() as i32,
-            WheelUnit::Pixels => (delta.y / TERMINAL_LINE_H).round() as i32,
+            WheelUnit::Lines => delta.y,
+            WheelUnit::Pixels => delta.y / (TERMINAL_LINE_H * 3.0),
         };
-        if lines != 0 {
-            wheel_controller.scroll(lines);
+        if lines.is_finite() && lines != 0.0 {
+            wheel_controller.wheel(lines, wheel_state.get().editor.modifiers);
             wheel_application.request_frame();
             cx.stop_propagation();
         }
@@ -1174,6 +1182,16 @@ fn cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u16) {
     (row as u16, col as u16)
 }
 
+fn mouse_cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u16) {
+    let row = ((point.y - content.top) / TERMINAL_LINE_H)
+        .floor()
+        .clamp(0.0, f32::from(rows.saturating_sub(1)));
+    let col = ((point.x - content.left) / terminal_cell_width())
+        .floor()
+        .clamp(0.0, f32::from(cols.saturating_sub(1)));
+    (row as u16, col as u16)
+}
+
 /// The terminal's clipboard actions (`terminal::Copy` and friends).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipboardShortcut {
@@ -1391,6 +1409,25 @@ fn resized_height(panel_bottom: f32, pointer_y: f32, max_height: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mouse_coordinates_use_cells_instead_of_selection_boundaries() {
+        let content = UiRect::new(12.0, 6.0, 500.0, 400.0);
+        let point = Point::new(
+            content.left + terminal_cell_width() * 3.75,
+            content.top + TERMINAL_LINE_H * 2.5,
+        );
+        assert_eq!(mouse_cell_at(content, point, 10, 20), (2, 3));
+        assert_eq!(cell_at(content, point, 10, 20), (2, 4));
+        assert_eq!(
+            mouse_cell_at(content, Point::new(-10.0, -10.0), 10, 20),
+            (0, 0)
+        );
+        assert_eq!(
+            mouse_cell_at(content, Point::new(1000.0, 1000.0), 10, 20),
+            (9, 19)
+        );
+    }
 
     #[test]
     fn resizing_adjacent_panes_preserves_other_widths_and_fits_narrow_windows() {

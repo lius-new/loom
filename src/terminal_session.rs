@@ -519,6 +519,7 @@ struct TerminalInner {
     shell: Mutex<ShellKind>,
     status: Mutex<TerminalStatus>,
     selection: Mutex<Option<Selection>>,
+    mouse: Mutex<crate::terminal_mouse::TerminalMouse>,
     generation: AtomicU64,
     cwd: Mutex<Option<PathBuf>>,
 }
@@ -558,6 +559,7 @@ impl TerminalController {
                 shell: Mutex::new(shell),
                 status: Mutex::new(TerminalStatus::Idle),
                 selection: Mutex::new(None),
+                mouse: Mutex::new(crate::terminal_mouse::TerminalMouse::default()),
                 generation: AtomicU64::new(0),
                 cwd: Mutex::new(None),
             }),
@@ -638,6 +640,7 @@ impl TerminalController {
         *lock(&self.inner.selection) = None;
 
         let cwd = crate::terminal_directory::starting_directory(cwd, None);
+        *lock(&self.inner.mouse) = crate::terminal_mouse::TerminalMouse::default();
         *lock(&self.inner.cwd) = cwd.clone();
         match spawn_shell(shell, cwd.as_deref(), size) {
             Ok(spawned) => {
@@ -744,13 +747,21 @@ impl TerminalController {
 
     pub fn scroll(&self, rows: i32) {
         let mut parser = lock(&self.inner.parser);
-        let current = parser.screen().scrollback();
-        let next = if rows >= 0 {
-            current.saturating_add(rows as usize)
-        } else {
-            current.saturating_sub(rows.unsigned_abs() as usize)
+        crate::terminal_mouse::scroll_history(parser.screen_mut(), rows);
+    }
+
+    pub fn set_mouse_position(&self, row: u16, col: u16) {
+        lock(&self.inner.mouse).set_position(row, col);
+    }
+
+    pub fn wheel(&self, delta: f32, modifiers: lgui::core::KeyModifiers) {
+        let bytes = {
+            let mut parser = lock(&self.inner.parser);
+            lock(&self.inner.mouse).wheel(parser.screen_mut(), delta, modifiers)
         };
-        parser.screen_mut().set_scrollback(next);
+        if !bytes.is_empty() {
+            self.write(&bytes);
+        }
     }
 
     /// Writes pasted text, wrapping it for shells that enabled bracketed paste.
@@ -1342,6 +1353,152 @@ fn find_git_bash() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn conpty_delivers_wheels_as_native_mouse_records_and_restores_history() {
+        use lgui::core::KeyModifiers;
+        use std::time::Instant;
+
+        if !ShellKind::Bash.command().is_file() {
+            eprintln!("Git Bash not installed; skipping native mouse round trip");
+            return;
+        }
+        let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
+        let controller = TerminalController::with_shell(ShellKind::Bash);
+        let size = TerminalSize {
+            rows: 32,
+            cols: 120,
+            pixel_width: 840,
+            pixel_height: 608,
+        };
+        controller.restart(ShellKind::Bash, None, size, application);
+
+        fn wait_for(controller: &TerminalController, predicate: impl Fn(&vt100::Screen) -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if predicate(lock(&controller.inner.parser).screen()) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            panic!(
+                "native mouse probe timed out: {:?}",
+                lock(&controller.inner.parser).screen().contents()
+            );
+        }
+
+        let executable = std::env::current_exe()
+            .unwrap()
+            .display()
+            .to_string()
+            .replace('\\', "/")
+            .replace('\'', "'\\''");
+        controller.write(format!("LOOM_MOUSE_PROBE=1 '{executable}' --exact terminal_session::tests::native_mouse_probe --ignored --nocapture\r").as_bytes());
+        wait_for(&controller, |screen| {
+            screen.contents().contains("MOUSE_READY")
+                && screen.mouse_protocol_encoding() == vt100::MouseProtocolEncoding::Sgr
+        });
+        assert!(lock(&controller.inner.parser).screen().alternate_screen());
+        assert_eq!(
+            lock(&controller.inner.parser)
+                .screen()
+                .mouse_protocol_mode(),
+            vt100::MouseProtocolMode::AnyMotion
+        );
+        controller.set_mouse_position(7, 13);
+        controller.wheel(1.0, KeyModifiers::empty());
+        wait_for(&controller, |screen| {
+            screen.contents().contains("WHEEL:up:13:7:false:false")
+        });
+        // Shift must bypass application reporting, even in the alternate screen.
+        controller.wheel(1.0, KeyModifiers::SHIFT);
+        controller.wheel(-1.0, KeyModifiers::CONTROL | KeyModifiers::ALT);
+        wait_for(&controller, |screen| {
+            screen.contents().contains("WHEEL:down:13:7:true:true")
+        });
+        controller.write(b"q");
+        wait_for(&controller, |screen| {
+            !screen.alternate_screen()
+                && screen.mouse_protocol_mode() == vt100::MouseProtocolMode::None
+        });
+        controller.write(b"for ((i=1;i<=80;i++)); do printf 'history-%03d\\n' $i; done\r");
+        wait_for(&controller, |screen| {
+            screen.contents().contains("history-080")
+        });
+        controller.wheel(1.0, KeyModifiers::empty());
+        assert_eq!(lock(&controller.inner.parser).screen().scrollback(), 3);
+        controller.wheel(-1.0, KeyModifiers::empty());
+        assert_eq!(lock(&controller.inner.parser).screen().scrollback(), 0);
+    }
+
+    /// Runs inside the test's ConPTY to exercise the same Windows input API
+    /// used by Codex/crossterm, rather than merely inspecting generated bytes.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "native console helper launched by the mouse round-trip test"]
+    fn native_mouse_probe() {
+        if std::env::var_os("LOOM_MOUSE_PROBE").is_none() {
+            return;
+        }
+        use std::ffi::c_void;
+        #[repr(C)]
+        struct InputRecord {
+            kind: u16,
+            padding: u16,
+            data: [u32; 4],
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetStdHandle(kind: u32) -> *mut c_void;
+            fn GetConsoleMode(handle: *mut c_void, mode: *mut u32) -> i32;
+            fn SetConsoleMode(handle: *mut c_void, mode: u32) -> i32;
+            fn ReadConsoleInputW(
+                handle: *mut c_void,
+                records: *mut InputRecord,
+                length: u32,
+                read: *mut u32,
+            ) -> i32;
+        }
+        unsafe {
+            let input = GetStdHandle((-10i32) as u32);
+            let output = GetStdHandle((-11i32) as u32);
+            let (mut input_mode, mut output_mode) = (0, 0);
+            assert_ne!(GetConsoleMode(input, &mut input_mode), 0);
+            assert_ne!(GetConsoleMode(output, &mut output_mode), 0);
+            assert_ne!(SetConsoleMode(output, output_mode | 4), 0);
+            assert_ne!(SetConsoleMode(input, (input_mode | 0x98) & !0x247), 0);
+            print!("\x1b[?1049h\x1b[?1006hMOUSE_READY\r\n");
+            std::io::stdout().flush().unwrap();
+            let mut wheels = 0;
+            loop {
+                let mut record = InputRecord {
+                    kind: 0,
+                    padding: 0,
+                    data: [0; 4],
+                };
+                let mut read = 0;
+                assert_ne!(ReadConsoleInputW(input, &mut record, 1, &mut read), 0);
+                if record.kind == 2 && record.data[3] == 4 {
+                    let x = record.data[0] as u16;
+                    let y = (record.data[0] >> 16) as u16;
+                    let delta = (record.data[1] >> 16) as i16;
+                    let alt = record.data[2] & 3 != 0;
+                    let ctrl = record.data[2] & 12 != 0;
+                    let direction = if delta > 0 { "up" } else { "down" };
+                    println!("WHEEL:{direction}:{x}:{y}:{alt}:{ctrl}");
+                    std::io::stdout().flush().unwrap();
+                    wheels += 1;
+                } else if wheels >= 2 && record.kind == 1 && record.data[0] != 0 {
+                    break;
+                }
+            }
+            print!("\x1b[?1006l\x1b[?1049l");
+            std::io::stdout().flush().unwrap();
+            assert_ne!(SetConsoleMode(input, input_mode), 0);
+            assert_ne!(SetConsoleMode(output, output_mode), 0);
+        }
+    }
 
     #[test]
     fn saved_directories_stay_with_independent_tabs_when_siblings_close() {
