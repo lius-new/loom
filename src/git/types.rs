@@ -204,6 +204,8 @@ pub struct RepositorySnapshot {
     pub head_oid: Option<String>,
     /// Stashes, newest first.
     pub stashes: Arc<Vec<StashInfo>>,
+    /// All worktrees sharing this repository, including the main worktree.
+    pub worktrees: Arc<Vec<WorktreeInfo>>,
     pub features: RepositoryFeatures,
     pub generation: u64,
 }
@@ -235,6 +237,7 @@ impl RepositorySnapshot {
             operation_step,
             head_oid,
             stashes,
+            worktrees,
             features,
             generation: _,
         } = self;
@@ -252,6 +255,7 @@ impl RepositorySnapshot {
             && *operation_step == other.operation_step
             && *head_oid == other.head_oid
             && *stashes == other.stashes
+            && *worktrees == other.worktrees
             && *features == other.features
     }
 
@@ -323,7 +327,7 @@ impl RepositorySnapshot {
 }
 
 #[cfg(windows)]
-fn comparable_path(path: &Path) -> Cow<'_, Path> {
+pub(crate) fn comparable_path(path: &Path) -> Cow<'_, Path> {
     let Some(value) = path.to_str() else {
         return Cow::Borrowed(path);
     };
@@ -339,7 +343,7 @@ fn comparable_path(path: &Path) -> Cow<'_, Path> {
 }
 
 #[cfg(not(windows))]
-fn comparable_path(path: &Path) -> Cow<'_, Path> {
+pub(crate) fn comparable_path(path: &Path) -> Cow<'_, Path> {
     Cow::Borrowed(path)
 }
 
@@ -416,6 +420,7 @@ pub struct BranchInfo {
     pub current: bool,
     pub oid: String,
     pub upstream: Option<String>,
+    pub worktree_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -503,6 +508,7 @@ mod tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            worktrees: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
         }

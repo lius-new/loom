@@ -877,6 +877,316 @@ pub fn select_repository(state: &State<AppState>, store: &State<GitStoreSnapshot
     store.update(move |snapshot| snapshot.pin_active(Some(&root)));
 }
 
+/// Open means add the worktree and select its repository in our single window.
+pub fn open_worktree(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    path: PathBuf,
+) -> bool {
+    if !path.is_dir() {
+        state.update(|app| {
+            app.show_error(format!(
+                "Worktree is no longer available: {}",
+                path.display()
+            ))
+        });
+        return false;
+    }
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
+    state.update(|app| crate::workspace_actions::add_folder(app, path.clone()));
+    select_repository(state, store, path);
+    state.get().git_poll_control.request_refresh();
+    true
+}
+
+pub fn add_worktree_folder(state: &State<AppState>, path: PathBuf) {
+    if !path.is_dir() {
+        state.update(|app| {
+            app.show_error(format!(
+                "Worktree is no longer available: {}",
+                path.display()
+            ))
+        });
+        return;
+    }
+    state.update(|app| crate::workspace_actions::add_folder(app, path));
+    state.get().git_poll_control.request_refresh();
+}
+
+fn default_worktree_path(repository: &Path, checkout: &Checkout) -> PathBuf {
+    let branch = match checkout {
+        Checkout::Track(remote) => remote
+            .split_once('/')
+            .map_or(remote.as_str(), |(_, name)| name),
+        _ => checkout.target(),
+    };
+    let suffix = branch
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let name = repository.file_name().unwrap_or_default().to_string_lossy();
+    repository
+        .parent()
+        .unwrap_or(repository)
+        .join(format!("{name}-{suffix}"))
+}
+
+fn create_worktree_message(path: &Path, checkout: &Checkout) -> String {
+    format!(
+        "Check out {} and add it to the workspace:\n{}",
+        checkout.target(),
+        crate::ui::display_path(path)
+    )
+}
+
+pub fn request_create_worktree(state: &State<AppState>, repository: PathBuf, checkout: Checkout) {
+    let path = default_worktree_path(&repository, &checkout);
+    state.update(move |app| {
+        app.branch_picker = None;
+        app.git_confirm = Some(GitConfirm {
+            title: "New Worktree".into(),
+            message: create_worktree_message(&path, &checkout),
+            confirm_label: "Create",
+            destructive: false,
+            action: GitConfirmAction::CreateWorktree {
+                repository,
+                path,
+                checkout,
+            },
+            restore_terminal: app.terminal_focused,
+        });
+    });
+}
+
+pub fn choose_worktree_location(state: &State<AppState>) {
+    use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
+    let Some(confirm) = state.get().git_confirm else {
+        return;
+    };
+    let GitConfirmAction::CreateWorktree { path, .. } = confirm.action else {
+        return;
+    };
+    let mut options = FileDialogOptions::new().title("Choose Parent Folder for Worktree");
+    if let Some(parent) = path.parent() {
+        options = options.directory(parent);
+    }
+    let Some(parent) = system_file_dialogs().pick_folder(&options) else {
+        return;
+    };
+    let Some(name) = path.file_name() else {
+        return;
+    };
+    let path = parent.join(name);
+    state.update(move |app| {
+        if let Some(confirm) = app.git_confirm.as_mut()
+            && let GitConfirmAction::CreateWorktree {
+                path: target,
+                checkout,
+                ..
+            } = &mut confirm.action
+        {
+            *target = path;
+            confirm.message = create_worktree_message(target, checkout);
+        }
+    });
+}
+
+fn create_worktree_with(
+    backend: &CliGitBackend,
+    root: &Path,
+    path: &Path,
+    checkout: &Checkout,
+) -> GitResult<()> {
+    match checkout {
+        Checkout::Switch(branch) => backend.add_worktree(root, path, Some(branch), false),
+        Checkout::Create(branch) => backend.add_worktree(root, path, Some(branch), true),
+        Checkout::Track(remote) => backend.add_tracking_worktree(root, path, remote),
+        Checkout::OpenWorktree { .. } => Err(GitError::new(
+            GitErrorKind::Other,
+            "This branch already has a worktree. Open it instead.",
+        )),
+    }
+}
+
+pub fn create_worktree(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    path: PathBuf,
+    checkout: Checkout,
+) -> bool {
+    if store.get().operation.is_some() {
+        state.update(|app| app.show_toast("Wait for the running Git operation to finish."));
+        return false;
+    }
+    let Some(repository) = store.get().repository_for_path(root).cloned() else {
+        return false;
+    };
+    let created = path.clone();
+    run_with(
+        state,
+        store,
+        repository,
+        OperationKind::Worktree,
+        "Creating worktree…",
+        move |service, root| {
+            service.write(root, |backend| {
+                create_worktree_with(backend, root, &path, &checkout)
+            })
+        },
+        move |app, ()| {
+            let path = std::fs::canonicalize(&created).unwrap_or(created);
+            crate::workspace_actions::add_folder(app, path.clone());
+            app.git_pinned_repository =
+                Some((path, app.workspace.active_path().map(Path::to_path_buf)));
+            app.git_history_commit = None;
+            app.git_scroll = 0.0;
+            app.show_success("Created worktree and added it to the workspace.");
+        },
+    )
+}
+
+fn worktree_removal_confirmation(
+    repository: PathBuf,
+    path: PathBuf,
+    force: bool,
+    restore_terminal: bool,
+) -> GitConfirm {
+    GitConfirm {
+        title: if force {
+            "Force Delete Worktree"
+        } else {
+            "Delete Worktree"
+        }
+        .into(),
+        message: if force {
+            format!(
+                "This worktree has modified or untracked files. Permanently delete them?\n{}",
+                crate::ui::display_path(&path)
+            )
+        } else {
+            format!(
+                "Delete this worktree from disk? Its branch will be kept.\n{}",
+                crate::ui::display_path(&path)
+            )
+        },
+        confirm_label: if force { "Force Delete" } else { "Delete" },
+        destructive: true,
+        action: GitConfirmAction::RemoveWorktree {
+            repository,
+            path,
+            force,
+        },
+        restore_terminal,
+    }
+}
+
+pub fn request_remove_worktree(
+    state: &State<AppState>,
+    repository: PathBuf,
+    path: PathBuf,
+    force: bool,
+) {
+    state.update(move |app| {
+        app.git_confirm = Some(worktree_removal_confirmation(
+            repository,
+            path,
+            force,
+            app.terminal_focused,
+        ));
+    });
+}
+
+/// Re-read metadata before removal so an external lock or a stale UI cannot
+/// turn the wrong worktree into a deletion target.
+fn remove_worktree_with(
+    backend: &CliGitBackend,
+    root: &Path,
+    path: &Path,
+    force: bool,
+) -> GitResult<bool> {
+    let worktrees = backend.worktrees(root)?;
+    let worktree = worktrees
+        .iter()
+        .find(|worktree| worktree.path == path)
+        .ok_or_else(|| {
+            GitError::new(
+                GitErrorKind::Other,
+                "This worktree is no longer registered.",
+            )
+        })?;
+    if path == root
+        || worktrees.first().is_some_and(|main| main.path == path)
+        || worktree.bare
+        || worktree.locked.is_some()
+    {
+        return Err(GitError::new(
+            GitErrorKind::Other,
+            "The current, main, or locked worktree cannot be deleted.",
+        ));
+    }
+    match backend.remove_worktree(root, path, force) {
+        Ok(()) => Ok(true),
+        Err(error) if !force && error.kind == GitErrorKind::DirtyWorktree => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn remove_worktree(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    path: PathBuf,
+    force: bool,
+) -> bool {
+    if store.get().operation.is_some() {
+        state.update(|app| app.show_toast("Wait for the running Git operation to finish."));
+        return false;
+    }
+    let Some(repository) = store.get().repository_for_path(root).cloned() else {
+        return false;
+    };
+    if state.get().workspace.has_dirty_paths_under(&path) {
+        state.update(|app| {
+            app.show_toast("Save or discard editor changes before deleting this worktree.")
+        });
+        return false;
+    }
+    let source = repository.worktree_root.clone();
+    let target = path.clone();
+    run_with(
+        state,
+        store,
+        repository,
+        OperationKind::Worktree,
+        "Deleting worktree…",
+        move |service, root| {
+            service.write(root, |backend| {
+                remove_worktree_with(backend, root, &path, force)
+            })
+        },
+        move |app, removed| {
+            if removed {
+                crate::workspace_actions::forget_worktree(app, &target);
+                app.show_success("Deleted worktree. Its branch was kept.");
+            } else {
+                app.git_confirm = Some(worktree_removal_confirmation(
+                    source,
+                    target,
+                    true,
+                    app.terminal_focused,
+                ));
+            }
+        },
+    )
+}
+
 /// Undo the last commit, keeping its changes staged, and offer its message
 /// for the next commit.
 pub fn undo_last_commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
@@ -1009,8 +1319,11 @@ pub fn load_branches(state: &State<AppState>, repository: PathBuf, sequence: u64
     let spawned = thread::Builder::new()
         .name("loom-git-branches".into())
         .spawn(move || {
-            let result =
-                crate::git::service().and_then(|service| service.backend().branches(&repository));
+            let result = crate::git::service().and_then(|service| {
+                let branches = service.backend().branches(&repository)?;
+                let worktrees = service.backend().worktrees(&repository)?;
+                Ok((branches, worktrees))
+            });
             application.post(move || {
                 worker_state.update(move |app| {
                     if let Some(picker) = app
@@ -1051,7 +1364,9 @@ pub fn fetch_branches(state: &State<AppState>, store: &State<GitStoreSnapshot>) 
         |service, root| {
             service.write(root, |backend| {
                 backend.fetch(root, None, true)?;
-                backend.branches(root)
+                let branches = backend.branches(root)?;
+                let worktrees = backend.worktrees(root)?;
+                Ok((branches, worktrees))
             })
         },
         move |app, branches| {
@@ -1101,6 +1416,10 @@ pub fn checkout_with(
         Checkout::Switch(name) => backend.switch(root, name),
         Checkout::Create(name) => backend.create_branch(root, name, None),
         Checkout::Track(remote) => backend.switch_tracking(root, remote),
+        Checkout::OpenWorktree { .. } => Err(GitError::new(
+            GitErrorKind::Other,
+            "Open the existing worktree instead of switching branches.",
+        )),
     };
     if mode == StashMode::Refuse {
         return match switch() {
@@ -1169,6 +1488,9 @@ pub fn checkout(
     checkout: Checkout,
     mode: StashMode,
 ) -> bool {
+    if let Checkout::OpenWorktree { path, .. } = checkout {
+        return open_worktree(state, store, path);
+    }
     let Some(repository) = store.get().repository_for_path(root).cloned() else {
         return false;
     };
@@ -1336,6 +1658,198 @@ mod tests {
     use super::*;
     use crate::git::{RepositoryFeatures, RepositoryId, RepositoryState, UpstreamState};
 
+    #[test]
+    fn worktree_defaults_are_siblings_with_safe_branch_names() {
+        assert_eq!(
+            default_worktree_path(
+                Path::new("projects/loom"),
+                &Checkout::Create("feature/x".into())
+            ),
+            PathBuf::from("projects/loom-feature-x")
+        );
+        assert_eq!(
+            default_worktree_path(
+                Path::new("projects/loom"),
+                &Checkout::Track("origin/feature/x".into())
+            ),
+            PathBuf::from("projects/loom-feature-x")
+        );
+    }
+
+    #[test]
+    fn real_repository_manages_worktrees_without_switching_the_source() {
+        use crate::git::backend::GitBackend;
+        use crate::git::command::GitCommand;
+        let (root, backend) = crate::git::backend::tests::repository()
+            .expect("Git runtime for worktree integration test");
+        let root = std::fs::canonicalize(root).unwrap();
+        std::fs::write(root.join("file.txt"), "base\n").unwrap();
+        backend.stage(&root, &[PathBuf::from("file.txt")]).unwrap();
+        backend.commit(&root, "base", false, false).unwrap();
+        let path = root.join("topic worktree");
+        let checkout = Checkout::Create("feature/topic".into());
+        create_worktree_with(&backend, &root, &path, &checkout).unwrap();
+        let path = std::fs::canonicalize(path).unwrap();
+        let branches = backend.branches(&root).unwrap();
+        assert!(
+            branches
+                .iter()
+                .any(|branch| branch.current && branch.name == "main")
+        );
+        assert_eq!(
+            branches
+                .iter()
+                .find(|branch| branch.name == "feature/topic")
+                .unwrap()
+                .worktree_path
+                .as_ref(),
+            Some(&path)
+        );
+        let discovered = backend.discover(std::slice::from_ref(&root)).unwrap();
+        let source = discovered
+            .iter()
+            .find(|repo| repo.worktree_root == root)
+            .unwrap();
+        let snapshot = backend.status(source, RepositoryId(1), 1).unwrap();
+        assert_eq!(snapshot.worktrees.len(), 2);
+        // External tools can override Git's single-checkout guard. Listing
+        // must preserve both directories even though worktreepath is singular.
+        let duplicate = root.join("topic review worktree");
+        backend
+            .runner()
+            .run(
+                GitCommand::new().cwd(&root).args([
+                    std::ffi::OsString::from("worktree"),
+                    "add".into(),
+                    "--force".into(),
+                    "--".into(),
+                    crate::git::types::comparable_path(&duplicate)
+                        .as_os_str()
+                        .to_owned(),
+                    "feature/topic".into(),
+                ]),
+            )
+            .unwrap();
+        assert_eq!(
+            backend
+                .worktrees(&root)
+                .unwrap()
+                .iter()
+                .filter(|worktree| worktree.branch.as_deref() == Some("feature/topic"))
+                .count(),
+            2
+        );
+        let duplicate = std::fs::canonicalize(duplicate).unwrap();
+        assert!(remove_worktree_with(&backend, &root, &duplicate, false).unwrap());
+        assert!(remove_worktree_with(&backend, &root, &root, true).is_err());
+        assert!(remove_worktree_with(&backend, &path, &root, true).is_err());
+        assert!(remove_worktree_with(&backend, &path, &path, true).is_err());
+
+        backend
+            .runner()
+            .run(
+                GitCommand::new().cwd(&root).args([
+                    std::ffi::OsString::from("worktree"),
+                    "lock".into(),
+                    "--reason".into(),
+                    "in use".into(),
+                    crate::git::types::comparable_path(&path)
+                        .as_os_str()
+                        .to_owned(),
+                ]),
+            )
+            .unwrap();
+        assert_eq!(
+            backend.worktrees(&root).unwrap()[1].locked.as_deref(),
+            Some("in use")
+        );
+        assert!(remove_worktree_with(&backend, &root, &path, true).is_err());
+        backend
+            .runner()
+            .run(
+                GitCommand::new().cwd(&root).args([
+                    std::ffi::OsString::from("worktree"),
+                    "unlock".into(),
+                    crate::git::types::comparable_path(&path)
+                        .as_os_str()
+                        .to_owned(),
+                ]),
+            )
+            .unwrap();
+
+        std::fs::write(path.join("file.txt"), "modified\n").unwrap();
+        std::fs::write(path.join("untracked.txt"), "untracked\n").unwrap();
+        assert!(!remove_worktree_with(&backend, &root, &path, false).unwrap());
+        assert!(path.join("untracked.txt").is_file());
+        assert!(remove_worktree_with(&backend, &root, &path, true).unwrap());
+        assert!(!path.exists());
+        let branches = backend.branches(&root).unwrap();
+        assert!(
+            branches
+                .iter()
+                .any(|branch| branch.name == "feature/topic" && branch.worktree_path.is_none())
+        );
+        // The kept branch can be checked out in another worktree and removed cleanly.
+        create_worktree_with(
+            &backend,
+            &root,
+            &path,
+            &Checkout::Switch("feature/topic".into()),
+        )
+        .unwrap();
+        assert!(remove_worktree_with(&backend, &root, &path, false).unwrap());
+
+        backend
+            .runner()
+            .run(
+                GitCommand::new()
+                    .cwd(&root)
+                    .args(["config", "remote.origin.url", "."]),
+            )
+            .unwrap();
+        backend
+            .runner()
+            .run(GitCommand::new().cwd(&root).args([
+                "config",
+                "remote.origin.fetch",
+                "+refs/heads/*:refs/remotes/origin/*",
+            ]))
+            .unwrap();
+        backend
+            .runner()
+            .run(GitCommand::new().cwd(&root).args([
+                "update-ref",
+                "refs/remotes/origin/release/1.0",
+                "HEAD",
+            ]))
+            .unwrap();
+        let remote_path = root.join("remote worktree");
+        create_worktree_with(
+            &backend,
+            &root,
+            &remote_path,
+            &Checkout::Track("origin/release/1.0".into()),
+        )
+        .unwrap();
+        let tracking = backend
+            .branches(&root)
+            .unwrap()
+            .into_iter()
+            .find(|branch| branch.name == "release/1.0")
+            .unwrap();
+        assert_eq!(tracking.upstream.as_deref(), Some("origin/release/1.0"));
+        assert!(
+            backend
+                .branches(&root)
+                .unwrap()
+                .iter()
+                .any(|branch| branch.name == "main" && branch.current)
+        );
+        let remote_path = std::fs::canonicalize(remote_path).unwrap();
+        assert!(remove_worktree_with(&backend, &root, &remote_path, false).unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn repository(head: HeadState, upstream: bool, ahead: u32, behind: u32) -> RepositorySnapshot {
         RepositorySnapshot {
             id: RepositoryId(1),
@@ -1354,6 +1868,7 @@ mod tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            worktrees: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 0,
         }

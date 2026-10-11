@@ -229,6 +229,7 @@ mod tests {
             repository_name: "repo".into(),
             anchor_x: 0.0,
             listing: crate::ui::branch_picker::BranchListing::Loading,
+            collapsed_worktrees: Default::default(),
             selected: 0,
             scroll: 0.0,
             query: String::new(),

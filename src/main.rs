@@ -65,62 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
-        .svg_icons(file_icons::register(
-            // Codicons are drawn on a 16px grid; render them at theme::ICON_SIZE
-            // so their 1px strokes land on whole pixels.
-            SvgIconRegistry::new()
-                .with_icon("panel-left", icondata::VsLayoutSidebarLeft)
-                .with_icon("check", icondata::VsCheck)
-                .with_icon("terminal", icondata::VsTerminal)
-                .with_icon("plus", icondata::VsAdd)
-                .with_icon("chevron-down", icondata::VsChevronDown)
-                .with_icon("chevron-right", icondata::VsChevronRight)
-                .with_icon("explorer", icondata::VsLayers)
-                .with_icon("settings", icondata::VsSettingsGear)
-                .with_icon("close", icondata::VsClose)
-                .with_icon("minus", icondata::VsRemove)
-                .with_icon("source-control", icondata::VsSourceControl)
-                .with_icon("arrow-up", icondata::VsArrowUp)
-                .with_icon("arrow-down", icondata::VsArrowDown)
-                .with_icon("cloud", icondata::VsCloud)
-                .with_icon("cloud-upload", icondata::VsCloudUpload)
-                .with_icon("refresh", icondata::VsRefresh)
-                .with_icon("sync", icondata::VsSync)
-                .with_icon("search", icondata::VsSearch)
-                .with_icon("discard", icondata::VsDiscard)
-                .with_icon("go-to-file", icondata::VsGoToFile)
-                .with_icon("arrow-left", icondata::VsArrowLeft)
-                .with_icon("arrow-right", icondata::VsArrowRight)
-                .with_icon("git-stash", icondata::VsGitStash)
-                .with_icon("git-stash-apply", icondata::VsGitStashApply)
-                .with_icon("git-stash-pop", icondata::VsGitStashPop)
-                .with_icon("trash", icondata::VsTrash)
-                .with_icon("list-tree", icondata::VsListTree)
-                .with_icon("list-flat", icondata::VsListFlat)
-                .with_icon("folder", icondata::VsFolder)
-                .with_icon("repo", icondata::VsRepo)
-                .with_icon("git-commit", icondata::VsGitCommit)
-                // No Codicon equivalent yet.
-                .with_icon("git-branch", icondata::LuGitBranch)
-                .with_icon("command", icondata::LuCommand)
-                // Filled caption silhouettes avoid fragile subpixel SVG strokes.
-                .with_icon(
-                    "window-minimize",
-                    include_str!("../assets/icons/window-minimize.svg"),
-                )
-                .with_icon(
-                    "window-maximize",
-                    include_str!("../assets/icons/window-maximize.svg"),
-                )
-                .with_icon(
-                    "window-restore",
-                    include_str!("../assets/icons/window-restore.svg"),
-                )
-                .with_icon(
-                    "window-close",
-                    include_str!("../assets/icons/window-close.svg"),
-                ),
-        ))
+        .svg_icons(svg_icons())
         .provide(RendererKind::Skia(GraphicsPreference::Auto))
         .memory_options(MemoryOptions::unbounded(
             ImageCachePolicy::WhileVisible,
@@ -129,6 +74,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .window_options(window_options)
         .run(app::app)?;
     Ok(())
+}
+
+fn svg_icons() -> SvgIconRegistry {
+    file_icons::register(
+        // Codicons are drawn on a 16px grid; render them at theme::ICON_SIZE
+        // so their 1px strokes land on whole pixels.
+        SvgIconRegistry::new()
+            .with_icon("panel-left", icondata::VsLayoutSidebarLeft)
+            .with_icon("check", icondata::VsCheck)
+            .with_icon("terminal", icondata::VsTerminal)
+            .with_icon("plus", icondata::VsAdd)
+            .with_icon("chevron-down", icondata::VsChevronDown)
+            .with_icon("chevron-right", icondata::VsChevronRight)
+            .with_icon("explorer", icondata::VsLayers)
+            .with_icon("settings", icondata::VsSettingsGear)
+            .with_icon("close", icondata::VsClose)
+            .with_icon("minus", icondata::VsRemove)
+            .with_icon("source-control", icondata::VsSourceControl)
+            .with_icon("arrow-up", icondata::VsArrowUp)
+            .with_icon("arrow-down", icondata::VsArrowDown)
+            .with_icon("cloud", icondata::VsCloud)
+            .with_icon("cloud-upload", icondata::VsCloudUpload)
+            .with_icon("refresh", icondata::VsRefresh)
+            .with_icon("sync", icondata::VsSync)
+            .with_icon("search", icondata::VsSearch)
+            .with_icon("discard", icondata::VsDiscard)
+            .with_icon("go-to-file", icondata::VsGoToFile)
+            .with_icon("arrow-left", icondata::VsArrowLeft)
+            .with_icon("arrow-right", icondata::VsArrowRight)
+            .with_icon("git-stash", icondata::VsGitStash)
+            .with_icon("git-stash-apply", icondata::VsGitStashApply)
+            .with_icon("git-stash-pop", icondata::VsGitStashPop)
+            .with_icon("trash", icondata::VsTrash)
+            .with_icon("list-tree", icondata::VsListTree)
+            .with_icon("list-flat", icondata::VsListFlat)
+            .with_icon("worktree-open", icondata::VsFolderOpened)
+            .with_icon("repo", icondata::VsRepo)
+            .with_icon("git-commit", icondata::VsGitCommit)
+            // No Codicon equivalent yet.
+            .with_icon("git-branch", icondata::LuGitBranch)
+            .with_icon("command", icondata::LuCommand)
+            // Filled caption silhouettes avoid fragile subpixel SVG strokes.
+            .with_icon(
+                "window-minimize",
+                include_str!("../assets/icons/window-minimize.svg"),
+            )
+            .with_icon(
+                "window-maximize",
+                include_str!("../assets/icons/window-maximize.svg"),
+            )
+            .with_icon(
+                "window-restore",
+                include_str!("../assets/icons/window-restore.svg"),
+            )
+            .with_icon(
+                "window-close",
+                include_str!("../assets/icons/window-close.svg"),
+            ),
+    )
 }
 
 fn native_window_options() -> Result<WinitWindowOptions, Box<dyn std::error::Error>> {

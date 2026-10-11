@@ -10,7 +10,7 @@ use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
 use crate::git::{
     ChangeKind, CommitSummary, ConflictSide, DiffTarget, FileState, GitStoreSnapshot,
-    RepositorySnapshot, RepositoryState, StashInfo,
+    RepositorySnapshot, RepositoryState, StashInfo, WorktreeInfo,
 };
 use crate::state::AppState;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
@@ -238,12 +238,61 @@ pub fn render(
         } else {
             section_height(STASHES, repository.stashes.len())
         }
+        + if repository.worktrees.len() > 1 {
+            section_height(WORKTREES, repository.worktrees.len() * 2)
+        } else {
+            0.0
+        }
         + section_height(HISTORY, history_rows.len());
     let max_scroll = (content_height - content_rect.height()).max(0.0);
     let scroll = app.git_scroll.clamp(0.0, max_scroll);
     let mut y = content_rect.top + 8.0;
     // Rows the pointer can hover, in content coordinates (before scrolling).
     let mut hover_targets = Vec::new();
+    if repository.worktrees.len() > 1 {
+        let collapsed = app.git_collapsed_sections.contains(&WORKTREES);
+        let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
+        hover_targets.push((section_rect, GitHover::Section(WORKTREES)));
+        content.push(section_header(
+            section_rect,
+            WORKTREES,
+            "WORKTREES",
+            repository.worktrees.len(),
+            collapsed,
+            Vec::new(),
+            state.clone(),
+        ));
+        y += SECTION_H;
+        if !collapsed {
+            let rows_top = y;
+            let visible = visible_worktree_rows(
+                rows_top,
+                content_rect.top + scroll,
+                content_rect.bottom + scroll,
+                repository.worktrees.len(),
+            );
+            y += repository.worktrees.len() as f32 * ROW_H * 2.0;
+            for index in visible {
+                let worktree = &repository.worktrees[index];
+                let top = rows_top + index as f32 * ROW_H * 2.0;
+                let row_rect = UiRect::new(rect.left, top, content_rect.right, top + ROW_H * 2.0);
+                let hover = GitHover::Worktree(worktree.path.clone());
+                let hovered = app.git_hover.as_ref() == Some(&hover);
+                hover_targets.push((row_rect, hover));
+                content.push(worktree_row(
+                    row_rect,
+                    worktree,
+                    repository,
+                    index == 0,
+                    hovered,
+                    git.operation.is_none(),
+                    state.clone(),
+                    store.clone(),
+                ));
+            }
+        }
+        y += 10.0;
+    }
     for (title, filter, files, rows) in &change_sections {
         let (title, filter) = (*title, *filter);
         if files.is_empty() {
@@ -523,14 +572,134 @@ fn visible_rows(
     viewport_bottom: f32,
     count: usize,
 ) -> std::ops::Range<usize> {
-    let start = ((viewport_top - rows_top) / ROW_H).floor().max(0.0) as usize;
-    let end = ((viewport_bottom - rows_top) / ROW_H).ceil().max(0.0) as usize;
+    visible_rows_with_height(rows_top, viewport_top, viewport_bottom, count, ROW_H)
+}
+
+fn visible_worktree_rows(
+    rows_top: f32,
+    viewport_top: f32,
+    viewport_bottom: f32,
+    count: usize,
+) -> std::ops::Range<usize> {
+    visible_rows_with_height(rows_top, viewport_top, viewport_bottom, count, ROW_H * 2.0)
+}
+
+fn visible_rows_with_height(
+    rows_top: f32,
+    viewport_top: f32,
+    viewport_bottom: f32,
+    count: usize,
+    height: f32,
+) -> std::ops::Range<usize> {
+    let start = ((viewport_top - rows_top) / height).floor().max(0.0) as usize;
+    let end = ((viewport_bottom - rows_top) / height).ceil().max(0.0) as usize;
     start.saturating_sub(1).min(count)..end.saturating_add(1).min(count)
 }
 
 #[cfg(test)]
 mod virtualization_tests {
     use super::*;
+
+    #[test]
+    fn worktree_delete_button_only_requests_confirmation() {
+        use crate::ui::git_confirm::GitConfirmAction;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
+        use lgui::session::UiSession;
+        use std::sync::{Arc, Mutex};
+
+        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let output = exposed.clone();
+        let viewport = UiRect::new(0.0, 0.0, 300.0, 100.0);
+        let source = PathBuf::from("worktree-ui-test-source");
+        let target = PathBuf::from("worktree-ui-test-linked");
+        let repository = RepositorySnapshot {
+            id: crate::git::RepositoryId(1),
+            worktree_root: source.clone(),
+            git_dir: source.join(".git"),
+            common_dir: source.join(".git"),
+            head: crate::git::HeadState::Branch("main".into()),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            files: Default::default(),
+            ignored: Default::default(),
+            repository_state: RepositoryState::Normal,
+            operation_step: None,
+            head_oid: None,
+            stashes: Default::default(),
+            worktrees: Default::default(),
+            features: Default::default(),
+            generation: 0,
+        };
+        let worktree = WorktreeInfo {
+            path: target.clone(),
+            oid: "abc".into(),
+            branch: Some("feature/x".into()),
+            bare: false,
+            detached: false,
+            locked: None,
+        };
+        let view: AppView = Arc::new(move |cx| {
+            let source = repository.worktree_root.clone();
+            let state = cx.state_with(move || {
+                let mut app = AppState::new();
+                app.workspace_folders = vec![source];
+                app
+            });
+            let store = cx.state_with(GitStoreSnapshot::default);
+            *output.lock().unwrap() = Some(state.clone());
+            panel(viewport, VisualStyle::default()).child(worktree_row(
+                UiRect::new(0.0, 0.0, 300.0, ROW_H * 2.0),
+                &worktree,
+                &repository,
+                false,
+                true,
+                true,
+                state,
+                store,
+            ))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        let context = ApplicationContext::empty(Default::default());
+        let point = Point::new(282.0, ROW_H);
+        for input in [
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+            InputEvent::PointerUp {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+        ] {
+            let events = session.handle_input(input);
+            dispatch_runtime_output(
+                events,
+                &context,
+                &lgui::window::WindowId::new("worktree-actions-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+        }
+        let app = state.get();
+        assert_eq!(app.workspace_folders, [source.clone()]);
+        assert!(app.git_pinned_repository.is_none());
+        assert!(app.toast.is_none()); // The click did not also open the row.
+        let confirm = app.git_confirm.unwrap();
+        assert!(confirm.destructive);
+        assert_eq!(
+            confirm.action,
+            GitConfirmAction::RemoveWorktree {
+                repository: source,
+                path: target,
+                force: false
+            }
+        );
+    }
 
     #[test]
     fn scrollbar_is_separate_from_resize_handle_and_drags_outside_its_strip() {
@@ -835,10 +1004,12 @@ pub const UNTRACKED: u8 = 3;
 pub const STASHES: u8 = 4;
 /// The recent commits, last in the drawer.
 pub const HISTORY: u8 = 5;
+pub const WORKTREES: u8 = 6;
 
 /// The drawer row under the pointer, which shows its action buttons.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitHover {
+    Worktree(PathBuf),
     Section(u8),
     File(u8, PathBuf),
     /// A folder row of a section grouped by folder.
@@ -1217,6 +1388,7 @@ fn section_header(
         UNSTAGED => "git-section-unstaged-chevron",
         UNTRACKED => "git-section-untracked-chevron",
         STASHES => "git-section-stashes-chevron",
+        WORKTREES => "git-section-worktrees-chevron",
         _ => "git-section-history-chevron",
     };
     let section = panel(rect, VisualStyle::default())
@@ -1260,6 +1432,138 @@ fn section_header(
     } else {
         row_buttons(section, rect, rect.right - 40.0, buttons)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn worktree_row(
+    rect: UiRect,
+    worktree: &WorktreeInfo,
+    repository: &RepositorySnapshot,
+    main: bool,
+    hovered: bool,
+    enabled: bool,
+    state: State<AppState>,
+    store: State<GitStoreSnapshot>,
+) -> Element {
+    let current = worktree.path == repository.worktree_root;
+    let mut buttons = Vec::new();
+    if hovered && enabled && !worktree.bare {
+        let open_state = state.clone();
+        let open_store = store.clone();
+        let path = worktree.path.clone();
+        buttons.push(RowButton {
+            key: format!("worktree-open-{}", path.display()),
+            icon: "worktree-open",
+            name: "Open Worktree (Add and Select)",
+            on_click: Box::new(move || {
+                git_actions::open_worktree(&open_state, &open_store, path.clone());
+            }),
+        });
+        let add_state = state.clone();
+        let path = worktree.path.clone();
+        buttons.push(RowButton {
+            key: format!("worktree-add-{}", path.display()),
+            icon: "plus",
+            name: "Add Worktree to Workspace",
+            on_click: Box::new(move || git_actions::add_worktree_folder(&add_state, path.clone())),
+        });
+        if !main && !current && worktree.locked.is_none() {
+            let source = repository.worktree_root.clone();
+            let path = worktree.path.clone();
+            let delete_state = state.clone();
+            buttons.push(RowButton {
+                key: format!("worktree-delete-{}", path.display()),
+                icon: "trash",
+                name: "Delete Worktree",
+                on_click: Box::new(move || {
+                    git_actions::request_remove_worktree(
+                        &delete_state,
+                        source.clone(),
+                        path.clone(),
+                        false,
+                    )
+                }),
+            });
+        }
+    }
+    let label_right = rect.right - BUTTON_W * buttons.len() as f32 - 12.0;
+    let mut detail = worktree.branch.clone().unwrap_or_else(|| {
+        if worktree.bare {
+            "Bare repository".into()
+        } else {
+            format!(
+                "Detached HEAD · {}",
+                worktree.oid.chars().take(8).collect::<String>()
+            )
+        }
+    });
+    if current {
+        detail.insert_str(0, "Current · ");
+    }
+    if let Some(reason) = &worktree.locked {
+        detail.insert_str(0, "Locked · ");
+        if !reason.is_empty() {
+            detail.push_str(&format!(": {reason}"));
+        }
+    }
+    let name = super::tabs::ellipsize(
+        &repository_name(&worktree.path),
+        (label_right - rect.left - 26.0).max(0.0),
+        theme::UI_SIZE,
+        400,
+    );
+    let detail_label = super::tabs::ellipsize(
+        &detail,
+        (label_right - rect.left - 26.0).max(0.0),
+        theme::SMALL,
+        400,
+    );
+    let open_state = state;
+    let path = worktree.path.clone();
+    let bare = worktree.bare;
+    let mut row = panel(
+        rect,
+        if hovered {
+            VisualStyle::filled(theme::c().active_line)
+        } else {
+            VisualStyle::default()
+        },
+    )
+    .key(format!("git-worktree-{}", worktree.path.display()))
+    .event_policy(EventPolicy::INTERACTIVE)
+    .semantics(Semantics::new(SemanticRole::Button).name(format!(
+        "{} · {detail}",
+        crate::ui::display_path(&worktree.path)
+    )))
+    .cursor(if bare {
+        CursorIcon::Default
+    } else {
+        CursorIcon::Pointer
+    })
+    .on_click(move || {
+        if !bare {
+            git_actions::open_worktree(&open_state, &store, path.clone());
+        }
+    })
+    .child(text(
+        UiRect::new(rect.left + 20.0, rect.top, label_right, rect.top + ROW_H),
+        name,
+        theme::mono(
+            if current {
+                theme::c().accent
+            } else {
+                theme::c().text
+            },
+            theme::UI_SIZE,
+        ),
+    ))
+    .child(text(
+        UiRect::new(rect.left + 20.0, rect.top + ROW_H, label_right, rect.bottom),
+        detail_label,
+        theme::mono(theme::c().text_dim, theme::SMALL),
+    ));
+    row = row_buttons(row, rect, rect.right - 8.0, buttons);
+    row
 }
 
 /// A stash: its message, and apply, pop and drop while hovered.
@@ -1943,6 +2247,7 @@ mod action_tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            worktrees: Default::default(),
             features: Default::default(),
             generation: 0,
         };

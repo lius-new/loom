@@ -369,13 +369,19 @@ impl CliGitBackend {
                 .args([
                     "for-each-ref",
                     "--sort=-committerdate",
-                    "--format=%(refname)%09%(refname:short)%09%(HEAD)%09%(objectname)%09%(upstream:short)",
+                    "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(objectname)%00%(upstream:short)%00%(worktreepath)%00",
                     "refs/heads",
                     "refs/remotes",
                 ])
                 .read_only(),
         )?;
-        parse_branches(&output.stdout)
+        let mut branches = parse_branches(&output.stdout)?;
+        for branch in &mut branches {
+            if let Some(path) = &mut branch.worktree_path {
+                *path = std::fs::canonicalize(&*path).unwrap_or_else(|_| path.clone());
+            }
+        }
+        Ok(branches)
     }
 
     pub fn tags(&self, repository: &Path) -> GitResult<Vec<String>> {
@@ -651,7 +657,8 @@ impl CliGitBackend {
             validate_ref(branch)?;
             args.extend([OsString::from("-b"), branch.into()]);
         }
-        args.push(path.as_os_str().to_owned());
+        args.push("--".into());
+        args.push(comparable_path(path).as_os_str().to_owned());
         if let Some(branch) = branch.filter(|_| !create_branch) {
             validate_ref(branch)?;
             args.push(branch.into());
@@ -666,9 +673,37 @@ impl CliGitBackend {
         if force {
             args.push("--force".into());
         }
-        args.push(path.as_os_str().to_owned());
+        args.push("--".into());
+        args.push(comparable_path(path).as_os_str().to_owned());
         self.runner
             .run(GitCommand::new().cwd(repository).args(args))?;
+        Ok(())
+    }
+
+    /// Explicitly name and track the remote branch, independent of the
+    /// repository's checkout.defaultRemote and branch.autoSetupMerge settings.
+    pub fn add_tracking_worktree(
+        &self,
+        repository: &Path,
+        path: &Path,
+        remote: &str,
+    ) -> GitResult<()> {
+        validate_ref(remote)?;
+        let name = remote
+            .split_once('/')
+            .map(|(_, name)| name)
+            .ok_or_else(|| GitError::new(GitErrorKind::Other, "A remote branch is required."))?;
+        validate_ref(name)?;
+        self.runner.run(GitCommand::new().cwd(repository).args([
+            OsString::from("worktree"),
+            "add".into(),
+            "--track".into(),
+            "-b".into(),
+            name.into(),
+            "--".into(),
+            comparable_path(path).as_os_str().to_owned(),
+            remote.into(),
+        ]))?;
         Ok(())
     }
 
@@ -1153,6 +1188,12 @@ impl CliGitBackend {
             operation_step,
             head_oid: parsed.head_oid,
             stashes: read_stashes(&repository.common_dir).into(),
+            worktrees: if untracked == "no" {
+                Vec::new()
+            } else {
+                self.worktrees(&repository.worktree_root)?
+            }
+            .into(),
             features,
             generation,
         })
@@ -1271,7 +1312,10 @@ fn parse_worktrees(input: &[u8]) -> GitResult<Vec<WorktreeInfo>> {
                 values.push(previous);
             }
             current = Some(WorktreeInfo {
-                path: PathBuf::from(path),
+                path: {
+                    let path = PathBuf::from(path);
+                    std::fs::canonicalize(&path).unwrap_or(path)
+                },
                 oid: String::new(),
                 branch: None,
                 bare: false,

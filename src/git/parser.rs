@@ -277,29 +277,36 @@ pub fn parse_log(input: &str) -> GitResult<Vec<CommitSummary>> {
 }
 
 pub fn parse_branches(input: &[u8]) -> GitResult<Vec<BranchInfo>> {
-    input
-        .split(|byte| *byte == b'\n')
-        .map(|record| record.strip_suffix(b"\r").unwrap_or(record))
-        .filter(|record| !record.is_empty())
-        .filter_map(|record| {
-            let text = String::from_utf8_lossy(record);
-            let fields = text.split('\t').collect::<Vec<_>>();
-            if fields.len() < 5 {
-                return Some(Err(invalid(record)));
-            }
-            // `origin/HEAD` names the remote's default branch, not a branch.
-            if fields[0].starts_with("refs/remotes/") && fields[0].ends_with("/HEAD") {
-                return None;
-            }
-            Some(Ok(BranchInfo {
-                name: fields[1].to_owned(),
-                remote: fields[0].starts_with("refs/remotes/"),
-                current: fields[2] == "*",
-                oid: fields[3].to_owned(),
-                upstream: (!fields[4].is_empty()).then(|| fields[4].to_owned()),
-            }))
-        })
-        .collect()
+    // Git adds a newline after each formatted record. NUL fields keep paths
+    // containing tabs or newlines intact.
+    let mut fields = input.split(|byte| *byte == 0);
+    let mut branches = Vec::new();
+    while let Some(reference) = fields.next() {
+        let reference = reference.strip_prefix(b"\n").unwrap_or(reference);
+        if reference.is_empty() {
+            continue;
+        }
+        let mut next = || fields.next().ok_or_else(|| invalid(reference));
+        let name = String::from_utf8_lossy(next()?).into_owned();
+        let current = next()? == b"*";
+        let oid = String::from_utf8_lossy(next()?).into_owned();
+        let upstream = next()?;
+        let worktree = next()?;
+        let remote = reference.starts_with(b"refs/remotes/");
+        if remote && reference.ends_with(b"/HEAD") {
+            continue;
+        }
+        branches.push(BranchInfo {
+            name,
+            remote,
+            current,
+            oid,
+            upstream: (!upstream.is_empty())
+                .then(|| String::from_utf8_lossy(upstream).into_owned()),
+            worktree_path: (!worktree.is_empty()).then(|| bytes_to_path(worktree)),
+        });
+    }
+    Ok(branches)
 }
 
 #[cfg(test)]
@@ -309,9 +316,9 @@ mod tests {
 
     #[test]
     fn branches_skip_remote_head_symrefs() {
-        let input = b"refs/heads/main\tmain\t*\taaa\torigin/main\n\
-refs/remotes/origin/HEAD\torigin\t \taaa\t\n\
-refs/remotes/origin/main\torigin/main\t \taaa\t\n";
+        let input = b"refs/heads/main\0main\0*\0aaa\0origin/main\0/repo\0\n\
+refs/remotes/origin/HEAD\0origin\0 \0aaa\0\0\0\n\
+refs/remotes/origin/main\0origin/main\0 \0aaa\0\0\0\n";
         let branches = parse_branches(input).unwrap();
         assert_eq!(
             branches
@@ -321,6 +328,21 @@ refs/remotes/origin/main\torigin/main\t \taaa\t\n";
             [("main", false, true), ("origin/main", true, false)]
         );
         assert_eq!(branches[0].upstream.as_deref(), Some("origin/main"));
+        assert_eq!(branches[0].worktree_path, Some(PathBuf::from("/repo")));
+        assert_eq!(branches[1].worktree_path, None);
+    }
+
+    #[test]
+    fn branch_worktree_paths_preserve_tabs_newlines_and_unicode() {
+        let path = "/repo/中文\tworktree\nnext";
+        let input = format!(
+            "refs/heads/topic\0topic\0 \0abc\0\0{path}\0\nrefs/heads/main\0main\0*\0abc\0\0/repo\0\n"
+        );
+        let branches = parse_branches(input.as_bytes()).unwrap();
+        assert_eq!(branches.len(), 2);
+        assert_eq!(branches[0].worktree_path, Some(PathBuf::from(path)));
+        assert!(branches[1].current);
+        assert!(parse_branches(b"refs/heads/topic\0topic\0").is_err());
     }
 
     #[test]

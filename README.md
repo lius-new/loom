@@ -28,6 +28,25 @@ loom/
 - Chinese IME preedit text is displayed at the caret, with the native candidate
   window anchored there. Only committed input changes the document.
 
+### Git worktrees
+
+The branch picker groups worktrees beneath their checked-out branch. Branch rows
+show the worktree count and expand or collapse the directory list. Each worktree
+has its own path and actions; choosing one adds it to the workspace and selects
+its repository. The existing folders stay available in the repository switcher.
+
+Source Control shows a **WORKTREES** section when a repository has multiple
+worktrees, with the branch, current worktree and lock status. Hover a row to open,
+add or delete it. Deletion asks for confirmation; modified or untracked files
+require a separate force-delete confirmation. The main, current and locked
+worktrees cannot be deleted from this section.
+
+In the branch picker, select an available branch and choose **New Worktree**.
+Typing a new branch name also offers this action. The dialog shows the branch and
+destination folder, defaulting to a sibling such as `../loom-feature-x`;
+**Browse…** changes its parent folder. Creation adds the worktree to the workspace
+and selects its repository.
+
 ### Editing shortcuts
 
 | Shortcut | Action |

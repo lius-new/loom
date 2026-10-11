@@ -99,6 +99,7 @@ impl GitError {
                 "Git user name or email is not configured.",
             )
         } else if lower.contains("would be overwritten")
+            || lower.contains("contains modified or untracked files")
             || lower.contains("local changes") && lower.contains("commit")
         {
             (

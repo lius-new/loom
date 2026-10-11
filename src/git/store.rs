@@ -714,6 +714,7 @@ mod tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            worktrees: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
         };
@@ -789,6 +790,7 @@ mod tests {
                 operation_step: None,
                 head_oid: None,
                 stashes: Default::default(),
+                worktrees: Default::default(),
                 features: RepositoryFeatures::default(),
                 generation: 3,
             },
@@ -835,6 +837,7 @@ mod tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            worktrees: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
         };
@@ -986,6 +989,7 @@ mod tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            worktrees: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
         };

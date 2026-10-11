@@ -1134,9 +1134,23 @@ fn replace_folder_state(app: &mut AppState, path: PathBuf) {
     remember_folder(app, path);
 }
 
-fn add_folder(app: &mut AppState, path: PathBuf) {
+pub(crate) fn add_folder(app: &mut AppState, path: PathBuf) {
     let path = normalized_folder(path);
     add_folder_state(app, path);
+    persist_workspace(app);
+}
+
+/// Forget a worktree after Git successfully removed it from disk.
+pub(crate) fn forget_worktree(app: &mut AppState, root: &Path) {
+    remove_folder_state(app, root);
+    app.recent_folders.retain(|path| path != root);
+    if app
+        .git_pinned_repository
+        .as_ref()
+        .is_some_and(|(path, _)| path == root)
+    {
+        app.git_pinned_repository = None;
+    }
     persist_workspace(app);
 }
 
