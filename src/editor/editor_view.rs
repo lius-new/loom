@@ -32,6 +32,8 @@ use crate::ui::components::scrollbar::{
     INSET as SCROLLBAR_INSET, MIN_THUMB_LENGTH, thumb as scrollbar_thumb, track as scrollbar_track,
 };
 const TRAILING_CODE_SPACE: f32 = 32.0;
+/// The shortest change mark on the scrollbar, so one line stays visible.
+const MIN_MARK_LENGTH: f32 = 3.0;
 const CURSOR_REVEAL_MARGIN: f32 = 12.0;
 
 #[derive(Clone, Copy, Debug)]
@@ -42,6 +44,36 @@ pub(crate) struct ScrollMetrics {
     pub content_h: f32,
     pub max_x: f32,
     pub max_y: f32,
+}
+
+/// A run of changed lines on the overview ruler.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OverviewMark {
+    /// The run's first line, 0-based.
+    first: usize,
+    lines: usize,
+    change: LineChange,
+}
+
+/// The overview ruler marks of a file's Git `changes`, keyed by 1-based
+/// line; adjacent lines with the same change form one mark.
+fn change_marks(changes: &BTreeMap<usize, LineChange>, line_count: usize) -> Vec<OverviewMark> {
+    let mut marks: Vec<(usize, usize, LineChange)> = Vec::new();
+    for (&line, &change) in changes {
+        let line = line.clamp(1, line_count.max(1));
+        match marks.last_mut() {
+            Some((_, end, last)) if *last == change && *end + 1 >= line => *end = line,
+            _ => marks.push((line, line, change)),
+        }
+    }
+    marks
+        .into_iter()
+        .map(|(first, last, change)| OverviewMark {
+            first: first - 1,
+            lines: last + 1 - first,
+            change,
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -447,6 +479,16 @@ pub fn render(
             || (focused_pane
                 && (s.editor_vertical_scrollbar_dragging
                     || s.editor_horizontal_scrollbar_dragging));
+        if let Some(changes) = git.line_changes.get(&meta.path)
+            && !changes.is_empty()
+        {
+            root = root.child(overview_ruler(
+                rect,
+                metrics,
+                has_horizontal,
+                &change_marks(changes, lines.len()),
+            ));
+        }
         if has_vertical {
             root = root.child(vertical_scrollbar(
                 pane,
@@ -498,6 +540,59 @@ pub fn render(
     });
 
     crate::ui::track_main_surface_focus(root, state)
+}
+
+/// Git change marks along the editor's right edge, independent of the
+/// scrollbar, which draws over them. Lines map to the ruler as they do to
+/// the scroll range, so a file that fits shows each mark beside its line.
+fn overview_ruler(
+    rect: UiRect,
+    metrics: ScrollMetrics,
+    has_horizontal: bool,
+    marks: &[OverviewMark],
+) -> Element {
+    let corner = if has_horizontal { SCROLLBAR_SIZE } else { 0.0 };
+    let lane = UiRect::new(
+        rect.right - SCROLLBAR_SIZE + 1.0,
+        rect.top,
+        rect.right - SCROLLBAR_SIZE + 5.0,
+        rect.bottom - corner,
+    );
+    let scale = lane.height() / metrics.content_h.max(metrics.viewport_h);
+    let mut ruler = group(lane);
+    let mut last: Option<(f32, f32, LineChange)> = None;
+    let flush = |ruler: Element, (top, bottom, change): (f32, f32, LineChange)| {
+        let color = match change {
+            LineChange::Added => theme::c().diff.add_mark,
+            LineChange::Modified => theme::c().diff.mod_mark,
+            LineChange::Deleted => theme::c().diff.del_mark,
+        };
+        ruler.child(panel(
+            UiRect::new(lane.left, top, lane.right, bottom),
+            VisualStyle::filled(color),
+        ))
+    };
+    for mark in marks {
+        let top = (lane.top + mark.first as f32 * theme::LINE_H * scale)
+            .min(lane.bottom - MIN_MARK_LENGTH);
+        let bottom = (lane.top + (mark.first + mark.lines) as f32 * theme::LINE_H * scale)
+            .max(top + MIN_MARK_LENGTH);
+        // Marks closer than a pixel draw as one, so huge files stay cheap.
+        match &mut last {
+            Some((_, end, change)) if *change == mark.change && top <= *end + 1.0 => {
+                *end = end.max(bottom)
+            }
+            _ => {
+                if let Some(previous) = last.replace((top, bottom, mark.change)) {
+                    ruler = flush(ruler, previous);
+                }
+            }
+        }
+    }
+    if let Some(previous) = last {
+        ruler = flush(ruler, previous);
+    }
+    ruler
 }
 
 pub(crate) fn vertical_scrollbar(
@@ -1355,6 +1450,33 @@ mod tests {
     use lgui::core::{KeyModifiers, KeyboardEvent, LogicalKey};
     use lgui::services::{Clipboard, ClipboardError};
     use std::sync::Mutex;
+
+    #[test]
+    fn overview_marks_join_adjacent_lines_of_the_same_change() {
+        let changes = BTreeMap::from([
+            (1, LineChange::Added),
+            (2, LineChange::Added),
+            (3, LineChange::Modified),
+            (5, LineChange::Modified),
+            (6, LineChange::Modified),
+            (10, LineChange::Deleted),
+            // A deletion after the last line marks the end of the file.
+            (11, LineChange::Deleted),
+        ]);
+        let runs = change_marks(&changes, 10)
+            .iter()
+            .map(|mark| (mark.first, mark.lines, mark.change))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            runs,
+            [
+                (0, 2, LineChange::Added),
+                (2, 1, LineChange::Modified),
+                (4, 2, LineChange::Modified),
+                (9, 1, LineChange::Deleted),
+            ]
+        );
+    }
 
     #[derive(Default)]
     struct TestClipboard {
