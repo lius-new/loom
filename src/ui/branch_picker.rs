@@ -1,4 +1,4 @@
-//! Branch picker opened from the status bar's Git badge.
+//! Branch picker opened from the title bar's repository badge.
 //!
 //! Lists the repository's local branches, then its remote-tracking branches,
 //! filtered by the query. A query that names no branch offers to create it.
@@ -341,11 +341,11 @@ fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Elem
     precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
 }
 
-/// The picker card, anchored above the status bar whose top is `bottom`.
+/// The picker card, dropped down below the title bar whose bottom is `top`.
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     viewport: UiRect,
-    bottom: f32,
+    top: f32,
     picker: &BranchPicker,
     query: &str,
     state: State<AppState>,
@@ -377,7 +377,7 @@ pub fn render(
         viewport.left + 8.0,
         (viewport.right - 8.0 - card_w).max(viewport.left + 8.0),
     );
-    let card = UiRect::new(left, bottom - 4.0 - card_h, left + card_w, bottom - 4.0);
+    let card = UiRect::new(left, top + 4.0, left + card_w, top + 4.0 + card_h);
 
     // Invisible backdrop: a press outside the card closes the picker.
     let close_state = state.clone();

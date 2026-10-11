@@ -986,7 +986,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     // ---- Compose chrome (back-to-front) -------------------------------
-    root = root.child(titlebar::render(titlebar_rect, state.clone()));
+    root = root.child(titlebar::render(
+        titlebar_rect,
+        state.clone(),
+        git_store.clone(),
+    ));
 
     for (&(pane, strip), &(_, body)) in strips.iter().zip(bodies.iter()) {
         root = root.child(tabs::render(
@@ -1085,7 +1089,6 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.child(statusbar::render(
         statusbar_rect,
         state.clone(),
-        git_store.clone(),
         editor_focus.clone(),
         terminal_focus.clone(),
         terminal_tabs.clone(),
@@ -1137,7 +1140,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     if let Some(picker) = &s.branch_picker {
         root = root.child(branch_picker::render(
             vp,
-            statusbar_rect.top,
+            titlebar_rect.bottom,
             picker,
             s.branch_picker_input.text(),
             state.clone(),

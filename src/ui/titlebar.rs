@@ -1,4 +1,5 @@
-//! Custom frameless title bar with native window controls on the far right.
+//! Custom frameless title bar: repository controls on the left, native
+//! window controls on the far right.
 //!
 //! The bar is marked as a native window drag region; interactive children
 //! (the buttons) are excluded automatically by hit testing.
@@ -9,6 +10,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
 
+use crate::git::GitStoreSnapshot;
 use crate::input::action::Action;
 use crate::state::AppState;
 use crate::theme;
@@ -96,8 +98,11 @@ fn window_icon_rect(button: UiRect, scale: UiScale) -> UiRect {
     scale.logical_rect(PhysicalRect::new(left, top, left + size, top + size))
 }
 
-pub fn render(rect: UiRect, state: State<AppState>) -> Element {
+pub fn render(rect: UiRect, state: State<AppState>, git_store: State<GitStoreSnapshot>) -> Element {
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar)).window_drag_region();
+
+    // ---- Left: repository, branch and sync ----------------------------
+    bar = super::git_badge::attach(bar, rect, rect.left + 8.0, state.clone(), git_store);
 
     // ---- Right cluster (anchored to the window controls) --------------
     // Flush with the window edge, like native caption buttons, so the close

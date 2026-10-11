@@ -317,7 +317,7 @@ pub struct AppState {
     pub git_application: Option<lgui::ApplicationHandle>,
     pub git_open_diff_sequence: u64,
     pub git_diff_loading: Option<crate::git::DiffRequest>,
-    /// The status bar's branch picker, while it is open.
+    /// The title bar's branch picker, while it is open.
     pub branch_picker: Option<crate::ui::branch_picker::BranchPicker>,
     /// The picker's filter. Kept outside `branch_picker` so the input's
     /// binding stays valid while the picker closes under it.

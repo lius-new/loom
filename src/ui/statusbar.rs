@@ -1,7 +1,6 @@
 //! Status bar: cursor position, indent mode, encoding, and language badge,
-//! grouped at the right edge. The terminal and Source Control toggles and the
-//! branch badge, which opens the branch picker, sit on the left, followed by
-//! the sync button.
+//! grouped at the right edge. The terminal and Source Control toggles sit on
+//! the left; repository controls live in the title bar.
 //!
 //! Items are laid out from measured text widths so every gap is uniform, and
 //! each text rect carries a small right margin so glyphs are never clipped by
@@ -11,13 +10,10 @@
 //! only the universal editor settings (indent mode, encoding) remain.
 
 use lgui::core::{
-    CursorIcon, EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId,
-    precompiled,
+    EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId, precompiled,
 };
-use lgui::prelude::{Color, Element, State, TextStyle, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::git::{GitStoreSnapshot, RepositorySnapshot, RepositoryState};
-use crate::git_actions::{self, SyncPlan};
 use crate::input::action::Action;
 use crate::state::AppState;
 use crate::terminal_session::TerminalTabs;
@@ -41,13 +37,11 @@ fn measure(s: &str, weight: i32) -> f32 {
 pub fn render(
     rect: UiRect,
     state: State<AppState>,
-    git_store: State<GitStoreSnapshot>,
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
     terminal_tabs: State<TerminalTabs>,
 ) -> Element {
     let s = state.get();
-    let git = git_store.get();
 
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
@@ -185,57 +179,7 @@ pub fn render(
             )),
     );
 
-    // Branch badge: opens the branch picker.
-    let badge_left = scm_slot.right + 4.0;
-    let (badge, mut git_right) = badge_element(
-        rect,
-        badge_left,
-        git_badge_pieces(&git),
-        s.branch_picker.is_some(),
-    );
-    let git_state = state.clone();
-    let git_click_store = git_store.clone();
-    bar = bar.child(
-        badge
-            .event_policy(EventPolicy::INTERACTIVE)
-            .semantics(Semantics::new(SemanticRole::Button).name("Switch branch"))
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                super::branch_picker::open(&git_state, &git_click_store, badge_left);
-            }),
-    );
-
-    // Sync button: publish, pull, push or fetch, whichever is due.
-    if let Some(repository) = git.active()
-        && let Some(plan) = git_actions::sync_plan(repository)
-    {
-        let enabled = git.operation.is_none();
-        let color = if enabled {
-            theme::c().text_muted
-        } else {
-            theme::c().text_ghost
-        };
-        let (sync, right) =
-            badge_element(rect, git_right, sync_pieces(repository, plan, color), false);
-        git_right = right;
-        let sync_state = state.clone();
-        let sync_store = git_store.clone();
-        bar = bar.child(
-            sync.event_policy(EventPolicy::INTERACTIVE)
-                .semantics(Semantics::new(SemanticRole::Button).name(sync_name(plan)))
-                .cursor(if enabled {
-                    CursorIcon::Pointer
-                } else {
-                    CursorIcon::NotAllowed
-                })
-                .on_click(move || {
-                    if enabled {
-                        git_actions::sync(&sync_state, &sync_store);
-                    }
-                }),
-        );
-    }
-    let mut left = git_right + GAP;
+    let mut left = scm_slot.right + GAP;
     if s.git_diff_loading.is_some() {
         bar = bar.child(text(
             UiRect::new(left, rect.top, left + 140.0, rect.bottom),
@@ -243,14 +187,6 @@ pub fn render(
             theme::mono(theme::c().text_dim, theme::SMALL),
         ));
         left += 140.0 + GAP;
-    }
-    if let Some(operation) = &git.operation {
-        bar = bar.child(text(
-            UiRect::new(left, rect.top, left + 180.0, rect.bottom),
-            operation.message.clone(),
-            theme::mono(theme::c().text_dim, theme::SMALL),
-        ));
-        left += 180.0 + GAP;
     }
     if crate::editor::vim_input::is_active(&s) {
         for (label, style) in vim_items(&s.vim) {
@@ -287,223 +223,6 @@ pub fn render(
     ));
 
     bar
-}
-
-const BADGE_ICON: f32 = 12.0;
-/// Gap between an icon and the text it labels.
-const ICON_GAP: f32 = 4.0;
-/// Gap between the badge's groups: branch, operation, sync state.
-const GROUP_GAP: f32 = 8.0;
-
-enum BadgePiece {
-    Icon {
-        id: &'static str,
-        key: &'static str,
-        color: Color,
-    },
-    Text {
-        label: String,
-        style: TextStyle,
-    },
-}
-
-impl BadgePiece {
-    fn width(&self) -> f32 {
-        match self {
-            Self::Icon { .. } => BADGE_ICON,
-            Self::Text { label, style } => measure(label, style.weight),
-        }
-    }
-}
-
-/// The branch badge's contents, each with the gap before it: the branch
-/// (`*` when dirty), then an operation in progress.
-fn git_badge_pieces(git: &GitStoreSnapshot) -> Vec<(f32, BadgePiece)> {
-    let Some(repository) = git.active() else {
-        let color = theme::c().text_ghost;
-        return vec![
-            (
-                0.0,
-                BadgePiece::Icon {
-                    id: "statusbar.git",
-                    key: "git-branch",
-                    color,
-                },
-            ),
-            (
-                ICON_GAP,
-                BadgePiece::Text {
-                    label: "No Git".into(),
-                    style: theme::mono(color, theme::SMALL),
-                },
-            ),
-        ];
-    };
-    let dirty = git
-        .presentation
-        .repositories
-        .get(&repository.id)
-        .is_some_and(|prepared| prepared.dirty_count > 0);
-    let color = if dirty {
-        theme::c().warning
-    } else {
-        theme::c().text_muted
-    };
-    let mut pieces = vec![
-        (
-            0.0,
-            BadgePiece::Icon {
-                id: "statusbar.git",
-                key: "git-branch",
-                color,
-            },
-        ),
-        (
-            ICON_GAP,
-            BadgePiece::Text {
-                label: format!(
-                    "{}{}",
-                    repository.branch_label(),
-                    if dirty { "*" } else { "" }
-                ),
-                style: theme::mono(color, theme::SMALL),
-            },
-        ),
-    ];
-    if let Some(label) = operation_label(repository.repository_state) {
-        pieces.push((
-            GROUP_GAP,
-            BadgePiece::Text {
-                label: label.into(),
-                style: theme::mono_bold(theme::c().warning, theme::SMALL),
-            },
-        ));
-    }
-    pieces
-}
-
-/// The sync button's contents: a publish icon for a branch with no
-/// upstream, else the sync icon with the commits behind and ahead.
-fn sync_pieces(
-    repository: &RepositorySnapshot,
-    plan: SyncPlan,
-    color: Color,
-) -> Vec<(f32, BadgePiece)> {
-    if plan == SyncPlan::Publish {
-        return vec![(
-            0.0,
-            BadgePiece::Icon {
-                id: "statusbar.git.publish",
-                key: "cloud-upload",
-                color,
-            },
-        )];
-    }
-    let mut pieces = vec![(
-        0.0,
-        BadgePiece::Icon {
-            id: "statusbar.git.sync",
-            key: "sync",
-            color,
-        },
-    )];
-    for (count, id, key) in [
-        (repository.behind, "statusbar.git.behind", "arrow-down"),
-        (repository.ahead, "statusbar.git.ahead", "arrow-up"),
-    ] {
-        if count > 0 {
-            pieces.push((ICON_GAP, BadgePiece::Icon { id, key, color }));
-            pieces.push((
-                1.0,
-                BadgePiece::Text {
-                    label: count.to_string(),
-                    style: theme::mono(color, theme::SMALL),
-                },
-            ));
-        }
-    }
-    pieces
-}
-
-/// What the sync button says it will do, for assistive technology.
-fn sync_name(plan: SyncPlan) -> &'static str {
-    match plan {
-        SyncPlan::Publish => "Publish branch",
-        SyncPlan::Fetch => "Fetch from remote",
-        SyncPlan::Pull { then_push: true } => "Pull and push changes",
-        SyncPlan::Pull { then_push: false } => "Pull changes",
-        SyncPlan::Push => "Push changes",
-    }
-}
-
-/// A status bar badge laid out from `pieces`, its left edge at `left`.
-/// Returns it without a click handler, and its right edge.
-fn badge_element(
-    bar: UiRect,
-    left: f32,
-    pieces: Vec<(f32, BadgePiece)>,
-    highlighted: bool,
-) -> (Element, f32) {
-    let pad = 7.0;
-    let height = 16.0;
-    let width = pad * 2.0
-        + pieces
-            .iter()
-            .map(|(gap, piece)| gap + piece.width())
-            .sum::<f32>()
-        + TEXT_MARGIN;
-    let slot = UiRect::new(left, bar.top, left + width, bar.bottom);
-    let top = bar.top + (bar.height() - height) / 2.0;
-    let visual = UiRect::new(slot.left, top, slot.right, top + height);
-    let mut badge = panel(slot, VisualStyle::default()).child(panel(
-        visual,
-        if highlighted {
-            VisualStyle::filled(theme::c().active_line).radius(3.0)
-        } else {
-            VisualStyle::default()
-        },
-    ));
-    let mut x = visual.left + pad;
-    for (gap, piece) in pieces {
-        x += gap;
-        let width = piece.width();
-        badge = match piece {
-            BadgePiece::Icon { id, key, color } => badge.child(precompiled(
-                UiElement::icon(
-                    UiId::new(id),
-                    UiRect::new(
-                        x,
-                        top + (height - BADGE_ICON) / 2.0,
-                        x + BADGE_ICON,
-                        top + (height + BADGE_ICON) / 2.0,
-                    ),
-                    key,
-                )
-                .icon_style(IconStyle::new(color)),
-            )),
-            BadgePiece::Text { label, style } => badge.child(text(
-                UiRect::new(x, visual.top, x + width + TEXT_MARGIN, visual.bottom),
-                label,
-                style,
-            )),
-        };
-        x += width;
-    }
-    (badge, slot.right)
-}
-
-/// The badge label for an operation Git is in the middle of.
-fn operation_label(state: RepositoryState) -> Option<&'static str> {
-    match state {
-        RepositoryState::MergeInProgress => Some("MERGING"),
-        RepositoryState::RebaseInProgress => Some("REBASING"),
-        RepositoryState::CherryPickInProgress => Some("CHERRY-PICKING"),
-        RepositoryState::RevertInProgress => Some("REVERTING"),
-        RepositoryState::Bisecting => Some("BISECTING"),
-        RepositoryState::Normal | RepositoryState::DetachedHead | RepositoryState::UnbornBranch => {
-            None
-        }
-    }
 }
 
 /// Vim's mode, then its command line, message or pending keys, and macro

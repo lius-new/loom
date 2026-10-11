@@ -201,7 +201,7 @@ pub fn commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool 
     )
 }
 
-/// What the status bar's sync button does for the checked-out branch.
+/// What the title bar's sync button does for the checked-out branch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyncPlan {
     /// Push a branch with no upstream and make the remote branch its upstream.

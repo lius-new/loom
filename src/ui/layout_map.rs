@@ -1018,7 +1018,6 @@ mod tests {
                 t.select(1);
                 t
             });
-            let git_store = cx.state_with(crate::git::GitStoreSnapshot::default);
             let state = cx.state_with(|| {
                 let mut a = AppState::new();
                 a.show_terminal = true;
@@ -1093,7 +1092,6 @@ mod tests {
             root = root.child(crate::ui::statusbar::render(
                 UiRect::new(0.0, 776.0, 1200.0, 800.0),
                 state.clone(),
-                git_store,
                 editor_focus.clone(),
                 focus.clone(),
                 tabs.clone(),
