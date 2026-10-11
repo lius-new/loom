@@ -89,6 +89,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_icon("search", icondata::VsSearch)
                 .with_icon("discard", icondata::VsDiscard)
                 .with_icon("go-to-file", icondata::VsGoToFile)
+                .with_icon("arrow-left", icondata::VsArrowLeft)
+                .with_icon("arrow-right", icondata::VsArrowRight)
+                .with_icon("git-stash", icondata::VsGitStash)
+                .with_icon("git-stash-apply", icondata::VsGitStashApply)
+                .with_icon("git-stash-pop", icondata::VsGitStashPop)
+                .with_icon("trash", icondata::VsTrash)
                 // No Codicon equivalent yet.
                 .with_icon("git-branch", icondata::LuGitBranch)
                 .with_icon("command", icondata::LuCommand)

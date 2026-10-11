@@ -1,12 +1,13 @@
 //! Modal confirmation for Source Control actions that need a second look:
-//! discarding changes, or committing when nothing is staged.
+//! discarding changes, committing when nothing is staged, aborting an
+//! operation in progress and dropping a stash.
 
 use std::path::PathBuf;
 
 use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId};
 use lgui::prelude::{Element, State, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::git::GitStoreSnapshot;
+use crate::git::{GitStoreSnapshot, RepositoryState};
 use crate::git_actions;
 use crate::input::action::Action;
 use crate::state::AppState;
@@ -23,6 +24,14 @@ pub enum GitConfirmAction {
         untracked: Vec<PathBuf>,
     },
     StageAllAndCommit,
+    AbortOperation {
+        repository: PathBuf,
+        operation: RepositoryState,
+    },
+    DropStash {
+        repository: PathBuf,
+        oid: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +65,15 @@ fn resolve(state: &State<AppState>, store: &State<GitStoreSnapshot>, confirmed: 
         }
         GitConfirmAction::StageAllAndCommit => {
             git_actions::commit_all(state, store);
+        }
+        GitConfirmAction::AbortOperation {
+            repository,
+            operation,
+        } => {
+            git_actions::abort_operation(state, store, &repository, operation);
+        }
+        GitConfirmAction::DropStash { repository, oid } => {
+            git_actions::drop_stash(state, store, &repository, oid);
         }
     }
 }

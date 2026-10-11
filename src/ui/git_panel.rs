@@ -8,7 +8,10 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
-use crate::git::{ChangeKind, DiffTarget, FileState, GitStoreSnapshot};
+use crate::git::{
+    ChangeKind, ConflictSide, DiffTarget, FileState, GitStoreSnapshot, RepositorySnapshot,
+    RepositoryState, StashInfo,
+};
 use crate::state::AppState;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::ui::components::scrollbar;
@@ -77,32 +80,54 @@ pub fn render(
     };
 
     let prompt_top = rect.bottom - PROMPT_H;
-    let content_rect = UiRect::new(
-        rect.left,
-        rect.top + TOPLINE_H,
-        rect.right - 8.0,
-        prompt_top,
-    );
-    let mut content = Vec::new();
     let prepared = git.presentation.repositories.get(&repository.id);
     let sections = prepared.map(|prepared| &prepared.sections);
-    let content_height = 8.0
-        + (0..4)
-            .map(|filter| {
-                let count = sections.map_or(0, |sections| sections[filter].len());
-                if count == 0 {
+    let mut banner_bottom = rect.top + TOPLINE_H;
+    if let Some(label) = operation_label(repository) {
+        let banner = UiRect::new(
+            rect.left,
+            banner_bottom,
+            rect.right,
+            banner_bottom + BANNER_H,
+        );
+        let conflicts = sections.is_some_and(|sections| !sections[CONFLICTS as usize].is_empty());
+        root = root.child(operation_banner(
+            banner,
+            label,
+            repository.repository_state,
+            conflicts,
+            git.operation.is_none(),
+            state.clone(),
+            store.clone(),
+        ));
+        banner_bottom = banner.bottom;
+    }
+    let content_rect = UiRect::new(rect.left, banner_bottom, rect.right - 8.0, prompt_top);
+    let mut content = Vec::new();
+    let section_height = |filter: u8, count: usize| {
+        if count == 0 {
+            0.0
+        } else {
+            SECTION_H
+                + 10.0
+                + if app.git_collapsed_sections.contains(&filter) {
                     0.0
                 } else {
-                    SECTION_H
-                        + 10.0
-                        + if app.git_collapsed_sections.contains(&(filter as u8)) {
-                            0.0
-                        } else {
-                            count as f32 * ROW_H
-                        }
+                    count as f32 * ROW_H
                 }
+        }
+    };
+    let content_height = 8.0
+        + [CONFLICTS, STAGED, UNSTAGED, UNTRACKED]
+            .into_iter()
+            .map(|filter| {
+                section_height(
+                    filter,
+                    sections.map_or(0, |sections| sections[filter as usize].len()),
+                )
             })
-            .sum::<f32>();
+            .sum::<f32>()
+        + section_height(STASHES, repository.stashes.len());
     let max_scroll = (content_height - content_rect.height()).max(0.0);
     let scroll = app.git_scroll.clamp(0.0, max_scroll);
     let mut y = content_rect.top + 8.0;
@@ -119,65 +144,10 @@ pub fn render(
             continue;
         }
         let collapsed = app.git_collapsed_sections.contains(&filter);
-        let section_icon_id = match filter {
-            CONFLICTS => "git-section-conflicts-chevron",
-            STAGED => "git-section-staged-chevron",
-            UNSTAGED => "git-section-unstaged-chevron",
-            _ => "git-section-untracked-chevron",
-        };
-        let section_icon = if collapsed {
-            "chevron-right"
-        } else {
-            "chevron-down"
-        };
-        let section_state = state.clone();
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
         hover_targets.push((section_rect, GitHover::Section(filter)));
-        let section_hovered = app.git_hover == Some(GitHover::Section(filter));
-        let mut section = panel(section_rect, VisualStyle::default())
-            .key(format!("git-section-{filter}"))
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                section_state.update(move |app| {
-                    if !app.git_collapsed_sections.insert(filter) {
-                        app.git_collapsed_sections.remove(&filter);
-                    }
-                });
-            })
-            .child(super::sidebar::drawer_icon(
-                section_icon_id,
-                section_icon,
-                theme::icon_rect(UiRect::new(
-                    rect.left + 9.0,
-                    y + 5.0,
-                    rect.left + 21.0,
-                    y + 17.0,
-                )),
-                theme::c().text_ghost,
-            ))
-            .child(text(
-                UiRect::new(
-                    rect.left + 25.0,
-                    y,
-                    content_rect.right - 38.0,
-                    y + SECTION_H,
-                ),
-                title,
-                theme::mono(theme::c().text_ghost, theme::SMALL),
-            ))
-            .child(text(
-                UiRect::new(
-                    content_rect.right - 38.0,
-                    y,
-                    content_rect.right - 12.0,
-                    y + SECTION_H,
-                ),
-                files.len().to_string(),
-                theme::mono_right(theme::c().text_ghost, theme::SMALL),
-            ));
-        if section_hovered {
-            let buttons = section_actions(filter)
+        let buttons = if app.git_hover == Some(GitHover::Section(filter)) {
+            section_actions(filter)
                 .iter()
                 .map(|&action| {
                     let action_state = state.clone();
@@ -192,10 +162,19 @@ pub fn render(
                         }),
                     }
                 })
-                .collect();
-            section = row_buttons(section, section_rect, content_rect.right - 40.0, buttons);
-        }
-        content.push(section);
+                .collect()
+        } else {
+            Vec::new()
+        };
+        content.push(section_header(
+            section_rect,
+            filter,
+            title,
+            files.len(),
+            collapsed,
+            buttons,
+            state.clone(),
+        ));
         y += SECTION_H;
         if collapsed {
             y += 10.0;
@@ -239,6 +218,47 @@ pub fn render(
                 store.clone(),
                 editor_focus.clone(),
             ));
+        }
+        y += 10.0;
+    }
+    if !repository.stashes.is_empty() {
+        let collapsed = app.git_collapsed_sections.contains(&STASHES);
+        let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
+        hover_targets.push((section_rect, GitHover::Section(STASHES)));
+        content.push(section_header(
+            section_rect,
+            STASHES,
+            "STASHES",
+            repository.stashes.len(),
+            collapsed,
+            Vec::new(),
+            state.clone(),
+        ));
+        y += SECTION_H;
+        if !collapsed {
+            let rows_top = y;
+            let visible = visible_rows(
+                rows_top,
+                content_rect.top + scroll,
+                content_rect.bottom + scroll,
+                repository.stashes.len(),
+            );
+            y += repository.stashes.len() as f32 * ROW_H;
+            for index in visible {
+                let stash = &repository.stashes[index];
+                let row_y = rows_top + index as f32 * ROW_H;
+                let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
+                let hover = GitHover::Stash(stash.oid.clone());
+                let hovered = app.git_hover.as_ref() == Some(&hover);
+                hover_targets.push((row_rect, hover));
+                content.push(stash_row(
+                    row_rect,
+                    stash,
+                    hovered,
+                    state.clone(),
+                    store.clone(),
+                ));
+            }
         }
         y += 10.0;
     }
@@ -645,12 +665,302 @@ pub const CONFLICTS: u8 = 0;
 pub const STAGED: u8 = 1;
 pub const UNSTAGED: u8 = 2;
 pub const UNTRACKED: u8 = 3;
+/// Listed after the change sections; its rows come from the snapshot.
+pub const STASHES: u8 = 4;
 
 /// The drawer row under the pointer, which shows its action buttons.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitHover {
     Section(u8),
     File(u8, PathBuf),
+    /// A stash, by commit id.
+    Stash(String),
+}
+
+const BANNER_H: f32 = 30.0;
+
+/// A collapsible section title with its count, and `buttons` on its right.
+fn section_header(
+    rect: UiRect,
+    filter: u8,
+    title: &'static str,
+    count: usize,
+    collapsed: bool,
+    buttons: Vec<RowButton>,
+    state: State<AppState>,
+) -> Element {
+    let chevron_id = match filter {
+        CONFLICTS => "git-section-conflicts-chevron",
+        STAGED => "git-section-staged-chevron",
+        UNSTAGED => "git-section-unstaged-chevron",
+        UNTRACKED => "git-section-untracked-chevron",
+        _ => "git-section-stashes-chevron",
+    };
+    let section = panel(rect, VisualStyle::default())
+        .key(format!("git-section-{filter}"))
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .on_click(move || {
+            state.update(move |app| {
+                if !app.git_collapsed_sections.insert(filter) {
+                    app.git_collapsed_sections.remove(&filter);
+                }
+            });
+        })
+        .child(super::sidebar::drawer_icon(
+            chevron_id,
+            if collapsed {
+                "chevron-right"
+            } else {
+                "chevron-down"
+            },
+            theme::icon_rect(UiRect::new(
+                rect.left + 9.0,
+                rect.top + 5.0,
+                rect.left + 21.0,
+                rect.top + 17.0,
+            )),
+            theme::c().text_ghost,
+        ))
+        .child(text(
+            UiRect::new(rect.left + 25.0, rect.top, rect.right - 38.0, rect.bottom),
+            title,
+            theme::mono(theme::c().text_ghost, theme::SMALL),
+        ))
+        .child(text(
+            UiRect::new(rect.right - 38.0, rect.top, rect.right - 12.0, rect.bottom),
+            count.to_string(),
+            theme::mono_right(theme::c().text_ghost, theme::SMALL),
+        ));
+    if buttons.is_empty() {
+        section
+    } else {
+        row_buttons(section, rect, rect.right - 40.0, buttons)
+    }
+}
+
+/// A stash: its message, and apply, pop and drop while hovered.
+fn stash_row(
+    rect: UiRect,
+    stash: &StashInfo,
+    hovered: bool,
+    state: State<AppState>,
+    store: State<GitStoreSnapshot>,
+) -> Element {
+    let trailing_w = if hovered { BUTTON_W * 3.0 + 12.0 } else { 64.0 };
+    let mut row = panel(
+        rect,
+        if hovered {
+            VisualStyle::filled(theme::c().surface)
+        } else {
+            VisualStyle::default()
+        },
+    )
+    .key(format!("git-stash-{}", stash.oid))
+    .child(super::sidebar::drawer_icon(
+        "git-stash-row-icon",
+        "git-stash",
+        UiRect::new(
+            rect.left + 11.0,
+            rect.top + (rect.height() - 12.0) / 2.0,
+            rect.left + 23.0,
+            rect.top + (rect.height() + 12.0) / 2.0,
+        ),
+        theme::c().text_ghost,
+    ))
+    .child(
+        clip(
+            UiRect::new(
+                rect.left + 30.0,
+                rect.top,
+                rect.right - trailing_w,
+                rect.bottom,
+            ),
+            0.0,
+            0.0,
+        )
+        .child(text(
+            UiRect::new(rect.left + 30.0, rect.top, rect.left + 2000.0, rect.bottom),
+            stash.message.clone(),
+            theme::mono(
+                if hovered {
+                    theme::c().text
+                } else {
+                    theme::c().text_dim
+                },
+                theme::SMALL,
+            ),
+        )),
+    );
+    if !hovered {
+        return row.child(text(
+            UiRect::new(rect.right - 62.0, rect.top, rect.right - 12.0, rect.bottom),
+            format!("stash@{{{}}}", stash.index),
+            theme::mono_right(theme::c().text_ghost, 9.0),
+        ));
+    }
+    let buttons = [
+        ("git-stash-apply", "Apply Stash", StashAction::Apply),
+        ("git-stash-pop", "Pop Stash", StashAction::Pop),
+        ("trash", "Drop Stash", StashAction::Drop),
+    ]
+    .into_iter()
+    .map(|(icon, name, action)| {
+        let action_state = state.clone();
+        let action_store = store.clone();
+        let oid = stash.oid.clone();
+        RowButton {
+            key: format!("git-stash-{}-{action:?}", stash.oid),
+            icon,
+            name,
+            on_click: Box::new(move || match action {
+                StashAction::Apply => {
+                    git_actions::apply_stash(&action_state, &action_store, oid.clone(), false);
+                }
+                StashAction::Pop => {
+                    git_actions::apply_stash(&action_state, &action_store, oid.clone(), true);
+                }
+                StashAction::Drop => {
+                    git_actions::request_drop_stash(&action_state, &action_store, oid.clone());
+                }
+            }),
+        }
+    })
+    .collect();
+    row = row_buttons(row, rect, rect.right - 8.0, buttons);
+    row
+}
+
+#[derive(Clone, Copy, Debug)]
+enum StashAction {
+    Apply,
+    Pop,
+    Drop,
+}
+
+/// The banner label for an operation in progress, with rebase progress.
+fn operation_label(repository: &RepositorySnapshot) -> Option<String> {
+    let label = match repository.repository_state {
+        RepositoryState::MergeInProgress => "MERGING",
+        RepositoryState::RebaseInProgress => "REBASING",
+        RepositoryState::CherryPickInProgress => "CHERRY-PICKING",
+        RepositoryState::RevertInProgress => "REVERTING",
+        RepositoryState::Bisecting => "BISECTING",
+        RepositoryState::Normal | RepositoryState::DetachedHead | RepositoryState::UnbornBranch => {
+            return None;
+        }
+    };
+    Some(match repository.operation_step {
+        Some((step, total)) => format!("{label} {step}/{total}"),
+        None => label.to_owned(),
+    })
+}
+
+/// The operation in progress, with Continue (not while conflicts remain or
+/// another Git command runs) and Abort.
+fn operation_banner(
+    rect: UiRect,
+    label: String,
+    operation: RepositoryState,
+    conflicts: bool,
+    idle: bool,
+    state: State<AppState>,
+    store: State<GitStoreSnapshot>,
+) -> Element {
+    let mut banner = panel(rect, VisualStyle::filled(theme::c().surface))
+        .child(panel(
+            UiRect::new(rect.left, rect.top, rect.left + 2.0, rect.bottom),
+            VisualStyle::filled(theme::c().warning),
+        ))
+        .child(panel(
+            UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
+            VisualStyle::filled(theme::c().border),
+        ));
+    let mut right = rect.right - 8.0;
+    let abort_label = if operation == RepositoryState::Bisecting {
+        "End"
+    } else {
+        "Abort"
+    };
+    let abort_state = state.clone();
+    let abort_store = store.clone();
+    let (abort, abort_left) = text_button(right, rect, abort_label, false, idle, move || {
+        git_actions::request_abort(&abort_state, &abort_store);
+    });
+    banner = banner.child(abort);
+    right = abort_left - 6.0;
+    // Bisect has no continue; its steps run from the terminal.
+    if operation != RepositoryState::Bisecting {
+        let (button, left) = text_button(
+            right,
+            rect,
+            "Continue",
+            true,
+            idle && !conflicts,
+            move || {
+                git_actions::continue_operation(&state, &store);
+            },
+        );
+        banner = banner.child(button);
+        right = left - 6.0;
+    }
+    let label_w = super::tabs::measure(&label, theme::SMALL, 700) + 6.0;
+    banner = banner.child(text(
+        UiRect::new(
+            rect.left + 12.0,
+            rect.top,
+            rect.left + 12.0 + label_w,
+            rect.bottom,
+        ),
+        label,
+        theme::mono_bold(theme::c().warning, theme::SMALL),
+    ));
+    if conflicts {
+        banner = banner.child(text(
+            UiRect::new(rect.left + 18.0 + label_w, rect.top, right, rect.bottom),
+            "Resolve conflicts",
+            theme::mono(theme::c().text_dim, theme::SMALL),
+        ));
+    }
+    banner
+}
+
+/// A small text button ending at `right`, vertically centered in `bar`.
+/// Returns it and its left edge.
+fn text_button(
+    right: f32,
+    bar: UiRect,
+    label: &'static str,
+    primary: bool,
+    enabled: bool,
+    on_click: impl Fn() + Send + Sync + 'static,
+) -> (Element, f32) {
+    let width = super::tabs::measure(label, theme::SMALL, 600) + 16.0;
+    let top = bar.top + (bar.height() - 20.0) / 2.0;
+    let rect = UiRect::new(right - width, top, right, top + 20.0);
+    let (fill, color) = match (primary, enabled) {
+        (_, false) => (theme::c().sidebar, theme::c().text_ghost),
+        (true, true) => (theme::c().accent, theme::c().on_accent),
+        (false, true) => (theme::c().sidebar, theme::c().text_soft),
+    };
+    let mut style = theme::mono_bold(color, theme::SMALL);
+    style.align = lgui::prelude::TextAlign::Center;
+    let button = theme::bordered(rect, fill, theme::c().border, 3.0, 1.0)
+        .key(format!("git-banner-{label}"))
+        .event_policy(EventPolicy::INTERACTIVE)
+        .semantics(Semantics::new(SemanticRole::Button).name(label))
+        .cursor(if enabled {
+            CursorIcon::Pointer
+        } else {
+            CursorIcon::NotAllowed
+        })
+        .on_click(move || {
+            if enabled {
+                on_click();
+            }
+        })
+        .child(text(rect, label, style));
+    (button, rect.left)
 }
 
 const BUTTON_W: f32 = 20.0;
@@ -661,6 +971,10 @@ enum RowAction {
     Stage,
     Unstage,
     Discard,
+    /// Resolve a conflict with the checked-out side (`--ours`).
+    KeepCurrent,
+    /// Resolve a conflict with the side being merged in (`--theirs`).
+    TakeIncoming,
 }
 
 /// Buttons on a section header, left to right.
@@ -677,7 +991,12 @@ fn section_actions(section: u8) -> &'static [RowAction] {
 fn file_actions(section: u8) -> &'static [RowAction] {
     match section {
         STAGED => &[RowAction::OpenFile, RowAction::Unstage],
-        CONFLICTS => &[RowAction::OpenFile, RowAction::Stage],
+        CONFLICTS => &[
+            RowAction::OpenFile,
+            RowAction::KeepCurrent,
+            RowAction::TakeIncoming,
+            RowAction::Stage,
+        ],
         _ => &[RowAction::OpenFile, RowAction::Discard, RowAction::Stage],
     }
 }
@@ -689,12 +1008,14 @@ impl RowAction {
             Self::Stage => "plus",
             Self::Unstage => "minus",
             Self::Discard => "discard",
+            Self::KeepCurrent => "arrow-left",
+            Self::TakeIncoming => "arrow-right",
         }
     }
 
     fn section_name(self, section: u8) -> &'static str {
         match self {
-            Self::OpenFile => "Open File",
+            Self::OpenFile | Self::KeepCurrent | Self::TakeIncoming => self.file_name(section),
             Self::Stage => "Stage All Changes",
             Self::Unstage => "Unstage All Changes",
             Self::Discard if section == UNTRACKED => "Delete All Untracked Files",
@@ -710,6 +1031,8 @@ impl RowAction {
             Self::Unstage => "Unstage Changes",
             Self::Discard if section == UNTRACKED => "Delete File",
             Self::Discard => "Discard Changes",
+            Self::KeepCurrent => "Keep Current (Ours)",
+            Self::TakeIncoming => "Take Incoming (Theirs)",
         }
     }
 
@@ -735,6 +1058,16 @@ impl RowAction {
             }
             Self::Discard => {
                 git_actions::request_discard(state, store, paths, Vec::new());
+            }
+            Self::KeepCurrent | Self::TakeIncoming => {
+                let side = if self == Self::KeepCurrent {
+                    ConflictSide::Ours
+                } else {
+                    ConflictSide::Theirs
+                };
+                for path in paths {
+                    git_actions::resolve_conflict(state, store, path, side);
+                }
             }
         }
     }
@@ -978,6 +1311,36 @@ mod action_tests {
     use super::*;
 
     #[test]
+    fn the_banner_names_the_operation_and_rebase_progress() {
+        let mut repository = RepositorySnapshot {
+            id: crate::git::RepositoryId(1),
+            worktree_root: PathBuf::from("repo"),
+            git_dir: PathBuf::from("repo/.git"),
+            common_dir: PathBuf::from("repo/.git"),
+            head: crate::git::HeadState::Branch("main".into()),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            files: Default::default(),
+            ignored: Default::default(),
+            repository_state: RepositoryState::Normal,
+            operation_step: None,
+            stashes: Default::default(),
+            features: Default::default(),
+            generation: 0,
+        };
+        assert_eq!(operation_label(&repository), None);
+        repository.repository_state = RepositoryState::MergeInProgress;
+        assert_eq!(operation_label(&repository).as_deref(), Some("MERGING"));
+        repository.repository_state = RepositoryState::RebaseInProgress;
+        repository.operation_step = Some((2, 5));
+        assert_eq!(
+            operation_label(&repository).as_deref(),
+            Some("REBASING 2/5")
+        );
+    }
+
+    #[test]
     fn each_section_offers_its_actions() {
         assert_eq!(section_actions(STAGED), [RowAction::Unstage]);
         assert_eq!(
@@ -987,7 +1350,12 @@ mod action_tests {
         assert!(section_actions(CONFLICTS).is_empty());
         assert_eq!(
             file_actions(CONFLICTS),
-            [RowAction::OpenFile, RowAction::Stage]
+            [
+                RowAction::OpenFile,
+                RowAction::KeepCurrent,
+                RowAction::TakeIncoming,
+                RowAction::Stage
+            ]
         );
         assert_eq!(RowAction::Stage.file_name(CONFLICTS), "Mark as Resolved");
         assert_eq!(RowAction::Discard.file_name(UNTRACKED), "Delete File");

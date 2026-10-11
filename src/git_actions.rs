@@ -9,8 +9,8 @@ use lgui::prelude::State;
 use crate::git::error::GitErrorKind;
 use crate::git::store::operation;
 use crate::git::{
-    CliGitBackend, GitError, GitResult, GitService, GitStoreSnapshot, HeadState, OperationKind,
-    RemoteInfo, RepositorySnapshot,
+    CliGitBackend, ConflictSide, GitError, GitResult, GitService, GitStoreSnapshot, HeadState,
+    OperationKind, RemoteInfo, RepositorySnapshot, RepositoryState,
 };
 use crate::state::AppState;
 use crate::ui::branch_picker::{BranchListing, Checkout};
@@ -362,6 +362,271 @@ fn commit_paths(
             })
         },
         |app, _| app.git_commit_amend = false,
+    )
+}
+
+/// The active repository, unless an open editor buffer under it has unsaved
+/// changes that an operation rewriting the worktree could conflict with.
+fn repository_without_unsaved(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    doing: &str,
+) -> Option<RepositorySnapshot> {
+    let repository = active_repository(store)?;
+    if state
+        .get()
+        .workspace
+        .has_dirty_paths_under(&repository.worktree_root)
+    {
+        let message = format!("Save or revert the open editor changes before {doing}.");
+        state.update(move |app| app.show_toast(message));
+        return None;
+    }
+    Some(repository)
+}
+
+/// Continue the merge, rebase, cherry-pick or revert in progress.
+pub fn continue_operation(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+    let Some(repository) = repository_without_unsaved(state, store, "continuing") else {
+        return false;
+    };
+    let operation = repository.repository_state;
+    run(
+        state,
+        store,
+        repository,
+        OperationKind::Other,
+        "Continuing…",
+        move |service, root| {
+            service.write(root, |backend| backend.continue_operation(root, operation))
+        },
+    )
+}
+
+/// Ask before aborting the operation in progress, which discards its work.
+pub fn request_abort(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+    let Some(repository) = repository_without_unsaved(state, store, "aborting") else {
+        return false;
+    };
+    let operation = repository.repository_state;
+    let (title, message) = match operation {
+        RepositoryState::MergeInProgress => (
+            "Abort the merge?",
+            "The branch returns to where it was before the merge.",
+        ),
+        RepositoryState::RebaseInProgress => (
+            "Abort the rebase?",
+            "The branch returns to where it was before the rebase.",
+        ),
+        RepositoryState::CherryPickInProgress => (
+            "Abort the cherry-pick?",
+            "The branch returns to where it was before the cherry-pick.",
+        ),
+        RepositoryState::RevertInProgress => (
+            "Abort the revert?",
+            "The branch returns to where it was before the revert.",
+        ),
+        RepositoryState::Bisecting => (
+            "End the bisect?",
+            "Git checks out the branch you started bisecting from.",
+        ),
+        _ => return false,
+    };
+    let root = repository.worktree_root;
+    state.update(move |app| {
+        app.git_confirm = Some(GitConfirm {
+            title: title.into(),
+            message: format!("{message} Conflict resolutions made so far are lost."),
+            confirm_label: if operation == RepositoryState::Bisecting {
+                "End Bisect"
+            } else {
+                "Abort"
+            },
+            destructive: true,
+            action: GitConfirmAction::AbortOperation {
+                repository: root,
+                operation,
+            },
+            restore_terminal: app.terminal_focused,
+        });
+    });
+    true
+}
+
+/// Abort a confirmed operation in progress.
+pub fn abort_operation(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    operation: RepositoryState,
+) -> bool {
+    let Some(repository) = store.get().repository_for_path(root).cloned() else {
+        return false;
+    };
+    run(
+        state,
+        store,
+        repository,
+        OperationKind::Other,
+        "Aborting…",
+        move |service, root| {
+            service.write(root, |backend| backend.abort_operation(root, operation))
+        },
+    )
+}
+
+/// Resolve a conflicted file with one side's version and stage it.
+pub fn resolve_conflict(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    path: PathBuf,
+    side: ConflictSide,
+) -> bool {
+    let Some(repository) = active_repository(store) else {
+        return false;
+    };
+    if unsaved(
+        state,
+        &repository.worktree_root,
+        std::slice::from_ref(&path),
+    ) {
+        state.update(|app| {
+            app.show_toast("Save or revert the open editor changes before resolving.")
+        });
+        return false;
+    }
+    let message = count_label(std::slice::from_ref(&path), "Resolving");
+    run(
+        state,
+        store,
+        repository,
+        OperationKind::Other,
+        message,
+        move |service, root| {
+            service.write(root, |backend| backend.resolve_conflict(root, &path, side))
+        },
+    )
+}
+
+/// Stash every change, untracked files included.
+pub fn stash_all(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+    let Some(repository) = repository_without_unsaved(state, store, "stashing") else {
+        return false;
+    };
+    if repository.files.is_empty() {
+        state.update(|app| app.show_toast("There are no changes to stash."));
+        return false;
+    }
+    run(
+        state,
+        store,
+        repository,
+        OperationKind::Stash,
+        "Stashing…",
+        |service, root| {
+            service.write(root, |backend| {
+                backend.stash_push(root, None, true, false).map(|_| ())
+            })
+        },
+    )
+}
+
+/// The current index of the stash `oid`; indices shift as stashes come and go.
+fn stash_index(backend: &CliGitBackend, root: &Path, oid: &str) -> GitResult<usize> {
+    backend
+        .stash_list(root)?
+        .into_iter()
+        .find(|stash| stash.oid == oid)
+        .map(|stash| stash.index)
+        .ok_or_else(|| GitError::new(GitErrorKind::Other, "The stash no longer exists."))
+}
+
+/// Apply the stash `oid`, removing it when `pop`.
+pub fn apply_stash(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    oid: String,
+    pop: bool,
+) -> bool {
+    let doing = if pop {
+        "popping a stash"
+    } else {
+        "applying a stash"
+    };
+    let Some(repository) = repository_without_unsaved(state, store, doing) else {
+        return false;
+    };
+    run(
+        state,
+        store,
+        repository,
+        OperationKind::Stash,
+        if pop {
+            "Popping stash…"
+        } else {
+            "Applying stash…"
+        },
+        move |service, root| {
+            service.write(root, |backend| {
+                let index = stash_index(backend, root, &oid)?;
+                backend.stash_apply(root, index, pop)
+            })
+        },
+    )
+}
+
+/// Ask before dropping the stash `oid`.
+pub fn request_drop_stash(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    oid: String,
+) -> bool {
+    let Some(repository) = active_repository(store) else {
+        return false;
+    };
+    let Some(stash) = repository.stashes.iter().find(|stash| stash.oid == oid) else {
+        return false;
+    };
+    let message = format!("\"{}\" is deleted. This cannot be undone.", stash.message);
+    let root = repository.worktree_root;
+    state.update(move |app| {
+        app.git_confirm = Some(GitConfirm {
+            title: "Drop this stash?".into(),
+            message,
+            confirm_label: "Drop",
+            destructive: true,
+            action: GitConfirmAction::DropStash {
+                repository: root,
+                oid,
+            },
+            restore_terminal: app.terminal_focused,
+        });
+    });
+    true
+}
+
+/// Drop a confirmed stash.
+pub fn drop_stash(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    oid: String,
+) -> bool {
+    let Some(repository) = store.get().repository_for_path(root).cloned() else {
+        return false;
+    };
+    run(
+        state,
+        store,
+        repository,
+        OperationKind::Stash,
+        "Dropping stash…",
+        move |service, root| {
+            service.write(root, |backend| {
+                let index = stash_index(backend, root, &oid)?;
+                backend.stash_drop(root, index)
+            })
+        },
     )
 }
 
@@ -1003,3 +1268,5 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 }
+            operation_step: None,
+            stashes: Default::default(),

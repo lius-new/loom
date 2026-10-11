@@ -7,7 +7,7 @@ use lgui::core::{CursorIcon, EventPolicy, UiEventContext, UiEventKind, UiFocusHa
 use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
 use lgui::services::ServicesContextExt;
 
-use crate::git::{DiffRequest, DiffTarget, GitStoreSnapshot};
+use crate::git::{ConflictSide, DiffRequest, DiffTarget, GitStoreSnapshot};
 use crate::git_actions;
 use crate::state::{AppState, ExplorerContextTarget, ExplorerTargetKind};
 use crate::theme;
@@ -51,6 +51,9 @@ enum MenuAction {
     ToggleAmend,
     ToggleSignoff,
     UndoCommit,
+    StashAll,
+    KeepCurrent,
+    TakeIncoming,
 }
 
 enum Entry {
@@ -81,7 +84,11 @@ fn entries(target: &GitMenuTarget, app: &AppState) -> Vec<Entry> {
             ];
             match *section {
                 STAGED => entries.push(item("Unstage Changes", MenuAction::Unstage)),
-                CONFLICTS => entries.push(item("Mark as Resolved", MenuAction::Stage)),
+                CONFLICTS => entries.extend([
+                    item("Keep Current (Ours)", MenuAction::KeepCurrent),
+                    item("Take Incoming (Theirs)", MenuAction::TakeIncoming),
+                    item("Mark as Resolved", MenuAction::Stage),
+                ]),
                 _ => {
                     entries.push(item("Stage Changes", MenuAction::Stage));
                     entries.push(item(
@@ -115,6 +122,7 @@ fn entries(target: &GitMenuTarget, app: &AppState) -> Vec<Entry> {
             },
             Entry::Separator,
             item("Undo Last Commit", MenuAction::UndoCommit),
+            item("Stash All Changes", MenuAction::StashAll),
         ],
     }
 }
@@ -189,7 +197,18 @@ fn perform(
                     kind: ExplorerTargetKind::File,
                 },
             ),
-            MenuAction::ToggleAmend | MenuAction::ToggleSignoff | MenuAction::UndoCommit => {}
+            MenuAction::KeepCurrent | MenuAction::TakeIncoming => {
+                let side = if action == MenuAction::KeepCurrent {
+                    ConflictSide::Ours
+                } else {
+                    ConflictSide::Theirs
+                };
+                git_actions::resolve_conflict(state, store, path.clone(), side);
+            }
+            MenuAction::ToggleAmend
+            | MenuAction::ToggleSignoff
+            | MenuAction::UndoCommit
+            | MenuAction::StashAll => {}
         }
         return;
     }
@@ -200,6 +219,9 @@ fn perform(
         }
         MenuAction::UndoCommit => {
             git_actions::undo_last_commit(state, store);
+        }
+        MenuAction::StashAll => {
+            git_actions::stash_all(state, store);
         }
         _ => {}
     }
@@ -406,7 +428,10 @@ mod tests {
         let unstaged = labels(&file(UNSTAGED), &app);
         assert!(unstaged.contains(&"Stage Changes") && unstaged.contains(&"Discard Changes"));
         assert!(labels(&file(UNTRACKED), &app).contains(&"Delete File"));
-        assert!(labels(&file(CONFLICTS), &app).contains(&"Mark as Resolved"));
+        let conflicts = labels(&file(CONFLICTS), &app);
+        assert!(
+            conflicts.contains(&"Keep Current (Ours)") && conflicts.contains(&"Mark as Resolved")
+        );
     }
 
     #[test]
