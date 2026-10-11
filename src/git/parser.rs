@@ -275,19 +275,23 @@ pub fn parse_branches(input: &[u8]) -> GitResult<Vec<BranchInfo>> {
         .split(|byte| *byte == b'\n')
         .map(|record| record.strip_suffix(b"\r").unwrap_or(record))
         .filter(|record| !record.is_empty())
-        .map(|record| {
+        .filter_map(|record| {
             let text = String::from_utf8_lossy(record);
             let fields = text.split('\t').collect::<Vec<_>>();
             if fields.len() < 5 {
-                return Err(invalid(record));
+                return Some(Err(invalid(record)));
             }
-            Ok(BranchInfo {
+            // `origin/HEAD` names the remote's default branch, not a branch.
+            if fields[0].starts_with("refs/remotes/") && fields[0].ends_with("/HEAD") {
+                return None;
+            }
+            Some(Ok(BranchInfo {
                 name: fields[1].to_owned(),
                 remote: fields[0].starts_with("refs/remotes/"),
                 current: fields[2] == "*",
                 oid: fields[3].to_owned(),
                 upstream: (!fields[4].is_empty()).then(|| fields[4].to_owned()),
-            })
+            }))
         })
         .collect()
 }
@@ -296,6 +300,22 @@ pub fn parse_branches(input: &[u8]) -> GitResult<Vec<BranchInfo>> {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn branches_skip_remote_head_symrefs() {
+        let input = b"refs/heads/main\tmain\t*\taaa\torigin/main\n\
+refs/remotes/origin/HEAD\torigin\t \taaa\t\n\
+refs/remotes/origin/main\torigin/main\t \taaa\t\n";
+        let branches = parse_branches(input).unwrap();
+        assert_eq!(
+            branches
+                .iter()
+                .map(|branch| (branch.name.as_str(), branch.remote, branch.current))
+                .collect::<Vec<_>>(),
+            [("main", false, true), ("origin/main", true, false)]
+        );
+        assert_eq!(branches[0].upstream.as_deref(), Some("origin/main"));
+    }
 
     #[test]
     fn parses_headers_xy_rename_conflict_and_special_paths() {

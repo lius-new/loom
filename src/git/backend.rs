@@ -237,6 +237,7 @@ impl CliGitBackend {
                 .cwd(repository)
                 .args([
                     "for-each-ref",
+                    "--sort=-committerdate",
                     "--format=%(refname)%09%(refname:short)%09%(HEAD)%09%(objectname)%09%(upstream:short)",
                     "refs/heads",
                     "refs/remotes",
@@ -265,6 +266,18 @@ impl CliGitBackend {
             GitCommand::new()
                 .cwd(repository)
                 .args(["switch", "--", branch]),
+        )?;
+        Ok(())
+    }
+
+    /// Create a local branch tracking `remote` (e.g. `origin/feature`) and
+    /// switch to it. Git derives the local name from the remote's refspec.
+    pub fn switch_tracking(&self, repository: &Path, remote: &str) -> GitResult<()> {
+        validate_ref(remote)?;
+        self.runner.run(
+            GitCommand::new()
+                .cwd(repository)
+                .args(["switch", "--track", "--", remote]),
         )?;
         Ok(())
     }
@@ -445,6 +458,14 @@ impl CliGitBackend {
             "--index",
             &reference,
         ]))?;
+        Ok(())
+    }
+
+    /// Pop the newest stash onto the working tree without restoring its
+    /// index, so it also applies on a branch other than the one it came from.
+    pub fn stash_pop(&self, repository: &Path) -> GitResult<()> {
+        self.runner
+            .run(GitCommand::new().cwd(repository).args(["stash", "pop"]))?;
         Ok(())
     }
 
@@ -1157,11 +1178,11 @@ fn path_from_git_bytes(value: &[u8]) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::git::runtime::GitRuntimeManager;
 
-    fn repository() -> Option<(PathBuf, CliGitBackend)> {
+    pub(crate) fn repository() -> Option<(PathBuf, CliGitBackend)> {
         let runtime = GitRuntimeManager::default().resolve().ok()?;
         let root = std::env::temp_dir().join(format!(
             "loom-git-test-{}-{}",
@@ -1253,6 +1274,54 @@ mod tests {
             backend.blame(&root, Path::new("tracked.txt")).unwrap()[0].author,
             "Loom Test"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn real_repository_creates_switches_and_tracks_branches() {
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        std::fs::write(root.join("tracked.txt"), "one\n").unwrap();
+        backend
+            .stage(&root, &[PathBuf::from("tracked.txt")])
+            .unwrap();
+        backend.commit(&root, "initial", false, false).unwrap();
+        // A remote-tracking ref without a reachable remote.
+        backend
+            .add_remote(&root, "origin", "https://example.invalid/loom.git")
+            .unwrap();
+        backend
+            .runner()
+            .run(GitCommand::new().cwd(&root).args([
+                "update-ref",
+                "refs/remotes/origin/feature/remote",
+                "HEAD",
+            ]))
+            .unwrap();
+        let current = |backend: &CliGitBackend| {
+            backend
+                .branches(&root)
+                .unwrap()
+                .into_iter()
+                .find(|branch| branch.current)
+                .map(|branch| branch.name)
+        };
+
+        backend.create_branch(&root, "topic", None).unwrap();
+        assert_eq!(current(&backend).as_deref(), Some("topic"));
+        backend.switch(&root, "main").unwrap();
+        assert_eq!(current(&backend).as_deref(), Some("main"));
+        backend
+            .switch_tracking(&root, "origin/feature/remote")
+            .unwrap();
+        let branches = backend.branches(&root).unwrap();
+        let tracking = branches
+            .iter()
+            .find(|branch| branch.current)
+            .expect("a branch is checked out");
+        assert_eq!(tracking.name, "feature/remote");
+        assert_eq!(tracking.upstream.as_deref(), Some("origin/feature/remote"));
         let _ = std::fs::remove_dir_all(root);
     }
 
