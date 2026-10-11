@@ -1085,9 +1085,10 @@ impl Workspace {
 
     pub fn open_prepared_diff(&mut self, diff: Arc<DiffDocument>) -> FileId {
         if let Some((&id, document)) = self.documents.iter_mut().find(|(_, document)| {
-            document.diff.as_ref().is_some_and(|current| {
-                current.matches(&diff.repository_root, &diff.path, diff.target)
-            })
+            document
+                .diff
+                .as_ref()
+                .is_some_and(|current| current.same_view(&diff))
         }) {
             document.meta.name = diff.title();
             document.meta.path = diff.absolute_path();
@@ -1121,18 +1122,24 @@ impl Workspace {
         let mut diffs = self
             .documents
             .values()
+            // A commit's diff never changes, so it is not refreshed.
             .filter_map(|document| {
-                document.diff.as_ref().map(|diff| DiffRequest {
-                    repository_root: diff.repository_root.clone(),
-                    path: diff.path.clone(),
-                    target: diff.target,
-                })
+                document
+                    .diff
+                    .as_ref()
+                    .filter(|diff| diff.revision.is_none())
+            })
+            .map(|diff| DiffRequest {
+                repository_root: diff.repository_root.clone(),
+                path: diff.path.clone(),
+                target: diff.target,
             })
             .collect::<Vec<_>>();
         diffs.sort();
         PollTarget {
             active_path: self.active_path().map(Path::to_path_buf),
             diffs,
+            pinned_repository: None,
         }
     }
 

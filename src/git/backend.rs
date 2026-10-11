@@ -86,12 +86,125 @@ impl CliGitBackend {
             DiffTarget::HeadToIndex => args.push("--cached".into()),
             DiffTarget::IndexToWorktree => {}
             DiffTarget::HeadToWorktree => args.push("HEAD".into()),
+            DiffTarget::Commit => {
+                return Err(GitError::new(
+                    GitErrorKind::Unsupported,
+                    "A commit diff needs the commit; use `commit_full_diff`.",
+                ));
+            }
         }
         args.push("--".into());
         args.extend(paths.iter().map(|path| path.as_os_str().to_owned()));
         self.runner
             .run(GitCommand::new().cwd(repository).args(args).read_only())?
             .stdout_text()
+    }
+
+    /// `path`'s diff with no context lines: one hunk per change block, as
+    /// the source of single-change patches. Raw text keeps CRLF intact.
+    pub fn zero_context_diff(
+        &self,
+        repository: &Path,
+        target: DiffTarget,
+        path: &Path,
+    ) -> GitResult<String> {
+        self.diff_with_context(repository, target, &[path.to_path_buf()], Some(0))
+    }
+
+    /// Apply a zero-context patch to the index, or to the worktree when
+    /// `to_index` is false, in `reverse` to undo it.
+    pub fn apply_zero_context_patch(
+        &self,
+        repository: &Path,
+        patch: &str,
+        to_index: bool,
+        reverse: bool,
+    ) -> GitResult<()> {
+        let mut args = vec!["apply", "--unidiff-zero", "--whitespace=nowarn"];
+        if to_index {
+            args.push("--cached");
+        }
+        if reverse {
+            args.push("--reverse");
+        }
+        args.push("-");
+        self.runner.run(
+            GitCommand::new()
+                .cwd(repository)
+                .args(args)
+                .stdin(patch.as_bytes().to_vec()),
+        )?;
+        Ok(())
+    }
+
+    /// The files `commit` changed against its first parent.
+    pub fn commit_files(
+        &self,
+        repository: &Path,
+        commit: &str,
+    ) -> GitResult<Vec<(ChangeKind, PathBuf)>> {
+        validate_ref(commit)?;
+        let output = self.runner.run(
+            GitCommand::new()
+                .cwd(repository)
+                .args([
+                    "show",
+                    "--format=",
+                    "--name-status",
+                    "--diff-merges=first-parent",
+                    "-z",
+                    commit,
+                ])
+                .read_only(),
+        )?;
+        // `<status>\0<path>\0`, or `<status>\0<old>\0<new>\0` for renames
+        // and copies, which list the new path.
+        let mut fields = output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|field| !field.is_empty());
+        let mut files = Vec::new();
+        while let Some(status) = fields.next() {
+            let kind = ChangeKind::from_porcelain(status[0]);
+            let mut path = fields.next();
+            if matches!(kind, ChangeKind::Renamed | ChangeKind::Copied) {
+                path = fields.next();
+            }
+            let Some(path) = path else {
+                break;
+            };
+            files.push((kind, path_from_git_bytes(path)));
+        }
+        Ok(files)
+    }
+
+    /// `path`'s whole-file diff in `commit` against its first parent.
+    pub fn commit_full_diff(
+        &self,
+        repository: &Path,
+        commit: &str,
+        path: &Path,
+    ) -> GitResult<UnifiedDiff> {
+        validate_ref(commit)?;
+        let text = self
+            .runner
+            .run(
+                GitCommand::new()
+                    .cwd(repository)
+                    .args([
+                        "show",
+                        "--format=",
+                        "--no-ext-diff",
+                        "--unified=1000000",
+                        "--diff-merges=first-parent",
+                        commit,
+                        "--",
+                    ])
+                    .arg(path.as_os_str())
+                    .read_only(),
+            )?
+            .stdout_text()?;
+        parse_unified(&text)
     }
 
     pub fn parsed_diff(
@@ -1038,6 +1151,7 @@ impl CliGitBackend {
             ignored: parsed.ignored.into(),
             repository_state,
             operation_step,
+            head_oid: parsed.head_oid,
             stashes: read_stashes(&repository.common_dir).into(),
             features,
             generation,
@@ -1615,6 +1729,7 @@ pub(crate) mod tests {
         control.set_target(PollTarget {
             active_path: Some(root.join(&tracked)),
             diffs: vec![worktree.clone(), index.clone(), added.clone()],
+            pinned_repository: None,
         });
         let service = GitService::new(backend);
         let phase = AtomicUsize::new(0);

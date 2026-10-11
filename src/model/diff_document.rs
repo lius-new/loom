@@ -41,6 +41,11 @@ pub struct DiffDocument {
     pub rows: Vec<DiffRow>,
     pub split_rows: Vec<SplitDiffRow>,
     pub binary: bool,
+    /// The commit of a `DiffTarget::Commit` diff.
+    pub revision: Option<String>,
+    /// Change blocks that can be staged, unstaged or discarded on their own,
+    /// in display order; empty when the diff offers no such actions.
+    pub blocks: Vec<ChangeBlock>,
     metrics: DiffMetrics,
 }
 
@@ -176,6 +181,16 @@ impl DiffDocument {
 
         let split_rows = build_split_rows(&rows);
         let metrics = DiffMetrics::new(&rows, &split_rows);
+        // Only the index and worktree can take a single change back.
+        let blocks = if !binary
+            && matches!(
+                target,
+                DiffTarget::HeadToIndex | DiffTarget::IndexToWorktree
+            ) {
+            change_blocks(&rows)
+        } else {
+            Vec::new()
+        };
         Self {
             repository_root,
             path,
@@ -183,8 +198,29 @@ impl DiffDocument {
             rows,
             split_rows,
             binary,
+            revision: None,
+            blocks,
             metrics,
         }
+    }
+
+    /// The diff of `path` in commit `revision`.
+    pub fn commit(
+        repository_root: PathBuf,
+        path: PathBuf,
+        revision: String,
+        diff: UnifiedDiff,
+    ) -> Self {
+        Self {
+            revision: Some(revision),
+            ..Self::from_unified(repository_root, path, DiffTarget::Commit, diff)
+        }
+    }
+
+    /// Whether `other` shows the same file, side and commit.
+    pub fn same_view(&self, other: &Self) -> bool {
+        self.matches(&other.repository_root, &other.path, other.target)
+            && self.revision == other.revision
     }
 
     pub fn added(
@@ -212,6 +248,8 @@ impl DiffDocument {
             rows,
             split_rows,
             binary: false,
+            revision: None,
+            blocks: Vec::new(),
             metrics,
         }
     }
@@ -226,13 +264,17 @@ impl DiffDocument {
             .file_name()
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.path.to_string_lossy().into_owned());
-        format!("{name} ({})", self.source_label())
+        match &self.revision {
+            Some(revision) => format!("{name} ({})", short_oid(revision)),
+            None => format!("{name} ({})", self.source_label()),
+        }
     }
 
     pub fn source_label(&self) -> &'static str {
         match self.target {
             DiffTarget::HeadToIndex => "Index",
             DiffTarget::IndexToWorktree | DiffTarget::HeadToWorktree => "Working Tree",
+            DiffTarget::Commit => "Commit",
         }
     }
 
@@ -263,6 +305,65 @@ impl DiffDocument {
             self.metrics.longest_inline
         }
     }
+}
+
+/// A run of changed lines, numbered as a zero-context hunk header numbers
+/// it: an empty side starts at the line before the change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChangeBlock {
+    pub old_start: usize,
+    pub old_lines: usize,
+    pub new_start: usize,
+    pub new_lines: usize,
+}
+
+/// The change blocks of `rows`, in the order `change_starts` lists them.
+fn change_blocks(rows: &[DiffRow]) -> Vec<ChangeBlock> {
+    let mut blocks = Vec::new();
+    let (mut last_old, mut last_new) = (0, 0);
+    let mut index = 0;
+    while index < rows.len() {
+        let row = &rows[index];
+        if !matches!(row.kind, DiffRowKind::Addition | DiffRowKind::Deletion) {
+            last_old = row.old_line.unwrap_or(last_old);
+            last_new = row.new_line.unwrap_or(last_new);
+            index += 1;
+            continue;
+        }
+        let mut block = ChangeBlock {
+            old_start: last_old,
+            old_lines: 0,
+            new_start: last_new,
+            new_lines: 0,
+        };
+        while let Some(row) = rows
+            .get(index)
+            .filter(|row| matches!(row.kind, DiffRowKind::Addition | DiffRowKind::Deletion))
+        {
+            if let Some(line) = row.old_line {
+                if block.old_lines == 0 {
+                    block.old_start = line;
+                }
+                block.old_lines += 1;
+                last_old = line;
+            }
+            if let Some(line) = row.new_line {
+                if block.new_lines == 0 {
+                    block.new_start = line;
+                }
+                block.new_lines += 1;
+                last_new = line;
+            }
+            index += 1;
+        }
+        blocks.push(block);
+    }
+    blocks
+}
+
+/// The abbreviated commit id shown in titles.
+pub fn short_oid(oid: &str) -> &str {
+    &oid[..oid.len().min(8)]
 }
 
 fn build_split_rows(rows: &[DiffRow]) -> Vec<SplitDiffRow> {
@@ -338,6 +439,32 @@ fn line_number(value: usize) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::git::diff::parse_unified;
+
+    #[test]
+    fn change_blocks_are_numbered_like_zero_context_hunks() {
+        // Replace line 2, insert after line 4, delete line 6.
+        let diff = parse_unified(
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,6 +1,6 @@\n 1\n-2\n+two\n 3\n 4\n+4b\n 5\n-6\n",
+        )
+        .unwrap();
+        let document =
+            DiffDocument::from_unified("r".into(), "f".into(), DiffTarget::IndexToWorktree, diff);
+        let block = |old_start, old_lines, new_start, new_lines| ChangeBlock {
+            old_start,
+            old_lines,
+            new_start,
+            new_lines,
+        };
+        assert_eq!(
+            document.blocks,
+            [block(2, 1, 2, 1), block(4, 0, 5, 1), block(6, 1, 6, 0)]
+        );
+        assert_eq!(document.change_starts(false).len(), document.blocks.len());
+        assert_eq!(document.change_starts(true).len(), document.blocks.len());
+        // Commits and new files offer no block actions.
+        let added = DiffDocument::added("r".into(), "f".into(), DiffTarget::IndexToWorktree, "x\n");
+        assert!(added.blocks.is_empty());
+    }
 
     #[test]
     fn diff_widths_use_tab_stops_and_unicode_display_columns() {

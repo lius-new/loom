@@ -82,6 +82,18 @@ impl GitStoreSnapshot {
         }
     }
 
+    /// Make the repository at `root` active, when it is one of ours.
+    pub fn pin_active(&mut self, root: Option<&Path>) {
+        if let Some(root) = root
+            && let Some(repository) = self
+                .repositories
+                .values()
+                .find(|repository| repository.worktree_root == root)
+        {
+            self.active_repository = Some(repository.id);
+        }
+    }
+
     /// Prevent a slower scan from replacing a newer repository generation.
     /// Scans never know about a running operation, so the current one
     /// survives the replacement.
@@ -249,6 +261,9 @@ struct PollRequest {
 pub struct PollTarget {
     pub active_path: Option<PathBuf>,
     pub diffs: Vec<DiffRequest>,
+    /// A repository chosen in Source Control, active instead of the one
+    /// holding `active_path`.
+    pub pinned_repository: Option<PathBuf>,
 }
 
 impl PollControl {
@@ -493,6 +508,9 @@ impl GitService {
                 RefreshMode::Fast => self.refresh_fast(roots, target.active_path.as_deref()),
                 RefreshMode::Detailed => self.refresh(roots, target.active_path.as_deref()),
             };
+            if let Ok(snapshot) = &mut result {
+                snapshot.pin_active(target.pinned_repository.as_deref());
+            }
             if mode == RefreshMode::Detailed
                 && let Ok(snapshot) = &mut result
             {
@@ -694,6 +712,7 @@ mod tests {
             ignored: Default::default(),
             repository_state: RepositoryState::Normal,
             operation_step: None,
+            head_oid: None,
             stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
@@ -768,6 +787,7 @@ mod tests {
                 ignored: Default::default(),
                 repository_state: RepositoryState::Normal,
                 operation_step: None,
+                head_oid: None,
                 stashes: Default::default(),
                 features: RepositoryFeatures::default(),
                 generation: 3,
@@ -813,6 +833,7 @@ mod tests {
             ignored: Default::default(),
             repository_state: RepositoryState::Normal,
             operation_step: None,
+            head_oid: None,
             stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,
@@ -963,6 +984,7 @@ mod tests {
             ignored: Default::default(),
             repository_state: RepositoryState::Normal,
             operation_step: None,
+            head_oid: None,
             stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,

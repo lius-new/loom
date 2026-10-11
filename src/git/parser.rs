@@ -7,6 +7,8 @@ use super::types::*;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ParsedStatus {
     pub head: HeadState,
+    /// The commit HEAD points at; `None` before the first commit.
+    pub head_oid: Option<String>,
     pub upstream: Option<UpstreamState>,
     pub ahead: u32,
     pub behind: u32,
@@ -94,6 +96,10 @@ pub fn parse_porcelain_v2(input: &[u8]) -> GitResult<ParsedStatus> {
         }
     }
 
+    status.head_oid = branch_oid
+        .as_deref()
+        .filter(|oid| *oid != "(initial)")
+        .map(str::to_owned);
     status.head = match (branch_name.as_deref(), branch_oid.as_deref()) {
         (Some(name), Some("(initial)")) => HeadState::Unborn(name.to_owned()),
         (Some("(detached)"), Some(oid)) => HeadState::Detached(oid.to_owned()),

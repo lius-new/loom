@@ -1325,6 +1325,7 @@ mod action_tests {
             ignored: Default::default(),
             repository_state: RepositoryState::Normal,
             operation_step: None,
+            head_oid: None,
             stashes: Default::default(),
             features: Default::default(),
             generation: 0,

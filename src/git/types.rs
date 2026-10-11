@@ -200,6 +200,8 @@ pub struct RepositorySnapshot {
     pub repository_state: RepositoryState,
     /// The rebase step being applied and the total, during a rebase.
     pub operation_step: Option<(u32, u32)>,
+    /// The commit HEAD points at; `None` before the first commit.
+    pub head_oid: Option<String>,
     /// Stashes, newest first.
     pub stashes: Arc<Vec<StashInfo>>,
     pub features: RepositoryFeatures,
@@ -231,6 +233,7 @@ impl RepositorySnapshot {
             ignored,
             repository_state,
             operation_step,
+            head_oid,
             stashes,
             features,
             generation: _,
@@ -247,6 +250,7 @@ impl RepositorySnapshot {
             && *ignored == other.ignored
             && *repository_state == other.repository_state
             && *operation_step == other.operation_step
+            && *head_oid == other.head_oid
             && *stashes == other.stashes
             && *features == other.features
     }
@@ -376,6 +380,8 @@ pub enum DiffTarget {
     HeadToIndex,
     IndexToWorktree,
     HeadToWorktree,
+    /// A commit against its first parent; the commit is named separately.
+    Commit,
 }
 
 /// Identity of an open diff that needs to follow repository changes.
@@ -495,6 +501,7 @@ mod tests {
                 .into(),
             repository_state: RepositoryState::Normal,
             operation_step: None,
+            head_oid: None,
             stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,

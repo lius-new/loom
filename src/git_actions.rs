@@ -1105,6 +1105,7 @@ mod tests {
             ignored: Arc::new(BTreeSet::new()),
             repository_state: RepositoryState::Normal,
             operation_step: None,
+            head_oid: None,
             stashes: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 0,
