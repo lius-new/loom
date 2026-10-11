@@ -32,6 +32,7 @@ mod jsonc;
 mod key_actions;
 mod launch;
 mod model;
+mod project_settings;
 mod settings_persistence;
 mod state;
 mod terminal_directory;

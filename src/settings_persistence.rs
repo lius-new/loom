@@ -119,26 +119,57 @@ pub enum UserSettings {
     Invalid(String),
 }
 
+/// Settings a project's `.loom/settings.json` may override. Everything else
+/// is a personal preference and only read from the user's file.
+pub const PROJECT_KEYS: &[&str] = &["default_shell"];
+
+/// Which file a settings source is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    User,
+    Project,
+}
+
+/// The values a settings file sets, validated, keyed like `Settings`; a
+/// nested object holds only the fields the file sets.
+pub type Overrides = Map<String, Value>;
+
 /// Parse file contents over the defaults. An unknown key or a bad value is
 /// reported and skipped, so one mistake never resets the other settings.
 /// `Err` means the file is not a JSONC object at all.
 pub fn parse(source: &str) -> Result<LoadOutcome, String> {
+    let (overrides, errors) = parse_overrides(source, Scope::User)?;
+    Ok(LoadOutcome {
+        settings: overlay(&Settings::default(), &overrides),
+        errors,
+    })
+}
+
+/// The valid values of a settings file for `scope`, plus messages for the
+/// ones that were skipped.
+pub fn parse_overrides(source: &str, scope: Scope) -> Result<(Overrides, Vec<String>), String> {
     let stripped = jsonc::strip(source);
     if stripped.trim().is_empty() {
-        return Ok(LoadOutcome::default());
+        return Ok(Default::default());
     }
     let value: Value = serde_json::from_str(&stripped).map_err(|error| error.to_string())?;
-    let Value::Object(user) = value else {
+    let Value::Object(file) = value else {
         return Err("expected an object of settings".to_owned());
     };
     let defaults = to_map(&Settings::default());
-    let mut merged = defaults.clone();
+    let mut accepted = Overrides::new();
     let mut errors = Vec::new();
-    for (key, value) in user {
+    for (key, value) in file {
         let Some(default) = defaults.get(&key) else {
             errors.push(format!("unknown setting \"{key}\""));
             continue;
         };
+        if scope == Scope::Project && !PROJECT_KEYS.contains(&key.as_str()) {
+            errors.push(format!(
+                "\"{key}\" can only be set in the user settings.json"
+            ));
+            continue;
+        }
         if let (Value::Object(default_fields), Value::Object(fields)) = (default, &value) {
             for (field, value) in fields {
                 let name = format!("{key}.{field}");
@@ -146,24 +177,41 @@ pub fn parse(source: &str) -> Result<LoadOutcome, String> {
                     errors.push(format!("unknown setting \"{name}\""));
                     continue;
                 }
-                let mut candidate = merged.clone();
-                candidate[&key][field] = value.clone();
-                accept(&mut merged, candidate, &name, value, &mut errors);
+                let mut candidate = accepted.clone();
+                let nested = candidate
+                    .entry(key.clone())
+                    .or_insert_with(|| Value::Object(Map::new()));
+                nested[field] = value.clone();
+                accept(
+                    &defaults,
+                    &mut accepted,
+                    candidate,
+                    &name,
+                    value,
+                    &mut errors,
+                );
             }
             continue;
         }
-        let mut candidate = merged.clone();
+        let mut candidate = accepted.clone();
         candidate.insert(key.clone(), value.clone());
-        accept(&mut merged, candidate, &key, &value, &mut errors);
+        accept(
+            &defaults,
+            &mut accepted,
+            candidate,
+            &key,
+            &value,
+            &mut errors,
+        );
     }
-    let settings = serde_json::from_value(Value::Object(merged)).unwrap_or_default();
-    Ok(LoadOutcome { settings, errors })
+    Ok((accepted, errors))
 }
 
 /// Keep `candidate` when it still deserializes, otherwise report why.
 fn accept(
-    merged: &mut Map<String, Value>,
-    candidate: Map<String, Value>,
+    defaults: &Map<String, Value>,
+    accepted: &mut Overrides,
+    candidate: Overrides,
     name: &str,
     value: &Value,
     errors: &mut Vec<String>,
@@ -176,9 +224,36 @@ fn accept(
         errors.push(format!("theme: unknown theme \"{id}\""));
         return;
     }
-    match serde_json::from_value::<Settings>(Value::Object(candidate.clone())) {
-        Ok(_) => *merged = candidate,
+    let mut merged = defaults.clone();
+    overlay_map(&mut merged, &candidate);
+    match serde_json::from_value::<Settings>(Value::Object(merged)) {
+        Ok(_) => *accepted = candidate,
         Err(error) => errors.push(format!("{name}: {error}")),
+    }
+}
+
+/// `base` with `overrides` applied on top.
+pub fn overlay(base: &Settings, overrides: &Overrides) -> Settings {
+    if overrides.is_empty() {
+        return base.clone();
+    }
+    let mut merged = to_map(base);
+    overlay_map(&mut merged, overrides);
+    serde_json::from_value(Value::Object(merged)).unwrap_or_else(|_| base.clone())
+}
+
+fn overlay_map(base: &mut Map<String, Value>, overrides: &Overrides) {
+    for (key, value) in overrides {
+        match (base.get_mut(key), value) {
+            (Some(Value::Object(fields)), Value::Object(overrides)) => {
+                for (field, value) in overrides {
+                    fields.insert(field.clone(), value.clone());
+                }
+            }
+            _ => {
+                base.insert(key.clone(), value.clone());
+            }
+        }
     }
 }
 

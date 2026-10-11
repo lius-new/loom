@@ -77,6 +77,7 @@ actions! {
     OpenKeymap => "workspace::OpenKeymap", "Open the Keymap page";
     OpenKeymapFile => "workspace::OpenKeymapFile", "Open the user keymap.json";
     OpenSettingsFile => "workspace::OpenSettingsFile", "Open the user settings.json";
+    OpenProjectSettingsFile => "workspace::OpenProjectSettingsFile", "Open the project .loom/settings.json";
     IncreaseFontSize => "workspace::IncreaseFontSize", "Increase the editor font size";
     DecreaseFontSize => "workspace::DecreaseFontSize", "Decrease the editor font size";
     ResetFontSize => "workspace::ResetFontSize", "Reset the editor font size";

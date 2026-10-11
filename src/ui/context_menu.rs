@@ -507,7 +507,7 @@ pub fn render(
                                 ExplorerTargetKind::Directory => Some(target.path.clone()),
                             });
                             if let Some(cwd) = cwd {
-                                let shell = st_click.get().effective_shell();
+                                let shell = st_click.get().effective_shell_at(Some(&cwd));
                                 terminal_tabs_click.update(move |tabs| {
                                     tabs.add_at(shell, Some(cwd));
                                 });

@@ -44,8 +44,12 @@ pub fn save_document(state: &State<AppState>, id: FileId) -> bool {
 
     match fs::write(&path, contents.as_bytes()) {
         Ok(()) => {
+            let project_settings = crate::project_settings::is_settings_file(&path);
             state.update(move |app| {
                 app.workspace.mark_saved(id);
+                if project_settings {
+                    app.refresh_project_settings();
+                }
             });
             true
         }

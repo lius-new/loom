@@ -160,6 +160,20 @@ fn card_height(app: &AppState) -> f32 {
     rows + form + 2.0
 }
 
+/// The current project's folder name and the shell its project settings
+/// choose, when they choose one.
+fn project_shell(app: &AppState) -> Option<(String, String)> {
+    let root = crate::key_actions::project_settings_root(app)?;
+    let (_, project) = app.project_settings.iter().find(|(r, _)| *r == root)?;
+    project.overrides.get("default_shell")?;
+    let shell = app.settings_at(Some(&root)).default_shell;
+    let folder = root.file_name().map_or_else(
+        || root.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    Some((folder, app.shell_name(shell)))
+}
+
 pub fn render(rect: UiRect, app: &AppState, state: State<AppState>) -> Element {
     let add_w = measure(ADD_LABEL, theme::UI_SIZE, 400) + BUTTON_PAD_X * 2.0;
     let add_rect = UiRect::new(
@@ -170,6 +184,15 @@ pub fn render(rect: UiRect, app: &AppState, state: State<AppState>) -> Element {
     );
     let text_right = (add_rect.left - 24.0).max(rect.left);
     let add = state.clone();
+    let description = match project_shell(app) {
+        Some((folder, shell)) => ellipsize(
+            &format!("This is your default. {folder} uses {shell} from its .loom/settings.json."),
+            (text_right - rect.left).max(0.0),
+            theme::SMALL + 1.0,
+            400,
+        ),
+        None => "Used when a new terminal opens without picking a shell.".to_owned(),
+    };
     let root = group(rect)
         .child(text(
             UiRect::new(rect.left, rect.top + 11.0, text_right, rect.top + 29.0),
@@ -178,7 +201,7 @@ pub fn render(rect: UiRect, app: &AppState, state: State<AppState>) -> Element {
         ))
         .child(text(
             UiRect::new(rect.left, rect.top + 30.0, text_right, rect.top + 48.0),
-            "Used when a new terminal opens without picking a shell.",
+            description,
             theme::sans(theme::c().text_dim, theme::SMALL + 1.0),
         ))
         .child(button(add_rect, ADD_LABEL, "shell-add", false, move || {

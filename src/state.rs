@@ -1,7 +1,7 @@
 //! Application state — the single reactive root owned by the UI.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::input::action::Action;
 use crate::input::keystroke::Keystroke;
@@ -205,6 +205,8 @@ pub struct AppState {
     /// Font family fields on the Settings page; committed on Enter or blur.
     pub editor_font_input: crate::ui::components::input::InputState,
     pub terminal_font_input: crate::ui::components::input::InputState,
+    /// Each workspace folder's `.loom/settings.json`, when it has one.
+    pub project_settings: Vec<(PathBuf, crate::project_settings::ProjectSettings)>,
     /// Horizontal scroll offset of each pane's tab strip, in logical pixels.
     pub tab_scroll: HashMap<PaneId, f32>,
     /// Open tab currently under the pointer.
@@ -392,6 +394,7 @@ impl AppState {
             terminal_font: crate::fonts::FontSettings::TERMINAL,
             editor_font_input: Default::default(),
             terminal_font_input: Default::default(),
+            project_settings: Vec::new(),
             tab_scroll: HashMap::new(),
             tab_hovered: None,
             tab_strip_hovered: None,
@@ -593,6 +596,76 @@ impl AppState {
             .unwrap_or(self.default_shell)
     }
 
+    /// `effective_shell` for a terminal starting in `cwd`, honoring the
+    /// project settings of the workspace folder that holds it.
+    pub fn effective_shell_at(&self, cwd: Option<&Path>) -> ShellKind {
+        let preferred = self.settings_at(cwd).default_shell;
+        crate::terminal_profiles::effective_default(preferred, &self.shell_options)
+            .unwrap_or(preferred)
+    }
+
+    /// The workspace folder holding `path`; the innermost when folders nest.
+    pub fn workspace_folder_of(&self, path: &Path) -> Option<&Path> {
+        self.workspace_folders
+            .iter()
+            .filter(|root| path.starts_with(root))
+            .max_by_key(|root| root.components().count())
+            .map(PathBuf::as_path)
+    }
+
+    /// The user's settings with the project settings for `path` applied.
+    pub fn settings_at(&self, path: Option<&Path>) -> crate::settings_persistence::Settings {
+        let settings = self.settings();
+        let project = path
+            .and_then(|path| self.workspace_folder_of(path))
+            .and_then(|root| self.project_settings.iter().find(|(r, _)| r == root));
+        match project {
+            Some((_, project)) => {
+                crate::settings_persistence::overlay(&settings, &project.overrides)
+            }
+            None => settings,
+        }
+    }
+
+    /// Re-reads every workspace folder's `.loom/settings.json`, reporting
+    /// problems that are new since the last read.
+    pub fn refresh_project_settings(&mut self) {
+        use crate::project_settings::{self, ProjectSettings};
+        let mut fresh = Vec::new();
+        for root in &self.workspace_folders {
+            let project = match project_settings::read(root) {
+                Ok(Some(project)) => project,
+                Ok(None) => continue,
+                Err(error) => ProjectSettings {
+                    errors: vec![format!("not applied: {error}")],
+                    ..Default::default()
+                },
+            };
+            fresh.push((root.clone(), project));
+        }
+        let mut messages = Vec::new();
+        for (root, project) in &fresh {
+            let known = self
+                .project_settings
+                .iter()
+                .any(|(r, p)| r == root && p == project);
+            if !known && let Some(first) = project.errors.first() {
+                let more = match project.errors.len() {
+                    1 => String::new(),
+                    count => format!(" (and {} more)", count - 1),
+                };
+                messages.push(format!(
+                    "{}: {first}{more}",
+                    project_settings::path(root).display()
+                ));
+            }
+        }
+        self.project_settings = fresh;
+        for message in messages {
+            self.show_error(message);
+        }
+    }
+
     pub fn shell_name(&self, kind: ShellKind) -> String {
         self.shell_options
             .iter()
@@ -668,6 +741,7 @@ impl AppState {
             }
             Action::OpenSettings => {
                 self.refresh_shells();
+                self.refresh_project_settings();
                 self.workspace.open_settings();
             }
             Action::OpenKeymap => {

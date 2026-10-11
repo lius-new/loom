@@ -251,6 +251,12 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
             open_keymap_file(env);
             true
         }
+        Action::OpenProjectSettingsFile => {
+            if open_project_settings(&env.state) {
+                env.editor_focus.focus();
+            }
+            true
+        }
         Action::OpenSettingsFile => {
             open_settings_file(env);
             true
@@ -408,6 +414,40 @@ pub fn open_user_settings(state: &State<AppState>) -> bool {
         Err(error) => {
             state.update(move |app| {
                 app.show_error(format!("Could not open settings.json: {error}"))
+            });
+            false
+        }
+    }
+}
+
+/// The current project's workspace folder: the one
+/// holding the active file, otherwise the first.
+pub fn project_settings_root(app: &AppState) -> Option<std::path::PathBuf> {
+    app.workspace
+        .active_path()
+        .and_then(|path| app.workspace_folder_of(path))
+        .or_else(|| {
+            app.workspace_folders
+                .first()
+                .map(std::path::PathBuf::as_path)
+        })
+        .map(std::path::Path::to_path_buf)
+}
+
+/// Open the current project's `.loom/settings.json`, creating it first.
+pub fn open_project_settings(state: &State<AppState>) -> bool {
+    let Some(root) = project_settings_root(&state.get()) else {
+        state.update(|app| app.show_error("Open a folder to add project settings."));
+        return false;
+    };
+    match crate::project_settings::ensure(&root) {
+        Ok(path) => {
+            state.update(move |app| workspace_actions::open_launch_paths(app, vec![path]));
+            true
+        }
+        Err(error) => {
+            state.update(move |app| {
+                app.show_error(format!("Could not open project settings: {error}"))
             });
             false
         }

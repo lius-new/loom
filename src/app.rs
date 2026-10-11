@@ -786,6 +786,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let watcher = key_actions::watch_user_keymap(keymap_state);
         move || drop(watcher)
     });
+    let project_state = state.clone();
+    cx.use_effect(s.workspace_folders.clone(), move || {
+        project_state.update(|app| app.refresh_project_settings());
+        || {}
+    });
     let settings_state = state.clone();
     cx.use_effect((), move || {
         // The state already holds the file's values; this reports problems.

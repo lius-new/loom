@@ -60,8 +60,8 @@ pub fn toggle_panel(
         });
     let mut selected = default_session;
     if opening && selected.is_none() {
-        let shell = app.effective_shell();
         let cwd = app.workspace_folders.first().cloned();
+        let shell = app.effective_shell_at(cwd.as_deref());
         terminal_tabs.update(|tabs| {
             selected = Some(tabs.add_at(shell, cwd));
         });
