@@ -356,10 +356,14 @@ pub fn render(
                     } else {
                         DiffTarget::IndexToWorktree
                     };
-                    let active = app
-                        .workspace
-                        .active_diff()
-                        .is_some_and(|diff| diff.matches(&repository.worktree_root, path, target));
+                    let active =
+                        app.workspace.active_diff().is_some_and(|diff| {
+                            diff.matches(&repository.worktree_root, path, target)
+                        }) || app.workspace.active_diff_focus().is_some_and(|focus| {
+                            focus.repository_root == repository.worktree_root
+                                && focus.path == *path
+                                && focus.target == target
+                        });
                     content.push(file_row(
                         row_rect,
                         path.clone(),
@@ -2014,7 +2018,6 @@ fn file_row(
     let open_state = state.clone();
     let open_repository = repository_root.clone();
     let open_relative_path = path.clone();
-    let untracked = file_state.worktree == ChangeKind::Untracked;
     let focus = editor_focus.clone();
     let kind = file_state.display_kind();
     let (indicator, indicator_color) = if file_state.conflict.is_some() {
@@ -2082,14 +2085,13 @@ fn file_row(
         if menu_open {
             return;
         }
-        git_actions::open_diff(
+        git_actions::open_changes(
             &open_state,
             crate::git::DiffRequest {
                 repository_root: open_repository.clone(),
                 path: open_relative_path.clone(),
                 target,
             },
-            untracked,
         );
         focus.focus();
     })

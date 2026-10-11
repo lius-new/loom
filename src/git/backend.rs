@@ -86,10 +86,10 @@ impl CliGitBackend {
             DiffTarget::HeadToIndex => args.push("--cached".into()),
             DiffTarget::IndexToWorktree => {}
             DiffTarget::HeadToWorktree => args.push("HEAD".into()),
-            DiffTarget::Commit => {
+            DiffTarget::Commit | DiffTarget::Changes => {
                 return Err(GitError::new(
                     GitErrorKind::Unsupported,
-                    "A commit diff needs the commit; use `commit_full_diff`.",
+                    "This comparison requires a commit or a repository change list.",
                 ));
             }
         }
@@ -1742,6 +1742,106 @@ pub(crate) mod tests {
         assert_eq!(parsed[0].base.as_deref(), Some("aaaa"));
         assert_eq!(parsed[0].ours.as_deref(), Some("bbbb"));
         assert_eq!(parsed[0].theirs.as_deref(), Some("cccc"));
+    }
+
+    #[test]
+    fn repository_changes_keep_both_sides_and_refresh_new_and_removed_files() {
+        use crate::git::GitService;
+        use crate::model::diff_document::DiffDocument;
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        std::fs::write(root.join("both.txt"), "original\n").unwrap();
+        std::fs::write(root.join("binary.dat"), [0, 1, 2]).unwrap();
+        std::fs::write(root.join("old.txt"), "rename only\n").unwrap();
+        backend
+            .stage(
+                &root,
+                &["both.txt".into(), "binary.dat".into(), "old.txt".into()],
+            )
+            .unwrap();
+        backend.commit(&root, "initial", false, false).unwrap();
+        std::fs::write(root.join("both.txt"), "staged\n").unwrap();
+        backend.stage(&root, &["both.txt".into()]).unwrap();
+        std::fs::write(root.join("both.txt"), "working\n").unwrap();
+        std::fs::write(root.join("binary.dat"), [0, 3, 4]).unwrap();
+        std::fs::rename(root.join("old.txt"), root.join("renamed.txt")).unwrap();
+        backend
+            .stage(&root, &["old.txt".into(), "renamed.txt".into()])
+            .unwrap();
+        std::fs::create_dir_all(root.join("drafts")).unwrap();
+        std::fs::write(root.join("drafts/中文.txt"), "draft\n").unwrap();
+        std::fs::write(root.join("untracked.bin"), [0, 9, 8]).unwrap();
+        let service = GitService::new(backend);
+        let snapshot = service.refresh(std::slice::from_ref(&root), None).unwrap();
+        let repository = snapshot.active().unwrap();
+        let request = DiffRequest {
+            repository_root: repository.worktree_root.clone(),
+            path: PathBuf::new(),
+            target: DiffTarget::Changes,
+        };
+        let document = DiffDocument::from_content(
+            request.clone(),
+            service.refresh_diff(&request, &snapshot).unwrap(),
+        );
+        let sections = document.sections.as_ref().unwrap();
+        assert!(
+            sections
+                .windows(2)
+                .all(|pair| pair[0].group <= pair[1].group)
+        );
+        let file = |path: &str, group| {
+            sections
+                .iter()
+                .find(|section| section.document.path == Path::new(path) && section.group == group)
+                .unwrap()
+        };
+        assert!(
+            file("both.txt", ChangeGroup::Staged)
+                .document
+                .rows
+                .iter()
+                .any(|row| row.text == "staged")
+        );
+        assert!(
+            file("both.txt", ChangeGroup::Unstaged)
+                .document
+                .rows
+                .iter()
+                .any(|row| row.text == "working")
+        );
+        assert_eq!(
+            file("drafts/中文.txt", ChangeGroup::Untracked)
+                .document
+                .additions(),
+            1
+        );
+        assert!(file("binary.dat", ChangeGroup::Unstaged).document.binary);
+        assert!(
+            file("untracked.bin", ChangeGroup::Untracked)
+                .document
+                .binary
+        );
+        assert!(file("renamed.txt", ChangeGroup::Staged).error.is_none());
+        std::fs::remove_file(root.join("drafts/中文.txt")).unwrap();
+        std::fs::write(root.join("later.txt"), "added later\n").unwrap();
+        let next = service.refresh(std::slice::from_ref(&root), None).unwrap();
+        let refreshed = DiffDocument::from_content(
+            request.clone(),
+            service.refresh_diff(&request, &next).unwrap(),
+        );
+        let sections = refreshed.sections.unwrap();
+        assert!(
+            sections
+                .iter()
+                .any(|section| section.document.path == Path::new("later.txt"))
+        );
+        assert!(
+            !sections
+                .iter()
+                .any(|section| section.document.path == Path::new("drafts/中文.txt"))
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

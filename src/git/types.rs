@@ -1,3 +1,4 @@
+use super::error::GitResult;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -381,6 +382,8 @@ impl PathDecoration {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiffTarget {
+    /// All current change sections in one repository-wide tab.
+    Changes,
     HeadToIndex,
     IndexToWorktree,
     HeadToWorktree,
@@ -400,6 +403,34 @@ pub struct DiffRequest {
 pub enum DiffContent {
     Unified(super::diff::UnifiedDiff),
     Untracked(String),
+    Changes(Vec<ChangeDiff>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ChangeGroup {
+    Conflicts,
+    Staged,
+    Unstaged,
+    Untracked,
+}
+
+impl ChangeGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Conflicts => "CONFLICTS",
+            Self::Staged => "STAGED CHANGES",
+            Self::Unstaged => "CHANGES",
+            Self::Untracked => "UNTRACKED FILES",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangeDiff {
+    pub path: PathBuf,
+    pub target: DiffTarget,
+    pub group: ChangeGroup,
+    pub content: GitResult<DiffContent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

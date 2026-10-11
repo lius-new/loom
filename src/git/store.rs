@@ -191,20 +191,7 @@ impl GitStoreSnapshot {
                 continue;
             }
             let Ok(content) = result else { continue };
-            let document = match content {
-                DiffContent::Unified(diff) => DiffDocument::from_unified(
-                    request.repository_root.clone(),
-                    request.path.clone(),
-                    request.target,
-                    diff.clone(),
-                ),
-                DiffContent::Untracked(contents) => DiffDocument::added(
-                    request.repository_root.clone(),
-                    request.path.clone(),
-                    request.target,
-                    contents,
-                ),
-            };
+            let document = DiffDocument::from_content(request.clone(), content.clone());
             presentation
                 .diffs
                 .insert(request.clone(), Arc::new(document));
@@ -440,6 +427,7 @@ impl GitService {
             && let Some(path) = active_path
             && let Some(repository) = snapshot.repository_for_path(path)
             && let Some(relative) = repository.relative_path(path)
+            && !relative.as_os_str().is_empty()
         {
             let mut changes = BTreeMap::new();
             for target in [DiffTarget::HeadToIndex, DiffTarget::IndexToWorktree] {
@@ -543,11 +531,33 @@ impl GitService {
         }
     }
 
-    fn refresh_diff(
+    pub(crate) fn refresh_diff(
         &self,
         request: &DiffRequest,
         snapshot: &GitStoreSnapshot,
     ) -> GitResult<DiffContent> {
+        if request.target == DiffTarget::Changes {
+            let repository = snapshot
+                .repositories
+                .values()
+                .find(|repo| repo.worktree_root == request.repository_root);
+            return match repository {
+                Some(repository) => Ok(self.changes(repository)),
+                None => {
+                    let current =
+                        self.refresh(std::slice::from_ref(&request.repository_root), None)?;
+                    let repository = current
+                        .repository_for_path(&request.repository_root)
+                        .ok_or_else(|| {
+                            GitError::new(
+                                super::error::GitErrorKind::Other,
+                                "Repository is no longer available.",
+                            )
+                        })?;
+                    Ok(self.changes(repository))
+                }
+            };
+        }
         let diff = self.backend.parsed_full_diff(
             &request.repository_root,
             request.target,
@@ -580,13 +590,110 @@ impl GitService {
                     .is_empty()
             };
             if untracked {
-                return Ok(DiffContent::Untracked(std::fs::read_to_string(
-                    request.repository_root.join(&request.path),
-                )?));
+                return read_untracked(&request.repository_root.join(&request.path));
             }
         }
         Ok(DiffContent::Unified(diff))
     }
+
+    /// Read tracked changes in two batches with normal diff context. Full-file
+    /// context is reserved for the explicitly opened single-file view.
+    pub fn changes(&self, repository: &RepositorySnapshot) -> DiffContent {
+        let root = &repository.worktree_root;
+        let mut files = Vec::new();
+        for (group, target) in [
+            (ChangeGroup::Conflicts, DiffTarget::IndexToWorktree),
+            (ChangeGroup::Staged, DiffTarget::HeadToIndex),
+            (ChangeGroup::Unstaged, DiffTarget::IndexToWorktree),
+            (ChangeGroup::Untracked, DiffTarget::IndexToWorktree),
+        ] {
+            let paths: Vec<_> = repository
+                .files
+                .iter()
+                .filter(|(_, file)| match group {
+                    ChangeGroup::Conflicts => file.conflict.is_some(),
+                    ChangeGroup::Staged => {
+                        file.conflict.is_none() && file.index != ChangeKind::Unmodified
+                    }
+                    ChangeGroup::Unstaged => {
+                        file.conflict.is_none()
+                            && !matches!(
+                                file.worktree,
+                                ChangeKind::Unmodified | ChangeKind::Untracked
+                            )
+                    }
+                    ChangeGroup::Untracked => file.worktree == ChangeKind::Untracked,
+                })
+                .map(|(path, _)| path.clone())
+                .collect();
+            if paths.is_empty() {
+                continue;
+            }
+            let mut batch = if matches!(group, ChangeGroup::Staged | ChangeGroup::Unstaged) {
+                Some(self.backend.parsed_diff(root, target, &[]).map(|diff| {
+                    diff.files
+                        .into_iter()
+                        .filter_map(|file| {
+                            let path = file.new_path.clone().or_else(|| file.old_path.clone())?;
+                            Some((path, file))
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                }))
+            } else {
+                None
+            };
+            for path in paths {
+                let content = match group {
+                    ChangeGroup::Untracked => read_untracked(&root.join(&path)),
+                    ChangeGroup::Conflicts => Err(GitError::new(
+                        super::error::GitErrorKind::Other,
+                        "Unresolved conflict. Open the file to resolve it.",
+                    )),
+                    _ => match batch.as_mut().unwrap() {
+                        Ok(batch) => match batch.remove(&path) {
+                            Some(file) => Ok(DiffContent::Unified(super::diff::UnifiedDiff {
+                                files: vec![file],
+                            })),
+                            // Renames without hunks and binary patches may have no
+                            // ---/+++ paths. Query these individually.
+                            None => self
+                                .backend
+                                .parsed_diff(root, target, std::slice::from_ref(&path))
+                                .map(DiffContent::Unified),
+                        },
+                        Err(error) => Err(error.clone()),
+                    },
+                };
+                files.push(ChangeDiff {
+                    path,
+                    target,
+                    group,
+                    content,
+                });
+            }
+        }
+        DiffContent::Changes(files)
+    }
+}
+
+pub(crate) fn read_untracked(path: &Path) -> GitResult<DiffContent> {
+    let bytes = std::fs::read(path)?;
+    if bytes.contains(&0) {
+        return Ok(binary_content());
+    }
+    Ok(match String::from_utf8(bytes) {
+        Ok(contents) => DiffContent::Untracked(contents),
+        Err(_) => binary_content(),
+    })
+}
+
+fn binary_content() -> DiffContent {
+    DiffContent::Unified(super::diff::UnifiedDiff {
+        files: vec![super::diff::FileDiff {
+            binary: true,
+            ..Default::default()
+        }],
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

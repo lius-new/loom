@@ -3,9 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::git::DiffTarget;
 use crate::git::diff::{DiffLine, UnifiedDiff};
+use crate::git::{ChangeGroup, DiffContent, DiffRequest, DiffTarget};
 use crate::model::text::display_width;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiffRowKind {
@@ -46,7 +47,38 @@ pub struct DiffDocument {
     /// Change blocks that can be staged, unstaged or discarded on their own,
     /// in display order; empty when the diff offers no such actions.
     pub blocks: Vec<ChangeBlock>,
+    /// Present only for the repository-wide Changes tab.
+    pub sections: Option<Vec<DiffSection>>,
     metrics: DiffMetrics,
+}
+
+pub const DIFF_ROW_HEIGHT: f32 = 20.0;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffSection {
+    pub document: Arc<DiffDocument>,
+    pub group: ChangeGroup,
+    pub error: Option<String>,
+}
+
+impl DiffSection {
+    pub fn request(&self) -> DiffRequest {
+        self.document.request()
+    }
+}
+
+pub struct SectionLayout {
+    pub index: usize,
+    pub top: usize,
+    pub group_header: bool,
+    pub body_top: usize,
+    pub body_rows: usize,
+}
+
+pub struct ChangesLayout {
+    pub sections: Vec<SectionLayout>,
+    pub row_count: usize,
+    pub starts: Arc<Vec<usize>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,6 +141,111 @@ impl DiffMetrics {
 }
 
 impl DiffDocument {
+    pub fn from_content(request: DiffRequest, content: DiffContent) -> Self {
+        match content {
+            DiffContent::Unified(diff) => {
+                Self::from_unified(request.repository_root, request.path, request.target, diff)
+            }
+            DiffContent::Untracked(contents) => Self::added(
+                request.repository_root,
+                request.path,
+                request.target,
+                &contents,
+            ),
+            DiffContent::Changes(files) => {
+                let sections = files
+                    .into_iter()
+                    .map(|file| {
+                        let request = DiffRequest {
+                            repository_root: request.repository_root.clone(),
+                            path: file.path,
+                            target: file.target,
+                        };
+                        let (content, error) = match file.content {
+                            Ok(content) => (content, None),
+                            Err(error) => (
+                                DiffContent::Unified(UnifiedDiff::default()),
+                                Some(error.user_message()),
+                            ),
+                        };
+                        let mut document = Self::from_content(request, content);
+                        if file.group == ChangeGroup::Conflicts {
+                            document.blocks.clear();
+                        }
+                        DiffSection {
+                            document: Arc::new(document),
+                            group: file.group,
+                            error,
+                        }
+                    })
+                    .collect();
+                let mut document = Self::from_unified(
+                    request.repository_root,
+                    PathBuf::new(),
+                    DiffTarget::Changes,
+                    UnifiedDiff::default(),
+                );
+                document.sections = Some(sections);
+                document
+            }
+        }
+    }
+
+    pub fn request(&self) -> DiffRequest {
+        DiffRequest {
+            repository_root: self.repository_root.clone(),
+            path: self.path.clone(),
+            target: self.target,
+        }
+    }
+
+    pub fn changes_layout(&self, split: bool, collapsed: &BTreeSet<DiffRequest>) -> ChangesLayout {
+        let mut layout = ChangesLayout {
+            sections: Vec::new(),
+            row_count: 0,
+            starts: Arc::default(),
+        };
+        let mut starts = Vec::new();
+        let mut group = None;
+        for (index, section) in self.sections.iter().flatten().enumerate() {
+            let group_header = group != Some(section.group);
+            if group_header {
+                layout.row_count += 1;
+            }
+            group = Some(section.group);
+            let top = layout.row_count;
+            layout.row_count += 2;
+            let body_top = layout.row_count;
+            let body_rows = if collapsed.contains(&section.request()) {
+                0
+            } else {
+                let rows = if split {
+                    section.document.split_rows.len()
+                } else {
+                    section.document.rows.len()
+                };
+                starts.extend(
+                    section
+                        .document
+                        .change_starts(split)
+                        .iter()
+                        .map(|row| body_top + row),
+                );
+                rows.max(1)
+            };
+            layout.row_count += body_rows;
+            layout.sections.push(SectionLayout {
+                index,
+                top,
+                group_header,
+                body_top,
+                body_rows,
+            });
+        }
+        layout.starts = starts.into();
+        layout
+    }
+
     pub fn from_unified(
         repository_root: PathBuf,
         path: PathBuf,
@@ -200,6 +337,7 @@ impl DiffDocument {
             binary,
             revision: None,
             blocks,
+            sections: None,
             metrics,
         }
     }
@@ -250,6 +388,7 @@ impl DiffDocument {
             binary: false,
             revision: None,
             blocks: Vec::new(),
+            sections: None,
             metrics,
         }
     }
@@ -259,6 +398,14 @@ impl DiffDocument {
     }
 
     pub fn title(&self) -> String {
+        if self.sections.is_some() {
+            let repository = self
+                .repository_root
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            return format!("Changes ({repository})");
+        }
         let name = self
             .path
             .file_name()
@@ -272,6 +419,7 @@ impl DiffDocument {
 
     pub fn source_label(&self) -> &'static str {
         match self.target {
+            DiffTarget::Changes => "All Changes",
             DiffTarget::HeadToIndex => "Index",
             DiffTarget::IndexToWorktree | DiffTarget::HeadToWorktree => "Working Tree",
             DiffTarget::Commit => "Commit",
@@ -283,11 +431,36 @@ impl DiffDocument {
     }
 
     pub fn additions(&self) -> usize {
+        if let Some(sections) = &self.sections {
+            return sections
+                .iter()
+                .map(|section| section.document.additions())
+                .sum();
+        }
         self.metrics.additions
     }
 
     pub fn deletions(&self) -> usize {
+        if let Some(sections) = &self.sections {
+            return sections
+                .iter()
+                .map(|section| section.document.deletions())
+                .sum();
+        }
         self.metrics.deletions
+    }
+
+    pub fn changed_file_count(&self) -> usize {
+        self.sections
+            .as_ref()
+            .map(|sections| {
+                sections
+                    .iter()
+                    .map(|section| section.document.path.as_path())
+                    .collect::<BTreeSet<_>>()
+                    .len()
+            })
+            .unwrap_or(1)
     }
 
     pub fn change_starts(&self, split: bool) -> Arc<Vec<usize>> {
@@ -299,6 +472,13 @@ impl DiffDocument {
     }
 
     pub fn longest_line(&self, split: bool) -> usize {
+        if let Some(sections) = &self.sections {
+            return sections
+                .iter()
+                .map(|section| section.document.longest_line(split))
+                .max()
+                .unwrap_or_default();
+        }
         if split {
             self.metrics.longest_split
         } else {

@@ -20,6 +20,42 @@ use crate::ui::git_panel::{ExpandedCommit, GitHistory};
 use crate::ui::stash_switch::StashSwitchRequest;
 
 pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untracked: bool) {
+    open_diff_with_focus(state, request, untracked, None);
+}
+
+pub fn open_changes(state: &State<AppState>, file: crate::git::DiffRequest) {
+    let mut revealed = false;
+    state.update(|app| {
+        if let Some(id) = app.workspace.diff_id_for(
+            &file.repository_root,
+            Path::new(""),
+            crate::git::DiffTarget::Changes,
+        ) && let Some(pane) = app.workspace.pane_of(id)
+        {
+            app.workspace.activate(pane, id);
+            app.workspace.focus_diff_section(&file, app.git_split_diff);
+            // Invalidate a slower single-file open still in flight.
+            app.git_open_diff_sequence += 1;
+            app.git_diff_loading = None;
+            revealed = true;
+        }
+    });
+    if !revealed {
+        let request = crate::git::DiffRequest {
+            repository_root: file.repository_root.clone(),
+            path: PathBuf::new(),
+            target: crate::git::DiffTarget::Changes,
+        };
+        open_diff_with_focus(state, request, false, Some(file));
+    }
+}
+
+fn open_diff_with_focus(
+    state: &State<AppState>,
+    request: crate::git::DiffRequest,
+    untracked: bool,
+    focus: Option<crate::git::DiffRequest>,
+) {
     let app = state.get();
     let Some(application) = app.git_application else {
         return;
@@ -36,6 +72,10 @@ pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untr
         .name("loom-git-open-diff".into())
         .spawn(move || {
             let result = crate::git::service().and_then(|service| {
+                if request.target == crate::git::DiffTarget::Changes {
+                    let content = service.refresh_diff(&request, &GitStoreSnapshot::default())?;
+                    return Ok(Arc::new(DiffDocument::from_content(request, content)));
+                }
                 let diff = service.backend().parsed_full_diff(
                     &request.repository_root,
                     request.target,
@@ -45,14 +85,10 @@ pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untr
                     && untracked
                     && request.target != crate::git::DiffTarget::HeadToIndex
                 {
-                    let contents =
-                        std::fs::read_to_string(request.repository_root.join(&request.path))?;
-                    crate::model::diff_document::DiffDocument::added(
-                        request.repository_root,
-                        request.path,
-                        request.target,
-                        &contents,
-                    )
+                    let content = crate::git::store::read_untracked(
+                        &request.repository_root.join(&request.path),
+                    )?;
+                    DiffDocument::from_content(request, content)
                 } else {
                     crate::model::diff_document::DiffDocument::from_unified(
                         request.repository_root,
@@ -77,7 +113,14 @@ pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untr
                     }
                     match result.take().unwrap() {
                         Ok(document) => {
-                            app.workspace.open_prepared_diff(document);
+                            if document.sections.is_some() {
+                                app.workspace.open_prepared_diff(document);
+                            } else {
+                                app.workspace.open_prepared_file_changes(document);
+                            }
+                            if let Some(focus) = &focus {
+                                app.workspace.focus_diff_section(focus, app.git_split_diff);
+                            }
                         }
                         Err(error) => app.show_error(error.user_message()),
                     }

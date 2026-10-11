@@ -1341,7 +1341,7 @@ fn apply_git_scan(
     {
         let retired = app
             .workspace
-            .apply_prepared_git_diffs(&next.presentation.diffs);
+            .apply_prepared_git_diffs(&next.presentation.diffs, app.git_split_diff);
         let changed = !retired.is_empty();
         crate::background_ui::retire(retired);
         changed

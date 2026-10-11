@@ -2,13 +2,18 @@
 
 use std::path::PathBuf;
 
-use lgui::core::{CursorIcon, EventPolicy, UiFocusHandle, WheelUnit, clip};
+use lgui::core::{
+    CursorIcon, EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId,
+    WheelUnit, clip, precompiled,
+};
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
 use crate::editor::editor_view::{self, SCROLLBAR_SIZE, ScrollMetrics};
 use crate::git::{DiffTarget, GitStoreSnapshot};
 use crate::git_actions::{self, BlockAction};
-use crate::model::diff_document::{DiffDocument, DiffRow, DiffRowKind, SplitDiffRow};
+use crate::model::diff_document::{
+    ChangesLayout, DiffDocument, DiffRow, DiffRowKind, SplitDiffRow,
+};
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
@@ -34,10 +39,24 @@ pub fn render(
     };
 
     let split = app.git_split_diff;
-    let starts = document.change_starts(split);
+    let collapsed = app.workspace.collapsed_diffs(pane);
+    let overview = document
+        .sections
+        .as_ref()
+        .map(|_| document.changes_layout(split, &collapsed));
+    let starts = overview.as_ref().map_or_else(
+        || document.change_starts(split),
+        |layout| layout.starts.clone(),
+    );
     let source_label = document.source_label();
-    let absolute_path = document.absolute_path();
-    let path_label = document.path.display().to_string();
+    let absolute_path = document
+        .sections
+        .is_none()
+        .then(|| document.absolute_path());
+    let path_label = document.sections.as_ref().map_or_else(
+        || document.path.display().to_string(),
+        |_| format!("All Changes · {} files", document.changed_file_count()),
+    );
     let additions = document.additions();
     let deletions = document.deletions();
     let (stored_x, stored_y) = app.workspace.scroll(pane);
@@ -46,7 +65,9 @@ pub fn render(
 
     let body_top = rect.top + TOOLBAR_H;
     let body_rect = UiRect::new(rect.left, body_top, rect.right, rect.bottom);
-    let row_count = if split {
+    let row_count = if let Some(overview) = &overview {
+        overview.row_count
+    } else if split {
         document.split_rows.len()
     } else {
         document.rows.len()
@@ -100,7 +121,7 @@ pub fn render(
         pane,
         UiRect::new(rect.left, rect.top, rect.right, rect.top + TOOLBAR_H),
         state.clone(),
-        editor_focus,
+        editor_focus.clone(),
         path_label,
         additions,
         deletions,
@@ -111,6 +132,18 @@ pub fn render(
     ));
 
     if row_count == 0 {
+        if overview.is_some() {
+            return root.child(text(
+                UiRect::new(
+                    body_rect.left + 24.0,
+                    body_rect.top + 24.0,
+                    body_rect.right - 24.0,
+                    body_rect.top + 64.0,
+                ),
+                "No changes in this repository.",
+                theme::mono(theme::c().text_dim, theme::UI_SIZE),
+            ));
+        }
         let label = format!("{} — {source_label}", document.path.display());
         let message = if document.binary {
             format!("Binary file changed: {label}")
@@ -135,7 +168,21 @@ pub fn render(
         body_rect.right - if max_y > 0.0 { SCROLLBAR_SIZE } else { 0.0 },
         body_rect.bottom - if max_x > 0.0 { SCROLLBAR_SIZE } else { 0.0 },
     );
-    root = if split {
+    root = if let Some(overview) = &overview {
+        root.child(render_changes(
+            pane,
+            content_rect,
+            document,
+            overview,
+            split,
+            scroll_x,
+            scroll_y,
+            app.git_split_ratio,
+            &state,
+            &store,
+            editor_focus,
+        ))
+    } else if split {
         root.child(render_split(
             content_rect,
             &document.split_rows,
@@ -290,7 +337,14 @@ pub(crate) fn drag_scrollbars(app: &mut AppState, rect: UiRect, x: f32, y: f32) 
         return editor_view::finish_scrollbar_drag(app);
     };
     let body = UiRect::new(rect.left, rect.top + TOOLBAR_H, rect.right, rect.bottom);
-    let rows = if split {
+    let rows = if document.sections.is_some() {
+        document
+            .changes_layout(
+                split,
+                &app.workspace.collapsed_diffs(app.workspace.active_pane()),
+            )
+            .row_count
+    } else if split {
         document.split_rows.len()
     } else {
         document.rows.len()
@@ -317,7 +371,7 @@ fn toolbar(
     split: bool,
     starts: std::sync::Arc<Vec<usize>>,
     current_change: Option<usize>,
-    absolute_path: PathBuf,
+    absolute_path: Option<PathBuf>,
 ) -> Element {
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
     bar = bar.child(panel(
@@ -329,24 +383,26 @@ fn toolbar(
     let button_top = rect.top + (rect.height() - BUTTON_H) / 2.0;
     let mut right = rect.right - 8.0;
 
-    let open_rect = take_button_rect(&mut right, button_top, if compact { 42.0 } else { 68.0 });
-    let open_state = state.clone();
-    bar = bar.child(
-        toolbar_button(open_rect, if compact { "Open" } else { "Open File" }, false).on_click(
-            move || match std::fs::read_to_string(&absolute_path) {
-                Ok(contents) => {
-                    let path = absolute_path.clone();
-                    open_state.update(move |app| {
-                        app.workspace.open_path(path, contents);
-                    });
-                    editor_focus.focus();
-                }
-                Err(error) => open_state.update(move |app| {
-                    app.show_error(format!("Could not open file: {error}"));
-                }),
-            },
-        ),
-    );
+    if let Some(absolute_path) = absolute_path {
+        let open_rect = take_button_rect(&mut right, button_top, if compact { 42.0 } else { 68.0 });
+        let open_state = state.clone();
+        bar = bar.child(
+            toolbar_button(open_rect, if compact { "Open" } else { "Open File" }, false).on_click(
+                move || match std::fs::read_to_string(&absolute_path) {
+                    Ok(contents) => {
+                        let path = absolute_path.clone();
+                        open_state.update(move |app| {
+                            app.workspace.open_path(path, contents);
+                        });
+                        editor_focus.focus();
+                    }
+                    Err(error) => open_state.update(move |app| {
+                        app.show_error(format!("Could not open file: {error}"));
+                    }),
+                },
+            ),
+        );
+    }
 
     let split_rect = take_button_rect(&mut right, button_top, if compact { 28.0 } else { 42.0 });
     let split_state = state.clone();
@@ -503,6 +559,202 @@ fn block_buttons(
         }
     }
     layer
+}
+
+/// Build only visible file sections; the existing inline/split renderers
+/// further limit each visible section to the rows inside the viewport.
+#[allow(clippy::too_many_arguments)]
+fn render_changes(
+    pane: PaneId,
+    rect: UiRect,
+    overview: &DiffDocument,
+    layout: &ChangesLayout,
+    split: bool,
+    scroll_x: f32,
+    scroll_y: f32,
+    ratio: f32,
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    editor_focus: UiFocusHandle,
+) -> Element {
+    let sections = overview.sections.as_ref().unwrap();
+    let mut body = clip(rect, 0.0, 0.0);
+    let first = layout
+        .sections
+        .partition_point(|item| (item.body_top + item.body_rows) as f32 * ROW_H < scroll_y);
+    for item in layout.sections.iter().skip(first) {
+        let top = rect.top + item.top as f32 * ROW_H - scroll_y;
+        if top - ROW_H > rect.bottom {
+            break;
+        }
+        let section = &sections[item.index];
+        let document = &section.document;
+        if item.group_header {
+            body = body.child(text(
+                UiRect::new(rect.left + 12.0, top - ROW_H, rect.right - 12.0, top),
+                section.group.label(),
+                theme::mono_bold(theme::c().text_dim, theme::SMALL),
+            ));
+        }
+        let header = UiRect::new(rect.left, top, rect.right, top + ROW_H * 2.0);
+        let toggle_state = state.clone();
+        let request = section.request();
+        let toggle_request = request.clone();
+        let collapsed = item.body_rows == 0;
+        let action_w = if rect.width() < 360.0 { 66.0 } else { 100.0 };
+        let action_rect = UiRect::new(
+            rect.right - action_w - 8.0,
+            top + 9.0,
+            rect.right - 8.0,
+            top + 31.0,
+        );
+        let stats_right = action_rect.left - 10.0;
+        let stats_w = if rect.width() < 460.0 { 0.0 } else { 96.0 };
+        let label_rect = UiRect::new(
+            rect.left + 32.0,
+            top,
+            (stats_right - stats_w).max(rect.left + 32.0),
+            header.bottom,
+        );
+        let path = super::tabs::ellipsize(
+            &super::display_path(&document.path),
+            (label_rect.width() - 6.0).max(0.0),
+            theme::UI_SIZE,
+            400,
+        );
+        let mut file_header = panel(header, VisualStyle::filled(theme::c().sidebar))
+            .key(format!("changes-header-{}", item.index))
+            .event_policy(EventPolicy::INTERACTIVE)
+            .semantics(Semantics::new(SemanticRole::Button).name(format!(
+                "{} {}",
+                if collapsed { "Expand" } else { "Collapse" },
+                document.path.display()
+            )))
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                toggle_state.update(|app| {
+                    app.workspace.activate_pane(pane);
+                    app.workspace
+                        .toggle_diff_section(pane, toggle_request.clone());
+                })
+            })
+            .child(panel(
+                UiRect::new(
+                    header.left,
+                    header.bottom - 1.0,
+                    header.right,
+                    header.bottom,
+                ),
+                VisualStyle::filled(theme::c().border),
+            ))
+            .child(text(
+                label_rect,
+                path,
+                theme::mono(theme::c().text, theme::UI_SIZE),
+            ));
+        file_header = file_header.child(precompiled(
+            UiElement::icon(
+                UiId::owned(format!("changes-chevron-{}", item.index)),
+                theme::icon_rect(UiRect::new(
+                    rect.left + 8.0,
+                    top + 12.0,
+                    rect.left + 24.0,
+                    top + 28.0,
+                )),
+                if collapsed {
+                    "chevron-right"
+                } else {
+                    "chevron-down"
+                },
+            )
+            .icon_style(IconStyle::new(theme::c().text_dim)),
+        ));
+        if stats_w > 0.0 {
+            let stats = if document.binary {
+                "Binary".into()
+            } else {
+                format!("+{}  −{}", document.additions(), document.deletions())
+            };
+            file_header = file_header.child(text(
+                UiRect::new(stats_right - stats_w, top, stats_right, header.bottom),
+                stats,
+                theme::mono_right(theme::c().text_dim, theme::SMALL),
+            ));
+        }
+        let open_state = state.clone();
+        let focus = editor_focus.clone();
+        let untracked = section.group == crate::git::ChangeGroup::Untracked;
+        file_header = file_header.child(
+            toolbar_button(
+                action_rect,
+                if rect.width() < 360.0 {
+                    "Changes"
+                } else {
+                    "Open Changes"
+                },
+                false,
+            )
+            .semantics(
+                Semantics::new(SemanticRole::Button)
+                    .name(format!("Open Changes for {}", document.path.display())),
+            )
+            .on_click(move |cx: &mut lgui::core::UiEventContext| {
+                cx.stop_propagation();
+                git_actions::open_diff(&open_state, request.clone(), untracked);
+                focus.focus();
+            }),
+        );
+        body = body.child(file_header);
+        if collapsed {
+            continue;
+        }
+        let body_top = rect.top + item.body_top as f32 * ROW_H - scroll_y;
+        let body_bottom = body_top + item.body_rows as f32 * ROW_H;
+        let visible = UiRect::new(
+            rect.left,
+            body_top.max(rect.top),
+            rect.right,
+            body_bottom.min(rect.bottom),
+        );
+        if visible.bottom <= visible.top {
+            continue;
+        }
+        let local_y = visible.top - body_top;
+        let mut file_body =
+            panel(visible, VisualStyle::default()).key(format!("changes-body-{}", item.index));
+        if document.rows.is_empty() {
+            let message = section.error.clone().unwrap_or_else(|| {
+                if document.binary {
+                    "Binary file changed.".into()
+                } else {
+                    "No textual changes.".into()
+                }
+            });
+            file_body = file_body.child(text(
+                UiRect::new(rect.left + 32.0, body_top, rect.right - 12.0, body_bottom),
+                message,
+                theme::mono(theme::c().text_dim, theme::SMALL),
+            ));
+        } else {
+            file_body = file_body.child(if split {
+                render_split(visible, &document.split_rows, scroll_x, local_y, ratio)
+            } else {
+                render_inline(visible, &document.rows, scroll_x, local_y)
+            });
+            if !document.blocks.is_empty() {
+                file_body = file_body.child(block_buttons(
+                    visible,
+                    document,
+                    &document.change_starts(split),
+                    local_y,
+                    state,
+                    store,
+                ));
+            }
+        }
+        body = body.child(file_body);
+    }
+    body
 }
 
 fn take_button_rect(right: &mut f32, top: f32, width: f32) -> UiRect {
@@ -736,6 +988,198 @@ fn navigate_change(app: &mut AppState, starts: &[usize], next: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_overview(extra_files: usize) -> DiffDocument {
+        use crate::git::{ChangeDiff, ChangeGroup, DiffContent, DiffRequest, diff::parse_unified};
+        let file = |path: &str, group, target, patch: &str| ChangeDiff {
+            path: path.into(),
+            group,
+            target,
+            content: Ok(DiffContent::Unified(parse_unified(patch).unwrap())),
+        };
+        let mut files = vec![
+            file(
+                "src/app.rs",
+                ChangeGroup::Staged,
+                DiffTarget::HeadToIndex,
+                "diff --git a/src/app.rs b/src/app.rs\n--- a/src/app.rs\n+++ b/src/app.rs\n@@ -1,3 +1,3 @@\n pub fn render() {\n-    open_diff(file);\n+    open_changes(repository, file);\n }\n",
+            ),
+            file(
+                "src/ui/git_panel.rs",
+                ChangeGroup::Unstaged,
+                DiffTarget::IndexToWorktree,
+                "diff --git a/src/ui/git_panel.rs b/src/ui/git_panel.rs\n--- a/src/ui/git_panel.rs\n+++ b/src/ui/git_panel.rs\n@@ -1,3 +1,3 @@\n fn on_click() {\n-    show_file_diff();\n+    show_all_changes();\n }\n",
+            ),
+            ChangeDiff {
+                path: "notes/review.md".into(),
+                group: ChangeGroup::Untracked,
+                target: DiffTarget::IndexToWorktree,
+                content: Ok(DiffContent::Untracked(
+                    "# Review notes\n\nOne Changes tab for the whole repository.\n".into(),
+                )),
+            },
+        ];
+        files.extend((0..extra_files).map(|index| ChangeDiff {
+            path: format!("generated/file-{index:04}.txt").into(),
+            group: ChangeGroup::Untracked,
+            target: DiffTarget::IndexToWorktree,
+            content: Ok(DiffContent::Untracked("first\nsecond\nthird\n".into())),
+        }));
+        DiffDocument::from_content(
+            DiffRequest {
+                repository_root: "loom".into(),
+                path: PathBuf::new(),
+                target: DiffTarget::Changes,
+            },
+            DiffContent::Changes(files),
+        )
+    }
+
+    #[test]
+    fn changes_view_collapses_files_and_virtualizes_inline_and_split_sections() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{
+            InputEvent, Point, PointerButton, PointerData, UiScale, dispatch_runtime_output,
+        };
+        use lgui::session::UiSession;
+        use std::sync::{Arc, Mutex};
+        for split in [false, true] {
+            let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+            let output = exposed.clone();
+            let viewport = UiRect::new(0.0, 0.0, 900.0, 600.0);
+            let view: AppView = Arc::new(move |cx| {
+                let state = cx.state_with(|| {
+                    let mut app = AppState::new();
+                    app.git_split_diff = split;
+                    app.workspace.open_diff(sample_overview(0));
+                    app
+                });
+                *output.lock().unwrap() = Some(state.clone());
+                let store = cx.state_with(GitStoreSnapshot::default);
+                let id = cx.use_stable_id();
+                let focus = cx.focus_handle(id);
+                render(
+                    state.get().workspace.active_pane(),
+                    viewport,
+                    state,
+                    store,
+                    focus,
+                )
+            });
+            let context = ApplicationContext::empty(Default::default());
+            let _text = lgui::backend::install_text_environment(
+                &context,
+                lgui::render_skia::skia_text_system_handle(),
+            );
+            let mut session = UiSession::new();
+            session.render_view(&view, viewport, UiScale::ONE);
+            let state = exposed.lock().unwrap().clone().unwrap();
+            let texts = || {
+                session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .filter_map(|node| node.text.as_deref())
+                    .collect::<Vec<_>>()
+            };
+            for expected in [
+                "STAGED CHANGES",
+                "CHANGES",
+                "UNTRACKED FILES",
+                "src/app.rs",
+                "src/ui/git_panel.rs",
+                "notes/review.md",
+            ] {
+                assert!(texts().contains(&expected), "Missing {expected}");
+            }
+            if !split && let Some(path) = std::env::var_os("LOOM_CHANGES_PREVIEW") {
+                use lgui::core::PhysicalRect;
+                use lgui::icons::IconRegistration;
+                use lgui::renderer::{FrameInfo, FrameReason};
+                context
+                    .resources()
+                    .provide(IconRegistration(Arc::new(crate::svg_icons())));
+                let scale = UiScale::new(2.0);
+                let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(12 * 1024 * 1024);
+                let frame = FrameInfo::new(
+                    PhysicalRect::new(0, 0, 1800, 1200),
+                    &[],
+                    scale,
+                    FrameReason::SceneChange,
+                    true,
+                );
+                lgui::assets::backend::with_render_resources(
+                    &context,
+                    lgui::RenderResources::new(),
+                    || {
+                        surface
+                            .draw(&session.tree().scene().project_to_physical(scale), &frame)
+                            .unwrap();
+                    },
+                );
+                let mut pixels = surface.pixels().to_vec();
+                for pixel in pixels.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                }
+                image::save_buffer(path, &pixels, 1800, 1200, image::ColorType::Rgba8).unwrap();
+            }
+            let header = session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| {
+                    node.semantics.as_ref().and_then(|s| s.name.as_deref())
+                        == Some("Collapse src/app.rs")
+                })
+                .unwrap()
+                .layout_rect;
+            let point = Point::new(header.left + 48.0, (header.top + header.bottom) / 2.0);
+            for input in [
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            ] {
+                let events = session.handle_input(input);
+                dispatch_runtime_output(
+                    events,
+                    &context,
+                    &lgui::window::WindowId::new("changes-view-test"),
+                    |action| session.handle_default_action(action),
+                    |_| {},
+                );
+                session.render_view(&view, viewport, UiScale::ONE);
+            }
+            let app = state.get();
+            let collapsed = app.workspace.collapsed_diffs(app.workspace.active_pane());
+            assert_eq!(collapsed.len(), 1);
+            assert_eq!(
+                collapsed.iter().next().unwrap().target,
+                DiffTarget::HeadToIndex
+            );
+            state.update(|app| {
+                app.workspace.open_diff(sample_overview(1000));
+                app.workspace.set_active_scroll(0.0, 100_000.0);
+            });
+            session.render_view(&view, viewport, UiScale::ONE);
+            let texts = session
+                .tree()
+                .nodes()
+                .iter()
+                .filter_map(|node| node.text.as_deref())
+                .collect::<Vec<_>>();
+            assert!(texts.contains(&"generated/file-0999.txt"));
+            assert!(!texts.contains(&"src/app.rs"));
+            assert!(
+                session.tree().nodes().len() < 600,
+                "Offscreen files must not create UI nodes"
+            );
+        }
+    }
 
     #[test]
     fn inline_diff_expands_tabs_before_rendering() {

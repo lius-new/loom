@@ -4,7 +4,7 @@
 //! undo history and one dirty state. Each pane keeps its own tab list,
 //! preview slot and, per document, its own selection and scroll position.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -48,6 +48,8 @@ struct OpenDocument {
     buffer: TextBuffer,
     saved_text: Arc<String>,
     diff: Option<Arc<DiffDocument>>,
+    collapsed_diffs: BTreeSet<DiffRequest>,
+    focused_diff: Option<DiffRequest>,
     /// A built-in page (Settings, Keymap) rather than a file.
     page: Option<AppPage>,
     /// One view per pane that has this document as a tab.
@@ -64,6 +66,8 @@ impl OpenDocument {
             buffer: TextBuffer::new(contents.clone()),
             saved_text: Arc::new(contents),
             diff: None,
+            collapsed_diffs: BTreeSet::new(),
+            focused_diff: None,
             page: None,
             views: HashMap::new(),
             disk_state,
@@ -847,6 +851,56 @@ impl Workspace {
         self.documents.get(&id)?.diff.as_deref()
     }
 
+    pub fn collapsed_diffs(&self, pane: PaneId) -> BTreeSet<DiffRequest> {
+        self.panes
+            .get(&pane)
+            .and_then(|p| p.active)
+            .and_then(|id| self.documents.get(&id))
+            .map(|document| document.collapsed_diffs.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn toggle_diff_section(&mut self, pane: PaneId, request: DiffRequest) {
+        let Some(id) = self.panes.get(&pane).and_then(|p| p.active) else {
+            return;
+        };
+        let Some(document) = self.documents.get_mut(&id) else {
+            return;
+        };
+        if !document.collapsed_diffs.insert(request.clone()) {
+            document.collapsed_diffs.remove(&request);
+        }
+    }
+
+    pub fn focus_diff_section(&mut self, request: &DiffRequest, split: bool) {
+        let pane = self.active_pane;
+        let Some(id) = self.active() else { return };
+        let Some(document) = self.documents.get_mut(&id) else {
+            return;
+        };
+        let Some(diff) = &document.diff else { return };
+        let Some(sections) = &diff.sections else {
+            return;
+        };
+        document.focused_diff = Some(request.clone());
+        document.collapsed_diffs.remove(request);
+        let layout = diff.changes_layout(split, &document.collapsed_diffs);
+        if let Some(section) = layout
+            .sections
+            .iter()
+            .find(|item| sections[item.index].request() == *request)
+            && let Some(view) = document.views.get_mut(&pane)
+        {
+            view.scroll_y = section.top as f32 * crate::model::diff_document::DIFF_ROW_HEIGHT;
+        }
+    }
+
+    pub fn active_diff_focus(&self) -> Option<&DiffRequest> {
+        let document = self.documents.get(&self.active()?)?;
+        document.diff.as_ref()?.sections.as_ref()?;
+        document.focused_diff.as_ref()
+    }
+
     /// The built-in page shown by a pane's active tab.
     pub fn pane_page(&self, pane: PaneId) -> Option<AppPage> {
         let id = self.panes.get(&pane)?.active?;
@@ -1083,6 +1137,35 @@ impl Workspace {
         self.open_prepared_diff(Arc::new(diff))
     }
 
+    /// Source Control keeps one single-file changes tab per repository.
+    pub fn open_prepared_file_changes(&mut self, diff: Arc<DiffDocument>) -> FileId {
+        if let Some((&id, document)) = self.documents.iter_mut().find(|(_, document)| {
+            document.diff.as_ref().is_some_and(|current| {
+                current.repository_root == diff.repository_root
+                    && current.sections.is_none()
+                    && current.revision.is_none()
+            })
+        }) {
+            let changed_file = document
+                .diff
+                .as_ref()
+                .is_none_or(|current| !current.same_view(&diff));
+            document.meta.name = diff.title();
+            document.meta.path = diff.absolute_path();
+            document.focused_diff = None;
+            if changed_file {
+                for view in document.views.values_mut() {
+                    view.scroll_x = 0.0;
+                    view.scroll_y = 0.0;
+                }
+            }
+            crate::background_ui::retire(document.diff.replace(diff));
+            self.reveal(id);
+            return id;
+        }
+        self.open_prepared_diff(diff)
+    }
+
     pub fn open_prepared_diff(&mut self, diff: Arc<DiffDocument>) -> FileId {
         if let Some((&id, document)) = self.documents.iter_mut().find(|(_, document)| {
             document
@@ -1162,20 +1245,7 @@ impl Workspace {
             let Some(Ok(content)) = diffs.get(&request) else {
                 continue;
             };
-            let next = match content {
-                DiffContent::Unified(diff) => DiffDocument::from_unified(
-                    request.repository_root,
-                    request.path,
-                    request.target,
-                    diff.clone(),
-                ),
-                DiffContent::Untracked(contents) => DiffDocument::added(
-                    request.repository_root,
-                    request.path,
-                    request.target,
-                    contents,
-                ),
-            };
+            let next = DiffDocument::from_content(request, content.clone());
             if **current != next {
                 document.diff = Some(Arc::new(next));
                 changed = true;
@@ -1188,6 +1258,7 @@ impl Workspace {
     pub fn apply_prepared_git_diffs(
         &mut self,
         diffs: &std::collections::BTreeMap<DiffRequest, Arc<DiffDocument>>,
+        split: bool,
     ) -> Vec<Arc<DiffDocument>> {
         let mut retired = Vec::new();
         for document in self.documents.values_mut() {
@@ -1202,6 +1273,30 @@ impl Workspace {
             if let Some(next) = diffs.get(&request)
                 && !Arc::ptr_eq(current, next)
             {
+                if let (Some(old_sections), Some(new_sections)) =
+                    (&current.sections, &next.sections)
+                {
+                    let old_layout = current.changes_layout(split, &document.collapsed_diffs);
+                    let new_layout = next.changes_layout(split, &document.collapsed_diffs);
+                    for view in document.views.values_mut() {
+                        let row = view.scroll_y / crate::model::diff_document::DIFF_ROW_HEIGHT;
+                        if let Some(old) = old_layout
+                            .sections
+                            .iter()
+                            .rfind(|item| item.top as f32 <= row)
+                        {
+                            let request = old_sections[old.index].request();
+                            if let Some(new) = new_layout
+                                .sections
+                                .iter()
+                                .find(|item| new_sections[item.index].request() == request)
+                            {
+                                view.scroll_y = (new.top as f32 + row - old.top as f32).max(0.0)
+                                    * crate::model::diff_document::DIFF_ROW_HEIGHT;
+                            }
+                        }
+                    }
+                }
                 retired.push(document.diff.replace(next.clone()).unwrap());
             }
         }
@@ -2028,7 +2123,82 @@ mod tests {
             workspace.active_diff().unwrap()
         ));
         let diffs = std::collections::BTreeMap::from([(request, document)]);
-        assert!(workspace.apply_prepared_git_diffs(&diffs).is_empty());
+        assert!(workspace.apply_prepared_git_diffs(&diffs, false).is_empty());
+    }
+
+    #[test]
+    fn changes_tab_reuses_identity_and_preserves_file_anchor_and_collapsed_sections() {
+        use crate::git::{ChangeDiff, ChangeGroup};
+        let root = PathBuf::from("repo");
+        let request = DiffRequest {
+            repository_root: root.clone(),
+            path: PathBuf::new(),
+            target: DiffTarget::Changes,
+        };
+        let make = |first_lines: usize| {
+            Arc::new(DiffDocument::from_content(
+                request.clone(),
+                DiffContent::Changes(vec![
+                    ChangeDiff {
+                        path: "first.txt".into(),
+                        target: DiffTarget::HeadToIndex,
+                        group: ChangeGroup::Staged,
+                        content: Ok(DiffContent::Untracked("one\n".repeat(first_lines))),
+                    },
+                    ChangeDiff {
+                        path: "second.txt".into(),
+                        target: DiffTarget::IndexToWorktree,
+                        group: ChangeGroup::Unstaged,
+                        content: Ok(DiffContent::Untracked("two\n".repeat(20))),
+                    },
+                    ChangeDiff {
+                        path: "third.txt".into(),
+                        target: DiffTarget::IndexToWorktree,
+                        group: ChangeGroup::Untracked,
+                        content: Ok(DiffContent::Untracked("three\n".repeat(20))),
+                    },
+                ]),
+            ))
+        };
+        let second = DiffRequest {
+            repository_root: root.clone(),
+            path: "second.txt".into(),
+            target: DiffTarget::IndexToWorktree,
+        };
+        let third = DiffRequest {
+            path: "third.txt".into(),
+            ..second.clone()
+        };
+        let mut workspace = Workspace::new();
+        let id = workspace.open_prepared_diff(make(10));
+        assert_eq!(workspace.open_prepared_diff(make(10)), id);
+        workspace.focus_diff_section(&second, false);
+        let (x, y) = workspace.active_scroll();
+        workspace.set_active_scroll(x, y + 25.0);
+        let pane = workspace.active_pane();
+        workspace.toggle_diff_section(pane, third.clone());
+        let refreshed = make(30);
+        let diffs = std::collections::BTreeMap::from([(request.clone(), refreshed)]);
+        assert_eq!(workspace.apply_prepared_git_diffs(&diffs, false).len(), 1);
+        assert_eq!(
+            workspace.active_scroll().1,
+            y + 25.0 + 20.0 * crate::model::diff_document::DIFF_ROW_HEIGHT
+        );
+        assert!(workspace.collapsed_diffs(pane).contains(&third));
+        assert_eq!(workspace.git_poll_target().diffs, [request]);
+        let single = workspace.open_diff(DiffDocument::added(
+            root.clone(),
+            "second.txt".into(),
+            DiffTarget::IndexToWorktree,
+            "two\n",
+        ));
+        assert_ne!(single, id);
+        assert_eq!(workspace.active_pane().get(), pane.get());
+        assert_eq!(workspace.pane(pane).unwrap().items().len(), 2);
+        workspace.activate(pane, id);
+        workspace.focus_diff_section(&third, false);
+        assert!(!workspace.collapsed_diffs(pane).contains(&third));
+        assert_eq!(workspace.active_diff_focus(), Some(&third));
     }
 
     #[test]
