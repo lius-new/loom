@@ -206,29 +206,47 @@ impl CliGitBackend {
         amend: bool,
         signoff: bool,
     ) -> GitResult<String> {
-        let mut args = vec!["commit", "--file=-"];
+        // Amending with no new message keeps the commit's own.
+        let keep_message = amend && message.trim().is_empty();
+        let mut args = vec![
+            "commit",
+            if keep_message {
+                "--no-edit"
+            } else {
+                "--file=-"
+            },
+        ];
         if amend {
             args.push("--amend");
         }
         if signoff {
             args.push("--signoff");
         }
-        let output = self.runner.run(
-            GitCommand::new()
-                .cwd(repository)
-                .args(args)
-                .stdin(message.as_bytes().to_vec()),
-        )?;
-        output.stdout_text()
+        let mut command = GitCommand::new().cwd(repository).args(args);
+        if !keep_message {
+            command = command.stdin(message.as_bytes().to_vec());
+        }
+        self.runner.run(command)?.stdout_text()
     }
 
-    pub fn undo_commit(&self, repository: &Path) -> GitResult<()> {
+    /// Undo the last commit, keeping its changes staged. Returns the undone
+    /// commit's message.
+    pub fn undo_commit(&self, repository: &Path) -> GitResult<String> {
+        let message = self
+            .runner
+            .run(
+                GitCommand::new()
+                    .cwd(repository)
+                    .args(["log", "-1", "--format=%B"])
+                    .read_only(),
+            )?
+            .stdout_text()?;
         self.runner.run(
             GitCommand::new()
                 .cwd(repository)
                 .args(["reset", "--soft", "HEAD^"]),
         )?;
-        Ok(())
+        Ok(message.trim_end().to_owned())
     }
 
     pub fn branches(&self, repository: &Path) -> GitResult<Vec<BranchInfo>> {
@@ -1273,6 +1291,46 @@ pub(crate) mod tests {
         assert_eq!(
             backend.blame(&root, Path::new("tracked.txt")).unwrap()[0].author,
             "Loom Test"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn real_repository_amends_without_a_message_and_undoes_commits() {
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        let subjects = |backend: &CliGitBackend| {
+            backend
+                .history(&root, None, None, 0, 10)
+                .unwrap()
+                .into_iter()
+                .map(|commit| commit.subject)
+                .collect::<Vec<_>>()
+        };
+        std::fs::write(root.join("a.txt"), "a\n").unwrap();
+        backend.stage(&root, &[PathBuf::from("a.txt")]).unwrap();
+        backend.commit(&root, "first", false, false).unwrap();
+        std::fs::write(root.join("b.txt"), "b\n").unwrap();
+        backend.stage(&root, &[PathBuf::from("b.txt")]).unwrap();
+        backend
+            .commit(&root, "second\n\nwith a body", false, false)
+            .unwrap();
+
+        // An empty amend message keeps the commit's own.
+        std::fs::write(root.join("c.txt"), "c\n").unwrap();
+        backend.stage(&root, &[PathBuf::from("c.txt")]).unwrap();
+        backend.commit(&root, "", true, false).unwrap();
+        assert_eq!(subjects(&backend), ["second", "first"]);
+
+        // Undo returns the full message and keeps the changes staged.
+        assert_eq!(backend.undo_commit(&root).unwrap(), "second\n\nwith a body");
+        assert_eq!(subjects(&backend), ["first"]);
+        let discovered = backend.discover(std::slice::from_ref(&root)).unwrap();
+        let status = backend.status(&discovered[0], RepositoryId(1), 1).unwrap();
+        assert_eq!(
+            status.files[&PathBuf::from("b.txt")].index,
+            ChangeKind::Added
         );
         let _ = std::fs::remove_dir_all(root);
     }
