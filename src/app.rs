@@ -1162,6 +1162,17 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     {
         root = root.child(tooltip);
     }
+    if s.context_menu.is_none()
+        && s.git_menu.is_none()
+        && s.git_confirm.is_none()
+        && s.branch_picker.is_none()
+        && s.stash_switch.is_none()
+        && !show_clone_dialog
+        && s.close_request.is_none()
+        && let Some(card) = git_panel::render_commit_card(vp, &s)
+    {
+        root = root.child(card);
+    }
 
     // ---- Overlays ------------------------------------------------------
     if let Some(pos) = s.editor.menu {

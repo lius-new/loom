@@ -447,6 +447,41 @@ pub struct CommitSummary {
     pub decorations: Vec<String>,
 }
 
+/// What a history commit's hover card shows beyond its summary.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommitDetails {
+    pub author: String,
+    pub author_email: String,
+    /// The author date, formatted by git in local time.
+    pub date: String,
+    /// The full message, without trailing blank lines.
+    pub message: String,
+    pub files_changed: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+}
+
+impl CommitDetails {
+    /// Read the counts of a `--shortstat` line such as
+    /// ` 3 files changed, 10 insertions(+), 2 deletions(-)`.
+    pub fn set_shortstat(&mut self, line: &str) {
+        for part in line.split(',') {
+            let mut words = part.split_whitespace();
+            let (Some(count), Some(kind)) = (words.next(), words.next()) else {
+                continue;
+            };
+            let Ok(count) = count.parse() else { continue };
+            if kind.starts_with("file") {
+                self.files_changed = count;
+            } else if kind.starts_with("insertion") {
+                self.insertions = count;
+            } else if kind.starts_with("deletion") {
+                self.deletions = count;
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BranchInfo {
     pub name: String,

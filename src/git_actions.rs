@@ -988,6 +988,89 @@ pub fn open_commit_changes(
     }
 }
 
+/// How long the pointer rests on a history commit before its card shows.
+const COMMIT_CARD_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Show commit `oid`'s hover card beside `anchor`, its row on screen, once
+/// the pointer has rested there.
+pub fn hover_commit(
+    state: &State<AppState>,
+    root: PathBuf,
+    oid: String,
+    anchor: lgui::prelude::UiRect,
+) {
+    let Some(application) = state.get().git_application else {
+        return;
+    };
+    let hovered = crate::ui::git_panel::GitHover::Commit(oid.clone());
+    let worker_state = state.clone();
+    let _ = thread::Builder::new()
+        .name("loom-git-commit-card".into())
+        .spawn(move || {
+            thread::sleep(COMMIT_CARD_DELAY);
+            let app = worker_state.get();
+            if app.git_hover.as_ref() != Some(&hovered) {
+                return;
+            }
+            let cached = app.git_commit_details.get(&oid).cloned();
+            drop(app);
+            let details = cached.unwrap_or_else(|| {
+                crate::git::service()
+                    .and_then(|service| service.backend().commit_details(&root, &oid))
+                    .map_err(|error| error.user_message())
+            });
+            application.post(move || {
+                worker_state.update(move |app| {
+                    // Commits never change, but keep the cache small.
+                    if app.git_commit_details.len() >= 64 {
+                        app.git_commit_details.clear();
+                    }
+                    app.git_commit_details.insert(oid.clone(), details.clone());
+                    if app.git_hover.as_ref() == Some(&hovered) {
+                        app.git_commit_card = Some(crate::ui::git_panel::CommitCard {
+                            oid,
+                            anchor,
+                            details,
+                        });
+                    }
+                });
+            });
+        });
+}
+
+/// Create a commit that undoes commit `oid`. Conflicts leave a revert in
+/// progress for Source Control to continue or abort.
+pub fn revert_commit(
+    state: &State<AppState>,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    oid: String,
+) -> bool {
+    let Some(repository) = store.get().repository_for_path(root).cloned() else {
+        return false;
+    };
+    if state
+        .get()
+        .workspace
+        .has_dirty_paths_under(&repository.worktree_root)
+    {
+        state.update(|app| {
+            app.show_toast("Save or revert the open editor changes before reverting.")
+        });
+        return false;
+    }
+    let short = crate::model::diff_document::short_oid(&oid).to_owned();
+    run_with(
+        state,
+        store,
+        repository,
+        OperationKind::Other,
+        "Reverting commit…",
+        move |service, root| service.write(root, |backend| backend.revert(root, &oid)),
+        move |app, ()| app.show_success(format!("Reverted commit {short}.")),
+    )
+}
+
 /// Make the repository at `root` active in Source Control until the
 /// active file changes.
 pub fn select_repository(state: &State<AppState>, store: &State<GitStoreSnapshot>, root: PathBuf) {

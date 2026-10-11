@@ -485,23 +485,38 @@ pub fn render(
     // One hit test per move finds the hovered row, so rows need no hover
     // state of their own and the pointer never leaves a stale highlight.
     let hover_state = state.clone();
+    let hover_root = repository.worktree_root.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
             let point = pointer.point;
-            let hover = content_rect
+            let target = content_rect
                 .contains(point)
                 .then(|| {
                     hover_targets.iter().find(|(rect, _)| {
                         point.y >= rect.top - scroll && point.y < rect.bottom - scroll
                     })
                 })
-                .flatten()
-                .map(|(_, hover)| hover.clone());
-            hover_state.try_update(move |app| {
-                let changed = app.git_hover != hover;
-                app.git_hover = hover;
+                .flatten();
+            let next = target.map(|(_, hover)| hover.clone());
+            let mut entered = false;
+            hover_state.try_update(|app| {
+                let changed = app.git_hover != next;
+                if changed {
+                    entered = true;
+                    app.git_commit_card = None;
+                }
+                app.git_hover = next;
                 changed
             });
+            if entered && let Some((rect, GitHover::Commit(oid))) = target {
+                let anchor = UiRect::new(
+                    rect.left,
+                    rect.top - scroll,
+                    rect.right,
+                    rect.bottom - scroll,
+                );
+                git_actions::hover_commit(&hover_state, hover_root.clone(), oid.clone(), anchor);
+            }
         }
     });
     let wheel_state = state.clone();
@@ -513,6 +528,7 @@ pub fn render(
             };
             wheel_state.update(move |app| {
                 app.git_scroll = (app.git_scroll - step).clamp(0.0, max_scroll);
+                app.git_commit_card = None;
             });
         }
     });
@@ -1035,6 +1051,208 @@ pub struct GitHistory {
     pub commits: Result<Vec<CommitSummary>, String>,
 }
 
+/// A history commit's hover card, beside its row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommitCard {
+    pub oid: String,
+    /// The commit's row on screen when the card was requested.
+    pub anchor: UiRect,
+    pub details: Result<crate::git::CommitDetails, String>,
+}
+
+const CARD_W: f32 = 420.0;
+const CARD_PAD: f32 = 12.0;
+const CARD_LINE_H: f32 = 18.0;
+const CARD_MAX_MESSAGE_LINES: usize = 16;
+
+/// The hovered history commit's card, to the right of Source Control.
+pub fn render_commit_card(viewport: UiRect, app: &AppState) -> Option<Element> {
+    let card = app.git_commit_card.as_ref()?;
+    if app.git_hover.as_ref() != Some(&GitHover::Commit(card.oid.clone())) {
+        return None;
+    }
+    let summary = app
+        .git_history
+        .as_ref()
+        .and_then(|history| history.commits.as_ref().ok())
+        .and_then(|commits| commits.iter().find(|commit| commit.oid == card.oid));
+    let width = CARD_W.min(viewport.width() - 16.0).max(160.0);
+    let inner = width - CARD_PAD * 2.0;
+    let separator = 11.0;
+
+    // Each line is (text pieces with colors, bold).
+    enum Line {
+        Text(Vec<(String, lgui::prelude::Color)>, bool),
+        Separator,
+    }
+    let mut lines = Vec::new();
+    match &card.details {
+        Ok(details) => {
+            lines.push(Line::Text(
+                vec![(details.author.clone(), theme::c().text_bright)],
+                true,
+            ));
+            lines.push(Line::Text(
+                vec![(
+                    format!("{}  ·  {}", details.author_email, details.date),
+                    theme::c().text_dim,
+                )],
+                false,
+            ));
+            lines.push(Line::Separator);
+            let mut message = wrap_text(&details.message.replace('\t', "    "), inner);
+            if message.len() > CARD_MAX_MESSAGE_LINES {
+                message.truncate(CARD_MAX_MESSAGE_LINES);
+                message.push("…".into());
+            }
+            lines.extend(
+                message
+                    .into_iter()
+                    .map(|line| Line::Text(vec![(line, theme::c().text)], false)),
+            );
+            if details.files_changed > 0 {
+                lines.push(Line::Separator);
+                let plural = |count: usize, word: &str| {
+                    format!("{count} {word}{}", if count == 1 { "" } else { "s" })
+                };
+                let mut stats = vec![(
+                    format!("{} changed", plural(details.files_changed, "file")),
+                    theme::c().text_soft,
+                )];
+                if details.insertions > 0 {
+                    stats.push((", ".into(), theme::c().text_soft));
+                    stats.push((
+                        format!("{}(+)", plural(details.insertions, "insertion")),
+                        theme::c().git.added,
+                    ));
+                }
+                if details.deletions > 0 {
+                    stats.push((", ".into(), theme::c().text_soft));
+                    stats.push((
+                        format!("{}(-)", plural(details.deletions, "deletion")),
+                        theme::c().git.deleted,
+                    ));
+                }
+                lines.push(Line::Text(stats, false));
+            }
+        }
+        Err(error) => lines.extend(
+            wrap_text(error, inner)
+                .into_iter()
+                .map(|line| Line::Text(vec![(line, theme::c().error_text)], false)),
+        ),
+    }
+    lines.push(Line::Separator);
+    let mut footer = vec![(
+        crate::model::diff_document::short_oid(&card.oid).to_owned(),
+        theme::c().text_soft,
+    )];
+    if let Some(summary) = summary.filter(|summary| !summary.decorations.is_empty()) {
+        footer.push((
+            format!("  {}", summary.decorations.join(", ")),
+            theme::c().text_dim,
+        ));
+    }
+    lines.push(Line::Text(footer, false));
+
+    let height = CARD_PAD * 2.0
+        + lines
+            .iter()
+            .map(|line| match line {
+                Line::Text(..) => CARD_LINE_H,
+                Line::Separator => separator,
+            })
+            .sum::<f32>();
+    let left = (card.anchor.right + 6.0)
+        .min(viewport.right - width - 8.0)
+        .max(viewport.left + 8.0);
+    let top = card
+        .anchor
+        .top
+        .min(viewport.bottom - height - 8.0)
+        .max(viewport.top + 8.0);
+    let rect = UiRect::new(left, top, left + width, top + height);
+    let mut surface = theme::bordered(rect, theme::c().surface, theme::c().border, 6.0, 1.0)
+        .shadow(
+            lgui::prelude::ShadowStyle::new(lgui::prelude::Color::BLACK)
+                .alpha(theme::c().shadow_alpha)
+                .offset(0.0, 2.0)
+                .blur(3.0),
+        );
+    let mut y = rect.top + CARD_PAD;
+    for line in lines {
+        match line {
+            Line::Separator => {
+                let line_y = y + (separator - 1.0) / 2.0;
+                surface = surface.child(panel(
+                    UiRect::new(
+                        rect.left + CARD_PAD,
+                        line_y,
+                        rect.right - CARD_PAD,
+                        line_y + 1.0,
+                    ),
+                    VisualStyle::filled(theme::c().border),
+                ));
+                y += separator;
+            }
+            Line::Text(pieces, bold) => {
+                let mut x = rect.left + CARD_PAD;
+                for (piece, color) in pieces {
+                    let piece_w =
+                        super::tabs::measure(&piece, theme::UI_SIZE, if bold { 700 } else { 400 });
+                    let piece = super::tabs::ellipsize(
+                        &piece,
+                        (rect.right - CARD_PAD - x).max(0.0),
+                        theme::UI_SIZE,
+                        if bold { 700 } else { 400 },
+                    );
+                    surface = surface.child(text(
+                        UiRect::new(x, y, rect.right - CARD_PAD, y + CARD_LINE_H),
+                        piece,
+                        if bold {
+                            theme::mono_bold(color, theme::UI_SIZE)
+                        } else {
+                            theme::mono(color, theme::UI_SIZE)
+                        },
+                    ));
+                    x += piece_w;
+                }
+                y += CARD_LINE_H;
+            }
+        }
+    }
+    Some(surface)
+}
+
+/// Break `text` into lines no wider than `width`: at spaces where possible,
+/// otherwise between characters, as CJK text needs.
+fn wrap_text(text: &str, width: f32) -> Vec<String> {
+    let fits = |line: &str| super::tabs::measure(line, theme::UI_SIZE, 400) <= width;
+    let mut lines = Vec::new();
+    for paragraph in text.lines() {
+        let mut line = String::new();
+        for word in paragraph.split_inclusive(' ') {
+            if fits(format!("{line}{word}").trim_end()) {
+                line.push_str(word);
+                continue;
+            }
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line).trim_end().to_owned());
+            }
+            for ch in word.chars() {
+                line.push(ch);
+                if !fits(&line) && line.chars().count() > 1 {
+                    line.pop();
+                    lines.push(std::mem::take(&mut line));
+                    line.push(ch);
+                }
+            }
+        }
+        lines.push(line.trim_end().to_owned());
+    }
+    lines
+}
+
 /// A history commit expanded to list the files it changed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExpandedCommit {
@@ -1324,7 +1542,9 @@ fn history_row(
             let toggle_state = state.clone();
             let root = repository.to_path_buf();
             let oid = commit.oid.clone();
-            let expanding = !*open;
+            let menu_state = state.clone();
+            let menu_root = repository.to_path_buf();
+            let menu_oid = commit.oid.clone();
             let age = relative_time(now, commit.timestamp);
             let age_w = super::tabs::measure(&age, 9.0, 400) + 6.0;
             panel(rect, background)
@@ -1333,18 +1553,33 @@ fn history_row(
                 .semantics(Semantics::new(SemanticRole::Button).name(commit.subject.clone()))
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
-                    git_actions::toggle_commit(&toggle_state, root.clone(), oid.clone());
-                    if expanding {
-                        git_actions::open_commit_changes(
-                            &toggle_state,
-                            root.clone(),
-                            oid.clone(),
-                            None,
-                        );
+                    // A right-click that opened this row's menu is not a click.
+                    let mut menu_open = false;
+                    toggle_state.try_update(|app| {
+                        menu_open = app.git_menu.is_some();
+                        false
+                    });
+                    if !menu_open {
+                        git_actions::toggle_commit(&toggle_state, root.clone(), oid.clone());
+                    }
+                })
+                .on_pointer_down_with_button(move |_cx, pointer, button| {
+                    if button == PointerButton::Right {
+                        let target = GitMenuTarget::HistoryCommit {
+                            repository: menu_root.clone(),
+                            oid: menu_oid.clone(),
+                        };
+                        menu_state.update(move |app| {
+                            app.git_menu = Some(GitMenu {
+                                pos: (pointer.point.x, pointer.point.y),
+                                target,
+                                hover: None,
+                            });
+                        });
                     }
                 })
                 .child(super::sidebar::drawer_icon(
-                    "git-commit-row-chevron",
+                    lgui::core::UiId::owned(format!("git-commit-row-chevron-{}", commit.oid)),
                     if *open {
                         "chevron-down"
                     } else {
@@ -1973,6 +2208,7 @@ fn row_buttons(mut row: Element, rect: UiRect, right: f32, buttons: Vec<RowButto
     for button in buttons {
         let slot = UiRect::new(left, rect.top + 1.0, left + BUTTON_W, rect.bottom - 1.0);
         let on_click = button.on_click;
+        let icon_key = button.key.clone();
         row = row.child(
             Element::new(move |cx| {
                 let style = if cx.context.interaction_flags(&cx.id).hovered {
@@ -1991,7 +2227,7 @@ fn row_buttons(mut row: Element, rect: UiRect, right: f32, buttons: Vec<RowButto
                 cx.stop_propagation();
             })
             .child(super::sidebar::drawer_icon(
-                "git-row-button-icon",
+                lgui::core::UiId::owned(format!("{icon_key}-icon")),
                 button.icon,
                 UiRect::new(
                     slot.left + 3.0,
@@ -2184,6 +2420,26 @@ fn file_row(
 #[cfg(test)]
 mod action_tests {
     use super::*;
+
+    #[test]
+    fn commit_card_messages_wrap_at_spaces_or_between_cjk_characters() {
+        let width = super::super::tabs::measure("aaaa bbbb", theme::UI_SIZE, 400);
+        assert_eq!(
+            wrap_text("aaaa bbbb cccc\n\ndddd", width),
+            ["aaaa bbbb", "cccc", "", "dddd"]
+        );
+        let cjk = "提交信息悬停卡片显示完整内容";
+        let lines = wrap_text(cjk, width);
+        assert!(lines.len() > 1);
+        assert_eq!(lines.concat(), cjk);
+        assert!(
+            lines
+                .iter()
+                .all(|line| super::super::tabs::measure(line, theme::UI_SIZE, 400) <= width)
+        );
+        let long = "x".repeat(40);
+        assert_eq!(wrap_text(&long, width).concat(), long);
+    }
 
     #[test]
     fn grouping_lists_root_files_then_each_folder_with_its_files() {

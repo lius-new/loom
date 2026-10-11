@@ -372,6 +372,41 @@ impl CliGitBackend {
         Ok(message.trim_end().to_owned())
     }
 
+    /// `commit`'s author, local date, full message and change counts
+    /// against its first parent.
+    pub fn commit_details(&self, repository: &Path, commit: &str) -> GitResult<CommitDetails> {
+        validate_ref(commit)?;
+        let text = self
+            .runner
+            .run(
+                GitCommand::new()
+                    .cwd(repository)
+                    .args([
+                        "show",
+                        "--no-ext-diff",
+                        "--shortstat",
+                        "--diff-merges=first-parent",
+                        "--date=format-local:%Y-%m-%d %H:%M",
+                        "--format=%an%x00%ae%x00%ad%x00%B%x00",
+                        commit,
+                        "--",
+                    ])
+                    .read_only(),
+            )?
+            .stdout_text()?;
+        let mut fields = text.splitn(5, '\0');
+        let mut field = || fields.next().unwrap_or_default().to_owned();
+        let mut details = CommitDetails {
+            author: field(),
+            author_email: field(),
+            date: field(),
+            message: field().trim_end().to_owned(),
+            ..Default::default()
+        };
+        details.set_shortstat(&field());
+        Ok(details)
+    }
+
     pub fn branches(&self, repository: &Path) -> GitResult<Vec<BranchInfo>> {
         let output = self.runner.run(
             GitCommand::new()
@@ -1887,10 +1922,19 @@ pub(crate) mod tests {
                 ],
             )
             .unwrap();
-        backend.commit(&root, "second", false, false).unwrap();
+        backend
+            .commit(&root, "second\n\nwith a body", false, false)
+            .unwrap();
         let head = backend.history(&root, None, None, 0, 1).unwrap()[0]
             .oid
             .clone();
+        let details = backend.commit_details(&root, &head).unwrap();
+        assert_eq!(details.message, "second\n\nwith a body");
+        assert!(!details.author.is_empty() && !details.date.is_empty());
+        assert_eq!(
+            (details.files_changed, details.insertions, details.deletions),
+            (4, 1, 2)
+        );
         let service = GitService::new(backend);
         let content = service.commit_changes(&root, &head).unwrap();
         let document = DiffDocument::commit_changes(root.clone(), head.clone(), content);

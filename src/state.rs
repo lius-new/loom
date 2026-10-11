@@ -334,6 +334,10 @@ pub struct AppState {
     pub git_history: Option<crate::ui::git_panel::GitHistory>,
     /// The history commit expanded to list its files.
     pub git_history_commit: Option<crate::ui::git_panel::ExpandedCommit>,
+    /// The hover card of a history commit; shown while its row is hovered.
+    pub git_commit_card: Option<crate::ui::git_panel::CommitCard>,
+    /// Hover card details already read, by commit id.
+    pub git_commit_details: HashMap<String, Result<crate::git::CommitDetails, String>>,
     /// A repository chosen in Source Control, with the active file at the
     /// time; it stays active until the active file changes.
     pub git_pinned_repository: Option<(PathBuf, Option<PathBuf>)>,
@@ -449,6 +453,8 @@ impl AppState {
             git_confirm: None,
             git_history: None,
             git_history_commit: None,
+            git_commit_card: None,
+            git_commit_details: HashMap::new(),
             git_pinned_repository: None,
             pending_keystrokes: Vec::new(),
             pending_keystrokes_seq: 0,

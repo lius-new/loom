@@ -1,5 +1,5 @@
-//! Source Control menus: a changed file's context menu, and the commit
-//! options menu beside the commit button.
+//! Source Control menus: a changed file's context menu, a history commit's
+//! context menu, and the commit options menu beside the commit button.
 
 use std::path::PathBuf;
 
@@ -28,6 +28,11 @@ pub enum GitMenuTarget {
         section: u8,
     },
     Commit,
+    /// A commit in the history list.
+    HistoryCommit {
+        repository: PathBuf,
+        oid: String,
+    },
     /// The workspace's repositories, to choose the active one.
     Repositories,
 }
@@ -58,6 +63,8 @@ enum MenuAction {
     TakeIncoming,
     /// Make the `n`th repository, in snapshot order, active.
     SelectRepository(usize),
+    OpenCommitChanges,
+    RevertCommit,
 }
 
 enum Entry {
@@ -127,6 +134,11 @@ fn entries(target: &GitMenuTarget, app: &AppState, git: &GitStoreSnapshot) -> Ve
             Entry::Separator,
             item("Undo Last Commit", MenuAction::UndoCommit),
             item("Stash All Changes", MenuAction::StashAll),
+        ],
+        GitMenuTarget::HistoryCommit { .. } => vec![
+            item("Open Commit Changes", MenuAction::OpenCommitChanges),
+            Entry::Separator,
+            item("Revert Commit", MenuAction::RevertCommit),
         ],
         GitMenuTarget::Repositories => {
             let active = git.active().map(|repository| repository.id);
@@ -225,7 +237,22 @@ fn perform(
             | MenuAction::ToggleSignoff
             | MenuAction::UndoCommit
             | MenuAction::StashAll
-            | MenuAction::SelectRepository(_) => {}
+            | MenuAction::SelectRepository(_)
+            | MenuAction::OpenCommitChanges
+            | MenuAction::RevertCommit => {}
+        }
+        return;
+    }
+    if let GitMenuTarget::HistoryCommit { repository, oid } = target {
+        match action {
+            MenuAction::OpenCommitChanges => {
+                git_actions::open_commit_changes(state, repository.clone(), oid.clone(), None);
+                editor_focus.focus();
+            }
+            MenuAction::RevertCommit => {
+                git_actions::revert_commit(state, store, repository, oid.clone());
+            }
+            _ => {}
         }
         return;
     }
@@ -475,6 +502,18 @@ mod tests {
         assert!(
             conflicts.iter().any(|label| label == "Keep Current (Ours)")
                 && conflicts.iter().any(|label| label == "Mark as Resolved")
+        );
+    }
+
+    #[test]
+    fn history_commit_menu_offers_open_and_revert() {
+        let target = GitMenuTarget::HistoryCommit {
+            repository: PathBuf::from("repo"),
+            oid: "abc".into(),
+        };
+        assert_eq!(
+            labels(&target, &AppState::new()),
+            ["Open Commit Changes", "Revert Commit"]
         );
     }
 

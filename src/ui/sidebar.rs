@@ -332,13 +332,15 @@ fn resized_sidebar_width(window_right: f32, pointer_x: f32) -> f32 {
     (window_right - pointer_x).clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W)
 }
 
+/// `id` must be unique in the frame: elements sharing one replace each
+/// other, so repeated rows need ids such as `UiId::owned(format!(..))`.
 pub(super) fn drawer_icon(
-    id: &'static str,
+    id: impl Into<UiId>,
     key: &'static str,
     rect: UiRect,
     color: lgui::prelude::Color,
 ) -> Element {
-    precompiled(UiElement::icon(UiId::new(id), rect, key).icon_style(IconStyle::new(color)))
+    precompiled(UiElement::icon(id.into(), rect, key).icon_style(IconStyle::new(color)))
 }
 
 fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
