@@ -33,6 +33,8 @@ mod key_actions;
 mod launch;
 mod model;
 mod project_settings;
+mod search;
+mod search_actions;
 mod settings_persistence;
 mod state;
 mod terminal_directory;
@@ -105,6 +107,12 @@ fn svg_icons() -> SvgIconRegistry {
             .with_icon("refresh", icondata::VsRefresh)
             .with_icon("sync", icondata::VsSync)
             .with_icon("search", icondata::VsSearch)
+            .with_icon("search-case", icondata::VsCaseSensitive)
+            .with_icon("search-word", icondata::VsWholeWord)
+            .with_icon("search-regex", icondata::VsRegex)
+            .with_icon("search-stop", icondata::VsDebugStop)
+            .with_icon("search-clear", icondata::VsClearAll)
+            .with_icon("search-collapse", icondata::VsCollapseAll)
             .with_icon("discard", icondata::VsDiscard)
             .with_icon("go-to-file", icondata::VsGoToFile)
             .with_icon("arrow-left", icondata::VsArrowLeft)

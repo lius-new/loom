@@ -162,6 +162,13 @@ pub enum MainSurface {
     Keymap,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DrawerMode {
+    #[default]
+    Files,
+    Search,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub editor: crate::editor::interaction::EditorInteraction,
@@ -172,6 +179,8 @@ pub struct AppState {
     pub focused: bool,
     /// File explorer drawer on the right.
     pub show_drawer: bool,
+    pub drawer_mode: DrawerMode,
+    pub search: crate::search_actions::SearchState,
     /// Source Control drawer on the left. It is independent from Explorer.
     pub show_source_control: bool,
     /// Visibility of the default terminal region, independent of detached regions.
@@ -371,6 +380,8 @@ impl AppState {
             workspace: Workspace::new(),
             focused: false,
             show_drawer: true,
+            drawer_mode: DrawerMode::Files,
+            search: Default::default(),
             show_source_control: false,
             show_terminal: false,
             terminal_h: crate::theme::TERMINAL_H,
@@ -706,11 +717,21 @@ impl AppState {
             Action::MenuSelectPrevious => crate::ui::branch_picker::move_selection(self, -1),
             Action::OpenExplorer => {
                 self.show_drawer = true;
+                self.drawer_mode = DrawerMode::Files;
+                self.search.blur();
+            }
+            Action::OpenSearch => {
+                self.show_drawer = true;
+                self.drawer_mode = DrawerMode::Search;
+                self.search.focus_request += 1;
+                self.search.results_focus_request = 0;
+                self.close_menus();
             }
             Action::ToggleDrawer => {
                 self.show_drawer = !self.show_drawer;
                 if !self.show_drawer {
                     self.sidebar_hovered = false;
+                    self.search.blur();
                 }
             }
             Action::ToggleTerminal => {

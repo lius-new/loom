@@ -19,6 +19,7 @@
     "context": "Workspace",
     "bindings": {
       "secondary-b": "workspace::ToggleDrawer",
+      "secondary-shift-f": "workspace::OpenSearch",
       "secondary-shift-g": "workspace::ToggleSourceControl",
       "secondary-`": "workspace::ToggleTerminal",
       "secondary-,": "workspace::OpenSettings",
@@ -179,6 +180,31 @@
     "bindings": {
       // Text fields cancel their own edit on Escape.
       "escape": null
+    }
+  },
+  {
+    "context": "SearchInput",
+    "bindings": {
+      "alt-c": "search::ToggleCase",
+      "alt-w": "search::ToggleWholeWord",
+      "alt-r": "search::ToggleRegex",
+      "alt-f": "search::ToggleFilters",
+      "down": "search::SelectNextMatch",
+      "escape": "search::Cancel"
+    }
+  },
+  {
+    "context": "SearchResults",
+    "bindings": {
+      "alt-c": "search::ToggleCase",
+      "alt-w": "search::ToggleWholeWord",
+      "alt-r": "search::ToggleRegex",
+      "alt-f": "search::ToggleFilters",
+      "down": "search::SelectNextMatch",
+      "up": "search::SelectPreviousMatch",
+      "enter": "search::OpenMatch",
+      "escape": "search::Cancel",
+      "secondary-r": "search::Refresh"
     }
   },
   {

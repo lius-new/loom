@@ -86,6 +86,7 @@ pub(crate) struct PreparedFileBatch {
     )>,
     disk_updates: Vec<crate::model::workspace::PreparedDiskUpdate>,
     defer_tree: bool,
+    invalidate_search: bool,
 }
 
 pub(crate) fn prepare_batch(app: &AppState, batch: &FileChangeBatch) -> PreparedFileBatch {
@@ -120,6 +121,21 @@ pub(crate) fn prepare_batch(app: &AppState, batch: &FileChangeBatch) -> Prepared
         directories,
         disk_updates,
         defer_tree: working.pending_file_tree_refresh,
+        invalidate_search: !app.search.query.text().is_empty()
+            && (batch.requires_full_rescan
+                || crate::search::paths_affect_search(
+                    &app.search.spec(),
+                    &app.workspace_folders,
+                    &batch
+                        .changes
+                        .iter()
+                        // Directory timestamp changes do not change contents.
+                        .filter(|change| {
+                            change.kind != FileChangeKind::Modify || !change.path.is_dir()
+                        })
+                        .map(|change| change.path.clone())
+                        .collect::<Vec<_>>(),
+                )),
     }
 }
 
@@ -163,6 +179,18 @@ pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch)
                 | ReconcileResult::Missing(_)
         )
     });
+    let content_reloaded = outcomes.iter().any(|result| {
+        matches!(result, ReconcileResult::Reloaded(path)
+            if app.workspace_folders.iter().any(|root| path.starts_with(root)))
+    });
+    if app.workspace_folders == batch.roots
+        && (batch.invalidate_search || content_reloaded)
+        && !app.search.query.text().is_empty()
+        && !app.search.cancelled
+    {
+        app.search.refresh += 1;
+        changed = true;
+    }
     (changed, retry)
 }
 
@@ -192,15 +220,23 @@ pub(crate) fn refresh_async(
     let _ = thread::Builder::new()
         .name("loom-disk-refresh".into())
         .spawn(move || {
-            let prepared = prepare_batch(
-                &state.get(),
-                &FileChangeBatch {
-                    changes: Vec::new(),
-                    requires_full_rescan: true,
-                },
-            );
+            let prepared = prepare_reconciliation(&state.get());
             notify_prepared(state, application, prepared);
         });
+}
+
+fn prepare_reconciliation(app: &AppState) -> PreparedFileBatch {
+    let mut prepared = prepare_batch(
+        app,
+        &FileChangeBatch {
+            changes: Vec::new(),
+            requires_full_rescan: true,
+        },
+    );
+    // Focus changes and directory-cache retries only reconcile disk models.
+    // Actual watcher events and reloaded documents still invalidate results.
+    prepared.invalidate_search = false;
+    prepared
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -648,6 +684,59 @@ mod tests {
         let retry = prepare_batch(&app, &full);
         assert_eq!(apply_prepared_batch(&mut app, retry), (true, false));
         assert_eq!(app.dir_entries[&key].len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn search_invalidation_ignores_unrelated_events_and_focus_reconciliation() {
+        let root = temp_directory("search-refresh");
+        fs::create_dir_all(root.join("target")).unwrap();
+        fs::write(root.join(".gitignore"), "target/\n").unwrap();
+        fs::write(root.join("target/generated.txt"), "generated").unwrap();
+        fs::write(root.join("a.txt"), "needle").unwrap();
+        let mut app = AppState::new();
+        app.workspace_folders.push(root.clone());
+        app.search.query.set_text("needle");
+        // Search is cached even when another drawer is visible.
+        for (name, expected) in [("target/generated.txt", 0), ("a.txt", 1)] {
+            let prepared = prepare_batch(
+                &app,
+                &FileChangeBatch {
+                    changes: vec![FileChange {
+                        path: root.join(name),
+                        kind: FileChangeKind::Modify,
+                    }],
+                    requires_full_rescan: false,
+                },
+            );
+            apply_prepared_batch(&mut app, prepared);
+            assert_eq!(app.search.refresh, expected);
+        }
+        let full = FileChangeBatch {
+            changes: Vec::new(),
+            requires_full_rescan: true,
+        };
+        let prepared = prepare_reconciliation(&app);
+        apply_prepared_batch(&mut app, prepared);
+        assert_eq!(
+            app.search.refresh, 1,
+            "Focus alone must not restart a search"
+        );
+        app.workspace.open_path(root.join("a.txt"), "needle".into());
+        fs::write(root.join("a.txt"), "changed needle").unwrap();
+        let prepared = prepare_reconciliation(&app);
+        apply_prepared_batch(&mut app, prepared);
+        assert_eq!(
+            app.search.refresh, 2,
+            "An actual clean-buffer reload must invalidate results"
+        );
+        app.search.cancelled = true;
+        let prepared = prepare_batch(&app, &full);
+        apply_prepared_batch(&mut app, prepared);
+        assert_eq!(
+            app.search.refresh, 2,
+            "Watcher events must respect an explicit stop"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1055,6 +1055,32 @@ impl Workspace {
         ))
     }
 
+    /// Documents are shared across panes, so each searchable file appears once.
+    pub fn search_snapshots(&self) -> Vec<crate::search::BufferSnapshot> {
+        self.documents
+            .values()
+            .filter(|document| document.is_text())
+            .map(|document| crate::search::BufferSnapshot {
+                path: document.meta.path.clone(),
+                text: document.buffer.text_snapshot(),
+                version: document.buffer.version(),
+            })
+            .collect()
+    }
+
+    pub fn search_versions(&self) -> Vec<(PathBuf, u64)> {
+        let mut versions = self
+            .documents
+            .values()
+            .filter(|document| {
+                document.is_text() && document.buffer.text() != document.saved_text.as_str()
+            })
+            .map(|document| (document.meta.path.clone(), document.buffer.version()))
+            .collect::<Vec<_>>();
+        versions.sort();
+        versions
+    }
+
     pub fn mark_saved(&mut self, id: FileId) -> bool {
         let Some(document) = self.documents.get_mut(&id) else {
             return false;

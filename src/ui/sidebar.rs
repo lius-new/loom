@@ -11,8 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lgui::core::{
-    CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiEventKind, UiEventPayload,
-    UiFocusHandle, UiId, WheelUnit, clip, precompiled,
+    CursorIcon, EventPolicy, IconStyle, PointerButton, SemanticRole, Semantics, UiElement,
+    UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip, precompiled,
 };
 use lgui::prelude::{Color, Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
@@ -343,31 +343,67 @@ pub(super) fn drawer_icon(
     precompiled(UiElement::icon(id.into(), rect, key).icon_style(IconStyle::new(color)))
 }
 
-fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
+pub(super) fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
+    use crate::input::action::Action;
+    use crate::state::DrawerMode;
+    let mode = state.get().drawer_mode;
     let mut header = panel(rect, VisualStyle::filled(theme::c().sidebar));
-    let icon_top = rect.top + (rect.height() - theme::ICON_SIZE) / 2.0;
-    let explorer_icon = UiRect::new(
-        rect.left + 12.0,
-        icon_top,
-        rect.left + 12.0 + theme::ICON_SIZE,
-        icon_top + theme::ICON_SIZE,
-    );
-    header = header.child(drawer_icon(
-        "sidebar.explorer",
-        "explorer",
-        explorer_icon,
-        theme::c().text_dim,
-    ));
-    header = header.child(text(
-        UiRect::new(
-            explorer_icon.right + 7.0,
-            rect.top,
-            rect.right - 40.0,
-            rect.bottom,
+    for (index, label, icon, target, action) in [
+        (
+            0,
+            "Explorer",
+            "explorer",
+            DrawerMode::Files,
+            Action::OpenExplorer,
         ),
-        "EXPLORER",
-        theme::mono_bold(theme::c().text_soft, theme::SMALL).tracking(0.8),
-    ));
+        (
+            1,
+            "Search",
+            "search",
+            DrawerMode::Search,
+            Action::OpenSearch,
+        ),
+    ] {
+        let button_width = ((rect.width() - 48.0).max(0.0) / 2.0).min(28.0);
+        let left = rect.left + 8.0 + index as f32 * (button_width + 4.0);
+        let hit = UiRect::new(
+            left,
+            rect.top + 2.0,
+            left + button_width,
+            (rect.bottom - 2.0).max(rect.top + 2.0),
+        );
+        let active = mode == target;
+        let click = state.clone();
+        let button = Element::new(move |cx| {
+            let flags = cx.context.interaction_flags(&cx.id);
+            let style = if mode != DrawerMode::Search && (flags.hovered || flags.pressed) {
+                VisualStyle::filled(theme::c().surface).radius(3.0)
+            } else {
+                VisualStyle::default()
+            };
+            UiElement::panel(cx.id, hit, style).children(cx.children)
+        })
+        .key(format!("drawer-mode-{index}"))
+        .event_policy(EventPolicy {
+            hover: true,
+            press: true,
+            focus: false,
+        })
+        .semantics(Semantics::new(SemanticRole::Button).name(label))
+        .cursor(CursorIcon::Pointer)
+        .on_click(move || click.update(|app| app.apply(action)))
+        .child(drawer_icon(
+            UiId::owned(format!("drawer-mode-icon-{index}")),
+            icon,
+            theme::icon_rect(hit),
+            if active {
+                theme::c().accent
+            } else {
+                theme::c().text_dim
+            },
+        ));
+        header = header.child(button);
+    }
 
     let collapse_hit = UiRect::new(
         rect.right - 32.0,
@@ -391,6 +427,7 @@ fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
                     app.show_drawer = false;
                     app.sidebar_hovered = false;
                     app.tree_hovered_path = None;
+                    app.search.blur();
                 });
             })
             .child(drawer_icon(

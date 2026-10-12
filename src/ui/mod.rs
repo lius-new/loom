@@ -17,6 +17,7 @@ pub mod git_panel;
 pub mod keymap_page;
 pub mod layout_map;
 pub mod pane_sash;
+pub mod search_panel;
 pub mod settings;
 pub mod sidebar;
 pub mod stash_switch;

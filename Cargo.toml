@@ -24,6 +24,8 @@ vt100 = "0.16"
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
 regex = "1"
+ignore = "0.4"
+globset = "0.4"
 
 [dependencies.lgui]
 git = "https://github.com/lius-new/lgui.git"

@@ -70,6 +70,16 @@ macro_rules! actions {
 actions! {
     ToggleDrawer => "workspace::ToggleDrawer", "Show or hide the Explorer drawer";
     OpenExplorer => "workspace::OpenExplorer", "Show the Explorer drawer";
+    OpenSearch => "workspace::OpenSearch", "Search across workspace files";
+    SearchNext => "search::SelectNextMatch", "Preview the next search match";
+    SearchPrevious => "search::SelectPreviousMatch", "Preview the previous search match";
+    SearchOpen => "search::OpenMatch", "Open the selected search match";
+    SearchCancel => "search::Cancel", "Cancel workspace search";
+    SearchRefresh => "search::Refresh", "Search the workspace again";
+    SearchToggleCase => "search::ToggleCase", "Toggle case sensitive search";
+    SearchToggleWord => "search::ToggleWholeWord", "Toggle whole word search";
+    SearchToggleRegex => "search::ToggleRegex", "Toggle regular expression search";
+    SearchToggleFilters => "search::ToggleFilters", "Show or hide search filters";
     OpenSourceControl => "workspace::OpenSourceControl", "Show the Source Control panel";
     ToggleSourceControl => "workspace::ToggleSourceControl", "Show or hide the Source Control panel";
     ToggleTerminal => "workspace::ToggleTerminal", "Show or hide the terminal panel";

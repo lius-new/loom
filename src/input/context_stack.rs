@@ -109,6 +109,20 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         let mut input = KeyContext::new(INPUT);
         input.add(COMMIT_MESSAGE);
         stack.push(input);
+    } else if app.show_drawer
+        && app.drawer_mode == crate::state::DrawerMode::Search
+        && (app.search.query.focused
+            || app.search.include.focused
+            || app.search.exclude.focused
+            || app.search.results_focused)
+    {
+        let mut input = KeyContext::new(INPUT);
+        input.add(if app.search.results_focused {
+            "SearchResults"
+        } else {
+            "SearchInput"
+        });
+        stack.push(input);
     } else if app.explorer_create_input.focused
         || (app.keymap_search.focused && app.main_surface() == MainSurface::Keymap)
     {
@@ -289,6 +303,36 @@ mod tests {
         }
         // Ctrl+P stays unbound.
         assert_eq!(action(&app, character("p", s)), None);
+    }
+
+    #[test]
+    fn workspace_search_keys_use_input_context_and_do_not_reach_editor() {
+        let mut app = editor_app();
+        assert_eq!(
+            action(&app, character("F", secondary() | KeyModifiers::SHIFT)),
+            Some(Action::OpenSearch)
+        );
+        app.apply(Action::OpenSearch);
+        app.search.query.focused = true;
+        assert_eq!(
+            action(&app, named(NamedKey::ArrowDown, KeyModifiers::empty())),
+            Some(Action::SearchNext)
+        );
+        assert_eq!(
+            action(&app, named(NamedKey::Escape, KeyModifiers::empty())),
+            Some(Action::SearchCancel)
+        );
+        assert_eq!(action(&app, character("a", secondary())), None);
+        app.search.query.focused = false;
+        app.search.results_focused = true;
+        assert_eq!(
+            action(&app, named(NamedKey::ArrowUp, KeyModifiers::empty())),
+            Some(Action::SearchPrevious)
+        );
+        assert_eq!(
+            action(&app, named(NamedKey::Enter, KeyModifiers::empty())),
+            Some(Action::SearchOpen)
+        );
     }
 
     #[test]

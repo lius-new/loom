@@ -237,6 +237,14 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let close_dialog_focus = cx.focus_handle(close_dialog_id.clone());
     let keymap_search_id = cx.use_stable_id();
     let keymap_search_focus = cx.focus_handle(keymap_search_id.clone());
+    let search_query_id = cx.use_stable_id();
+    let search_query_focus = cx.focus_handle(search_query_id.clone());
+    let search_include_id = cx.use_stable_id();
+    let search_include_focus = cx.focus_handle(search_include_id.clone());
+    let search_exclude_id = cx.use_stable_id();
+    let search_exclude_focus = cx.focus_handle(search_exclude_id.clone());
+    let search_results_id = cx.use_stable_id();
+    let search_results_focus = cx.focus_handle(search_results_id.clone());
     let vp = cx.viewport();
     let w = vp.width();
     let h = vp.height();
@@ -485,6 +493,28 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         },
     );
     let show_drawer = s.show_drawer;
+    let search_key = crate::search_actions::key(&s);
+    let search_state = state.clone();
+    let search_application = application.as_ref().clone();
+    cx.use_effect(search_key.clone(), move || {
+        crate::search_actions::start(search_state, search_application, search_key)
+    });
+    let search_visible = s.show_drawer && s.drawer_mode == crate::state::DrawerMode::Search;
+    let query_focus = search_query_focus.clone();
+    cx.use_effect((search_visible, s.search.focus_request), move || {
+        if search_visible {
+            query_focus.focus();
+        }
+        || {}
+    });
+    let result_focus = search_results_focus.clone();
+    let focus_requested = s.search.results_focus_request;
+    cx.use_effect((search_visible, focus_requested), move || {
+        if search_visible && focus_requested > 0 {
+            result_focus.focus();
+        }
+        || {}
+    });
     let source_control_open = s.show_source_control;
     cx.use_effect(source_control_open, move || {
         let _ = workspace_persistence::save_source_control_open(source_control_open);
@@ -1122,14 +1152,34 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         ));
     }
     if show_drawer {
-        root = root.child(sidebar::render(
-            explorer_rect,
-            state.clone(),
-            git_store.clone(),
-            editor_focus.clone(),
-            explorer_create_input_focus,
-            explorer_create_input_id,
-        ));
+        if s.drawer_mode == crate::state::DrawerMode::Search {
+            root = root.child(crate::ui::search_panel::render(
+                explorer_rect,
+                state.clone(),
+                application.as_ref().clone(),
+                editor_focus.clone(),
+                code_rect,
+                crate::ui::search_panel::Inputs {
+                    ids: [search_query_id, search_include_id, search_exclude_id],
+                    focus: [
+                        search_query_focus,
+                        search_include_focus,
+                        search_exclude_focus,
+                    ],
+                    results_id: search_results_id,
+                    results_focus: search_results_focus,
+                },
+            ));
+        } else {
+            root = root.child(sidebar::render(
+                explorer_rect,
+                state.clone(),
+                git_store.clone(),
+                editor_focus.clone(),
+                explorer_create_input_focus,
+                explorer_create_input_id,
+            ));
+        }
     }
 
     for (region, content, rect) in &application_snapshot.regions {

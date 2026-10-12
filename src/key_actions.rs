@@ -80,7 +80,8 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
             || !app.explorer_create_input.preedit.is_empty()
             || !app.git_commit_input.preedit.is_empty()
             || !app.branch_picker_input.preedit.is_empty()
-            || !app.keymap_search.preedit.is_empty();
+            || !app.keymap_search.preedit.is_empty()
+            || app.search.composing();
         pending = app.pending_keystrokes.clone();
         stack = context_stack::context_stack(app);
         false
@@ -226,6 +227,47 @@ fn run_replay(env: &KeyEnv, stack: &[KeyContext], replay: Replay) {
 pub fn perform(env: &KeyEnv, action: Action) -> bool {
     match action {
         Action::NoAction => false,
+        Action::SearchToggleCase
+        | Action::SearchToggleWord
+        | Action::SearchToggleRegex
+        | Action::SearchToggleFilters => {
+            env.state.update(|app| match action {
+                Action::SearchToggleCase => app.search.case_sensitive = !app.search.case_sensitive,
+                Action::SearchToggleWord => app.search.whole_word = !app.search.whole_word,
+                Action::SearchToggleRegex => app.search.regex = !app.search.regex,
+                _ => crate::search_actions::toggle_filters(&mut app.search),
+            });
+            true
+        }
+        Action::SearchRefresh | Action::SearchCancel => {
+            if action == Action::SearchRefresh {
+                crate::search_actions::refresh(&env.state);
+            } else {
+                crate::search_actions::cancel(&env.state);
+            }
+            true
+        }
+        Action::SearchNext | Action::SearchPrevious | Action::SearchOpen => {
+            if action != Action::SearchOpen {
+                env.state.update(|app| {
+                    crate::search_actions::move_selection(
+                        app,
+                        if action == Action::SearchNext { 1 } else { -1 },
+                    )
+                });
+            }
+            if let Some(application) = env.application.try_resource::<ApplicationHandle>() {
+                crate::search_actions::navigate_selected(
+                    &env.state,
+                    application.as_ref().clone(),
+                    env.editor_rect,
+                    env.editor_focus.clone(),
+                    action == Action::SearchOpen,
+                    action == Action::SearchOpen,
+                );
+            }
+            true
+        }
         Action::ToggleTerminal => {
             match &env.terminal {
                 Some(terminal) => terminal::toggle_panel(

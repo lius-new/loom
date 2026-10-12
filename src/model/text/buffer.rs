@@ -88,6 +88,11 @@ impl TextBuffer {
         &self.text
     }
 
+    /// Immutable text only: background readers do not retain undo history.
+    pub fn text_snapshot(&self) -> Arc<String> {
+        self.text.clone()
+    }
+
     pub fn len(&self) -> usize {
         self.text.len()
     }
