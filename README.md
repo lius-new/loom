@@ -41,6 +41,12 @@ add or delete it. Deletion asks for confirmation; modified or untracked files
 require a separate force-delete confirmation. The main, current and locked
 worktrees cannot be deleted from this section.
 
+Source Control keeps file changes in the upper area. **WORKTREES**, **STASHES**
+and **COMMITS** start collapsed in a separate area anchored at the bottom.
+The commit input follows short change lists and stays below the scrollable
+changes area for long lists. Expanding the bottom sections scrolls their
+contents independently while preserving room for changes above.
+
 In the branch picker, select an available branch and choose **New Worktree**.
 Typing a new branch name also offers this action. The dialog shows the branch and
 destination folder, defaulting to a sibling such as `../loom-feature-x`;

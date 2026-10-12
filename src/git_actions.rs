@@ -1080,6 +1080,7 @@ pub fn select_repository(state: &State<AppState>, store: &State<GitStoreSnapshot
             Some((pinned, app.workspace.active_path().map(Path::to_path_buf)));
         app.git_history_commit = None;
         app.git_scroll = 0.0;
+        app.git_details_scroll = 0.0;
     });
     store.update(move |snapshot| snapshot.pin_active(Some(&root)));
 }
@@ -1254,6 +1255,7 @@ pub fn create_worktree(
                 Some((path, app.workspace.active_path().map(Path::to_path_buf)));
             app.git_history_commit = None;
             app.git_scroll = 0.0;
+            app.git_details_scroll = 0.0;
             app.show_success("Created worktree and added it to the workspace.");
         },
     )

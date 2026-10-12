@@ -255,10 +255,14 @@ pub struct AppState {
     pub git_sidebar_w: f32,
     pub resizing_git_sidebar: bool,
     pub git_scroll: f32,
+    /// Independent scroll position for the bottom Worktrees/Stashes/Commits area.
+    pub git_details_scroll: f32,
     /// Whether the pointer is currently inside the Source Control drawer.
     pub git_sidebar_hovered: bool,
     pub git_scrollbar_dragging: bool,
     pub git_scrollbar_drag_offset: f32,
+    pub git_details_scrollbar_dragging: bool,
+    pub git_details_scrollbar_drag_offset: f32,
     /// Whether the pointer is currently inside the file-tree drawer.
     pub sidebar_hovered: bool,
     /// File-tree row path currently under the pointer.
@@ -428,9 +432,12 @@ impl AppState {
             git_sidebar_w: crate::theme::SIDEBAR_W,
             resizing_git_sidebar: false,
             git_scroll: 0.0,
+            git_details_scroll: 0.0,
             git_sidebar_hovered: false,
             git_scrollbar_dragging: false,
             git_scrollbar_drag_offset: 0.0,
+            git_details_scrollbar_dragging: false,
+            git_details_scrollbar_drag_offset: 0.0,
             sidebar_hovered: false,
             tree_hovered_path: None,
             context_menu: None,
@@ -467,7 +474,13 @@ impl AppState {
             git_commit_amend: false,
             git_commit_signoff: false,
             git_expanded_repositories: HashSet::new(),
-            git_collapsed_sections: HashSet::new(),
+            git_collapsed_sections: [
+                crate::ui::git_panel::WORKTREES,
+                crate::ui::git_panel::STASHES,
+                crate::ui::git_panel::HISTORY,
+            ]
+            .into_iter()
+            .collect(),
             git_tree_view: false,
             git_split_diff: false,
             git_inline_blame: false,
