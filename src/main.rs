@@ -22,6 +22,7 @@ mod background_ui;
 mod config_watcher;
 mod editor;
 mod file_icons;
+mod file_loading;
 mod file_tree;
 mod file_watcher;
 mod fonts;
@@ -35,6 +36,7 @@ mod model;
 mod project_settings;
 mod search;
 mod search_actions;
+mod session_restore;
 mod settings_persistence;
 mod state;
 mod terminal_directory;
@@ -87,6 +89,10 @@ fn svg_icons() -> SvgIconRegistry {
         // Codicons are drawn on a 16px grid; render them at theme::ICON_SIZE
         // so their 1px strokes land on whole pixels.
         SvgIconRegistry::new()
+            .with_icon(
+                ui::components::loading_indicator::ICON_KEY,
+                ui::components::loading_indicator::SVG,
+            )
             .with_icon("panel-left", icondata::VsLayoutSidebarLeft)
             .with_icon("check", icondata::VsCheck)
             .with_icon("terminal", icondata::VsTerminal)

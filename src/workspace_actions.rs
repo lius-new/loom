@@ -1,6 +1,7 @@
 //! Shared workspace commands used by the welcome screen and editor chrome.
 
 use std::fs::{self, OpenOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::thread;
 
@@ -18,7 +19,8 @@ use crate::state::{
 use crate::workspace_persistence::{self, MAX_RECENT_FOLDERS};
 use crate::workspace_persistence::{EditorLayout, SavedAxis, SavedChild, SavedPaneNode};
 
-const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_EDITABLE_FILE_MIB: u64 = 64;
+const MAX_EDITABLE_FILE_BYTES: u64 = MAX_EDITABLE_FILE_MIB * 1024 * 1024;
 const TREE_ROW_H: f32 = 20.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,8 +172,10 @@ pub fn discard_close_request(state: &State<AppState>) -> Option<CloseContinuatio
 
 fn discard_close_request_in(app: &mut AppState) -> Option<CloseContinuation> {
     let request = app.close_request.take()?;
-    for (pane, id) in request.targets {
-        app.workspace.close_item(pane, id);
+    if request.continuation == CloseContinuation::CloseTabs {
+        for (pane, id) in request.targets {
+            app.workspace.close_item(pane, id);
+        }
     }
     Some(request.continuation)
 }
@@ -206,8 +210,10 @@ fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>
             .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
         app.workspace.mark_saved(id);
     }
-    for (pane, id) in request.targets {
-        app.workspace.close_item(pane, id);
+    if request.continuation == CloseContinuation::CloseTabs {
+        for (pane, id) in request.targets {
+            app.workspace.close_item(pane, id);
+        }
     }
     app.close_request = None;
     Ok(Some(request.continuation))
@@ -216,6 +222,21 @@ fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>
 /// Open a file clicked in the Explorer: a single click previews it, a double
 /// click keeps it open. Returns whether the editor should take focus.
 pub(crate) fn open_tree_file(app: &mut AppState, path: PathBuf, clicks: u8) -> bool {
+    if app.workspace.file_id_for_path(&path).is_some() {
+        crate::file_loading::cancel(app);
+        return open_tree_file_with(app, path, clicks, |_| Ok(String::new()));
+    } else if crate::file_loading::request(
+        app,
+        path.clone(),
+        if clicks > 1 {
+            crate::model::workspace::OpenMode::Permanent
+        } else {
+            crate::model::workspace::OpenMode::Preview
+        },
+        None,
+    ) {
+        return true;
+    }
     open_tree_file_with(app, path, clicks, read_text_file)
 }
 
@@ -255,6 +276,22 @@ fn open_tree_file_with(
 /// dragged, otherwise open it where it was dropped. Returns whether the
 /// editor should take focus.
 pub(crate) fn finish_file_drag(app: &mut AppState) -> bool {
+    if app.file_loader.is_some() {
+        if let Some(drag) = app.file_drag.take() {
+            if !drag.active {
+                return open_tree_file(app, drag.path, drag.clicks);
+            }
+            if let Some(drop) = drag.drop {
+                return crate::file_loading::request(
+                    app,
+                    drag.path,
+                    crate::model::workspace::OpenMode::Permanent,
+                    Some(drop),
+                );
+            }
+        }
+        return false;
+    }
     finish_file_drag_with(app, read_text_file)
 }
 
@@ -432,21 +469,13 @@ pub fn choose_file(state: &State<AppState>) -> bool {
         return false;
     };
 
-    match read_text_file(&path) {
-        Ok(contents) => {
-            state.update(move |app| {
-                app.workspace.open_path(path, contents);
-                app.toast = None;
-                app.welcome_hover = None;
-                app.workspace_home_hover = None;
-            });
-            true
-        }
-        Err(message) => {
-            state.update(move |app| app.show_error(message));
-            false
-        }
-    }
+    let mut opened = false;
+    state.update(|app| {
+        opened = open_tree_file(app, path, 2);
+        app.welcome_hover = None;
+        app.workspace_home_hover = None;
+    });
+    opened
 }
 
 pub fn choose_folder(state: &State<AppState>) -> bool {
@@ -1186,13 +1215,44 @@ fn add_folder_state(app: &mut AppState, path: PathBuf) -> bool {
 /// further folders are added to it; files open as tabs, the last one active.
 /// Unreadable paths are reported once in a toast.
 pub(crate) fn open_launch_paths(app: &mut AppState, paths: Vec<PathBuf>) {
-    if open_launch_paths_with(app, paths, read_text_file) {
+    // Launch files use the same metadata-first restoration as session tabs.
+    // Reading them here would still block the very first frame.
+    let mut replaced_workspace = false;
+    for path in paths {
+        let path = std::path::absolute(&path).unwrap_or(path);
+        if path.is_dir() {
+            let path = normalized_folder(path);
+            if replaced_workspace {
+                add_folder_state(app, path);
+            } else {
+                replace_folder_state(app, path);
+                replaced_workspace = true;
+            }
+        } else {
+            if app.file_loader.is_some() {
+                if let Some(id) = app.workspace.file_id_for_path(&path) {
+                    app.workspace.set_active(id);
+                } else {
+                    crate::file_loading::request(
+                        app,
+                        path,
+                        crate::model::workspace::OpenMode::Permanent,
+                        None,
+                    );
+                }
+            } else {
+                app.workspace.open_deferred(path);
+            }
+        }
+    }
+    if replaced_workspace {
         persist_workspace(app);
     }
 }
 
 /// Apply launch paths to the state; returns whether the workspace folders
 /// changed and need to be persisted.
+#[cfg(test)]
 fn open_launch_paths_with(
     app: &mut AppState,
     paths: Vec<PathBuf>,
@@ -1246,16 +1306,38 @@ pub(crate) fn hydrate_workspace_folders(app: &mut AppState) {
     include_workspace_folders_in_recents(app);
 }
 
-/// Reopen the persisted file tabs from disk, preserving their order and the
-/// active tab. Files that are no longer readable are skipped independently.
-/// The pane layout worth restoring later: file tabs only (no previews, diffs
-/// or built-in pages), with panes left empty by that filter dropped.
+/// All open file tabs, including the single-click preview. Diffs and built-in
+/// pages are filtered out; panes left empty by that filter are dropped.
 pub(crate) fn saved_editor_layout(workspace: &Workspace) -> Option<EditorLayout> {
+    saved_layout_with_pending(workspace, None)
+}
+
+pub(crate) fn saved_app_editor_layout(app: &AppState) -> Option<EditorLayout> {
+    saved_layout_with_pending(&app.workspace, app.pending_file.as_ref())
+}
+
+/// Take the current snapshot at the exit boundary, rather than waiting for a
+/// later render effect. A failed write keeps the window open with its buffers.
+pub(crate) fn save_editor_session(state: &State<AppState>) -> bool {
+    let layout = saved_app_editor_layout(&state.get());
+    let result = workspace_persistence::save_editor_layout(layout.as_ref());
+    if let Err(error) = result {
+        state.update(|app| app.show_error(format!("Could not remember file tabs: {error}")));
+        return false;
+    }
+    true
+}
+
+fn saved_layout_with_pending(
+    workspace: &Workspace,
+    pending: Option<&crate::file_loading::PendingFile>,
+) -> Option<EditorLayout> {
     let mut leaf_index = 0;
     let mut active_pane = None;
     let root = save_pane_node(
         workspace,
         workspace.layout(),
+        pending,
         &mut leaf_index,
         &mut active_pane,
     )?;
@@ -1268,44 +1350,61 @@ pub(crate) fn saved_editor_layout(workspace: &Workspace) -> Option<EditorLayout>
 fn save_pane_node(
     workspace: &Workspace,
     node: &PaneNode,
+    pending: Option<&crate::file_loading::PendingFile>,
     leaf_index: &mut usize,
     active_pane: &mut Option<usize>,
 ) -> Option<SavedPaneNode> {
     match node {
         PaneNode::Leaf(id) => {
             let pane = workspace.pane(*id)?;
-            let restorable = |file: FileId| !pane.is_preview(file) && workspace.is_file(file);
+            let restorable = |file: FileId| workspace.is_file(file);
             let path = |file: FileId| workspace.meta(file).map(|meta| meta.path.clone());
-            let items = pane
+            let mut items = pane
                 .items()
                 .iter()
                 .copied()
                 .filter(|file| restorable(*file))
                 .filter_map(path)
                 .collect::<Vec<_>>();
+            let pending = pending.filter(|p| p.pane == *id);
+            if let Some(pending) = pending
+                && !items.contains(&pending.path)
+            {
+                let index = if let Some(TabDrop::Insert { index, .. }) = pending.drop {
+                    pane.items()
+                        .iter()
+                        .take(index)
+                        .filter(|file| workspace.is_file(**file))
+                        .count()
+                } else {
+                    items.len()
+                };
+                items.insert(index.min(items.len()), pending.path.clone());
+            }
             if items.is_empty() {
                 return None;
             }
-            if *id == workspace.active_pane() {
+            if pending.is_some() || (active_pane.is_none() && *id == workspace.active_pane()) {
                 *active_pane = Some(*leaf_index);
             }
             *leaf_index += 1;
-            let active = pane
-                .active()
-                .filter(|file| restorable(*file))
-                .and_then(path);
+            let active = pending.map(|p| p.path.clone()).or_else(|| {
+                pane.active()
+                    .filter(|file| restorable(*file))
+                    .and_then(path)
+            });
             Some(SavedPaneNode::Pane { items, active })
         }
         PaneNode::Split { axis, children } => {
             let mut saved = children
                 .iter()
                 .filter_map(|child| {
-                    save_pane_node(workspace, &child.node, leaf_index, active_pane).map(|node| {
-                        SavedChild {
+                    save_pane_node(workspace, &child.node, pending, leaf_index, active_pane).map(
+                        |node| SavedChild {
                             size: child.size,
                             node,
-                        }
-                    })
+                        },
+                    )
                 })
                 .collect::<Vec<_>>();
             match saved.len() {
@@ -1330,15 +1429,28 @@ fn save_pane_node(
 }
 
 pub(crate) fn hydrate_editor_layout(app: &mut AppState, layout: Option<EditorLayout>) {
-    hydrate_editor_layout_with(app, layout, read_text_file);
+    restore_editor_layout_with(app, layout, |workspace, path| {
+        Some(workspace.open_deferred(path))
+    });
 }
 
 /// Rebuild the saved panes and reopen their files. Files that can no longer
 /// be read are skipped, and a pane left without tabs is dropped.
+#[cfg(test)]
 fn hydrate_editor_layout_with(
     app: &mut AppState,
     layout: Option<EditorLayout>,
     mut read: impl FnMut(&Path) -> Result<String, String>,
+) {
+    restore_editor_layout_with(app, layout, |workspace, path| {
+        read(&path).ok().map(|text| workspace.open_path(path, text))
+    });
+}
+
+fn restore_editor_layout_with(
+    app: &mut AppState,
+    layout: Option<EditorLayout>,
+    mut open: impl FnMut(&mut Workspace, PathBuf) -> Option<FileId>,
 ) {
     let Some(layout) = layout else {
         return;
@@ -1351,11 +1463,10 @@ fn hydrate_editor_layout_with(
         let mut first = None;
         let mut active_id = None;
         for path in items {
-            let Ok(text) = read(&path) else {
+            let is_active = active.as_ref() == Some(&path);
+            let Some(id) = open(&mut app.workspace, path) else {
                 continue;
             };
-            let is_active = active.as_ref() == Some(&path);
-            let id = app.workspace.open_path(path, text);
             first.get_or_insert(id);
             if is_active {
                 active_id = Some(id);
@@ -1450,25 +1561,87 @@ fn persist_workspace(app: &mut AppState) {
     }
 }
 
-fn read_text_file(path: &Path) -> Result<String, String> {
+pub(crate) fn read_text_file(path: &Path) -> Result<String, String> {
     let name = path
         .file_name()
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    let metadata = fs::metadata(path).map_err(|error| format!("Could not open {name}: {error}"))?;
+    let file = fs::File::open(path).map_err(|error| format!("Could not open {name}: {error}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not open {name}: {error}"))?;
     if !metadata.is_file() {
         return Err(format!("Could not open {name}: not a regular file"));
     }
+    let too_large =
+        || format!("Could not open {name}: file is larger than {MAX_EDITABLE_FILE_MIB} MiB");
     if metadata.len() > MAX_EDITABLE_FILE_BYTES {
-        return Err(format!("Could not open {name}: file is larger than 4 MiB"));
+        return Err(too_large());
     }
-    fs::read_to_string(path).map_err(|error| format!("Could not open {name} as UTF-8: {error}"))
+    // Bound the read as well: another process can grow the file after metadata.
+    let mut bytes = Vec::new();
+    file.take(MAX_EDITABLE_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not open {name}: {error}"))?;
+    if bytes.len() as u64 > MAX_EDITABLE_FILE_BYTES {
+        return Err(too_large());
+    }
+    String::from_utf8(bytes).map_err(|error| format!("Could not open {name} as UTF-8: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::text::EditKind;
+
+    #[test]
+    fn text_file_above_four_mib_opens_in_explorer() {
+        let root = close_test_directory("large-text-file");
+        let path = root.join("seed.database.json");
+        let contents = format!("[\n{}null\n]\n", "\"中文😀\",\n".repeat(400_000));
+        assert!(contents.len() > 4 * 1024 * 1024);
+        fs::write(&path, &contents).unwrap();
+        assert_eq!(read_text_file(&path).unwrap(), contents);
+
+        let mut app = AppState::new();
+        assert!(open_tree_file(&mut app, path.clone(), 2));
+        assert_eq!(app.workspace.active_path(), Some(path.as_path()));
+        let id = app.workspace.active().unwrap();
+        assert_eq!(app.workspace.save_snapshot(id).unwrap().2, contents);
+        assert!(app.toast.is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn text_file_size_boundary_is_inclusive() {
+        let root = close_test_directory("text-file-size-boundary");
+        let path = root.join("large.txt");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(MAX_EDITABLE_FILE_BYTES).unwrap();
+        drop(file);
+        assert_eq!(
+            read_text_file(&path).unwrap().len() as u64,
+            MAX_EDITABLE_FILE_BYTES
+        );
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(MAX_EDITABLE_FILE_BYTES + 1).unwrap();
+        drop(file);
+        assert_eq!(
+            read_text_file(&path).unwrap_err(),
+            "Could not open large.txt: file is larger than 64 MiB"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn text_file_rejects_invalid_utf8_and_directories() {
+        let root = close_test_directory("invalid-text-file");
+        let path = root.join("invalid.txt");
+        fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert!(read_text_file(&path).unwrap_err().contains("as UTF-8"));
+        assert!(read_text_file(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn tabs(app: &AppState, ids: &[FileId]) -> Vec<(PaneId, FileId)> {
         let pane = app.workspace.active_pane();
@@ -1742,7 +1915,7 @@ mod tests {
     }
 
     #[test]
-    fn saving_multiple_dirty_tabs_closes_them_after_every_write_succeeds() {
+    fn saving_for_application_exit_preserves_tabs_for_the_final_snapshot() {
         let root = close_test_directory("save-all");
         let mut app = AppState::new();
         let first_path = root.join("first.txt");
@@ -1757,8 +1930,18 @@ mod tests {
         let result = save_close_request_in(&mut app).unwrap();
 
         assert_eq!(result, Some(CloseContinuation::ExitApplication));
-        assert!(app.workspace.meta(first).is_none());
-        assert!(app.workspace.meta(second).is_none());
+        assert!(app.workspace.meta(first).is_some());
+        assert!(app.workspace.meta(second).is_some());
+        assert!(!app.workspace.is_dirty(first));
+        assert!(!app.workspace.is_dirty(second));
+        let saved = saved_app_editor_layout(&app).unwrap();
+        assert_eq!(
+            saved.root,
+            SavedPaneNode::Pane {
+                items: vec![first_path.clone(), second_path.clone()],
+                active: Some(second_path.clone())
+            }
+        );
         assert!(app.close_request.is_none());
         assert_eq!(fs::read_to_string(first_path).unwrap(), "first updated");
         assert_eq!(fs::read_to_string(second_path).unwrap(), "second updated");
@@ -2116,6 +2299,65 @@ mod tests {
     }
 
     #[test]
+    fn unclosed_single_click_preview_restores_in_order_and_closed_tabs_stay_closed() {
+        let mut app = AppState::new();
+        app.workspace.open_path("first.rs".into(), String::new());
+        let closed = app.workspace.open_path("closed.rs".into(), String::new());
+        app.workspace.close(closed);
+        app.workspace
+            .preview_path("preview.json".into(), String::new());
+        let saved = saved_app_editor_layout(&app).unwrap();
+        assert_eq!(
+            saved.root,
+            SavedPaneNode::Pane {
+                items: vec!["first.rs".into(), "preview.json".into()],
+                active: Some("preview.json".into())
+            }
+        );
+        let serialized = serde_json::to_string(&saved).unwrap();
+        let mut restored = AppState::new();
+        hydrate_editor_layout_with(
+            &mut restored,
+            Some(serde_json::from_str(&serialized).unwrap()),
+            read_all_but(""),
+        );
+        assert_eq!(
+            restored.workspace.active_path(),
+            Some(Path::new("preview.json"))
+        );
+        assert!(
+            restored
+                .workspace
+                .file_id_for_path(Path::new("closed.rs"))
+                .is_none()
+        );
+        assert_eq!(saved_app_editor_layout(&restored), Some(saved));
+    }
+
+    #[test]
+    fn dont_save_on_application_exit_keeps_tabs_and_reopens_disk_contents() {
+        let root = close_test_directory("discard-on-exit");
+        let file = root.join("dirty.txt");
+        let mut app = AppState::new();
+        let id = dirty_test_file(&mut app, file.clone(), "disk", " modified");
+        app.close_request = Some(CloseRequest {
+            targets: tabs(&app, &[id]),
+            continuation: CloseContinuation::ExitApplication,
+        });
+        assert_eq!(
+            discard_close_request_in(&mut app),
+            Some(CloseContinuation::ExitApplication)
+        );
+        assert!(app.workspace.meta(id).is_some());
+        let layout = saved_app_editor_layout(&app);
+        let mut restored = AppState::new();
+        hydrate_editor_layout_with(&mut restored, layout, read_text_file);
+        assert_eq!(restored.workspace.active_path(), Some(file.as_path()));
+        assert_eq!(restored.workspace.active_editor().unwrap().text(), "disk");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn split_layout_round_trips_through_the_session_format() {
         let mut app = AppState::new();
         let left = app.workspace.active_pane();
@@ -2135,7 +2377,7 @@ mod tests {
         app.workspace.activate_pane(right);
 
         let saved = saved_editor_layout(&app.workspace).unwrap();
-        // The settings page and preview tab are not restorable.
+        // The settings page is excluded; the open preview is restored too.
         assert_eq!(
             saved.root,
             SavedPaneNode::Split {
@@ -2156,7 +2398,10 @@ mod tests {
                                 SavedChild {
                                     size: 0.5,
                                     node: SavedPaneNode::Pane {
-                                        items: vec![PathBuf::from("b.rs")],
+                                        items: vec![
+                                            PathBuf::from("b.rs"),
+                                            PathBuf::from("preview.rs")
+                                        ],
                                         active: None,
                                     },
                                 },
@@ -2185,6 +2430,7 @@ mod tests {
             vec![
                 PathBuf::from("a.rs"),
                 PathBuf::from("b.rs"),
+                PathBuf::from("preview.rs"),
                 PathBuf::from("c.rs")
             ]
         );

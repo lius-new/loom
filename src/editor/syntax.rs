@@ -8,7 +8,19 @@ use lgui::prelude::Color;
 
 use crate::model::document::Language;
 use crate::theme;
+use std::{cell::RefCell, collections::HashMap};
 use unicode_segmentation::UnicodeSegmentation;
+
+type ColoredSpans = Vec<(String, Color)>;
+#[derive(Default)]
+struct HighlightCache {
+    palette: Option<[Color; 8]>,
+    lines: HashMap<Language, HashMap<String, ColoredSpans>>,
+    len: usize,
+}
+thread_local! {
+    static HIGHLIGHTS: RefCell<HighlightCache> = RefCell::new(HighlightCache::default());
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tok {
@@ -37,6 +49,53 @@ fn color_for(kind: Tok) -> Color {
 
 /// Split one source line into `(text, color)` spans.
 pub fn highlight_line(line: &str, lang: Language) -> Vec<(String, Color)> {
+    let palette = [
+        Tok::Kw,
+        Tok::Fn,
+        Tok::Type,
+        Tok::Str,
+        Tok::Comment,
+        Tok::Num,
+        Tok::Prop,
+        Tok::Plain,
+    ]
+    .map(color_for);
+    if let Some(spans) = HIGHLIGHTS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.palette != Some(palette) {
+            *cache = HighlightCache {
+                palette: Some(palette),
+                ..Default::default()
+            };
+        }
+        cache
+            .lines
+            .get(&lang)
+            .and_then(|lines| lines.get(line))
+            .cloned()
+    }) {
+        return spans;
+    }
+    let spans = highlight_uncached(line, lang);
+    if line.len() <= 4096 {
+        HIGHLIGHTS.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.len >= 256 {
+                cache.lines.clear();
+                cache.len = 0;
+            }
+            cache
+                .lines
+                .entry(lang)
+                .or_default()
+                .insert(line.to_owned(), spans.clone());
+            cache.len += 1;
+        });
+    }
+    spans
+}
+
+fn highlight_uncached(line: &str, lang: Language) -> Vec<(String, Color)> {
     let boundaries: std::collections::HashSet<usize> =
         line.grapheme_indices(true).map(|(i, _)| i).collect();
     let mut spans: Vec<(String, Color)> = Vec::new();

@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::git::{DiffContent, DiffRequest, DiffTarget, GitResult, PollTarget};
 use crate::model::diff_document::DiffDocument;
@@ -47,6 +47,7 @@ struct OpenDocument {
     meta: FileMeta,
     buffer: TextBuffer,
     saved_text: Arc<String>,
+    dirty_cache: Arc<Mutex<(u64, usize, usize, bool)>>,
     diff: Option<Arc<DiffDocument>>,
     collapsed_diffs: BTreeSet<DiffRequest>,
     focused_diff: Option<DiffRequest>,
@@ -57,14 +58,20 @@ struct OpenDocument {
     disk_state: DiskState,
     disk_conflict: bool,
     missing_on_disk: bool,
+    /// A restored tab has metadata before its text is ready. Never expose its
+    /// empty staging buffer to editing, saving or disk reconciliation.
+    loading: Option<bool>,
 }
 
 impl OpenDocument {
     fn new(meta: FileMeta, contents: String, disk_state: DiskState) -> Self {
+        let buffer = TextBuffer::new(contents);
+        let saved_text = buffer.text_snapshot();
         Self {
             meta,
-            buffer: TextBuffer::new(contents.clone()),
-            saved_text: Arc::new(contents),
+            buffer,
+            saved_text,
+            dirty_cache: Arc::new(Mutex::new((u64::MAX, 0, 0, false))),
             diff: None,
             collapsed_diffs: BTreeSet::new(),
             focused_diff: None,
@@ -73,12 +80,27 @@ impl OpenDocument {
             disk_state,
             disk_conflict: false,
             missing_on_disk: false,
+            loading: None,
         }
     }
 
     /// Whether this tab edits a file on disk (not a diff or the settings page).
     fn is_text(&self) -> bool {
-        self.diff.is_none() && self.page.is_none()
+        self.is_shareable() && self.loading.is_none()
+    }
+
+    fn is_dirty(&self) -> bool {
+        let version = self.buffer.version();
+        let saved = Arc::as_ptr(&self.saved_text) as usize;
+        let text = self.buffer.snapshot_identity();
+        let mut cache = self.dirty_cache.lock().unwrap();
+        let (previous, identity, snapshot, dirty) = *cache;
+        if version == previous && saved == identity && snapshot == text {
+            return dirty;
+        }
+        let dirty = self.is_text() && !self.buffer.matches_snapshot(&self.saved_text);
+        *cache = (version, saved, text, dirty);
+        dirty
     }
 
     /// Diffs and built-in pages exist once; only text files can be shown in
@@ -184,6 +206,16 @@ pub struct PreparedDiskUpdate {
 pub enum OpenMode {
     Preview,
     Permanent,
+}
+
+/// Constructed entirely on a worker; installing it does not scan the text.
+pub(crate) struct PreparedTextFile(OpenDocument);
+
+impl PreparedTextFile {
+    pub fn new(path: PathBuf, contents: String) -> Self {
+        let disk = DiskState::capture(&path, &contents);
+        Self(OpenDocument::new(FileMeta::from_path(path), contents, disk))
+    }
 }
 
 #[derive(Clone)]
@@ -704,11 +736,11 @@ impl Workspace {
             document.views.remove(&pane);
             document.views.is_empty()
         });
-        if orphaned
-            && let Some(document) = self.documents.remove(&id)
-            && document.is_text()
-        {
-            self.paths.remove(&document.meta.path);
+        if orphaned && let Some(document) = self.documents.remove(&id) {
+            if document.is_shareable() {
+                self.paths.remove(&document.meta.path);
+            }
+            crate::background_ui::retire(document);
         }
         self.remove_pane_if_empty(pane);
     }
@@ -1005,9 +1037,9 @@ impl Workspace {
     }
 
     pub fn is_dirty(&self, id: FileId) -> bool {
-        self.documents.get(&id).is_some_and(|document| {
-            document.is_text() && document.buffer.text() != document.saved_text.as_str()
-        })
+        self.documents
+            .get(&id)
+            .is_some_and(|document| document.is_dirty())
     }
 
     pub fn dirty_paths(&self) -> Vec<PathBuf> {
@@ -1098,6 +1130,96 @@ impl Workspace {
 
     // ---- Opening -----------------------------------------------------------
 
+    /// Restore only metadata and tab order on the UI thread, without touching
+    /// the file or building a line index. The background restorer fills it in.
+    pub(crate) fn open_deferred(&mut self, path: PathBuf) -> FileId {
+        if let Some(id) = self.file_id_for_path(&path) {
+            return self.attach_text_tab(id, OpenMode::Permanent);
+        }
+        let mut document = OpenDocument::new(
+            FileMeta::from_path(path.clone()),
+            String::new(),
+            DiskState {
+                modified_time: None,
+                size: 0,
+                content_hash: 0,
+            },
+        );
+        document.loading = Some(false);
+        let id = self.allocate_file_id();
+        self.documents.insert(id, document);
+        self.paths.insert(path, id);
+        let pane = self.active_pane;
+        self.insert_item(pane, id, usize::MAX, None);
+        self.active_pane_mut().active = Some(id);
+        id
+    }
+
+    pub(crate) fn is_loading(&self, id: FileId) -> bool {
+        self.documents.get(&id).is_some_and(|d| d.loading.is_some())
+    }
+
+    pub(crate) fn loading_indicator(&self, id: FileId) -> bool {
+        self.documents
+            .get(&id)
+            .is_some_and(|d| d.loading == Some(true))
+    }
+
+    pub(crate) fn show_restore_indicators(&mut self) -> bool {
+        let mut changed = false;
+        for document in self.documents.values_mut() {
+            if document.loading == Some(false) {
+                document.loading = Some(true);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Active documents first, followed by tabs in visible order. Shared
+    /// documents are prepared once even when shown in more than one pane.
+    pub(crate) fn loading_files(&self) -> Vec<(FileId, PathBuf)> {
+        let mut ids = Vec::new();
+        if let Some(id) = self.active() {
+            ids.push(id);
+        }
+        for pane in self.pane_ids() {
+            if let Some(id) = self.panes[&pane].active {
+                ids.push(id);
+            }
+        }
+        for pane in self.pane_ids() {
+            ids.extend(&self.panes[&pane].items);
+        }
+        let mut seen = std::collections::HashSet::new();
+        ids.into_iter()
+            .filter(|id| seen.insert(*id) && self.is_loading(*id))
+            .filter_map(|id| self.meta(id).map(|m| (id, m.path.clone())))
+            .collect()
+    }
+
+    /// Fill a surviving placeholder in place. Loading must not reactivate,
+    /// reorder or resurrect a tab the user moved or closed in the meantime.
+    pub(crate) fn install_restored(
+        &mut self,
+        id: FileId,
+        path: &Path,
+        prepared: PreparedTextFile,
+    ) -> bool {
+        let Some(document) = self
+            .documents
+            .get_mut(&id)
+            .filter(|d| d.loading.is_some() && d.meta.path == path && prepared.0.meta.path == path)
+        else {
+            crate::background_ui::retire(prepared);
+            return false;
+        };
+        let mut replacement = prepared.0;
+        replacement.views = std::mem::take(&mut document.views);
+        crate::background_ui::retire(std::mem::replace(document, replacement));
+        true
+    }
+
     pub fn open_path(&mut self, path: PathBuf, contents: String) -> FileId {
         self.open_path_with_mode(path, contents, OpenMode::Permanent)
     }
@@ -1109,28 +1231,41 @@ impl Workspace {
     /// Open a file in the active pane. A file already open elsewhere gets a
     /// second tab here sharing its buffer; `contents` is then ignored.
     fn open_path_with_mode(&mut self, path: PathBuf, contents: String, mode: OpenMode) -> FileId {
-        let pane = self.active_pane;
         if let Some(id) = self.file_id_for_path(&path) {
-            if !self.panes[&pane].contains(id) {
-                let index = self.preview_replacement_index(pane, mode);
-                self.insert_item(pane, id, index.unwrap_or(usize::MAX), None);
-                if mode == OpenMode::Preview {
-                    self.replace_preview_slot(pane, id);
-                }
-            } else if mode == OpenMode::Permanent {
-                self.promote_preview(pane, id);
-            }
-            self.active_pane_mut().active = Some(id);
-            return id;
+            return self.attach_text_tab(id, mode);
         }
+        self.open_prepared_text(PreparedTextFile::new(path, contents), mode)
+    }
 
+    fn attach_text_tab(&mut self, id: FileId, mode: OpenMode) -> FileId {
+        let pane = self.active_pane;
+        if !self.panes[&pane].contains(id) {
+            let index = self.preview_replacement_index(pane, mode);
+            self.insert_item(pane, id, index.unwrap_or(usize::MAX), None);
+            if mode == OpenMode::Preview {
+                self.replace_preview_slot(pane, id);
+            }
+        } else if mode == OpenMode::Permanent {
+            self.promote_preview(pane, id);
+        }
+        self.active_pane_mut().active = Some(id);
+        id
+    }
+
+    pub(crate) fn open_prepared_text(
+        &mut self,
+        prepared: PreparedTextFile,
+        mode: OpenMode,
+    ) -> FileId {
+        let path = prepared.0.meta.path.clone();
+        if let Some(id) = self.file_id_for_path(&path) {
+            crate::background_ui::retire(prepared);
+            return self.attach_text_tab(id, mode);
+        }
+        let pane = self.active_pane;
         let replacement_index = self.preview_replacement_index(pane, mode);
         let id = self.allocate_file_id();
-        let disk_state = DiskState::capture(&path, &contents);
-        self.documents.insert(
-            id,
-            OpenDocument::new(FileMeta::from_path(path.clone()), contents, disk_state),
-        );
+        self.documents.insert(id, prepared.0);
         self.paths.insert(path, id);
         self.insert_item(pane, id, replacement_index.unwrap_or(usize::MAX), None);
         if mode == OpenMode::Preview {
@@ -1445,7 +1580,9 @@ impl Workspace {
 
     /// Whether a tab is backed by a file (rather than a diff or settings).
     pub fn is_file(&self, id: FileId) -> bool {
-        self.documents.get(&id).is_some_and(OpenDocument::is_text)
+        self.documents
+            .get(&id)
+            .is_some_and(OpenDocument::is_shareable)
     }
 
     pub fn diff_id_for(

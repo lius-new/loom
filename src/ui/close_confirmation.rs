@@ -190,7 +190,9 @@ fn finish(
     continuation: Option<CloseContinuation>,
 ) {
     if continuation == Some(CloseContinuation::ExitApplication) {
-        cx.window().close();
+        if workspace_actions::save_editor_session(state) {
+            cx.window().close();
+        }
     } else if state.get().close_request.is_none() {
         editor_focus.focus();
     }
@@ -214,7 +216,9 @@ pub fn perform(
         _ => return false,
     };
     if continuation == Some(CloseContinuation::ExitApplication) {
-        windows.close("loom");
+        if workspace_actions::save_editor_session(state) {
+            windows.close("loom");
+        }
     } else if state.get().close_request.is_none() {
         editor_focus.focus();
     }

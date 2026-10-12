@@ -40,9 +40,18 @@ fn content_end(text: &str, start: usize, next_start: Option<usize>) -> usize {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Position {
+    pub byte: usize,
+    pub chars: usize,
+    pub columns: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct LineIndex {
     starts: Vec<usize>,
     widths: Vec<u32>,
+    positions: Vec<Vec<Position>>,
+    max_width: usize,
 }
 
 impl LineIndex {
@@ -50,6 +59,8 @@ impl LineIndex {
         let mut index = Self {
             starts: Vec::new(),
             widths: Vec::new(),
+            positions: Vec::new(),
+            max_width: 0,
         };
         index.scan(text, 0, text.len(), true);
         index
@@ -69,7 +80,35 @@ impl LineIndex {
             let next = starts.get(i + 1).copied().or(next_after_region);
             let end = content_end(text, start, next);
             self.starts.push(start);
-            self.widths.push(display_width(&text[start..end]) as u32);
+            let line = &text[start..end];
+            let mut positions: Vec<Position> = Vec::new();
+            let mut columns = 0;
+            let mut chars = 0;
+            // Long lines have a sparse index for viewport and cursor lookups.
+            // Never split a grapheme, including combining marks and emoji.
+            for (byte, grapheme) in line.grapheme_indices(true) {
+                if line.len() > 4096
+                    && (positions.is_empty() || byte - positions.last().unwrap().byte >= 256)
+                {
+                    positions.push(Position {
+                        byte,
+                        chars,
+                        columns,
+                    });
+                }
+                columns += grapheme_width(grapheme, columns);
+                chars += grapheme.chars().count();
+            }
+            if !positions.is_empty() {
+                positions.push(Position {
+                    byte: line.len(),
+                    chars,
+                    columns,
+                });
+            }
+            self.max_width = self.max_width.max(columns);
+            self.widths.push(columns as u32);
+            self.positions.push(positions);
         }
     }
 
@@ -91,7 +130,25 @@ impl LineIndex {
     }
 
     pub fn max_width(&self) -> usize {
-        self.widths.iter().copied().max().unwrap_or(0) as usize
+        self.max_width
+    }
+
+    pub fn position_by(
+        &self,
+        line: usize,
+        key: usize,
+        value: impl Fn(&Position) -> usize,
+    ) -> Position {
+        let positions = &self.positions[line];
+        let index = positions.partition_point(|p| value(p) <= key);
+        index
+            .checked_sub(1)
+            .map(|i| positions[i].clone())
+            .unwrap_or(Position {
+                byte: 0,
+                chars: 0,
+                columns: 0,
+            })
     }
 
     /// The line containing `offset`; a line break belongs to the line it ends.
@@ -105,6 +162,9 @@ impl LineIndex {
 
     /// Rebuild the lines `changes` touched in `text`, the text after them.
     pub fn update(&mut self, text: &str, changes: &ChangeSet) {
+        if self.update_long_line(text, changes) {
+            return;
+        }
         let (Some(first), Some(last)) = (changes.changes().first(), changes.changes().last())
         else {
             return;
@@ -124,6 +184,8 @@ impl LineIndex {
         let mut rebuilt = Self {
             starts: Vec::new(),
             widths: Vec::new(),
+            positions: Vec::new(),
+            max_width: 0,
         };
         rebuilt.scan(text, region_start, region_end, to_end);
         let tail = last_line + 1;
@@ -132,6 +194,84 @@ impl LineIndex {
         }
         self.starts.splice(first_line..tail, rebuilt.starts);
         self.widths.splice(first_line..tail, rebuilt.widths);
+        self.positions.splice(first_line..tail, rebuilt.positions);
+        self.max_width = self.widths.iter().copied().max().unwrap_or(0) as usize;
+    }
+
+    /// Re-index the edit's surrounding graphemes, shifting sparse tail entries.
+    /// A tab-phase or grapheme-context change falls back to the full scanner.
+    fn update_long_line(&mut self, text: &str, changes: &ChangeSet) -> bool {
+        let [change] = changes.changes() else {
+            return false;
+        };
+        if change.inserted.contains(['\r', '\n']) || change.removed.contains(['\r', '\n']) {
+            return false;
+        }
+        let line = self.line_of(change.old.start);
+        if self.line_of(change.old.end) != line {
+            return false;
+        }
+        let start = self.starts[line];
+        let delta = change.inserted.len() as isize - change.removed.len() as isize;
+        let next = self
+            .next_start(line)
+            .map(|offset| (offset as isize + delta) as usize);
+        let end = content_end(text, start, next);
+        if end - start <= 4096 || self.positions[line].len() < 3 {
+            return false;
+        }
+        let positions = &mut self.positions[line];
+        let from = positions
+            .partition_point(|p| p.byte < change.old.start - start)
+            .saturating_sub(1);
+        let to = (positions.partition_point(|p| p.byte <= change.old.end - start) + 1)
+            .min(positions.len() - 1);
+        let before = positions[from].clone();
+        let after = positions[to].clone();
+        let tail = (after.byte as isize + delta) as usize;
+        let tail_offset = start + tail;
+        if tail_offset > end
+            || !text.is_char_boundary(tail_offset)
+            || !unicode_segmentation::GraphemeCursor::new(tail_offset, text.len(), true)
+                .is_boundary(text, 0)
+                .unwrap_or(false)
+        {
+            return false;
+        }
+        let mut columns = before.columns;
+        let mut chars = before.chars;
+        let mut last = before.byte;
+        let mut rebuilt = Vec::new();
+        for (byte, grapheme) in text[start + before.byte..tail_offset].grapheme_indices(true) {
+            let byte = before.byte + byte;
+            if byte - last >= 256 {
+                rebuilt.push(Position {
+                    byte,
+                    chars,
+                    columns,
+                });
+                last = byte;
+            }
+            columns += grapheme_width(grapheme, columns);
+            chars += grapheme.chars().count();
+        }
+        let column_delta = columns as isize - after.columns as isize;
+        if column_delta % 4 != 0 && text[tail_offset..end].contains('\t') {
+            return false;
+        }
+        let char_delta = chars as isize - after.chars as isize;
+        for position in &mut positions[to..] {
+            position.byte = (position.byte as isize + delta) as usize;
+            position.chars = (position.chars as isize + char_delta) as usize;
+            position.columns = (position.columns as isize + column_delta) as usize;
+        }
+        positions.splice(from + 1..to, rebuilt);
+        self.widths[line] = (self.widths[line] as isize + column_delta) as u32;
+        for offset in &mut self.starts[line + 1..] {
+            *offset = (*offset as isize + delta) as usize;
+        }
+        self.max_width = self.widths.iter().copied().max().unwrap_or(0) as usize;
+        true
     }
 }
 

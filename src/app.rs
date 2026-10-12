@@ -85,6 +85,21 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         .map(|tab| tab.controller.clone());
     let application_context = cx.application();
     let application = application_context.resource::<ApplicationHandle>();
+    let loading_state = state.clone();
+    let loading_application = application.as_ref().clone();
+    cx.use_effect((), move || {
+        let restore = crate::session_restore::SessionRestore::new(
+            loading_state.clone(),
+            loading_application.clone(),
+        );
+        let loader =
+            crate::file_loading::FileLoader::new(loading_state.clone(), loading_application);
+        loading_state.update(|app| app.file_loader = Some(loader.clone()));
+        move || {
+            restore.shutdown();
+            loader.shutdown();
+        }
+    });
     let program_sessions = terminal_tab_snapshot
         .tabs()
         .iter()
@@ -296,7 +311,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             .flat_map(|id| workspace.tabs_of(id))
             .collect::<Vec<_>>();
         if dirty_targets.is_empty() {
-            window_manager.close("loom");
+            if crate::workspace_actions::save_editor_session(&close_state) {
+                window_manager.close("loom");
+            }
         } else {
             close_state.update(move |app| {
                 app.close_request = Some(CloseRequest {
@@ -354,7 +371,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     layout_map::refresh(&s, &layout_map_store, content_area, session_ids.clone());
     theme::set(s.theme);
     crate::fonts::set(&s.editor_font, &s.terminal_font);
-    let editor_layout = crate::workspace_actions::saved_editor_layout(&s.workspace);
+    let editor_layout = crate::workspace_actions::saved_app_editor_layout(&s);
     let git_roots = s.workspace_folders.clone();
     let mut git_target = s.workspace.git_poll_target();
     // A repository chosen in Source Control holds until the active file changes.

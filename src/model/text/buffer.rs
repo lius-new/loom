@@ -8,7 +8,7 @@ use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
 use super::change::{Change, ChangeSet, Edit, EditError, validate};
 use super::history::History;
-use super::lines::{LineIndex, display_width, grapheme_width};
+use super::lines::{LineIndex, grapheme_width};
 use super::selection::Selection;
 
 /// The line break ending the first line, if it has one.
@@ -91,6 +91,14 @@ impl TextBuffer {
     /// Immutable text only: background readers do not retain undo history.
     pub fn text_snapshot(&self) -> Arc<String> {
         self.text.clone()
+    }
+
+    pub fn matches_snapshot(&self, saved: &Arc<String>) -> bool {
+        Arc::ptr_eq(&self.text, saved) || self.text.as_str() == saved.as_str()
+    }
+
+    pub fn snapshot_identity(&self) -> usize {
+        Arc::as_ptr(&self.text) as usize
     }
 
     pub fn len(&self) -> usize {
@@ -280,19 +288,30 @@ impl TextBuffer {
     pub fn line_col(&self, offset: usize) -> (usize, usize) {
         let offset = self.char_floor(offset);
         let line = self.line_of(offset);
+        let position = self
+            .lines
+            .position_by(line, offset - self.lines.start(line), |p| p.byte);
         (
             line,
-            self.text[self.lines.start(line)..offset].chars().count(),
+            position.chars
+                + self.text[self.lines.start(line) + position.byte..offset]
+                    .chars()
+                    .count(),
         )
     }
 
     /// The offset of a character column, clamped to the line's content.
     pub fn offset_at_char_column(&self, line: usize, column: usize) -> usize {
         let range = self.line_range(line);
-        self.text[range.clone()]
+        let position = self
+            .lines
+            .position_by(self.last_line_at_most(line), column, |p| p.chars);
+        self.text[range.start + position.byte..range.end]
             .char_indices()
-            .nth(column)
-            .map_or(range.end, |(offset, _)| range.start + offset)
+            .nth(column.saturating_sub(position.chars))
+            .map_or(range.end, |(offset, _)| {
+                range.start + position.byte + offset
+            })
     }
 
     /// The line break the document uses, judged by its first line.
@@ -306,22 +325,32 @@ impl TextBuffer {
     /// expanded).
     pub fn display_column(&self, offset: usize) -> usize {
         let offset = self.char_floor(offset);
-        display_width(&self.text[self.lines.start(self.line_of(offset))..offset])
+        let line = self.line_of(offset);
+        let start = self.lines.start(line);
+        let position = self.lines.position_by(line, offset - start, |p| p.byte);
+        self.text[start + position.byte..offset]
+            .graphemes(true)
+            .fold(position.columns, |x, g| x + grapheme_width(g, x))
     }
 
     /// The last grapheme boundary of `line` whose display column does not pass
     /// `column`, so a column inside a wide character or tab rounds down.
     pub fn offset_at_display_column(&self, line: usize, column: usize) -> usize {
         let range = self.line_range(line);
-        let mut x = 0;
-        let mut offset = range.start;
-        for (index, grapheme) in self.text[range.clone()].grapheme_indices(true) {
+        let position = self
+            .lines
+            .position_by(self.last_line_at_most(line), column, |p| p.columns);
+        let mut x = position.columns;
+        let mut offset = range.start + position.byte;
+        for (index, grapheme) in
+            self.text[range.start + position.byte..range.end].grapheme_indices(true)
+        {
             let width = grapheme_width(grapheme, x);
             if x + width > column {
                 break;
             }
             x += width;
-            offset = range.start + index + grapheme.len();
+            offset = range.start + position.byte + index + grapheme.len();
         }
         offset
     }
@@ -336,19 +365,24 @@ impl TextBuffer {
         right: usize,
     ) -> Option<Range<usize>> {
         let range = self.line_range(line);
-        let mut x = 0;
+        let position = self
+            .lines
+            .position_by(self.last_line_at_most(line), left, |p| p.columns);
+        let mut x = position.columns;
         let mut start = None;
-        let mut end = range.start;
-        for (index, grapheme) in self.text[range.clone()].grapheme_indices(true) {
+        let mut end = range.start + position.byte;
+        for (index, grapheme) in
+            self.text[range.start + position.byte..range.end].grapheme_indices(true)
+        {
             if x >= right {
                 break;
             }
             let width = grapheme_width(grapheme, x);
             if x + width.max(1) > left && start.is_none() {
-                start = Some(range.start + index);
+                start = Some(range.start + position.byte + index);
             }
             x += width;
-            end = range.start + index + grapheme.len();
+            end = range.start + position.byte + index + grapheme.len();
         }
         start.map(|start| start..end)
     }
@@ -455,6 +489,130 @@ mod tests {
         );
         assert_eq!(buffer.display_column_range(1, 5, 9), None);
         assert_eq!(buffer.display_column_range(2, 1, 99), Some(13..15));
+    }
+
+    #[test]
+    fn long_line_index_preserves_unicode_tabs_and_character_offsets() {
+        let line = "a\t中文e\u{301}👩‍💻😀Z".repeat(1800);
+        let text = format!("prefix\r\n{line}\r\nlast");
+        let buffer = TextBuffer::new(text);
+        let base = buffer.line_start(1);
+        let mut column = 0;
+        let mut chars = 0;
+        for (i, (byte, grapheme)) in line.grapheme_indices(true).enumerate() {
+            if i % 97 == 0 {
+                assert_eq!(buffer.line_col(base + byte), (1, chars));
+                assert_eq!(buffer.offset_at_char_column(1, chars), base + byte);
+                assert_eq!(buffer.display_column(base + byte), column);
+                assert_eq!(buffer.offset_at_display_column(1, column), base + byte);
+                let range = buffer.display_column_range(1, column, column + 12).unwrap();
+                assert_eq!(range.start, base + byte);
+                assert!(buffer.is_grapheme_boundary(range.end));
+                assert!(range.end - range.start < 128);
+            }
+            column += grapheme_width(grapheme, column);
+            chars += grapheme.chars().count();
+        }
+        assert_eq!(buffer.line_display_width(1), column);
+        assert_eq!(buffer.line_col(buffer.line_end(1)), (1, chars));
+    }
+
+    #[test]
+    fn editing_long_lines_keeps_position_indexes_and_max_width_correct() {
+        let mut buffer = TextBuffer::new(format!(
+            "{}\nshort\n{}",
+            "a中\t".repeat(3000),
+            "z".repeat(5000)
+        ));
+        for step in 0..3 {
+            let at = buffer.grapheme_floor(256);
+            let edit = match step {
+                0 => Edit::replace(at..buffer.next_grapheme(at), "😀\n"),
+                1 => Edit::replace(0..buffer.grapheme_floor(10), "head"),
+                _ => {
+                    let at = buffer.grapheme_floor(100);
+                    Edit::replace(at..at, "\t中文")
+                }
+            };
+            buffer.apply_edits(vec![edit]).unwrap();
+            let rebuilt = TextBuffer::new(buffer.text().to_owned());
+            assert_eq!(buffer.line_count(), rebuilt.line_count());
+            assert_eq!(
+                buffer.max_line_display_width(),
+                rebuilt.max_line_display_width()
+            );
+            for line in 0..buffer.line_count() {
+                assert_eq!(buffer.line(line), rebuilt.line(line));
+                assert_eq!(
+                    buffer.line_display_width(line),
+                    rebuilt.line_display_width(line)
+                );
+                for column in [0, 128, 257, 1000, 4999, 10000] {
+                    assert_eq!(
+                        buffer.offset_at_display_column(line, column),
+                        rebuilt.offset_at_display_column(line, column)
+                    );
+                    assert_eq!(
+                        buffer.offset_at_char_column(line, column),
+                        rebuilt.offset_at_char_column(line, column)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn incremental_long_line_edits_match_full_unicode_queries() {
+        let mut buffer = TextBuffer::new("a中文e\u{301}😀XYZ".repeat(3000));
+        let pieces = ["x", "中文", "\t", "😀", "\u{301}", "", "e\u{301}", "👩‍💻"];
+        let mut seed = 42u64;
+        for i in 0..60 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let at = if i % 10 == 0 {
+                buffer.len()
+            } else {
+                buffer.grapheme_floor((seed as usize) % buffer.len())
+            };
+            let end = if i % 3 == 0 {
+                buffer.next_grapheme(at)
+            } else {
+                at
+            };
+            buffer
+                .apply_edits(vec![Edit::replace(at..end, pieces[i % pieces.len()])])
+                .unwrap();
+            let rebuilt = TextBuffer::new(buffer.text().to_owned());
+            assert_eq!(
+                buffer.max_line_display_width(),
+                rebuilt.max_line_display_width()
+            );
+            for offset in [at, end.min(buffer.len()), buffer.len() / 2, buffer.len()] {
+                let offset = buffer.grapheme_floor(offset);
+                assert_eq!(buffer.line_col(offset), rebuilt.line_col(offset));
+                assert_eq!(
+                    buffer.display_column(offset),
+                    rebuilt.display_column(offset)
+                );
+            }
+            for column in [
+                0,
+                255,
+                256,
+                257,
+                1000,
+                10000,
+                buffer.line_display_width(0).saturating_sub(1),
+            ] {
+                assert_eq!(
+                    buffer.offset_at_display_column(0, column),
+                    rebuilt.offset_at_display_column(0, column)
+                );
+                assert_eq!(
+                    buffer.display_column_range(0, column, column + 64),
+                    rebuilt.display_column_range(0, column, column + 64)
+                );
+            }
+        }
     }
 
     #[test]

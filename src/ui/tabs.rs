@@ -21,7 +21,7 @@ use crate::ui::tab_layout::{self, TabLayoutInput, TabLayoutResult};
 /// Horizontal padding inside each tab pill (px-3 in the mockup).
 pub(super) const PAD: f32 = 12.0;
 /// Gap between badge, name and close icon (gap-2 in the mockup).
-pub(super) const GAP: f32 = 8.0;
+pub(super) const GAP: f32 = 6.0;
 /// Gap between adjacent tab pills.
 pub(super) const TAB_GAP: f32 = 4.0;
 /// Extra right margin inside text rects so the last glyph is not clipped.
@@ -176,9 +176,9 @@ fn controls_left(rect: UiRect, app: &AppState, pane: PaneId) -> f32 {
     }
 }
 
-/// Size of an SVG tab badge, matched to the cap height of the text badges.
-/// Smaller than theme::ICON_SIZE, so 16px-grid glyphs render slightly soft.
-const BADGE_ICON: f32 = 12.0;
+/// File and loading icons share one 16 px slot on the tab's baseline.
+const BADGE_ICON: f32 = 16.0;
+const CLOSE_ICON: f32 = 12.0;
 
 /// Leading tab marker: a language/diff label, or an SVG icon.
 #[derive(Clone, Copy)]
@@ -238,7 +238,10 @@ fn tab_badge(app: &AppState, id: FileId, meta: &FileMeta) -> TabBadge {
         };
         TabBadge::Icon(icon, theme::c().badge.diff)
     } else {
-        TabBadge::Text(meta.lang.badge(), meta.lang.badge_color())
+        TabBadge::Icon(
+            crate::file_icons::icon_for_file(&meta.name),
+            theme::c().text_muted,
+        )
     }
 }
 
@@ -273,7 +276,7 @@ fn pane_active(app: &AppState, pane: PaneId) -> Option<FileId> {
 
 fn natural_tab_widths(app: &AppState, pane: PaneId) -> Vec<f32> {
     let labels = app.workspace.tab_labels(pane);
-    pane_items(app, pane)
+    let mut widths: Vec<f32> = pane_items(app, pane)
         .iter()
         .filter_map(|id| {
             let meta = app.workspace.meta(*id)?;
@@ -283,17 +286,24 @@ fn natural_tab_widths(app: &AppState, pane: PaneId) -> Vec<f32> {
             } else {
                 0.0
             };
-            let fixed_width = PAD
-                + badge.width()
-                + GAP
-                + GAP
-                + state_slot
-                + measure("✕", theme::SMALL, 400)
-                + PAD;
+            let fixed_width = PAD + badge.width() + GAP + GAP + state_slot + CLOSE_ICON + PAD;
             let label = labels.get(id).map(String::as_str).unwrap_or(&meta.name);
             Some(fixed_width + measure(label, theme::UI_SIZE, 400) + TEXT_MARGIN)
         })
-        .collect()
+        .collect();
+    if let Some(pending) = app.pending_file.as_ref().filter(|p| p.pane == pane) {
+        let meta = FileMeta::from_path(pending.path.clone());
+        widths.push(
+            (PAD * 2.0
+                + BADGE_ICON
+                + GAP * 2.0
+                + CLOSE_ICON
+                + measure(&meta.name, theme::UI_SIZE, 400)
+                + TEXT_MARGIN)
+                .clamp(EDITOR_MIN_TAB_W, MAX_TAB_W),
+        );
+    }
+    widths
 }
 
 fn tab_layout(rect: UiRect, app: &AppState, pane: PaneId, reveal_active: bool) -> TabLayoutResult {
@@ -762,7 +772,9 @@ pub fn render(
     // Tabs are content-sized rounded pills, inset PILL_INSET vertically,
     // separated by TAB_GAP. The strip has no padding; this cluster's left
     // padding is TABS_PAD.
-    if s.pane_surface(pane) == MainSurface::Welcome {
+    if s.pane_surface(pane) == MainSurface::Welcome
+        && !s.pending_file.as_ref().is_some_and(|p| p.pane == pane)
+    {
         let label = "welcome";
         let label_w = measure(label, theme::UI_SIZE, 400);
         let tab_w = (PAD * 2.0 + label_w + TEXT_MARGIN).clamp(MIN_TAB_W, MAX_TAB_W);
@@ -809,7 +821,7 @@ pub fn render(
         let badge_w = badge.width();
         let state_mark = tab_state_mark(&s, id);
         let state_mark_w = state_mark.map_or(0.0, |(mark, _)| measure(mark, theme::SMALL, 400));
-        let close_w = measure("✕", theme::SMALL, 400);
+        let close_w = CLOSE_ICON;
         let tab_w = layout_item.width;
         let x = rect.left + layout_item.left;
 
@@ -863,6 +875,7 @@ pub fn render(
                     let pointer_x = pointer.point.x;
                     let pointer_y = pointer.point.y;
                     st.update(move |app| {
+                        crate::file_loading::cancel(app);
                         let clicks = app.editor.tab_click_count(id, pointer_x, pointer_y);
                         app.workspace.activate(pane, id);
                         app.tab_context_menu = None;
@@ -908,7 +921,16 @@ pub fn render(
             cx.stop_propagation();
         });
 
-        tab_el = tab_el.child(badge.render(badge_left, pill, &format!("{}-{id:?}", pane.get())));
+        tab_el = tab_el.child(if s.workspace.loading_indicator(id) {
+            let top = pill.top + (pill.height() - BADGE_ICON) / 2.0;
+            crate::ui::components::loading_indicator::render(
+                UiRect::new(badge_left, top, badge_left + BADGE_ICON, top + BADGE_ICON),
+                theme::c().text_muted,
+                format!("tabs.restore.{}-{id:?}", pane.get()),
+            )
+        } else {
+            badge.render(badge_left, pill, &format!("{}-{id:?}", pane.get()))
+        });
         tab_el = tab_el.child(text(
             UiRect::new(name_left, pill.top, name_left + name_slot_w, pill.bottom),
             display_name,
@@ -948,15 +970,16 @@ pub fn render(
                     crate::workspace_actions::request_close_tab(&st, pane, id);
                     focus.focus();
                 })
-                .child(text(
+                .child(icon(
+                    UiId::owned(format!("tabs.close.{}-{id:?}", pane.get())),
+                    "close",
                     UiRect::new(
                         close_left,
-                        pill.top,
-                        close_left + close_w + TEXT_MARGIN,
-                        pill.bottom,
+                        pill.top + (pill.height() - CLOSE_ICON) / 2.0,
+                        close_left + CLOSE_ICON,
+                        pill.top + (pill.height() + CLOSE_ICON) / 2.0,
                     ),
-                    "✕",
-                    theme::mono(theme::c().text_dim, theme::SMALL),
+                    theme::c().text_dim,
                 )),
             );
         }
@@ -964,6 +987,101 @@ pub fn render(
         tab_layer = tab_layer.child(tab_el);
     }
 
+    // The target tab reserves its icon slot immediately; only that icon changes
+    // after 300 ms. The old document remains the active central surface.
+    if let Some(pending) = s.pending_file.as_ref().filter(|p| p.pane == pane)
+        && let Some(item) = layout.items.get(open_files.len())
+    {
+        let pill = UiRect::new(
+            rect.left + item.left,
+            rect.top + PILL_INSET,
+            rect.left + item.right,
+            rect.bottom - PILL_INSET,
+        );
+        let meta = FileMeta::from_path(pending.path.clone());
+        let badge_left = pill.left + PAD;
+        let badge_top = pill.top + (pill.height() - BADGE_ICON) / 2.0;
+        let badge_rect = UiRect::new(
+            badge_left,
+            badge_top,
+            badge_left + BADGE_ICON,
+            badge_top + BADGE_ICON,
+        );
+        let badge = if pending.indicator {
+            crate::ui::components::loading_indicator::render(
+                badge_rect,
+                theme::c().text_muted,
+                format!("tabs.loading.{}-{}", pane.get(), pending.generation),
+            )
+        } else {
+            icon(
+                UiId::owned(format!("tabs.pending.{}", pane.get())),
+                crate::file_icons::icon_for_file(&meta.name),
+                badge_rect,
+                theme::c().text_muted,
+            )
+        };
+        let name = ellipsize(
+            &meta.name,
+            (pill.width() - PAD * 2.0 - BADGE_ICON - GAP * 2.0 - CLOSE_ICON).max(0.0),
+            theme::UI_SIZE,
+            400,
+        );
+        let cancel_state = state.clone();
+        let generation = pending.generation;
+        tab_layer = tab_layer.child(
+            panel(pill, VisualStyle::default().radius(2.0))
+                .key(format!("loading-tab-{}", pane.get()))
+                .child(badge)
+                .child(text(
+                    UiRect::new(
+                        pill.left + PAD + BADGE_ICON + GAP,
+                        pill.top,
+                        pill.right - PAD - CLOSE_ICON - GAP,
+                        pill.bottom,
+                    ),
+                    name,
+                    theme::mono(theme::c().text_muted, theme::UI_SIZE),
+                ))
+                .child(
+                    panel(
+                        UiRect::new(
+                            pill.right - PAD - CLOSE_ICON,
+                            pill.top,
+                            pill.right - PAD,
+                            pill.bottom,
+                        ),
+                        VisualStyle::default(),
+                    )
+                    .event_policy(EventPolicy::INTERACTIVE)
+                    .on_click(move || {
+                        cancel_state.try_update(|app| {
+                            if app
+                                .pending_file
+                                .as_ref()
+                                .is_some_and(|p| p.generation == generation)
+                            {
+                                crate::file_loading::cancel(app);
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                    })
+                    .child(icon(
+                        UiId::owned(format!("tabs.pending.close.{}", pane.get())),
+                        "close",
+                        UiRect::new(
+                            pill.right - PAD - CLOSE_ICON,
+                            pill.top + (pill.height() - CLOSE_ICON) / 2.0,
+                            pill.right - PAD,
+                            pill.top + (pill.height() + CLOSE_ICON) / 2.0,
+                        ),
+                        theme::c().text_dim,
+                    )),
+                ),
+        );
+    }
     bar = bar.child(tab_layer);
 
     // Insertion marker: a reorder within this strip, or a tab dragged in

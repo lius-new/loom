@@ -1,7 +1,8 @@
 //! The central code viewport: gutter, syntax-highlighted source, cursor and
 //! editor-specific overlay scrollbars.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -118,12 +119,21 @@ pub fn render(
             .meta(id)
             .expect("active document metadata exists");
         let buffer = s.workspace.editor(pane).expect("pane shows a text file");
+        let line_count = buffer.line_count();
+        let (cursor_line, cursor_col) = buffer.line_col();
+        let code_top = rect.top;
+        let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+        let metrics = scroll_metrics(rect, code_left, &buffer);
+        let (stored_x, stored_y) = s.workspace.scroll(pane);
+        let scroll_x = stored_x.clamp(0.0, metrics.max_x);
+        let scroll_y = stored_y.clamp(0.0, metrics.max_y);
+        let visible_lines = visible_line_range(scroll_y, rect.height(), line_count);
         let decorations = git
             .line_changes
             .get(&meta.path)
             .map(|changes| {
                 changes
-                    .iter()
+                    .range(visible_lines.start + 1..visible_lines.end + 1)
                     .map(|(line, change)| {
                         let decoration = match change {
                             LineChange::Added => gutter::GutterDecoration::GitAdded,
@@ -135,15 +145,6 @@ pub fn render(
                     .collect::<BTreeMap<_, _>>()
             })
             .unwrap_or_default();
-        let lines = document_lines(&buffer);
-        let (cursor_line, cursor_col) = buffer.line_col();
-        let code_top = rect.top;
-        let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
-        let metrics = scroll_metrics(rect, code_left, &buffer);
-        let (stored_x, stored_y) = s.workspace.scroll(pane);
-        let scroll_x = stored_x.clamp(0.0, metrics.max_x);
-        let scroll_y = stored_y.clamp(0.0, metrics.max_y);
-        let visible_lines = visible_line_range(scroll_y, rect.height(), lines.len());
         let has_vertical = metrics.max_y > 0.0;
         let has_horizontal = metrics.max_x > 0.0;
 
@@ -353,7 +354,6 @@ pub fn render(
             );
         }
         let st_gutter_hover = state.clone();
-        let line_count = lines.len();
         root = root.on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
             if let UiEventPayload::PointerMove { pointer } = payload {
                 let point = pointer.point;
@@ -386,26 +386,30 @@ pub fn render(
             .then(|| s.vim.highlights(buffer.buffer(), buffer.selection_state()))
             .flatten()
             .unwrap_or_else(|| buffer.selection().into_iter().collect());
-        let matches = if s.vim.is_enabled() {
+        let large_file = buffer.len() > 4 * 1024 * 1024 || buffer.max_line_display_width() > 4096;
+        let matches = if s.vim.is_enabled() && !large_file {
             s.vim.search_matches(buffer.buffer(), visible_lines.clone())
         } else {
             Vec::new()
         };
         for line_index in visible_lines.clone() {
             let y = code_top + line_index as f32 * fonts::editor().line_h;
-            let line = lines[line_index];
-            let layout = layout_line(line, code_left, y, layout_right);
-            let (start, end) = (buffer.line_start(line_index), buffer.line_end(line_index));
+            let window = line_window(&buffer, line_index, scroll_x, metrics.viewport_w);
+            let line = &buffer.text()[window.clone()];
+            let initial_column = buffer.display_column(window.start);
+            let line_left = code_left + initial_column as f32 * fonts::editor().char_w;
+            let layout = layout_line_at_column(line, line_left, y, layout_right, initial_column);
+            let (start, end) = (window.start, window.end);
             let next = buffer.line_range_with_break(line_index).end;
             // The part of `range` on this line, as a highlight rectangle.
             let line_rect = |range: &Range<usize>| {
-                if range.start >= next || range.end <= start {
+                if range.start >= next || range.end <= start || range.start > end {
                     return None;
                 }
                 let from = range.start.max(start).min(end);
                 let to = range.end.min(end).max(start);
                 let left = caret_x(layout.as_ref(), buffer.text()[start..from].chars().count())
-                    .unwrap_or(code_left);
+                    .unwrap_or(line_left);
                 let mut right = caret_x(layout.as_ref(), buffer.text()[start..to].chars().count())
                     .unwrap_or(left);
                 if range.end > end {
@@ -428,10 +432,15 @@ pub fn render(
                     code = code.child(panel(r, VisualStyle::filled(theme::c().accent).alpha(55)));
                 }
             }
-            let mut x = code_left;
+            let mut x = line_left;
             let mut char_offset = 0;
-            let mut display_column = 0;
-            for (span, color) in syntax::highlight_line(line, meta.lang) {
+            let mut display_column = initial_column;
+            let spans = if large_file {
+                vec![(line.to_owned(), theme::c().text)]
+            } else {
+                syntax::highlight_line(line, meta.lang)
+            };
+            for (span, color) in spans {
                 char_offset += span.chars().count();
                 let next_x = caret_x(layout.as_ref(), char_offset)
                     .unwrap_or_else(|| x + span.chars().count() as f32 * fonts::editor().char_w);
@@ -447,9 +456,14 @@ pub fn render(
         let editor_focused = s.focused && focused_pane;
         if editor_focused && visible_lines.contains(&cursor_line) {
             let cursor_y = code_top + cursor_line as f32 * fonts::editor().line_h;
-            let cursor_layout = layout_line(lines[cursor_line], code_left, cursor_y, layout_right);
-            let cursor_x = caret_x(cursor_layout.as_ref(), cursor_col)
-                .unwrap_or(code_left + cursor_col as f32 * fonts::editor().char_w);
+            let (cursor_x, cursor_layout) = document_caret(
+                &buffer,
+                cursor_line,
+                cursor_col,
+                code_left,
+                cursor_y,
+                layout_right,
+            );
             let shape = if vim_view {
                 s.vim.cursor_shape()
             } else {
@@ -468,7 +482,17 @@ pub fn render(
                     .filter(|grapheme| !grapheme.starts_with(['\r', '\n']))
                     .map_or(0, |grapheme| grapheme.chars().count());
                 let right = (chars > 0)
-                    .then(|| caret_x(cursor_layout.as_ref(), cursor_col + chars))
+                    .then(|| {
+                        if buffer.line(cursor_line).len() > 4096 {
+                            let offset = buffer.next_grapheme(buffer.cursor());
+                            Some(
+                                code_left
+                                    + buffer.display_column(offset) as f32 * fonts::editor().char_w,
+                            )
+                        } else {
+                            caret_x(cursor_layout.as_ref(), cursor_col + chars)
+                        }
+                    })
                     .flatten()
                     .unwrap_or(cursor_x + fonts::editor().char_w)
                     .max(cursor_x + 2.0);
@@ -564,12 +588,13 @@ pub fn render(
                     || s.editor_horizontal_scrollbar_dragging));
         if let Some(changes) = git.line_changes.get(&meta.path)
             && !changes.is_empty()
+            && changes.len() <= 10_000
         {
             root = root.child(overview_ruler(
                 rect,
                 metrics,
                 has_horizontal,
-                &change_marks(changes, lines.len()),
+                &change_marks(changes, line_count),
             ));
         }
         if has_vertical {
@@ -975,8 +1000,51 @@ pub fn finish_scrollbar_drag(app: &mut AppState) -> bool {
     changed
 }
 
-fn document_lines(buffer: &TextBuffer) -> Vec<&str> {
-    buffer.lines().collect()
+/// Keep long-line shaping bounded horizontally as well as vertically.
+fn line_window(buffer: &TextBuffer, line: usize, scroll_x: f32, width: f32) -> Range<usize> {
+    if buffer.line(line).len() <= 4096 {
+        return buffer.line_range(line);
+    }
+    let char_w = fonts::editor().char_w.max(1.0);
+    let left = (scroll_x / char_w).floor() as usize;
+    let right = ((scroll_x + width) / char_w).ceil() as usize;
+    buffer
+        .display_column_range(line, left.saturating_sub(32), right.saturating_add(32))
+        .unwrap_or_else(|| {
+            let end = buffer.line_end(line);
+            end..end
+        })
+}
+
+fn document_caret(
+    buffer: &TextBuffer,
+    line: usize,
+    column: usize,
+    left: f32,
+    top: f32,
+    right: f32,
+) -> (f32, Option<LineLayout>) {
+    if buffer.line(line).len() > 4096 {
+        let offset = buffer.offset_at_char_column(line, column);
+        let visual = buffer.display_column(offset);
+        let range = buffer
+            .display_column_range(line, visual.saturating_sub(32), visual.saturating_add(32))
+            .unwrap_or(offset..offset);
+        let initial = buffer.display_column(range.start);
+        let origin = left + initial as f32 * fonts::editor().char_w;
+        let layout =
+            layout_line_at_column(&buffer.text()[range.clone()], origin, top, right, initial);
+        let chars = buffer.text()[range.start..offset].chars().count();
+        return (
+            caret_x(layout.as_ref(), chars)
+                .unwrap_or(left + visual as f32 * fonts::editor().char_w),
+            None,
+        );
+    }
+    let layout = layout_line(buffer.line(line), left, top, right);
+    let x =
+        caret_x(layout.as_ref(), column).unwrap_or(left + column as f32 * fonts::editor().char_w);
+    (x, layout)
 }
 
 fn scroll_metrics(rect: UiRect, code_left: f32, buffer: &TextBuffer) -> ScrollMetrics {
@@ -1058,10 +1126,21 @@ fn scroll_from_thumb(thumb_start: f32, travel: f32, max_scroll: f32) -> f32 {
 }
 
 /// Layout uses expanded tabs, while all buffer positions remain source character indices.
+#[derive(Clone)]
 struct LineLayout {
     layout: TextLayout,
     source_to_display: Vec<usize>,
     width: f32,
+}
+
+type LayoutKey = (u32, usize, u32, u32, u32, usize);
+#[derive(Default)]
+struct LayoutCache {
+    entries: HashMap<LayoutKey, HashMap<String, LineLayout>>,
+    len: usize,
+}
+thread_local! {
+    static LINE_LAYOUTS: RefCell<LayoutCache> = RefCell::new(LayoutCache::default());
 }
 /// Expand tabs at four-column stops for editor and diff display.
 pub(crate) fn expand_tabs(line: &str, initial_column: usize) -> (String, Vec<usize>, usize) {
@@ -1088,7 +1167,36 @@ pub(crate) fn expand_tabs(line: &str, initial_column: usize) -> (String, Vec<usi
     (result, mapping, column)
 }
 fn layout_line(line: &str, left: f32, top: f32, right: f32) -> Option<LineLayout> {
-    let (display, source_to_display, _) = expand_tabs(line, 0);
+    layout_line_at_column(line, left, top, right, 0)
+}
+
+fn layout_line_at_column(
+    line: &str,
+    left: f32,
+    top: f32,
+    right: f32,
+    column: usize,
+) -> Option<LineLayout> {
+    let font = fonts::editor();
+    let key = (
+        font.size.to_bits(),
+        font.families.as_ptr() as usize,
+        left.to_bits(),
+        top.to_bits(),
+        right.to_bits(),
+        column % 4,
+    );
+    if let Some(layout) = LINE_LAYOUTS.with(|cache| {
+        cache
+            .borrow()
+            .entries
+            .get(&key)
+            .and_then(|entries| entries.get(line))
+            .cloned()
+    }) {
+        return Some(layout);
+    }
+    let (display, source_to_display, _) = expand_tabs(line, column);
     let bounds = UiRect::new(
         left,
         top,
@@ -1097,11 +1205,28 @@ fn layout_line(line: &str, left: f32, top: f32, right: f32) -> Option<LineLayout
     );
     let mut request = TextLayoutRequest::single_line(&display, bounds, fonts::editor().size, 400);
     request.font_families = fonts::editor().families;
-    text::layout(&request).map(|layout| LineLayout {
+    let layout = text::layout(&request).map(|layout| LineLayout {
         width: layout.width,
         layout,
         source_to_display,
-    })
+    });
+    if line.len() <= 8192
+        && let Some(layout) = &layout
+    {
+        LINE_LAYOUTS.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.len >= 256 {
+                *cache = LayoutCache::default();
+            }
+            cache
+                .entries
+                .entry(key)
+                .or_default()
+                .insert(line.to_owned(), layout.clone());
+            cache.len += 1;
+        });
+    }
+    layout
 }
 fn caret_x(layout: Option<&LineLayout>, char_index: usize) -> Option<f32> {
     let layout = layout?;
@@ -1152,6 +1277,33 @@ fn cursor_offset_from_point(
     let line = line_index_from_point(point_y, rect.top, scroll_y, buffer.line_count());
     let line_text = buffer.line(line);
     let content_x = point_x + scroll_x;
+    if line_text.len() > 4096 {
+        let column =
+            ((content_x - code_left).max(0.0) / fonts::editor().char_w.max(1.0)).round() as usize;
+        let approximate = buffer.offset_at_display_column(line, column);
+        let range = buffer
+            .display_column_range(line, column.saturating_sub(32), column.saturating_add(32))
+            .unwrap_or(approximate..approximate);
+        let initial = buffer.display_column(range.start);
+        let left = code_left + initial as f32 * fonts::editor().char_w;
+        let layout = layout_line_at_column(
+            &buffer.text()[range.clone()],
+            left,
+            rect.top,
+            code_left + metrics.content_w,
+            initial,
+        );
+        return layout
+            .map(|layout| {
+                let local = hit_column(&layout, content_x, point_y);
+                let offset = buffer.text()[range.clone()]
+                    .char_indices()
+                    .nth(local)
+                    .map_or(range.end, |(byte, _)| range.start + byte);
+                buffer.grapheme_floor(offset)
+            })
+            .unwrap_or(approximate);
+    }
     let content_y = point_y + scroll_y;
     let line_top = rect.top + line as f32 * fonts::editor().line_h;
     let char_index = layout_line(
@@ -1203,15 +1355,15 @@ pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
         scroll_y = line_bottom - metrics.viewport_h;
     }
 
-    let layout = layout_line(
-        buffer.line(line),
+    let caret = document_caret(
+        &buffer,
+        line,
+        column,
         code_left,
         rect.top,
         code_left + metrics.content_w,
-    );
-    let caret = caret_x(layout.as_ref(), column)
-        .unwrap_or(code_left + column as f32 * fonts::editor().char_w)
-        - code_left;
+    )
+    .0 - code_left;
     if caret < scroll_x + CURSOR_REVEAL_MARGIN {
         scroll_x = (caret - CURSOR_REVEAL_MARGIN).max(0.0);
     } else if caret > scroll_x + metrics.viewport_w - CURSOR_REVEAL_MARGIN {
@@ -1356,8 +1508,7 @@ fn ime_cursor_rect(app: &AppState, rect: UiRect) -> UiRect {
     let (sx, sy) = app.workspace.active_scroll();
     let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
     let top = rect.top + line as f32 * fonts::editor().line_h - sy;
-    let layout = layout_line(buffer.line(line), left, top, left + 100000.0);
-    let mut x = caret_x(layout.as_ref(), col).unwrap_or(left) - sx;
+    let mut x = document_caret(&buffer, line, col, left, top, left + 100000.0).0 - sx;
     let pane = app.workspace.active_pane();
     if let Some(session) = app
         .workspace
@@ -1562,6 +1713,145 @@ mod tests {
     use lgui::core::{KeyModifiers, KeyboardEvent, LogicalKey};
     use lgui::services::{Clipboard, ClipboardError};
     use std::sync::Mutex;
+
+    #[test]
+    fn multi_megabyte_single_line_windows_and_clicks_are_bounded() {
+        let buffer = TextBuffer::new("a".repeat(8 * 1024 * 1024));
+        let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
+        let left = 80.0;
+        let metrics = scroll_metrics(rect, left, &buffer);
+        let char_w = fonts::editor().char_w;
+        for column in [0, 1000, 1_000_000, 8 * 1024 * 1024 - 100] {
+            let sx = column as f32 * char_w;
+            let window = line_window(&buffer, 0, sx, 720.0);
+            assert!(
+                window.len() < 256,
+                "only viewport text is submitted for shaping"
+            );
+            assert!(window.contains(&column));
+            let offset = cursor_offset_from_point(
+                &buffer,
+                rect,
+                left,
+                metrics,
+                sx,
+                0.0,
+                left + char_w * 4.0,
+                10.0,
+            );
+            assert_eq!(offset, column + 4);
+        }
+        assert_eq!(
+            buffer.len(),
+            8 * 1024 * 1024,
+            "windowing must preserve all file contents"
+        );
+    }
+
+    #[test]
+    fn long_unicode_windows_remain_on_grapheme_boundaries_near_the_end() {
+        let buffer = TextBuffer::new("中e\u{301}👩‍💻\t😀".repeat(100_000));
+        let columns = buffer.line_display_width(0);
+        for column in [0, columns / 2, columns - 20] {
+            let window = line_window(&buffer, 0, column as f32 * fonts::editor().char_w, 700.0);
+            assert!(window.len() < 4096);
+            assert!(buffer.is_grapheme_boundary(window.start));
+            assert!(buffer.is_grapheme_boundary(window.end));
+        }
+    }
+
+    #[test]
+    #[ignore = "manual large-file rendering performance baseline"]
+    fn large_file_interaction_baseline() {
+        use lgui::{application::AppView, core::UiScale, session::UiSession};
+        use std::sync::Arc;
+        let rect = UiRect::new(0.0, 0.0, 1000.0, 600.0);
+        for (name, contents) in [
+            ("8 MiB single line", "a".repeat(8 * 1024 * 1024)),
+            ("Unicode single line", "中文e\u{301}😀\t".repeat(500_000)),
+            (
+                "many short lines",
+                "{\"record\": \"中文\", \"value\": 12345}\n".repeat(500_000),
+            ),
+        ] {
+            let prepare = std::time::Instant::now();
+            let mut app = document(&contents);
+            app.focused = true;
+            let prepare = prepare.elapsed();
+            let exposed = Arc::new(Mutex::new(None));
+            let output = exposed.clone();
+            let initial = Arc::new(Mutex::new(Some(app)));
+            let view: AppView = Arc::new(move |cx| {
+                let state = cx.state_with(|| initial.lock().unwrap().take().unwrap());
+                let git = cx.state(GitStoreSnapshot::default());
+                *output.lock().unwrap() = Some(state.clone());
+                let id = UiId::new("large-file-benchmark");
+                let focus = cx.focus_handle(id.clone());
+                render(PaneId::new(1), rect, state, git, id, focus)
+            });
+            let mut session = UiSession::new();
+            session.render_view(&view, rect, UiScale::ONE);
+            let state: State<AppState> = exposed.lock().unwrap().clone().unwrap();
+            let start = std::time::Instant::now();
+            for i in 0..100 {
+                state.update(|app| {
+                    let buffer = app.workspace.active_editor().unwrap();
+                    let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+                    let metrics = scroll_metrics(rect, left, &buffer);
+                    let sx = metrics.max_x * (i as f32 / 100.0);
+                    let offset = cursor_offset_from_point(
+                        &buffer,
+                        rect,
+                        left,
+                        metrics,
+                        sx,
+                        0.0,
+                        left + 20.0,
+                        10.0,
+                    );
+                    app.workspace
+                        .active_editor_mut()
+                        .unwrap()
+                        .set_cursor(offset);
+                    app.workspace.set_active_scroll(sx, 0.0);
+                });
+                session.render_view(&view, rect, UiScale::ONE);
+            }
+            eprintln!(
+                "{name}: {:.2} MiB, prepare {:?}, 100 viewport renders and clicks {:?}",
+                contents.len() as f64 / (1024.0 * 1024.0),
+                prepare,
+                start.elapsed()
+            );
+            let edits = std::time::Instant::now();
+            for _ in 0..20 {
+                state.update(|app| {
+                    let mut editor = app.workspace.active_editor_mut().unwrap();
+                    let end = editor.len();
+                    editor.set_cursor(end);
+                    editor
+                        .replace_selection("x", crate::model::text::EditKind::Other)
+                        .unwrap();
+                });
+                session.render_view(&view, rect, UiScale::ONE);
+            }
+            eprintln!(
+                "{name}: 20 end-of-file edits and renders {:?}",
+                edits.elapsed()
+            );
+            state.update(|app| {
+                assert!(app.workspace.is_dirty(app.workspace.active().unwrap()));
+                for _ in 0..20 {
+                    assert!(app.workspace.active_editor_mut().unwrap().undo().is_some());
+                }
+                assert!(!app.workspace.is_dirty(app.workspace.active().unwrap()));
+            });
+            assert_eq!(
+                state.get().workspace.active_editor().unwrap().text(),
+                contents
+            );
+        }
+    }
 
     #[test]
     fn overview_marks_join_adjacent_lines_of_the_same_change() {

@@ -175,6 +175,8 @@ pub struct AppState {
     /// Vim editing behaviour, when enabled in Settings.
     pub vim: crate::vim::Vim,
     pub workspace: Workspace,
+    pub file_loader: Option<crate::file_loading::FileLoader>,
+    pub pending_file: Option<crate::file_loading::PendingFile>,
     /// Focus of the shared welcome/home/editor surface, retained across swaps.
     pub focused: bool,
     /// File explorer drawer on the right.
@@ -382,6 +384,8 @@ impl AppState {
             editor: Default::default(),
             vim: Default::default(),
             workspace: Workspace::new(),
+            file_loader: None,
+            pending_file: None,
             focused: false,
             show_drawer: true,
             drawer_mode: DrawerMode::Files,
@@ -883,7 +887,13 @@ impl AppState {
             MainSurface::Diff
         } else if self.workspace.editor(pane).is_some() {
             MainSurface::Editor
-        } else if self.workspace.pane_count() > 1 {
+        } else if self
+            .workspace
+            .pane(pane)
+            .and_then(|p| p.active())
+            .is_some_and(|id| self.workspace.is_loading(id))
+            || self.workspace.pane_count() > 1
+        {
             MainSurface::Empty
         } else if self.workspace_folders.is_empty() {
             MainSurface::Welcome

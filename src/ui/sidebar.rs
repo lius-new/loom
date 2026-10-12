@@ -7,7 +7,6 @@
 //! folders themselves are shown as root nodes (expanded by default) with their
 //! contents indented beneath it.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use lgui::core::{
@@ -35,7 +34,6 @@ const INDENT: f32 = 12.0;
 const TREE_ICON_SIZE: f32 = 16.0;
 const TREE_ICON_GAP: f32 = 4.0;
 const TREE_LABEL_OFFSET: f32 = TREE_ICON_SIZE + TREE_ICON_GAP;
-const MAX_EDITABLE_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 struct StickyDirectory {
@@ -592,21 +590,6 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
     ]
 }
 
-fn read_text_file(path: &Path) -> Result<String, String> {
-    let name = path
-        .file_name()
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    let metadata = fs::metadata(path).map_err(|error| format!("Could not open {name}: {error}"))?;
-    if !metadata.is_file() {
-        return Err(format!("Could not open {name}: not a regular file"));
-    }
-    if metadata.len() > MAX_EDITABLE_FILE_BYTES {
-        return Err(format!("Could not open {name}: file is larger than 4 MiB"));
-    }
-    fs::read_to_string(path).map_err(|error| format!("Could not open {name} as UTF-8: {error}"))
-}
-
 fn create_row(
     rect: UiRect,
     y: f32,
@@ -1062,18 +1045,10 @@ fn build_tree(
                                     focus.focus();
                                 } else {
                                     let path = action_path.clone();
-                                    match read_text_file(&path) {
-                                        Ok(contents) => {
-                                            st.update(move |app| {
-                                                app.workspace.open_path(path, contents);
-                                                app.toast = None;
-                                            });
-                                            focus.focus();
-                                        }
-                                        Err(message) => {
-                                            st.update(move |app| app.show_error(message));
-                                        }
-                                    }
+                                    st.update(move |app| {
+                                        workspace_actions::open_tree_file(app, path, 2);
+                                    });
+                                    focus.focus();
                                 }
                             }
                             PointerButton::Right => {

@@ -3,6 +3,7 @@
 use std::env;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -164,7 +165,32 @@ fn update(change: impl FnOnce(&mut WorkspaceSession)) -> io::Result<()> {
 }
 
 fn save_to(path: &Path, session: &WorkspaceSession) -> io::Result<()> {
-    write_json(path, session)
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("missing session directory"))?;
+    fs::create_dir_all(parent)?;
+    let contents = serde_json::to_vec_pretty(session).map_err(io::Error::other)?;
+    let temporary = parent.join(format!(
+        ".loom-session-{}-{}.tmp",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let result = (|| {
+        file.write_all(&contents)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 /// Pretty-print `value` to `path`, creating the parent directory as needed.
@@ -218,6 +244,35 @@ pub(crate) fn config_path(file_name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_replacement_preserves_other_fields_and_is_readable_after_each_save() {
+        let root = env::temp_dir().join(format!("loom-session-atomic-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("workspace.json");
+        let mut session = WorkspaceSession {
+            recent_folders: vec!["remember-me".into()],
+            show_terminal: true,
+            ..Default::default()
+        };
+        save_to(&path, &session).unwrap();
+        session.editor_layout = Some(EditorLayout {
+            root: SavedPaneNode::Pane {
+                items: vec!["single-click.json".into()],
+                active: Some("single-click.json".into()),
+            },
+            active_pane: 0,
+        });
+        save_to(&path, &session).unwrap();
+        let decoded: WorkspaceSession = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(decoded, session);
+        assert_eq!(
+            fs::read_dir(&root).unwrap().count(),
+            1,
+            "no temporary save should remain"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn workspace_session_round_trips_as_json() {

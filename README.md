@@ -18,6 +18,25 @@ loom/
   combining marks and Emoji); LF and CRLF line endings are preserved.
 - Click a file in the tree to open or reactivate its tab. Each document keeps its
   own selection, scroll position and undo/redo history.
+- Restarting restores every file tab left open, including single-click previews
+  and a pending file load, in its saved pane and tab order. Normal window close
+  saves the final snapshot before exiting; Save/Don't Save exit decisions keep
+  the tab list intact until that snapshot is written. Unreadable files are
+  skipped on restore; unsaved text still uses the existing Save/Don't Save prompt.
+- Open UTF-8 text files up to 64 MiB from the Explorer, file dialog or launch
+  arguments. Workspace search has a separate 4 MiB per-file limit.
+- Interactive file opens prepare text and indexes on a background worker while
+  retaining the current editor. A target tab reserves its icon slot; only opens
+  taking more than 300 ms show a loading indicator. Close that tab to cancel;
+  choosing another file or existing tab supersedes the pending open.
+- Startup restores tab metadata, order, panes and selection before reading any
+  file contents. A background worker prepares the selected documents first;
+  surviving tabs are filled in place without changing focus. Restoring tabs are
+  remembered on exit and cannot edit or save their empty staging buffers.
+- Large documents use plain text rendering and suppress automatic Vim match
+  highlighting. Long lines are rendered in horizontal viewport slices, without
+  truncating the file; sparse Unicode indexes keep cursor lookup local. Line
+  widths, dirty-state checks, syntax colors and text layouts are cached.
 - Click to place the caret, drag to select, Shift-click to extend the selection,
   double-click to select a word, and triple-click or click a line number to select
   a line. Dragging line numbers selects whole lines. Holding a drag beyond the
