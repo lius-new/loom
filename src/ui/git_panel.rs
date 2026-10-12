@@ -24,7 +24,7 @@ const SECTION_H: f32 = 22.0;
 const ROW_H: f32 = 20.0;
 
 /// The secondary sections stay anchored at the bottom. Expanded
-/// details have a 45% height budget while there are changes to review, with
+/// details always have a 45% height budget, even without changes to review, with
 /// enough room for the section headers even in a short drawer.
 fn drawer_regions(
     body: UiRect,
@@ -35,11 +35,7 @@ fn drawer_regions(
     let available = body.height().max(0.0);
     let content_available = (available - PROMPT_H).max(0.0);
     let headers_height = detail_headers as f32 * SECTION_H;
-    let limit = if changes_height > 8.0 {
-        (content_available * 0.45).max(headers_height)
-    } else {
-        content_available
-    };
+    let limit = (content_available * 0.45).max(headers_height);
     let height = details_height.min(limit).clamp(0.0, content_available);
     let top = body.bottom - height;
     // Short lists end naturally above the commit bar; long lists scroll in the
@@ -1049,6 +1045,38 @@ mod virtualization_tests {
         session.render_view(&view, viewport, UiScale::ONE);
         assert_eq!(find(&session, "Commit message").top, TOPLINE_H + 8.0 + 5.0);
         save_drawer_preview(&session, &context, viewport, "git-drawer-no-changes");
+        // A clean repository with only Commits must retain the same upper
+        // area budget, input bounds and spacing when its history expands.
+        store.update(|snapshot| {
+            let repository = Arc::make_mut(&mut snapshot.repositories)
+                .get_mut(&id)
+                .unwrap();
+            repository.worktrees = Arc::default();
+            repository.stashes = Arc::default();
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        let empty_input = find(&session, "Commit message");
+        save_drawer_preview(&session, &context, viewport, "git-drawer-clean-collapsed");
+        let commits = find(&session, "COMMITS");
+        let point = Point::new(commits.left + 40.0, commits.top + SECTION_H / 2.0);
+        for input in [
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+            InputEvent::PointerUp {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+        ] {
+            send(&mut session, input);
+        }
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(!state.get().git_collapsed_sections.contains(&HISTORY));
+        assert_eq!(find(&session, "Commit message"), empty_input);
+        let content_available = viewport.height() - TOPLINE_H - PROMPT_H;
+        assert!(find(&session, "COMMITS").top >= TOPLINE_H + PROMPT_H + content_available * 0.55);
+        save_drawer_preview(&session, &context, viewport, "git-drawer-clean-expanded");
         for height in [120.0, 300.0, 900.0] {
             let body = UiRect::new(0.0, TOPLINE_H, 340.0, height);
             let (changes, prompt, details) = drawer_regions(body, 5000.0, 1500.0, 3);

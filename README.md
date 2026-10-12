@@ -45,7 +45,8 @@ Source Control keeps file changes in the upper area. **WORKTREES**, **STASHES**
 and **COMMITS** start collapsed in a separate area anchored at the bottom.
 The commit input follows short change lists and stays below the scrollable
 changes area for long lists. Expanding the bottom sections scrolls their
-contents independently while preserving room for changes above.
+contents independently while preserving room for changes above, including
+when the repository has no changes.
 
 In the branch picker, select an available branch and choose **New Worktree**.
 Typing a new branch name also offers this action. The dialog shows the branch and
