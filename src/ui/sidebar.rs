@@ -1028,7 +1028,7 @@ fn build_tree(
                                         app.editor.tree_click_count(&path, point.0, point.1);
                                     app.file_drag = Some(FileDragState {
                                         path,
-                                        clicks,
+                                        source: crate::state::FileDragSource::Explorer { clicks },
                                         origin: point,
                                         point,
                                         active: false,

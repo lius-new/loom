@@ -1406,6 +1406,36 @@ impl Workspace {
             return id;
         }
 
+        self.insert_prepared_diff(self.active_pane, diff)
+    }
+
+    /// A dropped diff belongs to the target pane. Reuse its matching tab,
+    /// while keeping diffs already shown in other panes in place.
+    pub fn open_prepared_diff_in(
+        &mut self,
+        pane: PaneId,
+        diff: Arc<DiffDocument>,
+    ) -> Option<FileId> {
+        let existing = self.panes.get(&pane)?.items.iter().copied().find(|id| {
+            self.documents[id]
+                .diff
+                .as_ref()
+                .is_some_and(|current| current.same_view(&diff))
+        });
+        self.activate_pane(pane);
+        if let Some(id) = existing {
+            let document = self.documents.get_mut(&id).unwrap();
+            document.meta.name = diff.title();
+            document.meta.path = diff.absolute_path();
+            crate::background_ui::retire(document.diff.replace(diff));
+            self.set_active(id);
+            Some(id)
+        } else {
+            Some(self.insert_prepared_diff(pane, diff))
+        }
+    }
+
+    fn insert_prepared_diff(&mut self, pane: PaneId, diff: Arc<DiffDocument>) -> FileId {
         let id = self.allocate_file_id();
         let absolute_path = diff.absolute_path();
         let mut meta = FileMeta::from_path(absolute_path.clone());
@@ -1421,9 +1451,8 @@ impl Workspace {
         );
         document.diff = Some(diff);
         self.documents.insert(id, document);
-        let pane = self.active_pane;
         self.insert_item(pane, id, usize::MAX, None);
-        self.active_pane_mut().active = Some(id);
+        self.panes.get_mut(&pane).unwrap().active = Some(id);
         id
     }
 
@@ -1445,6 +1474,7 @@ impl Workspace {
             })
             .collect::<Vec<_>>();
         diffs.sort();
+        diffs.dedup();
         PollTarget {
             active_path: self.active_path().map(Path::to_path_buf),
             diffs,

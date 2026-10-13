@@ -88,13 +88,23 @@ pub struct TabDragState {
     pub drop: Option<TabDrop>,
 }
 
-/// A file pressed in the Explorer: a click on release, or a drag into the
+#[derive(Clone, Debug, PartialEq)]
+pub enum FileDragSource {
+    Explorer {
+        clicks: u8,
+    },
+    Changes {
+        request: crate::git::DiffRequest,
+        untracked: bool,
+    },
+}
+
+/// A file pressed in a drawer: a click on release, or a drag into the
 /// editor once the pointer moves far enough.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FileDragState {
     pub path: PathBuf,
-    /// Click count of the press, so a release still opens like a click.
-    pub clicks: u8,
+    pub source: FileDragSource,
     pub origin: (f32, f32),
     pub point: (f32, f32),
     pub active: bool,
@@ -230,7 +240,7 @@ pub struct AppState {
     pub tab_scrollbar_drag_offset: f32,
     /// Pending or active left-button tab reorder gesture.
     pub tab_drag: Option<TabDragState>,
-    /// Pending click or active drag of an Explorer file.
+    /// Pending click or active drag of an Explorer or Source Control file.
     pub file_drag: Option<FileDragState>,
     /// Context menu opened for one editor tab.
     pub tab_context_menu: Option<TabContextMenuState>,

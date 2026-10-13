@@ -1048,7 +1048,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.on_event_capture(UiEventKind::PointerDown, move |_ctx, _payload| {
         st_stale_file_drag.try_update(|app| app.file_drag.take().is_some());
     });
-    // An Explorer file press becomes a drag into the editor once it moves;
+    // A drawer file press becomes a drag into the editor once it moves;
     // its release either opens it like a click or drops it on a pane.
     let st_file_drag = state.clone();
     let file_drag_regions = regions.clone();
@@ -1062,15 +1062,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let st_file_drop = state.clone();
     let file_drop_focus = editor_focus.clone();
     root = root.on_event_capture(UiEventKind::PointerUp, move |_ctx, _payload| {
-        let mut focus = false;
-        st_file_drop.try_update(|app| {
-            if app.file_drag.is_none() {
-                return false;
-            }
-            focus = crate::workspace_actions::finish_file_drag(app);
-            true
-        });
-        if focus {
+        if crate::workspace_actions::finish_drawer_file_drag(&st_file_drop) {
             file_drop_focus.focus();
         }
     });
@@ -1343,7 +1335,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     // Drag feedback goes last: inserting it earlier would shift the index of
     // the elements after it and drop the pressed element's pointer capture.
-    // Preview where a dragged tab or Explorer file would land on a pane.
+    // Preview where a dragged tab or drawer file would land on a pane.
     let file_drop = s
         .file_drag
         .as_ref()
@@ -1363,7 +1355,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         ));
     }
 
-    // The dragged Explorer file's name follows the pointer.
+    // The dragged drawer file's name follows the pointer.
     if let Some(drag) = s.file_drag.as_ref().filter(|drag| drag.active) {
         let name = drag.path.file_name().map_or_else(
             || drag.path.display().to_string(),

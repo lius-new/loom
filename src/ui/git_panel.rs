@@ -2755,6 +2755,11 @@ fn row_buttons(mut row: Element, rect: UiRect, right: f32, buttons: Vec<RowButto
             .event_policy(EventPolicy::INTERACTIVE)
             .semantics(Semantics::new(SemanticRole::Button).name(button.name))
             .cursor(CursorIcon::Pointer)
+            .on_pointer_down_with_button(move |cx, _pointer, button| {
+                if button == PointerButton::Left {
+                    cx.stop_propagation();
+                }
+            })
             .on_click(move |cx: &mut UiEventContext| {
                 on_click();
                 cx.stop_propagation();
@@ -2793,10 +2798,6 @@ fn file_row(
     editor_focus: UiFocusHandle,
 ) -> Element {
     let staged = section == STAGED;
-    let open_state = state.clone();
-    let open_repository = repository_root.clone();
-    let open_relative_path = path.clone();
-    let focus = editor_focus.clone();
     let kind = file_state.display_kind();
     let (indicator, indicator_color) = if file_state.conflict.is_some() {
         ("!", theme::c().git.deleted)
@@ -2853,41 +2854,49 @@ fn file_row(
     .key(row_key.clone())
     .event_policy(EventPolicy::INTERACTIVE)
     .cursor(CursorIcon::Pointer)
-    .on_click(move || {
-        // A right-click that opened this row's menu is not a click.
-        let mut menu_open = false;
-        open_state.try_update(|app| {
-            menu_open = app.git_menu.is_some();
-            false
-        });
-        if menu_open {
-            return;
-        }
-        git_actions::open_changes(
-            &open_state,
-            crate::git::DiffRequest {
-                repository_root: open_repository.clone(),
-                path: open_relative_path.clone(),
-                target,
-            },
-        );
-        focus.focus();
-    })
-    .on_pointer_down_with_button(move |_cx, pointer, button| {
-        if button == PointerButton::Right {
-            let target = GitMenuTarget::File {
-                repository: menu_repository.clone(),
-                path: menu_path.clone(),
-                section,
-            };
-            menu_state.update(move |app| {
-                app.git_menu = Some(GitMenu {
-                    pos: (pointer.point.x, pointer.point.y),
+    .on_pointer_down_with_button(move |cx, pointer, button| {
+        match button {
+            PointerButton::Left => {
+                // Like Explorer, defer opening until release so a drag can
+                // land on a pane or create a split instead of opening Changes.
+                let request = crate::git::DiffRequest {
+                    repository_root: menu_repository.clone(),
+                    path: menu_path.clone(),
                     target,
-                    hover: None,
+                };
+                let point = (pointer.point.x, pointer.point.y);
+                menu_state.update(move |app| {
+                    app.git_menu = None;
+                    app.file_drag = Some(crate::state::FileDragState {
+                        path: request.repository_root.join(&request.path),
+                        source: crate::state::FileDragSource::Changes {
+                            request,
+                            untracked: section == UNTRACKED,
+                        },
+                        origin: point,
+                        point,
+                        active: false,
+                        drop: None,
+                    });
                 });
-            });
+            }
+            PointerButton::Right => {
+                let target = GitMenuTarget::File {
+                    repository: menu_repository.clone(),
+                    path: menu_path.clone(),
+                    section,
+                };
+                menu_state.update(move |app| {
+                    app.git_menu = Some(GitMenu {
+                        pos: (pointer.point.x, pointer.point.y),
+                        target,
+                        hover: None,
+                    });
+                });
+            }
+            _ => return,
         }
+        cx.stop_propagation();
     })
     .child(text(
         UiRect::new(
@@ -2953,6 +2962,154 @@ fn file_row(
 #[cfg(test)]
 mod action_tests {
     use super::*;
+
+    #[test]
+    fn change_rows_drag_to_editor_splits_and_buttons_do_not_arm_file_drags() {
+        use crate::model::pane_layout::Direction;
+        use crate::state::{FileDragSource, TabDrop};
+        use crate::ui::tabs::{self, PaneRegion};
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
+        use lgui::session::UiSession;
+        use std::sync::{Arc, Mutex};
+
+        for section in [STAGED, UNSTAGED, UNTRACKED] {
+            let target = if section == STAGED {
+                DiffTarget::HeadToIndex
+            } else {
+                DiffTarget::IndexToWorktree
+            };
+            let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+            let output = exposed.clone();
+            let viewport = UiRect::new(0.0, 0.0, 900.0, 400.0);
+            let view: AppView = Arc::new(move |cx| {
+                let state = cx.state_with(|| {
+                    let mut app = AppState::new();
+                    app.workspace.open_path("current.txt".into(), "keep".into());
+                    app
+                });
+                *output.lock().unwrap() = Some(state.clone());
+                let pane = state.get().workspace.active_pane();
+                let store = cx.state_with(GitStoreSnapshot::default);
+                let id = cx.use_stable_id();
+                let region = PaneRegion {
+                    pane,
+                    strip: UiRect::new(0.0, 0.0, 600.0, 30.0),
+                    body: UiRect::new(0.0, 30.0, 600.0, 400.0),
+                };
+                let clear = state.clone();
+                let moving = state.clone();
+                let release = state.clone();
+                panel(viewport, VisualStyle::default())
+                    .on_event_capture(UiEventKind::PointerDown, move |_cx, _payload| {
+                        clear.try_update(|app| app.file_drag.take().is_some());
+                    })
+                    .on_event_capture(UiEventKind::PointerDrag, move |_cx, payload| {
+                        if let UiEventPayload::PointerDrag { pointer } = payload {
+                            moving.try_update(|app| {
+                                tabs::update_file_drag(
+                                    app,
+                                    &[region],
+                                    pointer.point.x,
+                                    pointer.point.y,
+                                )
+                            });
+                        }
+                    })
+                    .on_event_capture(UiEventKind::PointerUp, move |_cx, _payload| {
+                        crate::workspace_actions::finish_drawer_file_drag(&release);
+                    })
+                    .child(file_row(
+                        UiRect::new(600.0, 0.0, 900.0, ROW_H),
+                        "src/a.rs".into(),
+                        false,
+                        FileState::default(),
+                        section,
+                        target,
+                        false,
+                        true,
+                        "repo".into(),
+                        state,
+                        store,
+                        cx.focus_handle(id),
+                    ))
+            });
+            let context = ApplicationContext::empty(Default::default());
+            let mut session = UiSession::new();
+            session.render_view(&view, viewport, UiScale::ONE);
+            let state = exposed.lock().unwrap().clone().unwrap();
+            let send = |session: &mut UiSession, input| {
+                let events = session.handle_input(input);
+                dispatch_runtime_output(
+                    events,
+                    &context,
+                    &lgui::window::WindowId::new("change-drag-test"),
+                    |action| session.handle_default_action(action),
+                    |_| {},
+                );
+                session.render_view(&view, viewport, UiScale::ONE);
+            };
+            let down = |x, y| InputEvent::PointerDown {
+                pointer: PointerData::mouse(Point::new(x, y)),
+                button: PointerButton::Left,
+            };
+            send(&mut session, down(650.0, 10.0));
+            let drag = state.get().file_drag.unwrap();
+            assert!(!drag.active);
+            assert_eq!(
+                drag.source,
+                FileDragSource::Changes {
+                    request: crate::git::DiffRequest {
+                        repository_root: "repo".into(),
+                        path: "src/a.rs".into(),
+                        target
+                    },
+                    untracked: section == UNTRACKED,
+                }
+            );
+            send(
+                &mut session,
+                InputEvent::PointerMove(PointerData::mouse(Point::new(649.0, 10.0))),
+            );
+            assert!(!state.get().file_drag.unwrap().active);
+            send(
+                &mut session,
+                InputEvent::PointerMove(PointerData::mouse(Point::new(590.0, 150.0))),
+            );
+            let drag = state.get().file_drag.unwrap();
+            assert!(drag.active);
+            assert_eq!(
+                drag.drop,
+                Some(TabDrop::Pane {
+                    pane: state.get().workspace.active_pane(),
+                    split: Some(Direction::Right)
+                })
+            );
+            // Release outside the editor cancels the drag without opening Changes.
+            send(
+                &mut session,
+                InputEvent::PointerMove(PointerData::mouse(Point::new(800.0, 100.0))),
+            );
+            send(
+                &mut session,
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(Point::new(800.0, 100.0)),
+                    button: PointerButton::Left,
+                },
+            );
+            assert!(state.get().file_drag.is_none());
+            assert_eq!(state.get().workspace.pane_ids().len(), 1);
+            assert_eq!(
+                state.get().workspace.active_editor().unwrap().text(),
+                "keep"
+            );
+            send(&mut session, down(885.0, 10.0));
+            assert!(
+                state.get().file_drag.is_none(),
+                "action buttons must not start a file drag"
+            );
+        }
+    }
 
     #[test]
     fn commit_card_messages_wrap_at_spaces_or_between_cjk_characters() {

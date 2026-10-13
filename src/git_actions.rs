@@ -13,14 +13,23 @@ use crate::git::{
     OperationKind, RemoteInfo, RepositorySnapshot, RepositoryState,
 };
 use crate::model::diff_document::{ChangeBlock, DiffDocument};
-use crate::state::AppState;
+use crate::state::{AppState, TabDrop};
 use crate::ui::branch_picker::{BranchListing, Checkout};
 use crate::ui::git_confirm::{GitConfirm, GitConfirmAction};
 use crate::ui::git_panel::{ExpandedCommit, GitHistory};
 use crate::ui::stash_switch::StashSwitchRequest;
 
 pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untracked: bool) {
-    open_diff_with_focus(state, request, untracked, None);
+    open_diff_with_focus(state, request, untracked, None, None);
+}
+
+pub(crate) fn open_diff_at(
+    state: &State<AppState>,
+    request: crate::git::DiffRequest,
+    untracked: bool,
+    drop: TabDrop,
+) -> bool {
+    open_diff_with_focus(state, request, untracked, None, Some(drop))
 }
 
 pub fn open_changes(state: &State<AppState>, file: crate::git::DiffRequest) {
@@ -46,7 +55,7 @@ pub fn open_changes(state: &State<AppState>, file: crate::git::DiffRequest) {
             path: PathBuf::new(),
             target: crate::git::DiffTarget::Changes,
         };
-        open_diff_with_focus(state, request, false, Some(file));
+        open_diff_with_focus(state, request, false, Some(file), None);
     }
 }
 
@@ -55,13 +64,20 @@ fn open_diff_with_focus(
     request: crate::git::DiffRequest,
     untracked: bool,
     focus: Option<crate::git::DiffRequest>,
-) {
+    drop: Option<TabDrop>,
+) -> bool {
     let app = state.get();
     let Some(application) = app.git_application else {
-        return;
+        return false;
     };
     let roots = app.workspace_folders;
     let active_view = (app.workspace.active_pane(), app.workspace.active());
+    let destination_view = drop.map(|drop| {
+        let pane = match drop {
+            TabDrop::Insert { pane, .. } | TabDrop::Pane { pane, .. } => pane,
+        };
+        (pane, app.workspace.pane(pane).map(|pane| pane.active()))
+    });
     let sequence = app.git_open_diff_sequence + 1;
     state.update(|app| {
         app.git_open_diff_sequence = sequence;
@@ -108,12 +124,18 @@ fn open_diff_with_focus(
                     app.git_diff_loading = None;
                     if app.workspace_folders != roots
                         || (app.workspace.active_pane(), app.workspace.active()) != active_view
+                        || destination_view.is_some_and(|(pane, active)| {
+                            active.is_none()
+                                || app.workspace.pane(pane).map(|pane| pane.active()) != active
+                        })
                     {
                         return;
                     }
                     match result.take().unwrap() {
                         Ok(document) => {
-                            if document.sections.is_some() {
+                            if let Some(drop) = drop {
+                                apply_diff_drop(app, document, drop);
+                            } else if document.sections.is_some() {
                                 app.workspace.open_prepared_diff(document);
                             } else {
                                 app.workspace.open_prepared_file_changes(document);
@@ -135,6 +157,41 @@ fn open_diff_with_focus(
             app.show_error("Could not start Git diff worker.");
         });
     }
+    spawned
+}
+
+/// Apply a successful read before making any layout changes. A closed
+/// destination cancels the drop; no empty split is left on a failed read.
+fn apply_diff_drop(app: &mut AppState, document: Arc<DiffDocument>, drop: TabDrop) -> bool {
+    let (pane, index, split) = match drop {
+        TabDrop::Insert { pane, index } => (pane, Some(index), None),
+        TabDrop::Pane { pane, split } => (pane, None, split),
+    };
+    if app.workspace.pane(pane).is_none() {
+        return false;
+    }
+    let pane = if let Some(direction) = split {
+        let Some(new) = app.workspace.split_empty(pane, direction) else {
+            return false;
+        };
+        new
+    } else {
+        pane
+    };
+    let Some(id) = app.workspace.open_prepared_diff_in(pane, document) else {
+        return false;
+    };
+    if let Some(index) = index
+        && let Some(position) = app
+            .workspace
+            .pane(pane)
+            .and_then(|pane| pane.items().iter().position(|item| *item == id))
+    {
+        let target = if position < index { index - 1 } else { index };
+        app.workspace.move_tab(pane, id, target);
+    }
+    app.toast = None;
+    true
 }
 
 /// The active repository's change sections: conflicts, staged, unstaged and
@@ -1866,6 +1923,247 @@ mod tests {
 
     use super::*;
     use crate::git::{RepositoryFeatures, RepositoryId, RepositoryState, UpstreamState};
+
+    fn dropped_diff(path: &str) -> Arc<DiffDocument> {
+        Arc::new(DiffDocument::added(
+            "repo".into(),
+            path.into(),
+            crate::git::DiffTarget::IndexToWorktree,
+            "added\n",
+        ))
+    }
+
+    #[test]
+    fn diff_drop_opens_in_each_split_direction_without_replacing_the_original() {
+        use crate::model::pane_layout::Direction;
+        for direction in [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ] {
+            let mut app = AppState::new();
+            let original = app.workspace.open_prepared_diff(dropped_diff("a.txt"));
+            let pane = app.workspace.active_pane();
+            assert!(apply_diff_drop(
+                &mut app,
+                dropped_diff("a.txt"),
+                TabDrop::Pane {
+                    pane,
+                    split: Some(direction),
+                }
+            ));
+            assert_eq!(app.workspace.pane_ids().len(), 2);
+            assert_eq!(app.workspace.pane(pane).unwrap().items(), &[original]);
+            assert_ne!(app.workspace.active_pane(), pane);
+            assert_ne!(app.workspace.active(), Some(original));
+            assert_eq!(
+                app.workspace
+                    .diff(app.workspace.active_pane())
+                    .unwrap()
+                    .path,
+                Path::new("a.txt")
+            );
+            assert_eq!(app.workspace.git_poll_target().diffs.len(), 1);
+        }
+    }
+
+    #[test]
+    fn diff_drop_inserts_and_reuses_only_the_target_panes_matching_tab() {
+        use crate::model::pane_layout::Direction;
+        let mut app = AppState::new();
+        let original = app.workspace.open_prepared_diff(dropped_diff("a.txt"));
+        let source = app.workspace.active_pane();
+        let target = app.workspace.split_empty(source, Direction::Right).unwrap();
+        app.workspace.activate_pane(target);
+        let first = app.workspace.open_path("first.txt".into(), String::new());
+        let second = app.workspace.open_path("second.txt".into(), String::new());
+        assert!(apply_diff_drop(
+            &mut app,
+            dropped_diff("a.txt"),
+            TabDrop::Insert {
+                pane: target,
+                index: 1,
+            }
+        ));
+        let diff = app.workspace.active().unwrap();
+        assert_ne!(diff, original);
+        assert_eq!(
+            app.workspace.pane(target).unwrap().items(),
+            &[first, diff, second]
+        );
+        assert_eq!(app.workspace.pane(source).unwrap().items(), &[original]);
+        assert!(apply_diff_drop(
+            &mut app,
+            dropped_diff("a.txt"),
+            TabDrop::Pane {
+                pane: target,
+                split: None,
+            }
+        ));
+        assert_eq!(app.workspace.active(), Some(diff));
+        assert_eq!(app.workspace.pane(target).unwrap().items().len(), 3);
+        assert!(apply_diff_drop(
+            &mut app,
+            dropped_diff("a.txt"),
+            TabDrop::Insert {
+                pane: target,
+                index: 3,
+            }
+        ));
+        assert_eq!(
+            app.workspace.pane(target).unwrap().items(),
+            &[first, second, diff]
+        );
+    }
+
+    #[test]
+    fn diff_drop_to_a_closed_pane_leaves_the_current_layout_intact() {
+        use crate::model::pane_layout::Direction;
+        let mut app = AppState::new();
+        let current = app.workspace.open_path("current.txt".into(), "keep".into());
+        let source = app.workspace.active_pane();
+        let target = app.workspace.split_empty(source, Direction::Right).unwrap();
+        app.workspace.close_pane(target);
+        assert!(!apply_diff_drop(
+            &mut app,
+            dropped_diff("a.txt"),
+            TabDrop::Pane {
+                pane: target,
+                split: Some(Direction::Down),
+            }
+        ));
+        assert_eq!(app.workspace.pane_ids(), vec![source]);
+        assert_eq!(app.workspace.active(), Some(current));
+    }
+
+    #[test]
+    fn diff_drop_async_reads_preserve_comparison_and_ignore_failed_or_stale_destinations() {
+        use crate::git::{DiffRequest, DiffTarget};
+        use crate::model::diff_document::DiffRowKind;
+        use crate::model::pane_layout::Direction;
+        use lgui::application::{AppView, ApplicationHandle};
+        use lgui::core::UiScale;
+        use lgui::prelude::{UiRect, VisualStyle, panel};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+        use std::time::{Duration, Instant};
+
+        let (root, backend) = crate::git::backend::tests::repository().expect("Git runtime");
+        std::fs::write(root.join("file.txt"), "base\n").unwrap();
+        backend.stage(&root, &["file.txt".into()]).unwrap();
+        backend.commit(&root, "base", false, false).unwrap();
+        std::fs::write(root.join("file.txt"), "staged\n").unwrap();
+        backend.stage(&root, &["file.txt".into()]).unwrap();
+        std::fs::write(root.join("file.txt"), "working\n").unwrap();
+        std::fs::write(root.join("new.txt"), "untracked\n").unwrap();
+
+        for scenario in [
+            "staged",
+            "working",
+            "untracked",
+            "failed",
+            "closed",
+            "navigated",
+        ] {
+            let tasks = Arc::new(Mutex::new(Vec::new()));
+            let queue = tasks.clone();
+            let application =
+                ApplicationHandle::new(move |task| queue.lock().unwrap().push(task), || {});
+            let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+            let output = exposed.clone();
+            let roots = vec![root.clone()];
+            let viewport = UiRect::new(0.0, 0.0, 600.0, 400.0);
+            let view: AppView = Arc::new(move |cx| {
+                let state = cx.state_with(|| {
+                    let mut app = AppState::new();
+                    app.git_application = Some(application.clone());
+                    app.workspace_folders = roots.clone();
+                    app.workspace.open_path("current.txt".into(), "keep".into());
+                    app
+                });
+                *output.lock().unwrap() = Some(state);
+                panel(viewport, VisualStyle::default())
+            });
+            let mut session = UiSession::new();
+            session.render_view(&view, viewport, UiScale::ONE);
+            let state = exposed.lock().unwrap().clone().unwrap();
+            let mut target = state.get().workspace.active_pane();
+            if scenario == "closed" {
+                state.update(|app| {
+                    target = app.workspace.split_empty(target, Direction::Right).unwrap()
+                });
+            }
+            let request = DiffRequest {
+                repository_root: if scenario == "failed" {
+                    root.join("missing")
+                } else {
+                    root.clone()
+                },
+                path: if scenario == "untracked" {
+                    "new.txt".into()
+                } else {
+                    "file.txt".into()
+                },
+                target: if scenario == "staged" {
+                    DiffTarget::HeadToIndex
+                } else {
+                    DiffTarget::IndexToWorktree
+                },
+            };
+            assert!(open_diff_at(
+                &state,
+                request.clone(),
+                scenario == "untracked",
+                TabDrop::Pane {
+                    pane: target,
+                    split: Some(Direction::Right),
+                }
+            ));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let completion = tasks.lock().unwrap().pop();
+                if let Some(completion) = completion {
+                    if scenario == "closed" {
+                        state.update(|app| app.workspace.close_pane(target));
+                    } else if scenario == "navigated" {
+                        state.update(|app| {
+                            app.workspace
+                                .open_path("another.txt".into(), "another".into());
+                        });
+                    }
+                    completion();
+                    break;
+                }
+                assert!(Instant::now() < deadline, "diff worker did not respond");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let app = state.get();
+            assert!(app.git_diff_loading.is_none());
+            if matches!(scenario, "failed" | "closed" | "navigated") {
+                assert_eq!(app.workspace.pane_ids().len(), 1);
+                assert!(app.workspace.diff(app.workspace.active_pane()).is_none());
+                assert_eq!(
+                    app.workspace.active_editor().unwrap().text(),
+                    if scenario == "navigated" {
+                        "another"
+                    } else {
+                        "keep"
+                    }
+                );
+            } else {
+                assert_eq!(app.workspace.pane_ids().len(), 2);
+                let diff = app.workspace.diff(app.workspace.active_pane()).unwrap();
+                assert_eq!(diff.request(), request);
+                assert!(
+                    diff.rows
+                        .iter()
+                        .any(|row| row.kind == DiffRowKind::Addition && row.text == scenario)
+                );
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn worktree_defaults_are_siblings_with_safe_branch_names() {

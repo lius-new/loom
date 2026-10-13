@@ -211,6 +211,12 @@ cherry-pick recovery, submodules, LFS and sparse checkout. Git operations run
 outside the UI thread, are serialized per repository, classify common errors,
 and redact credentials from diagnostic output.
 
+Drag a changed file from Source Control onto an editor pane to open its
+single-file diff, keeping the staged or working-tree comparison shown in the
+list. Dropping near a pane edge creates a split; dropping on a tab strip inserts
+the diff at the marker. Releasing outside the editor cancels the drag. Clicking
+a changed file continues to open All Changes at that file's section.
+
 Official packages contain a managed Git runtime with a SHA-256 manifest. Loom
 prefers that runtime and falls back to system Git when a managed runtime is not
 present. Advanced users and development builds can select a custom runtime

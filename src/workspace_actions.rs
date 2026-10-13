@@ -278,8 +278,11 @@ fn open_tree_file_with(
 pub(crate) fn finish_file_drag(app: &mut AppState) -> bool {
     if app.file_loader.is_some() {
         if let Some(drag) = app.file_drag.take() {
+            let crate::state::FileDragSource::Explorer { clicks } = drag.source else {
+                return false;
+            };
             if !drag.active {
-                return open_tree_file(app, drag.path, drag.clicks);
+                return open_tree_file(app, drag.path, clicks);
             }
             if let Some(drop) = drag.drop {
                 return crate::file_loading::request(
@@ -302,8 +305,11 @@ fn finish_file_drag_with(
     let Some(drag) = app.file_drag.take() else {
         return false;
     };
+    let crate::state::FileDragSource::Explorer { clicks } = drag.source else {
+        return false;
+    };
     if !drag.active {
-        return open_tree_file_with(app, drag.path, drag.clicks, read);
+        return open_tree_file_with(app, drag.path, clicks, read);
     }
     let Some(drop) = drag.drop else {
         return false;
@@ -346,6 +352,36 @@ fn finish_file_drag_with(
     }
     app.toast = None;
     true
+}
+
+/// Dispatch a drawer-file release without doing Git reads on the UI thread.
+pub(crate) fn finish_drawer_file_drag(state: &State<AppState>) -> bool {
+    let mut changes = None;
+    let mut focus = false;
+    state.try_update(|app| {
+        let Some(drag) = &app.file_drag else {
+            return false;
+        };
+        if matches!(drag.source, crate::state::FileDragSource::Changes { .. }) {
+            changes = app.file_drag.take();
+        } else {
+            focus = finish_file_drag(app);
+        }
+        true
+    });
+    if let Some(drag) = changes {
+        let crate::state::FileDragSource::Changes { request, untracked } = drag.source else {
+            unreachable!("only changes drags are dispatched here");
+        };
+        if !drag.active {
+            crate::git_actions::open_changes(state, request);
+            return true;
+        }
+        if let Some(drop) = drag.drop {
+            return crate::git_actions::open_diff_at(state, request, untracked, drop);
+        }
+    }
+    focus
 }
 
 pub fn reveal_file_in_tree(state: &State<AppState>, id: FileId) {
@@ -2164,7 +2200,7 @@ mod tests {
     fn press_file(app: &mut AppState, path: &str, clicks: u8, drop: Option<TabDrop>) {
         app.file_drag = Some(crate::state::FileDragState {
             path: PathBuf::from(path),
-            clicks,
+            source: crate::state::FileDragSource::Explorer { clicks },
             origin: (0.0, 0.0),
             point: (0.0, 0.0),
             active: drop.is_some(),
