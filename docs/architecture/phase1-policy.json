@@ -538,12 +538,14 @@
     },
     "src/file_tree.rs": {
       "dependencies": [
+        "crate::features",
+        "crate::infrastructure",
         "crate::state",
         "std::fs",
         "std::process"
       ],
-      "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "remove_in": "R5",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.1 规则迁入 features/explorer/tree，读盘迁入 infrastructure/explorer_filesystem；本文件仅保留根状态桥接，R5.2 删除。"
     },
     "src/file_watcher.rs": {
       "dependencies": [
@@ -830,7 +832,6 @@
         "crate::state",
         "crate::terminal_session",
         "crate::workspace_actions",
-        "std::process",
         "unicode_width"
       ],
       "remove_in": "R8",
@@ -1061,10 +1062,12 @@
     "src/workspace_actions.rs": {
       "dependencies": [
         "crate::app",
+        "crate::features",
         "crate::file_loading",
         "crate::file_tree",
         "crate::git",
         "crate::git_actions",
+        "crate::infrastructure",
         "crate::input",
         "crate::model",
         "crate::project_settings",
@@ -1073,11 +1076,10 @@
         "lgui",
         "std::fs",
         "std::process",
-        "std::thread",
-        "windows_sys"
+        "std::thread"
       ],
       "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R4 会话保存/恢复转交 app/workspace_session；Explorer 与文件命令保留本文件各自阶段的登记。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R4 会话保存/恢复转交 app/workspace_session；Explorer 与文件命令保留本文件各自阶段的登记。 R5.1 命名校验与根目录规则转交 features/explorer，回收站/剪贴板/显示位置转交 infrastructure/explorer_filesystem；其余 Explorer 命令在 R5.3 迁入 app/explorer。"
     }
   },
   "phase2": {

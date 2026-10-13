@@ -273,7 +273,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                             workspace_actions::reveal_file_in_tree(&click_state, target);
                         }
                         Action::RevealInFileExplorer => {
-                            super::context_menu::reveal_target(
+                            crate::workspace_actions::reveal_item(
                                 &click_state,
                                 &ExplorerContextTarget {
                                     path: action_path.clone(),

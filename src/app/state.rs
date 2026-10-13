@@ -13,43 +13,11 @@ use crate::terminal_session::ShellKind;
 use crate::theme::ThemeId;
 use crate::ui::components::input::InputState;
 
-/// One entry in a loaded directory listing.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DirEntry {
-    pub name: String,
-    pub path: PathBuf,
-    pub is_dir: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExplorerCreateKind {
-    File,
-    Folder,
-}
-
-#[derive(Clone)]
-pub struct ExplorerCreateRequest {
-    pub kind: ExplorerCreateKind,
-    pub parent: PathBuf,
-}
-
-#[derive(Clone)]
-pub struct ExplorerRenameRequest {
-    pub path: PathBuf,
-    pub kind: ExplorerTargetKind,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExplorerTargetKind {
-    File,
-    Directory,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExplorerContextTarget {
-    pub path: PathBuf,
-    pub kind: ExplorerTargetKind,
-}
+// Explorer types keep their root-state paths until R5.6 removes the alias.
+pub use crate::features::explorer::{
+    DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerCreateRequest,
+    ExplorerRenameRequest, ExplorerTargetKind,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseContinuation {

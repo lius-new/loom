@@ -4,7 +4,6 @@
 //! back to the active workspace root. Items are grouped by separators.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use lgui::core::{CursorIcon, EventPolicy, UiEventKind};
 use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
@@ -12,6 +11,7 @@ use lgui::services::{Clipboard, ServicesContextExt};
 use lgui::text::measure_width;
 use unicode_width::UnicodeWidthStr;
 
+use crate::features::explorer::roots;
 use crate::state::{AppState, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
@@ -193,12 +193,7 @@ const FILE_ENTRIES: &[Entry] = &[
 fn context_root(app: &AppState) -> Option<PathBuf> {
     app.workspace
         .active_path()
-        .and_then(|active| {
-            app.workspace_folders
-                .iter()
-                .filter(|root| active.starts_with(root))
-                .max_by_key(|root| root.components().count())
-        })
+        .and_then(|active| roots::root_for_path(&app.workspace_folders, active))
         .or_else(|| app.workspace_folders.first())
         .cloned()
 }
@@ -213,11 +208,7 @@ fn context_target(app: &AppState) -> Option<ExplorerContextTarget> {
 }
 
 pub(crate) fn workspace_root_for_path(app: &AppState, path: &Path) -> Option<PathBuf> {
-    app.workspace_folders
-        .iter()
-        .filter(|root| path.starts_with(root))
-        .max_by_key(|root| root.components().count())
-        .cloned()
+    roots::root_for_path(&app.workspace_folders, path).cloned()
 }
 
 pub(crate) fn copy_target_path(
@@ -245,45 +236,6 @@ pub(crate) fn copy_target_path(
         Ok(()) => state.update(move |app| app.show_success(format!("Copied {label}."))),
         Err(error) => state.update(move |app| app.show_error(format!("Clipboard: {error}"))),
     }
-}
-
-pub(crate) fn reveal_target(state: &State<AppState>, target: &ExplorerContextTarget) {
-    match reveal_in_file_manager(&target.path, target.kind) {
-        Ok(()) => {}
-        Err(error) => state.update(move |app| {
-            app.show_error(format!("Could not reveal item: {error}"));
-        }),
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn reveal_in_file_manager(path: &Path, kind: ExplorerTargetKind) -> std::io::Result<()> {
-    let mut command = Command::new("explorer.exe");
-    if kind == ExplorerTargetKind::File {
-        command.arg(format!("/select,{}", super::display_path(path)));
-    } else {
-        command.arg(super::display_path(path));
-    }
-    command.spawn().map(|_| ())
-}
-
-#[cfg(target_os = "macos")]
-fn reveal_in_file_manager(path: &Path, kind: ExplorerTargetKind) -> std::io::Result<()> {
-    let mut command = Command::new("open");
-    if kind == ExplorerTargetKind::File {
-        command.arg("-R");
-    }
-    command.arg(path).spawn().map(|_| ())
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn reveal_in_file_manager(path: &Path, kind: ExplorerTargetKind) -> std::io::Result<()> {
-    let target = if kind == ExplorerTargetKind::File {
-        path.parent().unwrap_or(path)
-    } else {
-        path
-    };
-    Command::new("xdg-open").arg(target).spawn().map(|_| ())
 }
 
 /// Natural width of `s` at the menu text size. The renderer's generic text
@@ -552,7 +504,7 @@ pub fn render(
                         }
                         MenuAction::RevealInFileExplorer => {
                             if let Some(target) = action_target.as_ref() {
-                                reveal_target(&st_click, target);
+                                workspace_actions::reveal_item(&st_click, target);
                             }
                         }
                         MenuAction::CopyPath => {

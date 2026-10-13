@@ -114,3 +114,16 @@ test('the independent editing core cannot bypass its boundary with exceptions or
     assert.ok(violations({[file]:source},policy()).some(e=>e.includes('crate boundary')));
   }
 });
+test('Explorer rules cannot regain root state, GUI, I/O or exceptions',()=>{
+  for(const source of ['use crate::state::AppState;','use lgui::prelude::*;','use std::fs;','use std::{process, thread};','use crate::infrastructure::explorer_filesystem::ExplorerFilesystem;','use crate::input::InputState;','pub struct Rows { input: InputState }','fn row(state: State<Tree>) {}']) {
+    assert.ok(violations({'src/features/explorer/tree.rs':source},policy()).length>0,source);
+  }
+  assert.deepEqual(violations({'src/features/explorer/tree.rs':'use crate::features::explorer::DirEntry;\nuse std::path::Path;'},policy()),[]);
+  const p=policy();p.exceptions['src/features/explorer/edit.rs']={dependencies:['crate::state'],reason:'bad',remove_in:'R8'};
+  assert.ok(violations({'src/features/explorer/edit.rs':'use crate::state::AppState;'},p).some(e=>e.includes('Explorer feature cannot have migration exceptions')));
+});
+test('Explorer filesystem adapter is limited to its platform services',()=>{
+  const file='src/infrastructure/explorer_filesystem.rs';
+  assert.deepEqual(violations({[file]:'use crate::features::explorer::DirEntry;\nuse std::fs;\nfn t(){ std::process::Command::new("x"); windows_sys::Win32::Foo; }'},policy()),[]);
+  for(const source of ['use crate::state::AppState;','use lgui::prelude::*;','use std::thread;','use crate::app::explorer;'])assert.ok(violations({[file]:source},policy()).length>0,source);
+});

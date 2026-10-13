@@ -74,6 +74,8 @@ export function allowed(file, dependency) {
   if(root==='loom_editor_core')return true;
   if(own==='app'||file==='src/main.rs')return true;
   if(own==='domain')return root==='domain'||(file==='src/domain/workspace_session.rs'&&['serde','serde_json'].includes(root));
+  if(file.startsWith('src/features/explorer/'))return ['features','domain'].includes(root);
+  if(file==='src/infrastructure/explorer_filesystem.rs')return ['features','domain','std::fs','std::process','windows_sys'].includes(root);
   if(file.startsWith('src/features/search/'))return ['features','domain','globset','regex','unicode_segmentation'].includes(root);
   if(file.startsWith('src/infrastructure/search_filesystem'))return ['features','domain','ignore','std::fs','std::process'].includes(root);
   if(file==='src/infrastructure/workspace_filesystem.rs')return ['infrastructure','domain','std::fs'].includes(root);
@@ -130,6 +132,8 @@ export function violations(sources, policy) {
       if(policy.exceptions[file])problems.push(file+': Editor view cannot have migration exceptions');
       if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Editor view cannot include root sources');
     }
+    if(file.startsWith('src/features/explorer/')&&ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','InputState','UiRect','State'].includes(t)))problems.push(file+': Explorer feature must be framework/root independent');
+    if(file.startsWith('src/features/explorer/')&&policy.exceptions[file])problems.push(file+': Explorer feature cannot have migration exceptions');
     if((file.startsWith('src/features/search/')||file.startsWith('src/ui/search/'))&&policy.exceptions[file])problems.push(file+': Search cannot have migration exceptions');
     if(file==='src/model/workspace.rs'&&deps.some(d=>['crate::search','crate::search_actions','crate::features'].includes(d)))problems.push('Workspace must expose generic snapshots, not Search DTOs');
     if(layer(file)==='domain'&&(ts.some(t=>['super','AppState','AppRuntime'].includes(t))||/#\s*\[\s*path\s*=/.test(source)))problems.push(`${file}: domain must not escape through parent modules or root/runtime types`);

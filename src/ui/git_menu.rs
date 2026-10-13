@@ -218,7 +218,7 @@ fn perform(
                     action == MenuAction::CopyRelativePath,
                 );
             }
-            MenuAction::Reveal => super::context_menu::reveal_target(
+            MenuAction::Reveal => crate::workspace_actions::reveal_item(
                 state,
                 &ExplorerContextTarget {
                     path: absolute,

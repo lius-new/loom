@@ -12,7 +12,6 @@ use crate::infrastructure::session_filesystem as filesystem;
 #[cfg(test)]
 pub(crate) use filesystem::write_json;
 pub(crate) use filesystem::{config_path, session_path};
-pub const MAX_RECENT_FOLDERS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WindowGeometry {
