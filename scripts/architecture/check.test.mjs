@@ -173,3 +173,22 @@ test('Git state cannot evade its ownership register or expose model fields',()=>
   assert.ok(violations({'src/features/git/model.rs':'pub struct GitModel { pub history: u8 }'},p).some(e=>e.includes('GitModel fields must stay private')));
   assert.deepEqual(violations({'src/features/git/model.rs':'pub struct GitModel { history: u8 }'},p),[]);
 });
+
+test('Git views cannot regain root state, application commands or service access',()=>{
+  for(const source of ['use crate::state::AppState;','use crate::app::git;','use crate::infrastructure::git;','fn f(w: &Workspace) {}','use crate::workspace_actions;','use std::thread;']) {
+    assert.ok(violations({'src/ui/git/panel.rs':source},policy()).length>0,source);
+  }
+  assert.deepEqual(violations({'src/ui/git/panel.rs':'use crate::ui::components::state_access::StateAccess; use crate::features::git::GitStoreSnapshot; use lgui::prelude::Element;'},policy()),[]);
+});
+
+test('Git views cannot escape through exceptions or source inclusion',()=>{
+  const file='src/ui/git/panel.rs',p=policy();p.exceptions[file]={dependencies:['crate::app'],reason:'bad',remove_in:'R8'};
+  assert.ok(violations({[file]:'use crate::app::git;'},p).some(e=>e.includes('Git view cannot have migration exceptions')));
+  for(const source of ['#[path = "../../app/state.rs"] mod root;', 'include!("../../app/state.rs");'])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('cannot include root sources')));
+});
+
+test('root state cannot re-export Git types again',()=>{
+  const p=policy();p.state_ownership={git:{owner:'app composition',remove_in:'composition'}};
+  const source='pub use crate::features::git::{GitStoreSnapshot, DiffTarget}; pub struct AppState { pub git: u8 }\nimpl AppState {}';
+  assert.ok(violations({'src/app/state.rs':source},p).some(e=>e.includes('Git types must not be re-exported')));
+});

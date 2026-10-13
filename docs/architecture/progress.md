@@ -1,6 +1,6 @@
 # 整体重构进度
 
-2026-10-13：阶段 0 的本机基线与检查修复、阶段 1 的 R1.1–R1.5、阶段 2 的 R2.1–R2.6 本机自动验收已完成。阶段 3 的独立核心、应用编辑事务、交互状态和文本 UI 窄接口已完成本机自动验收；阶段 4 工作区域与文件/会话适配已完成本机自动验收；阶段 5 Explorer 迁移（R5.1–R5.6）已完成本机自动验收；阶段 6 Git 迁移进行中（[方案](git-migration-plan.md)），R6.1–R6.5 已完成本机自动验收；阶段 7–8 尚未开始。
+2026-10-13：阶段 0–5 本机自动验收已完成；阶段 6 Git 迁移（R6.1–R6.7）已完成本机自动验收（[说明](git-migration.md)、[方案](git-migration-plan.md)、[验收](results/2026-10-13-r6-git/report.md)）；阶段 7–8 尚未开始。
 
 2026-10-13 阶段 3 前置历史记录：恢复 Skia 本地缓存构建，固定 Rust 1.97.1 并同步 CI，复跑本机自动验收与 31 项性能基线；release 与 packaged 应用隔离启动、portable 打包和安装器编译通过。当时阶段 3 尚未开始，详见 [前置报告](results/2026-10-13-pre-r3/report.md)。原生人工、跨平台、远端 CI 与真实安装/卸载验收仍待执行。
 
@@ -24,15 +24,16 @@
   - [x] R5.4 watcher 竞态测试与准备阶段性能对照（本机自动验收）
   - [x] R5.5 Explorer 视图与右键菜单改为投影 + 语义命令（本机自动验收）
   - [x] R5.6 删除根状态别名、关闭 R5 登记、门禁与文档
-- [ ] 阶段 6：Git（[方案](git-migration-plan.md)）
+- [x] 阶段 6：Git（本机自动验收，[方案](git-migration-plan.md)）
   - [x] R6.1 纯 Git 规则迁入 features/git（本机自动验收）
   - [x] R6.2 Git 进程适配迁入 infrastructure/git，删除 src/git（本机自动验收）
   - [x] R6.3 Git 模型/UI 状态、左侧抽屉 chrome 与 diff 分栏归属（本机自动验收）
   - [x] R6.4 Git 命令迁入 app/git，写操作经可注入执行器（本机自动验收）
   - [x] R6.5 Git 轮询与扫描发布迁入 app/git_poll，修复固定仓库时扫描被丢弃（本机自动验收）
-  - [ ] R6.6–R6.7
+  - [x] R6.6 Git 视图投影、只读快照与语义命令，hunk/克隆接线迁出 UI
+  - [x] R6.7 门禁、例外清理、测试映射、性能对照与文档
 - [ ] 阶段 7–8
 
-当前完整 workspace 测试 650 通过、0 失败、13 忽略（应用 566，编辑核心 68，独立域重复验证 16；忽略项含新增 prepare_batch 基准）；R4 清单全部保留，R5 新增 35 项。门禁 23 项自测通过，登记根字段 76、editor 30、workspace 核心 9、Explorer 19，legacy exception 文件 57。详见 [R5 报告](results/2026-10-13-r5-explorer/report.md)；31 项常规性能基线需 PowerShell 7，待补跑。
+当前完整 workspace 测试 673 通过、0 失败、14 忽略（应用 589，编辑核心 68，独立域重复验证 16；新增忽略项为 Git 性能基准）。R6 新增 23 项行为测试，本轮 30 项测试迁移无缺失。架构自测 29 项、报告自测 3 项通过；登记根字段 40、editor 31、workspace 核心 9、Explorer 19、Git 33，legacy exception 文件 41。31 项常规性能基线已用 PowerShell 7 补跑；Git 大仓库冻结二进制 A/B 与隔离启动/恢复完成。首次隔离回归出现一次现有 ConPTY scrollback 断言波动，最终完整复跑通过，失败记录保留。详见 [R6 报告](results/2026-10-13-r6-git/report.md)；[R5 报告](results/2026-10-13-r5-explorer/report.md)保留当时的截止记录。
 
 报告：[阶段 0](../baseline/README.md)、[阶段 1](results/2026-10-13-phase1/report.md)、[阶段 2](results/2026-10-13-phase2/report.md)。后续修改必须清理 policy 中过期的例外和字段登记，不得整体刷新登记绕过门禁。

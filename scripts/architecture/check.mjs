@@ -140,6 +140,11 @@ export function violations(sources, policy) {
     if(file.startsWith('src/ui/explorer/')&&policy.exceptions[file])problems.push(file+': Explorer view cannot have migration exceptions');
     if(file.startsWith('src/features/git/')&&ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','InputState','UiRect','State','Command','Child'].includes(t)))problems.push(file+': Git feature must be framework/root/process independent');
     if(file.startsWith('src/features/git/')&&policy.exceptions[file])problems.push(file+': Git feature cannot have migration exceptions');
+    if(file.startsWith('src/ui/git/')) {
+      if(ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','StateRoot'].includes(t))||deps.some(d=>['crate::app','crate::state','crate::model','crate::infrastructure','crate::editor','crate::workspace_actions'].includes(d)))problems.push(file+': Git view must use projections, frame inputs and commands');
+      if(policy.exceptions[file])problems.push(file+': Git view cannot have migration exceptions');
+      if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Git view cannot include root sources');
+    }
     if(file.startsWith('src/infrastructure/git/')&&(policy.exceptions[file]||ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','UiRect'].includes(t))))problems.push(file+': Git infrastructure must stay free of root state, GUI and exceptions');
     if(file.startsWith('src/features/explorer/')&&policy.exceptions[file])problems.push(file+': Explorer feature cannot have migration exceptions');
     if((file.startsWith('src/features/search/')||file.startsWith('src/ui/search/'))&&policy.exceptions[file])problems.push(file+': Search cannot have migration exceptions');
@@ -192,6 +197,7 @@ export function violations(sources, policy) {
   }
   const rootState=sources['src/app/state.rs'];
   if(rootState&&/\bpub\s+use\s+crate\s*::\s*features\s*::\s*explorer\b/.test(tokens(rootState).join(' ')))problems.push('Explorer types must not be re-exported from the root state');
+  if(rootState&&/\bpub\s+use\s+crate\s*::\s*features\s*::\s*git\b/.test(tokens(rootState).join(' ')))problems.push('Git types must not be re-exported from the root state');
   for(const [file,name] of [['src/features/explorer/model.rs','ExplorerModel'],['src/features/git/model.rs','GitModel']]) {
     const model=sources[file];
     if(!model)continue;
