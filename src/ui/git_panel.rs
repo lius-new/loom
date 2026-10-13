@@ -257,7 +257,7 @@ pub fn render(
                     theme::mono(theme::c().text_muted, theme::SMALL),
                 )),
             )
-            .child(super::sidebar::drawer_icon(
+            .child(super::drawer::drawer_icon(
                 "git-repository-picker-chevron",
                 "chevron-down",
                 UiRect::new(
@@ -1494,7 +1494,7 @@ fn commit_options_button(rect: UiRect, state: State<AppState>) -> Element {
             });
         });
     })
-    .child(super::sidebar::drawer_icon(
+    .child(super::drawer::drawer_icon(
         "git-commit-options-icon",
         "chevron-down",
         UiRect::new(
@@ -1526,7 +1526,7 @@ fn commit_button(rect: UiRect, state: State<AppState>, store: State<GitStoreSnap
         .on_click(move || {
             git_actions::commit(&click_state, &click_store);
         })
-        .child(super::sidebar::drawer_icon(
+        .child(super::drawer::drawer_icon(
             "git-commit-button-icon",
             "check",
             theme::icon_rect(rect),
@@ -1891,7 +1891,7 @@ fn folder_row(
         },
     )
     .key(format!("git-{key}-{filter}"))
-    .child(super::sidebar::drawer_icon(
+    .child(super::drawer::drawer_icon(
         "git-folder-row-icon",
         "folder",
         UiRect::new(
@@ -2102,7 +2102,7 @@ fn history_row(
                         });
                     }
                 })
-                .child(super::sidebar::drawer_icon(
+                .child(super::drawer::drawer_icon(
                     lgui::core::UiId::owned(format!("git-commit-row-chevron-{}", commit.oid)),
                     if *open {
                         "chevron-down"
@@ -2230,7 +2230,7 @@ fn section_header(
                 }
             });
         })
-        .child(super::sidebar::drawer_icon(
+        .child(super::drawer::drawer_icon(
             chevron_id,
             if collapsed {
                 "chevron-right"
@@ -2412,7 +2412,7 @@ fn stash_row(
         },
     )
     .key(format!("git-stash-{}", stash.oid))
-    .child(super::sidebar::drawer_icon(
+    .child(super::drawer::drawer_icon(
         "git-stash-row-icon",
         "git-stash",
         UiRect::new(
@@ -2764,7 +2764,7 @@ fn row_buttons(mut row: Element, rect: UiRect, right: f32, buttons: Vec<RowButto
                 on_click();
                 cx.stop_propagation();
             })
-            .child(super::sidebar::drawer_icon(
+            .child(super::drawer::drawer_icon(
                 lgui::core::UiId::owned(format!("{icon_key}-icon")),
                 button.icon,
                 UiRect::new(

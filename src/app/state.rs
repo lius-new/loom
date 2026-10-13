@@ -13,6 +13,7 @@ use crate::terminal_session::ShellKind;
 use crate::theme::ThemeId;
 use crate::ui::components::input::InputState;
 
+pub use crate::ui::drawer::DrawerMode;
 // Explorer types keep their root-state paths until R5.6 removes the alias.
 pub use crate::features::explorer::{
     DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind,
@@ -116,13 +117,6 @@ pub enum MainSurface {
     Diff,
     Settings,
     Keymap,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DrawerMode {
-    #[default]
-    Files,
-    Search,
 }
 
 /// Visibility, page and width of the right-hand drawer.

@@ -81,6 +81,7 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/workspace_filesystem.rs')return ['infrastructure','domain','std::fs'].includes(root);
   if(file==='src/infrastructure/session_filesystem.rs')return ['infrastructure','domain','serde','serde_json','std::fs','std::process'].includes(root);
   if(file==='src/ui/editor/view.rs'&&root==='unicode_width')return true;
+  if(file==='src/ui/explorer/context_menu.rs'&&root==='unicode_width')return true;
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
   if(own==='features')return ['features','domain','input'].includes(root);
   if(own==='infrastructure')return ['infrastructure','domain'].includes(root)||dependency==='lgui'||dependency==='std::thread';

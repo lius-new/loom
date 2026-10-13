@@ -89,7 +89,7 @@ pub fn render(
                 }
             });
         })
-        .child(super::sidebar::drawer_icon(
+        .child(super::drawer::drawer_icon(
             "clone-dialog.close",
             "close",
             theme::icon_rect(UiRect::new(

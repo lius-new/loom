@@ -292,14 +292,14 @@ pub fn render(
     };
     let root_count = state.get().explorer.model.roots().len();
     let has_roots = root_count > 0;
-    let header = crate::ui::sidebar::drawer_header(
+    let header = crate::app::explorer_view::drawer_header(
         UiRect::new(
             rect.left,
             rect.top,
             rect.right,
             rect.top + crate::theme::TABS_H,
         ),
-        state.clone(),
+        &state,
     );
     let projected = StateAccess::project(state.clone(), |app| &app.search, |app| &mut app.search);
     let commands = Commands::new(move |command| match command {

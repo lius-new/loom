@@ -11,7 +11,6 @@
     "src/ui/branch_picker.rs",
     "src/ui/clone_repository.rs",
     "src/ui/close_confirmation.rs",
-    "src/ui/context_menu.rs",
     "src/ui/diff_editor.rs",
     "src/ui/git_badge.rs",
     "src/ui/git_confirm.rs",
@@ -22,7 +21,6 @@
     "src/ui/mod.rs",
     "src/ui/pane_sash.rs",
     "src/ui/settings.rs",
-    "src/ui/sidebar.rs",
     "src/ui/stash_switch.rs",
     "src/ui/statusbar.rs",
     "src/ui/tab_context_menu.rs",
@@ -725,16 +723,6 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/ui/context_menu.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::state",
-        "crate::terminal_session",
-        "unicode_width"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；R5.5 改为语义命令后移除。"
-    },
     "src/ui/diff_editor.rs": {
       "dependencies": [
         "crate::app",
@@ -838,16 +826,6 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 把原 Vim 调用转到应用命令入口。"
     },
-    "src/ui/sidebar.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::git",
-        "crate::input",
-        "crate::state"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；R5.5 改为语义命令后移除。"
-    },
     "src/ui/stash_switch.rs": {
       "dependencies": [
         "crate::git",
@@ -889,7 +867,7 @@
         "std::process"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；reveal 在 R5.5 改为命令；关闭命令按原阶段迁移。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.5 reveal 与复制路径调用 app/explorer；标签菜单属于编辑器 chrome，随 R8 收窄。"
     },
     "src/ui/terminal.rs": {
       "dependencies": [
@@ -937,7 +915,7 @@
         "crate::workspace_actions"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；R5.5 改为最近目录投影与命令后移除。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.5 Explorer 视图已改为投影与命令；欢迎页的悬停、主表面焦点、打开文件和最近目录命令属于 chrome，随 R8 收窄，届时移除 crate::app。"
     },
     "src/ui/workspace_home.rs": {
       "dependencies": [

@@ -468,7 +468,7 @@ fn search_panel_renders_bounded_rows_and_switches_drawer_at_normal_and_small_siz
             }
             assert_eq!(
                 exposed.lock().unwrap().as_ref().unwrap().get().drawer.mode,
-                crate::state::DrawerMode::Files
+                crate::ui::drawer::DrawerMode::Files
             );
         }
     }

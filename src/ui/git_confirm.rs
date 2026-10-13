@@ -346,7 +346,7 @@ fn worktree_form(
             .semantics(Semantics::new(SemanticRole::Button).name("Close"))
             .cursor(CursorIcon::Pointer)
             .on_click(move || resolve(&close_state, &close_store, false))
-            .child(super::sidebar::drawer_icon(
+            .child(super::drawer::drawer_icon(
                 "worktree-dialog.close",
                 "close",
                 theme::icon_rect(close),

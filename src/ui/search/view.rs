@@ -16,7 +16,7 @@ use crate::ui::components::input::{self, InputBinding, InputState, InputStyle};
 use crate::ui::components::scrollbar;
 use crate::ui::components::state_access::StateAccess;
 use crate::ui::components::text::SingleLineText;
-use crate::ui::sidebar::drawer_icon;
+use crate::ui::drawer::drawer_icon;
 
 // Search uses the compact UI scale for dense result lists.
 const TEXT_SIZE: f32 = theme::SMALL;

@@ -6,24 +6,26 @@
 //! the cached listings, so no filesystem I/O happens per frame. The opened
 //! folders themselves are shown as root nodes (expanded by default) with their
 //! contents indented beneath it.
+//!
+//! The view reads only the Explorer projection and its frame inputs; anything
+//! touching other features goes out as a [`Command`].
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use lgui::core::{
-    CursorIcon, EventPolicy, IconStyle, PointerButton, SemanticRole, Semantics, UiElement,
-    UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip, precompiled,
+    CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiEventKind, UiEventPayload,
+    UiId, WheelUnit, clip, precompiled,
 };
-use lgui::prelude::{Color, Element, State, TextAlign, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Color, Element, TextAlign, UiRect, VisualStyle, panel, text};
 
-use crate::git::{GitStoreSnapshot, PathDecoration};
-#[cfg(test)]
-use crate::state::DirEntry;
-use crate::state::{
-    AppState, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind, FileDragState,
-};
+use super::commands::{Command, Commands, Decoration, EditInput, Frame, GitTone};
+use super::state::ExplorerPanelState;
+use crate::features::explorer::{ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::theme;
-use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
+use crate::ui::components::input::{self, AccessInputOptions, InputBinding, InputStyle};
 use crate::ui::components::scrollbar;
+use crate::ui::components::state_access::StateAccess;
+use crate::ui::drawer::drawer_icon;
 
 const HEADER_H: f32 = theme::TABS_H;
 const ROW_H: f32 = 20.0;
@@ -32,6 +34,8 @@ const INDENT: f32 = 12.0;
 const TREE_ICON_SIZE: f32 = 16.0;
 const TREE_ICON_GAP: f32 = 4.0;
 const TREE_LABEL_OFFSET: f32 = TREE_ICON_SIZE + TREE_ICON_GAP;
+
+type Access = StateAccess<ExplorerPanelState>;
 
 #[derive(Clone, Debug)]
 struct StickyDirectory {
@@ -55,55 +59,62 @@ struct StickyRow {
     top: f32,
 }
 
+/// Everything one tree pass needs besides the row position.
+struct TreeContext<'a> {
+    panel: &'a ExplorerPanelState,
+    state: &'a Access,
+    frame: &'a Frame<'a>,
+    commands: &'a Commands,
+    input: &'a EditInput,
+    rect: UiRect,
+    content_right: f32,
+}
+
 pub fn render(
     rect: UiRect,
-    state: State<AppState>,
-    git_store: State<GitStoreSnapshot>,
-    editor_focus: UiFocusHandle,
-    create_input_focus: UiFocusHandle,
-    create_input_id: UiId,
+    state: Access,
+    frame: &Frame<'_>,
+    commands: Commands,
+    header: Element,
+    input: EditInput,
 ) -> Element {
     let s = state.get();
-    let git = git_store.get();
     let header_rect = UiRect::new(rect.left, rect.top, rect.right, rect.top + HEADER_H);
     let content_rect = UiRect::new(rect.left, header_rect.bottom, rect.right, rect.bottom);
 
-    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar))
-        .child(drawer_header(header_rect, state.clone()));
+    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar)).child(header);
 
     // Background right-click capture: covers the drawer at the lowest z-order.
     // Rows and the resize handle are drawn later and sit above it, so they win
     // hit-testing and this only receives events on empty space.
-    let st_menu = state.clone();
+    let menu_commands = commands.clone();
     let clear_hover = state.clone();
     let capture = panel(content_rect, VisualStyle::default())
         .event_policy(EventPolicy::INTERACTIVE)
         .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
-            clear_hover.try_update(|app| {
-                let changed = app.explorer.ui.hovered_path.is_some();
-                app.explorer.ui.hovered_path = None;
+            clear_hover.try_update(|panel| {
+                let changed = panel.ui.hovered_path.is_some();
+                panel.ui.hovered_path = None;
                 changed
             });
         })
         .on_pointer_down_with_button(move |_cx, p, button| {
             if button == PointerButton::Right {
-                st_menu.update(move |app| {
-                    app.editor.tab_context_menu = None;
-                    app.explorer.ui.menu = Some((p.point.x, p.point.y));
-                    app.explorer.ui.menu_target = None;
+                menu_commands.dispatch(Command::OpenMenu {
+                    point: (p.point.x, p.point.y),
+                    target: None,
                 });
             }
         });
     bar = bar.child(capture);
 
     // Content: empty-state prompt, or all root folders in the current project.
-    if s.explorer.model.roots().is_empty() {
-        for el in empty_state(content_rect, state.clone()) {
+    if s.model.roots().is_empty() {
+        for el in empty_state(content_rect, &commands) {
             bar = bar.child(el);
         }
     } else {
         let roots = s
-            .explorer
             .model
             .roots()
             .iter()
@@ -121,8 +132,17 @@ pub fn render(
             .map(|(_, key, name)| tree_content_right(key, name, &s, content_rect.left))
             .fold(content_rect.right, f32::max);
         let max_scroll_x = (content_right - content_rect.right).max(0.0);
-        let scroll_x = s.explorer.ui.scroll_x.clamp(0.0, max_scroll_x);
+        let scroll_x = s.ui.scroll_x.clamp(0.0, max_scroll_x);
 
+        let tree = TreeContext {
+            panel: &s,
+            state: &state,
+            frame,
+            commands: &commands,
+            input: &input,
+            rect: content_rect,
+            content_right,
+        };
         let mut y = content_rect.top;
         let indent = content_rect.left + INDENT;
         let mut rows = Vec::new();
@@ -132,7 +152,7 @@ pub fn render(
         // Each root starts a fresh sticky ancestry so adjacent workspaces push
         // one another out at the top edge instead of nesting visually.
         for (root_path, key, root_name) in roots {
-            let is_expanded = s.explorer.model.is_expanded(&key);
+            let is_expanded = s.model.is_expanded(&key);
             let root = StickyDirectory {
                 key: key.clone(),
                 name: root_name.clone(),
@@ -146,74 +166,39 @@ pub fn render(
                 depth: 0,
                 sticky_path: path.clone(),
             });
-            if s.explorer
-                .model
+            if s.model
                 .rename_request()
-                .as_ref()
                 .is_some_and(|request| request.path == root_path)
             {
-                tree_els.push(rename_row(
-                    content_rect,
-                    y,
-                    indent,
-                    is_expanded,
-                    state.clone(),
-                    create_input_focus.clone(),
-                    create_input_id.clone(),
-                ));
+                tree_els.push(rename_row(&tree, y, indent, is_expanded));
             } else {
                 tree_els.push(dir_row(
+                    &tree,
                     &key,
                     &root_name,
                     indent,
-                    content_rect,
                     y,
-                    content_right,
                     0.0,
                     is_expanded,
                     false,
-                    s.explorer.ui.hovered_path.as_deref() == Some(key.as_str()),
+                    s.ui.hovered_path.as_deref() == Some(key.as_str()),
                     theme::c().text_soft,
-                    &state,
                 ));
             }
             y += ROW_H;
 
-            if s.explorer
-                .model
+            if s.model
                 .create_request()
-                .as_ref()
                 .is_some_and(|request| request.parent == root_path)
             {
-                tree_els.push(create_row(
-                    content_rect,
-                    y,
-                    indent,
-                    state.clone(),
-                    create_input_focus.clone(),
-                    create_input_id.clone(),
-                ));
+                tree_els.push(create_row(&tree, y, indent));
                 y += CREATE_ROW_H;
             }
 
             if is_expanded {
                 let children_top = y;
                 let guide_x = indent + TREE_ICON_SIZE / 2.0;
-                tree_els.extend(build_tree(
-                    &key,
-                    content_rect,
-                    &mut y,
-                    1,
-                    &s,
-                    &state,
-                    &mut path,
-                    &mut rows,
-                    content_right,
-                    &git,
-                    &editor_focus,
-                    &create_input_focus,
-                    &create_input_id,
-                ));
+                tree_els.extend(build_tree(&tree, &key, &mut y, 1, &mut path, &mut rows));
                 if y > children_top {
                     tree_els.push(panel(
                         UiRect::new(guide_x, children_top, guide_x + 1.0, y),
@@ -225,7 +210,7 @@ pub fn render(
         let content_bottom = y;
 
         let max_scroll = (content_bottom - content_rect.bottom).max(0.0);
-        let scroll = s.explorer.ui.scroll.clamp(0.0, max_scroll);
+        let scroll = s.ui.scroll.clamp(0.0, max_scroll);
 
         let st = state.clone();
         bar = bar.on_event(UiEventKind::Wheel, move |_cx, payload| {
@@ -234,11 +219,9 @@ pub fn render(
                     WheelUnit::Lines => (delta.x * ROW_H * 3.0, delta.y * ROW_H * 3.0),
                     WheelUnit::Pixels => (delta.x, delta.y),
                 };
-                st.update(move |app| {
-                    app.explorer.ui.scroll =
-                        (app.explorer.ui.scroll - step_y).clamp(0.0, max_scroll);
-                    app.explorer.ui.scroll_x =
-                        (app.explorer.ui.scroll_x - step_x).clamp(0.0, max_scroll_x);
+                st.update(move |panel| {
+                    panel.ui.scroll = (panel.ui.scroll - step_y).clamp(0.0, max_scroll);
+                    panel.ui.scroll_x = (panel.ui.scroll_x - step_x).clamp(0.0, max_scroll_x);
                 });
             }
         });
@@ -259,25 +242,26 @@ pub fn render(
             let label_color = if directory.depth == 0 {
                 theme::c().text_soft
             } else {
-                tree_label_color(&git, Path::new(&directory.key), theme::c().text_soft)
+                tree_label_color(
+                    (frame.decorate)(Path::new(&directory.key)),
+                    theme::c().text_soft,
+                )
             };
             bar = bar.child(dir_row(
+                &tree,
                 &directory.key,
                 &directory.name,
                 indent,
-                content_rect,
                 sticky.top,
-                content_right,
                 -scroll_x,
                 directory.is_expanded,
                 true,
                 false,
                 label_color,
-                &state,
             ));
         }
 
-        if max_scroll > 0.0 && (s.explorer.ui.hovered || s.explorer.ui.scrollbar_dragging) {
+        if max_scroll > 0.0 && (s.ui.hovered || s.ui.scrollbar_dragging) {
             bar = bar.child(vertical_scrollbar(
                 content_rect,
                 content_bottom,
@@ -285,9 +269,7 @@ pub fn render(
                 state.clone(),
             ));
         }
-        if max_scroll_x > 0.0
-            && (s.explorer.ui.hovered || s.explorer.ui.horizontal_scrollbar_dragging)
-        {
+        if max_scroll_x > 0.0 && (s.ui.hovered || s.ui.horizontal_scrollbar_dragging) {
             bar = bar.child(horizontal_scrollbar(
                 content_rect,
                 content_right,
@@ -300,34 +282,29 @@ pub fn render(
     // Resize handle on the drawer's left edge. An 8px invisible hit strip
     // (drawn last, above the file rows) carries the drag; the 1px filled panel
     // inside it is the visible divider.
-    let handle_rect = UiRect::new(rect.left, rect.top, rect.left + 8.0, rect.bottom);
-    let win_right = rect.right;
-    let st_down = state.clone();
-    let st_move = state.clone();
-    let st_up = state.clone();
-    let handle = crate::ui::components::resize_handle::render(
-        "file-tree-resize-handle",
-        handle_rect,
-        UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
-        CursorIcon::ResizeHorizontal,
-        s.drawer.resizing,
-    )
-    .on_pointer_down_with_button(move |_cx, _p, button| {
-        if button == PointerButton::Left {
-            st_down.update(move |app| app.drawer.resizing = true);
-        }
-    })
-    .on_pointer_drag(move |_cx, p| {
-        st_move.update(move |app| {
-            if app.drawer.resizing {
-                app.drawer.width = resized_sidebar_width(win_right, p.point.x);
+    if frame.resizable {
+        let handle_rect = UiRect::new(rect.left, rect.top, rect.left + 8.0, rect.bottom);
+        let win_right = rect.right;
+        let down = commands.clone();
+        let drag = commands.clone();
+        let up = commands.clone();
+        let resizing = frame.resizing;
+        let handle = crate::ui::components::resize_handle::render(
+            "file-tree-resize-handle",
+            handle_rect,
+            UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
+            CursorIcon::ResizeHorizontal,
+            resizing,
+        )
+        .on_pointer_down_with_button(move |_cx, _p, button| {
+            if button == PointerButton::Left {
+                down.dispatch(Command::ResizeStart);
             }
-        });
-    })
-    .on_pointer_up(move |_cx, _p| {
-        st_up.update(move |app| app.drawer.resizing = false);
-    });
-    if s.application_layout.is_none() {
+        })
+        .on_pointer_drag(move |_cx, p| {
+            drag.dispatch(Command::Resize(resized_sidebar_width(win_right, p.point.x)));
+        })
+        .on_pointer_up(move |_cx, _p| up.dispatch(Command::ResizeEnd));
         bar = bar.child(handle);
     }
 
@@ -338,121 +315,9 @@ fn resized_sidebar_width(window_right: f32, pointer_x: f32) -> f32 {
     (window_right - pointer_x).clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W)
 }
 
-/// `id` must be unique in the frame: elements sharing one replace each
-/// other, so repeated rows need ids such as `UiId::owned(format!(..))`.
-pub(super) fn drawer_icon(
-    id: impl Into<UiId>,
-    key: &'static str,
-    rect: UiRect,
-    color: lgui::prelude::Color,
-) -> Element {
-    precompiled(UiElement::icon(id.into(), rect, key).icon_style(IconStyle::new(color)))
-}
-
-pub(crate) fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
-    use crate::input::action::Action;
-    use crate::state::DrawerMode;
-    let mode = state.get().drawer.mode;
-    let mut header = panel(rect, VisualStyle::filled(theme::c().sidebar));
-    for (index, label, icon, target, action) in [
-        (
-            0,
-            "Explorer",
-            "explorer",
-            DrawerMode::Files,
-            Action::OpenExplorer,
-        ),
-        (
-            1,
-            "Search",
-            "search",
-            DrawerMode::Search,
-            Action::OpenSearch,
-        ),
-    ] {
-        let button_width = ((rect.width() - 48.0).max(0.0) / 2.0).min(28.0);
-        let left = rect.left + 8.0 + index as f32 * (button_width + 4.0);
-        let hit = UiRect::new(
-            left,
-            rect.top + 2.0,
-            left + button_width,
-            (rect.bottom - 2.0).max(rect.top + 2.0),
-        );
-        let active = mode == target;
-        let click = state.clone();
-        let button = Element::new(move |cx| {
-            let flags = cx.context.interaction_flags(&cx.id);
-            let style = if mode != DrawerMode::Search && (flags.hovered || flags.pressed) {
-                VisualStyle::filled(theme::c().surface).radius(3.0)
-            } else {
-                VisualStyle::default()
-            };
-            UiElement::panel(cx.id, hit, style).children(cx.children)
-        })
-        .key(format!("drawer-mode-{index}"))
-        .event_policy(EventPolicy {
-            hover: true,
-            press: true,
-            focus: false,
-        })
-        .semantics(Semantics::new(SemanticRole::Button).name(label))
-        .cursor(CursorIcon::Pointer)
-        .on_click(move || click.update(|app| app.apply(action)))
-        .child(drawer_icon(
-            UiId::owned(format!("drawer-mode-icon-{index}")),
-            icon,
-            theme::icon_rect(hit),
-            if active {
-                theme::c().accent
-            } else {
-                theme::c().text_dim
-            },
-        ));
-        header = header.child(button);
-    }
-
-    let collapse_hit = UiRect::new(
-        rect.right - 32.0,
-        rect.top + 2.0,
-        rect.right - 4.0,
-        rect.bottom,
-    );
-    let collapse_icon = theme::icon_rect(UiRect::new(
-        collapse_hit.left + 7.0,
-        rect.top,
-        collapse_hit.left + 21.0,
-        rect.bottom,
-    ));
-    let collapse_state = state;
-    header = header.child(
-        panel(collapse_hit, VisualStyle::default().radius(3.0))
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                collapse_state.update(|app| {
-                    app.drawer.visible = false;
-                    app.explorer.ui.hovered = false;
-                    app.explorer.ui.hovered_path = None;
-                    app.search.blur();
-                });
-            })
-            .child(drawer_icon(
-                "sidebar.collapse.icon",
-                "panel-left",
-                collapse_icon,
-                theme::c().text_dim,
-            )),
-    );
-
-    header.child(panel(
-        UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-        VisualStyle::filled(theme::c().border),
-    ))
-}
-
 /// Empty state from the Explorer mockup, without its recent-workspace and
 /// bottom workspace-switching sections.
-fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
+fn empty_state(rect: UiRect, commands: &Commands) -> Vec<Element> {
     let cx = (rect.left + rect.right) / 2.0;
     let icon_rect = UiRect::new(cx - 24.0, rect.top + 28.0, cx + 24.0, rect.top + 76.0);
     let icon = theme::bordered(icon_rect, theme::c().surface, theme::c().border, 10.0, 1.0).child(
@@ -511,13 +376,11 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
         rect.right - 14.0,
         rect.top + 198.0,
     );
-    let st = state.clone();
+    let open = commands.clone();
     let btn = theme::bordered(btn_rect, theme::c().surface, theme::c().border, 4.0, 1.0)
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
-        .on_click(move || {
-            crate::app::explorer::choose_folder(&st);
-        })
+        .on_click(move || open.dispatch(Command::ChooseFolder))
         .child(drawer_icon(
             "sidebar.empty.open-folder",
             crate::file_icons::FOLDER_OPEN_ICON,
@@ -546,16 +409,11 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
         rect.right - 14.0,
         rect.top + 232.0,
     );
-    let clone_state = state;
+    let clone = commands.clone();
     let clone_btn = panel(clone_rect, VisualStyle::default().radius(4.0))
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
-        .on_click(move || {
-            clone_state.update(|app| {
-                app.show_clone_dialog = true;
-                app.clone_repository_error = None;
-            });
-        })
+        .on_click(move || clone.dispatch(Command::CloneRepository))
         .child(drawer_icon(
             "sidebar.empty.clone",
             "git-branch",
@@ -598,28 +456,60 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
     ]
 }
 
-fn create_row(
-    rect: UiRect,
-    y: f32,
-    indent: f32,
-    state: State<AppState>,
-    focus: UiFocusHandle,
-    id: UiId,
-) -> Element {
-    let snapshot = state.get();
-    let kind = snapshot
-        .explorer
-        .model
-        .create_request()
-        .as_ref()
-        .map_or(ExplorerCreateKind::File, |request| request.kind);
-    let border = if snapshot.explorer.ui.create_error.is_some() {
+fn edit_border(panel: &ExplorerPanelState) -> Color {
+    if panel.ui.create_error.is_some() {
         theme::c().error
-    } else if snapshot.explorer.ui.create_input.focused {
+    } else if panel.ui.create_input.focused {
         theme::c().accent
     } else {
         theme::c().border
-    };
+    }
+}
+
+/// The shared create/rename text field; submit and cancel go to the app.
+fn edit_field(tree: &TreeContext<'_>, rect: UiRect, label: &'static str) -> Element {
+    let submit = tree.commands.clone();
+    let cancel = tree.commands.clone();
+    let blur = tree.commands.clone();
+    input::render_access(
+        rect,
+        tree.input.id.clone(),
+        tree.input.focus.clone(),
+        InputBinding::new_access(
+            tree.state.clone(),
+            |panel| &panel.ui.create_input,
+            |panel| &mut panel.ui.create_input,
+        ),
+        AccessInputOptions {
+            label,
+            placeholder: "",
+            style: InputStyle {
+                text: theme::mono(theme::c().text, theme::UI_SIZE),
+                placeholder: theme::mono(theme::c().text_faint, theme::UI_SIZE),
+                caret: theme::c().text,
+                selection: theme::c().accent,
+            },
+            on_submit: Some(std::sync::Arc::new(move || {
+                submit.dispatch(Command::SubmitEdit)
+            })),
+            on_cancel: Some(std::sync::Arc::new(move || {
+                cancel.dispatch(Command::CancelEdit)
+            })),
+            on_blur: Some(std::sync::Arc::new(move || {
+                blur.dispatch(Command::CancelEdit)
+            })),
+        },
+    )
+}
+
+fn create_row(tree: &TreeContext<'_>, y: f32, indent: f32) -> Element {
+    let rect = tree.rect;
+    let kind = tree
+        .panel
+        .model
+        .create_request()
+        .map_or(ExplorerCreateKind::File, |request| request.kind);
+    let border = edit_border(tree.panel);
     let icon = if kind == ExplorerCreateKind::Folder {
         crate::file_icons::FOLDER_ICON
     } else {
@@ -637,27 +527,13 @@ fn create_row(
         input_rect.right - 1.0,
         input_rect.bottom - 1.0,
     );
-    let input = input::render(
+    let input = edit_field(
+        tree,
         field_rect,
-        id,
-        focus,
-        InputBinding::new(state, explorer_create_input, explorer_create_input_mut),
-        InputOptions {
-            label: if kind == ExplorerCreateKind::Folder {
-                "New folder name"
-            } else {
-                "New file name"
-            },
-            placeholder: "",
-            style: InputStyle {
-                text: theme::mono(theme::c().text, theme::UI_SIZE),
-                placeholder: theme::mono(theme::c().text_faint, theme::UI_SIZE),
-                caret: theme::c().text,
-                selection: theme::c().accent,
-            },
-            on_submit: Some(crate::app::explorer::finish_create),
-            on_cancel: Some(crate::app::explorer::cancel_edit),
-            on_blur: Some(crate::app::explorer::cancel_edit),
+        if kind == ExplorerCreateKind::Folder {
+            "New folder name"
+        } else {
+            "New file name"
         },
     );
 
@@ -682,23 +558,9 @@ fn create_row(
     .child(input)
 }
 
-fn rename_row(
-    rect: UiRect,
-    y: f32,
-    indent: f32,
-    is_expanded: bool,
-    state: State<AppState>,
-    focus: UiFocusHandle,
-    id: UiId,
-) -> Element {
-    let snapshot = state.get();
-    let border = if snapshot.explorer.ui.create_error.is_some() {
-        theme::c().error
-    } else if snapshot.explorer.ui.create_input.focused {
-        theme::c().accent
-    } else {
-        theme::c().border
-    };
+fn rename_row(tree: &TreeContext<'_>, y: f32, indent: f32, is_expanded: bool) -> Element {
+    let rect = tree.rect;
+    let border = edit_border(tree.panel);
     let input_rect = UiRect::new(
         indent + TREE_LABEL_OFFSET,
         y + 2.0,
@@ -711,19 +573,10 @@ fn rename_row(
         input_rect.right - 1.0,
         input_rect.bottom - 1.0,
     );
-    let (label, icon) = match snapshot
-        .explorer
-        .model
-        .rename_request()
-        .as_ref()
-        .map(|request| request.kind)
-    {
+    let request = tree.panel.model.rename_request();
+    let (label, icon) = match request.map(|request| request.kind) {
         Some(ExplorerTargetKind::File) => {
-            let icon = snapshot
-                .explorer
-                .model
-                .rename_request()
-                .as_ref()
+            let icon = request
                 .and_then(|request| request.path.file_name())
                 .map(|name| crate::file_icons::icon_for_file(&name.to_string_lossy()))
                 .unwrap_or(crate::file_icons::DEFAULT_FILE_ICON);
@@ -738,25 +591,7 @@ fn rename_row(
             },
         ),
     };
-    let input = input::render(
-        field_rect,
-        id,
-        focus,
-        InputBinding::new(state, explorer_create_input, explorer_create_input_mut),
-        InputOptions {
-            label,
-            placeholder: "",
-            style: InputStyle {
-                text: theme::mono(theme::c().text, theme::UI_SIZE),
-                placeholder: theme::mono(theme::c().text_faint, theme::UI_SIZE),
-                caret: theme::c().text,
-                selection: theme::c().accent,
-            },
-            on_submit: Some(crate::app::explorer::finish_rename),
-            on_cancel: Some(crate::app::explorer::cancel_edit),
-            on_blur: Some(crate::app::explorer::cancel_edit),
-        },
-    );
+    let input = edit_field(tree, field_rect, label);
     panel(
         UiRect::new(rect.left, y, rect.right, y + ROW_H),
         VisualStyle::filled(theme::c().surface),
@@ -778,43 +613,53 @@ fn rename_row(
     .child(input)
 }
 
-fn explorer_create_input(app: &AppState) -> &InputState {
-    &app.explorer.ui.create_input
-}
-
-fn explorer_create_input_mut(app: &mut AppState) -> &mut InputState {
-    &mut app.explorer.ui.create_input
-}
-
-/// Explorer label color for `path`: git changes and ignored paths override
-/// `default`, using the same precedence as Zed's project panel.
-fn tree_label_color(git: &GitStoreSnapshot, path: &Path, default: Color) -> Color {
+/// Explorer label color: git changes and ignored paths override `default`,
+/// using the same precedence as Zed's project panel.
+fn tree_label_color(decoration: Decoration, default: Color) -> Color {
     let colors = theme::c().git;
-    match git.decoration_for_absolute_path(path) {
-        Some(PathDecoration::Conflict | PathDecoration::Deleted) => colors.deleted,
-        Some(PathDecoration::Modified) => colors.modified,
-        Some(PathDecoration::Created) => colors.added,
-        Some(PathDecoration::Ignored) => colors.ignored,
+    match decoration.tone {
+        Some(GitTone::Deleted) => colors.deleted,
+        Some(GitTone::Modified) => colors.modified,
+        Some(GitTone::Added) => colors.added,
+        Some(GitTone::Ignored) => colors.ignored,
         None => default,
+    }
+}
+
+/// Hover tracking shared by directory and file rows.
+fn track_hover(
+    state: &Access,
+    key: &str,
+) -> impl Fn(&mut lgui::core::UiEventContext, lgui::core::PointerData) + Send + Sync + 'static {
+    let state = state.clone();
+    let key = key.to_string();
+    move |_cx, _pointer| {
+        let key = key.clone();
+        state.try_update(move |panel| {
+            let changed = panel.ui.hovered_path.as_deref() != Some(key.as_str());
+            panel.ui.hovered_path = Some(key);
+            changed
+        });
     }
 }
 
 /// A directory node row: left-click toggles expansion; right-click opens the
 /// context menu for this directory.
+#[allow(clippy::too_many_arguments)]
 fn dir_row(
+    tree: &TreeContext<'_>,
     key: &str,
     name: &str,
     indent: f32,
-    rect: UiRect,
     y: f32,
-    content_right: f32,
     content_offset_x: f32,
     is_expanded: bool,
     sticky: bool,
     hovered: bool,
     label_color: Color,
-    state: &State<AppState>,
 ) -> Element {
+    let rect = tree.rect;
+    let content_right = tree.content_right;
     let row_right = if sticky { rect.right } else { content_right };
     let row_rect = UiRect::new(rect.left, y, row_right, y + ROW_H);
     let indent = indent + content_offset_x;
@@ -840,39 +685,22 @@ fn dir_row(
 
     let mut row = panel(row_rect, style).event_policy(EventPolicy::INTERACTIVE);
     if !sticky {
-        let hover_state = state.clone();
-        let hover_key = key.to_string();
-        row = row.on_pointer_move(move |_cx, _pointer| {
-            let key = hover_key.clone();
-            hover_state.try_update(move |app| {
-                let changed = app.explorer.ui.hovered_path.as_deref() != Some(key.as_str());
-                app.explorer.ui.hovered_path = Some(key);
-                changed
-            });
-        });
+        row = row.on_pointer_move(track_hover(tree.state, key));
     }
 
-    let click_state = state.clone();
+    let commands = tree.commands.clone();
     let click_key = key.to_string();
     row.on_pointer_down_with_button(move |cx, pointer, button| {
         let key = click_key.clone();
         match button {
-            PointerButton::Left => {
-                click_state.update(move |app| {
-                    crate::app::explorer::toggle_directory(app, &key);
-                });
-            }
-            PointerButton::Right => {
-                click_state.update(move |app| {
-                    app.editor.tab_context_menu = None;
-                    app.explorer.ui.menu = Some((pointer.point.x, pointer.point.y));
-                    app.explorer.ui.menu_target = Some(ExplorerContextTarget {
-                        path: PathBuf::from(key),
-                        kind: ExplorerTargetKind::Directory,
-                    });
-                    app.explorer.ui.menu_hover = None;
-                });
-            }
+            PointerButton::Left => commands.dispatch(Command::ToggleDirectory(key)),
+            PointerButton::Right => commands.dispatch(Command::OpenMenu {
+                point: (pointer.point.x, pointer.point.y),
+                target: Some(ExplorerContextTarget {
+                    path: key.into(),
+                    kind: ExplorerTargetKind::Directory,
+                }),
+            }),
             _ => return,
         }
         cx.stop_propagation();
@@ -897,26 +725,97 @@ fn dir_row(
     ))
 }
 
+fn file_row(
+    tree: &TreeContext<'_>,
+    entry_path: &Path,
+    name: String,
+    key: &str,
+    indent: f32,
+    y: f32,
+) -> Element {
+    let content_right = tree.content_right;
+    let row_rect = UiRect::new(tree.rect.left, y, content_right, y + ROW_H);
+    let icon_id = UiId::owned(format!("tree-file-icon-{key}"));
+    let icon = crate::file_icons::icon_for_file(&name);
+    let decoration = (tree.frame.decorate)(entry_path);
+    let label_color = tree_label_color(decoration, theme::c().text_muted);
+    let row_style = if tree.frame.active_path == Some(entry_path) {
+        VisualStyle::filled(theme::c().active_line)
+    } else if tree.panel.ui.hovered_path.as_deref() == Some(key) {
+        VisualStyle::filled(theme::c().surface)
+    } else {
+        VisualStyle::default()
+    };
+    let commands = tree.commands.clone();
+    let action_path = entry_path.to_path_buf();
+    panel(row_rect, row_style)
+        .event_policy(EventPolicy::INTERACTIVE)
+        .on_pointer_move(track_hover(tree.state, key))
+        .on_pointer_down_with_button(move |cx, pointer, button| {
+            let path = action_path.clone();
+            match button {
+                // Opening waits for the release: a press that moves becomes
+                // a drag into the editor.
+                PointerButton::Left => commands.dispatch(Command::PressFile {
+                    path,
+                    point: (pointer.point.x, pointer.point.y),
+                }),
+                PointerButton::Middle => commands.dispatch(Command::OpenPinned(path)),
+                PointerButton::Right => commands.dispatch(Command::OpenMenu {
+                    point: (pointer.point.x, pointer.point.y),
+                    target: Some(ExplorerContextTarget {
+                        path,
+                        kind: ExplorerTargetKind::File,
+                    }),
+                }),
+                _ => return,
+            }
+            cx.stop_propagation();
+        })
+        .child(precompiled(
+            UiElement::icon(
+                icon_id,
+                UiRect::new(
+                    indent,
+                    y + 2.0,
+                    indent + TREE_ICON_SIZE,
+                    y + 2.0 + TREE_ICON_SIZE,
+                ),
+                icon,
+            )
+            .icon_style(IconStyle::new(theme::c().text_muted)),
+        ))
+        .child(text(
+            UiRect::new(
+                indent + TREE_LABEL_OFFSET,
+                y + 2.0,
+                content_right - 30.0,
+                y + 18.0,
+            ),
+            name,
+            theme::mono(label_color, theme::UI_SIZE),
+        ))
+        .child(text(
+            UiRect::new(content_right - 25.0, y + 2.0, content_right - 8.0, y + 18.0),
+            decoration.indicator,
+            theme::mono(theme::c().accent, theme::SMALL),
+        ))
+}
+
 /// Renders the cached entries for `dir_key`, advancing `y` by one row per
-/// entry. Child directories render only when present in `expanded`.
+/// entry. Child directories render only when expanded.
 fn build_tree(
+    tree: &TreeContext<'_>,
     dir_key: &str,
-    rect: UiRect,
     y: &mut f32,
     depth: usize,
-    s: &AppState,
-    state: &State<AppState>,
     path: &mut Vec<StickyDirectory>,
     rows: &mut Vec<TreeRowMeta>,
-    content_right: f32,
-    git: &GitStoreSnapshot,
-    editor_focus: &UiFocusHandle,
-    create_input_focus: &UiFocusHandle,
-    create_input_id: &UiId,
 ) -> Vec<Element> {
     let mut els = Vec::new();
+    let model = &tree.panel.model;
 
-    let Some(entries) = s.explorer.model.listing(dir_key) else {
+    let Some(entries) = model.listing(dir_key) else {
         return els;
     };
 
@@ -924,10 +823,13 @@ fn build_tree(
         let is_dir = entry.is_dir;
         let name = entry.name.clone();
         let key = entry.path.to_string_lossy().into_owned();
-        let indent = rect.left + INDENT + depth as f32 * INDENT;
+        let indent = tree.rect.left + INDENT + depth as f32 * INDENT;
+        let renaming = model
+            .rename_request()
+            .is_some_and(|request| request.path == entry.path);
 
         if is_dir {
-            let is_expanded = s.explorer.model.is_expanded(&key);
+            let is_expanded = model.is_expanded(&key);
             path.push(StickyDirectory {
                 key: key.clone(),
                 name: name.clone(),
@@ -940,35 +842,20 @@ fn build_tree(
                 depth,
                 sticky_path: path.clone(),
             });
-            if s.explorer
-                .model
-                .rename_request()
-                .as_ref()
-                .is_some_and(|request| request.path == entry.path)
-            {
-                els.push(rename_row(
-                    rect,
-                    *y,
-                    indent,
-                    is_expanded,
-                    state.clone(),
-                    create_input_focus.clone(),
-                    create_input_id.clone(),
-                ));
+            if renaming {
+                els.push(rename_row(tree, *y, indent, is_expanded));
             } else {
                 els.push(dir_row(
+                    tree,
                     &key,
                     &name,
                     indent,
-                    rect,
                     *y,
-                    content_right,
                     0.0,
                     is_expanded,
                     false,
-                    s.explorer.ui.hovered_path.as_deref() == Some(key.as_str()),
-                    tree_label_color(git, &entry.path, theme::c().text_soft),
-                    state,
+                    tree.panel.ui.hovered_path.as_deref() == Some(key.as_str()),
+                    tree_label_color((tree.frame.decorate)(&entry.path), theme::c().text_soft),
                 ));
             }
         } else {
@@ -977,184 +864,30 @@ fn build_tree(
                 depth,
                 sticky_path: path.clone(),
             });
-            let row_rect = UiRect::new(rect.left, *y, content_right, *y + ROW_H);
-            let icon_id = UiId::owned(format!("tree-file-icon-{key}"));
-            let icon = crate::file_icons::icon_for_file(&name);
-            if s.explorer
-                .model
-                .rename_request()
-                .as_ref()
-                .is_some_and(|request| request.path == entry.path)
-            {
-                els.push(rename_row(
-                    rect,
-                    *y,
-                    indent,
-                    false,
-                    state.clone(),
-                    create_input_focus.clone(),
-                    create_input_id.clone(),
-                ));
+            if renaming {
+                els.push(rename_row(tree, *y, indent, false));
             } else {
-                let file_path = entry.path.clone();
-                let open_id = s.workspace.file_id_for_path(&file_path);
-                let git_indicator = git
-                    .repository_for_path(&file_path)
-                    .and_then(|repository| repository.state_for_absolute_path(&file_path))
-                    .map(|state| state.display_kind().indicator())
-                    .unwrap_or_default();
-                let label_color = tree_label_color(git, &file_path, theme::c().text_muted);
-                let row_style = if s.workspace.active_path() == Some(file_path.as_path()) {
-                    VisualStyle::filled(theme::c().active_line)
-                } else if s.explorer.ui.hovered_path.as_deref() == Some(key.as_str()) {
-                    VisualStyle::filled(theme::c().surface)
-                } else {
-                    VisualStyle::default()
-                };
-                let hover_state = state.clone();
-                let hover_key = key.clone();
-                let st = state.clone();
-                let focus = editor_focus.clone();
-                let action_path = file_path.clone();
-                let row = panel(row_rect, row_style)
-                    .event_policy(EventPolicy::INTERACTIVE)
-                    .on_pointer_move(move |_cx, _pointer| {
-                        let key = hover_key.clone();
-                        hover_state.try_update(move |app| {
-                            let changed =
-                                app.explorer.ui.hovered_path.as_deref() != Some(key.as_str());
-                            app.explorer.ui.hovered_path = Some(key);
-                            changed
-                        });
-                    })
-                    .on_pointer_down_with_button(move |cx, pointer, button| {
-                        match button {
-                            PointerButton::Left => {
-                                // Opening waits for the release: a press that moves
-                                // becomes a drag into the editor (see `app.rs`).
-                                let point = (pointer.point.x, pointer.point.y);
-                                let path = action_path.clone();
-                                st.update(move |app| {
-                                    let clicks =
-                                        app.editor.tree_click_count(&path, point.0, point.1);
-                                    app.editor.file_drag = Some(FileDragState {
-                                        path,
-                                        source: crate::state::FileDragSource::Explorer { clicks },
-                                        origin: point,
-                                        point,
-                                        active: false,
-                                        drop: None,
-                                    });
-                                });
-                            }
-                            PointerButton::Middle => {
-                                if let Some(id) = open_id {
-                                    st.update(move |app| {
-                                        app.workspace.set_active(id);
-                                        app.workspace.promote_active_preview();
-                                    });
-                                    focus.focus();
-                                } else {
-                                    let path = action_path.clone();
-                                    st.update(move |app| {
-                                        crate::app::explorer::open_tree_file(app, path, 2);
-                                    });
-                                    focus.focus();
-                                }
-                            }
-                            PointerButton::Right => {
-                                let path = action_path.clone();
-                                st.update(move |app| {
-                                    app.editor.tab_context_menu = None;
-                                    app.explorer.ui.menu = Some((pointer.point.x, pointer.point.y));
-                                    app.explorer.ui.menu_target = Some(ExplorerContextTarget {
-                                        path,
-                                        kind: ExplorerTargetKind::File,
-                                    });
-                                    app.explorer.ui.menu_hover = None;
-                                });
-                            }
-                            _ => return,
-                        }
-                        cx.stop_propagation();
-                    })
-                    .child(precompiled(
-                        UiElement::icon(
-                            icon_id,
-                            UiRect::new(
-                                indent,
-                                *y + 2.0,
-                                indent + TREE_ICON_SIZE,
-                                *y + 2.0 + TREE_ICON_SIZE,
-                            ),
-                            icon,
-                        )
-                        .icon_style(IconStyle::new(theme::c().text_muted)),
-                    ))
-                    .child(text(
-                        UiRect::new(
-                            indent + TREE_LABEL_OFFSET,
-                            *y + 2.0,
-                            content_right - 30.0,
-                            *y + 18.0,
-                        ),
-                        name,
-                        theme::mono(label_color, theme::UI_SIZE),
-                    ))
-                    .child(text(
-                        UiRect::new(
-                            content_right - 25.0,
-                            *y + 2.0,
-                            content_right - 8.0,
-                            *y + 18.0,
-                        ),
-                        git_indicator,
-                        theme::mono(theme::c().accent, theme::SMALL),
-                    ));
-                els.push(row);
+                els.push(file_row(tree, &entry.path, name, &key, indent, *y));
             }
         }
 
         *y += ROW_H;
 
         if is_dir
-            && s.explorer
-                .model
+            && model
                 .create_request()
-                .as_ref()
                 .is_some_and(|request| request.parent.as_path() == entry.path.as_path())
         {
-            els.push(create_row(
-                rect,
-                *y,
-                indent,
-                state.clone(),
-                create_input_focus.clone(),
-                create_input_id.clone(),
-            ));
+            els.push(create_row(tree, *y, indent));
             *y += CREATE_ROW_H;
         }
 
-        if is_dir && s.explorer.model.is_expanded(&key) {
+        if is_dir && model.is_expanded(&key) {
             // Indent guide under an expanded folder's icon: spans from the
             // folder row bottom to the bottom of its last child.
             let children_top = *y;
             let guide_x = indent + TREE_ICON_SIZE / 2.0;
-            els.extend(build_tree(
-                &key,
-                rect,
-                y,
-                depth + 1,
-                s,
-                state,
-                path,
-                rows,
-                content_right,
-                git,
-                editor_focus,
-                create_input_focus,
-                create_input_id,
-            ));
+            els.extend(build_tree(tree, &key, y, depth + 1, path, rows));
             if *y > children_top {
                 els.push(panel(
                     UiRect::new(guide_x, children_top, guide_x + 1.0, *y),
@@ -1173,16 +906,22 @@ fn build_tree(
 /// Right edge required by the currently visible tree rows. File-tree labels
 /// use the editor's monospace UI font, so the shared character advance gives
 /// a stable scroll range without measuring text during every frame.
-fn tree_content_right(root_key: &str, root_name: &str, s: &AppState, left: f32) -> f32 {
+fn tree_content_right(root_key: &str, root_name: &str, s: &ExplorerPanelState, left: f32) -> f32 {
     let mut right = row_content_right(left, 0, root_name);
-    if s.explorer.model.is_expanded(root_key) {
+    if s.model.is_expanded(root_key) {
         extend_content_right(root_key, 1, s, left, &mut right);
     }
     right
 }
 
-fn extend_content_right(dir_key: &str, depth: usize, s: &AppState, left: f32, right: &mut f32) {
-    let Some(entries) = s.explorer.model.listing(dir_key) else {
+fn extend_content_right(
+    dir_key: &str,
+    depth: usize,
+    s: &ExplorerPanelState,
+    left: f32,
+    right: &mut f32,
+) {
+    let Some(entries) = s.model.listing(dir_key) else {
         return;
     };
 
@@ -1190,7 +929,7 @@ fn extend_content_right(dir_key: &str, depth: usize, s: &AppState, left: f32, ri
         *right = right.max(row_content_right(left, depth, &entry.name));
         if entry.is_dir {
             let key = entry.path.to_string_lossy();
-            if s.explorer.model.is_expanded(key.as_ref()) {
+            if s.model.is_expanded(key.as_ref()) {
                 extend_content_right(key.as_ref(), depth + 1, s, left, right);
             }
         }
@@ -1245,12 +984,7 @@ fn sticky_rows(rows: &[TreeRowMeta], viewport_top: f32, scroll: f32) -> Vec<Stic
 
 /// Fixed vertical scrollbar for the file tree. Only the draggable thumb is
 /// painted; the track remains invisible like the scrollbars in modern editors.
-fn vertical_scrollbar(
-    rect: UiRect,
-    content_bottom: f32,
-    scroll: f32,
-    state: State<AppState>,
-) -> Element {
+fn vertical_scrollbar(rect: UiRect, content_bottom: f32, scroll: f32, state: Access) -> Element {
     let content_top = rect.top + 8.0;
     let content_h = (content_bottom - content_top).max(1.0);
     let viewport_h = rect.height();
@@ -1280,8 +1014,8 @@ fn vertical_scrollbar(
     let track_top = track.top;
     let st_down = state.clone();
     let st_move = state.clone();
-    let st_up = state.clone();
-    let thumb = scrollbar::thumb(
+    let st_up = state;
+    scrollbar::thumb(
         UiRect::new(
             track.left + scrollbar::INSET,
             thumb_top,
@@ -1293,35 +1027,28 @@ fn vertical_scrollbar(
     .key("file-tree-vertical-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down(move |_cx, p| {
-        st_down.update(move |app| {
-            app.explorer.ui.scrollbar_dragging = true;
-            app.explorer.ui.scrollbar_drag_offset = p.point.y - thumb_top;
+        st_down.update(move |panel| {
+            panel.ui.scrollbar_dragging = true;
+            panel.ui.scrollbar_drag_offset = p.point.y - thumb_top;
         });
     })
     .on_pointer_drag(move |_cx, p| {
-        st_move.update(move |app| {
-            if app.explorer.ui.scrollbar_dragging && travel > 0.0 {
-                let t = (p.point.y - track_top - app.explorer.ui.scrollbar_drag_offset) / travel
-                    * max_scroll;
-                app.explorer.ui.scroll = t.clamp(0.0, max_scroll);
+        st_move.update(move |panel| {
+            if panel.ui.scrollbar_dragging && travel > 0.0 {
+                let t =
+                    (p.point.y - track_top - panel.ui.scrollbar_drag_offset) / travel * max_scroll;
+                panel.ui.scroll = t.clamp(0.0, max_scroll);
             }
         });
     })
     .on_pointer_up(move |_cx, _p| {
-        st_up.update(move |app| app.explorer.ui.scrollbar_dragging = false);
-    });
-
-    thumb
+        st_up.update(move |panel| panel.ui.scrollbar_dragging = false);
+    })
 }
 
 /// Fixed horizontal scrollbar for wide or deeply nested tree rows. As with
 /// the vertical scrollbar, only the draggable thumb is painted.
-fn horizontal_scrollbar(
-    rect: UiRect,
-    content_right: f32,
-    scroll: f32,
-    state: State<AppState>,
-) -> Element {
+fn horizontal_scrollbar(rect: UiRect, content_right: f32, scroll: f32, state: Access) -> Element {
     let content_w = (content_right - rect.left).max(1.0);
     let viewport_w = rect.width();
     let max_scroll = (content_right - rect.right).max(0.0);
@@ -1344,7 +1071,7 @@ fn horizontal_scrollbar(
     let track_left = track.left;
     let st_down = state.clone();
     let st_move = state.clone();
-    let st_up = state.clone();
+    let st_up = state;
     scrollbar::thumb(
         UiRect::new(
             thumb_left,
@@ -1357,29 +1084,30 @@ fn horizontal_scrollbar(
     .key("file-tree-horizontal-scrollbar-thumb")
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down(move |_cx, p| {
-        st_down.update(move |app| {
-            app.explorer.ui.horizontal_scrollbar_dragging = true;
-            app.explorer.ui.horizontal_scrollbar_drag_offset = p.point.x - thumb_left;
+        st_down.update(move |panel| {
+            panel.ui.horizontal_scrollbar_dragging = true;
+            panel.ui.horizontal_scrollbar_drag_offset = p.point.x - thumb_left;
         });
     })
     .on_pointer_drag(move |_cx, p| {
-        st_move.update(move |app| {
-            if app.explorer.ui.horizontal_scrollbar_dragging && travel > 0.0 {
-                let t = (p.point.x - track_left - app.explorer.ui.horizontal_scrollbar_drag_offset)
+        st_move.update(move |panel| {
+            if panel.ui.horizontal_scrollbar_dragging && travel > 0.0 {
+                let t = (p.point.x - track_left - panel.ui.horizontal_scrollbar_drag_offset)
                     / travel
                     * max_scroll;
-                app.explorer.ui.scroll_x = t.clamp(0.0, max_scroll);
+                panel.ui.scroll_x = t.clamp(0.0, max_scroll);
             }
         });
     })
     .on_pointer_up(move |_cx, _p| {
-        st_up.update(move |app| app.explorer.ui.horizontal_scrollbar_dragging = false);
+        st_up.update(move |panel| panel.ui.horizontal_scrollbar_dragging = false);
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::explorer::DirEntry;
 
     fn directory(key: &str, depth: usize, source_y: f32) -> StickyDirectory {
         StickyDirectory {
@@ -1455,10 +1183,10 @@ mod tests {
         let root_key = "root";
         let nested_key = "root/src";
         let long_name = "a_very_long_nested_file_name.rs";
-        let mut state = AppState::new();
-        state.explorer.model.set_expanded(root_key, true);
-        state.explorer.model.set_expanded(nested_key, true);
-        state.explorer.model.insert_listing(
+        let mut state = ExplorerPanelState::default();
+        state.model.set_expanded(root_key, true);
+        state.model.set_expanded(nested_key, true);
+        state.model.insert_listing(
             root_key.to_string(),
             vec![DirEntry {
                 name: "src".to_string(),
@@ -1467,7 +1195,7 @@ mod tests {
             }]
             .into(),
         );
-        state.explorer.model.insert_listing(
+        state.model.insert_listing(
             nested_key.to_string(),
             vec![DirEntry {
                 name: long_name.to_string(),
@@ -1482,7 +1210,7 @@ mod tests {
             row_content_right(100.0, 2, long_name)
         );
 
-        state.explorer.model.set_expanded(nested_key, false);
+        state.model.set_expanded(nested_key, false);
         assert_eq!(
             tree_content_right(root_key, "root", &state, 100.0),
             row_content_right(100.0, 1, "src")

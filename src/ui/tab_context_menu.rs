@@ -95,12 +95,9 @@ fn action_enabled(app: &AppState, pane: PaneId, target: FileId, action: Action) 
         }
         Action::KeepEditorVersion => app.workspace.has_disk_conflict(target),
         Action::CopyPath => true,
-        Action::CopyRelativePath => {
-            super::context_menu::workspace_root_for_path(app, &meta.path).is_some()
-        }
+        Action::CopyRelativePath => app.explorer.model.root_for_path(&meta.path).is_some(),
         Action::RevealInTree => {
-            !app.workspace.is_diff(target)
-                && super::context_menu::workspace_root_for_path(app, &meta.path).is_some()
+            !app.workspace.is_diff(target) && app.explorer.model.root_for_path(&meta.path).is_some()
         }
         Action::RevealInFileExplorer => !app.workspace.is_diff(target),
         _ => false,
@@ -262,7 +259,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                             });
                         }
                         Action::CopyPath | Action::CopyRelativePath => {
-                            super::context_menu::copy_target_path(
+                            crate::app::explorer::copy_path(
                                 &click_state,
                                 cx.application().clipboard().as_ref(),
                                 &action_path,

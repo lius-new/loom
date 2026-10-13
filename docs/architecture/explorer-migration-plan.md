@@ -224,3 +224,14 @@ src/app/
 - 结论：本步是结构收益（watcher 不再依赖整个根状态），不声称性能提升；也未发现回归。调查中的既有成本：每次刷新后 `prune_unavailable` 对所有已缓存目录逐个 `is_dir`，在本夹具中占单项变更的主要耗时。该行为 R5 前即存在，本轮未改，可作为后续独立优化。
 - 31 项常规性能基线需要 PowerShell 7（`scripts/baseline/run.ps1`），本机未安装，留到 R5 收尾在具备环境时执行。
 - 结果：完整 workspace 644 通过、0 失败、13 忽略（新增基准为忽略项；应用 560，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 22 项自测通过。
+
+### R5.5（2026-10-13，本机自动验收）
+
+- 删除 `ui/sidebar.rs`、`ui/context_menu.rs`；新增 `ui/explorer/{commands,view,context_menu}.rs` 与 `ui/drawer.rs`。树视图与右键菜单只接收 `StateAccess<ExplorerPanelState>` 投影、只读 `Frame`（活动文件、抽屉缩放状态、是否可缩放、Git 装饰函数）、`EditInput` 与语义 `Commands`；不再引用 AppState、Workspace、Git 存储、TerminalTabs 或 app 层。
+- `ui/drawer.rs` 承载抽屉 chrome：`DrawerMode`（从 app/state 迁出，state 以字段类型 re-export）、通用 `drawer_icon`（Git/Search/克隆等视图同步改引用）与由回调驱动的 Explorer/Search 头部。
+- 新增 `app/explorer_view.rs`：组装投影与帧输入，将 Git 快照映射为 `Decoration`（色调 + 状态字母），执行命令——打开菜单（同时关闭标签菜单）、文件按下（点击计数与待定拖动）、中键固定打开并聚焦编辑器、行内编辑提交按当前请求分派、抽屉缩放、全部菜单项（含终端、剪贴板、刷新与磁盘对账）。剪贴板通过 `ApplicationContext` 取得，视图不接触服务。
+- `copy_path`（原 context_menu::copy_target_path）迁入 app/explorer，供 Git 菜单与标签菜单复用；标签菜单的“工作区内”判断改为 `explorer.model.root_for_path`。
+- 与方案的偏差：welcome、workspace_home 与 tab_context_menu 仍是登记的根状态适配器。它们剩余的根依赖（欢迎页悬停、主表面焦点、打开文件对话框、Source Control 开关、标签关闭命令）属于 R8 chrome，不是 Explorer 状态；本轮只更新登记理由，未伪造窄接口。
+- 门禁/登记：删除两个文件的例外与根状态适配器登记（legacy exception 文件 59 → 57，根状态适配器 25 → 23）；为菜单宽度测量单独允许 `unicode_width`（与编辑器视图同例）。
+- 测试：原 sidebar 5 项、context_menu 7 项按原名迁到新视图（改用 `ExplorerPanelState` 与 `active_path` 参数）；新增 6 项 `explorer_view` 测试，在真实会话中渲染抽屉与菜单后经命令驱动：菜单替换标签菜单、两次按下形成双击待定拖动、提交按当前编辑行分派到重命名/新建、仅在拖动期间改变宽度、菜单命令无目标不执行、展开/折叠与悬停/菜单状态下重复渲染。
+- 结果：完整 workspace 650 通过、0 失败、13 忽略（应用 566，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 22 项自测通过；Windows PowerShell 5.1 隔离启动/恢复 smoke 通过。原生交互（点击、拖放、IME、右键菜单视觉）仍需人工验收。

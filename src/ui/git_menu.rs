@@ -211,7 +211,7 @@ fn perform(
                 }
             }
             MenuAction::CopyPath | MenuAction::CopyRelativePath => {
-                super::context_menu::copy_target_path(
+                crate::app::explorer::copy_path(
                     state,
                     cx.application().clipboard().as_ref(),
                     &absolute,
@@ -423,7 +423,7 @@ pub fn render(
             theme::c().text_soft
         };
         if checked == Some(true) {
-            row = row.child(super::sidebar::drawer_icon(
+            row = row.child(super::drawer::drawer_icon(
                 "git-menu.check",
                 "check",
                 UiRect::new(

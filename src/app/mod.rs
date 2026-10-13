@@ -9,6 +9,7 @@ pub(crate) mod editor_vim;
 #[cfg(test)]
 mod editor_vim_integration_tests;
 pub(crate) mod explorer;
+pub(crate) mod explorer_view;
 #[cfg(test)]
 mod phase0_baseline;
 mod presentation;

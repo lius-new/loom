@@ -19,10 +19,10 @@ use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::editor::view as editor_view;
 use crate::ui::{
-    branch_picker, clone_repository, close_confirmation, context_menu, diff_editor, git_confirm,
-    git_menu, git_panel, keymap_page, layout_map, pane_sash, settings, sidebar, stash_switch,
-    statusbar, tab_context_menu, tabs, terminal, terminal_tab_context_menu, titlebar, toast,
-    welcome, workspace_home,
+    branch_picker, clone_repository, close_confirmation, diff_editor, git_confirm, git_menu,
+    git_panel, keymap_page, layout_map, pane_sash, settings, stash_switch, statusbar,
+    tab_context_menu, tabs, terminal, terminal_tab_context_menu, titlebar, toast, welcome,
+    workspace_home,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -525,7 +525,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     cx.use_effect(search_key.clone(), move || {
         crate::app::search::start(search_state, search_application, search_key)
     });
-    let search_visible = s.drawer.visible && s.drawer.mode == crate::state::DrawerMode::Search;
+    let search_visible = s.drawer.visible && s.drawer.mode == crate::ui::drawer::DrawerMode::Search;
     let query_focus = search_query_focus.clone();
     cx.use_effect((search_visible, s.search.focus_request), move || {
         if search_visible {
@@ -1185,8 +1185,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             commit_input_id,
         ));
     }
+    let explorer_services = super::explorer_view::Services {
+        application: application_context.clone(),
+        editor_focus: editor_focus.clone(),
+        terminal_tabs: terminal_tabs.clone(),
+    };
     if show_drawer {
-        if s.drawer.mode == crate::state::DrawerMode::Search {
+        if s.drawer.mode == crate::ui::drawer::DrawerMode::Search {
             root = root.child(super::search::render(
                 explorer_rect,
                 state.clone(),
@@ -1205,13 +1210,15 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 },
             ));
         } else {
-            root = root.child(sidebar::render(
+            root = root.child(super::explorer_view::render(
                 explorer_rect,
-                state.clone(),
-                git_store.clone(),
-                editor_focus.clone(),
-                explorer_create_input_focus,
-                explorer_create_input_id,
+                &state,
+                &git_store,
+                &explorer_services,
+                crate::ui::explorer::commands::EditInput {
+                    id: explorer_create_input_id,
+                    focus: explorer_create_input_focus,
+                },
             ));
         }
     }
@@ -1281,11 +1288,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         ));
     }
     if let Some(pos) = s.explorer.ui.menu {
-        root = root.child(context_menu::render(
+        root = root.child(super::explorer_view::render_menu(
             vp,
             pos,
-            state.clone(),
-            terminal_tabs.clone(),
+            &state,
+            &explorer_services,
         ));
     }
     if s.editor.tab_context_menu.is_some() {

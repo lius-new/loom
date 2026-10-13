@@ -630,3 +630,32 @@ fn persist_workspace(app: &mut AppState) {
 #[cfg(test)]
 #[path = "explorer_tests.rs"]
 mod tests;
+
+/// Copy `target` to the clipboard, absolute or relative to its workspace root.
+pub(crate) fn copy_path(
+    state: &State<AppState>,
+    clipboard: &dyn lgui::services::Clipboard,
+    target: &Path,
+    relative: bool,
+) {
+    let value = if relative {
+        let snapshot = state.get();
+        let Some(root) = snapshot.explorer.model.root_for_path(target) else {
+            state.update(|app| app.show_toast("Path is outside the workspace."));
+            return;
+        };
+        let relative = target.strip_prefix(root).unwrap_or(target);
+        if relative.as_os_str().is_empty() {
+            ".".to_owned()
+        } else {
+            crate::ui::display_path(relative)
+        }
+    } else {
+        crate::ui::display_path(target)
+    };
+    let label = if relative { "relative path" } else { "path" };
+    match clipboard.write_text(&value) {
+        Ok(()) => state.update(move |app| app.show_success(format!("Copied {label}."))),
+        Err(error) => state.update(move |app| app.show_error(format!("Clipboard: {error}"))),
+    }
+}

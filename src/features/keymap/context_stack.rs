@@ -110,7 +110,7 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         input.add(COMMIT_MESSAGE);
         stack.push(input);
     } else if app.drawer.visible
-        && app.drawer.mode == crate::state::DrawerMode::Search
+        && app.drawer.mode == crate::ui::drawer::DrawerMode::Search
         && (app.search.ui.query.focused
             || app.search.ui.include.focused
             || app.search.ui.exclude.focused
