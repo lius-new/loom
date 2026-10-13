@@ -9,7 +9,6 @@ use lgui::prelude::{Element, State, TextAlign, TextStyle, UiRect, VisualStyle, p
 
 use crate::features::git::diff_document::ChangeBlock;
 use crate::features::git::{DiffTarget, GitStoreSnapshot, RepositoryState};
-use crate::git_actions;
 use crate::input::action::Action;
 use crate::state::AppState;
 use crate::theme;
@@ -79,47 +78,47 @@ fn resolve(state: &State<AppState>, store: &State<GitStoreSnapshot>, confirmed: 
             path,
             checkout,
         } => {
-            git_actions::create_worktree(state, store, &repository, path, checkout);
+            crate::app::git::create_worktree(state, store, &repository, path, checkout);
         }
         GitConfirmAction::RemoveWorktree {
             repository,
             path,
             force,
         } => {
-            git_actions::remove_worktree(state, store, &repository, path, force);
+            crate::app::git::remove_worktree(state, store, &repository, path, force);
         }
         GitConfirmAction::Discard {
             repository,
             tracked,
             untracked,
         } => {
-            git_actions::discard_paths(state, store, &repository, tracked, untracked);
+            crate::app::git::discard_paths(state, store, &repository, tracked, untracked);
         }
         GitConfirmAction::StageAllAndCommit => {
-            git_actions::commit_all(state, store);
+            crate::app::git::commit_all(state, store);
         }
         GitConfirmAction::AbortOperation {
             repository,
             operation,
         } => {
-            git_actions::abort_operation(state, store, &repository, operation);
+            crate::app::git::abort_operation(state, store, &repository, operation);
         }
         GitConfirmAction::DropStash { repository, oid } => {
-            git_actions::drop_stash(state, store, &repository, oid);
+            crate::app::git::drop_stash(state, store, &repository, oid);
         }
         GitConfirmAction::DiscardBlock {
             repository,
             path,
             block,
         } => {
-            git_actions::apply_block(
+            crate::app::git::apply_block(
                 state,
                 store,
                 &repository,
                 path,
                 DiffTarget::IndexToWorktree,
                 block,
-                git_actions::BlockAction::Discard,
+                crate::app::git::BlockAction::Discard,
             );
         }
     }
@@ -311,7 +310,7 @@ fn worktree_form(
                         .value(full_path),
                 )
                 .cursor(CursorIcon::Pointer)
-                .on_click(move || git_actions::choose_worktree_location(&location_state))
+                .on_click(move || crate::app::git::choose_worktree_location(&location_state))
                 .child(text(
                     UiRect::new(
                         location.left + 10.0,
@@ -328,7 +327,7 @@ fn worktree_form(
                 .event_policy(EventPolicy::INTERACTIVE)
                 .semantics(Semantics::new(SemanticRole::Button).name("Choose worktree location"))
                 .cursor(CursorIcon::Pointer)
-                .on_click(move || git_actions::choose_worktree_location(&state))
+                .on_click(move || crate::app::git::choose_worktree_location(&state))
                 .child(text(
                     browse,
                     "Browse…",

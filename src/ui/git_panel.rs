@@ -14,10 +14,10 @@ use crate::features::git::{
     RepositorySnapshot, RepositoryState, StashInfo, WorktreeInfo,
 };
 use crate::state::AppState;
+use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::ui::components::scrollbar;
 use crate::ui::git_menu::{GitMenu, GitMenuTarget};
-use crate::{git_actions, theme};
 
 const TOPLINE_H: f32 = theme::TABS_H;
 const PROMPT_H: f32 = 32.0;
@@ -671,7 +671,12 @@ pub fn render(
                 changed
             });
             if entered && let Some((anchor, GitHover::Commit(oid))) = target {
-                git_actions::hover_commit(&hover_state, hover_root.clone(), oid.clone(), anchor);
+                crate::app::git::hover_commit(
+                    &hover_state,
+                    hover_root.clone(),
+                    oid.clone(),
+                    anchor,
+                );
             }
         }
     });
@@ -1100,7 +1105,7 @@ mod virtualization_tests {
             app.git.ui.scroll = 100.0;
             app.git.ui.details_scroll = 200.0;
         });
-        git_actions::select_repository(&state, &store, PathBuf::from("loom"));
+        crate::app::git::select_repository(&state, &store, PathBuf::from("loom"));
         assert_eq!(state.get().git.ui.scroll, 0.0);
         assert_eq!(state.get().git.ui.details_scroll, 0.0);
     }
@@ -1536,7 +1541,7 @@ fn commit_button(rect: UiRect, state: State<AppState>, store: State<GitStoreSnap
         )
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
-            git_actions::commit(&click_state, &click_store);
+            crate::app::git::commit(&click_state, &click_store);
         })
         .child(super::drawer::drawer_icon(
             "git-commit-button-icon",
@@ -2080,7 +2085,7 @@ fn history_row(
                         false
                     });
                     if !menu_open {
-                        git_actions::toggle_commit(&toggle_state, root.clone(), oid.clone());
+                        crate::app::git::toggle_commit(&toggle_state, root.clone(), oid.clone());
                     }
                 })
                 .on_pointer_down_with_button(move |_cx, pointer, button| {
@@ -2164,7 +2169,7 @@ fn history_row(
                 .event_policy(EventPolicy::INTERACTIVE)
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
-                    git_actions::open_commit_changes(
+                    crate::app::git::open_commit_changes(
                         &open_state,
                         root.clone(),
                         open_oid.clone(),
@@ -2280,7 +2285,7 @@ fn worktree_row(
             icon: "worktree-open",
             name: "Open Worktree (Add and Select)",
             on_click: Box::new(move || {
-                git_actions::open_worktree(&open_state, &open_store, path.clone());
+                crate::app::git::open_worktree(&open_state, &open_store, path.clone());
             }),
         });
         let add_state = state.clone();
@@ -2289,7 +2294,9 @@ fn worktree_row(
             key: format!("worktree-add-{}", path.display()),
             icon: "plus",
             name: "Add Worktree to Workspace",
-            on_click: Box::new(move || git_actions::add_worktree_folder(&add_state, path.clone())),
+            on_click: Box::new(move || {
+                crate::app::git::add_worktree_folder(&add_state, path.clone())
+            }),
         });
         if !main && !current && worktree.locked.is_none() {
             let source = repository.worktree_root.clone();
@@ -2300,7 +2307,7 @@ fn worktree_row(
                 icon: "trash",
                 name: "Delete Worktree",
                 on_click: Box::new(move || {
-                    git_actions::request_remove_worktree(
+                    crate::app::git::request_remove_worktree(
                         &delete_state,
                         source.clone(),
                         path.clone(),
@@ -2366,7 +2373,7 @@ fn worktree_row(
     })
     .on_click(move || {
         if !bare {
-            git_actions::open_worktree(&open_state, &store, path.clone());
+            crate::app::git::open_worktree(&open_state, &store, path.clone());
         }
     })
     .child(text(
@@ -2466,13 +2473,13 @@ fn stash_row(
             name,
             on_click: Box::new(move || match action {
                 StashAction::Apply => {
-                    git_actions::apply_stash(&action_state, &action_store, oid.clone(), false);
+                    crate::app::git::apply_stash(&action_state, &action_store, oid.clone(), false);
                 }
                 StashAction::Pop => {
-                    git_actions::apply_stash(&action_state, &action_store, oid.clone(), true);
+                    crate::app::git::apply_stash(&action_state, &action_store, oid.clone(), true);
                 }
                 StashAction::Drop => {
-                    git_actions::request_drop_stash(&action_state, &action_store, oid.clone());
+                    crate::app::git::request_drop_stash(&action_state, &action_store, oid.clone());
                 }
             }),
         }
@@ -2536,7 +2543,7 @@ fn operation_banner(
     let abort_state = state.clone();
     let abort_store = store.clone();
     let (abort, abort_left) = text_button(right, rect, abort_label, false, idle, move || {
-        git_actions::request_abort(&abort_state, &abort_store);
+        crate::app::git::request_abort(&abort_state, &abort_store);
     });
     banner = banner.child(abort);
     right = abort_left - 6.0;
@@ -2549,7 +2556,7 @@ fn operation_banner(
             true,
             idle && !conflicts,
             move || {
-                git_actions::continue_operation(&state, &store);
+                crate::app::git::continue_operation(&state, &store);
             },
         );
         banner = banner.child(button);
@@ -2699,16 +2706,16 @@ impl RowAction {
         match self {
             Self::OpenFile => {}
             Self::Stage => {
-                git_actions::stage_paths(state, store, paths);
+                crate::app::git::stage_paths(state, store, paths);
             }
             Self::Unstage => {
-                git_actions::unstage_paths(state, store, paths);
+                crate::app::git::unstage_paths(state, store, paths);
             }
             Self::Discard if section == UNTRACKED => {
-                git_actions::request_discard(state, store, Vec::new(), paths);
+                crate::app::git::request_discard(state, store, Vec::new(), paths);
             }
             Self::Discard => {
-                git_actions::request_discard(state, store, paths, Vec::new());
+                crate::app::git::request_discard(state, store, paths, Vec::new());
             }
             Self::KeepCurrent | Self::TakeIncoming => {
                 let side = if self == Self::KeepCurrent {
@@ -2717,7 +2724,7 @@ impl RowAction {
                     ConflictSide::Theirs
                 };
                 for path in paths {
-                    git_actions::resolve_conflict(state, store, path, side);
+                    crate::app::git::resolve_conflict(state, store, path, side);
                 }
             }
         }

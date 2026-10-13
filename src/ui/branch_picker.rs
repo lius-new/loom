@@ -18,8 +18,8 @@ use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, pan
 
 use crate::features::git::{BranchInfo, GitResult, GitStoreSnapshot, OperationKind, WorktreeInfo};
 use crate::state::AppState;
+use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
-use crate::{git_actions, theme};
 
 const CARD_W: f32 = 420.0;
 const PAD: f32 = 6.0;
@@ -401,7 +401,7 @@ pub fn open(state: &State<AppState>, store: &State<GitStoreSnapshot>, anchor_x: 
             restore_terminal: app.terminal_focused,
         });
     });
-    git_actions::load_branches(state, repository, sequence);
+    crate::app::git::load_branches(state, repository, sequence);
 }
 
 /// Choose the selected row. Returns whether the picker was open.
@@ -431,12 +431,12 @@ fn choose(state: &State<AppState>, store: &State<GitStoreSnapshot>, index: Optio
     let checkout = checkout_for(row, branches);
     state.update(|app| app.git.ui.branch_picker = None);
     if let Some(checkout) = checkout {
-        git_actions::checkout(
+        crate::app::git::checkout(
             state,
             store,
             &picker.repository,
             checkout,
-            git_actions::StashMode::Refuse,
+            crate::app::git::StashMode::Refuse,
         );
     }
     true
@@ -574,7 +574,7 @@ pub fn render(
                 })
                 .on_click(move || {
                     if enabled {
-                        git_actions::fetch_branches(&fetch_state, &fetch_store);
+                        crate::app::git::fetch_branches(&fetch_state, &fetch_store);
                     }
                 })
                 .child(icon(
@@ -944,7 +944,11 @@ fn item_row(
             .cursor(CursorIcon::Pointer)
             .on_click(move |cx: &mut UiEventContext| {
                 cx.stop_propagation();
-                git_actions::request_create_worktree(&state, repository.clone(), checkout.clone());
+                crate::app::git::request_create_worktree(
+                    &state,
+                    repository.clone(),
+                    checkout.clone(),
+                );
             })
             .child(text(action_rect, "New Worktree", label_style)),
         );
@@ -1114,12 +1118,12 @@ fn worktree_item(
                 action_state.update(|app| app.git.ui.branch_picker = None);
                 match action {
                     WorktreeAction::Open => {
-                        git_actions::open_worktree(&action_state, &action_store, path.clone());
+                        crate::app::git::open_worktree(&action_state, &action_store, path.clone());
                     }
                     WorktreeAction::Add => {
-                        git_actions::add_worktree_folder(&action_state, path.clone())
+                        crate::app::git::add_worktree_folder(&action_state, path.clone())
                     }
-                    WorktreeAction::Delete => git_actions::request_remove_worktree(
+                    WorktreeAction::Delete => crate::app::git::request_remove_worktree(
                         &action_state,
                         source.clone(),
                         path.clone(),

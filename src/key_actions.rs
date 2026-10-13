@@ -359,7 +359,7 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
         }
         Action::MenuConfirm => branch_picker::confirm(&env.state, &env.git_store),
         Action::GitCommit => {
-            crate::git_actions::commit(&env.state, &env.git_store);
+            crate::app::git::commit(&env.state, &env.git_store);
             true
         }
         _ => {

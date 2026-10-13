@@ -7,8 +7,8 @@ use lgui::core::{
 };
 use lgui::prelude::{Color, Element, State, TextStyle, UiRect, VisualStyle, panel, text};
 
+use crate::app::git::SyncPlan;
 use crate::features::git::{GitStoreSnapshot, RepositorySnapshot, RepositoryState};
-use crate::git_actions::{self, SyncPlan};
 use crate::state::AppState;
 use crate::theme;
 
@@ -77,7 +77,7 @@ pub fn attach(
 
     // Sync: publish, pull, push or fetch, whichever is due.
     if let Some(repository) = git.active()
-        && let Some(plan) = git_actions::sync_plan(repository)
+        && let Some(plan) = crate::app::git::sync_plan(repository)
     {
         let enabled = git.operation.is_none();
         let color = if enabled {
@@ -102,7 +102,7 @@ pub fn attach(
                 })
                 .on_click(move || {
                     if enabled {
-                        git_actions::sync(&state, &store);
+                        crate::app::git::sync(&state, &store);
                     }
                 }),
         );

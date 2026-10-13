@@ -1,4 +1,5 @@
-//! Asynchronous UI-facing Git commands.
+//! Source Control commands. Each reads the snapshot and root state, runs Git
+//! off the UI thread, and applies the result in one root-state update.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,7 +10,6 @@ use lgui::prelude::State;
 use crate::features::git::diff_document::{ChangeBlock, DiffDocument};
 use crate::features::git::error::GitErrorKind;
 use crate::features::git::model::GitHistory;
-use crate::features::git::snapshot::operation;
 use crate::features::git::{
     ConflictSide, GitError, GitResult, GitStoreSnapshot, HeadState, OperationKind, RemoteInfo,
     RepositorySnapshot, RepositoryState,
@@ -1862,78 +1862,16 @@ fn run_with<T: Send + 'static>(
     if store.get().operation.is_some() {
         return false;
     }
-    let app = state.get();
-    let Some(application) = app.runtime().and_then(|runtime| runtime.application()) else {
+    let Some(tasks) = super::git_tasks::GitTasks::for_state(state, store) else {
         return false;
     };
-    let poll_control = app
-        .runtime()
-        .map(|runtime| runtime.git_poll_control())
-        .unwrap_or_default();
-    let message = message.into();
-    store.update(move |snapshot| {
-        snapshot.operation = Some(operation(kind, message, false));
-        snapshot.last_error = None;
-    });
-    let state = state.clone();
-    let store = store.clone();
-    let worker_store = store.clone();
-    let worker_poll_control = poll_control.clone();
-    let spawned = thread::Builder::new()
-        .name(format!("loom-git-{kind:?}").to_ascii_lowercase())
-        .spawn(move || {
-            let result = crate::infrastructure::git::service().and_then(|service| action(&service, &repository.worktree_root));
-            let disk_updates = if result.is_ok() {
-                state.get().workspace.prepare_disk_updates(&[], true)
-            } else { Vec::new() };
-            let completion_application = application.clone();
-            application.post(move || {
-            match result {
-                Ok(value) => {
-                    state.update(move |app| on_success(app, value));
-                    if kind == OperationKind::Commit {
-                        state.update(|app| {
-                            app.git.ui.commit_input.clear();
-                        });
-                    }
-                    state.update(|app| {
-                        let expected_updates = disk_updates.len();
-                        let outcomes = app.workspace.apply_disk_updates(disk_updates);
-                        if outcomes.len() < expected_updates {
-                            crate::file_watcher::refresh_async(state.clone(), completion_application);
-                        }
-                        let conflicts = outcomes
-                            .iter()
-                            .filter(|outcome| matches!(outcome, crate::model::workspace::ReconcileResult::Conflict(_)))
-                            .count();
-                        if conflicts > 0 {
-                            app.show_toast(format!("{conflicts} open file(s) changed on disk; editor buffers were preserved."));
-                        }
-                    });
-                    worker_store.update(move |current| {
-                        current.operation = None;
-                    });
-                }
-                Err(error) => {
-                    let message = error.user_message();
-                    state.update(move |app| app.show_error(message));
-                    worker_store.update(move |snapshot| {
-                        snapshot.operation = None;
-                        snapshot.last_error = Some(error);
-                    });
-                }
-            }
-            // The current worker knows the current roots and open tabs. Never
-            // publish a separate scan using the operation's starting context.
-            worker_poll_control.request_refresh();
-            });
-        })
-        .is_ok();
-    if !spawned {
-        store.update(|snapshot| snapshot.operation = None);
-        poll_control.request_refresh();
-    }
-    spawned
+    let root = repository.worktree_root;
+    tasks.run(
+        kind,
+        message,
+        move || crate::infrastructure::git::service().and_then(|service| action(&service, &root)),
+        on_success,
+    )
 }
 
 #[cfg(test)]

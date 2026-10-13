@@ -9,7 +9,6 @@ use lgui::services::ServicesContextExt;
 
 use crate::features::explorer::{ExplorerContextTarget, ExplorerTargetKind};
 use crate::features::git::{ConflictSide, DiffRequest, DiffTarget, GitStoreSnapshot};
-use crate::git_actions;
 use crate::state::AppState;
 use crate::theme;
 use crate::ui::git_panel::{CONFLICTS, STAGED, UNTRACKED};
@@ -174,7 +173,7 @@ fn perform(
         let paths = vec![path.clone()];
         match action {
             MenuAction::OpenChanges => {
-                git_actions::open_diff(
+                crate::app::git::open_diff(
                     state,
                     DiffRequest {
                         repository_root: repository.clone(),
@@ -199,16 +198,16 @@ fn perform(
                 }
             }
             MenuAction::Stage => {
-                git_actions::stage_paths(state, store, paths);
+                crate::app::git::stage_paths(state, store, paths);
             }
             MenuAction::Unstage => {
-                git_actions::unstage_paths(state, store, paths);
+                crate::app::git::unstage_paths(state, store, paths);
             }
             MenuAction::Discard => {
                 if *section == UNTRACKED {
-                    git_actions::request_discard(state, store, Vec::new(), paths);
+                    crate::app::git::request_discard(state, store, Vec::new(), paths);
                 } else {
-                    git_actions::request_discard(state, store, paths, Vec::new());
+                    crate::app::git::request_discard(state, store, paths, Vec::new());
                 }
             }
             MenuAction::CopyPath | MenuAction::CopyRelativePath => {
@@ -232,7 +231,7 @@ fn perform(
                 } else {
                     ConflictSide::Theirs
                 };
-                git_actions::resolve_conflict(state, store, path.clone(), side);
+                crate::app::git::resolve_conflict(state, store, path.clone(), side);
             }
             MenuAction::ToggleAmend
             | MenuAction::ToggleSignoff
@@ -247,11 +246,11 @@ fn perform(
     if let GitMenuTarget::HistoryCommit { repository, oid } = target {
         match action {
             MenuAction::OpenCommitChanges => {
-                git_actions::open_commit_changes(state, repository.clone(), oid.clone(), None);
+                crate::app::git::open_commit_changes(state, repository.clone(), oid.clone(), None);
                 editor_focus.focus();
             }
             MenuAction::RevertCommit => {
-                git_actions::revert_commit(state, store, repository, oid.clone());
+                crate::app::git::revert_commit(state, store, repository, oid.clone());
             }
             _ => {}
         }
@@ -265,10 +264,10 @@ fn perform(
             state.update(|app| app.git.ui.commit_signoff = !app.git.ui.commit_signoff)
         }
         MenuAction::UndoCommit => {
-            git_actions::undo_last_commit(state, store);
+            crate::app::git::undo_last_commit(state, store);
         }
         MenuAction::StashAll => {
-            git_actions::stash_all(state, store);
+            crate::app::git::stash_all(state, store);
         }
         MenuAction::SelectRepository(index) => {
             let root = store
@@ -278,7 +277,7 @@ fn perform(
                 .nth(index)
                 .map(|repository| repository.worktree_root.clone());
             if let Some(root) = root {
-                git_actions::select_repository(state, store, root);
+                crate::app::git::select_repository(state, store, root);
             }
         }
         _ => {}

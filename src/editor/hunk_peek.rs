@@ -11,10 +11,10 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
+use crate::app::git::BlockAction;
 use crate::features::git::diff_document::{ChangeBlock, DiffDocument, DiffRow, DiffRowKind};
 use crate::features::git::{DiffTarget, GitStoreSnapshot, LineChange};
 use crate::fonts;
-use crate::git_actions::{self, BlockAction};
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
@@ -362,14 +362,14 @@ pub fn render(
                 .on_click(move || {
                     action_state.update(|app| app.editor.editor_hunk_peek = None);
                     if action == BlockAction::Discard {
-                        git_actions::request_discard_block(
+                        crate::app::git::request_discard_block(
                             &action_state,
                             hunk.root.clone(),
                             hunk.relative.clone(),
                             hunk.block,
                         );
                     } else {
-                        git_actions::apply_block(
+                        crate::app::git::apply_block(
                             &action_state,
                             &action_store,
                             &hunk.root,

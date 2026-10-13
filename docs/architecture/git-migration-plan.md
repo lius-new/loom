@@ -171,3 +171,12 @@ Git 展示数据或发出命令。
 - 登记：`git_ownership` 33 项（模型 7、UI 26）；`source_control` 与 `diff_split` 写明由 features/git 更正为 app chrome / 编辑器交互。门禁把 Explorer 的字段登记与模型私有检查推广到 GitModel/GitUiState，新增负例（自测 26 项）。
 - 测试：6 项模型测试（diff 打开代次与取消、提交展开/折叠与晚到文件、固定仓库随活动文件失效、详情缓存上限、克隆互斥）；2 项状态测试（三项偏好经 settings 往返、chrome 与 diff 分栏默认值）。
 - 结果：完整 workspace 658 通过、0 失败、13 忽略（应用 574，编辑核心 68，独立域 16）；fmt、CI 参数 clippy、门禁与 26 项自测通过；隔离启动/恢复 smoke 通过。
+
+### R6.4（2026-10-13，本机自动验收）
+
+- `src/git_actions.rs` → `app/git.rs`（约 60 个 Source Control 命令，名称不变），调用方改为 `crate::app::git::`，不保留别名。
+- 新增 `app/git_tasks.rs`：`GitExecutor`（后台 spawn + UI 线程 post）与 `GitTasks::run`，承接原 `run_with` 的全部规则——同一时刻一个写操作、开始时标记并清除上次错误、后台完成后在 UI 线程应用结果、提交成功清空输入、磁盘对账与冲突提示、失败写 `last_error` 且保留输入、无论成败请求重扫、worker 无法启动时撤销标记。`app/git.rs` 的 `run_with` 只组装 Git 服务调用并委托。
+- 与方案的偏差：只读加载（历史、提交文件、提交卡片、打开 diff、分支列表）仍各自起线程，未接入执行器；它们已有各自的代次/目标校验，本轮不改调度。方案中“完成晚于工作区切换时不写入新工作区”不是现有行为（写操作完成总会应用），未新增该规则；“有未保存文件时拒绝提交/丢弃”已有原测试覆盖。
+- 登记：runtime 桥接由 git_actions 改为 app/git、app/git_tasks；删除 git_actions 例外（legacy exception 文件 50 → 49）；Git 视图与 hunk 预览的 `crate::git_actions` 依赖改为临时 `crate::app`，R6.6 移除。
+- 测试：git_actions 的 11 项测试随文件迁移、名称不变；新增 5 项 git_tasks 测试（第二个操作被拒、完成只在 UI 回合应用并清空提交输入、失败保留输入并记录错误、worker 无法启动撤销标记、新操作清除旧错误）。
+- 结果：完整 workspace 663 通过、0 失败、13 忽略（应用 579，编辑核心 68，独立域 16）；fmt、CI 参数 clippy、门禁与 26 项自测通过；隔离启动/恢复 smoke 通过。

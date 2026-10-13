@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId};
 use lgui::prelude::{Element, State, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
 
+use crate::app::git::StashMode;
 use crate::features::git::GitStoreSnapshot;
-use crate::git_actions::{self, StashMode};
 use crate::input::action::Action;
 use crate::state::AppState;
 use crate::theme;
@@ -54,7 +54,7 @@ fn resolve(state: &State<AppState>, store: &State<GitStoreSnapshot>, mode: Optio
     };
     state.update(|app| app.git.ui.stash_switch = None);
     if let Some(mode) = mode {
-        git_actions::checkout(state, store, &request.repository, request.checkout, mode);
+        crate::app::git::checkout(state, store, &request.repository, request.checkout, mode);
     }
 }
 

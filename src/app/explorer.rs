@@ -178,11 +178,11 @@ pub(crate) fn finish_drawer_file_drag(state: &State<AppState>) -> bool {
             unreachable!("only changes drags are dispatched here");
         };
         if !drag.active {
-            crate::git_actions::open_changes(state, request);
+            crate::app::git::open_changes(state, request);
             return true;
         }
         if let Some(drop) = drag.drop {
-            return crate::git_actions::open_diff_at(state, request, untracked, drop);
+            return crate::app::git::open_diff_at(state, request, untracked, drop);
         }
     }
     focus

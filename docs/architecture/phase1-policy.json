@@ -35,11 +35,12 @@
   "runtime_bridges": [
     "src/app/editor_vim_integration_tests.rs",
     "src/app/explorer.rs",
+    "src/app/git.rs",
+    "src/app/git_tasks.rs",
     "src/app/runtime.rs",
     "src/app/search.rs",
     "src/editor/hunk_peek.rs",
     "src/file_loading.rs",
-    "src/git_actions.rs",
     "src/ui/components/loading_indicator.rs",
     "src/ui/editor/caret.rs",
     "src/ui/terminal.rs",
@@ -220,9 +221,9 @@
     },
     "src/editor/hunk_peek.rs": {
       "dependencies": [
+        "crate::app",
         "crate::features",
         "crate::fonts",
-        "crate::git_actions",
         "crate::infrastructure",
         "crate::model",
         "crate::state",
@@ -232,7 +233,7 @@
         "std::thread"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 文本视图仅通过应用提供的覆盖层入口访问；Git diff 读取、异步加载与操作迁移属于 R6。 R6.1 Git 类型、解析、diff、快照与 DiffDocument 迁入 features/git，改引用 crate::features。 R6.2 Git 进程适配迁入 infrastructure/git，改引用 crate::infrastructure。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 文本视图仅通过应用提供的覆盖层入口访问；Git diff 读取、异步加载与操作迁移属于 R6。 R6.1 Git 类型、解析、diff、快照与 DiffDocument 迁入 features/git，改引用 crate::features。 R6.2 Git 进程适配迁入 infrastructure/git，改引用 crate::infrastructure。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/features/keymap/action.rs": {
       "dependencies": [
@@ -326,23 +327,6 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/git_actions.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::background_ui",
-        "crate::features",
-        "crate::file_watcher",
-        "crate::infrastructure",
-        "crate::model",
-        "crate::state",
-        "crate::ui",
-        "lgui",
-        "std::fs",
-        "std::thread"
-      ],
-      "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 文件夹添加/移除与回收站改由 app/explorer 提供。 R6.1 Git 类型、解析、diff、快照与 DiffDocument 迁入 features/git，改引用 crate::features。 R6.2 Git 进程适配迁入 infrastructure/git，改引用 crate::infrastructure。"
-    },
     "src/jsonc.rs": {
       "dependencies": [
         "serde_json"
@@ -355,7 +339,6 @@
         "crate::app",
         "crate::config_watcher",
         "crate::features",
-        "crate::git_actions",
         "crate::input",
         "crate::project_settings",
         "crate::settings_persistence",
@@ -369,7 +352,7 @@
         "std::thread"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R6.1 Git 类型、解析、diff、快照与 DiffDocument 迁入 features/git，改引用 crate::features。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R6.1 Git 类型、解析、diff、快照与 DiffDocument 迁入 features/git，改引用 crate::features。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/model/application_layout.rs": {
       "dependencies": [
@@ -481,13 +464,13 @@
     },
     "src/ui/branch_picker.rs": {
       "dependencies": [
-        "crate::git_actions",
+        "crate::app",
         "crate::state",
         "crate::svg_icons",
         "image"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/ui/clone_repository.rs": {
       "dependencies": [
@@ -517,7 +500,6 @@
     "src/ui/diff_editor.rs": {
       "dependencies": [
         "crate::app",
-        "crate::git_actions",
         "crate::model",
         "crate::state",
         "crate::svg_icons",
@@ -525,48 +507,46 @@
         "std::fs"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 的新增应用依赖仅在旧 UI 集成测试中构造窄 scrollbar binding。 R6.1 只用 Git 类型，改由 features/git 提供。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 的新增应用依赖仅在旧 UI 集成测试中构造窄 scrollbar binding。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/ui/git_badge.rs": {
       "dependencies": [
-        "crate::git_actions",
+        "crate::app",
         "crate::state"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/ui/git_confirm.rs": {
       "dependencies": [
-        "crate::git_actions",
+        "crate::app",
         "crate::input",
         "crate::state",
         "crate::svg_icons",
         "image"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/ui/git_menu.rs": {
       "dependencies": [
         "crate::app",
         "crate::features",
-        "crate::git_actions",
         "crate::state"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；抽屉文件打开随 R6 Git 迁移。 R6.1 只用 Git 类型，改由 features/git 提供。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；抽屉文件打开随 R6 Git 迁移。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/ui/git_panel.rs": {
       "dependencies": [
         "crate::app",
-        "crate::git_actions",
         "crate::model",
         "crate::state",
         "crate::svg_icons",
         "image"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；抽屉文件打开随 R6 Git 迁移。 R6.1 只用 Git 类型，改由 features/git 提供。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；抽屉文件打开随 R6 Git 迁移。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/ui/keymap_page.rs": {
       "dependencies": [
@@ -614,12 +594,12 @@
     },
     "src/ui/stash_switch.rs": {
       "dependencies": [
-        "crate::git_actions",
+        "crate::app",
         "crate::input",
         "crate::state"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/ui/statusbar.rs": {
       "dependencies": [

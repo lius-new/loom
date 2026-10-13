@@ -8,12 +8,12 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
+use crate::app::git::BlockAction;
 use crate::features::git::diff_document::{
     ChangesLayout, DiffDocument, DiffRow, DiffRowKind, SplitDiffRow,
 };
 use crate::features::git::{DiffTarget, GitStoreSnapshot};
 use crate::fonts;
-use crate::git_actions::{self, BlockAction};
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
@@ -556,14 +556,14 @@ fn block_buttons(
                     .cursor(CursorIcon::Pointer)
                     .on_click(move |cx: &mut lgui::core::UiEventContext| {
                         if action == BlockAction::Discard {
-                            git_actions::request_discard_block(
+                            crate::app::git::request_discard_block(
                                 &click_state,
                                 root.clone(),
                                 path.clone(),
                                 block,
                             );
                         } else {
-                            git_actions::apply_block(
+                            crate::app::git::apply_block(
                                 &click_state,
                                 &click_store,
                                 &root,
@@ -723,13 +723,13 @@ fn render_changes(
             .on_click(move |cx: &mut lgui::core::UiEventContext| {
                 cx.stop_propagation();
                 match &revision {
-                    Some(revision) => git_actions::open_commit_diff(
+                    Some(revision) => crate::app::git::open_commit_diff(
                         &open_state,
                         request.repository_root.clone(),
                         revision.clone(),
                         request.path.clone(),
                     ),
-                    None => git_actions::open_diff(&open_state, request.clone(), untracked),
+                    None => crate::app::git::open_diff(&open_state, request.clone(), untracked),
                 }
                 focus.focus();
             }),

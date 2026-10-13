@@ -411,7 +411,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let history_state = state.clone();
     cx.use_effect(history_key.clone(), move || {
         if let Some((root, head)) = history_key {
-            crate::git_actions::load_history(&history_state, root, head);
+            crate::app::git::load_history(&history_state, root, head);
         }
         || {}
     });
