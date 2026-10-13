@@ -59,7 +59,7 @@ pub fn attach(
     store: State<GitStoreSnapshot>,
 ) -> Element {
     let git = store.get();
-    let picker_open = state.get().branch_picker.is_some();
+    let picker_open = state.get().git.ui.branch_picker.is_some();
 
     // Repository and branch: opens the branch picker below the title bar.
     let (badge, mut right) = badge_element(rect, left, badge_pieces(&git), picker_open);

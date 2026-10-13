@@ -49,10 +49,10 @@ fn describe_files(files: &[String]) -> String {
 /// Resolve the open request: `Some(mode)` retries the switch that way,
 /// `None` cancels it.
 fn resolve(state: &State<AppState>, store: &State<GitStoreSnapshot>, mode: Option<StashMode>) {
-    let Some(request) = state.get().stash_switch else {
+    let Some(request) = state.get().git.ui.stash_switch else {
         return;
     };
-    state.update(|app| app.stash_switch = None);
+    state.update(|app| app.git.ui.stash_switch = None);
     if let Some(mode) = mode {
         git_actions::checkout(state, store, &request.repository, request.checkout, mode);
     }

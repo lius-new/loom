@@ -66,10 +66,10 @@ pub struct GitConfirm {
 
 /// Close the dialog, performing its action when `confirmed`.
 fn resolve(state: &State<AppState>, store: &State<GitStoreSnapshot>, confirmed: bool) {
-    let Some(confirm) = state.get().git_confirm else {
+    let Some(confirm) = state.get().git.ui.confirm else {
         return;
     };
-    state.update(|app| app.git_confirm = None);
+    state.update(|app| app.git.ui.confirm = None);
     if !confirmed {
         return;
     }
@@ -391,7 +391,7 @@ mod tests {
             let view: AppView = Arc::new(move |cx| {
                 let state = cx.state_with(|| {
                     let mut app = AppState::new();
-                    app.git_confirm = Some(GitConfirm {
+                    app.git.ui.confirm = Some(GitConfirm {
                         title: "New Worktree".into(),
                         message: String::new(),
                         confirm_label: "Create",
@@ -409,7 +409,7 @@ mod tests {
                 let dialog_id = cx.use_stable_id();
                 *output.lock().unwrap() = Some(state.clone());
                 let root = panel(viewport, VisualStyle::filled(theme::c().bg));
-                if let Some(confirm) = state.get().git_confirm {
+                if let Some(confirm) = state.get().git.ui.confirm {
                     root.child(render(viewport, &confirm, state, store, dialog_id))
                 } else {
                     root
@@ -509,7 +509,9 @@ mod tests {
                     .as_ref()
                     .unwrap()
                     .get()
-                    .git_confirm
+                    .git
+                    .ui
+                    .confirm
                     .is_none()
             );
         }

@@ -161,3 +161,13 @@ Git 展示数据或发出命令。
 - Git 运行时访问器 `runtime()` 改名 `git_runtime()`：原名与 `AppRuntime` 桥接的词法检查冲突，使 backend/store 被登记为 runtime 桥接；改名后两项登记删除，实际不涉及应用运行时。
 - 门禁：`infrastructure/git` 只允许 infrastructure/features/domain、std::fs/process/thread 与 serde，禁止根状态/GUI 与例外；新增负例（自测 25 项）。policy：删除 src/git 6 个例外（legacy exception 文件 56 → 50）与 2 个 runtime 桥接；git_actions、hunk_peek、workspace_actions 的 `crate::git` 依赖改登记为 `crate::infrastructure`。
 - 结果：完整 workspace 650 通过、0 失败、13 忽略（纯迁移）；fmt、CI 参数 clippy、门禁与 25 项自测通过；隔离启动/恢复 smoke 通过。进程参数、超时、取消与运行时解析未改动。
+
+### R6.3（2026-10-13，本机自动验收）
+
+- AppState 删除 38 个 Git 字段，新增 `git: GitPanelState { model, ui }` 与 `source_control: SidebarChrome`（visible/width/resizing）；EditorState 新增 `diff_split: DiffSplit`（drag/ratio，比例默认 0.5）。根字段登记 76 → 40，editor 30 → 31。
+- 新增 `features/git/model.rs`：`GitModel` 字段私有，持有历史、展开的提交、提交详情缓存（上限 64）、打开 diff 的请求代次与加载请求、用户固定的仓库、克隆进行中标记；`GitHistory`、`ExpandedCommit` 从 git_panel 迁入。方法覆盖原全部读写：`begin/cancel/finish/abandon_diff_open`、`toggle_commit`/`set_commit_files`、`cache_commit_detail`、`pin_repository`/`pinned_for`/`unpin`、`begin/finish_clone`。
+- 新增 `ui/git/state.rs`：`GitUiState` 26 项（悬停、滚动、提交表单、菜单、确认框、提交卡片、分支选择器、stash 切换、克隆对话框与三项视图偏好）；折叠分区默认值保持（Worktrees/Stashes/History 折叠）。
+- settings.json 格式不变：`settings()`/`apply_settings` 把 git_inline_blame/split_diff/tree_view 映射到 `git.ui`；会话字段 `source_control_open` 不变。
+- 登记：`git_ownership` 33 项（模型 7、UI 26）；`source_control` 与 `diff_split` 写明由 features/git 更正为 app chrome / 编辑器交互。门禁把 Explorer 的字段登记与模型私有检查推广到 GitModel/GitUiState，新增负例（自测 26 项）。
+- 测试：6 项模型测试（diff 打开代次与取消、提交展开/折叠与晚到文件、固定仓库随活动文件失效、详情缓存上限、克隆互斥）；2 项状态测试（三项偏好经 settings 往返、chrome 与 diff 分栏默认值）。
+- 结果：完整 workspace 658 通过、0 失败、13 忽略（应用 574，编辑核心 68，独立域 16）；fmt、CI 参数 clippy、门禁与 26 项自测通过；隔离启动/恢复 smoke 通过。

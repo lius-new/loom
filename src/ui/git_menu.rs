@@ -124,12 +124,12 @@ fn entries(target: &GitMenuTarget, app: &AppState, git: &GitStoreSnapshot) -> Ve
         GitMenuTarget::Commit => vec![
             Entry::Item {
                 label: "Amend Last Commit".into(),
-                checked: Some(app.git_commit_amend),
+                checked: Some(app.git.ui.commit_amend),
                 action: MenuAction::ToggleAmend,
             },
             Entry::Item {
                 label: "Sign Off".into(),
-                checked: Some(app.git_commit_signoff),
+                checked: Some(app.git.ui.commit_signoff),
                 action: MenuAction::ToggleSignoff,
             },
             Entry::Separator,
@@ -258,9 +258,11 @@ fn perform(
         return;
     }
     match action {
-        MenuAction::ToggleAmend => state.update(|app| app.git_commit_amend = !app.git_commit_amend),
+        MenuAction::ToggleAmend => {
+            state.update(|app| app.git.ui.commit_amend = !app.git.ui.commit_amend)
+        }
         MenuAction::ToggleSignoff => {
-            state.update(|app| app.git_commit_signoff = !app.git_commit_signoff)
+            state.update(|app| app.git.ui.commit_signoff = !app.git.ui.commit_signoff)
         }
         MenuAction::UndoCommit => {
             git_actions::undo_last_commit(state, store);
@@ -341,7 +343,7 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .on_pointer_down_with_button(move |_cx, pointer, _button| {
             if !card.contains(pointer.point) {
-                close_state.update(|app| app.git_menu = None);
+                close_state.update(|app| app.git.ui.menu = None);
             }
         });
     let clear_state = state.clone();
@@ -355,7 +357,7 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
             clear_state.try_update(|app| {
-                let Some(menu) = app.git_menu.as_mut() else {
+                let Some(menu) = app.git.ui.menu.as_mut() else {
                     return false;
                 };
                 menu.hover.take().is_some()
@@ -399,7 +401,7 @@ pub fn render(
         .cursor(CursorIcon::Pointer)
         .on_event(UiEventKind::PointerMove, move |_cx, _payload| {
             hover_state.try_update(move |app| {
-                let Some(menu) = app.git_menu.as_mut() else {
+                let Some(menu) = app.git.ui.menu.as_mut() else {
                     return false;
                 };
                 let changed = menu.hover != Some(idx);
@@ -408,7 +410,7 @@ pub fn render(
             });
         })
         .on_click(move |cx: &mut UiEventContext| {
-            click_state.update(|app| app.git_menu = None);
+            click_state.update(|app| app.git.ui.menu = None);
             perform(
                 action,
                 &target,
@@ -521,7 +523,7 @@ mod tests {
     #[test]
     fn commit_menu_reflects_the_options() {
         let mut app = AppState::new();
-        app.git_commit_amend = true;
+        app.git.ui.commit_amend = true;
         let entries = entries(&GitMenuTarget::Commit, &app, &GitStoreSnapshot::default());
         let checked = entries
             .iter()

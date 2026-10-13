@@ -205,7 +205,7 @@ fn action_row(
             ),
             WorkspaceAction::OpenSourceControl => {
                 actions.state.update(|app| {
-                    app.show_source_control = true;
+                    app.source_control.visible = true;
                     app.workspace_home_hover = None;
                 });
             }

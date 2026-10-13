@@ -8,6 +8,7 @@ use lgui::prelude::State;
 
 use crate::features::git::diff_document::{ChangeBlock, DiffDocument};
 use crate::features::git::error::GitErrorKind;
+use crate::features::git::model::GitHistory;
 use crate::features::git::snapshot::operation;
 use crate::features::git::{
     ConflictSide, GitError, GitResult, GitStoreSnapshot, HeadState, OperationKind, RemoteInfo,
@@ -17,7 +18,6 @@ use crate::infrastructure::git::{CliGitBackend, GitService};
 use crate::state::{AppState, TabDrop};
 use crate::ui::branch_picker::{BranchListing, Checkout};
 use crate::ui::git_confirm::{GitConfirm, GitConfirmAction};
-use crate::ui::git_panel::{ExpandedCommit, GitHistory};
 use crate::ui::stash_switch::StashSwitchRequest;
 
 pub fn open_diff(
@@ -47,10 +47,10 @@ pub fn open_changes(state: &State<AppState>, file: crate::features::git::DiffReq
         ) && let Some(pane) = app.workspace.pane_of(id)
         {
             app.workspace.activate(pane, id);
-            app.workspace.focus_diff_section(&file, app.git_split_diff);
+            app.workspace
+                .focus_diff_section(&file, app.git.ui.split_diff);
             // Invalidate a slower single-file open still in flight.
-            app.git_open_diff_sequence += 1;
-            app.git_diff_loading = None;
+            app.git.model.cancel_diff_open();
             revealed = true;
         }
     });
@@ -83,11 +83,8 @@ fn open_diff_with_focus(
         };
         (pane, app.workspace.pane(pane).map(|pane| pane.active()))
     });
-    let sequence = app.git_open_diff_sequence + 1;
-    state.update(|app| {
-        app.git_open_diff_sequence = sequence;
-        app.git_diff_loading = Some(request.clone());
-    });
+    let mut sequence = 0;
+    state.update(|app| sequence = app.git.model.begin_diff_open(request.clone()));
     let worker_state = state.clone();
     let spawned = thread::Builder::new()
         .name("loom-git-open-diff".into())
@@ -123,10 +120,9 @@ fn open_diff_with_focus(
             application.post(move || {
                 let mut result = Some(result);
                 worker_state.update(|app| {
-                    if app.git_open_diff_sequence != sequence {
+                    if !app.git.model.finish_diff_open(sequence) {
                         return;
                     }
-                    app.git_diff_loading = None;
                     if app.explorer.model.roots() != roots
                         || (app.workspace.active_pane(), app.workspace.active()) != active_view
                         || destination_view.is_some_and(|(pane, active)| {
@@ -146,7 +142,8 @@ fn open_diff_with_focus(
                                 app.workspace.open_prepared_file_changes(document);
                             }
                             if let Some(focus) = &focus {
-                                app.workspace.focus_diff_section(focus, app.git_split_diff);
+                                app.workspace
+                                    .focus_diff_section(focus, app.git.ui.split_diff);
                             }
                         }
                         Err(error) => app.show_error(error.user_message()),
@@ -158,7 +155,7 @@ fn open_diff_with_focus(
         .is_ok();
     if !spawned {
         state.update(|app| {
-            app.git_diff_loading = None;
+            app.git.model.abandon_diff_open();
             app.show_error("Could not start Git diff worker.");
         });
     }
@@ -314,7 +311,7 @@ pub fn request_discard(
         _ => "Changes to tracked files will be lost; untracked files are moved to the trash.",
     };
     state.update(move |app| {
-        app.git_confirm = Some(GitConfirm {
+        app.git.ui.confirm = Some(GitConfirm {
             title,
             message: message.to_owned(),
             confirm_label: if untracked.is_empty() {
@@ -385,8 +382,8 @@ pub fn discard_paths(
 /// tracked change first; amending needs no staged changes.
 pub fn commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
     let app = state.get();
-    let message = app.git_commit_input.text().trim().to_owned();
-    let amend = app.git_commit_amend;
+    let message = app.git.ui.commit_input.text().trim().to_owned();
+    let amend = app.git.ui.commit_amend;
     drop(app);
     if message.is_empty() && !amend {
         state.update(|app| app.show_toast("Enter a commit message."));
@@ -412,7 +409,7 @@ pub fn commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool 
         }
         let count = unstaged.len();
         state.update(move |app| {
-            app.git_confirm = Some(GitConfirm {
+            app.git.ui.confirm = Some(GitConfirm {
                 title: "Commit all changes?".into(),
                 message: format!(
                     "Nothing is staged. Stage the {count} changed file{} and commit? Untracked \
@@ -432,7 +429,7 @@ pub fn commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool 
 
 /// Stage every tracked change, then commit.
 pub fn commit_all(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
-    let message = state.get().git_commit_input.text().trim().to_owned();
+    let message = state.get().git.ui.commit_input.text().trim().to_owned();
     let Some(repository) = active_repository(store) else {
         return false;
     };
@@ -449,8 +446,8 @@ fn commit_paths(
     stage: Vec<PathBuf>,
 ) -> bool {
     let app = state.get();
-    let amend = app.git_commit_amend;
-    let signoff = app.git_commit_signoff;
+    let amend = app.git.ui.commit_amend;
+    let signoff = app.git.ui.commit_signoff;
     drop(app);
     run_with(
         state,
@@ -468,7 +465,7 @@ fn commit_paths(
                 backend.commit(root, &message, amend, signoff)
             })
         },
-        |app, _| app.git_commit_amend = false,
+        |app, _| app.git.ui.commit_amend = false,
     )
 }
 
@@ -541,7 +538,7 @@ pub fn request_abort(state: &State<AppState>, store: &State<GitStoreSnapshot>) -
     };
     let root = repository.worktree_root;
     state.update(move |app| {
-        app.git_confirm = Some(GitConfirm {
+        app.git.ui.confirm = Some(GitConfirm {
             title: title.into(),
             message: format!("{message} Conflict resolutions made so far are lost."),
             confirm_label: if operation == RepositoryState::Bisecting {
@@ -697,7 +694,7 @@ pub fn request_drop_stash(
     let message = format!("\"{}\" is deleted. This cannot be undone.", stash.message);
     let root = repository.worktree_root;
     state.update(move |app| {
-        app.git_confirm = Some(GitConfirm {
+        app.git.ui.confirm = Some(GitConfirm {
             title: "Drop this stash?".into(),
             message,
             confirm_label: "Drop",
@@ -852,7 +849,7 @@ pub fn request_discard_block(
         file_name(&path)
     );
     state.update(move |app| {
-        app.git_confirm = Some(GitConfirm {
+        app.git.ui.confirm = Some(GitConfirm {
             title: "Discard this change?".into(),
             message,
             confirm_label: "Discard",
@@ -897,7 +894,7 @@ pub fn load_history(state: &State<AppState>, root: PathBuf, head: Option<String>
             };
             application.post(move || {
                 worker_state.update(move |app| {
-                    app.git_history = Some(GitHistory {
+                    app.git.model.set_history(GitHistory {
                         repository: root,
                         head,
                         commits,
@@ -910,20 +907,14 @@ pub fn load_history(state: &State<AppState>, root: PathBuf, head: Option<String>
 /// Expand commit `oid` in the history, loading the files it changed.
 /// Expanding it again collapses it.
 pub fn toggle_commit(state: &State<AppState>, root: PathBuf, oid: String) {
-    let app = state.get();
-    let collapse = app
-        .git_history_commit
-        .as_ref()
-        .is_some_and(|commit| commit.oid == oid);
-    let application = app.runtime().and_then(|runtime| runtime.application());
+    let application = state
+        .get()
+        .runtime()
+        .and_then(|runtime| runtime.application());
     let toggled = oid.clone();
-    state.update(move |app| {
-        app.git_history_commit = (!collapse).then_some(ExpandedCommit {
-            oid: toggled,
-            files: None,
-        });
-    });
-    let Some(application) = application.filter(|_| !collapse) else {
+    let mut expanded = false;
+    state.update(|app| expanded = app.git.model.toggle_commit(toggled));
+    let Some(application) = application.filter(|_| expanded) else {
         return;
     };
     let worker_state = state.clone();
@@ -934,15 +925,7 @@ pub fn toggle_commit(state: &State<AppState>, root: PathBuf, oid: String) {
                 .and_then(|service| service.backend().commit_files(&root, &oid))
                 .map_err(|error| error.user_message());
             application.post(move || {
-                worker_state.update(move |app| {
-                    if let Some(commit) = app
-                        .git_history_commit
-                        .as_mut()
-                        .filter(|commit| commit.oid == oid)
-                    {
-                        commit.files = Some(files);
-                    }
-                });
+                worker_state.update(move |app| app.git.model.set_commit_files(&oid, files));
             });
         });
 }
@@ -996,11 +979,11 @@ pub fn open_commit_changes(
         {
             app.workspace.activate(pane, id);
             if let Some(focus) = &focus {
-                app.workspace.focus_diff_section(focus, app.git_split_diff);
+                app.workspace
+                    .focus_diff_section(focus, app.git.ui.split_diff);
             }
             // Invalidate a slower open still in flight.
-            app.git_open_diff_sequence += 1;
-            app.git_diff_loading = None;
+            app.git.model.cancel_diff_open();
             revealed = true;
         }
     });
@@ -1011,16 +994,14 @@ pub fn open_commit_changes(
     let Some(application) = app.runtime().and_then(|runtime| runtime.application()) else {
         return;
     };
-    let sequence = app.git_open_diff_sequence + 1;
+    drop(app);
     let loading = crate::features::git::DiffRequest {
         repository_root: root.clone(),
         path: PathBuf::new(),
         target: crate::features::git::DiffTarget::Commit,
     };
-    state.update(|app| {
-        app.git_open_diff_sequence = sequence;
-        app.git_diff_loading = Some(loading);
-    });
+    let mut sequence = 0;
+    state.update(|app| sequence = app.git.model.begin_diff_open(loading));
     let worker_state = state.clone();
     let spawned = thread::Builder::new()
         .name("loom-git-commit-changes".into())
@@ -1032,15 +1013,15 @@ pub fn open_commit_changes(
             application.post(move || {
                 let mut result = Some(result);
                 worker_state.update(|app| {
-                    if app.git_open_diff_sequence != sequence {
+                    if !app.git.model.finish_diff_open(sequence) {
                         return;
                     }
-                    app.git_diff_loading = None;
                     match result.take().unwrap() {
                         Ok(document) => {
                             app.workspace.open_prepared_commit_changes(document);
                             if let Some(focus) = &focus {
-                                app.workspace.focus_diff_section(focus, app.git_split_diff);
+                                app.workspace
+                                    .focus_diff_section(focus, app.git.ui.split_diff);
                             }
                         }
                         Err(error) => app.show_error(error.user_message()),
@@ -1052,7 +1033,7 @@ pub fn open_commit_changes(
         .is_ok();
     if !spawned {
         state.update(|app| {
-            app.git_diff_loading = None;
+            app.git.model.abandon_diff_open();
             app.show_error("Could not start Git diff worker.");
         });
     }
@@ -1083,10 +1064,10 @@ pub fn hover_commit(
         .spawn(move || {
             thread::sleep(COMMIT_CARD_DELAY);
             let app = worker_state.get();
-            if app.git_hover.as_ref() != Some(&hovered) {
+            if app.git.ui.hover.as_ref() != Some(&hovered) {
                 return;
             }
-            let cached = app.git_commit_details.get(&oid).cloned();
+            let cached = app.git.model.commit_detail(&oid).cloned();
             drop(app);
             let details = cached.unwrap_or_else(|| {
                 crate::infrastructure::git::service()
@@ -1095,13 +1076,11 @@ pub fn hover_commit(
             });
             application.post(move || {
                 worker_state.update(move |app| {
-                    // Commits never change, but keep the cache small.
-                    if app.git_commit_details.len() >= 64 {
-                        app.git_commit_details.clear();
-                    }
-                    app.git_commit_details.insert(oid.clone(), details.clone());
-                    if app.git_hover.as_ref() == Some(&hovered) {
-                        app.git_commit_card = Some(crate::ui::git_panel::CommitCard {
+                    app.git
+                        .model
+                        .cache_commit_detail(oid.clone(), details.clone());
+                    if app.git.ui.hover.as_ref() == Some(&hovered) {
+                        app.git.ui.commit_card = Some(crate::ui::git_panel::CommitCard {
                             oid,
                             anchor,
                             details,
@@ -1150,11 +1129,9 @@ pub fn revert_commit(
 pub fn select_repository(state: &State<AppState>, store: &State<GitStoreSnapshot>, root: PathBuf) {
     let pinned = root.clone();
     state.update(move |app| {
-        app.git_pinned_repository =
-            Some((pinned, app.workspace.active_path().map(Path::to_path_buf)));
-        app.git_history_commit = None;
-        app.git_scroll = 0.0;
-        app.git_details_scroll = 0.0;
+        let active_path = app.workspace.active_path().map(Path::to_path_buf);
+        app.git.model.pin_repository(pinned, active_path);
+        app.git.ui.reset_scroll();
     });
     store.update(move |snapshot| snapshot.pin_active(Some(&root)));
 }
@@ -1240,8 +1217,8 @@ fn create_worktree_message(path: &Path, checkout: &Checkout) -> String {
 pub fn request_create_worktree(state: &State<AppState>, repository: PathBuf, checkout: Checkout) {
     let path = default_worktree_path(&repository, &checkout);
     state.update(move |app| {
-        app.branch_picker = None;
-        app.git_confirm = Some(GitConfirm {
+        app.git.ui.branch_picker = None;
+        app.git.ui.confirm = Some(GitConfirm {
             title: "New Worktree".into(),
             message: create_worktree_message(&path, &checkout),
             confirm_label: "Create",
@@ -1258,7 +1235,7 @@ pub fn request_create_worktree(state: &State<AppState>, repository: PathBuf, che
 
 pub fn choose_worktree_location(state: &State<AppState>) {
     use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
-    let Some(confirm) = state.get().git_confirm else {
+    let Some(confirm) = state.get().git.ui.confirm else {
         return;
     };
     let GitConfirmAction::CreateWorktree { path, .. } = confirm.action else {
@@ -1276,7 +1253,7 @@ pub fn choose_worktree_location(state: &State<AppState>) {
     };
     let path = parent.join(name);
     state.update(move |app| {
-        if let Some(confirm) = app.git_confirm.as_mut()
+        if let Some(confirm) = app.git.ui.confirm.as_mut()
             && let GitConfirmAction::CreateWorktree {
                 path: target,
                 checkout,
@@ -1335,11 +1312,9 @@ pub fn create_worktree(
         move |app, ()| {
             let path = std::fs::canonicalize(&created).unwrap_or(created);
             crate::app::explorer::add_folder(app, path.clone());
-            app.git_pinned_repository =
-                Some((path, app.workspace.active_path().map(Path::to_path_buf)));
-            app.git_history_commit = None;
-            app.git_scroll = 0.0;
-            app.git_details_scroll = 0.0;
+            let active_path = app.workspace.active_path().map(Path::to_path_buf);
+            app.git.model.pin_repository(path, active_path);
+            app.git.ui.reset_scroll();
             app.show_success("Created worktree and added it to the workspace.");
         },
     )
@@ -1387,7 +1362,7 @@ pub fn request_remove_worktree(
     force: bool,
 ) {
     state.update(move |app| {
-        app.git_confirm = Some(worktree_removal_confirmation(
+        app.git.ui.confirm = Some(worktree_removal_confirmation(
             repository,
             path,
             force,
@@ -1469,7 +1444,7 @@ pub fn remove_worktree(
                 crate::app::explorer::forget_worktree(app, &target);
                 app.show_success("Deleted worktree. Its branch was kept.");
             } else {
-                app.git_confirm = Some(worktree_removal_confirmation(
+                app.git.ui.confirm = Some(worktree_removal_confirmation(
                     source,
                     target,
                     true,
@@ -1494,9 +1469,11 @@ pub fn undo_last_commit(state: &State<AppState>, store: &State<GitStoreSnapshot>
         "Undoing last commit…",
         |service, root| service.write(root, |backend| backend.undo_commit(root)),
         |app, message| {
-            if app.git_commit_input.text().trim().is_empty() {
+            if app.git.ui.commit_input.text().trim().is_empty() {
                 // The input is single-line: keep the subject.
-                app.git_commit_input
+                app.git
+                    .ui
+                    .commit_input
                     .set_text(message.lines().next().unwrap_or_default());
             }
             app.show_success("Undid the last commit. Its changes are staged.");
@@ -1624,6 +1601,8 @@ pub fn load_branches(state: &State<AppState>, repository: PathBuf, sequence: u64
             application.post(move || {
                 worker_state.update(move |app| {
                     if let Some(picker) = app
+                        .git
+                        .ui
                         .branch_picker
                         .as_mut()
                         .filter(|picker| picker.sequence == sequence)
@@ -1636,7 +1615,7 @@ pub fn load_branches(state: &State<AppState>, repository: PathBuf, sequence: u64
         .is_ok();
     if !spawned {
         state.update(move |app| {
-            if let Some(picker) = app.branch_picker.as_mut() {
+            if let Some(picker) = app.git.ui.branch_picker.as_mut() {
                 picker.listing = BranchListing::Failed("Could not start Git worker.".into());
             }
         });
@@ -1645,7 +1624,7 @@ pub fn load_branches(state: &State<AppState>, repository: PathBuf, sequence: u64
 
 /// Fetch every remote, then reload the open branch picker's list.
 pub fn fetch_branches(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
-    let Some(picker) = state.get().branch_picker else {
+    let Some(picker) = state.get().git.ui.branch_picker else {
         return false;
     };
     let Some(repository) = store.get().repository_for_path(&picker.repository).cloned() else {
@@ -1668,6 +1647,8 @@ pub fn fetch_branches(state: &State<AppState>, store: &State<GitStoreSnapshot>) 
         },
         move |app, branches| {
             if let Some(picker) = app
+                .git
+                .ui
                 .branch_picker
                 .as_mut()
                 .filter(|picker| picker.sequence == sequence)
@@ -1838,7 +1819,7 @@ pub fn checkout(
                 ));
             }
             CheckoutOutcome::Blocked(files) => {
-                app.stash_switch = Some(StashSwitchRequest {
+                app.git.ui.stash_switch = Some(StashSwitchRequest {
                     repository: repository_root,
                     checkout: blocked_checkout,
                     files,
@@ -1912,7 +1893,7 @@ fn run_with<T: Send + 'static>(
                     state.update(move |app| on_success(app, value));
                     if kind == OperationKind::Commit {
                         state.update(|app| {
-                            app.git_commit_input.clear();
+                            app.git.ui.commit_input.clear();
                         });
                     }
                     state.update(|app| {
@@ -2180,7 +2161,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(5));
             }
             let app = state.get();
-            assert!(app.git_diff_loading.is_none());
+            assert!(app.git.model.diff_loading().is_none());
             if matches!(scenario, "failed" | "closed" | "navigated") {
                 assert_eq!(app.workspace.pane_ids().len(), 1);
                 assert!(app.workspace.diff(app.workspace.active_pane()).is_none());

@@ -146,7 +146,7 @@ fn with_app<R>(state: &State<AppState>, f: impl FnOnce(&mut AppState) -> R) -> R
 }
 pub fn visibility(app: &AppState) -> Visibility {
     Visibility {
-        git: app.show_source_control,
+        git: app.source_control.visible,
         files: app.drawer.visible,
         terminal: app.show_terminal,
     }
@@ -767,7 +767,7 @@ mod tests {
         let r = UiRect::new(0.0, 0.0, 1200.0, 800.0);
         let mut app = AppState::new();
         app.show_terminal = true;
-        app.show_source_control = true;
+        app.source_control.visible = true;
         let mut layout = ApplicationLayout::initial(r, 220.0, 220.0, 240.0);
         layout.sync(&[(1, 1), (2, 2)], Some(1));
         // The default strip remains region 4; a deliberately detached tab is 7.
@@ -1021,7 +1021,7 @@ mod tests {
             let state = cx.state_with(|| {
                 let mut a = AppState::new();
                 a.show_terminal = true;
-                a.show_source_control = true;
+                a.source_control.visible = true;
                 a.application_layout =
                     Some(ApplicationLayout::initial(viewport, 220.0, 220.0, 240.0));
                 a

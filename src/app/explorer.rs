@@ -501,13 +501,7 @@ pub(crate) fn add_folder(app: &mut AppState, path: PathBuf) {
 pub(crate) fn forget_worktree(app: &mut AppState, root: &Path) {
     remove_folder_state(app, root);
     app.explorer.model.forget_recent(root);
-    if app
-        .git_pinned_repository
-        .as_ref()
-        .is_some_and(|(path, _)| path == root)
-    {
-        app.git_pinned_repository = None;
-    }
+    app.git.model.unpin(root);
     persist_workspace(app);
 }
 

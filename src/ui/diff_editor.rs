@@ -44,7 +44,7 @@ pub fn render(
         return panel(rect, VisualStyle::filled(theme::c().bg));
     };
 
-    let split = app.git_split_diff;
+    let split = app.git.ui.split_diff;
     let collapsed = app.workspace.collapsed_diffs(pane);
     let overview = document
         .sections
@@ -92,7 +92,7 @@ pub fn render(
         split,
         row_count,
         document.longest_line(split),
-        app.git_split_ratio,
+        app.editor.diff_split.ratio,
     );
     let max_y = metrics.max_y;
     let max_x = metrics.max_x;
@@ -187,7 +187,7 @@ pub fn render(
             split,
             scroll_x,
             scroll_y,
-            app.git_split_ratio,
+            app.editor.diff_split.ratio,
             &state,
             &store,
             editor_focus,
@@ -198,7 +198,7 @@ pub fn render(
             &document.split_rows,
             scroll_x,
             scroll_y,
-            app.git_split_ratio,
+            app.editor.diff_split.ratio,
         ))
     } else {
         root.child(render_inline(body_rect, &document.rows, scroll_x, scroll_y))
@@ -216,22 +216,22 @@ pub fn render(
         let up = state.clone();
         root = root.child(crate::ui::pane_sash::horizontal(
             format!("git-split-{}", pane.get()),
-            split_middle(body_rect, app.git_split_ratio),
+            split_middle(body_rect, app.editor.diff_split.ratio),
             (body_rect.top, body_rect.bottom),
-            app.git_split_drag == Some(pane),
-            move || down.update(|app| app.git_split_drag = Some(pane)),
+            app.editor.diff_split.drag == Some(pane),
+            move || down.update(|app| app.editor.diff_split.drag = Some(pane)),
             move |x| {
                 moving.try_update(|app| {
-                    if app.git_split_drag != Some(pane) || body_rect.width() <= 0.0 {
+                    if app.editor.diff_split.drag != Some(pane) || body_rect.width() <= 0.0 {
                         return false;
                     }
                     let position =
                         crate::ui::pane_sash::split_position(body_rect.left, body_rect.right, x);
-                    app.git_split_ratio = (position - body_rect.left) / body_rect.width();
+                    app.editor.diff_split.ratio = (position - body_rect.left) / body_rect.width();
                     true
                 });
             },
-            move || up.update(|app| app.git_split_drag = None),
+            move || up.update(|app| app.editor.diff_split.drag = None),
         ));
     }
 
@@ -346,7 +346,7 @@ pub(crate) fn drag_scrollbars(app: &mut AppState, rect: UiRect, x: f32, y: f32) 
     {
         return false;
     }
-    let split = app.git_split_diff;
+    let split = app.git.ui.split_diff;
     let Some(document) = app.workspace.diff(app.workspace.active_pane()) else {
         return crate::app::editor::finish_scrollbar_drag(app);
     };
@@ -368,7 +368,7 @@ pub(crate) fn drag_scrollbars(app: &mut AppState, rect: UiRect, x: f32, y: f32) 
         split,
         rows,
         document.longest_line(split),
-        app.git_split_ratio,
+        app.editor.diff_split.ratio,
     );
     crate::app::editor::drag_scrollbars_with_metrics(
         app,
@@ -431,7 +431,7 @@ fn toolbar(
         toolbar_button(split_rect, if compact { "S" } else { "Split" }, split).on_click(
             move || {
                 split_state.update(|app| {
-                    app.git_split_diff = true;
+                    app.git.ui.split_diff = true;
                     app.workspace.activate_pane(pane);
                     app.workspace.set_scroll(pane, 0.0, 0.0);
                 });
@@ -445,7 +445,7 @@ fn toolbar(
         toolbar_button(inline_rect, if compact { "I" } else { "Inline" }, !split).on_click(
             move || {
                 inline_state.update(|app| {
-                    app.git_split_diff = false;
+                    app.git.ui.split_diff = false;
                     app.workspace.activate_pane(pane);
                     app.workspace.set_scroll(pane, 0.0, 0.0);
                 });
@@ -1092,7 +1092,7 @@ mod tests {
             let view: AppView = Arc::new(move |cx| {
                 let state = cx.state_with(|| {
                     let mut app = AppState::new();
-                    app.git_split_diff = split;
+                    app.git.ui.split_diff = split;
                     app.workspace.open_diff(sample_overview(0));
                     app
                 });
@@ -1251,7 +1251,7 @@ mod tests {
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
-                app.git_split_diff = false;
+                app.git.ui.split_diff = false;
                 app.workspace.open_diff(document.clone());
                 app
             });
@@ -1376,7 +1376,7 @@ mod tests {
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
-                app.git_split_diff = split;
+                app.git.ui.split_diff = split;
                 app.workspace.open_diff(DiffDocument::added(
                     "test-repo".into(),
                     "long.txt".into(),
@@ -1434,21 +1434,22 @@ mod tests {
                 pointer: pointer(middle, 80.0),
                 button: PointerButton::Left,
             });
-            assert_eq!(state.get().git_split_drag, Some(PaneId::new(1)));
+            assert_eq!(state.get().editor.diff_split.drag, Some(PaneId::new(1)));
             send(InputEvent::PointerMove(pointer(900.0, 80.0)));
-            assert!(state.get().git_split_ratio > 0.5);
+            assert!(state.get().editor.diff_split.ratio > 0.5);
             assert!(
-                (split_middle(body, state.get().git_split_ratio) - (body.right - 200.0)).abs()
+                (split_middle(body, state.get().editor.diff_split.ratio) - (body.right - 200.0))
+                    .abs()
                     < 0.01
             );
             send(InputEvent::PointerUp {
                 pointer: pointer(900.0, 80.0),
                 button: PointerButton::Left,
             });
-            assert_eq!(state.get().git_split_drag, None);
-            let ratio = state.get().git_split_ratio;
+            assert_eq!(state.get().editor.diff_split.drag, None);
+            let ratio = state.get().editor.diff_split.ratio;
             send(InputEvent::PointerMove(pointer(20.0, 80.0)));
-            assert_eq!(state.get().git_split_ratio, ratio);
+            assert_eq!(state.get().editor.diff_split.ratio, ratio);
         }
 
         // Grab the thumb, then move away from its strip and beyond the viewport.

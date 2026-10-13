@@ -511,7 +511,7 @@ mod tests {
             app.search.ui.filters_open = true;
             app.search.ui.details_open = true;
             app.search.ui.scroll_y = 20.0;
-            app.show_source_control = !app.show_source_control;
+            app.source_control.visible = !app.source_control.visible;
             app.drawer.visible = false;
         });
         session.render_view(&view, viewport, UiScale::ONE);

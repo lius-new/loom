@@ -288,7 +288,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     // A key sequence does not survive leaving the window.
                     let had_pending = !app.pending_keystrokes.is_empty();
                     app.pending_keystrokes.clear();
-                    let split_drag = app.git_split_drag.take().is_some()
+                    let split_drag = app.editor.diff_split.drag.take().is_some()
                         | app.terminal_split_drag.take().is_some()
                         | app.application_sash_drag.take().is_some();
                     crate::app::editor::finish_scrollbar_drag(app)
@@ -331,11 +331,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 });
                 app.editor.tab_context_menu = None;
                 app.terminal_tab_context_menu = None;
-                app.show_clone_dialog = false;
-                app.branch_picker = None;
-                app.stash_switch = None;
-                app.git_confirm = None;
-                app.git_menu = None;
+                app.git.ui.clone_visible = false;
+                app.git.ui.branch_picker = None;
+                app.git.ui.stash_switch = None;
+                app.git.ui.confirm = None;
+                app.git.ui.menu = None;
                 app.editor.menu = None;
             });
         }
@@ -367,7 +367,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let layout = app.application_layout.get_or_insert_with(|| {
             ApplicationLayout::initial(
                 content_area,
-                app.git_sidebar_w,
+                app.source_control.width,
                 app.drawer.width,
                 app.terminal_h,
             )
@@ -385,18 +385,20 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let mut git_target = s.workspace.git_poll_target();
     // A repository chosen in Source Control holds until the active file changes.
     git_target.pinned_repository = s
-        .git_pinned_repository
-        .as_ref()
-        .filter(|(_, active_path)| *active_path == git_target.active_path)
-        .map(|(root, _)| root.clone());
+        .git
+        .model
+        .pinned_for(git_target.active_path.as_deref())
+        .cloned();
     // Keep the history of the active repository's HEAD while it is shown.
     let history_key = {
         let git = git_store.get();
         git.active()
             .filter(|_| {
-                s.show_source_control
+                s.source_control.visible
                     && !s
-                        .git_collapsed_sections
+                        .git
+                        .ui
+                        .collapsed_sections
                         .contains(&crate::ui::git_panel::HISTORY)
             })
             .map(|repository| {
@@ -541,7 +543,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         }
         || {}
     });
-    let source_control_open = s.show_source_control;
+    let source_control_open = s.source_control.visible;
     cx.use_effect(source_control_open, move || {
         let _ = workspace_persistence::save_source_control_open(source_control_open);
         || {}
@@ -551,7 +553,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let _ = settings_persistence::save(&settings);
         || {}
     });
-    let show_clone_dialog = s.show_clone_dialog;
+    let show_clone_dialog = s.git.ui.clone_visible;
     let editing_explorer_entry =
         s.explorer.model.create_request().is_some() || s.explorer.model.rename_request().is_some();
 
@@ -561,7 +563,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let application_layout = s.application_layout.as_ref().unwrap();
     let layout_visibility = layout_map::visibility(&s);
     let application_snapshot = application_layout.snapshot(content_area, layout_visibility);
-    let source_control_left = s.show_source_control;
+    let source_control_left = s.source_control.visible;
     // Each pane is a tab strip above its surface; the focused pane's rects
     // drive the editor-wide handlers (selection auto-scroll, menus, keys).
     let editor_area = application_layout
@@ -746,7 +748,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     crate::ui::hold_focus(
         cx,
-        s.branch_picker
+        s.git
+            .ui
+            .branch_picker
             .as_ref()
             .map(|picker| picker.restore_terminal),
         branch_picker_input_focus.clone(),
@@ -755,7 +759,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     );
     crate::ui::hold_focus(
         cx,
-        s.stash_switch
+        s.git
+            .ui
+            .stash_switch
             .as_ref()
             .map(|request| request.restore_terminal),
         stash_switch_focus.clone(),
@@ -764,7 +770,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     );
     crate::ui::hold_focus(
         cx,
-        s.git_confirm
+        s.git
+            .ui
+            .confirm
             .as_ref()
             .map(|confirm| confirm.restore_terminal),
         git_confirm_focus.clone(),
@@ -958,12 +966,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         if let UiEventPayload::PointerMove { pointer } = payload {
             let hovered = source_control_left && source_control_rect.contains(pointer.point);
             st_git_hover.try_update(move |app| {
-                let mut changed = app.git_sidebar_hovered != hovered;
-                app.git_sidebar_hovered = hovered;
+                let mut changed = app.git.ui.hovered != hovered;
+                app.git.ui.hovered = hovered;
                 // Leaving the drawer drops its row hover; the drawer only
                 // tracks moves inside itself.
-                if !hovered && app.git_hover.is_some() {
-                    app.git_hover = None;
+                if !hovered && app.git.ui.hover.is_some() {
+                    app.git.ui.hover = None;
                     changed = true;
                 }
                 changed
@@ -1020,12 +1028,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     || app.explorer.ui.menu.is_some()
                     || app.editor.tab_context_menu.is_some()
                     || app.terminal_tab_context_menu.is_some()
-                    || app.branch_picker.is_some()
-                    || app.stash_switch.is_some()
-                    || app.git_menu.is_some()
-                    || app.git_confirm.is_some()
+                    || app.git.ui.branch_picker.is_some()
+                    || app.git.ui.stash_switch.is_some()
+                    || app.git.ui.menu.is_some()
+                    || app.git.ui.confirm.is_some()
                     || app.editor.close_request.is_some()
-                    || app.show_clone_dialog;
+                    || app.git.ui.clone_visible;
                 !overlay && app.workspace.activate_pane(pane)
             });
         }
@@ -1255,10 +1263,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     if s.explorer.ui.menu.is_none()
         && s.editor.tab_context_menu.is_none()
         && s.terminal_tab_context_menu.is_none()
-        && s.branch_picker.is_none()
-        && s.stash_switch.is_none()
-        && s.git_menu.is_none()
-        && s.git_confirm.is_none()
+        && s.git.ui.branch_picker.is_none()
+        && s.git.ui.stash_switch.is_none()
+        && s.git.ui.menu.is_none()
+        && s.git.ui.confirm.is_none()
         && !show_clone_dialog
         && s.editor.close_request.is_none()
         && let Some(tooltip) = tabs::render_tooltip(vp, &strips, &s)
@@ -1266,10 +1274,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         root = root.child(tooltip);
     }
     if s.explorer.ui.menu.is_none()
-        && s.git_menu.is_none()
-        && s.git_confirm.is_none()
-        && s.branch_picker.is_none()
-        && s.stash_switch.is_none()
+        && s.git.ui.menu.is_none()
+        && s.git.ui.confirm.is_none()
+        && s.git.ui.branch_picker.is_none()
+        && s.git.ui.stash_switch.is_none()
         && !show_clone_dialog
         && s.editor.close_request.is_none()
         && let Some(card) = git_panel::render_commit_card(vp, &s)
@@ -1308,19 +1316,19 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             editor_focus.clone(),
         ));
     }
-    if let Some(picker) = &s.branch_picker {
+    if let Some(picker) = &s.git.ui.branch_picker {
         root = root.child(branch_picker::render(
             vp,
             titlebar_rect.bottom,
             picker,
-            s.branch_picker_input.text(),
+            s.git.ui.branch_picker_input.text(),
             state.clone(),
             git_store.clone(),
             branch_picker_input_focus.clone(),
             branch_picker_input_id.clone(),
         ));
     }
-    if let Some(request) = &s.stash_switch {
+    if let Some(request) = &s.git.ui.stash_switch {
         root = root.child(stash_switch::render(
             vp,
             request,
@@ -1329,7 +1337,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             stash_switch_id.clone(),
         ));
     }
-    if let Some(menu) = &s.git_menu {
+    if let Some(menu) = &s.git.ui.menu {
         root = root.child(git_menu::render(
             vp,
             menu,
@@ -1338,7 +1346,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             editor_focus.clone(),
         ));
     }
-    if let Some(confirm) = &s.git_confirm {
+    if let Some(confirm) = &s.git.ui.confirm {
         root = root.child(git_confirm::render(
             vp,
             confirm,
@@ -1461,7 +1469,7 @@ fn apply_git_scan(
     {
         let retired = app
             .workspace
-            .apply_prepared_git_diffs(&next.presentation.diffs, app.git_split_diff);
+            .apply_prepared_git_diffs(&next.presentation.diffs, app.git.ui.split_diff);
         let changed = !retired.is_empty();
         crate::background_ui::retire(retired);
         changed

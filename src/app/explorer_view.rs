@@ -176,8 +176,8 @@ fn run(state: &State<AppState>, services: &Services, command: Command) {
             explorer::choose_folder(state);
         }
         Command::CloneRepository => state.update(|app| {
-            app.show_clone_dialog = true;
-            app.clone_repository_error = None;
+            app.git.ui.clone_visible = true;
+            app.git.ui.clone_error = None;
         }),
         Command::SubmitEdit => {
             if state.get().explorer.model.create_request().is_some() {

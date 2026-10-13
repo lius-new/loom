@@ -277,16 +277,16 @@ pub fn choose_file(state: &State<AppState>) -> bool {
 /// dialog. Git runs off the UI thread; a successful clone becomes the active
 /// workspace automatically.
 pub fn clone_repository(state: &State<AppState>) -> bool {
-    let url = state.get().clone_repository_url.trim().to_owned();
+    let url = state.get().git.ui.clone_url.trim().to_owned();
     if url.is_empty() {
         state.update(|app| {
-            app.clone_repository_error = Some("Enter a repository URL.".to_owned());
+            app.git.ui.clone_error = Some("Enter a repository URL.".to_owned());
         });
         return false;
     }
     let Some(directory_name) = repository_directory_name(&url) else {
         state.update(|app| {
-            app.clone_repository_error = Some("The repository URL has no project name.".to_owned());
+            app.git.ui.clone_error = Some("The repository URL has no project name.".to_owned());
         });
         return false;
     };
@@ -301,13 +301,13 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
     let target = parent.join(directory_name);
     if target.exists() {
         let message = format!("{} already exists.", target.display());
-        state.update(move |app| app.clone_repository_error = Some(message));
+        state.update(move |app| app.git.ui.clone_error = Some(message));
         return false;
     }
 
     state.update(|app| {
-        app.cloning_repository = true;
-        app.clone_repository_error = None;
+        app.git.model.begin_clone();
+        app.git.ui.clone_error = None;
     });
     let clone_state = state.clone();
     thread::Builder::new()
@@ -322,18 +322,18 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
             });
 
             clone_state.update(move |app| {
-                app.cloning_repository = false;
+                app.git.model.finish_clone();
                 match result {
                     Ok(()) => {
                         app.toast = None;
                         crate::app::explorer::load_folder(app, target);
-                        app.show_clone_dialog = false;
-                        app.clone_repository_url.clear();
-                        app.clone_repository_error = None;
-                        app.clone_input_focused = false;
+                        app.git.ui.clone_visible = false;
+                        app.git.ui.clone_url.clear();
+                        app.git.ui.clone_error = None;
+                        app.git.ui.clone_input_focused = false;
                     }
                     Err(error) => {
-                        app.clone_repository_error = Some(error.user_message());
+                        app.git.ui.clone_error = Some(error.user_message());
                     }
                 }
             });
@@ -341,8 +341,8 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
         .map(|_| true)
         .unwrap_or_else(|error| {
             state.update(move |app| {
-                app.cloning_repository = false;
-                app.clone_repository_error = Some(format!("Could not start git: {error}"));
+                app.git.model.finish_clone();
+                app.git.ui.clone_error = Some(format!("Could not start git: {error}"));
             });
             false
         })

@@ -171,7 +171,7 @@ pub fn render(
                     ),
                     "source-control",
                 )
-                .icon_style(IconStyle::new(if s.show_source_control {
+                .icon_style(IconStyle::new(if s.source_control.visible {
                     theme::c().accent
                 } else {
                     theme::c().text_muted
@@ -180,7 +180,7 @@ pub fn render(
     );
 
     let mut left = scm_slot.right + GAP;
-    if s.git_diff_loading.is_some() {
+    if s.git.model.diff_loading().is_some() {
         bar = bar.child(text(
             UiRect::new(left, rect.top, left + 140.0, rect.bottom),
             "Loading diff…",

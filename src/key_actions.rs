@@ -78,8 +78,8 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
     env.state.try_update(|app| {
         composing = app.editor.is_composing()
             || !app.explorer.ui.create_input.preedit.is_empty()
-            || !app.git_commit_input.preedit.is_empty()
-            || !app.branch_picker_input.preedit.is_empty()
+            || !app.git.ui.commit_input.preedit.is_empty()
+            || !app.git.ui.branch_picker_input.preedit.is_empty()
             || !app.keymap_search.preedit.is_empty()
             || app.search.composing();
         pending = app.pending_keystrokes.clone();
@@ -335,9 +335,9 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
                 read(&env.state, |app| {
                     (
                         app.editor.close_request.is_some(),
-                        app.show_clone_dialog,
-                        app.stash_switch.is_some(),
-                        app.git_confirm.is_some(),
+                        app.git.ui.clone_visible,
+                        app.git.ui.stash_switch.is_some(),
+                        app.git.ui.confirm.is_some(),
                     )
                 });
             if close_request {

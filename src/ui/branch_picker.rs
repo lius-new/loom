@@ -242,8 +242,8 @@ fn picker_rows(picker: &BranchPicker, query: &str) -> Vec<Row> {
 
 fn toggle_worktrees(state: &State<AppState>, branch: String, index: usize) {
     state.update(move |app| {
-        let query = app.branch_picker_input.text().to_owned();
-        if let Some(picker) = app.branch_picker.as_mut() {
+        let query = app.git.ui.branch_picker_input.text().to_owned();
+        if let Some(picker) = app.git.ui.branch_picker.as_mut() {
             if !picker.collapsed_worktrees.insert(branch.clone()) {
                 picker.collapsed_worktrees.remove(&branch);
             }
@@ -353,8 +353,8 @@ impl ListLayout {
 
 /// Move the selection by `delta` items, wrapping at either end.
 pub fn move_selection(app: &mut AppState, delta: isize) {
-    let query = app.branch_picker_input.text().to_owned();
-    let Some(picker) = app.branch_picker.as_mut() else {
+    let query = app.git.ui.branch_picker_input.text().to_owned();
+    let Some(picker) = app.git.ui.branch_picker.as_mut() else {
         return;
     };
     let rows = picker_rows(picker, &query);
@@ -377,7 +377,7 @@ pub fn open(state: &State<AppState>, store: &State<GitStoreSnapshot>, anchor_x: 
         .active()
         .map(|repository| repository.worktree_root.clone())
     else {
-        state.update(|app| app.show_source_control = true);
+        state.update(|app| app.source_control.visible = true);
         return;
     };
     let sequence = NEXT_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
@@ -387,8 +387,8 @@ pub fn open(state: &State<AppState>, store: &State<GitStoreSnapshot>, anchor_x: 
     );
     let picker_repository = repository.clone();
     state.update(move |app| {
-        app.branch_picker_input = InputState::default();
-        app.branch_picker = Some(BranchPicker {
+        app.git.ui.branch_picker_input = InputState::default();
+        app.git.ui.branch_picker = Some(BranchPicker {
             repository: picker_repository,
             repository_name,
             anchor_x,
@@ -412,10 +412,10 @@ pub fn confirm(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool
 /// Choose item `index`, or the selected item without one.
 fn choose(state: &State<AppState>, store: &State<GitStoreSnapshot>, index: Option<usize>) -> bool {
     let app = state.get();
-    let Some(picker) = app.branch_picker else {
+    let Some(picker) = app.git.ui.branch_picker else {
         return false;
     };
-    let query = app.branch_picker_input.text();
+    let query = app.git.ui.branch_picker_input.text();
     let branches = picker.listing.branches();
     let rows = picker_rows(&picker, query);
     let index = index.unwrap_or_else(|| picker.view(query).0);
@@ -429,7 +429,7 @@ fn choose(state: &State<AppState>, store: &State<GitStoreSnapshot>, index: Optio
         return true;
     }
     let checkout = checkout_for(row, branches);
-    state.update(|app| app.branch_picker = None);
+    state.update(|app| app.git.ui.branch_picker = None);
     if let Some(checkout) = checkout {
         git_actions::checkout(
             state,
@@ -494,7 +494,7 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .on_pointer_down_with_button(move |_cx, pointer, _button| {
             if !card.contains(pointer.point) {
-                close_state.update(|app| app.branch_picker = None);
+                close_state.update(|app| app.git.ui.branch_picker = None);
             }
         });
 
@@ -515,8 +515,8 @@ pub fn render(
                     WheelUnit::Pixels => delta.y,
                 };
                 wheel_state.update(move |app| {
-                    let query = app.branch_picker_input.text().to_owned();
-                    if let Some(picker) = app.branch_picker.as_mut() {
+                    let query = app.git.ui.branch_picker_input.text().to_owned();
+                    if let Some(picker) = app.git.ui.branch_picker.as_mut() {
                         let (selected, scroll) = picker.view(&query);
                         picker.selected = selected;
                         picker.scroll = (scroll - step).clamp(0.0, max_scroll);
@@ -954,8 +954,8 @@ fn item_row(
 
 fn select_hovered(state: &State<AppState>, index: usize) {
     state.try_update(move |app| {
-        let query = app.branch_picker_input.text().to_owned();
-        let Some(picker) = app.branch_picker.as_mut() else {
+        let query = app.git.ui.branch_picker_input.text().to_owned();
+        let Some(picker) = app.git.ui.branch_picker.as_mut() else {
             return false;
         };
         let (selected, scroll) = picker.view(&query);
@@ -1111,7 +1111,7 @@ fn worktree_item(
             .cursor(CursorIcon::Pointer)
             .on_click(move |cx: &mut UiEventContext| {
                 cx.stop_propagation();
-                action_state.update(|app| app.branch_picker = None);
+                action_state.update(|app| app.git.ui.branch_picker = None);
                 match action {
                     WorktreeAction::Open => {
                         git_actions::open_worktree(&action_state, &action_store, path.clone());
@@ -1149,11 +1149,11 @@ fn worktree_label(path: &std::path::Path, repository: &std::path::Path) -> Strin
 }
 
 fn filter_state(app: &AppState) -> &InputState {
-    &app.branch_picker_input
+    &app.git.ui.branch_picker_input
 }
 
 fn filter_state_mut(app: &mut AppState) -> &mut InputState {
-    &mut app.branch_picker_input
+    &mut app.git.ui.branch_picker_input
 }
 
 #[cfg(test)]
@@ -1181,7 +1181,7 @@ mod tests {
                 occupied.worktree_path = Some(PathBuf::from("projects/loom-fix-login"));
                 branches.insert(2, occupied);
                 open_picker(&mut app, branches);
-                let picker = app.branch_picker.as_mut().unwrap();
+                let picker = app.git.ui.branch_picker.as_mut().unwrap();
                 picker.repository = PathBuf::from("projects/loom");
                 picker.repository_name = "loom".into();
                 picker.anchor_x = 8.0;
@@ -1202,12 +1202,12 @@ mod tests {
             let input_id = cx.use_stable_id();
             let input_focus = cx.focus_handle(input_id.clone());
             let root = panel(viewport, VisualStyle::filled(theme::c().bg));
-            if let Some(picker) = app.branch_picker.as_ref() {
+            if let Some(picker) = app.git.ui.branch_picker.as_ref() {
                 root.child(render(
                     viewport,
                     24.0,
                     picker,
-                    app.branch_picker_input.text(),
+                    app.git.ui.branch_picker_input.text(),
                     state,
                     store,
                     input_focus,
@@ -1274,7 +1274,7 @@ mod tests {
                 pixel.swap(0, 2);
             }
             image::save_buffer(path, &pixels, 920, 840, image::ColorType::Rgba8).unwrap();
-            state.update(|app| app.branch_picker.as_mut().unwrap().selected = 2);
+            state.update(|app| app.git.ui.branch_picker.as_mut().unwrap().selected = 2);
             session.render_view(&view, viewport, UiScale::ONE);
         }
 
@@ -1299,9 +1299,9 @@ mod tests {
             session.render_view(&view, viewport, UiScale::ONE);
         }
         let app = state.get();
-        assert!(app.branch_picker.is_none());
+        assert!(app.git.ui.branch_picker.is_none());
         assert_eq!(
-            app.git_confirm.unwrap().action,
+            app.git.ui.confirm.unwrap().action,
             GitConfirmAction::CreateWorktree {
                 repository: PathBuf::from("projects/loom"),
                 path: PathBuf::from("projects/loom-feature"),
@@ -1325,7 +1325,7 @@ mod tests {
     fn every_worktree_of_a_branch_gets_its_own_child_row() {
         let mut app = AppState::new();
         open_picker(&mut app, sample());
-        let picker = app.branch_picker.as_mut().unwrap();
+        let picker = app.git.ui.branch_picker.as_mut().unwrap();
         if let BranchListing::Ready { worktrees, .. } = &mut picker.listing {
             *worktrees = vec![
                 worktree("/repo-feature", "feature"),
@@ -1482,7 +1482,7 @@ mod tests {
     }
 
     fn open_picker(app: &mut AppState, branches: Vec<BranchInfo>) {
-        app.branch_picker = Some(BranchPicker {
+        app.git.ui.branch_picker = Some(BranchPicker {
             repository: PathBuf::from("repo"),
             repository_name: "repo".into(),
             anchor_x: 0.0,
@@ -1504,12 +1504,12 @@ mod tests {
         let mut app = AppState::new();
         open_picker(&mut app, sample());
         move_selection(&mut app, -1);
-        assert_eq!(app.branch_picker.as_ref().unwrap().selected, 3);
+        assert_eq!(app.git.ui.branch_picker.as_ref().unwrap().selected, 3);
         move_selection(&mut app, 1);
-        assert_eq!(app.branch_picker.as_ref().unwrap().selected, 0);
+        assert_eq!(app.git.ui.branch_picker.as_ref().unwrap().selected, 0);
         move_selection(&mut app, 1);
-        app.branch_picker_input.set_text("rel");
-        let picker = app.branch_picker.as_ref().unwrap();
+        app.git.ui.branch_picker_input.set_text("rel");
+        let picker = app.git.ui.branch_picker.as_ref().unwrap();
         assert_eq!(picker.view("rel"), (0, 0.0));
     }
 
@@ -1521,11 +1521,11 @@ mod tests {
             .collect();
         open_picker(&mut app, branches);
         move_selection(&mut app, -1);
-        let picker = app.branch_picker.as_ref().unwrap();
+        let picker = app.git.ui.branch_picker.as_ref().unwrap();
         assert_eq!(picker.selected, 29);
         // Header plus 30 rows, scrolled so the last row ends at the bottom.
         assert_eq!(picker.scroll, HEADER_H + 30.0 * ROW_H - MAX_LIST_H);
         move_selection(&mut app, 1);
-        assert_eq!(app.branch_picker.as_ref().unwrap().scroll, 0.0);
+        assert_eq!(app.git.ui.branch_picker.as_ref().unwrap().scroll, 0.0);
     }
 }

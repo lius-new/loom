@@ -82,30 +82,30 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         dialog.add(CLOSE_CONFIRMATION);
         return vec![dialog];
     }
-    if app.show_clone_dialog {
+    if app.git.ui.clone_visible {
         let mut dialog = KeyContext::new(DIALOG);
         dialog.add(CLONE_REPOSITORY);
         return vec![dialog];
     }
-    if app.stash_switch.is_some() {
+    if app.git.ui.stash_switch.is_some() {
         let mut dialog = KeyContext::new(DIALOG);
         dialog.add(STASH_SWITCH);
         return vec![dialog];
     }
-    if app.git_confirm.is_some() {
+    if app.git.ui.confirm.is_some() {
         let mut dialog = KeyContext::new(DIALOG);
         dialog.add(GIT_CONFIRM);
         return vec![dialog];
     }
     // The picker's filter takes typing, so workspace shortcuts stay out.
-    if app.branch_picker.is_some() {
+    if app.git.ui.branch_picker.is_some() {
         let mut dialog = KeyContext::new(DIALOG);
         dialog.add(BRANCH_PICKER);
         return vec![dialog];
     }
 
     let mut stack = vec![workspace_context(app)];
-    if app.git_commit_input.focused {
+    if app.git.ui.commit_input.focused {
         let mut input = KeyContext::new(INPUT);
         input.add(COMMIT_MESSAGE);
         stack.push(input);
@@ -139,7 +139,7 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         || app.explorer.ui.menu.is_some()
         || app.editor.tab_context_menu.is_some()
         || app.terminal_tab_context_menu.is_some()
-        || app.git_menu.is_some()
+        || app.git.ui.menu.is_some()
     {
         stack.push(KeyContext::new(MENU));
     }
@@ -231,14 +231,14 @@ mod tests {
         assert_eq!(primaries, [WORKSPACE, TERMINAL, MENU]);
 
         let mut dialog = editor_app();
-        dialog.show_clone_dialog = true;
+        dialog.git.ui.clone_visible = true;
         assert_eq!(describe(&context_stack(&dialog)), "Dialog CloneRepository");
     }
 
     #[test]
     fn branch_picker_owns_navigation_and_leaves_typing_to_its_filter() {
         let mut app = editor_app();
-        app.branch_picker = Some(crate::ui::branch_picker::BranchPicker {
+        app.git.ui.branch_picker = Some(crate::ui::branch_picker::BranchPicker {
             repository: "repo".into(),
             repository_name: "repo".into(),
             anchor_x: 0.0,
@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn inputs_and_dialogs_own_their_keys() {
         let mut input = AppState::new();
-        input.git_commit_input.focused = true;
+        input.git.ui.commit_input.focused = true;
         assert_eq!(
             action(&input, named(NamedKey::Escape, KeyModifiers::empty())),
             None

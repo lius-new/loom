@@ -161,9 +161,9 @@ impl Setting {
             | Self::TerminalLineHeight => None,
             Self::TerminalCursorBlink => Some(app.terminal_cursor_blink),
             Self::SmoothCaret => Some(app.smooth_caret),
-            Self::InlineBlame => Some(app.git_inline_blame),
-            Self::SplitDiff => Some(app.git_split_diff),
-            Self::TreeView => Some(app.git_tree_view),
+            Self::InlineBlame => Some(app.git.ui.inline_blame),
+            Self::SplitDiff => Some(app.git.ui.split_diff),
+            Self::TreeView => Some(app.git.ui.tree_view),
             Self::VimMode => Some(app.editor.vim.options.enabled),
             Self::VimSystemClipboard => Some(app.editor.vim.options.system_clipboard),
         }
@@ -180,9 +180,9 @@ impl Setting {
             | Self::TerminalLineHeight => {}
             Self::TerminalCursorBlink => app.terminal_cursor_blink ^= true,
             Self::SmoothCaret => app.smooth_caret ^= true,
-            Self::InlineBlame => app.git_inline_blame ^= true,
-            Self::SplitDiff => app.git_split_diff ^= true,
-            Self::TreeView => app.git_tree_view ^= true,
+            Self::InlineBlame => app.git.ui.inline_blame ^= true,
+            Self::SplitDiff => app.git.ui.split_diff ^= true,
+            Self::TreeView => app.git.ui.tree_view ^= true,
             Self::VimMode => {
                 let enabled = !app.editor.vim.options.enabled;
                 crate::app::editor_vim::set_enabled(app, enabled);

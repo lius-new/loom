@@ -23,10 +23,30 @@ pub struct DragSelection {
     pub unit: SelectionUnit,
     pub point: (f32, f32),
 }
+/// Divider between the two sides of a split diff.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DiffSplit {
+    /// Pane whose divider is being dragged.
+    pub drag: Option<PaneId>,
+    /// Left side's share of the width.
+    pub ratio: f32,
+}
+
+impl Default for DiffSplit {
+    fn default() -> Self {
+        Self {
+            drag: None,
+            ratio: 0.5,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct EditorState {
     /// Pending close operation waiting for the user to resolve dirty files.
     pub close_request: Option<CloseRequest>,
+    /// Side-by-side diff divider: the pane being dragged and the split.
+    pub diff_split: DiffSplit,
     /// The 1-based line under the pointer in a pane's gutter, which
     /// thickens that line's Git change bar.
     pub editor_gutter_hover: Option<(PaneId, usize)>,

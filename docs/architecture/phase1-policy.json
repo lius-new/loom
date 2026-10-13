@@ -54,30 +54,6 @@
       "owner": "app/state/layout",
       "remove_in": "R7"
     },
-    "branch_picker": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "branch_picker_input": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "clone_input_focused": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "clone_repository_error": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "clone_repository_url": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "cloning_repository": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
     "default_shell": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
@@ -98,6 +74,14 @@
       "owner": "app composition: features/explorer private model + ui/explorer interaction state",
       "remove_in": "R5 migrated; root composition retained"
     },
+    "git": {
+      "owner": "app composition: features/git private model + ui/git interaction state",
+      "remove_in": "R6 migrated; root composition retained"
+    },
+    "source_control": {
+      "owner": "app/state/chrome: SidebarChrome (Source Control drawer visibility/width/resizing; R6.3 owner corrected from features/git)",
+      "remove_in": "composition"
+    },
     "editor_font": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
@@ -105,118 +89,6 @@
     "editor_font_input": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
-    },
-    "git_collapsed_sections": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_commit_amend": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_commit_card": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_commit_details": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_commit_input": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_commit_signoff": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_confirm": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_details_scroll": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_details_scrollbar_drag_offset": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_details_scrollbar_dragging": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_diff_loading": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_expanded_repositories": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_history": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_history_commit": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_hover": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_inline_blame": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_menu": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_open_diff_sequence": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_pinned_repository": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_scroll": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_scrollbar_drag_offset": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_scrollbar_dragging": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_sidebar_hovered": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_sidebar_w": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_split_diff": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_split_drag": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_split_ratio": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "git_tree_view": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
     },
     "keymap_search": {
       "owner": "features/keymap/private model",
@@ -237,10 +109,6 @@
     "project_settings": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
-    },
-    "resizing_git_sidebar": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
     },
     "resizing_terminal": {
       "owner": "features/terminal/private model",
@@ -266,14 +134,6 @@
       "owner": "features/settings/private model",
       "remove_in": "R8"
     },
-    "show_clone_dialog": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
-    "show_source_control": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
-    },
     "show_terminal": {
       "owner": "features/terminal/private model",
       "remove_in": "R7"
@@ -281,10 +141,6 @@
     "smooth_caret": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
-    },
-    "stash_switch": {
-      "owner": "features/git/private model",
-      "remove_in": "R6"
     },
     "terminal_cursor_blink": {
       "owner": "features/settings/private model",
@@ -1007,6 +863,11 @@
     "ime": {
       "owner": "app/state/editor",
       "migrated_in": "R3"
+    },
+    "diff_split": {
+      "owner": "app/state/editor (diff view divider; R6.3 owner corrected from features/git)",
+      "migrated_in": "R6.3",
+      "from": "git_split_drag, git_split_ratio"
     }
   },
   "workspace_core_ownership": {
@@ -1153,5 +1014,172 @@
       "ExplorerCreateKind",
       "ExplorerTargetKind"
     ]
+  },
+  "git_ownership": {
+    "history": {
+      "owner": "features/git/model",
+      "migrated_in": "R6.3",
+      "from": "git_history"
+    },
+    "history_commit": {
+      "owner": "features/git/model",
+      "migrated_in": "R6.3",
+      "from": "git_history_commit"
+    },
+    "commit_details": {
+      "owner": "features/git/model",
+      "migrated_in": "R6.3",
+      "from": "git_commit_details"
+    },
+    "open_diff_sequence": {
+      "owner": "features/git/model",
+      "migrated_in": "R6.3",
+      "from": "git_open_diff_sequence"
+    },
+    "diff_loading": {
+      "owner": "features/git/model",
+      "migrated_in": "R6.3",
+      "from": "git_diff_loading"
+    },
+    "pinned_repository": {
+      "owner": "features/git/model",
+      "migrated_in": "R6.3",
+      "from": "git_pinned_repository"
+    },
+    "cloning": {
+      "owner": "features/git/model",
+      "migrated_in": "R6.3",
+      "from": "cloning_repository"
+    },
+    "hovered": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_sidebar_hovered"
+    },
+    "hover": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_hover"
+    },
+    "scroll": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_scroll"
+    },
+    "details_scroll": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_details_scroll"
+    },
+    "scrollbar_dragging": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_scrollbar_dragging"
+    },
+    "scrollbar_drag_offset": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_scrollbar_drag_offset"
+    },
+    "details_scrollbar_dragging": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_details_scrollbar_dragging"
+    },
+    "details_scrollbar_drag_offset": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_details_scrollbar_drag_offset"
+    },
+    "commit_input": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_commit_input"
+    },
+    "commit_amend": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_commit_amend"
+    },
+    "commit_signoff": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_commit_signoff"
+    },
+    "expanded_repositories": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_expanded_repositories"
+    },
+    "collapsed_sections": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_collapsed_sections"
+    },
+    "tree_view": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_tree_view"
+    },
+    "split_diff": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_split_diff"
+    },
+    "inline_blame": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_inline_blame"
+    },
+    "menu": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_menu"
+    },
+    "confirm": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_confirm"
+    },
+    "commit_card": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "git_commit_card"
+    },
+    "branch_picker": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "branch_picker"
+    },
+    "branch_picker_input": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "branch_picker_input"
+    },
+    "stash_switch": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "stash_switch"
+    },
+    "clone_visible": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "show_clone_dialog"
+    },
+    "clone_url": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "clone_repository_url"
+    },
+    "clone_error": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "clone_repository_error"
+    },
+    "clone_input_focused": {
+      "owner": "ui/git/state",
+      "migrated_in": "R6.3",
+      "from": "clone_input_focused"
+    }
   }
 }

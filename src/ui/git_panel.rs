@@ -8,6 +8,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
+use crate::features::git::model::{ExpandedCommit, GitHistory};
 use crate::features::git::{
     ChangeKind, CommitSummary, ConflictSide, DiffTarget, FileState, GitStoreSnapshot,
     RepositorySnapshot, RepositoryState, StashInfo, WorktreeInfo,
@@ -65,25 +66,28 @@ impl ScrollRegion {
 
     fn scroll(self, app: &AppState) -> f32 {
         match self {
-            Self::Changes => app.git_scroll,
-            Self::Details => app.git_details_scroll,
+            Self::Changes => app.git.ui.scroll,
+            Self::Details => app.git.ui.details_scroll,
         }
     }
 
     fn set_scroll(self, app: &mut AppState, value: f32) {
         match self {
-            Self::Changes => app.git_scroll = value,
-            Self::Details => app.git_details_scroll = value,
+            Self::Changes => app.git.ui.scroll = value,
+            Self::Details => app.git.ui.details_scroll = value,
         }
-        app.git_commit_card = None;
+        app.git.ui.commit_card = None;
     }
 
     fn drag(self, app: &AppState) -> (bool, f32) {
         match self {
-            Self::Changes => (app.git_scrollbar_dragging, app.git_scrollbar_drag_offset),
+            Self::Changes => (
+                app.git.ui.scrollbar_dragging,
+                app.git.ui.scrollbar_drag_offset,
+            ),
             Self::Details => (
-                app.git_details_scrollbar_dragging,
-                app.git_details_scrollbar_drag_offset,
+                app.git.ui.details_scrollbar_dragging,
+                app.git.ui.details_scrollbar_drag_offset,
             ),
         }
     }
@@ -91,12 +95,12 @@ impl ScrollRegion {
     fn set_drag(self, app: &mut AppState, dragging: bool, offset: f32) {
         match self {
             Self::Changes => {
-                app.git_scrollbar_dragging = dragging;
-                app.git_scrollbar_drag_offset = offset;
+                app.git.ui.scrollbar_dragging = dragging;
+                app.git.ui.scrollbar_drag_offset = offset;
             }
             Self::Details => {
-                app.git_details_scrollbar_dragging = dragging;
-                app.git_details_scrollbar_drag_offset = offset;
+                app.git.ui.details_scrollbar_dragging = dragging;
+                app.git.ui.details_scrollbar_drag_offset = offset;
             }
         }
     }
@@ -136,7 +140,7 @@ fn scroll_region(
             }
         });
     let app = state.get();
-    if max_scroll > 0.0 && (app.git_sidebar_hovered || region.drag(&app).0) {
+    if max_scroll > 0.0 && (app.git.ui.hovered || region.drag(&app).0) {
         viewport = viewport.child(git_vertical_scrollbar(
             rect,
             content_bottom,
@@ -157,7 +161,7 @@ pub fn render(
     commit_id: UiId,
 ) -> Element {
     let app = state.get();
-    let resizing = app.resizing_git_sidebar;
+    let resizing = app.source_control.resizing;
     let git = store.get();
     let mut root = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
@@ -174,7 +178,7 @@ pub fn render(
         "CHANGES",
         theme::mono_bold(theme::c().text_soft, theme::SMALL).tracking(0.8),
     ));
-    let grouped = app.git_tree_view;
+    let grouped = app.git.ui.tree_view;
     let group_state = state.clone();
     root = root.child(row_buttons(
         lgui::prelude::group(topline),
@@ -194,7 +198,7 @@ pub fn render(
                 "Group by Folder"
             },
             on_click: Box::new(move || {
-                group_state.update(|app| app.git_tree_view = !app.git_tree_view);
+                group_state.update(|app| app.git.ui.tree_view = !app.git.ui.tree_view);
             }),
         }],
     ));
@@ -228,7 +232,7 @@ pub fn render(
             .cursor(CursorIcon::Pointer)
             .on_click(move || {
                 picker_state.update(|app| {
-                    app.git_menu = Some(GitMenu {
+                    app.git.ui.menu = Some(GitMenu {
                         pos: (picker.left, picker.bottom + 2.0),
                         target: GitMenuTarget::Repositories,
                         hover: None,
@@ -340,16 +344,22 @@ pub fn render(
     ]
     .map(|(title, filter)| {
         let files = sections.map_or(&[][..], |sections| sections[filter as usize].as_slice());
-        (title, filter, files, change_rows(files, app.git_tree_view))
+        (
+            title,
+            filter,
+            files,
+            change_rows(files, app.git.ui.tree_view),
+        )
     });
     let history = app
-        .git_history
-        .as_ref()
+        .git
+        .model
+        .history()
         .filter(|history| history.repository == repository.worktree_root);
-    let history_rows = history_rows(history, app.git_history_commit.as_ref());
+    let history_rows = history_rows(history, app.git.model.history_commit());
     let section_height = |filter: u8, rows: usize| {
         SECTION_H
-            + if app.git_collapsed_sections.contains(&filter) {
+            + if app.git.ui.collapsed_sections.contains(&filter) {
                 0.0
             } else {
                 rows as f32 * ROW_H
@@ -379,7 +389,7 @@ pub fn render(
     let prompt_bottom = prompt_rect.bottom;
     let max_scroll = (changes_height - content_rect.height()).max(0.0);
     let details_max_scroll = (details_height - details_rect.height()).max(0.0);
-    let scroll = app.git_scroll.clamp(0.0, max_scroll);
+    let scroll = app.git.ui.scroll.clamp(0.0, max_scroll);
     let mut y = content_rect.top + 8.0;
     // Rows the pointer can hover, in content coordinates (before scrolling).
     let mut hover_targets = Vec::new();
@@ -388,10 +398,10 @@ pub fn render(
         if files.is_empty() {
             continue;
         }
-        let collapsed = app.git_collapsed_sections.contains(&filter);
+        let collapsed = app.git.ui.collapsed_sections.contains(&filter);
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
         hover_targets.push((section_rect, GitHover::Section(filter)));
-        let buttons = if app.git_hover == Some(GitHover::Section(filter)) {
+        let buttons = if app.git.ui.hover == Some(GitHover::Section(filter)) {
             group_buttons(filter, files.to_vec(), "section", &state, &store)
         } else {
             Vec::new()
@@ -424,7 +434,7 @@ pub fn render(
             match &rows[index] {
                 ChangeRow::Folder { path, files } => {
                     let hover = GitHover::Folder(filter, path.clone());
-                    let hovered = app.git_hover.as_ref() == Some(&hover);
+                    let hovered = app.git.ui.hover.as_ref() == Some(&hover);
                     hover_targets.push((row_rect, hover));
                     content.push(folder_row(
                         row_rect,
@@ -439,7 +449,7 @@ pub fn render(
                 &ChangeRow::File { path, nested } => {
                     let file_state = &repository.files[path];
                     let hover = GitHover::File(filter, path.clone());
-                    let hovered = app.git_hover.as_ref() == Some(&hover);
+                    let hovered = app.git.ui.hover.as_ref() == Some(&hover);
                     hover_targets.push((row_rect, hover));
                     let target = if filter == STAGED {
                         DiffTarget::HeadToIndex
@@ -480,10 +490,10 @@ pub fn render(
     let changes_scroll = scroll;
     let changes_max_scroll = max_scroll;
     let content_rect = details_rect;
-    let scroll = app.git_details_scroll.clamp(0.0, details_max_scroll);
+    let scroll = app.git.ui.details_scroll.clamp(0.0, details_max_scroll);
     let mut y = content_rect.top;
     if repository.worktrees.len() > 1 {
-        let collapsed = app.git_collapsed_sections.contains(&WORKTREES);
+        let collapsed = app.git.ui.collapsed_sections.contains(&WORKTREES);
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
         hover_targets.push((section_rect, GitHover::Section(WORKTREES)));
         content.push(section_header(
@@ -510,7 +520,7 @@ pub fn render(
                 let top = rows_top + index as f32 * ROW_H * 2.0;
                 let row_rect = UiRect::new(rect.left, top, content_rect.right, top + ROW_H * 2.0);
                 let hover = GitHover::Worktree(worktree.path.clone());
-                let hovered = app.git_hover.as_ref() == Some(&hover);
+                let hovered = app.git.ui.hover.as_ref() == Some(&hover);
                 hover_targets.push((row_rect, hover));
                 content.push(worktree_row(
                     row_rect,
@@ -526,7 +536,7 @@ pub fn render(
         }
     }
     if !repository.stashes.is_empty() {
-        let collapsed = app.git_collapsed_sections.contains(&STASHES);
+        let collapsed = app.git.ui.collapsed_sections.contains(&STASHES);
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
         hover_targets.push((section_rect, GitHover::Section(STASHES)));
         content.push(section_header(
@@ -553,7 +563,7 @@ pub fn render(
                 let row_y = rows_top + index as f32 * ROW_H;
                 let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
                 let hover = GitHover::Stash(stash.oid.clone());
-                let hovered = app.git_hover.as_ref() == Some(&hover);
+                let hovered = app.git.ui.hover.as_ref() == Some(&hover);
                 hover_targets.push((row_rect, hover));
                 content.push(stash_row(
                     row_rect,
@@ -566,7 +576,7 @@ pub fn render(
         }
     }
     {
-        let collapsed = app.git_collapsed_sections.contains(&HISTORY);
+        let collapsed = app.git.ui.collapsed_sections.contains(&HISTORY);
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
         hover_targets.push((section_rect, GitHover::Section(HISTORY)));
         let count = history
@@ -605,7 +615,7 @@ pub fn render(
                     }
                     HistoryRow::Message(_) => None,
                 };
-                let hovered = hover.is_some() && app.git_hover == hover;
+                let hovered = hover.is_some() && app.git.ui.hover == hover;
                 if let Some(hover) = hover {
                     hover_targets.push((row_rect, hover));
                 }
@@ -652,12 +662,12 @@ pub fn render(
             let next = target.as_ref().map(|(_, hover)| (*hover).clone());
             let mut entered = false;
             hover_state.try_update(|app| {
-                let changed = app.git_hover != next;
+                let changed = app.git.ui.hover != next;
                 if changed {
                     entered = true;
-                    app.git_commit_card = None;
+                    app.git.ui.commit_card = None;
                 }
-                app.git_hover = next;
+                app.git.ui.hover = next;
                 changed
             });
             if entered && let Some((anchor, GitHover::Commit(oid))) = target {
@@ -715,7 +725,7 @@ pub fn render(
     let commit_field = theme::bordered(
         field,
         theme::c().surface,
-        if app.git_commit_input.focused {
+        if app.git.ui.commit_input.focused {
             theme::c().accent
         } else {
             theme::c().border
@@ -862,7 +872,7 @@ mod virtualization_tests {
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
-                app.git_history = Some(GitHistory {
+                app.git.model.set_history(GitHistory {
                     repository: "loom".into(),
                     head: None,
                     commits: Ok((0..40)
@@ -949,12 +959,12 @@ mod virtualization_tests {
             },
         );
         session.render_view(&view, viewport, UiScale::ONE);
-        assert!(state.get().git_scroll > 0.0);
-        assert_eq!(state.get().git_details_scroll, 0.0);
+        assert!(state.get().git.ui.scroll > 0.0);
+        assert_eq!(state.get().git.ui.details_scroll, 0.0);
         assert_eq!(find(&session, "WORKTREES"), worktrees);
         assert_eq!(find(&session, "COMMITS"), commits);
         assert_eq!(find(&session, "Commit message"), commit_input);
-        let changes_scroll = state.get().git_scroll;
+        let changes_scroll = state.get().git.ui.scroll;
         let point = Point::new(100.0, commits.top + SECTION_H / 2.0);
         for input in [
             InputEvent::PointerDown {
@@ -969,7 +979,7 @@ mod virtualization_tests {
             send(&mut session, input);
         }
         session.render_view(&view, viewport, UiScale::ONE);
-        assert!(!state.get().git_collapsed_sections.contains(&HISTORY));
+        assert!(!state.get().git.ui.collapsed_sections.contains(&HISTORY));
         let expanded = find(&session, "COMMITS");
         assert!(expanded.top >= TOPLINE_H + (footer_top - TOPLINE_H) * 0.55);
         send(
@@ -980,8 +990,8 @@ mod virtualization_tests {
             },
         );
         session.render_view(&view, viewport, UiScale::ONE);
-        assert!(state.get().git_details_scroll > 0.0);
-        assert_eq!(state.get().git_scroll, changes_scroll);
+        assert!(state.get().git.ui.details_scroll > 0.0);
+        assert_eq!(state.get().git.ui.scroll, changes_scroll);
 
         // Visual fixtures use a short list to expose the empty space between
         // the primary changes and the sections pinned at the bottom.
@@ -990,9 +1000,9 @@ mod virtualization_tests {
             presentation.repositories.get_mut(&id).unwrap().sections[UNSTAGED as usize].truncate(5);
         });
         state.update(|app| {
-            app.git_scroll = 0.0;
-            app.git_details_scroll = 0.0;
-            app.git_collapsed_sections.insert(HISTORY);
+            app.git.ui.scroll = 0.0;
+            app.git.ui.details_scroll = 0.0;
+            app.git.ui.collapsed_sections.insert(HISTORY);
         });
         session.render_view(&view, viewport, UiScale::ONE);
         let short_input = find(&session, "Commit message");
@@ -1016,16 +1026,16 @@ mod virtualization_tests {
             send(&mut session, input);
         }
         session.render_view(&view, viewport, UiScale::ONE);
-        assert_eq!(state.get().git_commit_input.text(), "Improve search UI");
+        assert_eq!(state.get().git.ui.commit_input.text(), "Improve search UI");
         save_drawer_preview(&session, &context, viewport, "git-drawer-collapsed");
         state.update(|app| {
-            app.git_collapsed_sections.remove(&HISTORY);
+            app.git.ui.collapsed_sections.remove(&HISTORY);
         });
         session.render_view(&view, viewport, UiScale::ONE);
         save_drawer_preview(&session, &context, viewport, "git-drawer-commits");
         state.update(|app| {
-            app.git_collapsed_sections.insert(HISTORY);
-            app.git_collapsed_sections.remove(&WORKTREES);
+            app.git.ui.collapsed_sections.insert(HISTORY);
+            app.git.ui.collapsed_sections.remove(&WORKTREES);
         });
         session.render_view(&view, viewport, UiScale::ONE);
         save_drawer_preview(&session, &context, viewport, "git-drawer-worktrees");
@@ -1038,9 +1048,9 @@ mod virtualization_tests {
                 .clear();
         });
         state.update(|app| {
-            app.git_commit_input.clear();
-            app.git_commit_input.focused = false;
-            app.git_collapsed_sections.insert(WORKTREES);
+            app.git.ui.commit_input.clear();
+            app.git.ui.commit_input.focused = false;
+            app.git.ui.collapsed_sections.insert(WORKTREES);
         });
         session.render_view(&view, viewport, UiScale::ONE);
         assert_eq!(find(&session, "Commit message").top, TOPLINE_H + 8.0 + 5.0);
@@ -1072,7 +1082,7 @@ mod virtualization_tests {
             send(&mut session, input);
         }
         session.render_view(&view, viewport, UiScale::ONE);
-        assert!(!state.get().git_collapsed_sections.contains(&HISTORY));
+        assert!(!state.get().git.ui.collapsed_sections.contains(&HISTORY));
         assert_eq!(find(&session, "Commit message"), empty_input);
         let content_available = viewport.height() - TOPLINE_H - PROMPT_H;
         assert!(find(&session, "COMMITS").top >= TOPLINE_H + PROMPT_H + content_available * 0.55);
@@ -1087,12 +1097,12 @@ mod virtualization_tests {
             assert!(changes.height() >= 0.0 && details.height() >= 0.0);
         }
         state.update(|app| {
-            app.git_scroll = 100.0;
-            app.git_details_scroll = 200.0;
+            app.git.ui.scroll = 100.0;
+            app.git.ui.details_scroll = 200.0;
         });
         git_actions::select_repository(&state, &store, PathBuf::from("loom"));
-        assert_eq!(state.get().git_scroll, 0.0);
-        assert_eq!(state.get().git_details_scroll, 0.0);
+        assert_eq!(state.get().git.ui.scroll, 0.0);
+        assert_eq!(state.get().git.ui.details_scroll, 0.0);
     }
 
     fn save_drawer_preview(
@@ -1228,9 +1238,9 @@ mod virtualization_tests {
         }
         let app = state.get();
         assert_eq!(app.explorer.model.roots(), std::slice::from_ref(&source));
-        assert!(app.git_pinned_repository.is_none());
+        assert!(!app.git.model.has_pinned_repository());
         assert!(app.toast.is_none()); // The click did not also open the row.
-        let confirm = app.git_confirm.unwrap();
+        let confirm = app.git.ui.confirm.unwrap();
         assert!(confirm.destructive);
         assert_eq!(
             confirm.action,
@@ -1295,7 +1305,7 @@ mod virtualization_tests {
                 button: PointerButton::Left,
             });
             assert!(region.drag(&state.get()).0);
-            assert!(!state.get().resizing_git_sidebar);
+            assert!(!state.get().source_control.resizing);
             let outside = PointerData::mouse(Point::new(30.0, 260.0));
             send(InputEvent::PointerMove(outside));
             assert!(region.scroll(&state.get()) > 0.0);
@@ -1408,24 +1418,24 @@ fn git_resize_handle(rect: UiRect, state: State<AppState>, resizing: bool) -> El
     )
     .on_pointer_down_with_button(move |_cx, _pointer, button| {
         if button == PointerButton::Left {
-            drag_start.update(|app| app.resizing_git_sidebar = true);
+            drag_start.update(|app| app.source_control.resizing = true);
         }
     })
     .on_pointer_drag(move |_cx, pointer| {
         drag_move.update(move |app| {
-            if app.resizing_git_sidebar {
-                app.git_sidebar_w = (pointer.point.x - drawer_left)
+            if app.source_control.resizing {
+                app.source_control.width = (pointer.point.x - drawer_left)
                     .clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W);
             }
         });
     })
     .on_pointer_up(move |_cx, _pointer| {
-        drag_end.update(|app| app.resizing_git_sidebar = false);
+        drag_end.update(|app| app.source_control.resizing = false);
     })
 }
 
 fn commit_input(rect: UiRect, state: State<AppState>, focus: UiFocusHandle, id: UiId) -> Element {
-    let placeholder = if state.get().git_commit_amend {
+    let placeholder = if state.get().git.ui.commit_amend {
         "Amend message (empty keeps it)"
     } else {
         "Commit message"
@@ -1452,22 +1462,24 @@ fn commit_input(rect: UiRect, state: State<AppState>, focus: UiFocusHandle, id: 
 }
 
 fn commit_input_state(app: &AppState) -> &InputState {
-    &app.git_commit_input
+    &app.git.ui.commit_input
 }
 
 fn commit_input_state_mut(app: &mut AppState) -> &mut InputState {
-    &mut app.git_commit_input
+    &mut app.git.ui.commit_input
 }
 
 /// Opens the commit options menu: amend, sign-off and undo.
 fn commit_options_button(rect: UiRect, state: State<AppState>) -> Element {
     let app = state.get();
     let open = app
-        .git_menu
+        .git
+        .ui
+        .menu
         .as_ref()
         .is_some_and(|menu| menu.target == GitMenuTarget::Commit);
     // Amend and sign-off stay visible while the menu is closed.
-    let color = if app.git_commit_amend || app.git_commit_signoff {
+    let color = if app.git.ui.commit_amend || app.git.ui.commit_signoff {
         theme::c().accent
     } else {
         theme::c().text_faint
@@ -1487,7 +1499,7 @@ fn commit_options_button(rect: UiRect, state: State<AppState>) -> Element {
     .cursor(CursorIcon::Pointer)
     .on_click(move || {
         click_state.update(|app| {
-            app.git_menu = Some(GitMenu {
+            app.git.ui.menu = Some(GitMenu {
                 pos: (rect.left, rect.top),
                 target: GitMenuTarget::Commit,
                 hover: None,
@@ -1509,14 +1521,14 @@ fn commit_options_button(rect: UiRect, state: State<AppState>) -> Element {
 
 fn commit_button(rect: UiRect, state: State<AppState>, store: State<GitStoreSnapshot>) -> Element {
     let app = state.get();
-    let has_message = app.git_commit_amend || !app.git_commit_input.text().trim().is_empty();
+    let has_message = app.git.ui.commit_amend || !app.git.ui.commit_input.text().trim().is_empty();
     let click_state = state.clone();
     let click_store = store;
     panel(rect, VisualStyle::default())
         .key("git-commit-button")
         .event_policy(EventPolicy::INTERACTIVE)
         .semantics(
-            Semantics::new(SemanticRole::Button).name(if app.git_commit_amend {
+            Semantics::new(SemanticRole::Button).name(if app.git.ui.commit_amend {
                 "Amend last commit"
             } else {
                 "Commit changes"
@@ -1566,15 +1578,6 @@ pub enum GitHover {
     CommitFile(String, PathBuf),
 }
 
-/// Recent commits of a repository's HEAD.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GitHistory {
-    pub repository: PathBuf,
-    /// The commit HEAD was at when these were listed.
-    pub head: Option<String>,
-    pub commits: Result<Vec<CommitSummary>, String>,
-}
-
 /// A history commit's hover card, beside its row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommitCard {
@@ -1591,13 +1594,14 @@ const CARD_MAX_MESSAGE_LINES: usize = 16;
 
 /// The hovered history commit's card, to the right of Source Control.
 pub fn render_commit_card(viewport: UiRect, app: &AppState) -> Option<Element> {
-    let card = app.git_commit_card.as_ref()?;
-    if app.git_hover.as_ref() != Some(&GitHover::Commit(card.oid.clone())) {
+    let card = app.git.ui.commit_card.as_ref()?;
+    if app.git.ui.hover.as_ref() != Some(&GitHover::Commit(card.oid.clone())) {
         return None;
     }
     let summary = app
-        .git_history
-        .as_ref()
+        .git
+        .model
+        .history()
         .and_then(|history| history.commits.as_ref().ok())
         .and_then(|commits| commits.iter().find(|commit| commit.oid == card.oid));
     let width = CARD_W.min(viewport.width() - 16.0).max(160.0);
@@ -1775,14 +1779,6 @@ fn wrap_text(text: &str, width: f32) -> Vec<String> {
         lines.push(line.trim_end().to_owned());
     }
     lines
-}
-
-/// A history commit expanded to list the files it changed.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExpandedCommit {
-    pub oid: String,
-    /// `None` while loading.
-    pub files: Option<Result<Vec<(ChangeKind, PathBuf)>, String>>,
 }
 
 const BANNER_H: f32 = 30.0;
@@ -2080,7 +2076,7 @@ fn history_row(
                     // A right-click that opened this row's menu is not a click.
                     let mut menu_open = false;
                     toggle_state.try_update(|app| {
-                        menu_open = app.git_menu.is_some();
+                        menu_open = app.git.ui.menu.is_some();
                         false
                     });
                     if !menu_open {
@@ -2094,7 +2090,7 @@ fn history_row(
                             oid: menu_oid.clone(),
                         };
                         menu_state.update(move |app| {
-                            app.git_menu = Some(GitMenu {
+                            app.git.ui.menu = Some(GitMenu {
                                 pos: (pointer.point.x, pointer.point.y),
                                 target,
                                 hover: None,
@@ -2221,12 +2217,12 @@ fn section_header(
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
             state.update(move |app| {
-                if !app.git_collapsed_sections.insert(filter) {
-                    app.git_collapsed_sections.remove(&filter);
+                if !app.git.ui.collapsed_sections.insert(filter) {
+                    app.git.ui.collapsed_sections.remove(&filter);
                 }
                 if filter >= STASHES {
-                    app.git_details_scroll = 0.0;
-                    app.git_commit_card = None;
+                    app.git.ui.details_scroll = 0.0;
+                    app.git.ui.commit_card = None;
                 }
             });
         })
@@ -2866,7 +2862,7 @@ fn file_row(
                 };
                 let point = (pointer.point.x, pointer.point.y);
                 menu_state.update(move |app| {
-                    app.git_menu = None;
+                    app.git.ui.menu = None;
                     app.editor.file_drag = Some(crate::state::FileDragState {
                         path: request.repository_root.join(&request.path),
                         source: crate::state::FileDragSource::Changes {
@@ -2887,7 +2883,7 @@ fn file_row(
                     section,
                 };
                 menu_state.update(move |app| {
-                    app.git_menu = Some(GitMenu {
+                    app.git.ui.menu = Some(GitMenu {
                         pos: (pointer.point.x, pointer.point.y),
                         target,
                         hover: None,

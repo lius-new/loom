@@ -164,3 +164,12 @@ test('Git infrastructure is limited to process, file and thread services',()=>{
   const p=policy();p.exceptions[file]={dependencies:['lgui'],reason:'bad',remove_in:'R8'};
   assert.ok(violations({[file]:'use lgui::prelude::*;'},p).some(e=>e.includes('Git infrastructure must stay free')));
 });
+test('Git state cannot evade its ownership register or expose model fields',()=>{
+  const p=policy();p.git_ownership={history:{owner:'features/git/model',migrated_in:'R6.3'},gone:{owner:'ui/git/state',migrated_in:'R6.3'}};
+  const errors=violations({'src/features/git/model.rs':'pub struct GitModel { history: u8, extra: u8 }','src/ui/git/state.rs':'pub struct GitUiState { pub scroll: f32 }'},p);
+  assert.ok(errors.some(e=>e.includes('GitModel.extra: no registered owner')));
+  assert.ok(errors.some(e=>e.includes('GitUiState.gone: obsolete ownership entry')));
+  p.git_ownership={history:{owner:'features/git/model',migrated_in:'R6.3'}};
+  assert.ok(violations({'src/features/git/model.rs':'pub struct GitModel { pub history: u8 }'},p).some(e=>e.includes('GitModel fields must stay private')));
+  assert.deepEqual(violations({'src/features/git/model.rs':'pub struct GitModel { history: u8 }'},p),[]);
+});
