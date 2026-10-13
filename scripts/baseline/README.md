@@ -24,6 +24,7 @@
 - -SkipChecks 只采集指定的性能组。
 - run.ps1 执行检查并记录环境；inventory.ps1 收集字段、hash 和词法依赖候选；report.mjs 生成测试清单、Clippy 定位和统计。
 - 完整回归与 Clippy 使用 --workspace，包含独立编辑核心；inventory 同时记录 src 与 crates/editor-core。report 汇总各 crate 的 unit/integration/doc-test 结果，末尾的空 doctest 不会覆盖通过数量或隐藏前面的失败。
+- R4 增加 crates/workspace-tests 无 GUI 域验证入口，复用生产 domain 源码；测试以 isolated::domain 前缀区分。全 workspace 包含该入口的重复规则验证，报告需单列其通过数量，不能当作新增独立行为覆盖。
 - R3 应用事务迁移后，原有编辑和 UI 性能测试分别位于 app::editor_baseline_tests::perf_baseline 和 app::editor::tests::large_file_interaction_baseline；run.ps1 已同步精确筛选名称，指标与样本规则保持一致。
 - 原生终端 smoke 只在 Windows 执行。不要对所有 ignored 测试盲目使用全局 --ignored；native_mouse_probe 是辅助入口。
 

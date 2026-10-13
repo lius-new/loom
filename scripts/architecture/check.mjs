@@ -60,6 +60,7 @@ export function dependencies(source) {
 }
 
 export function layer(file) {
+  if(file.startsWith('crates/workspace-tests/'))return 'domain-verification';
   if(file.startsWith('crates/editor-core/'))return 'core';
   for(const l of ['app','domain','features','ui','infrastructure'])if(file.startsWith('src/'+l+'/'))return l;
   return 'legacy';
@@ -67,13 +68,16 @@ export function layer(file) {
 
 export function allowed(file, dependency) {
   const own=layer(file), root=dependency.replace('crate::','');
+  if(own==='domain-verification')return ['domain','loom_editor_core','serde','serde_json'].includes(root);
   if(file.startsWith('crates/editor-core/tests/')&&root==='loom_editor_core')return true;
   if(own==='core')return ['identity','text','normal','commands','vim','buffer','change','editor','history','lines','selection','command','ex','exec','insert','key','motion','object','register','search','regex','unicode_segmentation','unicode_width'].includes(root);
   if(root==='loom_editor_core')return true;
   if(own==='app'||file==='src/main.rs')return true;
-  if(own==='domain')return root==='domain';
+  if(own==='domain')return root==='domain'||(file==='src/domain/workspace_session.rs'&&['serde','serde_json'].includes(root));
   if(file.startsWith('src/features/search/'))return ['features','domain','globset','regex','unicode_segmentation'].includes(root);
   if(file.startsWith('src/infrastructure/search_filesystem'))return ['features','domain','ignore','std::fs','std::process'].includes(root);
+  if(file==='src/infrastructure/workspace_filesystem.rs')return ['infrastructure','domain','std::fs'].includes(root);
+  if(file==='src/infrastructure/session_filesystem.rs')return ['infrastructure','domain','serde','serde_json','std::fs','std::process'].includes(root);
   if(file==='src/ui/editor/view.rs'&&root==='unicode_width')return true;
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
   if(own==='features')return ['features','domain','input'].includes(root);
@@ -94,6 +98,14 @@ export function structFields(source, name) {
 }
 export function stateFields(source) { return structFields(source, 'AppState'); }
 
+export function verificationManifestErrors(source) {
+  const block=source.split(/^\[dependencies\]\s*$/m)[1]?.split(/^\[/m)[0]??'';
+  const names=[...block.matchAll(/^([a-zA-Z0-9_-]+)\s*=/gm)].map(m=>m[1]).sort();
+  const expected=['loom-editor-core','serde','serde_json'].sort();
+  if(JSON.stringify(names)!==JSON.stringify(expected)||/^\[[^\]]*dependencies[^\]]*\]$/m.test(source.replace(/^\[dependencies\]\s*$/m,''))||/\bpackage\s*=/.test(block))return ['Workspace domain verification may depend only on editor-core, serde and serde_json'];
+  return [];
+}
+
 export function violations(sources, policy) {
   const problems=[];
   for(const [file,source] of Object.entries(sources)) {
@@ -102,6 +114,10 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
+    if(layer(file)==='domain-verification') {
+      if(policy.exceptions[file])problems.push(`${file}: domain verification cannot have migration exceptions`);
+      if(ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!')||(/#\s*\[\s*path\s*=/.test(source)&&(file!=='crates/workspace-tests/src/isolated.rs'||!/^#\[path = "\.\.\/\.\.\/\.\.\/src\/domain\/mod\.rs"\]$/m.test(source))))problems.push(`${file}: domain verification can only include the production domain entry point`);
+    }
     if(layer(file)==='core') {
       if(policy.exceptions[file])problems.push(`${file}: editing core cannot have migration exceptions`);
       if(ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','KeyboardEvent','Keystroke','UiRect','InputState'].includes(t)))problems.push(`${file}: editing core must not depend on application/platform state`);
@@ -117,6 +133,11 @@ export function violations(sources, policy) {
     if((file.startsWith('src/features/search/')||file.startsWith('src/ui/search/'))&&policy.exceptions[file])problems.push(file+': Search cannot have migration exceptions');
     if(file==='src/model/workspace.rs'&&deps.some(d=>['crate::search','crate::search_actions','crate::features'].includes(d)))problems.push('Workspace must expose generic snapshots, not Search DTOs');
     if(layer(file)==='domain'&&(ts.some(t=>['super','AppState','AppRuntime'].includes(t))||/#\s*\[\s*path\s*=/.test(source)))problems.push(`${file}: domain must not escape through parent modules or root/runtime types`);
+    if(layer(file)==='domain') {
+      if(policy.exceptions[file])problems.push(`${file}: domain cannot have migration exceptions`);
+      if(ts.some(t=>['UiRect','Color','ApplicationHandle','FileLoader','InputState'].includes(t)))problems.push(`${file}: domain must not contain framework or runtime types`);
+      if(ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(`${file}: domain cannot include adapter sources`);
+    }
     if(layer(file)==='ui'&&ts.includes('AppState')&&!policy.root_state_adapters.includes(file))problems.push(`${file}: new root-state adapter`);
     if(/\.\s*runtime\s*\(/.test(ts.join(' '))&&!policy.runtime_bridges.includes(file))problems.push(`${file}: unregistered runtime bridge`);
   }
@@ -144,6 +165,13 @@ export function violations(sources, policy) {
     if(tokens(editor).some(t=>['FileLoader','ApplicationHandle','PollControl','AppRuntime','AtomicBool'].includes(t)))problems.push('EditorState embeds a runtime service');
   }
   for(const [field,entry] of Object.entries(policy.editor_state_ownership??{}))if(!entry.owner||!entry.migrated_in)problems.push(`EditorState.${field}: incomplete ownership entry`);
+  const workspace=sources['src/domain/workspace.rs'];
+  if(workspace) {
+    const actual=structFields(workspace,'Workspace'),registered=Object.keys(policy.workspace_core_ownership??{});
+    for(const field of actual)if(!registered.includes(field))problems.push(`Workspace.${field}: no registered owner`);
+    for(const field of registered)if(!actual.includes(field))problems.push(`Workspace.${field}: obsolete ownership entry`);
+  }
+  for(const [field,entry] of Object.entries(policy.workspace_core_ownership??{}))if(!entry.owner||!entry.migrated_in)problems.push(`Workspace.${field}: incomplete ownership entry`);
   for(const [field,entry] of Object.entries(policy.state_ownership))if(!entry.owner||!entry.remove_in)problems.push(`AppState.${field}: incomplete ownership entry`);
   for(const [file,entry] of Object.entries(policy.exceptions))if(!entry.reason||!entry.remove_in)problems.push(`${file}: incomplete migration exception`);
   return problems;
@@ -154,6 +182,7 @@ export function readSources(root) {
   function visit(dir){for(const entry of fs.readdirSync(path.join(root,dir),{withFileTypes:true})){const file=dir+'/'+entry.name;if(entry.isDirectory())visit(file);else if(file.endsWith('.rs'))result[file]=fs.readFileSync(path.join(root,file),'utf8');}}
   visit('src');
   if(fs.existsSync(path.join(root,'crates/editor-core')))visit('crates/editor-core');
+  if(fs.existsSync(path.join(root,'crates/workspace-tests')))visit('crates/workspace-tests');
   return result;
 }
 
@@ -161,6 +190,8 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
   const policy=JSON.parse(fs.readFileSync(path.join(root,'docs/architecture/phase1-policy.json'),'utf8'));
   const sources=readSources(root),errors=violations(sources,policy);
+  const verificationManifest=path.join(root,'crates/workspace-tests/Cargo.toml');
+  if(fs.existsSync(verificationManifest))errors.push(...verificationManifestErrors(fs.readFileSync(verificationManifest,'utf8')));
   if(errors.length){console.error(errors.join('\n'));process.exitCode=1;}
-  else console.log(`Architecture gate passed: ${Object.keys(sources).length} source files; ${Object.keys(policy.state_ownership).length} root and ${Object.keys(policy.editor_state_ownership??{}).length} editor owned fields; ${Object.keys(policy.exceptions).length} tracked legacy exception files.`);
+  else console.log(`Architecture gate passed: ${Object.keys(sources).length} source files; ${Object.keys(policy.state_ownership).length} root, ${Object.keys(policy.editor_state_ownership??{}).length} editor and ${Object.keys(policy.workspace_core_ownership??{}).length} workspace owned fields; ${Object.keys(policy.exceptions).length} tracked legacy exception files.`);
 }

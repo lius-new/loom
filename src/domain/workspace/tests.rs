@@ -1,0 +1,142 @@
+//! Workspace rules exercised with supplied observations and opaque unit payloads.
+use crate::domain::document::{DiskRead, DiskState};
+use crate::domain::identity::FileId;
+use crate::domain::pane_layout::Direction;
+use crate::domain::workspace::{OpenMode, PreparedTextFile, ReconcileResult, Workspace};
+use loom_editor_core::normal;
+
+type PureWorkspace = Workspace<(), ()>;
+fn open(workspace: &mut PureWorkspace, path: &str, text: &str) -> FileId {
+    let prepared =
+        PreparedTextFile::with_disk_state(path.into(), text.into(), DiskState::from_contents(text));
+    workspace.open_prepared_text(prepared, OpenMode::Permanent)
+}
+fn observed(text: &str) -> DiskRead {
+    DiskRead::Found {
+        contents: text.into(),
+        state: DiskState::from_contents(text),
+    }
+}
+
+#[test]
+fn unicode_edits_and_shared_undo_transform_both_pane_selections() {
+    let mut workspace = PureWorkspace::new();
+    let id = open(&mut workspace, "virtual.txt", "a界b\r\n");
+    let left = workspace.active_pane();
+    let right = workspace.split(left, Direction::Right).unwrap();
+    workspace.editor_mut(left).unwrap().set_cursor(1);
+    workspace.editor_mut(right).unwrap().set_cursor(4);
+    normal::insert(&mut workspace.editor_mut(left).unwrap(), "你");
+    assert_eq!(workspace.editor(right).unwrap().text(), "a你界b\r\n");
+    assert_eq!(workspace.editor(right).unwrap().cursor(), 7);
+    assert!(workspace.is_dirty(id));
+    workspace.editor_mut(right).unwrap().undo();
+    assert_eq!(workspace.editor(left).unwrap().text(), "a界b\r\n");
+    assert_eq!(workspace.editor(left).unwrap().cursor(), 1);
+    // The pane invoking Undo receives the edit's recorded original selection.
+    assert_eq!(workspace.editor(right).unwrap().cursor(), 1);
+    assert!(!workspace.is_dirty(id));
+}
+
+#[test]
+fn injected_disk_conflicts_keep_edits_until_explicit_acceptance() {
+    let mut workspace = PureWorkspace::new();
+    let id = open(&mut workspace, "virtual.txt", "base");
+    let left = workspace.active_pane();
+    let right = workspace.split(left, Direction::Right).unwrap();
+    normal::insert(&mut workspace.editor_mut(left).unwrap(), "edit ");
+    workspace.editor_mut(right).unwrap().select_range(2..9);
+    workspace.set_scroll(right, 17.0, 48.0);
+    assert_eq!(
+        workspace.reconcile_with_disk(id, observed("disk")),
+        ReconcileResult::Conflict("virtual.txt".into())
+    );
+    assert_eq!(workspace.editor(left).unwrap().text(), "edit base");
+    workspace
+        .accept_disk_with(id, "disk".into(), DiskState::from_contents("disk"))
+        .unwrap();
+    assert_eq!(workspace.editor(left).unwrap().text(), "disk");
+    assert_eq!(workspace.editor(right).unwrap().selection(), Some(2..4));
+    assert_eq!(workspace.scroll(right), (17.0, 48.0));
+    assert!(!workspace.editor(right).unwrap().can_undo());
+    assert!(!workspace.is_dirty(id));
+    assert!(!workspace.has_disk_conflict(id));
+}
+
+#[test]
+fn missing_recovered_and_unreadable_observations_remain_distinct() {
+    let mut workspace = PureWorkspace::new();
+    let id = open(&mut workspace, "virtual.txt", "base");
+    normal::insert(&mut workspace.active_editor_mut().unwrap(), "edit ");
+    assert_eq!(
+        workspace.reconcile_with_disk(id, DiskRead::Missing),
+        ReconcileResult::Missing("virtual.txt".into())
+    );
+    assert!(workspace.is_missing_on_disk(id));
+    assert!(workspace.has_disk_conflict(id));
+    let version = workspace.active_editor().unwrap().version();
+    assert_eq!(
+        workspace.reconcile_with_disk(id, DiskRead::Failed("permission denied".into())),
+        ReconcileResult::Failed("virtual.txt".into(), "permission denied".into())
+    );
+    assert_eq!(workspace.active_editor().unwrap().version(), version);
+    assert!(workspace.is_missing_on_disk(id));
+    workspace.reconcile_with_disk(id, observed("base"));
+    assert!(!workspace.is_missing_on_disk(id));
+    assert!(!workspace.has_disk_conflict(id));
+    assert_eq!(workspace.active_editor().unwrap().text(), "edit base");
+    assert!(workspace.is_dirty(id));
+}
+
+#[test]
+fn a_closed_placeholder_rejects_late_preparation_and_returns_retired_data() {
+    let mut workspace = PureWorkspace::new();
+    let id = workspace.open_deferred("virtual.txt".into());
+    assert!(workspace.active_editor().is_none());
+    assert!(!workspace.mark_saved_with_disk(id, DiskState::from_contents("")));
+    assert_eq!(
+        workspace.reconcile_with_disk(id, observed("disk")),
+        ReconcileResult::Unchanged("virtual.txt".into())
+    );
+    workspace.close(id);
+    let prepared = PreparedTextFile::with_disk_state(
+        "virtual.txt".into(),
+        "late".into(),
+        DiskState::from_contents("late"),
+    );
+    assert!(!workspace.install_restored(id, std::path::Path::new("virtual.txt"), prepared));
+    assert!(workspace.meta(id).is_none());
+    assert_eq!(workspace.take_retired().len(), 2);
+    assert!(workspace.take_retired().is_empty());
+}
+
+#[test]
+fn retargeting_metadata_keeps_identity_views_and_shared_history() {
+    let mut workspace = PureWorkspace::new();
+    let id = open(&mut workspace, "virtual.txt", "base");
+    let left = workspace.active_pane();
+    let right = workspace.split(left, Direction::Right).unwrap();
+    normal::insert(&mut workspace.editor_mut(left).unwrap(), "edit ");
+    workspace.set_scroll(right, 7.0, 20.0);
+    assert!(workspace.move_path_with_disk(
+        std::path::Path::new("virtual.txt"),
+        "renamed.rs".into(),
+        DiskState::from_contents("base")
+    ));
+    assert_eq!(
+        workspace.file_id_for_path(std::path::Path::new("renamed.rs")),
+        Some(id)
+    );
+    assert!(
+        workspace
+            .file_id_for_path(std::path::Path::new("virtual.txt"))
+            .is_none()
+    );
+    assert_eq!(workspace.pane(left).unwrap().active(), Some(id));
+    assert_eq!(workspace.pane(right).unwrap().active(), Some(id));
+    assert_eq!(workspace.scroll(right), (7.0, 20.0));
+    workspace.editor_mut(right).unwrap().undo();
+    assert_eq!(workspace.editor(left).unwrap().text(), "base");
+    assert!(workspace.mark_saved_with_disk(id, DiskState::from_contents("base")));
+    assert!(!workspace.is_dirty(id));
+}

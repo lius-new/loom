@@ -18,7 +18,7 @@ env:
 
 jobs:
   core:
-    name: Independent editing core
+    name: Independent editor and workspace rules
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -29,6 +29,8 @@ jobs:
           toolchain: 1.97.1
       - name: Test core without GUI build dependencies
         run: cargo test --locked -p loom-editor-core
+      - name: Test workspace domain without GUI build dependencies
+        run: cargo test --locked -p loom-workspace-tests
 
   quality:
     name: Format and lint

@@ -37,7 +37,7 @@ mod key_actions;
 mod launch;
 mod model;
 mod project_settings;
-mod session_restore;
+use app::workspace_restore as session_restore;
 mod settings_persistence;
 use app::state;
 mod terminal_directory;
@@ -50,7 +50,7 @@ mod ui;
 use loom_editor_core::vim;
 mod window_geometry;
 mod workspace_actions;
-mod workspace_persistence;
+use app::workspace_session as workspace_persistence;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     app::run()

@@ -8,16 +8,23 @@ use std::thread;
 use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
 use lgui::prelude::State;
 
+#[cfg(test)]
+use crate::app::workspace_session::hydrate_editor_layout_with;
+#[cfg(test)]
+use crate::app::workspace_session::saved_editor_layout;
+pub(crate) use crate::app::workspace_session::{
+    hydrate_editor_layout, save_editor_session, saved_app_editor_layout,
+};
+use crate::domain::identity::PaneId;
+#[cfg(test)]
+use crate::domain::workspace_session::{EditorLayout, SavedAxis, SavedChild, SavedPaneNode};
 use crate::file_tree::read_directory;
 use crate::model::document::FileId;
-use crate::model::pane_layout::{Axis, Child, PaneId, PaneNode};
-use crate::model::workspace::Workspace;
 use crate::state::{
     AppState, CloseContinuation, CloseRequest, ExplorerCreateKind, ExplorerCreateRequest,
     ExplorerRenameRequest, ExplorerTargetKind, TabDrop,
 };
 use crate::workspace_persistence::{self, MAX_RECENT_FOLDERS};
-use crate::workspace_persistence::{EditorLayout, SavedAxis, SavedChild, SavedPaneNode};
 
 const MAX_EDITABLE_FILE_MIB: u64 = 64;
 const MAX_EDITABLE_FILE_BYTES: u64 = MAX_EDITABLE_FILE_MIB * 1024 * 1024;
@@ -492,7 +499,7 @@ fn close_test_directory(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "loom-close-{name}-{}-{}",
         std::process::id(),
-        crate::model::document::content_hash(name)
+        crate::domain::document::content_hash(name)
     ));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
@@ -1346,222 +1353,6 @@ pub(crate) fn hydrate_workspace_folders(app: &mut AppState) {
     }
 
     include_workspace_folders_in_recents(app);
-}
-
-/// All open file tabs, including the single-click preview. Diffs and built-in
-/// pages are filtered out; panes left empty by that filter are dropped.
-pub(crate) fn saved_editor_layout(workspace: &Workspace) -> Option<EditorLayout> {
-    saved_layout_with_pending(workspace, None)
-}
-
-pub(crate) fn saved_app_editor_layout(app: &AppState) -> Option<EditorLayout> {
-    saved_layout_with_pending(&app.workspace, app.editor.pending_file.as_ref())
-}
-
-/// Take the current snapshot at the exit boundary, rather than waiting for a
-/// later render effect. A failed write keeps the window open with its buffers.
-pub(crate) fn save_editor_session(state: &State<AppState>) -> bool {
-    let layout = saved_app_editor_layout(&state.get());
-    let result = workspace_persistence::save_editor_layout(layout.as_ref());
-    if let Err(error) = result {
-        state.update(|app| app.show_error(format!("Could not remember file tabs: {error}")));
-        return false;
-    }
-    true
-}
-
-fn saved_layout_with_pending(
-    workspace: &Workspace,
-    pending: Option<&crate::file_loading::PendingFile>,
-) -> Option<EditorLayout> {
-    let mut leaf_index = 0;
-    let mut active_pane = None;
-    let root = save_pane_node(
-        workspace,
-        workspace.layout(),
-        pending,
-        &mut leaf_index,
-        &mut active_pane,
-    )?;
-    Some(EditorLayout {
-        root,
-        active_pane: active_pane.unwrap_or(0),
-    })
-}
-
-fn save_pane_node(
-    workspace: &Workspace,
-    node: &PaneNode,
-    pending: Option<&crate::file_loading::PendingFile>,
-    leaf_index: &mut usize,
-    active_pane: &mut Option<usize>,
-) -> Option<SavedPaneNode> {
-    match node {
-        PaneNode::Leaf(id) => {
-            let pane = workspace.pane(*id)?;
-            let restorable = |file: FileId| workspace.is_file(file);
-            let path = |file: FileId| workspace.meta(file).map(|meta| meta.path.clone());
-            let mut items = pane
-                .items()
-                .iter()
-                .copied()
-                .filter(|file| restorable(*file))
-                .filter_map(path)
-                .collect::<Vec<_>>();
-            let pending = pending.filter(|p| p.pane == *id);
-            if let Some(pending) = pending
-                && !items.contains(&pending.path)
-            {
-                let index = if let Some(TabDrop::Insert { index, .. }) = pending.drop {
-                    pane.items()
-                        .iter()
-                        .take(index)
-                        .filter(|file| workspace.is_file(**file))
-                        .count()
-                } else {
-                    items.len()
-                };
-                items.insert(index.min(items.len()), pending.path.clone());
-            }
-            if items.is_empty() {
-                return None;
-            }
-            if pending.is_some() || (active_pane.is_none() && *id == workspace.active_pane()) {
-                *active_pane = Some(*leaf_index);
-            }
-            *leaf_index += 1;
-            let active = pending.map(|p| p.path.clone()).or_else(|| {
-                pane.active()
-                    .filter(|file| restorable(*file))
-                    .and_then(path)
-            });
-            Some(SavedPaneNode::Pane { items, active })
-        }
-        PaneNode::Split { axis, children } => {
-            let mut saved = children
-                .iter()
-                .filter_map(|child| {
-                    save_pane_node(workspace, &child.node, pending, leaf_index, active_pane).map(
-                        |node| SavedChild {
-                            size: child.size,
-                            node,
-                        },
-                    )
-                })
-                .collect::<Vec<_>>();
-            match saved.len() {
-                0 => None,
-                1 => saved.pop().map(|child| child.node),
-                _ => {
-                    let total: f32 = saved.iter().map(|child| child.size).sum();
-                    for child in &mut saved {
-                        child.size /= total.max(f32::EPSILON);
-                    }
-                    Some(SavedPaneNode::Split {
-                        axis: match axis {
-                            Axis::Horizontal => SavedAxis::Horizontal,
-                            Axis::Vertical => SavedAxis::Vertical,
-                        },
-                        children: saved,
-                    })
-                }
-            }
-        }
-    }
-}
-
-pub(crate) fn hydrate_editor_layout(app: &mut AppState, layout: Option<EditorLayout>) {
-    restore_editor_layout_with(app, layout, |workspace, path| {
-        Some(workspace.open_deferred(path))
-    });
-}
-
-/// Rebuild the saved panes and reopen their files. Files that can no longer
-/// be read are skipped, and a pane left without tabs is dropped.
-#[cfg(test)]
-fn hydrate_editor_layout_with(
-    app: &mut AppState,
-    layout: Option<EditorLayout>,
-    mut read: impl FnMut(&Path) -> Result<String, String>,
-) {
-    restore_editor_layout_with(app, layout, |workspace, path| {
-        read(&path).ok().map(|text| workspace.open_path(path, text))
-    });
-}
-
-fn restore_editor_layout_with(
-    app: &mut AppState,
-    layout: Option<EditorLayout>,
-    mut open: impl FnMut(&mut Workspace, PathBuf) -> Option<FileId>,
-) {
-    let Some(layout) = layout else {
-        return;
-    };
-    let mut contents = Vec::new();
-    let shape = restored_shape(layout.root, &mut contents);
-    let panes = app.workspace.restore_layout(shape);
-    for (&pane, (items, active)) in panes.iter().zip(contents) {
-        app.workspace.activate_pane(pane);
-        let mut first = None;
-        let mut active_id = None;
-        for path in items {
-            let is_active = active.as_ref() == Some(&path);
-            let Some(id) = open(&mut app.workspace, path) else {
-                continue;
-            };
-            first.get_or_insert(id);
-            if is_active {
-                active_id = Some(id);
-            }
-        }
-        if let Some(id) = active_id.or(first) {
-            app.workspace.activate(pane, id);
-        }
-    }
-    for &pane in &panes {
-        if app.workspace.pane(pane).is_some_and(|pane| pane.is_empty()) {
-            app.workspace.close_pane(pane);
-        }
-    }
-    let focus = panes
-        .get(layout.active_pane)
-        .copied()
-        .filter(|pane| app.workspace.pane(*pane).is_some())
-        .unwrap_or_else(|| app.workspace.pane_ids()[0]);
-    app.workspace.activate_pane(focus);
-}
-
-/// The tree shape of a saved layout with leaves numbered in reading order;
-/// each leaf's tabs are pushed onto `contents` in the same order.
-fn restored_shape(
-    node: SavedPaneNode,
-    contents: &mut Vec<(Vec<PathBuf>, Option<PathBuf>)>,
-) -> PaneNode {
-    match node {
-        SavedPaneNode::Pane { items, active } => {
-            let leaf = PaneId::new(contents.len() as u64);
-            contents.push((items, active));
-            PaneNode::Leaf(leaf)
-        }
-        SavedPaneNode::Split { axis, children } if !children.is_empty() => PaneNode::Split {
-            axis: match axis {
-                SavedAxis::Horizontal => Axis::Horizontal,
-                SavedAxis::Vertical => Axis::Vertical,
-            },
-            children: children
-                .into_iter()
-                .map(|child| Child {
-                    size: child.size,
-                    node: restored_shape(child.node, contents),
-                })
-                .collect(),
-        },
-        SavedPaneNode::Split { .. } => {
-            let leaf = PaneId::new(contents.len() as u64);
-            contents.push((Vec::new(), None));
-            PaneNode::Leaf(leaf)
-        }
-    }
 }
 
 fn existing_unique(paths: Vec<PathBuf>) -> Vec<PathBuf> {

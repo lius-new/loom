@@ -234,7 +234,8 @@ builds and baseline checks.
 The framework-independent editing core lives in
 [`crates/editor-core`](crates/editor-core/README.md). Run its tests without the
 GUI with `cargo test --locked -p loom-editor-core`; run all application and core
-regressions with `cargo test --locked --workspace`.
+regressions with `cargo test --locked --workspace`. Workspace domain rules also
+have a GUI-free verification entry point: `cargo test --locked -p loom-workspace-tests`.
 
 ```sh
 cargo build --release --locked

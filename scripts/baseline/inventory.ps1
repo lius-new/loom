@@ -4,6 +4,8 @@ $sourceRoot = Join-Path $Repository 'src'
 $sourceDirectories = @($sourceRoot)
 $coreRoot = Join-Path $Repository 'crates/editor-core'
 if (Test-Path -LiteralPath $coreRoot) { $sourceDirectories += $coreRoot }
+$workspaceVerificationRoot = Join-Path $Repository 'crates/workspace-tests'
+if (Test-Path -LiteralPath $workspaceVerificationRoot) { $sourceDirectories += $workspaceVerificationRoot }
 $files = Get-ChildItem -LiteralPath $sourceDirectories -Recurse -Filter '*.rs'
 $fileRecords = foreach ($file in $files) {
     $text = Get-Content -LiteralPath $file.FullName -Raw
@@ -35,7 +37,7 @@ $candidates = foreach ($rule in $rules) {
 }
 [ordered]@{
     schema = 1
-    scope = 'Application and editor-core source identities; lexical candidates include cfg(test), not a Rust dependency parser.'
+    scope = 'Application, editor-core and workspace verification source identities; lexical candidates include cfg(test), not a Rust dependency parser.'
     app_state_public_fields = [regex]::Matches($stateBody, '(?m)^\s+pub \w+:').Count
     files = @($fileRecords)
     dependency_candidates = @($candidates)

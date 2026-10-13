@@ -1,9 +1,6 @@
 //! Persistent file-tree session and recent-workspace history.
 
-use std::env;
-use std::fs;
 use std::io;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -11,6 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::terminal_session::ShellKind;
 
+use crate::infrastructure::session_filesystem as filesystem;
+#[cfg(test)]
+pub(crate) use filesystem::write_json;
+pub(crate) use filesystem::{config_path, session_path};
 pub const MAX_RECENT_FOLDERS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -23,43 +24,9 @@ pub struct WindowGeometry {
     pub maximized: bool,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SavedAxis {
-    Horizontal,
-    Vertical,
-}
-
-/// One node of the saved pane tree.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SavedPaneNode {
-    Pane {
-        items: Vec<PathBuf>,
-        #[serde(default)]
-        active: Option<PathBuf>,
-    },
-    Split {
-        axis: SavedAxis,
-        children: Vec<SavedChild>,
-    },
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct SavedChild {
-    /// Fraction of the parent split.
-    pub size: f32,
-    pub node: SavedPaneNode,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct EditorLayout {
-    pub root: SavedPaneNode,
-    /// Index of the focused pane in reading order.
-    #[serde(default)]
-    pub active_pane: usize,
-}
-
+pub use crate::domain::workspace_session::EditorLayout;
+#[cfg(test)]
+pub use crate::domain::workspace_session::{SavedAxis, SavedChild, SavedPaneNode};
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct WorkspaceSession {
     #[serde(default)]
@@ -99,13 +66,9 @@ pub fn load() -> WorkspaceSession {
 }
 
 fn load_unlocked() -> WorkspaceSession {
-    let Some(path) = session_path() else {
-        return WorkspaceSession::default();
-    };
-    let Ok(contents) = fs::read_to_string(path) else {
-        return WorkspaceSession::default();
-    };
-    serde_json::from_str(&contents).unwrap_or_default()
+    session_path()
+        .and_then(|path| filesystem::read_json(&path))
+        .unwrap_or_default()
 }
 
 pub fn save(open_folders: &[PathBuf], recent_folders: &[PathBuf]) -> io::Result<()> {
@@ -165,41 +128,7 @@ fn update(change: impl FnOnce(&mut WorkspaceSession)) -> io::Result<()> {
 }
 
 fn save_to(path: &Path, session: &WorkspaceSession) -> io::Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::other("missing session directory"))?;
-    fs::create_dir_all(parent)?;
-    let contents = serde_json::to_vec_pretty(session).map_err(io::Error::other)?;
-    let temporary = parent.join(format!(
-        ".loom-session-{}-{}.tmp",
-        std::process::id(),
-        SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)?;
-    let result = (|| {
-        file.write_all(&contents)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&temporary, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
-}
-
-/// Pretty-print `value` to `path`, creating the parent directory as needed.
-pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let contents = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
-    fs::write(path, contents)
+    filesystem::write_session(path, session)
 }
 
 fn persistence_lock() -> &'static Mutex<()> {
@@ -207,43 +136,107 @@ fn persistence_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-pub(crate) fn session_path() -> Option<PathBuf> {
-    config_path("workspace.json")
+use super::state::AppState;
+use super::workspace::Workspace;
+use crate::domain::identity::FileId;
+use crate::domain::workspace_session::{self as editor_session, PendingTab};
+use lgui::prelude::State;
+
+pub(crate) fn saved_editor_layout(workspace: &Workspace) -> Option<EditorLayout> {
+    saved_layout_with_pending(workspace, None)
 }
 
-/// Path of `file_name` inside Loom's per-user configuration directory.
-pub(crate) fn config_path(file_name: &str) -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .map(|path| path.join("Loom").join(file_name))
-    }
+pub(crate) fn saved_app_editor_layout(app: &AppState) -> Option<EditorLayout> {
+    saved_layout_with_pending(&app.workspace, app.editor.pending_file.as_ref())
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        env::var_os("HOME").map(PathBuf::from).map(|path| {
-            path.join("Library")
-                .join("Application Support")
-                .join("Loom")
-                .join(file_name)
-        })
+pub(crate) fn save_editor_session(state: &State<AppState>) -> bool {
+    let layout = saved_app_editor_layout(&state.get());
+    let result = save_editor_layout(layout.as_ref());
+    if let Err(error) = result {
+        state.update(|app| app.show_error(format!("Could not remember file tabs: {error}")));
+        return false;
     }
+    true
+}
 
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
-            return Some(PathBuf::from(path).join("loom").join(file_name));
+pub(crate) fn hydrate_editor_layout(app: &mut AppState, layout: Option<EditorLayout>) {
+    restore_editor_layout_with(app, layout, |workspace, path| {
+        Some(workspace.open_deferred(path))
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn hydrate_editor_layout_with(
+    app: &mut AppState,
+    layout: Option<EditorLayout>,
+    mut read: impl FnMut(&Path) -> Result<String, String>,
+) {
+    restore_editor_layout_with(app, layout, |workspace, path| {
+        read(&path).ok().map(|text| workspace.open_path(path, text))
+    });
+}
+
+fn restore_editor_layout_with(
+    app: &mut AppState,
+    layout: Option<EditorLayout>,
+    mut open: impl FnMut(&mut Workspace, PathBuf) -> Option<FileId>,
+) {
+    let Some(layout) = layout else {
+        return;
+    };
+    let mut contents = Vec::new();
+    let shape = editor_session::restored_shape(layout.root, &mut contents);
+    let panes = app.workspace.restore_layout(shape);
+    for (&pane, (items, active)) in panes.iter().zip(contents) {
+        app.workspace.activate_pane(pane);
+        let mut first = None;
+        let mut active_id = None;
+        for path in items {
+            let is_active = active.as_ref() == Some(&path);
+            let Some(id) = open(&mut app.workspace, path) else {
+                continue;
+            };
+            first.get_or_insert(id);
+            if is_active {
+                active_id = Some(id);
+            }
         }
-        env::var_os("HOME")
-            .map(PathBuf::from)
-            .map(|path| path.join(".config").join("loom").join(file_name))
+        if let Some(id) = active_id.or(first) {
+            app.workspace.activate(pane, id);
+        }
     }
+    for &pane in &panes {
+        if app.workspace.pane(pane).is_some_and(|pane| pane.is_empty()) {
+            app.workspace.close_pane(pane);
+        }
+    }
+    let focus = panes
+        .get(layout.active_pane)
+        .copied()
+        .filter(|pane| app.workspace.pane(*pane).is_some())
+        .unwrap_or_else(|| app.workspace.pane_ids()[0]);
+    app.workspace.activate_pane(focus);
+}
+fn saved_layout_with_pending(
+    workspace: &Workspace,
+    pending: Option<&crate::file_loading::PendingFile>,
+) -> Option<EditorLayout> {
+    let pending = pending.map(|value| PendingTab {
+        pane: value.pane,
+        path: value.path.clone(),
+        insert_before: match value.drop {
+            Some(crate::app::state::TabDrop::Insert { index, .. }) => Some(index),
+            _ => None,
+        },
+    });
+    editor_session::capture(&workspace.core, pending.as_ref())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{env, fs};
 
     #[test]
     fn session_replacement_preserves_other_fields_and_is_readable_after_each_save() {

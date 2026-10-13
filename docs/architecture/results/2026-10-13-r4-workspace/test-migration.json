@@ -1,0 +1,151 @@
+{
+  "before": 603,
+  "after": 627,
+  "renames": [
+    [
+      "model::workspace::tests::",
+      "app::workspace::tests::"
+    ],
+    [
+      "model::document::tests::",
+      "domain::document::tests::"
+    ],
+    [
+      "model::pane_layout::tests::",
+      "domain::pane_layout::tests::"
+    ],
+    [
+      "session_restore::tests::",
+      "app::workspace_restore::tests::"
+    ],
+    [
+      "workspace_persistence::tests::",
+      "app::workspace_session::tests::"
+    ]
+  ],
+  "missing": [],
+  "new_behavior_tests": [
+    {
+      "name": "app::workspace::tests::preview_reuse_and_pane_moves_flush_retired_data_at_the_application_boundary",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "domain::workspace::tests::a_closed_placeholder_rejects_late_preparation_and_returns_retired_data",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "domain::workspace::tests::injected_disk_conflicts_keep_edits_until_explicit_acceptance",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "domain::workspace::tests::missing_recovered_and_unreadable_observations_remain_distinct",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "domain::workspace::tests::retargeting_metadata_keeps_identity_views_and_shared_history",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "domain::workspace::tests::unicode_edits_and_shared_undo_transform_both_pane_selections",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "domain::workspace_session::tests::pending_snapshot_counts_only_file_tabs_before_its_insertion",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "domain::workspace_session::tests::pruning_empty_panes_preserves_focus_and_restorable_tree_order",
+      "result": "ok",
+      "reason": ""
+    }
+  ],
+  "verification_tests": [
+    {
+      "name": "isolated::domain::document::tests::detects_supported_editor_languages_from_paths",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::pane_layout::tests::even_resets_all_sizes",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::pane_layout::tests::neighbors_follow_geometry",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::pane_layout::tests::layout_rounds_boundaries_without_gaps",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::pane_layout::tests::nested_subtrees_contribute_their_minimum_extent",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::pane_layout::tests::removed_space_goes_to_the_previous_sibling",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::pane_layout::tests::resize_moves_a_sash_and_respects_minimum_sizes",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::workspace::tests::a_closed_placeholder_rejects_late_preparation_and_returns_retired_data",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::pane_layout::tests::parallel_split_inserts_a_sibling_and_orthogonal_split_nests",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::workspace::tests::retargeting_metadata_keeps_identity_views_and_shared_history",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::workspace::tests::missing_recovered_and_unreadable_observations_remain_distinct",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::workspace::tests::injected_disk_conflicts_keep_edits_until_explicit_acceptance",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::workspace_session::tests::pruning_empty_panes_preserves_focus_and_restorable_tree_order",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::workspace_session::tests::pending_snapshot_counts_only_file_tabs_before_its_insertion",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::workspace::tests::unicode_edits_and_shared_undo_transform_both_pane_selections",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "isolated::domain::pane_layout::tests::removing_collapses_single_child_splits_into_the_grandparent",
+      "result": "ok",
+      "reason": ""
+    }
+  ]
+}

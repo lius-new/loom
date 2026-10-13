@@ -7,9 +7,9 @@ use std::sync::{
     mpsc,
 };
 
-use crate::model::document::FileId;
-use crate::model::workspace::PreparedTextFile;
-use crate::state::AppState;
+use super::state::AppState;
+use super::workspace::PreparedTextFile;
+use crate::domain::identity::FileId;
 use lgui::{ApplicationHandle, prelude::State};
 
 pub struct SessionRestore {

@@ -1834,6 +1834,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom-workspace-tests"
+version = "0.1.0"
+dependencies = [
+ "loom-editor-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

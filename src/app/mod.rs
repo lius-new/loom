@@ -24,3 +24,7 @@ pub(crate) use bootstrap::svg_icons;
 
 pub(crate) mod search;
 mod search_tasks;
+pub(crate) mod workspace;
+mod workspace_git;
+pub(crate) mod workspace_restore;
+pub(crate) mod workspace_session;

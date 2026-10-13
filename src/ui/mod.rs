@@ -105,3 +105,5 @@ pub fn display_path(path: &std::path::Path) -> String {
 pub fn display_path(path: &std::path::Path) -> String {
     path.to_string_lossy().into_owned()
 }
+pub(crate) mod geometry;
+pub(crate) mod language;

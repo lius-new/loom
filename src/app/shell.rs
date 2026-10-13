@@ -567,7 +567,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         .content_rect(&application_snapshot, &Content::Editor)
         .unwrap_or(content_area);
     let focused_pane = s.workspace.active_pane();
-    let pane_rects = s.workspace.layout().layout(editor_area);
+    let pane_rects: Vec<_> = s
+        .workspace
+        .layout()
+        .layout(editor_area.into())
+        .into_iter()
+        .map(|(pane, rect)| (pane, UiRect::from(rect)))
+        .collect();
     let strips = pane_rects
         .iter()
         .map(|(pane, rect)| (*pane, pane_strip_rect(*rect)))
@@ -1163,7 +1169,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         });
     }
-    for sash in s.workspace.layout().sashes(editor_area) {
+    for sash in s.workspace.layout().sashes(editor_area.into()) {
         root = root.child(pane_sash::render(sash, state.clone()));
     }
     if source_control_left {

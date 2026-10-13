@@ -431,8 +431,8 @@
       "remove_in": "R8"
     },
     "workspace": {
-      "owner": "domain/workspace (one atomic update)",
-      "remove_in": "R3 R4"
+      "owner": "app/workspace composition of domain/workspace (one atomic update)",
+      "remove_in": "composition"
     },
     "workspace_folders": {
       "owner": "features/explorer/private model",
@@ -687,33 +687,12 @@
       "remove_in": "R3 R4",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/model/document.rs": {
-      "dependencies": [
-        "crate::theme",
-        "lgui",
-        "std::fs"
-      ],
-      "remove_in": "R3 R4",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/model/pane_layout.rs": {
-      "dependencies": [
-        "lgui"
-      ],
-      "remove_in": "R3 R4",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/model/workspace.rs": {
       "dependencies": [
-        "crate::background_ui",
-        "crate::git",
-        "crate::model",
-        "lgui",
-        "std::fs",
-        "std::process"
+        "crate::app"
       ],
-      "remove_in": "R3 R4",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "remove_in": "R8",
+      "reason": "R4 的兼容导出指向 app/workspace 组合容器；纯域规则已迁入 domain/workspace。旧 UI 按各自登记阶段迁移，新增代码使用实际边界。"
     },
     "src/project_settings.rs": {
       "dependencies": [
@@ -725,22 +704,6 @@
         "std::thread"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/session_restore.rs": {
-      "dependencies": [
-        "crate::background_ui",
-        "crate::file_loading",
-        "crate::model",
-        "crate::state",
-        "crate::theme",
-        "crate::ui",
-        "crate::workspace_actions",
-        "crate::workspace_persistence",
-        "lgui",
-        "std::thread"
-      ],
-      "remove_in": "R4 R5",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
     "src/settings_persistence.rs": {
@@ -1097,6 +1060,7 @@
     },
     "src/workspace_actions.rs": {
       "dependencies": [
+        "crate::app",
         "crate::file_loading",
         "crate::file_tree",
         "crate::git",
@@ -1113,17 +1077,7 @@
         "windows_sys"
       ],
       "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/workspace_persistence.rs": {
-      "dependencies": [
-        "crate::terminal_session",
-        "serde",
-        "std::fs",
-        "std::process"
-      ],
-      "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R4 会话保存/恢复转交 app/workspace_session；Explorer 与文件命令保留本文件各自阶段的登记。"
     }
   },
   "phase2": {
@@ -1251,6 +1205,44 @@
     "ime": {
       "owner": "app/state/editor",
       "migrated_in": "R3"
+    }
+  },
+  "workspace_core_ownership": {
+    "documents": {
+      "owner": "domain/workspace",
+      "migrated_in": "R4"
+    },
+    "paths": {
+      "owner": "domain/workspace",
+      "migrated_in": "R4"
+    },
+    "panes": {
+      "owner": "domain/workspace",
+      "migrated_in": "R4"
+    },
+    "layout": {
+      "owner": "domain/workspace",
+      "migrated_in": "R4"
+    },
+    "active_pane": {
+      "owner": "domain/workspace",
+      "migrated_in": "R4"
+    },
+    "pane_mru": {
+      "owner": "domain/workspace",
+      "migrated_in": "R4"
+    },
+    "next_file_id": {
+      "owner": "domain/workspace",
+      "migrated_in": "R4"
+    },
+    "next_pane_id": {
+      "owner": "domain/workspace",
+      "migrated_in": "R4"
+    },
+    "retired": {
+      "owner": "domain/workspace",
+      "migrated_in": "R4"
     }
   }
 }

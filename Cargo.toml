@@ -9,7 +9,7 @@ repository = "https://github.com/lius-new/loom"
 readme = "README.md"
 
 [workspace]
-members = ["crates/editor-core"]
+members = ["crates/editor-core", "crates/workspace-tests"]
 default-members = [".", "crates/editor-core"]
 resolver = "3"
 

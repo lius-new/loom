@@ -1,7 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {dependencies,stateFields,structFields,violations} from './check.mjs';
+import {dependencies,stateFields,structFields,violations,verificationManifestErrors} from './check.mjs';
 const policy=()=>({exceptions:{},root_state_adapters:[],runtime_bridges:[],state_ownership:{}});
+
+test('workspace, document and pane rules cannot regain I/O, UI, Git or adapter exceptions',()=>{
+  for(const file of ['src/domain/workspace.rs','src/domain/document.rs','src/domain/pane_layout.rs']) {
+    for(const source of ['use crate::git::DiffRequest;', 'use crate::app::workspace::Workspace;', 'use lgui::prelude::*;', 'use std::{fs, thread};', 'pub struct View { area: UiRect }', 'include!("../model/workspace.rs");']) {
+      const declaration=file==='src/domain/workspace.rs'?'pub struct Workspace {}\n':'';
+      assert.ok(violations({[file]:declaration+source},policy()).length>0);
+    }
+    const p=policy();p.exceptions[file]={dependencies:['lgui'],remove_in:'R8',reason:'bad'};
+    const declaration=file==='src/domain/workspace.rs'?'pub struct Workspace {}\n':'';
+    assert.ok(violations({[file]:declaration+'use lgui::prelude::*;'},p).some(e=>e.includes('domain cannot have migration exceptions')));
+  }
+});
+test('workspace fields cannot evade their ownership register',()=>{
+  const p=policy();p.workspace_core_ownership={gone:{owner:'domain/workspace',migrated_in:'R4'}};
+  const errors=violations({'src/domain/workspace.rs':'pub struct Workspace<D, K> { pub docs: D, keys: K }'},p);
+  assert.ok(errors.some(e=>e.includes('Workspace.docs: no registered owner')));
+  assert.ok(errors.some(e=>e.includes('Workspace.gone: obsolete ownership entry')));
+});
+test('domain verification cannot silently include the application or an I/O adapter',()=>{
+  const file='crates/workspace-tests/src/isolated.rs';
+  for(const source of ['use lgui::ApplicationHandle;', '#[path = "../../../src/app/mod.rs"] mod app;', 'include!("../../../src/model/workspace.rs");']) {
+    assert.ok(violations({[file]:source},policy()).length>0);
+  }
+  assert.deepEqual(violations({[file]:'#[path = "../../../src/domain/mod.rs"]\npub(crate) mod domain;'},policy()),[]);
+});
+test('domain verification cannot acquire GUI dependencies or renamed package aliases',()=>{
+  const source='[dependencies]\nloom-editor-core = { path = "../editor-core" }\nserde = "1"\nserde_json = "1"\n';
+  assert.deepEqual(verificationManifestErrors(source),[]);
+  for(const modified of [source+'lgui = "1"\n',source+'[build-dependencies]\nlgui = "1"\n',source.replace('serde = "1"','serde = { package = "lgui", version = "1" }')])assert.ok(verificationManifestErrors(modified).length>0);
+});
 
 test('Editor views cannot regain root state, model, Vim machinery or exceptions',()=>{
   for(const file of ['src/ui/editor/view.rs','src/ui/editor/menu.rs','src/ui/editor_binding.rs']) {
