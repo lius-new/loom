@@ -1,0 +1,26 @@
+# prepare_batch A/B (release, frozen test binaries, interleaved, 3 warm-up + 30 samples per run)
+# before = a5abed2 (R5.1: clones whole AppState), after = R5.4 working tree (clones ExplorerModel)
+# before.exe sha256 33efa689a69f77d69e588419442232230e2038abdfb445b8f866851f1d17b478
+# after.exe  sha256 ea4a4089f5686b643f88fa0508b89951f2296f7d102e5a03f0784f58fa8ba339
+# fixture: 100 loaded directories x 100 files + root; 20 open documents x 512 KiB
+round=1 before BENCH prepare_batch single_change median_ms=3.2339 p90_ms=3.7286
+round=1 before BENCH prepare_batch full_rescan median_ms=20.4590 p90_ms=21.0901
+round=1 after BENCH prepare_batch single_change median_ms=3.2196 p90_ms=3.8098
+round=1 after BENCH prepare_batch full_rescan median_ms=18.0754 p90_ms=18.9561
+round=2 after BENCH prepare_batch single_change median_ms=3.4021 p90_ms=4.1928
+round=2 after BENCH prepare_batch full_rescan median_ms=17.5690 p90_ms=18.3596
+round=2 before BENCH prepare_batch single_change median_ms=3.3742 p90_ms=3.6331
+round=2 before BENCH prepare_batch full_rescan median_ms=17.6636 p90_ms=18.8868
+round=3 before BENCH prepare_batch single_change median_ms=3.3233 p90_ms=3.7415
+round=3 before BENCH prepare_batch full_rescan median_ms=18.0040 p90_ms=19.8182
+round=3 after BENCH prepare_batch single_change median_ms=3.4564 p90_ms=3.7074
+round=3 after BENCH prepare_batch full_rescan median_ms=18.0242 p90_ms=18.9402
+round=4 after BENCH prepare_batch single_change median_ms=3.2666 p90_ms=3.9505
+round=4 after BENCH prepare_batch full_rescan median_ms=17.7989 p90_ms=19.5447
+round=4 before BENCH prepare_batch single_change median_ms=3.3748 p90_ms=4.3103
+round=4 before BENCH prepare_batch full_rescan median_ms=17.7096 p90_ms=18.3885
+round=5 before BENCH prepare_batch single_change median_ms=3.4841 p90_ms=4.1372
+round=5 before BENCH prepare_batch full_rescan median_ms=18.1139 p90_ms=18.8865
+round=5 after BENCH prepare_batch single_change median_ms=3.5318 p90_ms=4.1030
+round=5 after BENCH prepare_batch full_rescan median_ms=18.5674 p90_ms=20.4425
+# clone cost, after binary: app_state_median_us=13.80 explorer_model_median_us=8.60

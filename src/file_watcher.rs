@@ -823,4 +823,250 @@ mod tests {
         drop(watcher);
         fs::remove_dir_all(root).unwrap();
     }
+
+    // --- Explorer state changed between preparing and applying a batch ---
+
+    fn full_rescan() -> FileChangeBatch {
+        FileChangeBatch {
+            changes: Vec::new(),
+            requires_full_rescan: true,
+        }
+    }
+
+    fn explorer_at(root: &Path) -> AppState {
+        let mut app = AppState::new();
+        app.explorer
+            .model
+            .restore(vec![root.to_path_buf()], Vec::new());
+        app.explorer.model.hydrate(&ExplorerFilesystem);
+        app
+    }
+
+    fn key(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    fn names(app: &AppState, directory: &Path) -> Vec<String> {
+        app.explorer
+            .model
+            .listing(&key(directory))
+            .unwrap()
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn collapsing_during_preparation_keeps_the_collapse_and_applies_the_listing() {
+        let root = temp_directory("race-collapse");
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let mut app = explorer_at(&root);
+        app.explorer
+            .model
+            .toggle_directory(&ExplorerFilesystem, &key(&sub));
+        fs::write(sub.join("new.txt"), "new").unwrap();
+
+        let prepared = prepare_batch(&app, &full_rescan());
+        app.explorer
+            .model
+            .toggle_directory(&ExplorerFilesystem, &key(&sub));
+
+        assert_eq!(apply_prepared_batch(&mut app, prepared), (true, false));
+        assert!(!app.explorer.model.is_expanded(&key(&sub)));
+        assert_eq!(names(&app, &sub), ["new.txt"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn directory_expanded_during_preparation_stays_loaded() {
+        let root = temp_directory("race-expand");
+        let later = root.join("later");
+        fs::create_dir(&later).unwrap();
+        fs::write(later.join("inner.txt"), "inner").unwrap();
+        let mut app = explorer_at(&root);
+        fs::write(root.join("added.txt"), "added").unwrap();
+
+        let prepared = prepare_batch(&app, &full_rescan());
+        app.explorer
+            .model
+            .toggle_directory(&ExplorerFilesystem, &key(&later));
+
+        assert_eq!(apply_prepared_batch(&mut app, prepared), (true, false));
+        assert!(app.explorer.model.is_expanded(&key(&later)));
+        assert_eq!(names(&app, &later), ["inner.txt"]);
+        assert_eq!(names(&app, &root), ["later", "added.txt"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn edit_row_opened_during_preparation_defers_the_tree() {
+        let root = temp_directory("race-edit");
+        let mut app = explorer_at(&root);
+        fs::write(root.join("added.txt"), "added").unwrap();
+
+        let prepared = prepare_batch(&app, &full_rescan());
+        app.explorer
+            .model
+            .begin_create(root.clone(), crate::state::ExplorerCreateKind::File);
+
+        assert_eq!(apply_prepared_batch(&mut app, prepared), (false, false));
+        assert!(names(&app, &root).is_empty());
+        assert!(app.explorer.model.pending_refresh());
+
+        app.explorer.model.cancel_edit();
+        assert!(
+            app.explorer
+                .model
+                .apply_pending_refresh(&ExplorerFilesystem)
+        );
+        assert_eq!(names(&app, &root), ["added.txt"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn root_replaced_during_preparation_discards_the_tree_batch() {
+        let root = temp_directory("race-old-root");
+        let other = temp_directory("race-new-root");
+        fs::write(other.join("kept.txt"), "kept").unwrap();
+        let mut app = explorer_at(&root);
+        fs::write(root.join("added.txt"), "added").unwrap();
+
+        let prepared = prepare_batch(&app, &full_rescan());
+        app.explorer
+            .model
+            .open_root(&ExplorerFilesystem, other.clone());
+
+        assert_eq!(apply_prepared_batch(&mut app, prepared), (false, false));
+        assert!(app.explorer.model.listing(&key(&root)).is_none());
+        assert_eq!(names(&app, &other), ["kept.txt"]);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(other).unwrap();
+    }
+
+    #[test]
+    fn rename_during_preparation_rejects_the_late_listing_and_retries() {
+        let root = temp_directory("race-rename");
+        let old = root.join("old.txt");
+        let new = root.join("new.txt");
+        fs::write(&old, "old").unwrap();
+        let mut app = explorer_at(&root);
+        fs::write(root.join("added.txt"), "added").unwrap();
+
+        let prepared = prepare_batch(&app, &full_rescan());
+        fs::rename(&old, &new).unwrap();
+        app.explorer
+            .model
+            .apply_rename(&ExplorerFilesystem, &old, &new);
+        let after_rename = names(&app, &root);
+
+        assert_eq!(apply_prepared_batch(&mut app, prepared), (false, true));
+        assert_eq!(names(&app, &root), after_rename);
+        assert!(after_rename.contains(&"new.txt".to_owned()));
+        assert!(!after_rename.contains(&"old.txt".to_owned()));
+
+        let retry = prepare_batch(&app, &full_rescan());
+        assert_eq!(apply_prepared_batch(&mut app, retry), (false, false));
+        assert_eq!(names(&app, &root), ["added.txt", "new.txt"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn removed_directory_is_unloaded_and_collapsed() {
+        let root = temp_directory("race-removed");
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let mut app = explorer_at(&root);
+        app.explorer
+            .model
+            .toggle_directory(&ExplorerFilesystem, &key(&sub));
+        fs::remove_dir(&sub).unwrap();
+
+        let prepared = prepare_batch(&app, &full_rescan());
+        assert_eq!(apply_prepared_batch(&mut app, prepared), (true, false));
+        assert!(app.explorer.model.listing(&key(&sub)).is_none());
+        assert!(!app.explorer.model.is_expanded(&key(&sub)));
+        assert!(names(&app, &root).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// `cargo test --release --bin Loom prepare_batch_cost -- --ignored --nocapture`
+    /// Times watcher preparation with a loaded tree and large open documents.
+    #[test]
+    #[ignore = "benchmark"]
+    fn prepare_batch_cost_benchmark() {
+        let root = temp_directory("bench-prepare");
+        let mut directories = Vec::new();
+        for d in 0..100 {
+            let directory = root.join(format!("dir-{d:03}"));
+            fs::create_dir(&directory).unwrap();
+            for f in 0..100 {
+                fs::write(directory.join(format!("file-{f:03}.txt")), "").unwrap();
+            }
+            directories.push(directory);
+        }
+        let mut app = AppState::new();
+        app.explorer.model.restore(vec![root.clone()], Vec::new());
+        app.explorer.model.hydrate(&ExplorerFilesystem);
+        for directory in &directories {
+            app.explorer
+                .model
+                .toggle_directory(&ExplorerFilesystem, &key(directory));
+        }
+        bench_prepare(app, &root);
+    }
+
+    fn bench_prepare(mut app: AppState, root: &Path) {
+        // 20 open documents of 512 KiB (10 MiB) that the batch does not touch.
+        for index in 0..20 {
+            let text = format!("{index:02} 中文 emoji 🙂 line\n").repeat(512 * 1024 / 32);
+            app.workspace
+                .open_path(root.join(format!("open-{index:02}.rs")), text);
+        }
+        let single = FileChangeBatch {
+            changes: vec![FileChange {
+                path: root.join("dir-050").join("created.txt"),
+                kind: FileChangeKind::Create,
+            }],
+            requires_full_rescan: false,
+        };
+        let full = FileChangeBatch {
+            changes: Vec::new(),
+            requires_full_rescan: true,
+        };
+        let median_us = |clone: &dyn Fn()| {
+            let mut samples = (0..30)
+                .map(|_| {
+                    let start = Instant::now();
+                    clone();
+                    start.elapsed().as_secs_f64() * 1_000_000.0
+                })
+                .collect::<Vec<_>>();
+            samples.sort_by(f64::total_cmp);
+            samples[15]
+        };
+        println!(
+            "BENCH clone app_state_median_us={:.2} explorer_model_median_us={:.2}",
+            median_us(&|| drop(std::hint::black_box(app.clone()))),
+            median_us(&|| drop(std::hint::black_box(app.explorer.model.clone())))
+        );
+        for (label, batch) in [("single_change", &single), ("full_rescan", &full)] {
+            for _ in 0..3 {
+                std::hint::black_box(prepare_batch(&app, batch));
+            }
+            let mut samples = (0..30)
+                .map(|_| {
+                    let start = Instant::now();
+                    std::hint::black_box(prepare_batch(&app, batch));
+                    start.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect::<Vec<_>>();
+            samples.sort_by(f64::total_cmp);
+            println!(
+                "BENCH prepare_batch {label} median_ms={:.4} p90_ms={:.4}",
+                samples[15], samples[27]
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -215,3 +215,12 @@ src/app/
 - 调用方改为 `crate::app::explorer::*`。sidebar、context_menu、welcome、tab_context_menu 及 git_menu、git_panel 因此登记临时 `crate::app` 依赖（UI→app 方向）：前四个在 R5.5 改为语义命令后移除，Git 两个随 R6 迁移。git_actions 不再依赖 workspace_actions。
 - 测试：13 项 Explorer 相关测试按原名迁到 `app/explorer_tests.rs`（大文件打开、启动参数 2、文件夹添加/替换/移除 3、拖放 4、重命名 2、删除 1）；新增 4 项在真实 `State<AppState>` 上运行的命令测试：有未保存文档的目录拒绝删除且不触碰磁盘、Unicode 文件重命名同步磁盘/标签/列表、非法重命名保留编辑行与错误、嵌套新建（含尾部斜杠建目录）展开整条路径并打开新文件。原计划的“重命名期间晚到 watcher 结果”归入 R5.4 竞态测试。
 - 结果：完整 workspace 638 通过、0 失败、12 忽略（应用 554，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 22 项自测通过；根字段 76、legacy exception 文件 59 不变。Windows PowerShell 5.1 隔离启动/恢复 smoke 通过。
+
+### R5.4（2026-10-13，本机自动验收）
+
+- 准备阶段只克隆 Explorer 模型（R5.2 已落地）；本步补齐竞态验证与性能对照，未改变 watcher 调度、过期拒收或回收逻辑。
+- 新增 6 项 file_watcher 测试，在 `prepare_batch` 与 `apply_prepared_batch` 之间修改 Explorer 状态：准备期间折叠目录（保留折叠、列表仍更新）、展开新目录（新加载保留、根列表更新）、打开新建行（整批延迟、取消后补刷新）、替换根目录（整批丢弃）、重命名（晚到列表因 `Arc` 身份不符被拒并请求重试，重试后收敛）、目录被删（卸载并折叠）。
+- 性能：新增被忽略的基准 `prepare_batch_cost_benchmark`（100 个已加载目录 × 100 文件 + 20 个 512 KiB 打开文档）。对 R5.1（a5abed2，克隆整个 AppState）与当前代码冻结 release 测试二进制，交替顺序各 5 轮、每轮 3 次预热 + 30 样本。单项变更中位数 3.22–3.53 ms（前）对 3.22–3.53 ms（后）同一区间；全量重扫 17.66–20.46 ms 对 17.57–18.57 ms，第一轮“前”偏高后与“后”重叠，结论为无可测差异。直接测量克隆：整个 AppState 中位数 13.8 µs，Explorer 模型 8.6 µs，相对毫秒级目录读取可忽略。原始数据见 [prepare-batch-ab.txt](results/2026-10-13-r5-explorer/prepare-batch-ab.txt)。
+- 结论：本步是结构收益（watcher 不再依赖整个根状态），不声称性能提升；也未发现回归。调查中的既有成本：每次刷新后 `prune_unavailable` 对所有已缓存目录逐个 `is_dir`，在本夹具中占单项变更的主要耗时。该行为 R5 前即存在，本轮未改，可作为后续独立优化。
+- 31 项常规性能基线需要 PowerShell 7（`scripts/baseline/run.ps1`），本机未安装，留到 R5 收尾在具备环境时执行。
+- 结果：完整 workspace 644 通过、0 失败、13 忽略（新增基准为忽略项；应用 560，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 22 项自测通过。
