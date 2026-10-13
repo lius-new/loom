@@ -252,7 +252,7 @@ pub fn navigate(
                             if let Some(mut editor) = app.workspace.active_editor_mut() {
                                 editor.select_range(range);
                             }
-                            crate::editor::editor_view::reveal_cursor(app, rect);
+                            crate::app::editor::reveal_cursor(app, rect);
                             app.editor.drag = None;
                             app.editor.ime = None;
                             focused = focus_editor;

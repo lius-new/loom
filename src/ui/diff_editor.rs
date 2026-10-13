@@ -8,7 +8,6 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
-use crate::editor::editor_view::{self, SCROLLBAR_SIZE, ScrollMetrics};
 use crate::fonts;
 use crate::git::{DiffTarget, GitStoreSnapshot};
 use crate::git_actions::{self, BlockAction};
@@ -18,6 +17,7 @@ use crate::model::diff_document::{
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
+use crate::ui::editor::view::{self as editor_view, SCROLLBAR_SIZE, ScrollMetrics};
 
 const TOOLBAR_H: f32 = 34.0;
 const NUMBER_W: f32 = 44.0;
@@ -36,6 +36,7 @@ pub fn render(
     state: State<AppState>,
     store: State<GitStoreSnapshot>,
     editor_focus: UiFocusHandle,
+    scrollbars: crate::ui::editor_binding::Binding,
 ) -> Element {
     let app = state.get();
     let Some(document) = app.workspace.diff(pane) else {
@@ -233,10 +234,10 @@ pub fn render(
         ));
     }
 
-    let emphasized = app.editor_hovered == Some(pane)
+    let emphasized = app.editor.editor_hovered == Some(pane)
         || (app.workspace.active_pane() == pane
-            && (app.editor_vertical_scrollbar_dragging
-                || app.editor_horizontal_scrollbar_dragging));
+            && (app.editor.editor_vertical_scrollbar_dragging
+                || app.editor.editor_horizontal_scrollbar_dragging));
     if !split && document.sections.is_none() {
         let marks = document.inline_change_marks();
         if !marks.is_empty() && marks.len() <= 10_000 {
@@ -257,7 +258,7 @@ pub fn render(
             scroll_y,
             max_x > 0.0,
             emphasized,
-            state.clone(),
+            scrollbars.clone(),
         ));
     }
     if max_x > 0.0 {
@@ -269,7 +270,7 @@ pub fn render(
             scroll_x,
             max_y > 0.0,
             emphasized,
-            state,
+            scrollbars.clone(),
         ));
     }
     if max_x > 0.0 && max_y > 0.0 {
@@ -339,12 +340,14 @@ fn scroll_metrics(
 /// Use the same window-level drag handling as the text editor, including
 /// movements outside the scrollbar strip.
 pub(crate) fn drag_scrollbars(app: &mut AppState, rect: UiRect, x: f32, y: f32) -> bool {
-    if !app.editor_vertical_scrollbar_dragging && !app.editor_horizontal_scrollbar_dragging {
+    if !app.editor.editor_vertical_scrollbar_dragging
+        && !app.editor.editor_horizontal_scrollbar_dragging
+    {
         return false;
     }
     let split = app.git_split_diff;
     let Some(document) = app.workspace.diff(app.workspace.active_pane()) else {
-        return editor_view::finish_scrollbar_drag(app);
+        return crate::app::editor::finish_scrollbar_drag(app);
     };
     let body = UiRect::new(rect.left, rect.top + TOOLBAR_H, rect.right, rect.bottom);
     let rows = if document.sections.is_some() {
@@ -366,7 +369,14 @@ pub(crate) fn drag_scrollbars(app: &mut AppState, rect: UiRect, x: f32, y: f32) 
         document.longest_line(split),
         app.git_split_ratio,
     );
-    editor_view::drag_scrollbars_with_metrics(app, body, code_left(body, split), metrics, x, y)
+    crate::app::editor::drag_scrollbars_with_metrics(
+        app,
+        body,
+        code_left(body, split),
+        metrics,
+        x,
+        y,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1007,6 +1017,16 @@ fn navigate_change(app: &mut AppState, starts: &[usize], next: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn render(
+        pane: PaneId,
+        rect: UiRect,
+        state: State<AppState>,
+        store: State<GitStoreSnapshot>,
+        focus: UiFocusHandle,
+    ) -> Element {
+        let binding = crate::app::editor_view::binding(state.clone(), store.clone(), pane, rect);
+        super::render(pane, rect, state, store, focus, binding)
+    }
 
     fn sample_overview(extra_files: usize) -> DiffDocument {
         use crate::git::{ChangeDiff, ChangeGroup, DiffContent, DiffRequest, diff::parse_unified};
@@ -1376,7 +1396,7 @@ mod tests {
                     }
                 })
                 .on_event_capture(UiEventKind::PointerUp, move |_, _| {
-                    up_state.try_update(editor_view::finish_scrollbar_drag);
+                    up_state.try_update(crate::app::editor::finish_scrollbar_drag);
                 })
                 .child(render(
                     PaneId::new(1),
@@ -1433,7 +1453,7 @@ mod tests {
             pointer: pointer(496.0, body_top + 4.0),
             button: PointerButton::Left,
         });
-        assert!(state.get().editor_vertical_scrollbar_dragging);
+        assert!(state.get().editor.editor_vertical_scrollbar_dragging);
         send(InputEvent::PointerMove(pointer(30.0, 500.0)));
         let bottom = state.get().workspace.active_scroll().1;
         assert!(bottom > 0.0);
@@ -1441,7 +1461,7 @@ mod tests {
             pointer: pointer(30.0, 500.0),
             button: PointerButton::Left,
         });
-        assert!(!state.get().editor_vertical_scrollbar_dragging);
+        assert!(!state.get().editor.editor_vertical_scrollbar_dragging);
         send(InputEvent::PointerMove(pointer(30.0, body_top)));
         assert_eq!(state.get().workspace.active_scroll().1, bottom);
 
@@ -1461,7 +1481,7 @@ mod tests {
             pointer: pointer(left + 4.0, 296.0),
             button: PointerButton::Left,
         });
-        assert!(state.get().editor_horizontal_scrollbar_dragging);
+        assert!(state.get().editor.editor_horizontal_scrollbar_dragging);
         send(InputEvent::PointerMove(pointer(900.0, 100.0)));
         let right = state.get().workspace.active_scroll().0;
         assert!(right > 0.0);
@@ -1469,7 +1489,7 @@ mod tests {
             pointer: pointer(900.0, 100.0),
             button: PointerButton::Left,
         });
-        assert!(!state.get().editor_horizontal_scrollbar_dragging);
+        assert!(!state.get().editor.editor_horizontal_scrollbar_dragging);
         send(InputEvent::PointerMove(pointer(left, 100.0)));
         assert_eq!(state.get().workspace.active_scroll().0, right);
         send(InputEvent::PointerDown {

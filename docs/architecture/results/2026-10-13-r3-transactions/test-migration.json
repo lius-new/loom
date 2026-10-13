@@ -1,0 +1,79 @@
+{
+  "before": 597,
+  "after": 603,
+  "renames": [
+    [
+      "editor::phase0_baseline::",
+      "app::phase0_baseline::"
+    ],
+    [
+      "editor::editor_view::tests::",
+      "app::editor::tests::"
+    ],
+    [
+      "editor::vim_input::tests::",
+      "app::editor_vim::tests::"
+    ],
+    [
+      "editor::interaction::tests::",
+      "app::state::editor::tests::"
+    ],
+    [
+      "editor::baseline_tests::",
+      "app::editor_baseline_tests::"
+    ],
+    [
+      "editor::commands::tests::",
+      "ui::editor::keys::tests::"
+    ],
+    [
+      "editor::caret::tests::",
+      "ui::editor::caret::tests::"
+    ],
+    [
+      "editor::gutter::tests::",
+      "ui::editor::gutter::tests::"
+    ],
+    [
+      "editor::syntax::tests::",
+      "ui::editor::syntax::tests::"
+    ],
+    [
+      "editor::vim_integration_tests::",
+      "app::editor_vim_integration_tests::"
+    ]
+  ],
+  "missing": [],
+  "new_tests": [
+    {
+      "name": "app::editor_view::tests::a_late_ime_event_commits_to_its_original_pane_and_undo_history",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "app::editor_view::tests::a_pointer_event_from_a_replaced_document_cannot_move_the_new_selection",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "app::editor_view::tests::blur_cancels_transients_and_separates_typing_undo_groups",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "app::editor_view::tests::inactive_pane_snapshot_keeps_its_own_selection_scroll_and_ime",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "app::editor_view::tests::snapshot_bounds_gutter_changes_but_keeps_the_full_overview",
+      "result": "ok",
+      "reason": ""
+    },
+    {
+      "name": "app::editor::tests::editor_menu_executes_its_intent_and_keeps_editor_focus",
+      "result": "ok",
+      "reason": ""
+    }
+  ]
+}

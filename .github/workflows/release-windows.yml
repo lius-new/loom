@@ -50,6 +50,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
 
       - name: Show Node.js version
         run: node --version
@@ -60,7 +62,7 @@ jobs:
         run: node scripts/package/package.mjs setup --expect-version ${{ steps.version.outputs.version }}
 
       - name: Run tests
-        run: cargo test --locked
+        run: cargo test --locked --workspace
 
       - name: Compile
         run: node scripts/package/package.mjs compile --expect-version ${{ steps.version.outputs.version }}

@@ -6,8 +6,8 @@
 
 use serde_json::Value;
 
-use crate::editor::commands::Command;
-use crate::editor::normal::Movement;
+use loom_editor_core::commands::Command;
+use loom_editor_core::normal::Movement;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ActionMeta {

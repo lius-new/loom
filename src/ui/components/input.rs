@@ -9,9 +9,9 @@ use lgui::core::{
 use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel};
 use lgui::services::ServicesContextExt;
 
-use crate::editor::commands::{self, Command};
-use crate::editor::normal::{self, Movement};
-use crate::model::text::{EditorMut, Selection, TextBuffer};
+use crate::ui::editor::keys::{self as commands, Command};
+use loom_editor_core::normal::{self, Movement};
+use loom_editor_core::text::{EditorMut, Selection, TextBuffer};
 
 use super::state_access::StateAccess;
 use super::text::SingleLineText;

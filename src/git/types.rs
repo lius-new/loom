@@ -542,12 +542,7 @@ pub enum ConflictSide {
     Theirs,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LineChange {
-    Added,
-    Modified,
-    Deleted,
-}
+pub use crate::domain::line_change::LineChange;
 
 #[cfg(test)]
 mod tests {

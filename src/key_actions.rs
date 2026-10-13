@@ -15,9 +15,8 @@ use lgui::core::{KeyboardEvent, UiEventKind, UiEventPayload, UiFocusHandle};
 use lgui::prelude::{Element, State, UiRect};
 use lgui::services::ServicesContextExt;
 
+use crate::app::editor_vim as vim_input;
 use crate::config_watcher::{self, ConfigWatcher};
-use crate::editor::editor_view;
-use crate::editor::vim_input;
 use crate::git::GitStoreSnapshot;
 use crate::input::action::Action;
 use crate::input::context::KeyContext;
@@ -29,6 +28,7 @@ use crate::input::keystroke::Keystroke;
 use crate::settings_persistence::{self, UserSettings};
 use crate::state::AppState;
 use crate::terminal_session::{TerminalController, TerminalTabs};
+use crate::ui::editor::view as editor_view;
 use crate::ui::terminal::{self, ClipboardShortcut};
 use crate::ui::{branch_picker, clone_repository, close_confirmation, git_confirm, stash_switch};
 use crate::workspace_actions;
@@ -125,7 +125,7 @@ fn vim_key(env: &KeyEnv, stack: &[KeyContext], keystroke: &Keystroke) -> bool {
     if !stack.iter().any(|context| context.primary() == Some(VIM)) {
         return false;
     }
-    let Some(key) = crate::vim::Key::from_keystroke(keystroke) else {
+    let Some(key) = crate::app::editor_keys::vim_key(keystroke) else {
         return false;
     };
     let clipboard = env.application.clipboard();
@@ -207,7 +207,7 @@ fn run_replay(env: &KeyEnv, stack: &[KeyContext], replay: Replay) {
         Some(EDITOR | VIM) => {
             let rect = env.editor_rect;
             env.state
-                .update(move |app| editor_view::insert_text(app, &text, rect));
+                .update(move |app| crate::app::editor::insert_text(app, &text, rect));
         }
         Some(TERMINAL) => {
             if let Some(controller) = env
@@ -334,7 +334,7 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
             let (close_request, clone_dialog, stash_switch, git_confirm) =
                 read(&env.state, |app| {
                     (
-                        app.close_request.is_some(),
+                        app.editor.close_request.is_some(),
                         app.show_clone_dialog,
                         app.stash_switch.is_some(),
                         app.git_confirm.is_some(),
@@ -364,7 +364,7 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
         }
         _ => {
             if let Some(command) = action.editor_command(editor_view::page_lines(env.editor_rect)) {
-                editor_view::execute_command(
+                crate::app::editor::execute_command(
                     &env.state,
                     command,
                     env.editor_rect,

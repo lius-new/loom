@@ -7,51 +7,9 @@ use lgui::prelude::Color;
 
 use crate::theme;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Language {
-    CSharp,
-    Rust,
-    TypeScript,
-    JavaScript,
-    PlainText,
-}
+pub use crate::domain::language::Language;
 
 impl Language {
-    pub fn from_path(path: &Path) -> Self {
-        let extension = path
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        match extension.as_str() {
-            "cs" => Self::CSharp,
-            "rs" => Self::Rust,
-            "ts" | "tsx" | "mts" | "cts" => Self::TypeScript,
-            "js" | "jsx" | "mjs" | "cjs" => Self::JavaScript,
-            _ => Self::PlainText,
-        }
-    }
-
-    pub fn badge(self) -> &'static str {
-        match self {
-            Self::CSharp => "C#",
-            Self::Rust => "RS",
-            Self::TypeScript => "TS",
-            Self::JavaScript => "JS",
-            Self::PlainText => "TXT",
-        }
-    }
-
-    pub fn long_name(self) -> &'static str {
-        match self {
-            Self::CSharp => "C#",
-            Self::Rust => "Rust",
-            Self::TypeScript => "TypeScript",
-            Self::JavaScript => "JavaScript",
-            Self::PlainText => "Plain Text",
-        }
-    }
-
     pub fn badge_color(self) -> Color {
         match self {
             Self::CSharp => theme::c().badge.csharp,
@@ -63,14 +21,7 @@ impl Language {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct FileId(u64);
-
-impl FileId {
-    pub(crate) const fn new(value: u64) -> Self {
-        Self(value)
-    }
-}
+pub use crate::domain::identity::FileId;
 
 #[derive(Clone, Debug)]
 pub struct FileMeta {

@@ -1,0 +1,800 @@
+{
+  "schema": 1,
+  "scope": "R3.1 independent editing core",
+  "output_root": "target/baseline/2026-10-13-r3-1-accepted",
+  "environment": {
+    "captured_at": "2026-10-13T06:43:29.8573846-06:00",
+    "head": "8cb46fbe76588e5b964c60c9bc222ff80c261ae4",
+    "timezone": "Mountain Standard Time",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\r\nbinary: rustc\r\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\r\ncommit-date: 2026-07-14\r\nhost: x86_64-pc-windows-msvc\r\nrelease: 1.97.1\r\nLLVM version: 22.1.6",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "rustfmt": "rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)",
+    "clippy": "clippy 0.1.97 (8bab26f4f6 2026-07-14)",
+    "git": "git version 2.52.0.windows.1",
+    "node": "v24.13.0",
+    "os": "Microsoft Windows NT 10.0.26200.0",
+    "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "logical_processors": 20,
+    "rustup_available": true,
+    "lock_sha256": "A42067329C231790A0852A5DA4D4E18153FDBFADE8750E0371915E95A2D96CB5",
+    "lock_lf_sha256": "A42067329C231790A0852A5DA4D4E18153FDBFADE8750E0371915E95A2D96CB5",
+    "manifest_sha256": "6A92D76D5427FED44F35418E9CF842E84AF8C6BE8BAF65C4361A80350882E4BA",
+    "toolchain_sha256": "8E390D6A0838315F972690F46EF8BAE8B7ECC9EE6C1ED70140EF852869C2482E",
+    "lgui_source": "source = \"git+https://github.com/lius-new/lgui.git#46e13848aefd9fd92f3370f111a5a0216c811438\"",
+    "inherited_git_autocrlf": "file:C:/Users/liusnew/.gitconfig\tfalse",
+    "perf_samples": 5,
+    "performance_set": "All",
+    "warmup_samples_per_filter": 1,
+    "skia_cache": {
+      "archive": "D:\\Documents\\cprojects\\loom\\target\\dependency-cache\\skia\\0.99.0\\skia-binaries-a25a0fdb7d90429aa2d1-x86_64-pc-windows-msvc-d3d-gl-jpegd-jpege-pdf-svg-textlayout-vulkan.tar.gz",
+      "version": "0.99.0",
+      "key": "a25a0fdb7d90429aa2d1-x86_64-pc-windows-msvc-d3d-gl-jpegd-jpege-pdf-svg-textlayout-vulkan",
+      "sha256": "c410ec64ed356b11ba877847889b279daf52e6972ada79137493931668c12b79",
+      "source": "https://github.com/rust-skia/skia-binaries/releases/download/0.99.0/skia-binaries-a25a0fdb7d90429aa2d1-x86_64-pc-windows-msvc-d3d-gl-jpegd-jpege-pdf-svg-textlayout-vulkan.tar.gz",
+      "url": "file://D:/Documents/cprojects/loom/target/dependency-cache/skia/0.99.0/skia-binaries-a25a0fdb7d90429aa2d1-x86_64-pc-windows-msvc-d3d-gl-jpegd-jpege-pdf-svg-textlayout-vulkan.tar.gz"
+    },
+    "skia_binaries_url": "file://D:/Documents/cprojects/loom/target/dependency-cache/skia/0.99.0/skia-binaries-a25a0fdb7d90429aa2d1-x86_64-pc-windows-msvc-d3d-gl-jpegd-jpege-pdf-svg-textlayout-vulkan.tar.gz",
+    "hardware": {
+      "unavailable": "拒绝访问 "
+    }
+  },
+  "checks": [
+    {
+      "name": "architecture-self-test",
+      "command": "node --test scripts/architecture/check.test.mjs",
+      "exit_code": 0,
+      "elapsed_seconds": 0.1881003,
+      "log": "logs/architecture-self-test.log"
+    },
+    {
+      "name": "architecture-gate",
+      "command": "node scripts/architecture/check.mjs",
+      "exit_code": 0,
+      "elapsed_seconds": 0.3297275,
+      "log": "logs/architecture-gate.log"
+    },
+    {
+      "name": "baseline-report-self-test",
+      "command": "node --test scripts/baseline/test-results.test.mjs",
+      "exit_code": 0,
+      "elapsed_seconds": 0.1700059,
+      "log": "logs/baseline-report-self-test.log"
+    },
+    {
+      "name": "format",
+      "command": "cargo fmt --all -- --check",
+      "exit_code": 0,
+      "elapsed_seconds": 1.1223881,
+      "log": "logs/format.log"
+    },
+    {
+      "name": "clippy",
+      "command": "cargo clippy --locked --offline --workspace --all-targets -- -D warnings -A clippy::redundant_closure_call -A clippy::collapsible_if -A clippy::too_many_arguments -A clippy::let_and_return -A clippy::manual_div_ceil",
+      "exit_code": 0,
+      "elapsed_seconds": 3.9945663,
+      "log": "logs/clippy.log"
+    },
+    {
+      "name": "tests-native",
+      "command": "cargo test --locked --offline --workspace -- --nocapture",
+      "exit_code": 0,
+      "elapsed_seconds": 16.8786874,
+      "log": "logs/tests-native.log"
+    },
+    {
+      "name": "tests-release",
+      "command": "cargo test --release --locked --offline --workspace -- --nocapture",
+      "exit_code": 0,
+      "elapsed_seconds": 9.9725133,
+      "log": "logs/tests-release.log"
+    },
+    {
+      "name": "release-app-build",
+      "command": "cargo build --release --locked --offline --bin Loom",
+      "exit_code": 0,
+      "elapsed_seconds": 17.5410567,
+      "log": "logs/release-app-build.log"
+    },
+    {
+      "name": "tests-isolated",
+      "command": "cargo test --locked --offline --workspace -- --nocapture",
+      "exit_code": 0,
+      "elapsed_seconds": 8.4312607,
+      "log": "logs/tests-isolated.log"
+    },
+    {
+      "name": "native-terminal-smoke",
+      "command": "cargo test --locked --offline terminal_session::tests::supported_shells_round_trip_through_real_conpty_sessions -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 3.2611193,
+      "log": "logs/native-terminal-smoke.log"
+    },
+    {
+      "name": "native-launcher-smoke",
+      "command": "cargo test --locked --offline terminal_session::tests::launcher_backed_shell_is_idle_then_detects_and_clears_programs -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 6.2471533,
+      "log": "logs/native-launcher-smoke.log"
+    },
+    {
+      "name": "native-bash-replacement-smoke",
+      "command": "cargo test --locked --offline terminal_session::tests::exited_shell_launchers_do_not_hide_unknown_applications -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 6.1991031,
+      "log": "logs/native-bash-replacement-smoke.log"
+    },
+    {
+      "name": "native-program-name-smoke",
+      "command": "cargo test --locked --offline terminal_session::tests::running_application_is_detected_and_cleared_in_each_real_shell -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 12.0350685,
+      "log": "logs/native-program-name-smoke.log"
+    },
+    {
+      "name": "perf-legacy-editor-0",
+      "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.0526022,
+      "log": "logs/perf-legacy-editor-0.log"
+    },
+    {
+      "name": "perf-legacy-editor-1",
+      "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.0883888,
+      "log": "logs/perf-legacy-editor-1.log"
+    },
+    {
+      "name": "perf-legacy-editor-2",
+      "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.1549349,
+      "log": "logs/perf-legacy-editor-2.log"
+    },
+    {
+      "name": "perf-legacy-editor-3",
+      "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.1164836,
+      "log": "logs/perf-legacy-editor-3.log"
+    },
+    {
+      "name": "perf-legacy-editor-4",
+      "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.088525,
+      "log": "logs/perf-legacy-editor-4.log"
+    },
+    {
+      "name": "perf-legacy-editor-5",
+      "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.069683,
+      "log": "logs/perf-legacy-editor-5.log"
+    },
+    {
+      "name": "perf-ui-interaction-0",
+      "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.1599989,
+      "log": "logs/perf-ui-interaction-0.log"
+    },
+    {
+      "name": "perf-ui-interaction-1",
+      "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.1599931,
+      "log": "logs/perf-ui-interaction-1.log"
+    },
+    {
+      "name": "perf-ui-interaction-2",
+      "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.161097,
+      "log": "logs/perf-ui-interaction-2.log"
+    },
+    {
+      "name": "perf-ui-interaction-3",
+      "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.1118236,
+      "log": "logs/perf-ui-interaction-3.log"
+    },
+    {
+      "name": "perf-ui-interaction-4",
+      "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.2186994,
+      "log": "logs/perf-ui-interaction-4.log"
+    },
+    {
+      "name": "perf-ui-interaction-5",
+      "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 1.2310392,
+      "log": "logs/perf-ui-interaction-5.log"
+    },
+    {
+      "name": "perf-tab-pointer-0",
+      "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.7305042,
+      "log": "logs/perf-tab-pointer-0.log"
+    },
+    {
+      "name": "perf-tab-pointer-1",
+      "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.736789,
+      "log": "logs/perf-tab-pointer-1.log"
+    },
+    {
+      "name": "perf-tab-pointer-2",
+      "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.7077365,
+      "log": "logs/perf-tab-pointer-2.log"
+    },
+    {
+      "name": "perf-tab-pointer-3",
+      "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.7359092,
+      "log": "logs/perf-tab-pointer-3.log"
+    },
+    {
+      "name": "perf-tab-pointer-4",
+      "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.7344872,
+      "log": "logs/perf-tab-pointer-4.log"
+    },
+    {
+      "name": "perf-tab-pointer-5",
+      "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.7311143,
+      "log": "logs/perf-tab-pointer-5.log"
+    },
+    {
+      "name": "perf-file-0",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 2.0426483,
+      "log": "logs/perf-file-0.log"
+    },
+    {
+      "name": "perf-file-1",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 2.0078575,
+      "log": "logs/perf-file-1.log"
+    },
+    {
+      "name": "perf-file-2",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 2.0671164,
+      "log": "logs/perf-file-2.log"
+    },
+    {
+      "name": "perf-file-3",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 2.0698183,
+      "log": "logs/perf-file-3.log"
+    },
+    {
+      "name": "perf-file-4",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 2.1298613,
+      "log": "logs/perf-file-4.log"
+    },
+    {
+      "name": "perf-file-5",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 2.0023616,
+      "log": "logs/perf-file-5.log"
+    },
+    {
+      "name": "perf-search-0",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.710436,
+      "log": "logs/perf-search-0.log"
+    },
+    {
+      "name": "perf-search-1",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.7053201,
+      "log": "logs/perf-search-1.log"
+    },
+    {
+      "name": "perf-search-2",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6949178,
+      "log": "logs/perf-search-2.log"
+    },
+    {
+      "name": "perf-search-3",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6865796,
+      "log": "logs/perf-search-3.log"
+    },
+    {
+      "name": "perf-search-4",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.684403,
+      "log": "logs/perf-search-4.log"
+    },
+    {
+      "name": "perf-search-5",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.7011562,
+      "log": "logs/perf-search-5.log"
+    },
+    {
+      "name": "perf-terminal-0",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6633257,
+      "log": "logs/perf-terminal-0.log"
+    },
+    {
+      "name": "perf-terminal-1",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6173192,
+      "log": "logs/perf-terminal-1.log"
+    },
+    {
+      "name": "perf-terminal-2",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6268926,
+      "log": "logs/perf-terminal-2.log"
+    },
+    {
+      "name": "perf-terminal-3",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6358157,
+      "log": "logs/perf-terminal-3.log"
+    },
+    {
+      "name": "perf-terminal-4",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6501295,
+      "log": "logs/perf-terminal-4.log"
+    },
+    {
+      "name": "perf-terminal-5",
+      "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6181528,
+      "log": "logs/perf-terminal-5.log"
+    }
+  ],
+  "test_suites": [
+    {
+      "log": "tests-isolated.log",
+      "result": "ok",
+      "passed": 585,
+      "failed": 0,
+      "ignored": 12,
+      "filtered": 0
+    },
+    {
+      "log": "tests-native.log",
+      "result": "ok",
+      "passed": 585,
+      "failed": 0,
+      "ignored": 12,
+      "filtered": 0
+    },
+    {
+      "log": "tests-release.log",
+      "result": "ok",
+      "passed": 585,
+      "failed": 0,
+      "ignored": 12,
+      "filtered": 0
+    }
+  ],
+  "source_files": 154,
+  "source_hashes_match": true,
+  "independent_core": {
+    "schema": 1,
+    "package": "loom-editor-core",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "target": "D:\\Documents\\cprojects\\loom\\target\\r3-core-final-isolated",
+    "skia_sentinel": "file://D:/loom-intentionally-missing-skia.tar.gz",
+    "llvm_sentinel": "D:/loom-intentionally-missing-llvm",
+    "exit_code": 0,
+    "unit_tests": 65,
+    "integration_tests": 3,
+    "tree": "dependency-tree.txt",
+    "log": "core-isolated.log"
+  },
+  "startup": {
+    "exe": "D:\\Documents\\cprojects\\loom\\target\\release\\Loom.exe",
+    "sha256": "7EFDD5A63E98272BB3BB3D184D4A28218E453008BD6B4DAEC7580EFD6823F242",
+    "child_appdata": "D:\\Documents\\cprojects\\loom\\target\\baseline\\2026-10-13-r3-1-accepted\\startup\\startup-fixture\\appdata",
+    "child_localappdata": "D:\\Documents\\cprojects\\loom\\target\\baseline\\2026-10-13-r3-1-accepted\\startup\\startup-fixture\\localappdata",
+    "window_style": "Hidden",
+    "started_at": "2026-10-13T06:46:18.4696054-06:00",
+    "result": "passed",
+    "forced_cleanup": false,
+    "pid": 17580,
+    "alive_after_4_seconds": true,
+    "root_effect_configuration_files": [
+      "workspace.json"
+    ],
+    "close_requested": true,
+    "exit_code": 0,
+    "clean_exit": true,
+    "saved_synthetic_workspace": true,
+    "finished_at": "2026-10-13T06:46:22.5730601-06:00"
+  },
+  "performance_comparison": [
+    {
+      "scenario": "ascii-1m",
+      "metric": "file_read_cached",
+      "unit": "ms",
+      "before": 1.1561,
+      "after": 1.1672,
+      "percent": 0.960124556699257
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "document_prepare",
+      "unit": "ms",
+      "before": 14.56,
+      "after": 14.4117,
+      "percent": -1.0185439560439613
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "file_read_cached",
+      "unit": "ms",
+      "before": 9.8888,
+      "after": 9.992799999999999,
+      "percent": 1.0516948466952432
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "document_prepare",
+      "unit": "ms",
+      "before": 147.2389,
+      "after": 144.78279999999998,
+      "percent": -1.6681053716103698
+    },
+    {
+      "scenario": "ascii-64m",
+      "metric": "file_read_cached",
+      "unit": "ms",
+      "before": 70.5234,
+      "after": 69.9446,
+      "percent": -0.8207204984444896
+    },
+    {
+      "scenario": "ascii-64m",
+      "metric": "document_prepare",
+      "unit": "ms",
+      "before": 951.4924,
+      "after": 938.551,
+      "percent": -1.3601159609892766
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "typing_per_char",
+      "unit": "ms",
+      "before": 0.021532,
+      "after": 0.020197,
+      "percent": -6.200074308006686
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "paste_1m",
+      "unit": "ms",
+      "before": 18.9214,
+      "after": 18.6459,
+      "percent": -1.4560233386535744
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "undo_paste",
+      "unit": "ms",
+      "before": 0.3905,
+      "after": 0.4639,
+      "percent": 18.79641485275287
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "select_all_indent",
+      "unit": "ms",
+      "before": 18.1149,
+      "after": 17.9135,
+      "percent": -1.1117919502729774
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "history_bytes_rounded",
+      "unit": "bytes",
+      "before": 0,
+      "after": 0,
+      "percent": null
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "typing_per_char",
+      "unit": "ms",
+      "before": 0.223021,
+      "after": 0.21510100000000001,
+      "percent": -3.5512350854852155
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "paste_1m",
+      "unit": "ms",
+      "before": 19.0917,
+      "after": 19.4777,
+      "percent": 2.0218210007490125
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "undo_paste",
+      "unit": "ms",
+      "before": 0.9244,
+      "after": 1.1483,
+      "percent": 24.221116399826926
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "select_all_indent",
+      "unit": "ms",
+      "before": 180.4429,
+      "after": 190.254,
+      "percent": 5.437232498480118
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "history_bytes_rounded",
+      "unit": "bytes",
+      "before": 314572.8,
+      "after": 314572.8,
+      "percent": 0.0
+    },
+    {
+      "scenario": "100-files-6.25m",
+      "metric": "search_scan_cached",
+      "unit": "ms",
+      "before": 21.107999999999997,
+      "after": 21.726300000000002,
+      "percent": 2.929221148379785
+    },
+    {
+      "scenario": "100-files-6.25m",
+      "metric": "search_cancel_latency",
+      "unit": "ms",
+      "before": 0.0747,
+      "after": 0.10679999999999999,
+      "percent": 42.97188755020079
+    },
+    {
+      "scenario": "100-tabs",
+      "metric": "pointer_update",
+      "unit": "ms",
+      "before": 0.040579000000000004,
+      "after": 0.039347,
+      "percent": -3.0360531309298007
+    },
+    {
+      "scenario": "500-tabs",
+      "metric": "pointer_update",
+      "unit": "ms",
+      "before": 0.23895,
+      "after": 0.240053,
+      "percent": 0.46160284578363375
+    },
+    {
+      "scenario": "ansi-unicode-8m",
+      "metric": "terminal_parse",
+      "unit": "ms",
+      "before": 58.7211,
+      "after": 58.437000000000005,
+      "percent": -0.4838124626411888
+    },
+    {
+      "scenario": "24x80-screen",
+      "metric": "terminal_screen_snapshot_100",
+      "unit": "ms",
+      "before": 0.2009,
+      "after": 0.2084,
+      "percent": 3.733200597312099
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_document_prepare",
+      "unit": "ms",
+      "before": 119.3578,
+      "after": 119.0847,
+      "percent": -0.228807836605567
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "unit": "ms",
+      "before": 10.8924,
+      "after": 10.6468,
+      "percent": -2.254783151555209
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_20_edits_and_renders",
+      "unit": "ms",
+      "before": 7.4427,
+      "after": 7.0728,
+      "percent": -4.96997057519449
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_document_prepare",
+      "unit": "ms",
+      "before": 54.5517,
+      "after": 54.4895,
+      "percent": -0.1140202780114958
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "unit": "ms",
+      "before": 9.2338,
+      "after": 9.6113,
+      "percent": 4.088241027529289
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_20_edits_and_renders",
+      "unit": "ms",
+      "before": 6.1312,
+      "after": 6.1358,
+      "percent": 0.0750260960334019
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_document_prepare",
+      "unit": "ms",
+      "before": 242.8551,
+      "after": 242.286,
+      "percent": -0.23433726530758126
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_100_viewports_and_clicks",
+      "unit": "ms",
+      "before": 25.4956,
+      "after": 25.5617,
+      "percent": 0.2592604214060415
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_20_edits_and_renders",
+      "unit": "ms",
+      "before": 18.7378,
+      "after": 19.0669,
+      "percent": 1.75634279371111
+    }
+  ],
+  "interleaved_editor_comparison": [
+    {
+      "scenario": "ascii-1m",
+      "metric": "typing_per_char",
+      "before": 0.020527999999999998,
+      "after": 0.021187,
+      "percent": 3.2102494154325965
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "paste_1m",
+      "before": 18.9251,
+      "after": 18.6374,
+      "percent": -1.5202033278556042
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "undo_paste",
+      "before": 0.4038,
+      "after": 0.4129,
+      "percent": 2.2535908865775127
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "select_all_indent",
+      "before": 17.6056,
+      "after": 17.8268,
+      "percent": 1.2564184123233495
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "history_bytes_rounded",
+      "before": 0,
+      "after": 0,
+      "percent": null
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "typing_per_char",
+      "before": 0.21164500000000003,
+      "after": 0.214174,
+      "percent": 1.194925464811347
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "paste_1m",
+      "before": 18.4588,
+      "after": 18.739,
+      "percent": 1.5179751663163406
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "undo_paste",
+      "before": 1.0109,
+      "after": 0.9478,
+      "percent": -6.2419626075774
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "select_all_indent",
+      "before": 179.1937,
+      "after": 179.8694,
+      "percent": 0.377077988790904
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "history_bytes_rounded",
+      "before": 314572.8,
+      "after": 314572.8,
+      "percent": 0.0
+    }
+  ],
+  "launcher_corrected_runs": [
+    {
+      "name": "native-launcher-corrected-1",
+      "exit_code": 0,
+      "log": "D:\\Documents\\cprojects\\loom\\target\\baseline\\2026-10-13-r3-1\\logs\\native-launcher-corrected-1.log"
+    },
+    {
+      "name": "native-launcher-corrected-2",
+      "exit_code": 0,
+      "log": "D:\\Documents\\cprojects\\loom\\target\\baseline\\2026-10-13-r3-1\\logs\\native-launcher-corrected-2.log"
+    },
+    {
+      "name": "native-launcher-corrected-3",
+      "exit_code": 0,
+      "log": "D:\\Documents\\cprojects\\loom\\target\\baseline\\2026-10-13-r3-1\\logs\\native-launcher-corrected-3.log"
+    },
+    {
+      "name": "native-launcher-corrected-4",
+      "exit_code": 0,
+      "log": "D:\\Documents\\cprojects\\loom\\target\\baseline\\2026-10-13-r3-1\\logs\\native-launcher-corrected-4.log"
+    },
+    {
+      "name": "native-launcher-corrected-5",
+      "exit_code": 0,
+      "log": "D:\\Documents\\cprojects\\loom\\target\\baseline\\2026-10-13-r3-1\\logs\\native-launcher-corrected-5.log"
+    }
+  ],
+  "registry_dependency_versions_changed": false,
+  "legacy_exception_files": 76,
+  "owned_fields": 118,
+  "pending": "remaining R3 application/editor UI migration; native manual/cross-platform/remote CI acceptance"
+}

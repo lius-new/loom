@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "version": "0.99.0",
+  "target": "x86_64-pc-windows-msvc",
+  "key": "a25a0fdb7d90429aa2d1-x86_64-pc-windows-msvc-d3d-gl-jpegd-jpege-pdf-svg-textlayout-vulkan",
+  "archive": "skia-binaries-a25a0fdb7d90429aa2d1-x86_64-pc-windows-msvc-d3d-gl-jpegd-jpege-pdf-svg-textlayout-vulkan.tar.gz",
+  "sha256": "c410ec64ed356b11ba877847889b279daf52e6972ada79137493931668c12b79",
+  "source": "https://github.com/rust-skia/skia-binaries/releases/download/0.99.0/skia-binaries-a25a0fdb7d90429aa2d1-x86_64-pc-windows-msvc-d3d-gl-jpegd-jpege-pdf-svg-textlayout-vulkan.tar.gz"
+}

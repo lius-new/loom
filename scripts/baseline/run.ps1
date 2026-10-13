@@ -4,6 +4,7 @@ param(
     [string]$OutputDirectory,
     [ValidateRange(1, 20)][int]$Samples = 5,
     [ValidateSet('All', 'Legacy', 'Additional', 'None')][string]$PerformanceSet = 'All',
+    [string]$SkiaArchive,
     [switch]$Offline,
     [switch]$SkipChecks
 )
@@ -25,6 +26,9 @@ $cargoBase = @('--locked')
 if ($Offline) { $cargoBase += '--offline' }
 $checks = [Collections.Generic.List[object]]::new()
 $previousLocation = Get-Location
+$previousSkiaUrl = [Environment]::GetEnvironmentVariable('SKIA_BINARIES_URL', 'Process')
+$hadSkiaUrl = Test-Path Env:SKIA_BINARIES_URL
+. (Join-Path $PSScriptRoot '../build/skia-cache.ps1')
 
 function Invoke-CargoCheck {
     param([string]$Name, [string[]]$Arguments)
@@ -61,6 +65,14 @@ function Invoke-ArchitectureCheck {
 
 try {
     Set-Location -LiteralPath $repoRoot
+    $skiaCache = $null
+    if ($SkiaArchive -or -not $previousSkiaUrl) {
+        $skiaCache = Resolve-LoomSkiaCache -Repository $repoRoot -ArchivePath $SkiaArchive
+        if ($skiaCache) {
+            $env:SKIA_BINARIES_URL = $skiaCache.url
+            Write-Host "Verified local Skia $($skiaCache.version): $($skiaCache.archive)"
+        }
+    }
     $environment = [ordered]@{
         captured_at = (Get-Date -Format o)
         head = (git rev-parse HEAD)
@@ -76,12 +88,17 @@ try {
         logical_processors = [Environment]::ProcessorCount
         rustup_available = [bool](Get-Command rustup -ErrorAction SilentlyContinue)
         lock_sha256 = (Get-FileHash -LiteralPath Cargo.lock -Algorithm SHA256).Hash
+        lock_lf_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::UTF8.GetBytes([IO.File]::ReadAllText((Join-Path $repoRoot 'Cargo.lock')).Replace("`r`n", "`n"))))
         manifest_sha256 = (Get-FileHash -LiteralPath Cargo.toml -Algorithm SHA256).Hash
+        toolchain_sha256 = (Get-FileHash -LiteralPath rust-toolchain.toml -Algorithm SHA256).Hash
         lgui_source = ((Select-String -LiteralPath Cargo.lock -Pattern 'source = "git\+https://github.com/lius-new/lgui').Line | Select-Object -Unique)
         inherited_git_autocrlf = (git config --show-origin --get core.autocrlf)
         perf_samples = $Samples
         performance_set = $PerformanceSet
         warmup_samples_per_filter = 1
+        skia_cache = $skiaCache
+        skia_binaries_url = $env:SKIA_BINARIES_URL
     }
     try {
         $environment.hardware = [ordered]@{
@@ -99,18 +116,21 @@ try {
     if (-not $SkipChecks) {
         Invoke-ArchitectureCheck 'architecture-self-test' @('--test', 'scripts/architecture/check.test.mjs')
         Invoke-ArchitectureCheck 'architecture-gate' @('scripts/architecture/check.mjs')
+        Invoke-ArchitectureCheck 'baseline-report-self-test' @('--test', 'scripts/baseline/test-results.test.mjs')
         $null = Invoke-CargoCheck 'format' @('fmt', '--all', '--', '--check')
-        $null = Invoke-CargoCheck 'clippy' (@('clippy') + $cargoBase + @('--all-targets', '--',
+        $null = Invoke-CargoCheck 'clippy' (@('clippy') + $cargoBase + @('--workspace', '--all-targets', '--',
             '-D', 'warnings', '-A', 'clippy::redundant_closure_call',
             '-A', 'clippy::collapsible_if', '-A', 'clippy::too_many_arguments',
             '-A', 'clippy::let_and_return', '-A', 'clippy::manual_div_ceil'))
-        $null = Invoke-CargoCheck 'tests-native' (@('test') + $cargoBase + @('--', '--nocapture'))
-        $null = Invoke-CargoCheck 'tests-release' (@('test', '--release') + $cargoBase + @('--', '--nocapture'))
+        $null = Invoke-CargoCheck 'tests-native' (@('test') + $cargoBase + @('--workspace', '--', '--nocapture'))
+        $null = Invoke-CargoCheck 'tests-release' (@('test', '--release') + $cargoBase + @('--workspace', '--', '--nocapture'))
         $null = Invoke-CargoCheck 'release-app-build' (@('build', '--release') + $cargoBase + @('--bin', 'Loom'))
     }
 
     $previousNoSystem = [Environment]::GetEnvironmentVariable('GIT_CONFIG_NOSYSTEM', 'Process')
     $previousGlobal = [Environment]::GetEnvironmentVariable('GIT_CONFIG_GLOBAL', 'Process')
+    $hadNoSystem = Test-Path Env:GIT_CONFIG_NOSYSTEM
+    $hadGlobal = Test-Path Env:GIT_CONFIG_GLOBAL
     $controlledConfig = Join-Path $OutputDirectory 'controlled-git.config'
     # This synthetic file is scoped to child processes; no user config is changed.
     @'
@@ -122,7 +142,7 @@ eol = lf
         $env:GIT_CONFIG_NOSYSTEM = '1'
         $env:GIT_CONFIG_GLOBAL = $controlledConfig
         if (-not $SkipChecks) {
-            $null = Invoke-CargoCheck 'tests-isolated' (@('test') + $cargoBase + @('--', '--nocapture'))
+            $null = Invoke-CargoCheck 'tests-isolated' (@('test') + $cargoBase + @('--workspace', '--', '--nocapture'))
             if ($IsWindows) {
                 $smokes = [ordered]@{
                     'native-terminal-smoke' = 'supported_shells_round_trip_through_real_conpty_sessions'
@@ -139,14 +159,14 @@ eol = lf
         }
         $filters = [ordered]@{}
         if ($PerformanceSet -in @('All', 'Legacy')) {
-            $filters['legacy-editor'] = 'editor::baseline_tests::perf_baseline'
-            $filters['ui-interaction'] = 'editor::editor_view::tests::large_file_interaction_baseline'
+            $filters['legacy-editor'] = 'app::editor_baseline_tests::perf_baseline'
+            $filters['ui-interaction'] = 'app::editor::tests::large_file_interaction_baseline'
             $filters['tab-pointer'] = 'ui::tabs::tests::pointer_updates_with_many_tabs'
         }
         if ($PerformanceSet -in @('All', 'Additional')) {
-            $filters['file'] = 'editor::phase0_baseline::phase0_perf_file_preparation'
-            $filters['search'] = 'editor::phase0_baseline::phase0_perf_search_scan_and_cancel'
-            $filters['terminal'] = 'editor::phase0_baseline::phase0_perf_terminal_parser'
+            $filters['file'] = 'app::phase0_baseline::phase0_perf_file_preparation'
+            $filters['search'] = 'app::phase0_baseline::phase0_perf_search_scan_and_cancel'
+            $filters['terminal'] = 'app::phase0_baseline::phase0_perf_terminal_parser'
         }
         foreach ($item in $filters.GetEnumerator()) {
             for ($sample = 0; $sample -le $Samples; $sample++) {
@@ -157,13 +177,17 @@ eol = lf
             }
         }
     } finally {
-        [Environment]::SetEnvironmentVariable('GIT_CONFIG_NOSYSTEM', $previousNoSystem, 'Process')
-        [Environment]::SetEnvironmentVariable('GIT_CONFIG_GLOBAL', $previousGlobal, 'Process')
+        if ($hadNoSystem) { $env:GIT_CONFIG_NOSYSTEM = $previousNoSystem }
+        else { Remove-Item Env:GIT_CONFIG_NOSYSTEM -ErrorAction SilentlyContinue }
+        if ($hadGlobal) { $env:GIT_CONFIG_GLOBAL = $previousGlobal }
+        else { Remove-Item Env:GIT_CONFIG_GLOBAL -ErrorAction SilentlyContinue }
     }
     $checks | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'checks.json') -Encoding utf8
     & node (Join-Path $PSScriptRoot 'report.mjs') $OutputDirectory
     if ($LASTEXITCODE -ne 0) { throw 'Baseline report generation failed.' }
     if (($checks | Where-Object exit_code -NE 0).Count -gt 0) { exit 1 }
 } finally {
+    if ($hadSkiaUrl) { $env:SKIA_BINARIES_URL = $previousSkiaUrl }
+    else { Remove-Item Env:SKIA_BINARIES_URL -ErrorAction SilentlyContinue }
     Set-Location -LiteralPath $previousLocation.Path
 }

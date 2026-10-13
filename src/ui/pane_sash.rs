@@ -57,6 +57,7 @@ pub fn horizontal(
 pub fn render(sash: Sash, state: State<AppState>) -> Element {
     let s = state.get();
     let active = s
+        .editor
         .sash_drag
         .as_ref()
         .is_some_and(|drag| same_sash(drag, &sash));
@@ -109,13 +110,13 @@ pub fn render(sash: Sash, state: State<AppState>) -> Element {
         .on_pointer_down_with_button(move |cx, _pointer, button| {
             if button == PointerButton::Left {
                 let sash = pressed.clone();
-                st_down.update(move |app| app.sash_drag = Some(sash));
+                st_down.update(move |app| app.editor.sash_drag = Some(sash));
                 cx.stop_propagation();
             }
         })
         .on_pointer_drag(move |_cx, pointer| {
             st_move.try_update(move |app| {
-                let Some(drag) = app.sash_drag.clone() else {
+                let Some(drag) = app.editor.sash_drag.clone() else {
                     return false;
                 };
                 let position = match drag.axis {
@@ -126,7 +127,7 @@ pub fn render(sash: Sash, state: State<AppState>) -> Element {
             });
         })
         .on_pointer_up(move |_cx, _pointer| {
-            st_up.update(|app| app.sash_drag = None);
+            st_up.update(|app| app.editor.sash_drag = None);
         })
 }
 

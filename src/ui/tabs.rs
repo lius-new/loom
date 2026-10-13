@@ -291,7 +291,7 @@ fn natural_tab_widths(app: &AppState, pane: PaneId) -> Vec<f32> {
             Some(fixed_width + measure(label, theme::UI_SIZE, 400) + TEXT_MARGIN)
         })
         .collect();
-    if let Some(pending) = app.pending_file.as_ref().filter(|p| p.pane == pane) {
+    if let Some(pending) = app.editor.pending_file.as_ref().filter(|p| p.pane == pane) {
         let meta = FileMeta::from_path(pending.path.clone());
         widths.push(
             (PAD * 2.0
@@ -325,14 +325,14 @@ fn tab_layout(rect: UiRect, app: &AppState, pane: PaneId, reveal_active: bool) -
 }
 
 pub fn tab_scroll_x(app: &AppState, pane: PaneId) -> f32 {
-    app.tab_scroll.get(&pane).copied().unwrap_or(0.0)
+    app.editor.tab_scroll.get(&pane).copied().unwrap_or(0.0)
 }
 
 fn set_tab_scroll_x(app: &mut AppState, pane: PaneId, value: f32) -> bool {
     if (tab_scroll_x(app, pane) - value).abs() <= f32::EPSILON {
         return false;
     }
-    app.tab_scroll.insert(pane, value);
+    app.editor.tab_scroll.insert(pane, value);
     true
 }
 
@@ -462,10 +462,10 @@ pub fn update_pointer(
         .iter()
         .find(|region| point_inside(region.strip, pointer_x, pointer_y))
         .map(|region| region.pane);
-    let mut changed = app.tab_strip_hovered != inside;
-    app.tab_strip_hovered = inside;
+    let mut changed = app.editor.tab_strip_hovered != inside;
+    app.editor.tab_strip_hovered = inside;
 
-    if is_pointer_drag && let Some(mut drag) = app.tab_drag.take() {
+    if is_pointer_drag && let Some(mut drag) = app.editor.tab_drag.take() {
         let moved = (pointer_x - drag.pointer_origin_x).hypot(pointer_y - drag.pointer_origin_y);
         if !drag.active && moved >= DRAG_THRESHOLD {
             drag.active = true;
@@ -479,7 +479,7 @@ pub fn update_pointer(
                 changed = true;
             }
         }
-        app.tab_drag = Some(drag);
+        app.editor.tab_drag = Some(drag);
     }
 
     let mut hovered = None;
@@ -487,10 +487,11 @@ pub fn update_pointer(
         let (pane, rect) = (region.pane, region.strip);
         let mut layout = tab_layout(rect, app, pane, false);
         if is_pointer_drag
-            && app.tab_scrollbar_dragging == Some(pane)
+            && app.editor.tab_scrollbar_dragging == Some(pane)
             && let Some(geometry) = scrollbar_geometry(rect, &layout)
         {
-            let next = scroll_from_pointer(pointer_x, app.tab_scrollbar_drag_offset, geometry);
+            let next =
+                scroll_from_pointer(pointer_x, app.editor.tab_scrollbar_drag_offset, geometry);
             if set_tab_scroll_x(app, pane, next) {
                 changed = true;
                 layout = tab_layout(rect, app, pane, false);
@@ -507,8 +508,8 @@ pub fn update_pointer(
                 .map(|id| (pane, id));
         }
     }
-    if app.tab_hovered != hovered {
-        app.tab_hovered = hovered;
+    if app.editor.tab_hovered != hovered {
+        app.editor.tab_hovered = hovered;
         changed = true;
     }
 
@@ -604,7 +605,7 @@ pub fn update_file_drag(
     pointer_x: f32,
     pointer_y: f32,
 ) -> bool {
-    let Some(drag) = app.file_drag.as_ref() else {
+    let Some(drag) = app.editor.file_drag.as_ref() else {
         return false;
     };
     let moved = (pointer_x - drag.origin.0).hypot(pointer_y - drag.origin.1);
@@ -614,7 +615,7 @@ pub fn update_file_drag(
     } else {
         None
     };
-    let drag = app.file_drag.as_mut().expect("checked above");
+    let drag = app.editor.file_drag.as_mut().expect("checked above");
     let changed = drag.active != active
         || drag.drop != drop
         || (active && drag.point != (pointer_x, pointer_y));
@@ -627,9 +628,9 @@ pub fn update_file_drag(
 /// Commit a completed tab drag and release all tab pointer state. Holding
 /// Ctrl (Alt on macOS) copies a file into the target pane instead of moving.
 pub fn finish_pointer_interaction(app: &mut AppState) -> bool {
-    let mut changed = app.tab_scrollbar_dragging.is_some();
-    app.tab_scrollbar_dragging = None;
-    let Some(drag) = app.tab_drag.take() else {
+    let mut changed = app.editor.tab_scrollbar_dragging.is_some();
+    app.editor.tab_scrollbar_dragging = None;
+    let Some(drag) = app.editor.tab_drag.take() else {
         return changed;
     };
     changed = true;
@@ -675,16 +676,16 @@ pub fn finish_pointer_interaction(app: &mut AppState) -> bool {
 
 /// Cancel transient pointer state without applying a pending reorder.
 pub fn cancel_pointer_interaction(app: &mut AppState) -> bool {
-    let changed = app.tab_scrollbar_dragging.is_some()
-        || app.tab_drag.is_some()
-        || app.file_drag.is_some()
-        || app.tab_strip_hovered.is_some()
-        || app.tab_hovered.is_some();
-    app.tab_scrollbar_dragging = None;
-    app.tab_drag = None;
-    app.file_drag = None;
-    app.tab_strip_hovered = None;
-    app.tab_hovered = None;
+    let changed = app.editor.tab_scrollbar_dragging.is_some()
+        || app.editor.tab_drag.is_some()
+        || app.editor.file_drag.is_some()
+        || app.editor.tab_strip_hovered.is_some()
+        || app.editor.tab_hovered.is_some();
+    app.editor.tab_scrollbar_dragging = None;
+    app.editor.tab_drag = None;
+    app.editor.file_drag = None;
+    app.editor.tab_strip_hovered = None;
+    app.editor.tab_hovered = None;
     changed
 }
 
@@ -693,7 +694,7 @@ pub fn render_tooltip(
     strips: &[(PaneId, UiRect)],
     app: &AppState,
 ) -> Option<Element> {
-    let (pane, hovered) = app.tab_hovered?;
+    let (pane, hovered) = app.editor.tab_hovered?;
     let rect = strips.iter().find(|(id, _)| *id == pane)?.1;
     let path = app.workspace.meta(hovered)?.path.clone();
     let path = super::display_path(&path);
@@ -773,7 +774,11 @@ pub fn render(
     // separated by TAB_GAP. The strip has no padding; this cluster's left
     // padding is TABS_PAD.
     if s.pane_surface(pane) == MainSurface::Welcome
-        && !s.pending_file.as_ref().is_some_and(|p| p.pane == pane)
+        && !s
+            .editor
+            .pending_file
+            .as_ref()
+            .is_some_and(|p| p.pane == pane)
     {
         let label = "welcome";
         let label_w = measure(label, theme::UI_SIZE, 400);
@@ -803,6 +808,7 @@ pub fn render(
         RENDER_OVERSCAN,
     );
     let drag_source_index = s
+        .editor
         .tab_drag
         .as_ref()
         .and_then(|drag| open_files.iter().position(|id| *id == drag.source))
@@ -878,12 +884,12 @@ pub fn render(
                         crate::file_loading::cancel(app);
                         let clicks = app.editor.tab_click_count(id, pointer_x, pointer_y);
                         app.workspace.activate(pane, id);
-                        app.tab_context_menu = None;
+                        app.editor.tab_context_menu = None;
                         if clicks > 1 {
                             app.workspace.promote_preview(pane, id);
-                            app.tab_drag = None;
+                            app.editor.tab_drag = None;
                         } else {
-                            app.tab_drag = Some(TabDragState {
+                            app.editor.tab_drag = Some(TabDragState {
                                 pane,
                                 source: id,
                                 pointer_origin_x: pointer_x,
@@ -903,12 +909,12 @@ pub fn render(
                 PointerButton::Right => {
                     let position = (pointer.point.x, pointer.point.y);
                     st.update(move |app| {
-                        app.tab_drag = None;
+                        app.editor.tab_drag = None;
                         app.editor.menu = None;
                         app.context_menu = None;
                         app.context_menu_target = None;
                         app.context_menu_hover = None;
-                        app.tab_context_menu = Some(TabContextMenuState {
+                        app.editor.tab_context_menu = Some(TabContextMenuState {
                             position,
                             pane,
                             target: id,
@@ -951,7 +957,7 @@ pub fn render(
 
         // The close slot is always reserved by the layout, but the control is
         // only painted and hit-testable for the active or hovered tab.
-        if Some(id) == active || s.tab_hovered == Some((pane, id)) {
+        if Some(id) == active || s.editor.tab_hovered == Some((pane, id)) {
             let st = state.clone();
             let focus = editor_focus.clone();
             tab_el = tab_el.child(
@@ -989,7 +995,7 @@ pub fn render(
 
     // The target tab reserves its icon slot immediately; only that icon changes
     // after 300 ms. The old document remains the active central surface.
-    if let Some(pending) = s.pending_file.as_ref().filter(|p| p.pane == pane)
+    if let Some(pending) = s.editor.pending_file.as_ref().filter(|p| p.pane == pane)
         && let Some(item) = layout.items.get(open_files.len())
     {
         let pill = UiRect::new(
@@ -1057,6 +1063,7 @@ pub fn render(
                     .on_click(move || {
                         cancel_state.try_update(|app| {
                             if app
+                                .editor
                                 .pending_file
                                 .as_ref()
                                 .is_some_and(|p| p.generation == generation)
@@ -1087,11 +1094,13 @@ pub fn render(
     // Insertion marker: a reorder within this strip, or a tab dragged in
     // from another pane.
     let file_drop = s
+        .editor
         .file_drag
         .as_ref()
         .filter(|drag| drag.active)
         .and_then(|drag| drag.drop);
     let marker = s
+        .editor
         .tab_drag
         .as_ref()
         .filter(|drag| drag.active)
@@ -1154,7 +1163,7 @@ pub fn render(
         }
     }
 
-    if (s.tab_strip_hovered == Some(pane) || s.tab_scrollbar_dragging == Some(pane))
+    if (s.editor.tab_strip_hovered == Some(pane) || s.editor.tab_scrollbar_dragging == Some(pane))
         && let Some(geometry) = scrollbar_geometry(rect, &layout)
     {
         let visual_track = UiRect::new(
@@ -1182,9 +1191,9 @@ pub fn render(
                 let next = scroll_from_pointer(pointer.point.x, offset, geometry);
                 track_state.update(move |app| {
                     set_tab_scroll_x(app, pane, next);
-                    app.tab_scrollbar_dragging = Some(pane);
-                    app.tab_scrollbar_drag_offset = offset;
-                    app.tab_drag = None;
+                    app.editor.tab_scrollbar_dragging = Some(pane);
+                    app.editor.tab_scrollbar_drag_offset = offset;
+                    app.editor.tab_drag = None;
                 });
                 cx.stop_propagation();
             })
@@ -1205,9 +1214,9 @@ pub fn render(
                     }
                     let offset = pointer.point.x - geometry.thumb_left;
                     thumb_state.update(move |app| {
-                        app.tab_scrollbar_dragging = Some(pane);
-                        app.tab_scrollbar_drag_offset = offset;
-                        app.tab_drag = None;
+                        app.editor.tab_scrollbar_dragging = Some(pane);
+                        app.editor.tab_scrollbar_drag_offset = offset;
+                        app.editor.tab_drag = None;
                     });
                     cx.stop_propagation();
                 }),
@@ -1324,7 +1333,7 @@ mod tests {
             .workspace
             .open_path(PathBuf::from("third.rs"), String::new());
         app.workspace.set_active(first);
-        app.tab_drag = Some(TabDragState {
+        app.editor.tab_drag = Some(TabDragState {
             pane: app.workspace.active_pane(),
             source: first,
             pointer_origin_x: 20.0,
@@ -1343,11 +1352,11 @@ mod tests {
             10.0,
             true
         ));
-        assert!(!app.tab_drag.as_ref().unwrap().active);
+        assert!(!app.editor.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
         assert_eq!(app.workspace.active_items(), &[first, second, third]);
 
-        app.tab_drag = Some(TabDragState {
+        app.editor.tab_drag = Some(TabDragState {
             pane: app.workspace.active_pane(),
             source: first,
             pointer_origin_x: 20.0,
@@ -1363,7 +1372,7 @@ mod tests {
             10.0,
             true
         ));
-        assert!(app.tab_drag.as_ref().unwrap().active);
+        assert!(app.editor.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
         assert_eq!(app.workspace.active_items(), &[second, third, first]);
     }
@@ -1410,7 +1419,7 @@ mod tests {
             .workspace
             .open_path(PathBuf::from("second.rs"), String::new());
         app.workspace.set_active(first);
-        app.tab_drag = Some(TabDragState {
+        app.editor.tab_drag = Some(TabDragState {
             pane: app.workspace.active_pane(),
             source: first,
             pointer_origin_x: 20.0,
@@ -1429,7 +1438,7 @@ mod tests {
             10.0,
             false
         ));
-        assert!(!app.tab_drag.as_ref().unwrap().active);
+        assert!(!app.editor.tab_drag.as_ref().unwrap().active);
         assert!(finish_pointer_interaction(&mut app));
         assert_eq!(app.workspace.active_items(), &[first, second]);
     }
@@ -1449,7 +1458,7 @@ mod tests {
     }
 
     fn drag_from(app: &mut AppState, pane: PaneId, source: FileId, x: f32, y: f32) {
-        app.tab_drag = Some(TabDragState {
+        app.editor.tab_drag = Some(TabDragState {
             pane,
             source,
             pointer_origin_x: x,
@@ -1479,7 +1488,7 @@ mod tests {
 
         assert!(update_pointer(&mut app, &regions, 1150.0, 10.0, true));
         assert_eq!(
-            app.tab_drag.as_ref().unwrap().drop,
+            app.editor.tab_drag.as_ref().unwrap().drop,
             Some(TabDrop::Insert {
                 pane: right,
                 index: 1
@@ -1507,7 +1516,7 @@ mod tests {
 
         update_pointer(&mut app, &regions, 880.0, 200.0, true);
         assert_eq!(
-            app.tab_drag.as_ref().unwrap().drop,
+            app.editor.tab_drag.as_ref().unwrap().drop,
             Some(TabDrop::Pane {
                 pane,
                 split: Some(Direction::Right)

@@ -1,7 +1,10 @@
 param([string]$Repository, [string]$OutputPath)
 $ErrorActionPreference = 'Stop'
 $sourceRoot = Join-Path $Repository 'src'
-$files = Get-ChildItem -LiteralPath $sourceRoot -Recurse -Filter '*.rs'
+$sourceDirectories = @($sourceRoot)
+$coreRoot = Join-Path $Repository 'crates/editor-core'
+if (Test-Path -LiteralPath $coreRoot) { $sourceDirectories += $coreRoot }
+$files = Get-ChildItem -LiteralPath $sourceDirectories -Recurse -Filter '*.rs'
 $fileRecords = foreach ($file in $files) {
     $text = Get-Content -LiteralPath $file.FullName -Raw
     [pscustomobject]@{
@@ -32,7 +35,7 @@ $candidates = foreach ($rule in $rules) {
 }
 [ordered]@{
     schema = 1
-    scope = 'Lexical candidates including cfg(test); not a Rust dependency parser or a phase 1 enforcement check.'
+    scope = 'Application and editor-core source identities; lexical candidates include cfg(test), not a Rust dependency parser.'
     app_state_public_fields = [regex]::Matches($stateBody, '(?m)^\s+pub \w+:').Count
     files = @($fileRecords)
     dependency_candidates = @($candidates)

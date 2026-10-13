@@ -90,7 +90,7 @@ pub fn render(
         .on_pointer_down_with_button(move |_cx, p, button| {
             if button == PointerButton::Right {
                 st_menu.update(move |app| {
-                    app.tab_context_menu = None;
+                    app.editor.tab_context_menu = None;
                     app.context_menu = Some((p.point.x, p.point.y));
                     app.context_menu_target = None;
                 });
@@ -858,7 +858,7 @@ fn dir_row(
             }
             PointerButton::Right => {
                 click_state.update(move |app| {
-                    app.tab_context_menu = None;
+                    app.editor.tab_context_menu = None;
                     app.context_menu = Some((pointer.point.x, pointer.point.y));
                     app.context_menu_target = Some(ExplorerContextTarget {
                         path: PathBuf::from(key),
@@ -1026,7 +1026,7 @@ fn build_tree(
                                 st.update(move |app| {
                                     let clicks =
                                         app.editor.tree_click_count(&path, point.0, point.1);
-                                    app.file_drag = Some(FileDragState {
+                                    app.editor.file_drag = Some(FileDragState {
                                         path,
                                         source: crate::state::FileDragSource::Explorer { clicks },
                                         origin: point,
@@ -1054,7 +1054,7 @@ fn build_tree(
                             PointerButton::Right => {
                                 let path = action_path.clone();
                                 st.update(move |app| {
-                                    app.tab_context_menu = None;
+                                    app.editor.tab_context_menu = None;
                                     app.context_menu = Some((pointer.point.x, pointer.point.y));
                                     app.context_menu_target = Some(ExplorerContextTarget {
                                         path,

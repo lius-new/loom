@@ -115,13 +115,13 @@ pub fn toggle(
 ) {
     let mut open = true;
     state.update(|app| {
-        if let Some(peek) = &app.editor_hunk_peek
+        if let Some(peek) = &app.editor.editor_hunk_peek
             && peek.pane == pane
             && peek.path == path
             && (peek.line == line
                 || matches!(&peek.content, Some(Ok(Some(hunk))) if hunk.lines.contains(&line)))
         {
-            app.editor_hunk_peek = None;
+            app.editor.editor_hunk_peek = None;
             open = false;
         }
     });
@@ -152,7 +152,7 @@ fn open_at(
         content: None,
     };
     let pending = peek.clone();
-    state.update(move |app| app.editor_hunk_peek = Some(pending));
+    state.update(move |app| app.editor.editor_hunk_peek = Some(pending));
     let worker_state = state.clone();
     let _ = thread::Builder::new()
         .name("loom-git-hunk-peek".into())
@@ -161,7 +161,7 @@ fn open_at(
             application.post(move || {
                 worker_state.update(move |app| {
                     // Keep only the answer to the peek still open.
-                    if let Some(current) = app.editor_hunk_peek.as_mut()
+                    if let Some(current) = app.editor.editor_hunk_peek.as_mut()
                         && current.pane == peek.pane
                         && current.path == peek.path
                         && current.line == peek.line
@@ -289,7 +289,7 @@ pub fn render(
 
     let close_state = state.clone();
     let close = icon_button("close", "Close").on_click(move || {
-        close_state.update(|app| app.editor_hunk_peek = None);
+        close_state.update(|app| app.editor.editor_hunk_peek = None);
     });
     let mut header_buttons = vec![close];
     for (icon, name, step) in [
@@ -356,7 +356,7 @@ pub fn render(
                 .semantics(Semantics::new(SemanticRole::Button).name(label))
                 .child(text(rect, label, style))
                 .on_click(move || {
-                    action_state.update(|app| app.editor_hunk_peek = None);
+                    action_state.update(|app| app.editor.editor_hunk_peek = None);
                     if action == BlockAction::Discard {
                         git_actions::request_discard_block(
                             &action_state,

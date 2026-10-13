@@ -135,6 +135,7 @@ pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<T
     };
     let origin_pane = app.workspace.active_pane();
     if let Some(pending) = app
+        .editor
         .pending_file
         .as_mut()
         .filter(|p| p.path == path && p.drop == drop && p.origin_pane == origin_pane)
@@ -162,7 +163,7 @@ pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<T
         origin_pane,
         folders: app.workspace_folders.clone(),
     };
-    app.pending_file = Some(pending.clone());
+    app.editor.pending_file = Some(pending.clone());
     if loader.work.send(Some(pending.clone())).is_err() {
         cancel(app);
         app.show_error("Could not start file loading.");
@@ -173,14 +174,14 @@ pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<T
 }
 
 pub fn cancel(app: &mut AppState) {
-    app.pending_file = None;
+    app.editor.pending_file = None;
     if let Some(loader) = app.runtime().and_then(|runtime| runtime.file_loader()) {
         loader.current.store(0, Ordering::Release);
     }
 }
 
 fn show_indicator(app: &mut AppState, generation: u64, now: Instant) -> bool {
-    let Some(pending) = &mut app.pending_file else {
+    let Some(pending) = &mut app.editor.pending_file else {
         return false;
     };
     if pending.generation != generation
@@ -197,6 +198,7 @@ fn show_indicator(app: &mut AppState, generation: u64, now: Instant) -> bool {
 
 fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile, String>) -> bool {
     let Some(pending) = app
+        .editor
         .pending_file
         .as_ref()
         .filter(|p| p.generation == generation)
@@ -352,13 +354,13 @@ mod tests {
         h.open("slow.json");
         let before = h.state.get().workspace.active();
         h.state.update(|app| {
-            let pending = app.pending_file.as_ref().unwrap();
+            let pending = app.editor.pending_file.as_ref().unwrap();
             let generation = pending.generation;
             let started = pending.started;
             let mut clock = crate::app::test_support::ManualClock::default();
             clock.advance(Duration::from_millis(299));
             assert!(!show_indicator(app, generation, started + clock.elapsed()));
-            assert!(!app.pending_file.as_ref().unwrap().indicator);
+            assert!(!app.editor.pending_file.as_ref().unwrap().indicator);
             // An unrelated UI click and edit complete while the worker is held.
             app.show_drawer = !app.show_drawer;
             app.workspace.active_editor_mut().unwrap().set_cursor(4);
@@ -368,14 +370,14 @@ mod tests {
                 "Keep this screen"
             );
         });
-        h.pump_until(|app| app.pending_file.as_ref().unwrap().indicator);
+        h.pump_until(|app| app.editor.pending_file.as_ref().unwrap().indicator);
         assert_eq!(h.state.get().workspace.active(), before);
         // Double-click promotion does not restart the timer or disk operation.
         h.state.update(|app| {
             crate::workspace_actions::open_tree_file(app, "slow.json".into(), 2);
         });
         release.send(()).unwrap();
-        h.pump_until(|app| app.pending_file.is_none());
+        h.pump_until(|app| app.editor.pending_file.is_none());
         let app = h.state.get();
         assert_eq!(
             app.workspace.active_path(),
@@ -411,7 +413,7 @@ mod tests {
         received.recv_timeout(Duration::from_secs(5)).unwrap();
         h.open("last.json");
         release.send(()).unwrap();
-        h.pump_until(|app| app.pending_file.is_none());
+        h.pump_until(|app| app.editor.pending_file.is_none());
         let app = h.state.get();
         assert_eq!(
             app.workspace.active_path(),
@@ -422,7 +424,7 @@ mod tests {
                 .file_id_for_path(std::path::Path::new("first.json"))
                 .is_none()
         );
-        assert!(app.pending_file.is_none());
+        assert!(app.editor.pending_file.is_none());
     }
 
     #[test]
@@ -441,7 +443,7 @@ mod tests {
         h.open("current.txt");
         release.send(()).unwrap();
         done.recv_timeout(Duration::from_secs(5)).unwrap();
-        h.pump_until(|app| app.pending_file.is_none());
+        h.pump_until(|app| app.editor.pending_file.is_none());
         assert_eq!(
             h.state.get().workspace.active_path(),
             Some(std::path::Path::new("current.txt"))
@@ -453,8 +455,15 @@ mod tests {
     fn failures_preserve_the_document_and_finished_loads_ignore_delayed_indicators() {
         let h = Harness::new(|_| Err("Could not open missing.json".into()));
         h.open("missing.json");
-        let generation = h.state.get().pending_file.as_ref().unwrap().generation;
-        h.pump_until(|app| app.pending_file.is_none());
+        let generation = h
+            .state
+            .get()
+            .editor
+            .pending_file
+            .as_ref()
+            .unwrap()
+            .generation;
+        h.pump_until(|app| app.editor.pending_file.is_none());
         h.state.update(|app| {
             assert!(!show_indicator(
                 app,
@@ -489,7 +498,7 @@ mod tests {
             Some(expected.clone())
         );
         release.send(()).unwrap();
-        h.pump_until(|app| app.pending_file.is_none());
+        h.pump_until(|app| app.editor.pending_file.is_none());
         // No session/render effect has run since the background result was installed.
         assert_eq!(
             crate::workspace_actions::saved_app_editor_layout(&h.state.get()),
@@ -516,7 +525,7 @@ mod tests {
         h.state
             .update(|app| app.workspace_folders.push("different-workspace".into()));
         release.send(()).unwrap();
-        h.pump_until(|app| app.pending_file.is_none());
+        h.pump_until(|app| app.editor.pending_file.is_none());
         assert_eq!(
             h.state.get().workspace.active_path(),
             Some(std::path::Path::new("current.txt"))
@@ -551,7 +560,7 @@ mod tests {
                     }
                     let pane = app.workspace.active_pane();
                     if row < 2 {
-                        app.pending_file = Some(PendingFile {
+                        app.editor.pending_file = Some(PendingFile {
                             generation: 1,
                             path: "seed.database.json".into(),
                             pane,

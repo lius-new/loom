@@ -164,8 +164,8 @@ impl Setting {
             Self::InlineBlame => Some(app.git_inline_blame),
             Self::SplitDiff => Some(app.git_split_diff),
             Self::TreeView => Some(app.git_tree_view),
-            Self::VimMode => Some(app.vim.options.enabled),
-            Self::VimSystemClipboard => Some(app.vim.options.system_clipboard),
+            Self::VimMode => Some(app.editor.vim.options.enabled),
+            Self::VimSystemClipboard => Some(app.editor.vim.options.system_clipboard),
         }
     }
 
@@ -184,10 +184,10 @@ impl Setting {
             Self::SplitDiff => app.git_split_diff ^= true,
             Self::TreeView => app.git_tree_view ^= true,
             Self::VimMode => {
-                let enabled = !app.vim.options.enabled;
-                crate::editor::vim_input::set_enabled(app, enabled);
+                let enabled = !app.editor.vim.options.enabled;
+                crate::app::editor_vim::set_enabled(app, enabled);
             }
-            Self::VimSystemClipboard => app.vim.options.system_clipboard ^= true,
+            Self::VimSystemClipboard => app.editor.vim.options.system_clipboard ^= true,
         }
     }
 
@@ -1033,7 +1033,7 @@ mod tests {
         .unwrap();
         assert!(app.apply_settings(file.settings));
         assert!(!app.smooth_caret);
-        assert!(app.vim.options.enabled);
+        assert!(app.editor.vim.options.enabled);
         assert_eq!(app.editor_font.family, "Consolas");
         assert_eq!(app.editor_font_input.text(), "Consolas");
         // Out-of-range values are clamped, so the next save normalizes them.

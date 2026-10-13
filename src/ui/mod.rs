@@ -10,6 +10,8 @@ pub mod close_confirmation;
 pub mod components;
 pub mod context_menu;
 pub mod diff_editor;
+pub(crate) mod editor;
+pub(crate) mod editor_binding;
 pub mod git_badge;
 pub mod git_confirm;
 pub mod git_menu;
@@ -72,10 +74,10 @@ pub(crate) fn track_main_surface_focus(
 ) -> lgui::prelude::Element {
     let focus_state = state.clone();
     surface
-        .on_focus(move |_| focus_state.update(|app| app.focused = true))
+        .on_focus(move |_| focus_state.update(|app| app.editor.focused = true))
         .on_blur(move |_| {
             state.update(|app| {
-                app.focused = false;
+                app.editor.focused = false;
                 app.editor.drag = None;
                 app.editor.ime = None;
                 if let Some(mut buffer) = app.workspace.active_editor_mut() {

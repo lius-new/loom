@@ -226,9 +226,19 @@ overwritten and are marked when their disk version changes.
 
 ## Build & run
 
+Rust 1.97.1, Clippy and rustfmt are pinned in `rust-toolchain.toml`; CI uses
+the same compiler. Windows builds with an existing Skia archive can use the
+[verified local cache helper](scripts/build/README.md), including for offline
+builds and baseline checks.
+
+The framework-independent editing core lives in
+[`crates/editor-core`](crates/editor-core/README.md). Run its tests without the
+GUI with `cargo test --locked -p loom-editor-core`; run all application and core
+regressions with `cargo test --locked --workspace`.
+
 ```sh
-cargo build --release
-cargo run --release
+cargo build --release --locked
+cargo run --release --locked
 ```
 
 The project follows the `main` branch of the lgui repository. `Cargo.lock`

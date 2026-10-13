@@ -10,7 +10,6 @@ use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
 use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, component, group};
 use lgui::window::WindowFocusChanged;
 
-use crate::editor::editor_view;
 use crate::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
 use crate::model::application_layout::{ApplicationLayout, Content};
@@ -18,6 +17,7 @@ use crate::settings_persistence;
 use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
+use crate::ui::editor::view as editor_view;
 use crate::ui::{
     branch_picker, clone_repository, close_confirmation, context_menu, diff_editor, git_confirm,
     git_menu, git_panel, keymap_page, layout_map, pane_sash, settings, sidebar, stash_switch,
@@ -291,7 +291,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     let split_drag = app.git_split_drag.take().is_some()
                         | app.terminal_split_drag.take().is_some()
                         | app.application_sash_drag.take().is_some();
-                    editor_view::finish_scrollbar_drag(app)
+                    crate::app::editor::finish_scrollbar_drag(app)
                         | tabs::cancel_pointer_interaction(app)
                         | had_pending
                         | split_drag
@@ -325,11 +325,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         } else {
             close_state.update(move |app| {
-                app.close_request = Some(CloseRequest {
+                app.editor.close_request = Some(CloseRequest {
                     targets: dirty_targets,
                     continuation: CloseContinuation::ExitApplication,
                 });
-                app.tab_context_menu = None;
+                app.editor.tab_context_menu = None;
                 app.terminal_tab_context_menu = None;
                 app.show_clone_dialog = false;
                 app.branch_picker = None;
@@ -486,7 +486,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             app.editor.drag = None;
             app.editor.menu = None;
             // Leaving a view ends its Vim insert and returns it to Normal mode.
-            crate::editor::vim_input::sync_view(app);
+            crate::app::editor_vim::sync_view(app);
         });
     });
     let default_terminal_open = s.default_terminal_open();
@@ -626,7 +626,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             let mut changed = false;
             for (pane, scroll) in desired {
                 if (tabs::tab_scroll_x(app, pane) - scroll).abs() > f32::EPSILON {
-                    app.tab_scroll.insert(pane, scroll);
+                    app.editor.tab_scroll.insert(pane, scroll);
                     changed = true;
                 }
             }
@@ -651,7 +651,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     while let Err(RecvTimeoutError::Timeout) =
                         receiver.recv_timeout(Duration::from_millis(30))
                     {
-                        drag_state.try_update(|app| editor_view::drag_scroll_tick(app, code_rect));
+                        drag_state
+                            .try_update(|app| crate::app::editor::drag_scroll_tick(app, code_rect));
                     }
                 })
                 .ok()
@@ -763,7 +764,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     );
     // The close confirmation takes keyboard focus while open so Enter/Esc go
     // to the dialog rather than the editor; it hands focus back on resolve.
-    let showing_close_request = s.close_request.is_some();
+    let showing_close_request = s.editor.close_request.is_some();
     let mounted_close_focus = close_dialog_focus.clone();
     cx.use_effect(showing_close_request, move || {
         if showing_close_request {
@@ -970,17 +971,18 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 .find(|(_, rect)| rect.contains(pointer.point))
                 .map(|(pane, _)| *pane);
             st_editor_hover.try_update(move |app| {
-                let mut changed = app.editor_hovered != hovered
+                let mut changed = app.editor.editor_hovered != hovered
                     || (hovered.is_none()
                         && (app.welcome_hover.is_some() || app.workspace_home_hover.is_some()));
-                app.editor_hovered = hovered;
+                app.editor.editor_hovered = hovered;
                 // A pane's gutter only sees moves inside it; drop its hover
                 // once the pointer leaves the pane.
                 if app
+                    .editor
                     .editor_gutter_hover
                     .is_some_and(|(pane, _)| Some(pane) != hovered)
                 {
-                    app.editor_gutter_hover = None;
+                    app.editor.editor_gutter_hover = None;
                     changed = true;
                 }
                 if hovered.is_none() {
@@ -1007,13 +1009,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             st_pane_focus.try_update(move |app| {
                 let overlay = app.editor.menu.is_some()
                     || app.context_menu.is_some()
-                    || app.tab_context_menu.is_some()
+                    || app.editor.tab_context_menu.is_some()
                     || app.terminal_tab_context_menu.is_some()
                     || app.branch_picker.is_some()
                     || app.stash_switch.is_some()
                     || app.git_menu.is_some()
                     || app.git_confirm.is_some()
-                    || app.close_request.is_some()
+                    || app.editor.close_request.is_some()
                     || app.show_clone_dialog;
                 !overlay && app.workspace.activate_pane(pane)
             });
@@ -1055,7 +1057,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     // click; a file row press records a fresh drag after this runs.
     let st_stale_file_drag = state.clone();
     root = root.on_event_capture(UiEventKind::PointerDown, move |_ctx, _payload| {
-        st_stale_file_drag.try_update(|app| app.file_drag.take().is_some());
+        st_stale_file_drag.try_update(|app| app.editor.file_drag.take().is_some());
     });
     // A drawer file press becomes a drag into the editor once it moves;
     // its release either opens it like a click or drops it on a pane.
@@ -1086,14 +1088,19 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 if app.main_surface() == MainSurface::Diff {
                     diff_editor::drag_scrollbars(app, code_rect, pointer.point.x, pointer.point.y)
                 } else {
-                    editor_view::drag_scrollbars(app, code_rect, pointer.point.x, pointer.point.y)
+                    crate::app::editor::drag_scrollbars(
+                        app,
+                        code_rect,
+                        pointer.point.x,
+                        pointer.point.y,
+                    )
                 }
             });
         }
     });
     let st_editor_scrollbar_up = state.clone();
     root = root.on_event_capture(UiEventKind::PointerUp, move |_ctx, _payload| {
-        st_editor_scrollbar_up.try_update(editor_view::finish_scrollbar_drag);
+        st_editor_scrollbar_up.try_update(crate::app::editor::finish_scrollbar_drag);
     });
 
     // ---- Compose chrome (back-to-front) -------------------------------
@@ -1131,12 +1138,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 state.clone(),
                 git_store.clone(),
                 editor_focus.clone(),
+                super::editor_view::binding(state.clone(), git_store.clone(), pane, body),
             ),
             MainSurface::Editor => editor_view::render(
                 pane,
                 body,
-                state.clone(),
-                git_store.clone(),
+                super::editor_view::binding(state.clone(), git_store.clone(), pane, body),
                 surface_id,
                 editor_focus.clone(),
             ),
@@ -1230,14 +1237,14 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     ));
 
     if s.context_menu.is_none()
-        && s.tab_context_menu.is_none()
+        && s.editor.tab_context_menu.is_none()
         && s.terminal_tab_context_menu.is_none()
         && s.branch_picker.is_none()
         && s.stash_switch.is_none()
         && s.git_menu.is_none()
         && s.git_confirm.is_none()
         && !show_clone_dialog
-        && s.close_request.is_none()
+        && s.editor.close_request.is_none()
         && let Some(tooltip) = tabs::render_tooltip(vp, &strips, &s)
     {
         root = root.child(tooltip);
@@ -1248,7 +1255,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         && s.branch_picker.is_none()
         && s.stash_switch.is_none()
         && !show_clone_dialog
-        && s.close_request.is_none()
+        && s.editor.close_request.is_none()
         && let Some(card) = git_panel::render_commit_card(vp, &s)
     {
         root = root.child(card);
@@ -1256,7 +1263,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     // ---- Overlays ------------------------------------------------------
     if let Some(pos) = s.editor.menu {
-        root = root.child(crate::editor::edit_menu::render(
+        root = root.child(super::editor_view::menu(
             vp,
             code_rect,
             pos,
@@ -1272,7 +1279,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_tabs.clone(),
         ));
     }
-    if s.tab_context_menu.is_some() {
+    if s.editor.tab_context_menu.is_some() {
         root = root.child(tab_context_menu::render(vp, state.clone()));
     }
     if s.terminal_tab_context_menu.is_some() {
@@ -1332,7 +1339,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             clone_input_id,
         ));
     }
-    if s.close_request.is_some() {
+    if s.editor.close_request.is_some() {
         root = root.child(close_confirmation::render(
             vp,
             state.clone(),
@@ -1350,11 +1357,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     // the elements after it and drop the pressed element's pointer capture.
     // Preview where a dragged tab or drawer file would land on a pane.
     let file_drop = s
+        .editor
         .file_drag
         .as_ref()
         .filter(|drag| drag.active)
         .and_then(|drag| drag.drop);
     if let Some(TabDrop::Pane { pane, split }) = s
+        .editor
         .tab_drag
         .as_ref()
         .filter(|drag| drag.active)
@@ -1369,7 +1378,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
 
     // The dragged drawer file's name follows the pointer.
-    if let Some(drag) = s.file_drag.as_ref().filter(|drag| drag.active) {
+    if let Some(drag) = s.editor.file_drag.as_ref().filter(|drag| drag.active) {
         let name = drag.path.file_name().map_or_else(
             || drag.path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),

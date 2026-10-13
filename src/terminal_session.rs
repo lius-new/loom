@@ -2343,10 +2343,16 @@ mod tests {
             .unwrap()
             .console
             .is_some();
-        let mut idle = true;
+        let mut startup_tracker = SustainedProgram::default();
+        let mut startup_labels = Vec::new();
         for _ in 0..20 {
-            let candidate = controller.program_candidate(&ProgramProbe::new(), None);
-            idle &= candidate.is_none();
+            let now = Instant::now();
+            let candidate = controller
+                .program_candidate(&ProgramProbe::new(), startup_tracker.sustained_pid(now));
+            // Match app/shell: short-lived startup candidates never get labels.
+            if let Some(label) = startup_tracker.observe(candidate, now) {
+                startup_labels.push(label);
+            }
             thread::sleep(Duration::from_millis(100));
         }
         let mut tracker = SustainedProgram::default();
@@ -2372,7 +2378,10 @@ mod tests {
             console,
             "observer must attach to the launcher-backed console"
         );
-        assert!(idle, "startup processes must never become applications");
+        assert!(
+            startup_labels.is_empty(),
+            "startup processes must never become applications: {startup_labels:?}"
+        );
         assert!(detected && cleared);
     }
 

@@ -133,8 +133,8 @@ fn request_close_tabs_in(app: &mut AppState, targets: Vec<(PaneId, FileId)>) {
     if existing.is_empty() {
         return;
     }
-    app.tab_context_menu = None;
-    app.tab_drag = None;
+    app.editor.tab_context_menu = None;
+    app.editor.tab_drag = None;
     app.editor.menu = None;
     // A dirty document only needs a decision when its last tab closes.
     if app
@@ -143,7 +143,7 @@ fn request_close_tabs_in(app: &mut AppState, targets: Vec<(PaneId, FileId)>) {
         .into_iter()
         .any(|id| app.workspace.is_dirty(id))
     {
-        app.close_request = Some(CloseRequest {
+        app.editor.close_request = Some(CloseRequest {
             targets: existing,
             continuation: CloseContinuation::CloseTabs,
         });
@@ -159,11 +159,11 @@ pub fn cancel_close_request(state: &State<AppState>) {
 }
 
 fn cancel_close_request_in(app: &mut AppState) {
-    app.close_request = None;
+    app.editor.close_request = None;
 }
 
 pub fn discard_close_request(state: &State<AppState>) -> Option<CloseContinuation> {
-    let continuation = state.get().close_request.as_ref()?.continuation;
+    let continuation = state.get().editor.close_request.as_ref()?.continuation;
     state.update(|app| {
         let _ = discard_close_request_in(app);
     });
@@ -171,7 +171,7 @@ pub fn discard_close_request(state: &State<AppState>) -> Option<CloseContinuatio
 }
 
 fn discard_close_request_in(app: &mut AppState) -> Option<CloseContinuation> {
-    let request = app.close_request.take()?;
+    let request = app.editor.close_request.take()?;
     if request.continuation == CloseContinuation::CloseTabs {
         for (pane, id) in request.targets {
             app.workspace.close_item(pane, id);
@@ -196,7 +196,7 @@ pub fn save_close_request(state: &State<AppState>) -> Option<CloseContinuation> 
 }
 
 fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>, String> {
-    let Some(request) = app.close_request.clone() else {
+    let Some(request) = app.editor.close_request.clone() else {
         return Ok(None);
     };
     for id in app.workspace.released_by(&request.targets) {
@@ -215,7 +215,7 @@ fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>
             app.workspace.close_item(pane, id);
         }
     }
-    app.close_request = None;
+    app.editor.close_request = None;
     Ok(Some(request.continuation))
 }
 
@@ -280,7 +280,7 @@ pub(crate) fn finish_file_drag(app: &mut AppState) -> bool {
         .runtime()
         .is_some_and(|runtime| runtime.file_loader().is_some())
     {
-        if let Some(drag) = app.file_drag.take() {
+        if let Some(drag) = app.editor.file_drag.take() {
             let crate::state::FileDragSource::Explorer { clicks } = drag.source else {
                 return false;
             };
@@ -305,7 +305,7 @@ fn finish_file_drag_with(
     app: &mut AppState,
     read: impl FnOnce(&Path) -> Result<String, String>,
 ) -> bool {
-    let Some(drag) = app.file_drag.take() else {
+    let Some(drag) = app.editor.file_drag.take() else {
         return false;
     };
     let crate::state::FileDragSource::Explorer { clicks } = drag.source else {
@@ -362,11 +362,11 @@ pub(crate) fn finish_drawer_file_drag(state: &State<AppState>) -> bool {
     let mut changes = None;
     let mut focus = false;
     state.try_update(|app| {
-        let Some(drag) = &app.file_drag else {
+        let Some(drag) = &app.editor.file_drag else {
             return false;
         };
         if matches!(drag.source, crate::state::FileDragSource::Changes { .. }) {
-            changes = app.file_drag.take();
+            changes = app.editor.file_drag.take();
         } else {
             focus = finish_file_drag(app);
         }
@@ -1355,7 +1355,7 @@ pub(crate) fn saved_editor_layout(workspace: &Workspace) -> Option<EditorLayout>
 }
 
 pub(crate) fn saved_app_editor_layout(app: &AppState) -> Option<EditorLayout> {
-    saved_layout_with_pending(&app.workspace, app.pending_file.as_ref())
+    saved_layout_with_pending(&app.workspace, app.editor.pending_file.as_ref())
 }
 
 /// Take the current snapshot at the exit boundary, rather than waiting for a
@@ -1705,7 +1705,7 @@ mod tests {
         close_tab(&mut app, id);
 
         assert!(app.workspace.meta(id).is_none());
-        assert!(app.close_request.is_none());
+        assert!(app.editor.close_request.is_none());
     }
 
     #[test]
@@ -1726,12 +1726,12 @@ mod tests {
             .unwrap();
 
         request_close_tab_in(&mut app, right, id);
-        assert!(app.close_request.is_none());
+        assert!(app.editor.close_request.is_none());
         assert!(app.workspace.is_dirty(id));
 
         request_close_tab_in(&mut app, left, id);
         assert_eq!(
-            app.close_request.map(|request| request.targets),
+            app.editor.close_request.map(|request| request.targets),
             Some(vec![(left, id)])
         );
     }
@@ -1752,7 +1752,7 @@ mod tests {
 
         assert!(app.workspace.meta(id).is_some());
         assert_eq!(
-            app.close_request,
+            app.editor.close_request,
             Some(CloseRequest {
                 targets: tabs(&app, &[id]),
                 continuation: CloseContinuation::CloseTabs,
@@ -1836,7 +1836,8 @@ mod tests {
         app.apply(Action::CloseActiveItem);
         assert!(app.workspace.meta(dirty).is_some());
         assert_eq!(
-            app.close_request
+            app.editor
+                .close_request
                 .as_ref()
                 .map(|request| request.targets.clone()),
             Some(tabs(&app, &[dirty]))
@@ -1847,16 +1848,17 @@ mod tests {
         app.apply(Action::CloseActiveItem);
         assert!(app.workspace.meta(clean).is_some());
         assert_eq!(
-            app.close_request
+            app.editor
+                .close_request
                 .as_ref()
                 .map(|request| request.targets.clone()),
             Some(tabs(&app, &[dirty]))
         );
 
-        app.close_request = None;
+        app.editor.close_request = None;
         app.apply(Action::CloseActiveItem);
         assert!(app.workspace.meta(clean).is_none());
-        assert!(app.close_request.is_none());
+        assert!(app.editor.close_request.is_none());
     }
 
     #[test]
@@ -1948,7 +1950,7 @@ mod tests {
         assert!(app.workspace.meta(clean).is_some());
         assert!(app.workspace.meta(dirty).is_some());
         assert_eq!(
-            app.close_request,
+            app.editor.close_request,
             Some(CloseRequest {
                 targets: tabs(&app, &[clean, dirty]),
                 continuation: CloseContinuation::CloseTabs,
@@ -1964,7 +1966,7 @@ mod tests {
         let second_path = root.join("second.txt");
         let first = dirty_test_file(&mut app, first_path.clone(), "first", " updated");
         let second = dirty_test_file(&mut app, second_path.clone(), "second", " updated");
-        app.close_request = Some(CloseRequest {
+        app.editor.close_request = Some(CloseRequest {
             targets: tabs(&app, &[first, second]),
             continuation: CloseContinuation::ExitApplication,
         });
@@ -1984,7 +1986,7 @@ mod tests {
                 active: Some(second_path.clone())
             }
         );
-        assert!(app.close_request.is_none());
+        assert!(app.editor.close_request.is_none());
         assert_eq!(fs::read_to_string(first_path).unwrap(), "first updated");
         assert_eq!(fs::read_to_string(second_path).unwrap(), "second updated");
         let _ = fs::remove_dir_all(root);
@@ -2007,7 +2009,7 @@ mod tests {
             .unwrap()
             .replace_selection(" updated", EditKind::Typing)
             .unwrap();
-        app.close_request = Some(CloseRequest {
+        app.editor.close_request = Some(CloseRequest {
             targets: tabs(&app, &[first, second]),
             continuation: CloseContinuation::CloseTabs,
         });
@@ -2019,7 +2021,7 @@ mod tests {
         assert!(app.workspace.meta(second).is_some());
         assert!(!app.workspace.is_dirty(first));
         assert!(app.workspace.is_dirty(second));
-        assert!(app.close_request.is_some());
+        assert!(app.editor.close_request.is_some());
         assert_eq!(fs::read_to_string(first_path).unwrap(), "first updated");
         let _ = fs::remove_dir_all(root);
     }
@@ -2043,7 +2045,7 @@ mod tests {
             .unwrap()
             .replace_selection("second", EditKind::Typing)
             .unwrap();
-        app.close_request = Some(CloseRequest {
+        app.editor.close_request = Some(CloseRequest {
             targets: tabs(&app, &[first, second]),
             continuation: CloseContinuation::CloseTabs,
         });
@@ -2053,7 +2055,7 @@ mod tests {
         assert_eq!(result, Some(CloseContinuation::CloseTabs));
         assert!(app.workspace.meta(first).is_none());
         assert!(app.workspace.meta(second).is_none());
-        assert!(app.close_request.is_none());
+        assert!(app.editor.close_request.is_none());
     }
 
     #[test]
@@ -2067,7 +2069,7 @@ mod tests {
             .unwrap()
             .replace_selection("changed", EditKind::Typing)
             .unwrap();
-        app.close_request = Some(CloseRequest {
+        app.editor.close_request = Some(CloseRequest {
             targets: tabs(&app, &[id]),
             continuation: CloseContinuation::ExitApplication,
         });
@@ -2076,7 +2078,7 @@ mod tests {
 
         assert!(app.workspace.meta(id).is_some());
         assert!(app.workspace.is_dirty(id));
-        assert!(app.close_request.is_none());
+        assert!(app.editor.close_request.is_none());
     }
 
     #[test]
@@ -2204,7 +2206,7 @@ mod tests {
     }
 
     fn press_file(app: &mut AppState, path: &str, clicks: u8, drop: Option<TabDrop>) {
-        app.file_drag = Some(crate::state::FileDragState {
+        app.editor.file_drag = Some(crate::state::FileDragState {
             path: PathBuf::from(path),
             source: crate::state::FileDragSource::Explorer { clicks },
             origin: (0.0, 0.0),
@@ -2223,7 +2225,7 @@ mod tests {
         let mut app = AppState::new();
         press_file(&mut app, "a.rs", 1, None);
         assert!(finish_file_drag_with(&mut app, read_ok));
-        assert!(app.file_drag.is_none());
+        assert!(app.editor.file_drag.is_none());
         let id = app.workspace.active().unwrap();
         assert_eq!(app.workspace.preview(), Some(id));
 
@@ -2382,7 +2384,7 @@ mod tests {
         let file = root.join("dirty.txt");
         let mut app = AppState::new();
         let id = dirty_test_file(&mut app, file.clone(), "disk", " modified");
-        app.close_request = Some(CloseRequest {
+        app.editor.close_request = Some(CloseRequest {
             targets: tabs(&app, &[id]),
             continuation: CloseContinuation::ExitApplication,
         });

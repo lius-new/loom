@@ -22,7 +22,7 @@ pub fn render(
     editor_focus: UiFocusHandle,
 ) -> Element {
     let snapshot = state.get();
-    let Some(request) = snapshot.close_request.as_ref() else {
+    let Some(request) = snapshot.editor.close_request.as_ref() else {
         return panel(viewport, VisualStyle::default());
     };
     let dirty_targets = snapshot
@@ -193,7 +193,7 @@ fn finish(
         if workspace_actions::save_editor_session(state) {
             cx.window().close();
         }
-    } else if state.get().close_request.is_none() {
+    } else if state.get().editor.close_request.is_none() {
         editor_focus.focus();
     }
 }
@@ -219,7 +219,7 @@ pub fn perform(
         if workspace_actions::save_editor_session(state) {
             windows.close("loom");
         }
-    } else if state.get().close_request.is_none() {
+    } else if state.get().editor.close_request.is_none() {
         editor_focus.focus();
     }
     true

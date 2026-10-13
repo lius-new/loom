@@ -1,0 +1,557 @@
+//! Compose the pane scene and application intents; the viewport never sees root state.
+use lgui::prelude::{State, UiRect};
+
+use super::{editor, state::AppState};
+use crate::domain::identity::PaneId;
+use crate::git::GitStoreSnapshot;
+use crate::ui::editor_binding::{Binding, DocumentMeta, Event, Preedit, ViewDocument, ViewState};
+
+pub(crate) fn menu(
+    viewport: UiRect,
+    editor_rect: UiRect,
+    pos: (f32, f32),
+    state: State<AppState>,
+    focus: lgui::core::UiFocusHandle,
+) -> lgui::prelude::Element {
+    use crate::ui::editor::menu::{self, Event, Item};
+    use loom_editor_core::commands::Command;
+    let app = state.get();
+    let items = [
+        ("Undo", Command::Undo),
+        ("Redo", Command::Redo),
+        ("Cut", Command::Cut),
+        ("Copy", Command::Copy),
+        ("Paste", Command::Paste),
+        ("Select All", Command::SelectAll),
+    ]
+    .into_iter()
+    .map(|(label, command)| Item {
+        label,
+        command,
+        shortcut: crate::input::action::Action::for_editor_command(command)
+            .and_then(|action| crate::key_actions::editor_shortcut_label(&app, action))
+            .unwrap_or_default(),
+        enabled: app
+            .workspace
+            .active_editor()
+            .is_some_and(|buffer| match command {
+                Command::Undo => buffer.can_undo(),
+                Command::Redo => buffer.can_redo(),
+                Command::Copy | Command::Cut => {
+                    buffer.selection().is_some()
+                        || matches!(app.editor.vim.mode(), crate::vim::Mode::Visual(_))
+                }
+                _ => true,
+            }),
+    })
+    .collect();
+    menu::render(
+        viewport,
+        pos,
+        items,
+        app.editor.menu_hover,
+        std::sync::Arc::new(move |event| match event {
+            Event::Close => state.update(|app| app.editor.menu = None),
+            Event::Hover(index) => {
+                state.try_update(|app| {
+                    let changed = app.editor.menu_hover != Some(index);
+                    app.editor.menu_hover = Some(index);
+                    changed
+                });
+            }
+            Event::Execute(command, clipboard) => {
+                editor::execute_command(&state, command, editor_rect, clipboard);
+                state.update(|app| app.editor.menu = None);
+            }
+        }),
+        focus,
+    )
+}
+
+pub(crate) fn snapshot(
+    app: AppState,
+    git: GitStoreSnapshot,
+    pane: PaneId,
+    rect: UiRect,
+) -> ViewState {
+    let focused_pane = app.workspace.active_pane() == pane;
+    let document = app
+        .workspace
+        .pane(pane)
+        .and_then(|value| value.active())
+        .and_then(|id| {
+            let meta = app.workspace.meta(id)?;
+            let value = app.workspace.editor(pane)?;
+            Some(ViewDocument {
+                id,
+                meta: DocumentMeta {
+                    path: meta.path.clone(),
+                    lang: meta.lang,
+                },
+                buffer: value.buffer().clone(),
+                selection: value.selection_state(),
+                scroll: app.workspace.scroll(pane),
+            })
+        });
+    let has_repository = document.as_ref().is_some_and(|doc| {
+        git.repository_for_path(&doc.meta.path)
+            .is_some_and(|value| value.relative_path(&doc.meta.path).is_some())
+    });
+    let visible_lines = document
+        .as_ref()
+        .map(|doc| {
+            let left = rect.left + crate::fonts::editor().gutter_w() + crate::theme::CODE_PAD;
+            let metrics = crate::ui::editor::view::scroll_metrics(rect, left, &doc.buffer);
+            crate::ui::editor::view::visible_line_range(
+                doc.scroll.1.clamp(0.0, metrics.max_y),
+                rect.height(),
+                doc.buffer.line_count(),
+            )
+        })
+        .unwrap_or(0..0);
+    let state = app.editor;
+    let vim_view = state.vim.is_enabled()
+        && document
+            .as_ref()
+            .is_some_and(|doc| state.vim.view() == Some((pane, doc.id)));
+    let selections = document
+        .as_ref()
+        .map(|doc| {
+            vim_view
+                .then(|| state.vim.highlights(&doc.buffer, doc.selection))
+                .flatten()
+                .unwrap_or_else(|| doc.editor().selection().into_iter().collect())
+        })
+        .unwrap_or_default();
+    let search_matches = document
+        .as_ref()
+        .filter(|doc| {
+            state.vim.is_enabled()
+                && doc.buffer.len() <= 4 * 1024 * 1024
+                && doc.buffer.max_line_display_width() <= 4096
+        })
+        .map(|doc| state.vim.search_matches(&doc.buffer, visible_lines.clone()))
+        .unwrap_or_default();
+    let changes = document
+        .as_ref()
+        .and_then(|doc| git.line_changes.get(&doc.meta.path));
+    let line_changes = changes
+        .map(|changes| {
+            changes
+                .range(visible_lines.start + 1..visible_lines.end + 1)
+                .map(|(line, change)| (*line, *change))
+                .collect()
+        })
+        .unwrap_or_default();
+    let overview_marks = document
+        .as_ref()
+        .zip(changes)
+        .filter(|(_, changes)| changes.len() <= 10_000)
+        .map(|(doc, changes)| {
+            crate::ui::editor::view::change_marks(changes, doc.buffer.line_count())
+        })
+        .unwrap_or_default();
+    let peek_visible = state.editor_hunk_peek.as_ref().is_some_and(|peek| {
+        document
+            .as_ref()
+            .is_some_and(|doc| peek.pane == pane && peek.path == doc.meta.path)
+    });
+    ViewState {
+        pane,
+        document,
+        focused_pane,
+        focused: state.focused,
+        accepts_text: !state.vim.is_enabled() || state.vim.accepts_text(),
+        cursor_shape: if vim_view {
+            state.vim.cursor_shape()
+        } else {
+            crate::vim::CursorShape::Bar
+        },
+        selections,
+        search_matches,
+        smooth_caret: app.smooth_caret,
+        dragging: state.drag.is_some(),
+        caret_dragging: state.caret_dragging,
+        preedit: state
+            .ime
+            .filter(|value| value.pane == pane)
+            .map(|value| Preedit {
+                pane: value.pane,
+                document: value.document,
+                text: value.text,
+                cursor: value.cursor,
+            }),
+        editor_gutter_hover: state.editor_gutter_hover,
+        editor_hovered: state.editor_hovered,
+        editor_vertical_scrollbar_dragging: state.editor_vertical_scrollbar_dragging,
+        editor_horizontal_scrollbar_dragging: state.editor_horizontal_scrollbar_dragging,
+        line_changes,
+        overview_marks,
+        has_repository,
+        peek_visible,
+    }
+}
+
+pub(crate) fn binding(
+    state: State<AppState>,
+    git: State<GitStoreSnapshot>,
+    pane: PaneId,
+    rect: UiRect,
+) -> Binding {
+    let reader = state.clone();
+    let read_git = git.clone();
+    let dispatcher = state.clone();
+    let overlay_git = git.clone();
+    Binding::new(
+        move || snapshot(reader.get(), read_git.get(), pane, rect),
+        move |event| {
+            if let Event::Peek { line } = event {
+                let app = dispatcher.get();
+                if let Some(meta) = app
+                    .workspace
+                    .pane(pane)
+                    .and_then(|value| value.active())
+                    .and_then(|id| app.workspace.meta(id))
+                {
+                    let store = git.get();
+                    if let Some(repo) = store.repository_for_path(&meta.path)
+                        && let Some(relative) = repo.relative_path(&meta.path)
+                    {
+                        crate::editor::hunk_peek::toggle(
+                            &dispatcher,
+                            pane,
+                            meta.path.clone(),
+                            repo.worktree_root.clone(),
+                            relative,
+                            line,
+                        );
+                    }
+                }
+                return;
+            }
+            dispatcher.try_update(|app| dispatch(app, pane, rect, event));
+        },
+        {
+            let git = overlay_git;
+            // The overlay remains a registered Git adapter until its R6 migration.
+            move |placement| {
+                let app = state.get();
+                let meta = app
+                    .workspace
+                    .pane(pane)
+                    .and_then(|value| value.active())
+                    .and_then(|id| app.workspace.meta(id))?;
+                let peek = app
+                    .editor
+                    .editor_hunk_peek
+                    .as_ref()
+                    .filter(|peek| peek.pane == pane && peek.path == meta.path)?;
+                let store = git.get();
+                let repo = store.repository_for_path(&meta.path)?;
+                let relative = repo.relative_path(&meta.path)?;
+                Some(crate::editor::hunk_peek::render(
+                    peek,
+                    crate::editor::hunk_peek::PeekContext {
+                        pane,
+                        rect: placement.rect,
+                        code_left: placement.code_left,
+                        code_right: placement.rect.right - crate::ui::editor::view::SCROLLBAR_SIZE,
+                        scroll_y: placement.scroll_y,
+                        max_y: placement.metrics.max_y,
+                        viewport_h: placement.metrics.viewport_h,
+                        path: &meta.path,
+                        root: &repo.worktree_root,
+                        relative: &relative,
+                        changes: store.line_changes.get(&meta.path),
+                    },
+                    &state,
+                    &git,
+                ))
+            }
+        },
+    )
+}
+
+pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Event) -> bool {
+    match event {
+        Event::PointerDown {
+            document,
+            point,
+            button,
+            code_left,
+            metrics,
+        } => {
+            if app.workspace.pane(pane).and_then(|value| value.active()) != Some(document) {
+                return false;
+            }
+            editor::pointer_down(app, pane, document, rect, code_left, metrics, point, button);
+        }
+        Event::PointerDrag(point) => {
+            if let Some(drag) = app.editor.drag.as_mut() {
+                app.editor.caret_dragging = true;
+                drag.point = point;
+            }
+            editor::update_drag_selection(app, rect);
+        }
+        Event::PointerUp => app.editor.drag = None,
+        Event::Wheel { x, y, metrics } => {
+            let (x, y) = if app.editor.modifiers.shift() {
+                (x + y, 0.0)
+            } else {
+                (x, y)
+            };
+            let (sx, sy) = app.workspace.scroll(pane);
+            app.workspace.set_scroll(
+                pane,
+                (sx - x).clamp(0.0, metrics.max_x),
+                (sy - y).clamp(0.0, metrics.max_y),
+            );
+        }
+        Event::GutterHover(hovered) => {
+            let changed = app.editor.editor_gutter_hover != hovered;
+            app.editor.editor_gutter_hover = hovered;
+            return changed;
+        }
+        Event::Text(text) => editor::insert_text(app, &text, rect),
+        Event::Composition { text, cursor } => editor::update_composition(app, &text, cursor),
+        Event::CompositionEnd => app.editor.ime = None,
+        Event::Focus => app.editor.focused = true,
+        Event::Blur => {
+            app.editor.focused = false;
+            app.editor.drag = None;
+            app.editor.ime = None;
+            if let Some(mut value) = app.workspace.active_editor_mut() {
+                value.break_undo_group();
+            }
+        }
+        Event::ScrollbarDown {
+            vertical,
+            offset,
+            position,
+        } => {
+            app.workspace.activate_pane(pane);
+            if vertical {
+                app.editor.editor_vertical_scrollbar_dragging = true;
+                app.editor.editor_vertical_scrollbar_drag_offset = offset;
+            } else {
+                app.editor.editor_horizontal_scrollbar_dragging = true;
+                app.editor.editor_horizontal_scrollbar_drag_offset = offset;
+            }
+            if let Some(value) = position {
+                let (x, y) = app.workspace.scroll(pane);
+                app.workspace.set_scroll(
+                    pane,
+                    if vertical { x } else { value },
+                    if vertical { value } else { y },
+                );
+            }
+        }
+        Event::ScrollbarDrag {
+            vertical,
+            pointer,
+            start,
+            travel,
+            max,
+        } => {
+            let offset = if vertical {
+                app.editor.editor_vertical_scrollbar_drag_offset
+            } else {
+                app.editor.editor_horizontal_scrollbar_drag_offset
+            };
+            let value = crate::ui::editor::view::scroll_from_thumb(
+                (pointer - start - offset).clamp(0.0, travel),
+                travel,
+                max,
+            );
+            let (x, y) = app.workspace.scroll(pane);
+            app.workspace.set_scroll(
+                pane,
+                if vertical { x } else { value },
+                if vertical { value } else { y },
+            );
+        }
+        Event::ScrollbarUp { vertical } => {
+            if vertical {
+                app.editor.editor_vertical_scrollbar_dragging = false;
+            } else {
+                app.editor.editor_horizontal_scrollbar_dragging = false;
+            }
+        }
+        Event::Peek { .. } => return false,
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::line_change::LineChange;
+    use crate::model::pane_layout::Direction;
+    use lgui::core::PointerButton;
+    use std::collections::BTreeMap;
+
+    const RECT: UiRect = UiRect {
+        left: 0.0,
+        top: 0.0,
+        right: 500.0,
+        bottom: 120.0,
+    };
+    fn document(contents: &str) -> AppState {
+        let mut app = AppState::new();
+        app.workspace.open_path("first.txt".into(), contents.into());
+        app
+    }
+
+    #[test]
+    fn inactive_pane_snapshot_keeps_its_own_selection_scroll_and_ime() {
+        let mut app = document(&"some text\n".repeat(120));
+        let left = app.workspace.active_pane();
+        let id = app.workspace.active().unwrap();
+        app.workspace.editor_mut(left).unwrap().select_range(0..3);
+        app.workspace.set_scroll(left, 17.0, 48.0);
+        let right = app.workspace.split(left, Direction::Right).unwrap();
+        app.workspace.editor_mut(right).unwrap().select_range(5..9);
+        app.workspace.set_scroll(right, 30.0, 200.0);
+        dispatch(
+            &mut app,
+            right,
+            RECT,
+            Event::Composition {
+                text: "ni".into(),
+                cursor: Some(0..0),
+            },
+        );
+        let scene = snapshot(app.clone(), GitStoreSnapshot::default(), left, RECT);
+        assert!(!scene.focused_pane);
+        let doc = scene.document.as_ref().unwrap();
+        assert_eq!(doc.id, id);
+        assert_eq!(doc.editor().selection(), Some(0..3));
+        assert_eq!(doc.scroll, (17.0, 48.0));
+        assert!(scene.preedit_for(left, id).is_none());
+        let scene = snapshot(app, GitStoreSnapshot::default(), right, RECT);
+        assert!(scene.focused_pane);
+        assert_eq!(
+            scene.document.as_ref().unwrap().editor().selection(),
+            Some(5..9)
+        );
+        assert!(scene.preedit_for(right, id).is_some());
+    }
+
+    #[test]
+    fn snapshot_bounds_gutter_changes_but_keeps_the_full_overview() {
+        let app = document(&"line\n".repeat(400));
+        let pane = app.workspace.active_pane();
+        let git = GitStoreSnapshot {
+            line_changes: BTreeMap::from([
+                (
+                    "first.txt".into(),
+                    (1..=400).map(|line| (line, LineChange::Added)).collect(),
+                ),
+                (
+                    "unrelated.txt".into(),
+                    BTreeMap::from([(1, LineChange::Deleted)]),
+                ),
+            ])
+            .into(),
+            ..Default::default()
+        };
+        let scene = snapshot(app, git, pane, RECT);
+        assert!(!scene.line_changes.is_empty());
+        assert!(scene.line_changes.len() < 20);
+        assert!(
+            scene
+                .line_changes
+                .values()
+                .all(|value| *value == LineChange::Added)
+        );
+        assert_eq!(scene.overview_marks.len(), 1);
+        assert_eq!(scene.overview_marks[0].lines, 400);
+    }
+
+    #[test]
+    fn a_pointer_event_from_a_replaced_document_cannot_move_the_new_selection() {
+        let mut app = document("first");
+        let pane = app.workspace.active_pane();
+        let old = app.workspace.active().unwrap();
+        app.workspace
+            .open_path("second.txt".into(), "second".into());
+        app.workspace
+            .active_editor_mut()
+            .unwrap()
+            .select_range(1..4);
+        let before = app.workspace.active_editor().unwrap().selection_state();
+        let metrics = crate::ui::editor::view::scroll_metrics(
+            RECT,
+            80.0,
+            app.workspace.active_editor().unwrap().buffer(),
+        );
+        assert!(!dispatch(
+            &mut app,
+            pane,
+            RECT,
+            Event::PointerDown {
+                document: old,
+                point: (400.0, 100.0),
+                button: PointerButton::Left,
+                code_left: 80.0,
+                metrics,
+            }
+        ));
+        assert_eq!(
+            app.workspace.active_editor().unwrap().selection_state(),
+            before
+        );
+        assert!(app.editor.drag.is_none());
+    }
+
+    #[test]
+    fn a_late_ime_event_commits_to_its_original_pane_and_undo_history() {
+        let mut app = document("first");
+        let left = app.workspace.active_pane();
+        dispatch(
+            &mut app,
+            left,
+            RECT,
+            Event::Composition {
+                text: "ni".into(),
+                cursor: None,
+            },
+        );
+        let right = app.workspace.split(left, Direction::Right).unwrap();
+        app.workspace
+            .open_path("second.txt".into(), "second".into());
+        dispatch(&mut app, right, RECT, Event::Text("你".into()));
+        assert_eq!(app.workspace.active_pane(), right);
+        assert_eq!(app.workspace.editor(right).unwrap().text(), "second");
+        assert_eq!(app.workspace.editor(left).unwrap().text(), "你first");
+        assert!(app.editor.ime.is_none());
+        app.workspace.editor_mut(left).unwrap().undo();
+        assert_eq!(app.workspace.editor(left).unwrap().text(), "first");
+        assert_eq!(app.workspace.editor(right).unwrap().text(), "second");
+    }
+
+    #[test]
+    fn blur_cancels_transients_and_separates_typing_undo_groups() {
+        let mut app = document("");
+        let pane = app.workspace.active_pane();
+        dispatch(&mut app, pane, RECT, Event::Text("ab".into()));
+        dispatch(
+            &mut app,
+            pane,
+            RECT,
+            Event::Composition {
+                text: "ni".into(),
+                cursor: None,
+            },
+        );
+        dispatch(&mut app, pane, RECT, Event::Blur);
+        assert!(!app.editor.focused);
+        assert!(app.editor.ime.is_none());
+        dispatch(&mut app, pane, RECT, Event::Focus);
+        dispatch(&mut app, pane, RECT, Event::Text("c".into()));
+        app.workspace.active_editor_mut().unwrap().undo();
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "ab");
+        app.workspace.active_editor_mut().unwrap().undo();
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "");
+    }
+}

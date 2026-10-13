@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseTestResults } from './test-results.mjs';
 
 const directory = path.resolve(process.argv[2] || '');
 const logs = path.join(directory, 'logs');
@@ -18,15 +19,15 @@ function add(scenario, metric, value, unit, sample, log, extra = {}) {
 }
 for (const name of fs.readdirSync(logs).filter(name => name.endsWith('.log')).sort()) {
   const text = fs.readFileSync(path.join(logs, name), 'utf8').replace(/^\uFEFF/, '');
-  const outcome = [...text.matchAll(/test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out/g)].at(-1);
-  if (outcome) checks.push({ log: name, result: outcome[1], passed: Number(outcome[2]), failed: Number(outcome[3]), ignored: Number(outcome[4]), filtered: Number(outcome[6]) });
+  const outcome = parseTestResults(text);
+  if (outcome) checks.push({ log: name, ...outcome });
   if (name === 'tests-isolated.log') {
     testInventory = [...text.matchAll(/^test (\S+) \.\.\. (ok|FAILED|ignored)(.*)$/gm)].map(match => ({
       name: match[1], result: match[2], reason: match[3].replace(/^[, ]+/, '').trim()
     }));
   }
   if (name === 'clippy.log') {
-    for (const match of text.matchAll(/error: ([^\r\n]+)\r?\n\s+--> (src[\\/][^:\r\n]+):(\d+):(\d+)/g)) {
+    for (const match of text.matchAll(/error: ([^\r\n]+)\r?\n\s+--> ((?:src|crates)[\\/][^:\r\n]+):(\d+):(\d+)/g)) {
       const file = match[2].replaceAll('\\', '/');
       diagnostics.set(file + ':' + match[3], { message: match[1], file, line: Number(match[3]), column: Number(match[4]) });
     }
@@ -34,7 +35,7 @@ for (const name of fs.readdirSync(logs).filter(name => name.endsWith('.log')).so
   const numbered = /-(\d+)\.log$/.exec(name);
   if (!numbered || Number(numbered[1]) === 0) continue;
   // Failed tests are invalid samples even if they printed a timing.
-  if (!outcome || outcome[1] !== 'ok') {
+  if (!outcome || outcome.result !== 'ok') {
     notices.push({ log: name, reason: 'invalid performance sample' });
     continue;
   }

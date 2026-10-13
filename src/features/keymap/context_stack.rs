@@ -69,7 +69,7 @@ pub fn editor_context(app: &AppState) -> KeyContext {
 /// The Vim node below the editor, e.g. `Vim mode=normal`.
 pub fn vim_context(app: &AppState) -> KeyContext {
     let mut vim = KeyContext::new(VIM);
-    vim.set("mode", app.vim.mode().context_name());
+    vim.set("mode", app.editor.vim.mode().context_name());
     vim
 }
 
@@ -77,7 +77,7 @@ pub fn vim_context(app: &AppState) -> KeyContext {
 pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
     // Modal dialogs are roots of their own, so workspace bindings never reach
     // through them.
-    if app.close_request.is_some() {
+    if app.editor.close_request.is_some() {
         let mut dialog = KeyContext::new(DIALOG);
         dialog.add(CLOSE_CONFIRMATION);
         return vec![dialog];
@@ -129,15 +129,15 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         stack.push(KeyContext::new(INPUT));
     } else if app.terminal_focused {
         stack.push(KeyContext::new(TERMINAL));
-    } else if app.focused && app.main_surface() == MainSurface::Editor {
+    } else if app.editor.focused && app.main_surface() == MainSurface::Editor {
         stack.push(editor_context(app));
-        if crate::editor::vim_input::is_active(app) {
+        if crate::app::editor_vim::is_active(app) {
             stack.push(vim_context(app));
         }
     }
     if app.editor.menu.is_some()
         || app.context_menu.is_some()
-        || app.tab_context_menu.is_some()
+        || app.editor.tab_context_menu.is_some()
         || app.terminal_tab_context_menu.is_some()
         || app.git_menu.is_some()
     {
@@ -209,7 +209,7 @@ mod tests {
         let mut app = AppState::new();
         app.workspace
             .open_path("main.rs".into(), "fn main() {}".into());
-        app.focused = true;
+        app.editor.focused = true;
         app
     }
 
@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(stack[0].get("surface"), Some("editor"));
 
         let mut terminal = editor_app();
-        terminal.focused = false;
+        terminal.editor.focused = false;
         terminal.terminal_focused = true;
         terminal.editor.menu = Some((0.0, 0.0));
         let primaries = context_stack(&terminal)
@@ -442,7 +442,7 @@ mod tests {
         );
 
         let mut closing = editor_app();
-        closing.close_request = Some(CloseRequest {
+        closing.editor.close_request = Some(CloseRequest {
             targets: Vec::new(),
             continuation: CloseContinuation::CloseTabs,
         });
@@ -493,9 +493,9 @@ mod vim_tests {
         let mut app = AppState::new();
         app.workspace
             .open_path("main.rs".into(), "fn main() {}".into());
-        app.focused = true;
-        app.vim.options.enabled = true;
-        crate::editor::vim_input::sync_view(&mut app);
+        app.editor.focused = true;
+        app.editor.vim.options.enabled = true;
+        crate::app::editor_vim::sync_view(&mut app);
         app
     }
 
@@ -535,7 +535,8 @@ mod vim_tests {
 
         let mut editor = app.workspace.active_editor_mut().unwrap();
         let mut host = NoHost;
-        app.vim
+        app.editor
+            .vim
             .handle_key(&mut editor, crate::vim::Key::Char('i'), &mut host);
         drop(editor);
         let insert = context_stack(&app);

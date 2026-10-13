@@ -1,7 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {dependencies,stateFields,violations} from './check.mjs';
+import {dependencies,stateFields,structFields,violations} from './check.mjs';
 const policy=()=>({exceptions:{},root_state_adapters:[],runtime_bridges:[],state_ownership:{}});
+
+test('Editor views cannot regain root state, model, Vim machinery or exceptions',()=>{
+  for(const file of ['src/ui/editor/view.rs','src/ui/editor/menu.rs','src/ui/editor_binding.rs']) {
+    for(const source of ['use crate::app::state::AppState;', 'use crate::model::workspace::Workspace;', 'pub struct Scene { vim: Vim }', 'use crate::state::Root as Alias;', 'include!("../../app/state.rs");']) {
+      assert.ok(violations({[file]:source},policy()).some(e=>e.includes('Editor view')));
+    }
+    const p=policy();p.exceptions[file]={dependencies:['crate::state'],reason:'bad',remove_in:'R8'};
+    assert.ok(violations({[file]:'use crate::state::Root;'},p).some(e=>e.includes('cannot have migration exceptions')));
+  }
+});
+test('nested editor fields still require ownership and cannot embed runtime services',()=>{
+  const file='src/app/state/editor.rs',source='pub struct EditorState { pub loader: Option<FileLoader>, pub hover: Option<(u32, u32)>, }';
+  assert.deepEqual(structFields(source,'EditorState'),['hover','loader']);
+  const errors=violations({[file]:source},policy());
+  assert.ok(errors.some(e=>e.includes('EditorState.loader: no registered owner')));
+  assert.ok(errors.some(e=>e.includes('runtime service')));
+  const p=policy();p.editor_state_ownership={gone:{owner:'app/state/editor',migrated_in:'R3'}};
+  assert.ok(violations({[file]:'pub struct EditorState {}'},p).some(e=>e.includes('obsolete ownership')));
+});
 
 test('new reverse dependencies fail, including grouped imports',()=>{
   for(const source of ['use crate::ui::toast;', 'use crate::{app, ui::{toast}};', 'use lgui::prelude::*;','use std::fs;', 'use std::{fs, thread};', 'use lgui;', 'use unknown_external::Thing;']) {
@@ -47,4 +66,21 @@ test('Search does not accept legacy exceptions',()=>{
 test('Workspace cannot regain Search-specific snapshot contracts',()=>{
   const p=policy();p.exceptions['src/model/workspace.rs']={dependencies:['crate::features'],reason:'bad',remove_in:'R8'};
   assert.ok(violations({'src/model/workspace.rs':'use crate::features::search::BufferSnapshot;'},p).some(e=>e.includes('generic snapshots')));
+});
+
+test('the independent editing core rejects framework, application and I/O dependencies',()=>{
+  for(const source of ['use lgui::core::*;', 'use crate::app::state::AppState;', 'use crate::model::workspace::Workspace;', 'use std::{fs, thread};', 'use std::process;', 'use conpty::Process;', 'use unknown_dependency::Thing;']) {
+    assert.ok(violations({'crates/editor-core/src/new.rs':source},policy()).length>0);
+  }
+  assert.deepEqual(violations({'crates/editor-core/src/normal.rs':'use crate::text::EditorMut; use unicode_segmentation::UnicodeSegmentation;'},policy()),[]);
+  assert.deepEqual(violations({'src/domain/identity.rs':'pub use loom_editor_core::identity::{FileId, PaneId};'},policy()),[]);
+  assert.deepEqual(violations({'crates/editor-core/tests/host.rs':'use loom_editor_core::text::TextBuffer;'},policy()),[]);
+});
+test('the independent editing core cannot bypass its boundary with exceptions or source inclusion',()=>{
+  const file='crates/editor-core/src/escape.rs',p=policy();
+  p.exceptions[file]={dependencies:['lgui'],reason:'bad',remove_in:'R8'};
+  assert.ok(violations({[file]:'use lgui::ApplicationHandle;'},p).some(e=>e.includes('cannot have migration exceptions')));
+  for(const source of ['#[path = "../../../src/app/state.rs"] mod root;', 'include!("../../../src/app/state.rs");']) {
+    assert.ok(violations({[file]:source},policy()).some(e=>e.includes('crate boundary')));
+  }
 });

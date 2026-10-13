@@ -339,7 +339,7 @@ fn render_view(
     terminal = terminal.on_focus(move |_cx| {
         focus_state.update(|app| {
             app.terminal_focused = true;
-            app.focused = false;
+            app.editor.focused = false;
         });
     });
     let blur_state = state.clone();
@@ -893,7 +893,7 @@ fn render_terminal_tabs(
                         app.editor.menu = None;
                         app.context_menu = None;
                         app.context_menu_target = None;
-                        app.tab_context_menu = None;
+                        app.editor.tab_context_menu = None;
                         app.terminal_shell_menu = false;
                         app.terminal_tab_context_menu =
                             Some(crate::state::TerminalTabContextMenuState {
@@ -977,7 +977,7 @@ fn render_terminal_tabs(
                             app.editor.menu = None;
                             app.context_menu = None;
                             app.context_menu_target = None;
-                            app.tab_context_menu = None;
+                            app.editor.tab_context_menu = None;
                             app.terminal_shell_menu = false;
                             app.terminal_tab_context_menu =
                                 Some(crate::state::TerminalTabContextMenuState {

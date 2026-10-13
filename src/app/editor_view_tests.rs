@@ -1,0 +1,1089 @@
+use super::*;
+use crate::domain::identity::PaneId;
+use crate::git::{GitStoreSnapshot, LineChange};
+use crate::model::text::TextBuffer;
+use lgui::core::{CursorIcon, KeyState, PointerButton, UiId};
+use lgui::core::{KeyModifiers, KeyboardEvent, LogicalKey};
+use lgui::prelude::{Element, group};
+use lgui::services::{Clipboard, ClipboardError};
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+#[test]
+fn multi_megabyte_single_line_windows_and_clicks_are_bounded() {
+    let buffer = TextBuffer::new("a".repeat(8 * 1024 * 1024));
+    let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
+    let left = 80.0;
+    let metrics = scroll_metrics(rect, left, &buffer);
+    let char_w = fonts::editor().char_w;
+    for column in [0, 1000, 1_000_000, 8 * 1024 * 1024 - 100] {
+        let sx = column as f32 * char_w;
+        let window = line_window(&buffer, 0, sx, 720.0);
+        assert!(
+            window.len() < 256,
+            "only viewport text is submitted for shaping"
+        );
+        assert!(window.contains(&column));
+        let offset = cursor_offset_from_point(
+            &buffer,
+            rect,
+            left,
+            metrics,
+            sx,
+            0.0,
+            left + char_w * 4.0,
+            10.0,
+        );
+        assert_eq!(offset, column + 4);
+    }
+    assert_eq!(
+        buffer.len(),
+        8 * 1024 * 1024,
+        "windowing must preserve all file contents"
+    );
+}
+
+#[test]
+fn long_unicode_windows_remain_on_grapheme_boundaries_near_the_end() {
+    let buffer = TextBuffer::new("中e\u{301}👩‍💻\t😀".repeat(100_000));
+    let columns = buffer.line_display_width(0);
+    for column in [0, columns / 2, columns - 20] {
+        let window = line_window(&buffer, 0, column as f32 * fonts::editor().char_w, 700.0);
+        assert!(window.len() < 4096);
+        assert!(buffer.is_grapheme_boundary(window.start));
+        assert!(buffer.is_grapheme_boundary(window.end));
+    }
+}
+
+#[test]
+#[ignore = "manual large-file rendering performance baseline"]
+fn large_file_interaction_baseline() {
+    use lgui::{application::AppView, core::UiScale, session::UiSession};
+    use std::sync::Arc;
+    let rect = UiRect::new(0.0, 0.0, 1000.0, 600.0);
+    for (name, contents) in [
+        ("8 MiB single line", "a".repeat(8 * 1024 * 1024)),
+        ("Unicode single line", "中文e\u{301}😀\t".repeat(500_000)),
+        (
+            "many short lines",
+            "{\"record\": \"中文\", \"value\": 12345}\n".repeat(500_000),
+        ),
+    ] {
+        let prepare = std::time::Instant::now();
+        let mut app = document(&contents);
+        app.editor.focused = true;
+        let prepare = prepare.elapsed();
+        let exposed = Arc::new(Mutex::new(None));
+        let output = exposed.clone();
+        let initial = Arc::new(Mutex::new(Some(app)));
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state_with(|| initial.lock().unwrap().take().unwrap());
+            let git = cx.state(GitStoreSnapshot::default());
+            *output.lock().unwrap() = Some(state.clone());
+            let id = UiId::new("large-file-benchmark");
+            let focus = cx.focus_handle(id.clone());
+            render(PaneId::new(1), rect, state, git, id, focus)
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, rect, UiScale::ONE);
+        let state: State<AppState> = exposed.lock().unwrap().clone().unwrap();
+        let start = std::time::Instant::now();
+        for i in 0..100 {
+            state.update(|app| {
+                let buffer = app.workspace.active_editor().unwrap();
+                let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+                let metrics = scroll_metrics(rect, left, &buffer);
+                let sx = metrics.max_x * (i as f32 / 100.0);
+                let offset = cursor_offset_from_point(
+                    &buffer,
+                    rect,
+                    left,
+                    metrics,
+                    sx,
+                    0.0,
+                    left + 20.0,
+                    10.0,
+                );
+                app.workspace
+                    .active_editor_mut()
+                    .unwrap()
+                    .set_cursor(offset);
+                app.workspace.set_active_scroll(sx, 0.0);
+            });
+            session.render_view(&view, rect, UiScale::ONE);
+        }
+        eprintln!(
+            "{name}: {:.2} MiB, prepare {:?}, 100 viewport renders and clicks {:?}",
+            contents.len() as f64 / (1024.0 * 1024.0),
+            prepare,
+            start.elapsed()
+        );
+        let edits = std::time::Instant::now();
+        for _ in 0..20 {
+            state.update(|app| {
+                let mut editor = app.workspace.active_editor_mut().unwrap();
+                let end = editor.len();
+                editor.set_cursor(end);
+                editor
+                    .replace_selection("x", crate::model::text::EditKind::Other)
+                    .unwrap();
+            });
+            session.render_view(&view, rect, UiScale::ONE);
+        }
+        eprintln!(
+            "{name}: 20 end-of-file edits and renders {:?}",
+            edits.elapsed()
+        );
+        state.update(|app| {
+            assert!(app.workspace.is_dirty(app.workspace.active().unwrap()));
+            for _ in 0..20 {
+                assert!(app.workspace.active_editor_mut().unwrap().undo().is_some());
+            }
+            assert!(!app.workspace.is_dirty(app.workspace.active().unwrap()));
+        });
+        assert_eq!(
+            state.get().workspace.active_editor().unwrap().text(),
+            contents
+        );
+    }
+}
+
+#[test]
+fn overview_marks_join_adjacent_lines_of_the_same_change() {
+    let changes = BTreeMap::from([
+        (1, LineChange::Added),
+        (2, LineChange::Added),
+        (3, LineChange::Modified),
+        (5, LineChange::Modified),
+        (6, LineChange::Modified),
+        (10, LineChange::Deleted),
+        // A deletion after the last line marks the end of the file.
+        (11, LineChange::Deleted),
+    ]);
+    let runs = change_marks(&changes, 10)
+        .iter()
+        .map(|mark| (mark.first, mark.lines, mark.change))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        runs,
+        [
+            (0, 2, LineChange::Added),
+            (2, 1, LineChange::Modified),
+            (4, 2, LineChange::Modified),
+            (9, 1, LineChange::Deleted),
+        ]
+    );
+}
+
+#[derive(Default)]
+struct TestClipboard {
+    text: Mutex<Option<String>>,
+    fail: bool,
+}
+impl Clipboard for TestClipboard {
+    fn read_text(&self) -> Result<Option<String>, ClipboardError> {
+        if self.fail {
+            Err(ClipboardError::AccessDenied)
+        } else {
+            Ok(self.text.lock().unwrap().clone())
+        }
+    }
+    fn write_text(&self, text: &str) -> Result<(), ClipboardError> {
+        if self.fail {
+            return Err(ClipboardError::AccessDenied);
+        }
+        *self.text.lock().unwrap() = Some(text.to_owned());
+        Ok(())
+    }
+}
+fn document(contents: &str) -> AppState {
+    let mut app = AppState::new();
+    app.workspace
+        .open_path("editing-test.txt".into(), contents.into());
+    app
+}
+
+/// Exercise real lgui hit testing, focus and event dispatch without opening a native window.
+#[test]
+fn editor_events_route_drag_selection_shortcuts_and_ime_commit() {
+    use lgui::application::{AppView, ApplicationContext};
+    use lgui::core::{ImeEvent, InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
+    use lgui::session::UiSession;
+    use std::sync::Arc;
+    let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+    let output = exposed.clone();
+    let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
+    let app = ApplicationContext::empty(Default::default());
+    let view_app = app.clone();
+    let view: AppView = Arc::new(move |cx| {
+        let state = cx.state(document("hello world\nsecond"));
+        let git_store = cx.state(GitStoreSnapshot::default());
+        *output.lock().unwrap() = Some(state.clone());
+        let id = cx.use_stable_id();
+        let focus = cx.focus_handle(id.clone());
+        // Shortcuts reach the editor through the keymap, as in the app root.
+        let env = crate::key_actions::KeyEnv {
+            state: state.clone(),
+            git_store: git_store.clone(),
+            application: view_app.clone(),
+            editor_focus: focus.clone(),
+            editor_rect: viewport,
+            terminal: None,
+        };
+        crate::key_actions::attach(
+            group(viewport).child(render(
+                PaneId::new(1),
+                viewport,
+                state,
+                git_store,
+                id,
+                focus,
+            )),
+            env,
+        )
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, viewport, UiScale::ONE);
+    let state = exposed.lock().unwrap().clone().unwrap();
+    let mut send = |input| {
+        let events = session.handle_input(input);
+        let mut prevented = false;
+        dispatch_runtime_output(
+            events,
+            &app,
+            &lgui::window::WindowId::new("editor-test"),
+            |action| session.handle_default_action(action),
+            |cx| prevented |= cx.default_prevented(),
+        );
+        session.render_view(&view, viewport, UiScale::ONE);
+        prevented
+    };
+    let left = fonts::editor().gutter_w() + theme::CODE_PAD;
+    let pointer =
+        |column: f32| PointerData::mouse(Point::new(left + column * fonts::editor().char_w, 5.0));
+    send(InputEvent::PointerDown {
+        pointer: pointer(0.0),
+        button: PointerButton::Left,
+    });
+    send(InputEvent::PointerMove(pointer(5.0)));
+    send(InputEvent::PointerUp {
+        pointer: pointer(5.0),
+        button: PointerButton::Left,
+    });
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selected_text(),
+        Some("hello")
+    );
+    let key = |key, modifiers| {
+        InputEvent::Keyboard(KeyboardEvent {
+            state: KeyState::Down,
+            key,
+            modifiers,
+            ..Default::default()
+        })
+    };
+    assert!(send(key(
+        LogicalKey::Named(lgui::core::NamedKey::Tab),
+        KeyModifiers::empty()
+    )));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "  hello world\nsecond"
+    );
+    send(key(
+        LogicalKey::Character("z".into()),
+        KeyModifiers::CONTROL,
+    ));
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selected_text(),
+        Some("hello")
+    );
+    send(InputEvent::Ime(ImeEvent::Preedit {
+        text: "nihao".into(),
+        cursor: Some(0..5),
+    }));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "hello world\nsecond"
+    );
+    send(InputEvent::Ime(ImeEvent::Commit("你好".into())));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "你好 world\nsecond"
+    );
+    assert!(state.get().editor.ime.is_none());
+    send(key(
+        LogicalKey::Character("z".into()),
+        KeyModifiers::CONTROL,
+    ));
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selected_text(),
+        Some("hello")
+    );
+}
+
+#[test]
+fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_changes() {
+    use lgui::application::{AppView, ApplicationContext};
+    use lgui::core::{
+        ImeEvent, InputEvent, NamedKey, Point, PointerData, UiScale, dispatch_runtime_output,
+    };
+    use lgui::session::UiSession;
+    use std::sync::Arc;
+
+    let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+    let output = exposed.clone();
+    let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
+    let application = ApplicationContext::empty(Default::default());
+    let view_app = application.clone();
+    let view: AppView = Arc::new(move |cx| {
+        let mut initial = document(&format!("hello world\n{}", "line\n".repeat(40)));
+        initial.editor.focused = true;
+        let state = cx.state(initial);
+        let git = cx.state(GitStoreSnapshot::default());
+        *output.lock().unwrap() = Some(state.clone());
+        let id = UiId::new("smooth-editor-test");
+        let focus = cx.focus_handle(id.clone());
+        let env = crate::key_actions::KeyEnv {
+            state: state.clone(),
+            git_store: git.clone(),
+            application: view_app.clone(),
+            editor_focus: focus.clone(),
+            editor_rect: viewport,
+            terminal: None,
+        };
+        crate::key_actions::attach(
+            group(viewport).child(render(PaneId::new(1), viewport, state, git, id, focus)),
+            env,
+        )
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, viewport, UiScale::ONE);
+    let state = exposed.lock().unwrap().clone().unwrap();
+    let send = |session: &mut UiSession, input| {
+        dispatch_runtime_output(
+            session.handle_input(input),
+            &application,
+            &lgui::window::WindowId::new("smooth-test"),
+            |action| session.handle_default_action(action),
+            |_| {},
+        );
+        session.render_view(&view, viewport, UiScale::ONE);
+    };
+    let caret = |session: &UiSession| {
+        let node = session.tree().node(&UiId::new("editor-caret-1")).unwrap();
+        let layer = session.tree().node(node.parent.as_ref().unwrap()).unwrap();
+        let transform = layer.compositing_layer.unwrap().transform;
+        node.layout_rect
+            .translate(transform.translation_x(), transform.translation_y())
+    };
+    // UiSession has no native text service. Use the editor's existing
+    // fallback metrics for the painted target, and check IME geometry separately.
+    let logical = |state: &State<AppState>| {
+        let app = state.get();
+        let buffer = app.workspace.active_editor().unwrap();
+        let (line, col) = buffer.line_col();
+        let left = viewport.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+        let layout = layout_line(
+            buffer.line(line),
+            left,
+            line as f32 * fonts::editor().line_h,
+            viewport.right,
+        );
+        (caret_x(layout.as_ref(), col).unwrap_or(left + col as f32 * fonts::editor().char_w)
+            - app.workspace.active_scroll().0)
+            .round()
+    };
+    let left = fonts::editor().gutter_w() + theme::CODE_PAD;
+    let pointer =
+        |column| PointerData::mouse(Point::new(left + column * fonts::editor().char_w, 5.0));
+    send(
+        &mut session,
+        InputEvent::PointerDown {
+            pointer: pointer(0.0),
+            button: PointerButton::Left,
+        },
+    );
+    send(
+        &mut session,
+        InputEvent::PointerUp {
+            pointer: pointer(0.0),
+            button: PointerButton::Left,
+        },
+    );
+    let start = caret(&session);
+    send(&mut session, InputEvent::TextInput("中".into()));
+    assert!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .text()
+            .starts_with("中hello")
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().cursor(),
+        "中".len()
+    );
+    assert_eq!(caret(&session), start, "only the visual caret should lag");
+    assert!(logical(&state) > start.left);
+    assert_eq!(
+        session
+            .tree()
+            .node(&UiId::new("smooth-editor-test"))
+            .unwrap()
+            .ime_cursor_rect
+            .unwrap()
+            .left
+            .round(),
+        super::ime_cursor_rect(&state.get(), viewport).left.round()
+    );
+    session.advance(0.0);
+    session.advance(40.0);
+    session.render_view(&view, viewport, UiScale::ONE);
+    assert!(caret(&session).left > start.left && caret(&session).left < logical(&state));
+    let displayed = caret(&session);
+    send(
+        &mut session,
+        InputEvent::Keyboard(KeyboardEvent {
+            state: KeyState::Down,
+            key: LogicalKey::Named(NamedKey::ArrowRight),
+            ..Default::default()
+        }),
+    );
+    assert_eq!(
+        caret(&session),
+        displayed,
+        "navigation retargets without jumping"
+    );
+    session.advance(0.0);
+    session.advance(80.0);
+    session.render_view(&view, viewport, UiScale::ONE);
+    assert_eq!(caret(&session).left, logical(&state));
+
+    let before_click = caret(&session);
+    send(
+        &mut session,
+        InputEvent::PointerDown {
+            pointer: pointer(8.0),
+            button: PointerButton::Left,
+        },
+    );
+    assert_eq!(
+        caret(&session),
+        before_click,
+        "single-click placement should animate"
+    );
+    send(&mut session, InputEvent::PointerMove(pointer(10.0)));
+    assert!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selection()
+            .is_some()
+    );
+    assert_eq!(
+        caret(&session).left,
+        logical(&state),
+        "drag selection must track immediately"
+    );
+    send(
+        &mut session,
+        InputEvent::PointerUp {
+            pointer: pointer(10.0),
+            button: PointerButton::Left,
+        },
+    );
+    send(&mut session, InputEvent::TextInput("x".into()));
+    send(
+        &mut session,
+        InputEvent::Ime(ImeEvent::Preedit {
+            text: "ni".into(),
+            cursor: Some(0..0),
+        }),
+    );
+    assert_eq!(
+        caret(&session).left,
+        logical(&state),
+        "composition cancels visual motion"
+    );
+    send(&mut session, InputEvent::Ime(ImeEvent::Commit("你".into())));
+    assert!(state.get().editor.ime.is_none());
+    state.update(|app| app.smooth_caret = false);
+    session.render_view(&view, viewport, UiScale::ONE);
+    assert_eq!(
+        caret(&session).left,
+        logical(&state),
+        "turning off motion snaps an active animation"
+    );
+    state.update(|app| {
+        app.smooth_caret = true;
+        app.workspace.active_editor_mut().unwrap().set_cursor(0);
+    });
+    session.render_view(&view, viewport, UiScale::ONE);
+    state.update(|app| app.workspace.set_active_scroll(0.0, 1.0));
+    session.render_view(&view, viewport, UiScale::ONE);
+    assert_eq!(
+        caret(&session).left,
+        logical(&state),
+        "scrolling snaps even while moving"
+    );
+    state.update(|app| app.editor.focused = false);
+    session.render_view(&view, viewport, UiScale::ONE);
+    assert!(session.tree().node(&UiId::new("editor-caret-1")).is_none());
+    state.update(|app| {
+        app.editor.focused = true;
+        app.workspace.active_editor_mut().unwrap().set_cursor(4);
+    });
+    session.render_view(&view, viewport, UiScale::ONE);
+    assert_eq!(
+        caret(&session).left,
+        logical(&state),
+        "focus restoration starts at the logical caret"
+    );
+    state.update(|app| {
+        app.workspace
+            .open_path("other.txt".into(), "other file".into());
+    });
+    session.render_view(&view, viewport, UiScale::ONE);
+    assert_eq!(
+        caret(&session).left,
+        logical(&state),
+        "switching files snaps immediately"
+    );
+}
+
+#[test]
+fn scrollbar_release_survives_editor_child_reordering() {
+    use lgui::application::{AppView, ApplicationContext};
+    use lgui::core::{
+        InputEvent, Point, PointerData, UiEventKind, UiEventPayload, UiScale,
+        dispatch_runtime_output,
+    };
+    use lgui::session::UiSession;
+    use std::sync::Arc;
+
+    let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+    let output = exposed.clone();
+    let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
+    let view: AppView = Arc::new(move |cx| {
+        let state = cx.state(document(&format!("{}\n", "line".repeat(100)).repeat(100)));
+        *output.lock().unwrap() = Some(state.clone());
+        let id = cx.use_stable_id();
+        let focus = cx.focus_handle(id.clone());
+        let git_store = cx.state(GitStoreSnapshot::default());
+
+        let drag_state = state.clone();
+        let up_state = state.clone();
+        group(viewport)
+            .on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
+                if let UiEventPayload::PointerMove { pointer } = payload {
+                    drag_state.try_update(|app| {
+                        drag_scrollbars(app, viewport, pointer.point.x, pointer.point.y)
+                    });
+                }
+            })
+            .on_event_capture(UiEventKind::PointerUp, move |_cx, _payload| {
+                up_state.try_update(finish_scrollbar_drag);
+            })
+            .child(render(
+                PaneId::new(1),
+                viewport,
+                state,
+                git_store,
+                id,
+                focus,
+            ))
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, viewport, UiScale::ONE);
+    let state = exposed.lock().unwrap().clone().unwrap();
+    let app = ApplicationContext::empty(Default::default());
+    let thumb_point = Point::new(viewport.right - 4.0, 10.0);
+    let thumb_id = session.tree().hit_test(thumb_point).unwrap().id;
+    let idle_style = session.tree().node(&thumb_id).unwrap().style;
+    assert_eq!(session.tree().cursor_at(thumb_point), None);
+    assert_eq!(
+        session
+            .tree()
+            .cursor_at(Point::new(viewport.right - 1.0, 100.0)),
+        None
+    );
+    assert_eq!(
+        session
+            .tree()
+            .cursor_at(Point::new(150.0, viewport.bottom - 4.0)),
+        None
+    );
+    assert_eq!(
+        session
+            .tree()
+            .cursor_at(Point::new(viewport.right - 4.0, viewport.bottom - 4.0)),
+        None
+    );
+    assert_eq!(
+        session.tree().cursor_at(Point::new(150.0, 10.0)),
+        Some(CursorIcon::Text)
+    );
+    let events = session.handle_input(InputEvent::PointerMove(PointerData::mouse(thumb_point)));
+    dispatch_runtime_output(
+        events,
+        &app,
+        &lgui::window::WindowId::new("scrollbar-test"),
+        |action| session.handle_default_action(action),
+        |_| {},
+    );
+    session.render_view(&view, viewport, UiScale::ONE);
+    let hover_style = session.tree().node(&thumb_id).unwrap().style;
+    assert_ne!(hover_style, idle_style);
+    assert_eq!(hover_style.fill, Some(theme::c().text_soft));
+    let mut send = |input| {
+        let events = session.handle_input(input);
+        dispatch_runtime_output(
+            events,
+            &app,
+            &lgui::window::WindowId::new("scrollbar-test"),
+            |action| session.handle_default_action(action),
+            |_| {},
+        );
+        session.render_view(&view, viewport, UiScale::ONE);
+    };
+    let pointer = |x, y| PointerData::mouse(Point::new(x, y));
+
+    send(InputEvent::PointerDown {
+        pointer: pointer(viewport.right - 4.0, 10.0),
+        button: PointerButton::Left,
+    });
+    send(InputEvent::PointerMove(pointer(100.0, 260.0)));
+    assert!(state.get().editor.editor_vertical_scrollbar_dragging);
+    assert!(state.get().workspace.active_scroll().1 > 0.0);
+
+    send(InputEvent::PointerUp {
+        pointer: pointer(100.0, 260.0),
+        button: PointerButton::Left,
+    });
+    assert!(!state.get().editor.editor_vertical_scrollbar_dragging);
+    let released_scroll = state.get().workspace.active_scroll().1;
+
+    send(InputEvent::PointerMove(pointer(100.0, 20.0)));
+    assert_eq!(state.get().workspace.active_scroll().1, released_scroll);
+}
+
+#[test]
+fn clipboard_cut_paste_and_undo_preserve_unicode_and_selection() {
+    let mut app = document("你好 world");
+    let clipboard = TestClipboard::default();
+    app.workspace
+        .active_editor_mut()
+        .unwrap()
+        .select_range(0..6);
+    apply_command(&mut app, Command::Copy, &clipboard).unwrap();
+    assert_eq!(clipboard.read_text().unwrap().as_deref(), Some("你好"));
+    apply_command(&mut app, Command::Cut, &clipboard).unwrap();
+    assert_eq!(app.workspace.active_editor().unwrap().text(), " world");
+    apply_command(&mut app, Command::Undo, &clipboard).unwrap();
+    assert_eq!(
+        app.workspace.active_editor().unwrap().selected_text(),
+        Some("你好")
+    );
+    clipboard.write_text("再见").unwrap();
+    apply_command(&mut app, Command::Paste, &clipboard).unwrap();
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "再见 world");
+}
+
+#[test]
+fn clipboard_failure_and_empty_clipboard_never_destroy_selection() {
+    let mut app = document("keep this");
+    app.workspace.active_editor_mut().unwrap().select_all();
+    let unavailable = TestClipboard {
+        fail: true,
+        ..Default::default()
+    };
+    for command in [Command::Cut, Command::Copy, Command::Paste] {
+        assert!(apply_command(&mut app, command, &unavailable).is_err());
+        assert_eq!(
+            app.workspace.active_editor().unwrap().selected_text(),
+            Some("keep this")
+        );
+    }
+    apply_command(&mut app, Command::Paste, &TestClipboard::default()).unwrap();
+    assert_eq!(
+        app.workspace.active_editor().unwrap().selected_text(),
+        Some("keep this")
+    );
+    assert!(!app.workspace.active_editor().unwrap().can_undo());
+}
+
+#[test]
+fn editing_commands_promote_a_preview_while_navigation_does_not() {
+    let mut app = AppState::new();
+    let preview = app
+        .workspace
+        .preview_path("preview.txt".into(), "hello".into());
+    let clipboard = TestClipboard::default();
+
+    apply_command(
+        &mut app,
+        Command::Move(normal::Movement::Right, false),
+        &clipboard,
+    )
+    .unwrap();
+    assert_eq!(app.workspace.preview(), Some(preview));
+    apply_command(&mut app, Command::Undo, &clipboard).unwrap();
+    assert_eq!(app.workspace.preview(), Some(preview));
+
+    clipboard.write_text("!").unwrap();
+    apply_command(&mut app, Command::Paste, &clipboard).unwrap();
+    assert_ne!(app.workspace.preview(), Some(preview));
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "h!ello");
+}
+
+#[test]
+fn a_failed_cut_does_not_promote_or_modify_a_preview() {
+    let mut app = AppState::new();
+    let preview = app
+        .workspace
+        .preview_path("preview.txt".into(), "hello".into());
+    app.workspace.active_editor_mut().unwrap().select_all();
+    let unavailable = TestClipboard {
+        fail: true,
+        ..Default::default()
+    };
+
+    assert!(apply_command(&mut app, Command::Cut, &unavailable).is_err());
+    assert_eq!(app.workspace.preview(), Some(preview));
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "hello");
+}
+
+#[test]
+fn tab_expansion_keeps_source_indices_and_visual_columns_in_sync() {
+    let (display, mapping, width) = expand_tabs("a\t中\tb", 0);
+    assert_eq!(display, "a   中  b");
+    assert_eq!(mapping, vec![0, 1, 4, 5, 7, 8]);
+    assert_eq!(width, 9);
+    assert_eq!(
+        fallback_hit_column("a\t中\tb", 5.9 * fonts::editor().char_w),
+        3
+    );
+    assert_eq!(fallback_hit_column("👩‍💻x", 1.5 * fonts::editor().char_w), 3);
+}
+
+#[test]
+fn held_pointer_scrolls_and_extends_selection_without_mouse_movement() {
+    let mut app = document(&(0..100).map(|i| format!("line {i}\n")).collect::<String>());
+    let rect = UiRect::new(0.0, 0.0, 400.0, 100.0);
+    app.editor.drag = Some(DragSelection {
+        document: app.workspace.active().unwrap(),
+        origin: 0..0,
+        unit: SelectionUnit::Character,
+        point: (100.0, 150.0),
+    });
+    assert!(drag_scroll_tick(&mut app, rect));
+    let first = app.workspace.active_scroll().1;
+    let first_selection = app.workspace.active_editor().unwrap().selection().unwrap();
+    assert!(drag_scroll_tick(&mut app, rect));
+    assert!(app.workspace.active_scroll().1 > first);
+    assert!(
+        app.workspace
+            .active_editor()
+            .unwrap()
+            .selection()
+            .unwrap()
+            .end
+            > first_selection.end
+    );
+    app.editor.drag = None;
+    assert!(!drag_scroll_tick(&mut app, rect));
+}
+
+#[test]
+fn scrollbar_drag_uses_window_pointer_outside_the_scrollbar_strip() {
+    let mut app = document(&(0..100).map(|i| format!("line {i}\n")).collect::<String>());
+    let rect = UiRect::new(0.0, 0.0, 400.0, 100.0);
+    app.editor.editor_vertical_scrollbar_dragging = true;
+    app.editor.editor_vertical_scrollbar_drag_offset = 4.0;
+
+    assert!(drag_scrollbars(&mut app, rect, 40.0, 500.0));
+    let bottom = app.workspace.active_scroll().1;
+    assert!(bottom > 0.0);
+
+    assert!(drag_scrollbars(&mut app, rect, 40.0, rect.top));
+    assert_eq!(app.workspace.active_scroll().1, 0.0);
+    assert!(finish_scrollbar_drag(&mut app));
+    assert!(!app.editor.editor_vertical_scrollbar_dragging);
+    assert!(!finish_scrollbar_drag(&mut app));
+
+    let mut app = document(&"x".repeat(1_000));
+    app.editor.editor_horizontal_scrollbar_dragging = true;
+    app.editor.editor_horizontal_scrollbar_drag_offset = 4.0;
+
+    assert!(drag_scrollbars(&mut app, rect, 1_000.0, 40.0));
+    assert!(app.workspace.active_scroll().0 > 0.0);
+    assert!(drag_scrollbars(&mut app, rect, rect.left, 40.0));
+    assert_eq!(app.workspace.active_scroll().0, 0.0);
+    assert!(finish_scrollbar_drag(&mut app));
+    assert!(!app.editor.editor_horizontal_scrollbar_dragging);
+}
+
+#[test]
+fn gutter_drag_selects_whole_lines_in_both_directions() {
+    let mut app = document("one\ntwo\nthree");
+    let rect = UiRect::new(0.0, 0.0, 400.0, 300.0);
+    app.editor.drag = Some(DragSelection {
+        document: app.workspace.active().unwrap(),
+        origin: 4..8,
+        unit: SelectionUnit::Line,
+        point: (5.0, 1.0),
+    });
+    update_drag_selection(&mut app, rect);
+    assert_eq!(
+        app.workspace.active_editor().unwrap().selected_text(),
+        Some("one\ntwo\n")
+    );
+    app.editor.drag.as_mut().unwrap().point.1 = fonts::editor().line_h * 2.0 + 1.0;
+    update_drag_selection(&mut app, rect);
+    assert_eq!(
+        app.workspace.active_editor().unwrap().selected_text(),
+        Some("two\nthree")
+    );
+}
+
+#[test]
+fn switching_documents_cancels_drag_and_keeps_undo_histories_independent() {
+    let mut app = document("first");
+    let first = app.workspace.active().unwrap();
+    normal::insert(&mut app.workspace.active_editor_mut().unwrap(), "A");
+    app.editor.drag = Some(DragSelection {
+        document: first,
+        origin: 0..0,
+        unit: SelectionUnit::Character,
+        point: (100.0, 500.0),
+    });
+    app.workspace
+        .open_path("second.txt".into(), "second".into());
+    normal::insert(&mut app.workspace.active_editor_mut().unwrap(), "B");
+    assert!(drag_scroll_tick(
+        &mut app,
+        UiRect::new(0.0, 0.0, 400.0, 100.0)
+    ));
+    assert!(app.editor.drag.is_none());
+    app.workspace.active_editor_mut().unwrap().undo();
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "second");
+    app.workspace.set_active(first);
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "Afirst");
+    app.workspace.active_editor_mut().unwrap().undo();
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "first");
+}
+
+#[test]
+fn a_late_composition_commit_lands_in_the_view_it_started_in() {
+    let rect = UiRect::new(0.0, 0.0, 400.0, 300.0);
+    let mut app = document("first");
+    let first = app.workspace.active().unwrap();
+    let left = app.workspace.active_pane();
+    update_composition(&mut app, "ni", None);
+    assert!(app.editor.preedit_for(left, first).is_some());
+
+    let second = app
+        .workspace
+        .open_path("second.txt".into(), "second".into());
+    assert!(app.editor.preedit_for(left, second).is_none());
+    insert_text(&mut app, "你", rect);
+    assert_eq!(app.workspace.active(), Some(second));
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "second");
+    app.workspace.set_active(first);
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "你first");
+    assert!(app.editor.ime.is_none());
+
+    // Plain typing without a composition goes to the active view.
+    insert_text(&mut app, "x", rect);
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "你xfirst");
+}
+
+#[test]
+fn a_commit_for_a_closed_view_is_dropped() {
+    let rect = UiRect::new(0.0, 0.0, 400.0, 300.0);
+    let mut app = document("first");
+    let first = app.workspace.active().unwrap();
+    update_composition(&mut app, "ni", None);
+    app.workspace
+        .open_path("second.txt".into(), "second".into());
+    app.workspace.close(first);
+    insert_text(&mut app, "你", rect);
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "second");
+}
+
+#[test]
+fn an_emptied_composition_moves_to_the_view_that_starts_the_next_one() {
+    let mut app = document("first");
+    let left = app.workspace.active_pane();
+    let first = app.workspace.active().unwrap();
+    update_composition(&mut app, "ni", None);
+    update_composition(&mut app, "", None);
+    let right = app
+        .workspace
+        .split(left, crate::model::pane_layout::Direction::Right)
+        .unwrap();
+    update_composition(&mut app, "hao", None);
+    assert!(app.editor.preedit_for(right, first).is_some());
+    assert!(app.editor.preedit_for(left, first).is_none());
+}
+
+#[test]
+fn keyboard_reveal_scrolls_to_the_document_end() {
+    let mut app = document(&"long line\n".repeat(100));
+    app.workspace
+        .active_editor_mut()
+        .unwrap()
+        .select_to(usize::MAX, false);
+    reveal_cursor(&mut app, UiRect::new(0.0, 0.0, 400.0, 100.0));
+    assert_eq!(
+        app.workspace.active_scroll().1,
+        101.0 * fonts::editor().line_h - 100.0
+    );
+}
+
+#[test]
+fn visible_range_keeps_only_rows_around_the_viewport() {
+    assert_eq!(visible_line_range(240.0, 120.0, 100), 9..16);
+}
+
+#[test]
+fn thumb_geometry_maps_the_full_scroll_range_to_the_track() {
+    let start = thumb_geometry(10.0, 100.0, 100.0, 400.0, 0.0);
+    let end = thumb_geometry(10.0, 100.0, 100.0, 400.0, 300.0);
+
+    assert_eq!(
+        start,
+        ThumbGeometry {
+            start: 10.0,
+            length: 28.0
+        }
+    );
+    assert_eq!(
+        end,
+        ThumbGeometry {
+            start: 82.0,
+            length: 28.0
+        }
+    );
+}
+
+#[test]
+fn visual_columns_expand_tabs_and_wide_characters() {
+    assert_eq!(visual_columns("a\tb"), 5);
+    assert_eq!(visual_columns("a界b"), 4);
+}
+
+#[test]
+fn pointer_line_accounts_for_vertical_scroll_and_clamps_to_document() {
+    assert_eq!(
+        line_index_from_point(100.0, 100.0, fonts::editor().line_h * 2.0, 10),
+        2
+    );
+    assert_eq!(line_index_from_point(50.0, 100.0, 0.0, 10), 0);
+    assert_eq!(line_index_from_point(900.0, 100.0, 0.0, 10), 9);
+}
+
+fn render(
+    pane: crate::domain::identity::PaneId,
+    rect: UiRect,
+    state: State<AppState>,
+    git: State<GitStoreSnapshot>,
+    id: UiId,
+    focus: lgui::core::UiFocusHandle,
+) -> Element {
+    let binding = crate::app::editor_view::binding(state, git, pane, rect);
+    crate::ui::editor::view::render(pane, rect, binding, id, focus)
+}
+
+#[test]
+fn editor_menu_executes_its_intent_and_keeps_editor_focus() {
+    use lgui::application::{AppView, ApplicationContext};
+    use lgui::core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
+    use lgui::session::UiSession;
+    use std::sync::Arc;
+    let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+    let output = exposed.clone();
+    let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
+    let app = ApplicationContext::empty(Default::default());
+    let view: AppView = Arc::new(move |cx| {
+        let state = cx.state(document("hello"));
+        let git = cx.state(GitStoreSnapshot::default());
+        *output.lock().unwrap() = Some(state.clone());
+        let id = cx.use_stable_id();
+        let focus = cx.focus_handle(id.clone());
+        let scene = state.get();
+        let mut root = group(viewport).child(render(
+            PaneId::new(1),
+            viewport,
+            state.clone(),
+            git,
+            id,
+            focus.clone(),
+        ));
+        if let Some(pos) = scene.editor.menu {
+            root = root.child(crate::app::editor_view::menu(
+                viewport, viewport, pos, state, focus,
+            ));
+        }
+        root
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, viewport, UiScale::ONE);
+    let state = exposed.lock().unwrap().clone().unwrap();
+    let mut click = |point, button| {
+        for input in [
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(point),
+                button,
+            },
+            InputEvent::PointerUp {
+                pointer: PointerData::mouse(point),
+                button,
+            },
+        ] {
+            let events = session.handle_input(input);
+            dispatch_runtime_output(
+                events,
+                &app,
+                &lgui::window::WindowId::new("menu-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+        }
+    };
+    click(Point::new(100.0, 10.0), PointerButton::Right);
+    assert_eq!(state.get().editor.menu, Some((100.0, 10.0)));
+    // The final row is Select All; menu rows retain focus and emit a core command.
+    click(
+        Point::new(120.0, 10.0 + 4.0 + 5.0 * 28.0 + 14.0),
+        PointerButton::Left,
+    );
+    let value = state.get();
+    assert!(value.editor.menu.is_none());
+    assert_eq!(
+        value.workspace.active_editor().unwrap().selected_text(),
+        Some("hello")
+    );
+    assert!(value.editor.focused);
+}

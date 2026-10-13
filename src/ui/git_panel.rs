@@ -2870,7 +2870,7 @@ fn file_row(
                 let point = (pointer.point.x, pointer.point.y);
                 menu_state.update(move |app| {
                     app.git_menu = None;
-                    app.file_drag = Some(crate::state::FileDragState {
+                    app.editor.file_drag = Some(crate::state::FileDragState {
                         path: request.repository_root.join(&request.path),
                         source: crate::state::FileDragSource::Changes {
                             request,
@@ -3005,7 +3005,7 @@ mod action_tests {
                 let release = state.clone();
                 panel(viewport, VisualStyle::default())
                     .on_event_capture(UiEventKind::PointerDown, move |_cx, _payload| {
-                        clear.try_update(|app| app.file_drag.take().is_some());
+                        clear.try_update(|app| app.editor.file_drag.take().is_some());
                     })
                     .on_event_capture(UiEventKind::PointerDrag, move |_cx, payload| {
                         if let UiEventPayload::PointerDrag { pointer } = payload {
@@ -3057,7 +3057,7 @@ mod action_tests {
                 button: PointerButton::Left,
             };
             send(&mut session, down(650.0, 10.0));
-            let drag = state.get().file_drag.unwrap();
+            let drag = state.get().editor.file_drag.unwrap();
             assert!(!drag.active);
             assert_eq!(
                 drag.source,
@@ -3074,12 +3074,12 @@ mod action_tests {
                 &mut session,
                 InputEvent::PointerMove(PointerData::mouse(Point::new(649.0, 10.0))),
             );
-            assert!(!state.get().file_drag.unwrap().active);
+            assert!(!state.get().editor.file_drag.unwrap().active);
             send(
                 &mut session,
                 InputEvent::PointerMove(PointerData::mouse(Point::new(590.0, 150.0))),
             );
-            let drag = state.get().file_drag.unwrap();
+            let drag = state.get().editor.file_drag.unwrap();
             assert!(drag.active);
             assert_eq!(
                 drag.drop,
@@ -3100,7 +3100,7 @@ mod action_tests {
                     button: PointerButton::Left,
                 },
             );
-            assert!(state.get().file_drag.is_none());
+            assert!(state.get().editor.file_drag.is_none());
             assert_eq!(state.get().workspace.pane_ids().len(), 1);
             assert_eq!(
                 state.get().workspace.active_editor().unwrap().text(),
@@ -3108,7 +3108,7 @@ mod action_tests {
             );
             send(&mut session, down(885.0, 10.0));
             assert!(
-                state.get().file_drag.is_none(),
+                state.get().editor.file_drag.is_none(),
                 "action buttons must not start a file drag"
             );
         }

@@ -37,9 +37,9 @@
   "runtime_bridges": [
     "src/app/runtime.rs",
     "src/app/search.rs",
-    "src/editor/caret.rs",
+    "src/ui/editor/caret.rs",
     "src/editor/hunk_peek.rs",
-    "src/editor/vim_integration_tests.rs",
+    "src/app/editor_vim_integration_tests.rs",
     "src/file_loading.rs",
     "src/git/backend.rs",
     "src/git/store.rs",
@@ -82,10 +82,6 @@
       "owner": "features/git/private model",
       "remove_in": "R6"
     },
-    "close_request": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
     "context_menu": {
       "owner": "features/explorer/private model",
       "remove_in": "R5"
@@ -115,8 +111,8 @@
       "remove_in": "R5"
     },
     "editor": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
+      "owner": "app/state/editor (composition field)",
+      "remove_in": "composition"
     },
     "editor_font": {
       "owner": "features/settings/private model",
@@ -125,34 +121,6 @@
     "editor_font_input": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
-    },
-    "editor_gutter_hover": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "editor_horizontal_scrollbar_drag_offset": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "editor_horizontal_scrollbar_dragging": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "editor_hovered": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "editor_hunk_peek": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "editor_vertical_scrollbar_drag_offset": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "editor_vertical_scrollbar_dragging": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
     },
     "expanded": {
       "owner": "features/explorer/private model",
@@ -173,14 +141,6 @@
     "explorer_rename": {
       "owner": "features/explorer/private model",
       "remove_in": "R5"
-    },
-    "file_drag": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "focused": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
     },
     "git_collapsed_sections": {
       "owner": "features/git/private model",
@@ -310,10 +270,6 @@
       "owner": "features/keymap/private model",
       "remove_in": "R8"
     },
-    "pending_file": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
     "pending_file_tree_refresh": {
       "owner": "features/explorer/private model",
       "remove_in": "R5"
@@ -349,10 +305,6 @@
     "runtime": {
       "owner": "app/runtime weak legacy access (no ownership)",
       "remove_in": "R8"
-    },
-    "sash_drag": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
     },
     "scrollbar_drag_offset": {
       "owner": "features/explorer/private model",
@@ -409,34 +361,6 @@
     "stash_switch": {
       "owner": "features/git/private model",
       "remove_in": "R6"
-    },
-    "tab_context_menu": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "tab_drag": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "tab_hovered": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "tab_scroll": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "tab_scrollbar_drag_offset": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "tab_scrollbar_dragging": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
-    "tab_strip_hovered": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
     },
     "terminal_cursor_blink": {
       "owner": "features/settings/private model",
@@ -502,10 +426,6 @@
       "owner": "features/explorer/private model",
       "remove_in": "R5"
     },
-    "vim": {
-      "owner": "app/state/editor_interaction",
-      "remove_in": "R3"
-    },
     "welcome_hover": {
       "owner": "app/state/chrome",
       "remove_in": "R8"
@@ -534,74 +454,6 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/editor/baseline_tests.rs": {
-      "dependencies": [
-        "crate::editor",
-        "crate::model",
-        "crate::state",
-        "lgui"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/caret.rs": {
-      "dependencies": [
-        "crate::fonts",
-        "crate::model",
-        "crate::theme",
-        "lgui"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/commands.rs": {
-      "dependencies": [
-        "crate::model",
-        "lgui"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/editor_view.rs": {
-      "dependencies": [
-        "crate::editor",
-        "crate::fonts",
-        "crate::git",
-        "crate::key_actions",
-        "crate::model",
-        "crate::state",
-        "crate::theme",
-        "crate::ui",
-        "crate::vim",
-        "lgui",
-        "unicode_segmentation",
-        "unicode_width",
-        "vim"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/edit_menu.rs": {
-      "dependencies": [
-        "crate::input",
-        "crate::key_actions",
-        "crate::state",
-        "crate::theme",
-        "crate::vim",
-        "lgui"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/gutter.rs": {
-      "dependencies": [
-        "crate::fonts",
-        "crate::theme",
-        "lgui"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/editor/hunk_peek.rs": {
       "dependencies": [
         "crate::fonts",
@@ -614,83 +466,12 @@
         "lgui",
         "std::thread"
       ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/interaction.rs": {
-      "dependencies": [
-        "crate::model",
-        "lgui"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/normal.rs": {
-      "dependencies": [
-        "crate::model"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/phase0_baseline.rs": {
-      "dependencies": [
-        "crate::features",
-        "crate::infrastructure",
-        "crate::input",
-        "crate::model",
-        "crate::settings_persistence",
-        "crate::terminal_session",
-        "crate::workspace_actions",
-        "crate::workspace_persistence",
-        "std::fs",
-        "std::process",
-        "std::thread"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。"
-    },
-    "src/editor/syntax.rs": {
-      "dependencies": [
-        "crate::model",
-        "crate::theme",
-        "lgui",
-        "unicode_segmentation"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/vim_input.rs": {
-      "dependencies": [
-        "crate::fonts",
-        "crate::model",
-        "crate::state",
-        "crate::vim",
-        "crate::workspace_actions",
-        "lgui"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/vim_integration_tests.rs": {
-      "dependencies": [
-        "crate::fonts",
-        "crate::git",
-        "crate::key_actions",
-        "crate::model",
-        "crate::state",
-        "crate::terminal_session",
-        "crate::theme",
-        "crate::ui",
-        "crate::vim",
-        "lgui"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 文本视图仅通过应用提供的覆盖层入口访问；Git diff 读取、异步加载与操作迁移属于 R6。"
     },
     "src/features/keymap/action.rs": {
       "dependencies": [
         "Movement",
-        "crate::editor",
         "serde_json"
       ],
       "remove_in": "R8",
@@ -698,14 +479,14 @@
     },
     "src/features/keymap/context_stack.rs": {
       "dependencies": [
-        "crate::editor",
+        "crate::app",
         "crate::state",
         "crate::ui",
         "crate::vim",
         "lgui"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 把原 Vim 调用转到应用命令入口。"
     },
     "src/features/keymap/keymap_file.rs": {
       "dependencies": [
@@ -873,7 +654,6 @@
       "dependencies": [
         "crate::app",
         "crate::config_watcher",
-        "crate::editor",
         "crate::git",
         "crate::git_actions",
         "crate::input",
@@ -882,7 +662,6 @@
         "crate::state",
         "crate::terminal_session",
         "crate::ui",
-        "crate::vim",
         "crate::workspace_actions",
         "crate::workspace_persistence",
         "lgui",
@@ -920,33 +699,6 @@
     "src/model/pane_layout.rs": {
       "dependencies": [
         "lgui"
-      ],
-      "remove_in": "R3 R4",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/model/text/buffer.rs": {
-      "dependencies": [
-        "unicode_segmentation"
-      ],
-      "remove_in": "R3 R4",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/model/text/lines.rs": {
-      "dependencies": [
-        "unicode_segmentation",
-        "unicode_width"
-      ],
-      "remove_in": "R3 R4",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/model/text/mod.rs": {
-      "dependencies": [
-        "buffer",
-        "change",
-        "editor",
-        "history",
-        "lines",
-        "selection"
       ],
       "remove_in": "R3 R4",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
@@ -1102,14 +854,6 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/ui/components/input.rs": {
-      "dependencies": [
-        "crate::editor",
-        "crate::model"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/ui/components/text.rs": {
       "dependencies": [
         "unicode_width"
@@ -1131,7 +875,7 @@
     },
     "src/ui/diff_editor.rs": {
       "dependencies": [
-        "crate::editor",
+        "crate::app",
         "crate::git",
         "crate::git_actions",
         "crate::model",
@@ -1141,7 +885,7 @@
         "std::fs"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 的新增应用依赖仅在旧 UI 集成测试中构造窄 scrollbar binding。"
     },
     "src/ui/git_badge.rs": {
       "dependencies": [
@@ -1223,14 +967,14 @@
     },
     "src/ui/settings.rs": {
       "dependencies": [
-        "crate::editor",
+        "crate::app",
         "crate::input",
         "crate::key_actions",
         "crate::settings_persistence",
         "crate::state"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 把原 Vim 调用转到应用命令入口。"
     },
     "src/ui/sidebar.rs": {
       "dependencies": [
@@ -1255,14 +999,14 @@
     },
     "src/ui/statusbar.rs": {
       "dependencies": [
-        "crate::editor",
+        "crate::app",
         "crate::input",
         "crate::state",
         "crate::terminal_session",
         "crate::vim"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 把原 Vim 调用转到应用命令入口。"
     },
     "src/ui/tabs.rs": {
       "dependencies": [
@@ -1341,75 +1085,6 @@
       "remove_in": "R4 R5",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/vim/ex.rs": {
-      "dependencies": [
-        "crate::model"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/vim/exec.rs": {
-      "dependencies": [
-        "crate::editor",
-        "crate::model"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/vim/insert.rs": {
-      "dependencies": [
-        "crate::editor",
-        "crate::model",
-        "unicode_segmentation"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/vim/key.rs": {
-      "dependencies": [
-        "crate::input"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/vim/mod.rs": {
-      "dependencies": [
-        "command",
-        "crate::model",
-        "key",
-        "register"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/vim/motion.rs": {
-      "dependencies": [
-        "crate::model"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/vim/object.rs": {
-      "dependencies": [
-        "crate::model"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/vim/search.rs": {
-      "dependencies": [
-        "regex"
-      ],
-      "remove_in": "R2",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/vim/tests.rs": {
-      "dependencies": [
-        "crate::model"
-      ],
-      "remove_in": "R3",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/window_geometry.rs": {
       "dependencies": [
         "crate::workspace_persistence",
@@ -1454,5 +1129,128 @@
   "phase2": {
     "search_has_no_exceptions": true,
     "retired_entry_files_retained": true
+  },
+  "editor_state_ownership": {
+    "close_request": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "editor_gutter_hover": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "editor_horizontal_scrollbar_drag_offset": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "editor_horizontal_scrollbar_dragging": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "editor_hovered": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "editor_hunk_peek": {
+      "owner": "app/state/editor (Git overlay adapter)",
+      "migrated_in": "R3",
+      "remove_in": "R6"
+    },
+    "editor_vertical_scrollbar_drag_offset": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "editor_vertical_scrollbar_dragging": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "file_drag": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "focused": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "pending_file": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "sash_drag": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "tab_context_menu": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "tab_drag": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "tab_hovered": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "tab_scroll": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "tab_scrollbar_drag_offset": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "tab_scrollbar_dragging": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "tab_strip_hovered": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "vim": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "modifiers": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "drag": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "caret_dragging": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "last_click": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "last_tree_click": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "last_tab_click": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "last_terminal_tab_click": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "menu": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "menu_hover": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
+    "ime": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    }
   }
 }

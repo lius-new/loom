@@ -1,4 +1,5 @@
 //! Application state — the single reactive root owned by the UI.
+pub(crate) mod editor;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -161,13 +162,8 @@ pub enum DrawerMode {
 pub struct AppState {
     // R1 legacy command bridge: snapshots never own runtime services.
     runtime: std::sync::Weak<crate::app::runtime::AppRuntime>,
-    pub editor: crate::editor::interaction::EditorInteraction,
-    /// Vim editing behaviour, when enabled in Settings.
-    pub vim: crate::vim::Vim,
+    pub editor: editor::EditorState,
     pub workspace: Workspace,
-    pub pending_file: Option<crate::file_loading::PendingFile>,
-    /// Focus of the shared welcome/home/editor surface, retained across swaps.
-    pub focused: bool,
     /// File explorer drawer on the right.
     pub show_drawer: bool,
     pub drawer_mode: DrawerMode,
@@ -207,24 +203,6 @@ pub struct AppState {
     pub terminal_font_input: crate::ui::components::input::InputState,
     /// Each workspace folder's `.loom/settings.json`, when it has one.
     pub project_settings: Vec<(PathBuf, crate::project_settings::ProjectSettings)>,
-    /// Horizontal scroll offset of each pane's tab strip, in logical pixels.
-    pub tab_scroll: HashMap<PaneId, f32>,
-    /// Open tab currently under the pointer.
-    pub tab_hovered: Option<(PaneId, FileId)>,
-    /// The pane whose tab strip contains the pointer.
-    pub tab_strip_hovered: Option<PaneId>,
-    /// The pane whose tab scrollbar thumb is being dragged.
-    pub tab_scrollbar_dragging: Option<PaneId>,
-    /// Pointer x offset from the tab scrollbar thumb's left edge.
-    pub tab_scrollbar_drag_offset: f32,
-    /// Pending or active left-button tab reorder gesture.
-    pub tab_drag: Option<TabDragState>,
-    /// Pending click or active drag of an Explorer or Source Control file.
-    pub file_drag: Option<FileDragState>,
-    /// Context menu opened for one editor tab.
-    pub tab_context_menu: Option<TabContextMenuState>,
-    /// Pending close operation waiting for the user to resolve dirty files.
-    pub close_request: Option<CloseRequest>,
     /// Notification above the status bar; cleared by its timer or close button.
     pub toast: Option<Toast>,
     /// Source of `Toast::id`, so a replacement restarts the dismiss timer.
@@ -237,8 +215,6 @@ pub struct AppState {
     pub expanded: HashSet<String>,
     pub sidebar_w: f32,
     pub resizing_sidebar: bool,
-    /// The pane divider being dragged.
-    pub sash_drag: Option<crate::model::pane_layout::Sash>,
     pub git_split_drag: Option<crate::model::pane_layout::PaneId>,
     pub git_split_ratio: f32,
     pub terminal_split_drag: Option<u64>,
@@ -288,21 +264,6 @@ pub struct AppState {
     pub horizontal_scrollbar_dragging: bool,
     /// Pointer x offset from the horizontal thumb's left when dragging began.
     pub horizontal_scrollbar_drag_offset: f32,
-    /// Whether the pointer is currently inside the visible code editor.
-    pub editor_hovered: Option<PaneId>,
-    /// The 1-based line under the pointer in a pane's gutter, which
-    /// thickens that line's Git change bar.
-    pub editor_gutter_hover: Option<(PaneId, usize)>,
-    /// The Git change peeked at from its gutter bar.
-    pub editor_hunk_peek: Option<crate::editor::hunk_peek::HunkPeek>,
-    /// True while the editor's vertical overlay scrollbar is being dragged.
-    pub editor_vertical_scrollbar_dragging: bool,
-    /// Pointer y offset from the editor vertical thumb's top.
-    pub editor_vertical_scrollbar_drag_offset: f32,
-    /// True while the editor's horizontal overlay scrollbar is being dragged.
-    pub editor_horizontal_scrollbar_dragging: bool,
-    /// Pointer x offset from the editor horizontal thumb's left.
-    pub editor_horizontal_scrollbar_drag_offset: f32,
     /// Welcome-page row currently under the pointer.
     pub welcome_hover: Option<usize>,
     /// Workspace Home action currently under the pointer.
@@ -381,10 +342,7 @@ impl AppState {
         Self {
             runtime: Default::default(),
             editor: Default::default(),
-            vim: Default::default(),
             workspace: Workspace::new(),
-            pending_file: None,
-            focused: false,
             show_drawer: true,
             drawer_mode: DrawerMode::Files,
             search: Default::default(),
@@ -412,22 +370,12 @@ impl AppState {
             editor_font_input: Default::default(),
             terminal_font_input: Default::default(),
             project_settings: Vec::new(),
-            tab_scroll: HashMap::new(),
-            tab_hovered: None,
-            tab_strip_hovered: None,
-            tab_scrollbar_dragging: None,
-            tab_scrollbar_drag_offset: 0.0,
-            tab_drag: None,
-            file_drag: None,
-            tab_context_menu: None,
-            close_request: None,
             toast: None,
             toast_seq: 0,
             dir_entries: HashMap::new(),
             expanded: HashSet::new(),
             sidebar_w: crate::theme::SIDEBAR_W,
             resizing_sidebar: false,
-            sash_drag: None,
             git_split_drag: None,
             git_split_ratio: 0.5,
             terminal_split_drag: None,
@@ -458,13 +406,6 @@ impl AppState {
             scrollbar_drag_offset: 0.0,
             horizontal_scrollbar_dragging: false,
             horizontal_scrollbar_drag_offset: 0.0,
-            editor_hovered: None,
-            editor_gutter_hover: None,
-            editor_hunk_peek: None,
-            editor_vertical_scrollbar_dragging: false,
-            editor_vertical_scrollbar_drag_offset: 0.0,
-            editor_horizontal_scrollbar_dragging: false,
-            editor_horizontal_scrollbar_drag_offset: 0.0,
             welcome_hover: None,
             workspace_home_hover: None,
             show_clone_dialog: false,
@@ -536,7 +477,7 @@ impl AppState {
             git_inline_blame: self.git_inline_blame,
             git_split_diff: self.git_split_diff,
             git_tree_view: self.git_tree_view,
-            vim: self.vim.options.into(),
+            vim: self.editor.vim.options.into(),
             editor_font: self.editor_font.clone(),
             terminal_font: self.terminal_font.clone(),
         }
@@ -561,10 +502,10 @@ impl AppState {
         self.set_editor_font(settings.editor_font);
         self.set_terminal_font(settings.terminal_font);
         let vim: crate::vim::Options = settings.vim.into();
-        if vim.enabled != self.vim.options.enabled {
-            crate::editor::vim_input::set_enabled(self, vim.enabled);
+        if vim.enabled != self.editor.vim.options.enabled {
+            crate::app::editor_vim::set_enabled(self, vim.enabled);
         }
-        self.vim.options = vim;
+        self.editor.vim.options = vim;
         if shells_changed {
             self.refresh_shells();
         }
@@ -753,12 +694,12 @@ impl AppState {
             }
             Action::CloseOverlay => {
                 self.close_menus();
-                self.close_request = None;
-                self.tab_drag = None;
-                self.file_drag = None;
-                self.sash_drag = None;
+                self.editor.close_request = None;
+                self.editor.tab_drag = None;
+                self.editor.file_drag = None;
+                self.editor.sash_drag = None;
                 self.application_sash_drag = None;
-                self.tab_scrollbar_dragging = None;
+                self.editor.tab_scrollbar_dragging = None;
                 if !self.cloning_repository {
                     self.show_clone_dialog = false;
                     self.clone_input_focused = false;
@@ -827,14 +768,14 @@ impl AppState {
                 self.workspace.move_active_item(Direction::Down);
             }
             Action::ClosePane => {
-                if self.close_request.is_none() {
+                if self.editor.close_request.is_none() {
                     let pane = self.workspace.active_pane();
                     crate::workspace_actions::request_close_pane_in(self, pane);
                 }
             }
             Action::CloseActiveItem => {
                 // A pending (possibly batch) request must be resolved first.
-                if self.close_request.is_none()
+                if self.editor.close_request.is_none()
                     && let Some(id) = self.workspace.active()
                 {
                     let pane = self.workspace.active_pane();
@@ -850,7 +791,7 @@ impl AppState {
         self.context_menu = None;
         self.context_menu_target = None;
         self.context_menu_hover = None;
-        self.tab_context_menu = None;
+        self.editor.tab_context_menu = None;
         self.terminal_tab_context_menu = None;
         self.branch_picker = None;
         self.git_menu = None;
@@ -860,7 +801,7 @@ impl AppState {
     fn split_focused(&mut self, direction: Direction) {
         let pane = self.workspace.active_pane();
         if self.workspace.split(pane, direction).is_some() {
-            self.tab_drag = None;
+            self.editor.tab_drag = None;
             self.editor.drag = None;
             self.editor.menu = None;
         }

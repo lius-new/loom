@@ -6,18 +6,7 @@
 
 use lgui::prelude::UiRect;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PaneId(u64);
-
-impl PaneId {
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
+pub use crate::domain::identity::PaneId;
 
 /// Direction in which a split lays out its children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

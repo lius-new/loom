@@ -109,7 +109,7 @@ fn action_enabled(app: &AppState, pane: PaneId, target: FileId, action: Action) 
 
 pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
     let snapshot = state.get();
-    let Some(menu) = snapshot.tab_context_menu.as_ref() else {
+    let Some(menu) = snapshot.editor.tab_context_menu.as_ref() else {
         return panel(viewport, VisualStyle::default());
     };
     let target = menu.target;
@@ -148,7 +148,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
         .event_policy(EventPolicy::INTERACTIVE)
         .on_pointer_down_with_button(move |_cx, pointer, _button| {
             if !card.contains(pointer.point) {
-                dismiss_state.update(|app| app.tab_context_menu = None);
+                dismiss_state.update(|app| app.editor.tab_context_menu = None);
             }
         });
 
@@ -163,7 +163,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
         .event_policy(EventPolicy::INTERACTIVE)
         .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
             clear_hover.try_update(|app| {
-                let Some(menu) = app.tab_context_menu.as_mut() else {
+                let Some(menu) = app.editor.tab_context_menu.as_mut() else {
                     return false;
                 };
                 let changed = menu.hovered.is_some();
@@ -214,7 +214,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                 })
                 .on_event(UiEventKind::PointerMove, move |_cx, _payload| {
                     hover_state.try_update(move |app| {
-                        let Some(menu) = app.tab_context_menu.as_mut() else {
+                        let Some(menu) = app.editor.tab_context_menu.as_mut() else {
                             return false;
                         };
                         let next = enabled.then_some(index);
@@ -227,7 +227,7 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                     if !enabled {
                         return;
                     }
-                    click_state.update(|app| app.tab_context_menu = None);
+                    click_state.update(|app| app.editor.tab_context_menu = None);
                     if let Some(scope) = close_scope(action) {
                         workspace_actions::request_close_tabs(&click_state, pane, target, scope);
                         return;

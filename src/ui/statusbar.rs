@@ -188,8 +188,8 @@ pub fn render(
         ));
         left += 140.0 + GAP;
     }
-    if crate::editor::vim_input::is_active(&s) {
-        for (label, style) in vim_items(&s.vim) {
+    if crate::app::editor_vim::is_active(&s) {
+        for (label, style) in vim_items(&s.editor.vim) {
             let width = measure(&label, style.weight) + TEXT_MARGIN;
             bar = bar.child(text(
                 UiRect::new(left, rect.top, left + width, rect.bottom),

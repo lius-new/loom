@@ -8,11 +8,17 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/lius-new/loom"
 readme = "README.md"
 
+[workspace]
+members = ["crates/editor-core"]
+default-members = [".", "crates/editor-core"]
+resolver = "3"
+
 [[bin]]
 name = "Loom"
 path = "src/main.rs"
 
 [dependencies]
+loom-editor-core = { path = "crates/editor-core" }
 base64 = "0.22"
 icondata = "0.7"
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -26,6 +32,9 @@ unicode-width = "0.2"
 regex = "1"
 ignore = "0.4"
 globset = "0.4"
+
+[dev-dependencies]
+loom-editor-core = { path = "crates/editor-core", features = ["diagnostics"] }
 
 [dependencies.lgui]
 git = "https://github.com/lius-new/lgui.git"
