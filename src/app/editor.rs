@@ -459,9 +459,9 @@ pub(crate) fn pointer_down(
             app.editor.menu_hover = None;
             app.editor.drag = None;
             app.editor.tab_context_menu = None;
-            app.context_menu = None;
-            app.context_menu_target = None;
-            app.context_menu_hover = None;
+            app.explorer.ui.menu = None;
+            app.explorer.ui.menu_target = None;
+            app.explorer.ui.menu_hover = None;
         } else {
             app.editor.menu = None;
             let clicks = app.editor.click_count(id, point.x, point.y);

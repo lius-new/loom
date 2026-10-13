@@ -147,7 +147,7 @@ fn with_app<R>(state: &State<AppState>, f: impl FnOnce(&mut AppState) -> R) -> R
 pub fn visibility(app: &AppState) -> Visibility {
     Visibility {
         git: app.show_source_control,
-        files: app.show_drawer,
+        files: app.drawer.visible,
         terminal: app.show_terminal,
     }
 }

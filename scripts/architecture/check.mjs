@@ -133,6 +133,8 @@ export function violations(sources, policy) {
       if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Editor view cannot include root sources');
     }
     if(file.startsWith('src/features/explorer/')&&ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','InputState','UiRect','State'].includes(t)))problems.push(file+': Explorer feature must be framework/root independent');
+    if(file.startsWith('src/ui/explorer/')&&ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle'].includes(t)))problems.push(file+': Explorer view must use projections and commands');
+    if(file.startsWith('src/ui/explorer/')&&policy.exceptions[file])problems.push(file+': Explorer view cannot have migration exceptions');
     if(file.startsWith('src/features/explorer/')&&policy.exceptions[file])problems.push(file+': Explorer feature cannot have migration exceptions');
     if((file.startsWith('src/features/search/')||file.startsWith('src/ui/search/'))&&policy.exceptions[file])problems.push(file+': Search cannot have migration exceptions');
     if(file==='src/model/workspace.rs'&&deps.some(d=>['crate::search','crate::search_actions','crate::features'].includes(d)))problems.push('Workspace must expose generic snapshots, not Search DTOs');
@@ -175,6 +177,20 @@ export function violations(sources, policy) {
     for(const field of actual)if(!registered.includes(field))problems.push(`Workspace.${field}: no registered owner`);
     for(const field of registered)if(!actual.includes(field))problems.push(`Workspace.${field}: obsolete ownership entry`);
   }
+  for(const [file,name,owner] of [['src/features/explorer/model.rs','ExplorerModel','features/explorer/model'],['src/ui/explorer/state.rs','ExplorerUiState','ui/explorer/state']]) {
+    const source=sources[file];
+    if(!source)continue;
+    const actual=structFields(source,name),registered=Object.entries(policy.explorer_ownership??{}).filter(([,e])=>e.owner?.startsWith(owner)).map(([k])=>k);
+    for(const field of actual)if(!registered.includes(field))problems.push(`${name}.${field}: no registered owner`);
+    for(const field of registered)if(!actual.includes(field))problems.push(`${name}.${field}: obsolete ownership entry`);
+  }
+  const explorerModel=sources['src/features/explorer/model.rs'];
+  if(explorerModel) {
+    const ts=tokens(explorerModel),start=ts.findIndex((t,i)=>t==='struct'&&ts[i+1]==='ExplorerModel');
+    let depth=0;
+    for(let i=start+2;start>=0&&i<ts.length;i++){if(ts[i]==='{'){depth++;continue;}if(ts[i]==='}'&&--depth===0)break;if(depth===1&&ts[i]==='pub'){problems.push('ExplorerModel fields must stay private');break;}}
+  }
+  for(const [field,entry] of Object.entries(policy.explorer_ownership??{}))if(!entry.owner||!entry.migrated_in)problems.push(`Explorer.${field}: incomplete ownership entry`);
   for(const [field,entry] of Object.entries(policy.workspace_core_ownership??{}))if(!entry.owner||!entry.migrated_in)problems.push(`Workspace.${field}: incomplete ownership entry`);
   for(const [field,entry] of Object.entries(policy.state_ownership))if(!entry.owner||!entry.remove_in)problems.push(`AppState.${field}: incomplete ownership entry`);
   for(const [file,entry] of Object.entries(policy.exceptions))if(!entry.reason||!entry.remove_in)problems.push(`${file}: incomplete migration exception`);

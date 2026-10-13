@@ -15,8 +15,7 @@ use crate::ui::components::input::InputState;
 
 // Explorer types keep their root-state paths until R5.6 removes the alias.
 pub use crate::features::explorer::{
-    DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerCreateRequest,
-    ExplorerRenameRequest, ExplorerTargetKind,
+    DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,15 +125,37 @@ pub enum DrawerMode {
     Search,
 }
 
+/// Visibility, page and width of the right-hand drawer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawerChrome {
+    pub visible: bool,
+    pub mode: DrawerMode,
+    pub width: f32,
+    /// True while the drawer resize handle is being dragged.
+    pub resizing: bool,
+}
+
+impl Default for DrawerChrome {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            mode: DrawerMode::Files,
+            width: crate::theme::SIDEBAR_W,
+            resizing: false,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     // R1 legacy command bridge: snapshots never own runtime services.
     runtime: std::sync::Weak<crate::app::runtime::AppRuntime>,
     pub editor: editor::EditorState,
+    /// Right-hand drawer shared by Explorer and Search.
+    pub drawer: DrawerChrome,
+    /// Explorer business model and view state.
+    pub explorer: crate::ui::explorer::state::ExplorerPanelState,
     pub workspace: Workspace,
-    /// File explorer drawer on the right.
-    pub show_drawer: bool,
-    pub drawer_mode: DrawerMode,
     pub search: crate::ui::search::state::SearchPanelState,
     /// Source Control drawer on the left. It is independent from Explorer.
     pub show_source_control: bool,
@@ -175,14 +196,6 @@ pub struct AppState {
     pub toast: Option<Toast>,
     /// Source of `Toast::id`, so a replacement restarts the dismiss timer.
     pub toast_seq: u64,
-    /// Cached entries per loaded directory (key = directory path string).
-    /// Renders read from this cache; the filesystem is only hit on open and
-    /// on first expand.
-    pub dir_entries: HashMap<String, std::sync::Arc<Vec<DirEntry>>>,
-    /// Directory paths currently expanded in the tree.
-    pub expanded: HashSet<String>,
-    pub sidebar_w: f32,
-    pub resizing_sidebar: bool,
     pub git_split_drag: Option<crate::model::pane_layout::PaneId>,
     pub git_split_ratio: f32,
     pub terminal_split_drag: Option<u64>,
@@ -198,40 +211,6 @@ pub struct AppState {
     pub git_scrollbar_drag_offset: f32,
     pub git_details_scrollbar_dragging: bool,
     pub git_details_scrollbar_drag_offset: f32,
-    /// Whether the pointer is currently inside the file-tree drawer.
-    pub sidebar_hovered: bool,
-    /// File-tree row path currently under the pointer.
-    pub tree_hovered_path: Option<String>,
-    /// Empty-space context menu anchor (screen coords) when open.
-    pub context_menu: Option<(f32, f32)>,
-    /// File-tree item targeted by the context menu. `None` means drawer background.
-    pub context_menu_target: Option<ExplorerContextTarget>,
-    /// Index of the context-menu item currently hovered, if any.
-    pub context_menu_hover: Option<usize>,
-    /// Inline New File/New Folder editor currently shown in the file tree.
-    pub explorer_create: Option<ExplorerCreateRequest>,
-    /// Inline directory rename editor currently shown in the file tree.
-    pub explorer_rename: Option<ExplorerRenameRequest>,
-    /// A disk refresh that is deferred until an inline Explorer edit ends.
-    pub pending_file_tree_refresh: bool,
-    pub explorer_create_input: InputState,
-    pub explorer_create_error: Option<String>,
-    /// Root folders currently browsed in the file tree, in display order.
-    pub workspace_folders: Vec<PathBuf>,
-    /// Previously opened workspace folders, most recently used first.
-    pub recent_folders: Vec<PathBuf>,
-    /// Vertical scroll offset of the file tree, in pixels (0 = top).
-    pub tree_scroll: f32,
-    /// Horizontal scroll offset of the file tree, in pixels (0 = left).
-    pub tree_scroll_x: f32,
-    /// True while the file-tree scrollbar thumb is being dragged.
-    pub scrollbar_dragging: bool,
-    /// Pointer y offset from the thumb's top when the drag began.
-    pub scrollbar_drag_offset: f32,
-    /// True while the horizontal file-tree scrollbar thumb is being dragged.
-    pub horizontal_scrollbar_dragging: bool,
-    /// Pointer x offset from the horizontal thumb's left when dragging began.
-    pub horizontal_scrollbar_drag_offset: f32,
     /// Welcome-page row currently under the pointer.
     pub welcome_hover: Option<usize>,
     /// Workspace Home action currently under the pointer.
@@ -309,10 +288,10 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             runtime: Default::default(),
+            drawer: DrawerChrome::default(),
+            explorer: Default::default(),
             editor: Default::default(),
             workspace: Workspace::new(),
-            show_drawer: true,
-            drawer_mode: DrawerMode::Files,
             search: Default::default(),
             show_source_control: false,
             show_terminal: false,
@@ -340,10 +319,6 @@ impl AppState {
             project_settings: Vec::new(),
             toast: None,
             toast_seq: 0,
-            dir_entries: HashMap::new(),
-            expanded: HashSet::new(),
-            sidebar_w: crate::theme::SIDEBAR_W,
-            resizing_sidebar: false,
             git_split_drag: None,
             git_split_ratio: 0.5,
             terminal_split_drag: None,
@@ -356,24 +331,6 @@ impl AppState {
             git_scrollbar_drag_offset: 0.0,
             git_details_scrollbar_dragging: false,
             git_details_scrollbar_drag_offset: 0.0,
-            sidebar_hovered: false,
-            tree_hovered_path: None,
-            context_menu: None,
-            context_menu_target: None,
-            context_menu_hover: None,
-            explorer_create: None,
-            explorer_rename: None,
-            pending_file_tree_refresh: false,
-            explorer_create_input: InputState::default(),
-            explorer_create_error: None,
-            workspace_folders: Vec::new(),
-            recent_folders: Vec::new(),
-            tree_scroll: 0.0,
-            tree_scroll_x: 0.0,
-            scrollbar_dragging: false,
-            scrollbar_drag_offset: 0.0,
-            horizontal_scrollbar_dragging: false,
-            horizontal_scrollbar_drag_offset: 0.0,
             welcome_hover: None,
             workspace_home_hover: None,
             show_clone_dialog: false,
@@ -423,8 +380,9 @@ impl AppState {
         if let Some(height) = session.terminal_height.filter(|height| height.is_finite()) {
             app.terminal_h = height;
         }
-        app.workspace_folders = session.open_folders;
-        app.recent_folders = session.recent_folders;
+        app.explorer
+            .model
+            .restore(session.open_folders, session.recent_folders);
         app.show_source_control = session.source_control_open;
         app.apply_settings(crate::settings_persistence::load());
         app.refresh_shells();
@@ -539,7 +497,9 @@ impl AppState {
 
     /// The workspace folder holding `path`; the innermost when folders nest.
     pub fn workspace_folder_of(&self, path: &Path) -> Option<&Path> {
-        self.workspace_folders
+        self.explorer
+            .model
+            .roots()
             .iter()
             .filter(|root| path.starts_with(root))
             .max_by_key(|root| root.components().count())
@@ -565,7 +525,7 @@ impl AppState {
     pub fn refresh_project_settings(&mut self) {
         use crate::project_settings::{self, ProjectSettings};
         let mut fresh = Vec::new();
-        for root in &self.workspace_folders {
+        for root in self.explorer.model.roots() {
             let project = match project_settings::read(root) {
                 Ok(Some(project)) => project,
                 Ok(None) => continue,
@@ -638,21 +598,21 @@ impl AppState {
             Action::MenuSelectNext => crate::ui::branch_picker::move_selection(self, 1),
             Action::MenuSelectPrevious => crate::ui::branch_picker::move_selection(self, -1),
             Action::OpenExplorer => {
-                self.show_drawer = true;
-                self.drawer_mode = DrawerMode::Files;
+                self.drawer.visible = true;
+                self.drawer.mode = DrawerMode::Files;
                 self.search.blur();
             }
             Action::OpenSearch => {
-                self.show_drawer = true;
-                self.drawer_mode = DrawerMode::Search;
+                self.drawer.visible = true;
+                self.drawer.mode = DrawerMode::Search;
                 self.search.focus_request += 1;
                 self.search.results_focus_request = 0;
                 self.close_menus();
             }
             Action::ToggleDrawer => {
-                self.show_drawer = !self.show_drawer;
-                if !self.show_drawer {
-                    self.sidebar_hovered = false;
+                self.drawer.visible = !self.drawer.visible;
+                if !self.drawer.visible {
+                    self.explorer.ui.hovered = false;
                     self.search.blur();
                 }
             }
@@ -756,9 +716,9 @@ impl AppState {
 
     fn close_menus(&mut self) {
         self.editor.menu = None;
-        self.context_menu = None;
-        self.context_menu_target = None;
-        self.context_menu_hover = None;
+        self.explorer.ui.menu = None;
+        self.explorer.ui.menu_target = None;
+        self.explorer.ui.menu_hover = None;
         self.editor.tab_context_menu = None;
         self.terminal_tab_context_menu = None;
         self.branch_picker = None;
@@ -800,7 +760,7 @@ impl AppState {
             || self.workspace.pane_count() > 1
         {
             MainSurface::Empty
-        } else if self.workspace_folders.is_empty() {
+        } else if self.explorer.model.roots().is_empty() {
             MainSurface::Welcome
         } else {
             MainSurface::WorkspaceHome
@@ -854,7 +814,9 @@ mod tests {
         let mut app = AppState::new();
         assert_eq!(app.main_surface(), MainSurface::Welcome);
 
-        app.workspace_folders.push(PathBuf::from("project"));
+        app.explorer
+            .model
+            .restore(vec![PathBuf::from("project")], Vec::new());
         assert_eq!(app.main_surface(), MainSurface::WorkspaceHome);
 
         let file = app
@@ -881,7 +843,7 @@ mod tests {
         assert_eq!(app.main_surface(), MainSurface::Diff);
 
         app.workspace.close(diff);
-        app.workspace_folders.clear();
+        app.explorer.model.restore(Vec::new(), Vec::new());
         assert_eq!(app.main_surface(), MainSurface::Welcome);
     }
 

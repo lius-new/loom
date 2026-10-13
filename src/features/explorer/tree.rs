@@ -30,12 +30,112 @@ pub struct TreeCache {
 }
 
 impl TreeCache {
-    pub fn from_parts(listings: Listings, expanded: HashSet<String>) -> Self {
-        Self { listings, expanded }
+    pub fn listing(&self, key: &str) -> Option<&Arc<Vec<DirEntry>>> {
+        self.listings.get(key)
     }
 
-    pub fn into_parts(self) -> (Listings, HashSet<String>) {
-        (self.listings, self.expanded)
+    pub fn listings(&self) -> impl Iterator<Item = (&String, &Arc<Vec<DirEntry>>)> {
+        self.listings.iter()
+    }
+
+    pub fn is_loaded(&self, key: &str) -> bool {
+        self.listings.contains_key(key)
+    }
+
+    pub fn is_expanded(&self, key: &str) -> bool {
+        self.expanded.contains(key)
+    }
+
+    pub fn expand(&mut self, key: String) {
+        self.expanded.insert(key);
+    }
+
+    pub fn collapse(&mut self, key: &str) {
+        self.expanded.remove(key);
+    }
+
+    /// Replace one listing, returning the previous one for retirement.
+    pub fn insert_listing(
+        &mut self,
+        key: String,
+        entries: Arc<Vec<DirEntry>>,
+    ) -> Option<Arc<Vec<DirEntry>>> {
+        self.listings.insert(key, entries)
+    }
+
+    /// Forget a directory which no longer exists, collapsing it.
+    pub fn unload(&mut self, key: &str) -> Option<Arc<Vec<DirEntry>>> {
+        self.expanded.remove(key);
+        self.listings.remove(key)
+    }
+
+    /// Read `directory` and show it expanded.
+    pub fn load_expanded(&mut self, port: &dyn DirectoryPort, directory: &Path) {
+        let key = key(directory);
+        self.listings
+            .insert(key.clone(), port.read_directory(directory));
+        self.expanded.insert(key);
+    }
+
+    /// Read `directory` without changing its expansion.
+    pub fn load(&mut self, port: &dyn DirectoryPort, directory: &Path) {
+        self.listings
+            .insert(key(directory), port.read_directory(directory));
+    }
+
+    /// Drop listings and expansion at or below `path`.
+    pub fn remove_under(&mut self, path: &Path) {
+        self.listings
+            .retain(|cached, _| !Path::new(cached).starts_with(path));
+        self.expanded
+            .retain(|expanded| !Path::new(expanded).starts_with(path));
+    }
+
+    pub fn clear(&mut self) {
+        self.listings.clear();
+        self.expanded.clear();
+    }
+
+    /// Row index of `target` among the visible rows below `roots`, counting
+    /// each root row first.
+    pub fn visible_row_index(&self, roots: &[PathBuf], target: &Path) -> Option<usize> {
+        let mut index = 0usize;
+        for root in roots {
+            if root == target {
+                return Some(index);
+            }
+            index += 1;
+            let key = key(root);
+            if self.expanded.contains(&key)
+                && let Some(found) = self.visible_descendant_index(&key, target, &mut index)
+            {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    fn visible_descendant_index(
+        &self,
+        directory_key: &str,
+        target: &Path,
+        index: &mut usize,
+    ) -> Option<usize> {
+        let entries = self.listings.get(directory_key)?;
+        for entry in entries.iter() {
+            if entry.path == target {
+                return Some(*index);
+            }
+            *index += 1;
+            let key = key(&entry.path);
+            if entry.is_dir
+                && self.expanded.contains(&key)
+                && let Some(found) = self.visible_descendant_index(&key, target, index)
+            {
+                return Some(found);
+            }
+        }
+        None
     }
 
     /// Refresh one directory only when it is already loaded. Returns whether

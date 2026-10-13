@@ -60,7 +60,7 @@ pub fn toggle_panel(
         });
     let mut selected = default_session;
     if opening && selected.is_none() {
-        let cwd = app.workspace_folders.first().cloned();
+        let cwd = app.explorer.model.roots().first().cloned();
         let shell = app.effective_shell_at(cwd.as_deref());
         terminal_tabs.update(|tabs| {
             selected = Some(tabs.add_at(shell, cwd));
@@ -363,7 +363,7 @@ fn render_view(
     let add_cwd = terminal_tab_snapshot
         .active()
         .and_then(TerminalTab::working_directory)
-        .or_else(|| app_state.workspace_folders.first().cloned());
+        .or_else(|| app_state.explorer.model.roots().first().cloned());
     let add_rect = UiRect::new(
         rect.right - 32.0,
         header.top + 5.0,
@@ -891,8 +891,8 @@ fn render_terminal_tabs(
                 {
                     menu_state.update(move |app| {
                         app.editor.menu = None;
-                        app.context_menu = None;
-                        app.context_menu_target = None;
+                        app.explorer.ui.menu = None;
+                        app.explorer.ui.menu_target = None;
                         app.editor.tab_context_menu = None;
                         app.terminal_shell_menu = false;
                         app.terminal_tab_context_menu =
@@ -975,8 +975,8 @@ fn render_terminal_tabs(
                             app.editor.last_terminal_tab_click = None;
                             click_map.cancel();
                             app.editor.menu = None;
-                            app.context_menu = None;
-                            app.context_menu_target = None;
+                            app.explorer.ui.menu = None;
+                            app.explorer.ui.menu_target = None;
                             app.editor.tab_context_menu = None;
                             app.terminal_shell_menu = false;
                             app.terminal_tab_context_menu =

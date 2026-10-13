@@ -70,7 +70,7 @@ fn open_diff_with_focus(
     let Some(application) = app.runtime().and_then(|runtime| runtime.application()) else {
         return false;
     };
-    let roots = app.workspace_folders;
+    let roots = app.explorer.model.roots().to_vec();
     let active_view = (app.workspace.active_pane(), app.workspace.active());
     let destination_view = drop.map(|drop| {
         let pane = match drop {
@@ -122,7 +122,7 @@ fn open_diff_with_focus(
                         return;
                     }
                     app.git_diff_loading = None;
-                    if app.workspace_folders != roots
+                    if app.explorer.model.roots() != roots
                         || (app.workspace.active_pane(), app.workspace.active()) != active_view
                         || destination_view.is_some_and(|(pane, active)| {
                             active.is_none()
@@ -2109,7 +2109,7 @@ mod tests {
                 let state = cx.state_with(|| {
                     let mut app = AppState::new();
                     app.attach_runtime(&runtime);
-                    app.workspace_folders = roots.clone();
+                    app.explorer.model.restore(roots.clone(), Vec::new());
                     app.workspace.open_path("current.txt".into(), "keep".into());
                     app
                 });

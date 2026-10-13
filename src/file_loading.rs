@@ -161,7 +161,7 @@ pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<T
         started: Instant::now(),
         active: app.workspace.pane(pane).and_then(|p| p.active()),
         origin_pane,
-        folders: app.workspace_folders.clone(),
+        folders: app.explorer.model.roots().to_vec(),
     };
     app.editor.pending_file = Some(pending.clone());
     if loader.work.send(Some(pending.clone())).is_err() {
@@ -207,7 +207,7 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
         crate::background_ui::retire(prepared);
         return false;
     };
-    let valid = app.workspace_folders == pending.folders
+    let valid = app.explorer.model.roots() == pending.folders
         && app.workspace.active_pane() == pending.origin_pane
         && app
             .workspace
@@ -362,7 +362,7 @@ mod tests {
             assert!(!show_indicator(app, generation, started + clock.elapsed()));
             assert!(!app.editor.pending_file.as_ref().unwrap().indicator);
             // An unrelated UI click and edit complete while the worker is held.
-            app.show_drawer = !app.show_drawer;
+            app.drawer.visible = !app.drawer.visible;
             app.workspace.active_editor_mut().unwrap().set_cursor(4);
             assert_eq!(app.workspace.active(), before);
             assert_eq!(
@@ -522,8 +522,11 @@ mod tests {
             Ok(PreparedTextFile::new(request.path.clone(), "late".into()))
         });
         h.open("old-workspace.txt");
-        h.state
-            .update(|app| app.workspace_folders.push("different-workspace".into()));
+        h.state.update(|app| {
+            app.explorer
+                .model
+                .restore(vec!["different-workspace".into()], Vec::new())
+        });
         release.send(()).unwrap();
         h.pump_until(|app| app.editor.pending_file.is_none());
         assert_eq!(
@@ -549,7 +552,7 @@ mod tests {
             for row in 0..3 {
                 let state = cx.state_with(|| {
                     let mut app = AppState::new();
-                    app.show_drawer = true;
+                    app.drawer.visible = true;
                     for _ in 0..row {
                         let pane = app.workspace.active_pane();
                         let new = app

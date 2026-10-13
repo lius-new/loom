@@ -165,7 +165,7 @@ fn icon(id: UiId, key: &'static str, rect: UiRect, color: Color) -> Element {
 
 /// The collapsed-drawer toggle sits at the right end of the top-right pane's strip.
 fn shows_drawer_toggle(app: &AppState, pane: PaneId) -> bool {
-    !app.show_drawer && app.workspace.layout().top_right() == pane
+    !app.drawer.visible && app.workspace.layout().top_right() == pane
 }
 
 fn controls_left(rect: UiRect, app: &AppState, pane: PaneId) -> f32 {
@@ -911,9 +911,9 @@ pub fn render(
                     st.update(move |app| {
                         app.editor.tab_drag = None;
                         app.editor.menu = None;
-                        app.context_menu = None;
-                        app.context_menu_target = None;
-                        app.context_menu_hover = None;
+                        app.explorer.ui.menu = None;
+                        app.explorer.ui.menu_target = None;
+                        app.explorer.ui.menu_hover = None;
                         app.editor.tab_context_menu = Some(TabContextMenuState {
                             position,
                             pane,
@@ -1243,7 +1243,7 @@ pub fn render(
                 VisualStyle::filled(theme::c().sidebar),
             )
             .event_policy(EventPolicy::INTERACTIVE)
-            .on_click(move || state.update(|app| app.show_drawer = true))
+            .on_click(move || state.update(|app| app.drawer.visible = true))
             .child(icon(
                 UiId::owned(format!("tabs.drawer.{}", pane.get())),
                 "panel-left",

@@ -43,7 +43,9 @@ impl Ui {
                 let mut app = AppState::new();
                 if let Some(project) = workspace_home {
                     if project {
-                        app.workspace_folders.push("focus-test-project".into());
+                        app.explorer
+                            .model
+                            .restore(vec!["focus-test-project".into()], Vec::new());
                     }
                 } else {
                     app.workspace.open_path("vim.txt".into(), contents.clone());

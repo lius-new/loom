@@ -109,8 +109,8 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         let mut input = KeyContext::new(INPUT);
         input.add(COMMIT_MESSAGE);
         stack.push(input);
-    } else if app.show_drawer
-        && app.drawer_mode == crate::state::DrawerMode::Search
+    } else if app.drawer.visible
+        && app.drawer.mode == crate::state::DrawerMode::Search
         && (app.search.ui.query.focused
             || app.search.ui.include.focused
             || app.search.ui.exclude.focused
@@ -123,7 +123,7 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
             "SearchInput"
         });
         stack.push(input);
-    } else if app.explorer_create_input.focused
+    } else if app.explorer.ui.create_input.focused
         || (app.keymap_search.focused && app.main_surface() == MainSurface::Keymap)
     {
         stack.push(KeyContext::new(INPUT));
@@ -136,7 +136,7 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         }
     }
     if app.editor.menu.is_some()
-        || app.context_menu.is_some()
+        || app.explorer.ui.menu.is_some()
         || app.editor.tab_context_menu.is_some()
         || app.terminal_tab_context_menu.is_some()
         || app.git_menu.is_some()

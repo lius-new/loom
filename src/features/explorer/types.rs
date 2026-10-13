@@ -15,13 +15,13 @@ pub enum ExplorerCreateKind {
     Folder,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExplorerCreateRequest {
     pub kind: ExplorerCreateKind,
     pub parent: PathBuf,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExplorerRenameRequest {
     pub path: PathBuf,
     pub kind: ExplorerTargetKind,

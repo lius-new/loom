@@ -1185,7 +1185,7 @@ mod virtualization_tests {
             let source = repository.worktree_root.clone();
             let state = cx.state_with(move || {
                 let mut app = AppState::new();
-                app.workspace_folders = vec![source];
+                app.explorer.model.restore(vec![source], Vec::new());
                 app
             });
             let store = cx.state_with(GitStoreSnapshot::default);
@@ -1227,10 +1227,7 @@ mod virtualization_tests {
             session.render_view(&view, viewport, UiScale::ONE);
         }
         let app = state.get();
-        assert_eq!(
-            app.workspace_folders.as_slice(),
-            std::slice::from_ref(&source)
-        );
+        assert_eq!(app.explorer.model.roots(), std::slice::from_ref(&source));
         assert!(app.git_pinned_repository.is_none());
         assert!(app.toast.is_none()); // The click did not also open the row.
         let confirm = app.git_confirm.unwrap();

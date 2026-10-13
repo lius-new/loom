@@ -18,14 +18,14 @@ pub(crate) use crate::app::workspace_session::{
 use crate::domain::identity::PaneId;
 #[cfg(test)]
 use crate::domain::workspace_session::{EditorLayout, SavedAxis, SavedChild, SavedPaneNode};
+use crate::features::explorer::model::Reveal;
 use crate::features::explorer::ports::FileOpsPort;
 use crate::features::explorer::{edit, roots};
-use crate::file_tree::read_directory;
 use crate::infrastructure::explorer_filesystem::ExplorerFilesystem;
 use crate::model::document::FileId;
 use crate::state::{
     AppState, CloseContinuation, CloseRequest, ExplorerContextTarget, ExplorerCreateKind,
-    ExplorerCreateRequest, ExplorerRenameRequest, ExplorerTargetKind, TabDrop,
+    ExplorerTargetKind, TabDrop,
 };
 use crate::workspace_persistence;
 
@@ -397,88 +397,34 @@ pub(crate) fn finish_drawer_file_drag(state: &State<AppState>) -> bool {
     focus
 }
 
+/// Expand or collapse an Explorer directory row, reading it on first expansion.
+pub(crate) fn toggle_tree_directory(app: &mut AppState, key: &str) {
+    app.explorer
+        .model
+        .toggle_directory(&ExplorerFilesystem, key);
+}
+
+/// Reread every loaded Explorer listing (deferred while an edit row is open).
+pub(crate) fn refresh_explorer(app: &mut AppState) -> bool {
+    app.explorer.model.refresh_all(&ExplorerFilesystem)
+}
+
 pub fn reveal_file_in_tree(state: &State<AppState>, id: FileId) {
     state.update(move |app| {
         let Some(path) = app.workspace.meta(id).map(|meta| meta.path.clone()) else {
             return;
         };
-        let Some(root) = app
-            .workspace_folders
-            .iter()
-            .filter(|root| path.starts_with(root))
-            .max_by_key(|root| root.components().count())
-            .cloned()
-        else {
+        let Reveal::Revealed { row } = app.explorer.model.reveal(&ExplorerFilesystem, &path) else {
             app.show_toast("File is outside the workspace.");
             return;
         };
-
         app.workspace.set_active(id);
-        app.show_drawer = true;
-        let mut directories = Vec::new();
-        let mut current = path.parent();
-        while let Some(directory) = current {
-            if !directory.starts_with(&root) {
-                break;
-            }
-            directories.push(directory.to_path_buf());
-            if directory == root {
-                break;
-            }
-            current = directory.parent();
+        app.drawer.visible = true;
+        if let Some(index) = row {
+            app.explorer.ui.scroll = index.saturating_sub(1) as f32 * TREE_ROW_H;
         }
-        directories.reverse();
-        for directory in directories {
-            let key = directory.to_string_lossy().into_owned();
-            app.dir_entries
-                .insert(key.clone(), read_directory(&directory));
-            app.expanded.insert(key);
-        }
-        if let Some(index) = visible_tree_row_index(app, &path) {
-            app.tree_scroll = index.saturating_sub(1) as f32 * TREE_ROW_H;
-        }
-        app.tree_scroll_x = 0.0;
+        app.explorer.ui.scroll_x = 0.0;
     });
-}
-
-fn visible_tree_row_index(app: &AppState, target: &Path) -> Option<usize> {
-    let mut index = 0usize;
-    for root in &app.workspace_folders {
-        if root == target {
-            return Some(index);
-        }
-        index += 1;
-        let key = root.to_string_lossy();
-        if app.expanded.contains(key.as_ref())
-            && let Some(found) = visible_descendant_index(app, key.as_ref(), target, &mut index)
-        {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn visible_descendant_index(
-    app: &AppState,
-    directory_key: &str,
-    target: &Path,
-    index: &mut usize,
-) -> Option<usize> {
-    let entries = app.dir_entries.get(directory_key)?;
-    for entry in entries.iter() {
-        if entry.path == target {
-            return Some(*index);
-        }
-        *index += 1;
-        let key = entry.path.to_string_lossy();
-        if entry.is_dir
-            && app.expanded.contains(key.as_ref())
-            && let Some(found) = visible_descendant_index(app, key.as_ref(), target, index)
-        {
-            return Some(found);
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -511,7 +457,7 @@ fn close_test_directory(name: &str) -> PathBuf {
 
 pub fn choose_file(state: &State<AppState>) -> bool {
     let mut options = FileDialogOptions::new().title("Open File");
-    if let Some(directory) = state.get().workspace_folders.first().cloned() {
+    if let Some(directory) = state.get().explorer.model.roots().first().cloned() {
         options = options.directory(directory);
     }
     let Some(path) = system_file_dialogs().pick_file(&options) else {
@@ -529,7 +475,7 @@ pub fn choose_file(state: &State<AppState>) -> bool {
 
 pub fn choose_folder(state: &State<AppState>) -> bool {
     let mut options = FileDialogOptions::new().title("Open Folder");
-    if let Some(directory) = state.get().workspace_folders.first().cloned() {
+    if let Some(directory) = state.get().explorer.model.roots().first().cloned() {
         options = options.directory(directory);
     }
     let Some(path) = system_file_dialogs().pick_folder(&options) else {
@@ -544,7 +490,7 @@ pub fn choose_folder(state: &State<AppState>) -> bool {
 /// folders that are already open.
 pub fn choose_folder_to_add(state: &State<AppState>) -> bool {
     let mut options = FileDialogOptions::new().title("Add Folder to Project");
-    if let Some(directory) = state.get().workspace_folders.first().cloned() {
+    if let Some(directory) = state.get().explorer.model.roots().first().cloned() {
         options = options.directory(directory);
     }
     let Some(path) = system_file_dialogs().pick_folder(&options) else {
@@ -557,21 +503,15 @@ pub fn choose_folder_to_add(state: &State<AppState>) -> bool {
 
 pub fn begin_explorer_create(state: &State<AppState>, parent: PathBuf, kind: ExplorerCreateKind) {
     state.update(move |app| {
-        let key = parent.to_string_lossy().into_owned();
-        app.expanded.insert(key);
-        app.explorer_rename = None;
-        app.explorer_create = Some(ExplorerCreateRequest { kind, parent });
-        app.explorer_create_input.clear();
-        app.explorer_create_error = None;
+        app.explorer.model.begin_create(parent, kind);
+        app.explorer.ui.clear_edit();
     });
 }
 
 pub fn cancel_explorer_create(state: &State<AppState>) {
     state.update(|app| {
-        app.explorer_create = None;
-        app.explorer_rename = None;
-        app.explorer_create_input.clear();
-        app.explorer_create_error = None;
+        app.explorer.model.cancel_edit();
+        app.explorer.ui.clear_edit();
     });
 }
 
@@ -596,26 +536,25 @@ pub fn begin_explorer_rename(state: &State<AppState>, path: PathBuf, kind: Explo
     };
     let name = name.to_owned();
     state.update(move |app| {
-        app.explorer_create = None;
-        app.explorer_rename = Some(ExplorerRenameRequest { path, kind });
-        app.explorer_create_input.set_text(name);
-        app.explorer_create_error = None;
+        app.explorer.model.begin_rename(path, kind);
+        app.explorer.ui.create_input.set_text(name);
+        app.explorer.ui.create_error = None;
     });
 }
 
 pub fn finish_explorer_rename(state: &State<AppState>) {
     let snapshot = state.get();
-    let Some(request) = snapshot.explorer_rename.clone() else {
+    let Some(request) = snapshot.explorer.model.rename_request().cloned() else {
         return;
     };
-    let raw_name = snapshot.explorer_create_input.text().to_owned();
+    let raw_name = snapshot.explorer.ui.create_input.text().to_owned();
     drop(snapshot);
 
     let target = match edit::validate_rename_path(&ExplorerFilesystem, &request.path, &raw_name) {
         Ok(target) => target,
         Err(message) => {
             state.update(move |app| {
-                app.explorer_create_error = Some(message.clone());
+                app.explorer.ui.create_error = Some(message.clone());
                 app.show_error(message);
             });
             return;
@@ -628,7 +567,7 @@ pub fn finish_explorer_rename(state: &State<AppState>) {
     if let Err(error) = ExplorerFilesystem.rename(&request.path, &target) {
         let message = format!("Could not rename {}: {error}", request.path.display());
         state.update(move |app| {
-            app.explorer_create_error = Some(message.clone());
+            app.explorer.ui.create_error = Some(message.clone());
             app.show_error(message);
         });
         return;
@@ -638,46 +577,13 @@ pub fn finish_explorer_rename(state: &State<AppState>) {
 }
 
 fn apply_renamed_path_state(app: &mut AppState, old_path: &Path, new_path: &Path) {
-    let was_expanded = app.expanded.iter().any(|path| Path::new(path) == old_path);
     app.workspace.move_open_paths_under(old_path, new_path);
-
-    let mut roots_changed = false;
-    for root in &mut app.workspace_folders {
-        if let Ok(relative) = root.strip_prefix(old_path) {
-            *root = new_path.join(relative);
-            roots_changed = true;
-        }
-    }
-    for recent in &mut app.recent_folders {
-        if let Ok(relative) = recent.strip_prefix(old_path) {
-            *recent = new_path.join(relative);
-        }
-    }
-    app.dir_entries
-        .retain(|path, _| !Path::new(path).starts_with(old_path));
-    app.expanded
-        .retain(|path| !Path::new(path).starts_with(old_path));
-    if let Some(parent) = new_path.parent()
-        && app
-            .workspace_folders
-            .iter()
-            .any(|root| parent.starts_with(root))
-    {
-        app.dir_entries.insert(
-            parent.to_string_lossy().into_owned(),
-            read_directory(parent),
-        );
-    }
-    if was_expanded || app.workspace_folders.iter().any(|root| root == new_path) {
-        let key = new_path.to_string_lossy().into_owned();
-        app.dir_entries
-            .insert(key.clone(), read_directory(new_path));
-        app.expanded.insert(key);
-    }
-    app.tree_hovered_path = None;
-    app.explorer_rename = None;
-    app.explorer_create_input.clear();
-    app.explorer_create_error = None;
+    let roots_changed = app
+        .explorer
+        .model
+        .apply_rename(&ExplorerFilesystem, old_path, new_path);
+    app.explorer.ui.hovered_path = None;
+    app.explorer.ui.clear_edit();
     app.toast = None;
     if roots_changed {
         persist_workspace(app);
@@ -714,35 +620,11 @@ pub(crate) fn reveal_item(state: &State<AppState>, target: &ExplorerContextTarge
 
 pub(crate) fn apply_deleted_path_state(app: &mut AppState, path: &Path) {
     app.workspace.close_paths_under(path);
-    let original_root_count = app.workspace_folders.len();
-    let original_recent_count = app.recent_folders.len();
-    app.workspace_folders.retain(|root| !root.starts_with(path));
-    app.recent_folders
-        .retain(|recent| !recent.starts_with(path));
-    app.dir_entries
-        .retain(|cached, _| !Path::new(cached).starts_with(path));
-    app.expanded
-        .retain(|expanded| !Path::new(expanded).starts_with(path));
-    if let Some(parent) = path.parent()
-        && app
-            .workspace_folders
-            .iter()
-            .any(|root| parent.starts_with(root))
-    {
-        app.dir_entries.insert(
-            parent.to_string_lossy().into_owned(),
-            read_directory(parent),
-        );
-    }
-    app.tree_hovered_path = None;
-    app.explorer_create = None;
-    app.explorer_rename = None;
-    app.explorer_create_input.clear();
-    app.explorer_create_error = None;
+    let folders_changed = app.explorer.model.apply_delete(&ExplorerFilesystem, path);
+    app.explorer.ui.hovered_path = None;
+    app.explorer.ui.clear_edit();
     app.show_success("Moved item to Trash.");
-    if app.workspace_folders.len() != original_root_count
-        || app.recent_folders.len() != original_recent_count
-    {
+    if folders_changed {
         persist_workspace(app);
     }
 }
@@ -762,52 +644,31 @@ pub fn remove_folder_from_workspace(state: &State<AppState>, root: PathBuf) {
 }
 
 fn remove_folder_state(app: &mut AppState, root: &Path) -> bool {
-    let original_len = app.workspace_folders.len();
-    app.workspace_folders.retain(|folder| folder != root);
-    if app.workspace_folders.len() == original_len {
+    let Some(edit_cancelled) = app.explorer.model.remove_root(root) else {
         return false;
-    }
-
-    app.dir_entries
-        .retain(|path, _| !Path::new(path).starts_with(root));
-    app.expanded
-        .retain(|path| !Path::new(path).starts_with(root));
+    };
     if app
-        .tree_hovered_path
+        .explorer
+        .ui
+        .hovered_path
         .as_deref()
         .is_some_and(|path| Path::new(path).starts_with(root))
     {
-        app.tree_hovered_path = None;
+        app.explorer.ui.hovered_path = None;
     }
-    if app
-        .explorer_create
-        .as_ref()
-        .is_some_and(|request| request.parent.starts_with(root))
-    {
-        app.explorer_create = None;
-        app.explorer_create_input.clear();
-        app.explorer_create_error = None;
+    if edit_cancelled {
+        app.explorer.ui.clear_edit();
     }
-    if app
-        .explorer_rename
-        .as_ref()
-        .is_some_and(|request| request.path.starts_with(root))
-    {
-        app.explorer_rename = None;
-        app.explorer_create_input.clear();
-        app.explorer_create_error = None;
-    }
-    app.tree_scroll = 0.0;
-    app.tree_scroll_x = 0.0;
+    app.explorer.ui.reset_scroll();
     true
 }
 
 pub fn finish_explorer_create(state: &State<AppState>) {
     let snapshot = state.get();
-    let Some(request) = snapshot.explorer_create.clone() else {
+    let Some(request) = snapshot.explorer.model.create_request().cloned() else {
         return;
     };
-    let raw_name = snapshot.explorer_create_input.text().to_owned();
+    let raw_name = snapshot.explorer.ui.create_input.text().to_owned();
     drop(snapshot);
 
     let force_folder = raw_name.ends_with(['/', '\\']);
@@ -816,7 +677,7 @@ pub fn finish_explorer_create(state: &State<AppState>) {
         Ok(relative) => relative,
         Err(message) => {
             state.update(move |app| {
-                app.explorer_create_error = Some(message.clone());
+                app.explorer.ui.create_error = Some(message.clone());
                 app.show_error(message);
             });
             return;
@@ -835,44 +696,22 @@ pub fn finish_explorer_create(state: &State<AppState>) {
     if let Err(error) = result {
         let message = format!("Could not create {}: {error}", target.display());
         state.update(move |app| {
-            app.explorer_create_error = Some(message.clone());
+            app.explorer.ui.create_error = Some(message.clone());
             app.show_error(message);
         });
         return;
     }
 
     state.update(move |app| {
-        refresh_created_path(app, &request.parent, &target, kind);
+        app.explorer
+            .model
+            .complete_create(&ExplorerFilesystem, &request.parent, &target, kind);
         if kind == ExplorerCreateKind::File {
             app.workspace.open_path(target, String::new());
         }
-        app.explorer_create = None;
-        app.explorer_create_input.clear();
-        app.explorer_create_error = None;
+        app.explorer.ui.clear_edit();
         app.toast = None;
     });
-}
-
-fn refresh_created_path(app: &mut AppState, root: &Path, target: &Path, kind: ExplorerCreateKind) {
-    let refresh_until = if kind == ExplorerCreateKind::Folder {
-        target
-    } else {
-        target.parent().unwrap_or(root)
-    };
-    let mut directory = root.to_path_buf();
-    let key = directory.to_string_lossy().into_owned();
-    app.dir_entries
-        .insert(key.clone(), read_directory(&directory));
-    app.expanded.insert(key);
-    if let Ok(relative) = refresh_until.strip_prefix(root) {
-        for component in relative.components() {
-            directory.push(component.as_os_str());
-            let key = directory.to_string_lossy().into_owned();
-            app.dir_entries
-                .insert(key.clone(), read_directory(&directory));
-            app.expanded.insert(key);
-        }
-    }
 }
 
 /// Reopen a folder selected from the welcome screen's recent-workspace list.
@@ -880,7 +719,7 @@ pub fn open_recent_folder(state: &State<AppState>, path: PathBuf) -> bool {
     if !path.is_dir() {
         let display = path.display().to_string();
         state.update(move |app| {
-            app.recent_folders.retain(|recent| recent != &path);
+            app.explorer.model.forget_recent(&path);
             persist_workspace(app);
             app.show_error(format!(
                 "Workspace folder is no longer available: {display}"
@@ -912,7 +751,7 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
     };
 
     let mut options = FileDialogOptions::new().title("Select Repository Location");
-    if let Some(directory) = state.get().workspace_folders.first().cloned() {
+    if let Some(directory) = state.get().explorer.model.roots().first().cloned() {
         options = options.directory(directory);
     }
     let Some(parent) = system_file_dialogs().pick_folder(&options) else {
@@ -1001,20 +840,11 @@ fn load_folder(app: &mut AppState, path: PathBuf) {
 }
 
 fn replace_folder_state(app: &mut AppState, path: PathBuf) {
-    let key = path.to_string_lossy().into_owned();
-    let entries = read_directory(&path);
-    app.workspace_folders.clear();
-    app.workspace_folders.push(path.clone());
-    app.dir_entries.clear();
-    app.dir_entries.insert(key.clone(), entries);
-    app.expanded.clear();
-    app.expanded.insert(key);
-    app.tree_scroll = 0.0;
-    app.tree_scroll_x = 0.0;
-    app.show_drawer = true;
+    app.explorer.model.open_root(&ExplorerFilesystem, path);
+    app.explorer.ui.reset_scroll();
+    app.drawer.visible = true;
     app.welcome_hover = None;
     app.toast = None;
-    remember_folder(app, path);
 }
 
 pub(crate) fn add_folder(app: &mut AppState, path: PathBuf) {
@@ -1026,7 +856,7 @@ pub(crate) fn add_folder(app: &mut AppState, path: PathBuf) {
 /// Forget a worktree after Git successfully removed it from disk.
 pub(crate) fn forget_worktree(app: &mut AppState, root: &Path) {
     remove_folder_state(app, root);
-    app.recent_folders.retain(|path| path != root);
+    app.explorer.model.forget_recent(root);
     if app
         .git_pinned_repository
         .as_ref()
@@ -1038,25 +868,16 @@ pub(crate) fn forget_worktree(app: &mut AppState, root: &Path) {
 }
 
 fn add_folder_state(app: &mut AppState, path: PathBuf) -> bool {
-    if app.workspace_folders.contains(&path) {
-        remember_folder(app, path);
+    let was_empty = app.explorer.model.roots().is_empty();
+    if !app.explorer.model.add_root(&ExplorerFilesystem, path) {
         return false;
     }
-
-    let key = path.to_string_lossy().into_owned();
-    let entries = read_directory(&path);
-    let was_empty = app.workspace_folders.is_empty();
-    app.workspace_folders.push(path.clone());
-    app.dir_entries.insert(key.clone(), entries);
-    app.expanded.insert(key);
     if was_empty {
-        app.tree_scroll = 0.0;
-        app.tree_scroll_x = 0.0;
+        app.explorer.ui.reset_scroll();
     }
-    app.show_drawer = true;
+    app.drawer.visible = true;
     app.welcome_hover = None;
     app.toast = None;
-    remember_folder(app, path);
     true
 }
 
@@ -1146,28 +967,17 @@ fn open_launch_paths_with(
 
 /// Populate directory caches for folders restored from the previous session.
 pub(crate) fn hydrate_workspace_folders(app: &mut AppState) {
-    roots::hydrate(
-        &ExplorerFilesystem,
-        &mut app.workspace_folders,
-        &mut app.recent_folders,
-    );
-    for path in &app.workspace_folders {
-        let key = path.to_string_lossy().into_owned();
-        app.dir_entries.insert(key.clone(), read_directory(path));
-        app.expanded.insert(key);
-    }
+    app.explorer.model.hydrate(&ExplorerFilesystem);
 }
 
 fn normalized_folder(path: PathBuf) -> PathBuf {
     roots::normalized(&ExplorerFilesystem, path)
 }
 
-fn remember_folder(app: &mut AppState, path: PathBuf) {
-    roots::remember(&mut app.recent_folders, path);
-}
-
 fn persist_workspace(app: &mut AppState) {
-    if let Err(error) = workspace_persistence::save(&app.workspace_folders, &app.recent_folders) {
+    if let Err(error) =
+        workspace_persistence::save(app.explorer.model.roots(), app.explorer.model.recents())
+    {
         app.show_error(format!("Could not remember workspace folders: {error}"));
     }
 }
@@ -1338,8 +1148,9 @@ mod tests {
         fs::create_dir_all(&second).unwrap();
         let file = first.join("main.rs");
         let mut app = AppState::new();
-        app.workspace_folders
-            .push(PathBuf::from("previous-workspace"));
+        app.explorer
+            .model
+            .restore(vec![PathBuf::from("previous-workspace")], Vec::new());
 
         let changed = open_launch_paths_with(
             &mut app,
@@ -1349,7 +1160,7 @@ mod tests {
 
         assert!(changed);
         assert_eq!(
-            app.workspace_folders,
+            app.explorer.model.roots(),
             vec![normalized_folder(first), normalized_folder(second)]
         );
         let active = app.workspace.active().unwrap();
@@ -1361,8 +1172,9 @@ mod tests {
     #[test]
     fn unreadable_launch_files_report_one_toast_and_keep_the_workspace() {
         let mut app = AppState::new();
-        app.workspace_folders
-            .push(PathBuf::from("previous-workspace"));
+        app.explorer
+            .model
+            .restore(vec![PathBuf::from("previous-workspace")], Vec::new());
 
         let changed = open_launch_paths_with(
             &mut app,
@@ -1372,7 +1184,7 @@ mod tests {
 
         assert!(!changed);
         assert_eq!(
-            app.workspace_folders,
+            app.explorer.model.roots(),
             vec![PathBuf::from("previous-workspace")]
         );
         assert!(app.workspace.active_items().is_empty());
@@ -1676,13 +1488,13 @@ mod tests {
         assert!(add_folder_state(&mut app, second.clone()));
         assert!(!add_folder_state(&mut app, first.clone()));
 
-        assert_eq!(app.workspace_folders, vec![first.clone(), second.clone()]);
-        assert!(app.expanded.contains(&first.to_string_lossy().into_owned()));
-        assert!(
-            app.expanded
-                .contains(&second.to_string_lossy().into_owned())
+        assert_eq!(
+            app.explorer.model.roots(),
+            vec![first.clone(), second.clone()]
         );
-        assert_eq!(app.recent_folders, vec![first.clone(), second]);
+        assert!(app.explorer.model.is_expanded(&first.to_string_lossy()));
+        assert!(app.explorer.model.is_expanded(&second.to_string_lossy()));
+        assert_eq!(app.explorer.model.recents(), vec![first.clone(), second]);
     }
 
     #[test]
@@ -1694,7 +1506,7 @@ mod tests {
         add_folder_state(&mut app, first);
         replace_folder_state(&mut app, second.clone());
 
-        assert_eq!(app.workspace_folders, vec![second]);
+        assert_eq!(app.explorer.model.roots(), vec![second]);
     }
 
     #[test]
@@ -1704,45 +1516,55 @@ mod tests {
         let child = removed.join("src");
         let kept = PathBuf::from("second-workspace");
         let open_file = child.join("main.rs");
-        app.workspace_folders = vec![removed.clone(), kept.clone()];
-        app.recent_folders = vec![removed.clone(), kept.clone()];
-        app.dir_entries
-            .insert(removed.to_string_lossy().into_owned(), Vec::new().into());
-        app.dir_entries
-            .insert(child.to_string_lossy().into_owned(), Vec::new().into());
-        app.dir_entries
-            .insert(kept.to_string_lossy().into_owned(), Vec::new().into());
-        app.expanded.insert(removed.to_string_lossy().into_owned());
-        app.expanded.insert(child.to_string_lossy().into_owned());
-        app.expanded.insert(kept.to_string_lossy().into_owned());
-        app.tree_hovered_path = Some(open_file.to_string_lossy().into_owned());
-        app.explorer_create = Some(ExplorerCreateRequest {
-            kind: ExplorerCreateKind::File,
-            parent: child.clone(),
-        });
+        app.explorer.model.restore(
+            vec![removed.clone(), kept.clone()],
+            vec![removed.clone(), kept.clone()],
+        );
+        app.explorer
+            .model
+            .insert_listing(removed.to_string_lossy().into_owned(), Vec::new().into());
+        app.explorer
+            .model
+            .insert_listing(child.to_string_lossy().into_owned(), Vec::new().into());
+        app.explorer
+            .model
+            .insert_listing(kept.to_string_lossy().into_owned(), Vec::new().into());
+        for path in [&removed, &child, &kept] {
+            app.explorer
+                .model
+                .set_expanded(&path.to_string_lossy(), true);
+        }
+        app.explorer.ui.hovered_path = Some(open_file.to_string_lossy().into_owned());
+        app.explorer
+            .model
+            .begin_create(child.clone(), ExplorerCreateKind::File);
         app.workspace.open_path(open_file.clone(), String::new());
 
         assert!(remove_folder_state(&mut app, &removed));
 
-        assert_eq!(app.workspace_folders, vec![kept.clone()]);
-        assert_eq!(app.recent_folders, vec![removed.clone(), kept.clone()]);
-        assert!(
-            app.dir_entries
-                .keys()
-                .all(|path| !Path::new(path).starts_with(&removed))
+        assert_eq!(app.explorer.model.roots(), vec![kept.clone()]);
+        assert_eq!(
+            app.explorer.model.recents(),
+            vec![removed.clone(), kept.clone()]
         );
         assert!(
-            app.expanded
-                .iter()
-                .all(|path| !Path::new(path).starts_with(&removed))
+            app.explorer
+                .model
+                .listings()
+                .all(|(path, _)| !Path::new(path).starts_with(&removed))
         );
+        for path in [&removed, &child] {
+            assert!(!app.explorer.model.is_expanded(&path.to_string_lossy()));
+        }
         assert!(
-            app.dir_entries
-                .contains_key(&kept.to_string_lossy().into_owned())
+            app.explorer
+                .model
+                .listing(&kept.to_string_lossy())
+                .is_some()
         );
-        assert!(app.expanded.contains(&kept.to_string_lossy().into_owned()));
-        assert!(app.tree_hovered_path.is_none());
-        assert!(app.explorer_create.is_none());
+        assert!(app.explorer.model.is_expanded(&kept.to_string_lossy()));
+        assert!(app.explorer.ui.hovered_path.is_none());
+        assert!(app.explorer.model.create_request().is_none());
         assert_eq!(app.workspace.active_path(), Some(open_file.as_path()));
     }
 
@@ -2067,25 +1889,30 @@ mod tests {
         let new_path = root.join("source");
         let old_file = old_path.join("main.rs");
         let new_file = new_path.join("main.rs");
-        app.workspace_folders = vec![root];
-        app.dir_entries
-            .insert(old_path.to_string_lossy().into_owned(), Vec::new().into());
-        app.expanded.insert(old_path.to_string_lossy().into_owned());
+        app.explorer.model.restore(vec![root], Vec::new());
+        app.explorer
+            .model
+            .insert_listing(old_path.to_string_lossy().into_owned(), Vec::new().into());
+        app.explorer
+            .model
+            .set_expanded(&old_path.to_string_lossy(), true);
+        app.explorer
+            .model
+            .begin_rename(old_path.clone(), ExplorerTargetKind::Directory);
         app.workspace.open_path(old_file, String::new());
 
         apply_renamed_path_state(&mut app, &old_path, &new_path);
 
         assert_eq!(app.workspace.active_path(), Some(new_file.as_path()));
         assert!(
-            app.dir_entries
-                .keys()
-                .all(|path| !Path::new(path).starts_with(&old_path))
+            app.explorer
+                .model
+                .listings()
+                .all(|(path, _)| !Path::new(path).starts_with(&old_path))
         );
-        assert!(
-            app.expanded
-                .contains(&new_path.to_string_lossy().into_owned())
-        );
-        assert!(app.explorer_rename.is_none());
+        assert!(!app.explorer.model.is_expanded(&old_path.to_string_lossy()));
+        assert!(app.explorer.model.is_expanded(&new_path.to_string_lossy()));
+        assert!(app.explorer.model.rename_request().is_none());
     }
 
     #[test]
@@ -2094,7 +1921,7 @@ mod tests {
         let root = PathBuf::from("workspace");
         let old_path = root.join("before.rs");
         let new_path = root.join("after.rs");
-        app.workspace_folders = vec![root];
+        app.explorer.model.restore(vec![root], Vec::new());
         app.workspace.open_path(old_path.clone(), String::new());
 
         apply_renamed_path_state(&mut app, &old_path, &new_path);
@@ -2108,7 +1935,7 @@ mod tests {
         let mut app = AppState::new();
         let root = PathBuf::from("workspace");
         let path = root.join("deleted.rs");
-        app.workspace_folders = vec![root];
+        app.explorer.model.restore(vec![root], Vec::new());
         app.workspace.open_path(path.clone(), String::new());
 
         apply_deleted_path_state(&mut app, &path);

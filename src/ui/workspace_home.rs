@@ -80,7 +80,7 @@ pub fn render(
         terminal_focus,
         terminal_tabs,
     };
-    let (title, detail) = workspace_identity(&snapshot.workspace_folders);
+    let (title, detail) = workspace_identity(snapshot.explorer.model.roots());
     let page_w = (rect.width() - PAGE_PAD_X * 2.0).clamp(0.0, MAX_PAGE_W);
     let page_left = rect.left + (rect.width() - page_w) / 2.0;
     let page_right = page_left + page_w;

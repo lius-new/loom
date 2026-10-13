@@ -127,3 +127,18 @@ test('Explorer filesystem adapter is limited to its platform services',()=>{
   assert.deepEqual(violations({[file]:'use crate::features::explorer::DirEntry;\nuse std::fs;\nfn t(){ std::process::Command::new("x"); windows_sys::Win32::Foo; }'},policy()),[]);
   for(const source of ['use crate::state::AppState;','use lgui::prelude::*;','use std::thread;','use crate::app::explorer;'])assert.ok(violations({[file]:source},policy()).length>0,source);
 });
+test('Explorer state cannot evade its ownership register or expose model fields',()=>{
+  const p=policy();p.explorer_ownership={roots:{owner:'features/explorer/model',migrated_in:'R5.2'},gone:{owner:'ui/explorer/state',migrated_in:'R5.2'}};
+  const errors=violations({'src/features/explorer/model.rs':'pub struct ExplorerModel { roots: Vec<u8>, extra: bool }','src/ui/explorer/state.rs':'pub struct ExplorerUiState { pub scroll: f32 }'},p);
+  assert.ok(errors.some(e=>e.includes('ExplorerModel.extra: no registered owner')));
+  assert.ok(errors.some(e=>e.includes('ExplorerUiState.gone: obsolete ownership entry')));
+  assert.ok(errors.some(e=>e.includes('ExplorerUiState.scroll: no registered owner')));
+  p.explorer_ownership={roots:{owner:'features/explorer/model',migrated_in:'R5.2'}};
+  assert.ok(violations({'src/features/explorer/model.rs':'pub struct ExplorerModel { pub roots: Vec<u8> }'},p).some(e=>e.includes('must stay private')));
+  assert.deepEqual(violations({'src/features/explorer/model.rs':'pub struct ExplorerModel { roots: Vec<u8> }'},p),[]);
+});
+test('Explorer view cannot read the application root or keep exceptions',()=>{
+  for(const source of ['use crate::state::AppState;','fn f(w: &Workspace) {}'])assert.ok(violations({'src/ui/explorer/view.rs':source},policy()).length>0,source);
+  const p=policy();p.exceptions['src/ui/explorer/view.rs']={dependencies:['crate::state'],reason:'bad',remove_in:'R8'};
+  assert.ok(violations({'src/ui/explorer/view.rs':'use crate::state::Root;'},p).some(e=>e.includes('Explorer view cannot have migration exceptions')));
+});

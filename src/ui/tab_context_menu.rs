@@ -402,7 +402,9 @@ mod tests {
             Action::RevealInTree
         ));
 
-        app.workspace_folders.push(PathBuf::from("workspace"));
+        app.explorer
+            .model
+            .restore(vec![PathBuf::from("workspace")], Vec::new());
         assert!(action_enabled(
             &app,
             app.workspace.active_pane(),
@@ -468,7 +470,9 @@ mod tests {
     #[test]
     fn every_menu_action_is_enabled_when_its_target_is_available() {
         let mut app = AppState::new();
-        app.workspace_folders.push(PathBuf::from("workspace"));
+        app.explorer
+            .model
+            .restore(vec![PathBuf::from("workspace")], Vec::new());
         let target = app
             .workspace
             .open_path(PathBuf::from("workspace/first.rs"), String::new());

@@ -146,7 +146,7 @@ pub fn render(
         .floor() as usize)
         .clamp(1, MAX_VISIBLE_RECENTS);
 
-    if snapshot.recent_folders.is_empty() {
+    if snapshot.explorer.model.recents().is_empty() {
         welcome = welcome.child(empty_recent_card(UiRect::new(
             workspace_rect.left,
             list_top,
@@ -156,7 +156,9 @@ pub fn render(
     } else {
         let mut card_top = list_top;
         for (recent_index, path) in snapshot
-            .recent_folders
+            .explorer
+            .model
+            .recents()
             .iter()
             .take(visible_count)
             .enumerate()

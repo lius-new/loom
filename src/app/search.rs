@@ -14,13 +14,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub fn key(app: &AppState) -> Key {
     Key {
         spec: app.search.spec(),
-        roots: app.workspace_folders.clone(),
+        roots: app.explorer.model.roots().to_vec(),
         versions: app
             .workspace
             .dirty_text_versions()
             .into_iter()
             .filter(|(path, _)| {
-                app.workspace_folders
+                app.explorer
+                    .model
+                    .roots()
                     .iter()
                     .any(|root| path.starts_with(root))
             })
@@ -288,7 +290,7 @@ pub fn render(
         commands::{Command, Commands},
         view,
     };
-    let root_count = state.get().workspace_folders.len();
+    let root_count = state.get().explorer.model.roots().len();
     let has_roots = root_count > 0;
     let header = crate::ui::sidebar::drawer_header(
         UiRect::new(
@@ -389,7 +391,9 @@ mod tests {
     #[test]
     fn query_key_tracks_search_inputs_and_workspace_edits_but_not_view_state() {
         let mut app = AppState::new();
-        app.workspace_folders.push(PathBuf::from("project"));
+        app.explorer
+            .model
+            .restore(vec![PathBuf::from("project")], Vec::new());
         let original = key(&app);
         app.apply(Action::OpenSearch);
         assert!(key(&app) == original);
@@ -461,7 +465,9 @@ mod tests {
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
-                app.workspace_folders.push(fixture_root.clone());
+                app.explorer
+                    .model
+                    .restore(vec![fixture_root.clone()], Vec::new());
                 app.apply(Action::OpenSearch);
                 app.search.ui.query.set_text("needle");
                 app
@@ -506,11 +512,11 @@ mod tests {
             app.search.ui.details_open = true;
             app.search.ui.scroll_y = 20.0;
             app.show_source_control = !app.show_source_control;
-            app.show_drawer = false;
+            app.drawer.visible = false;
         });
         session.render_view(&view, viewport, UiScale::ONE);
         session.runtime().run_effects();
-        state.update(|app| app.show_drawer = true);
+        state.update(|app| app.drawer.visible = true);
         session.render_view(&view, viewport, UiScale::ONE);
         session.runtime().run_effects();
         assert_eq!(state.get().search.model.status().generation, generation);
@@ -548,7 +554,9 @@ mod tests {
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
                 app.apply(Action::OpenSearch);
-                app.workspace_folders.push(fixture_root.clone());
+                app.explorer
+                    .model
+                    .restore(vec![fixture_root.clone()], Vec::new());
                 app.workspace
                     .open_path(fixture_path.clone(), "old disk\n".into());
                 app.workspace.active_editor_mut().unwrap().select_all();

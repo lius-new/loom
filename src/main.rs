@@ -25,7 +25,6 @@ mod editor;
 mod features;
 mod file_icons;
 mod file_loading;
-mod file_tree;
 mod file_watcher;
 mod fonts;
 mod git;

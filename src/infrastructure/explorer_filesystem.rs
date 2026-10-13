@@ -9,6 +9,11 @@ use crate::features::explorer::{DirEntry, ExplorerTargetKind};
 
 pub(crate) struct ExplorerFilesystem;
 
+/// Read one directory listing from disk.
+pub(crate) fn read_directory(directory: &Path) -> Arc<Vec<DirEntry>> {
+    ExplorerFilesystem.read_directory(directory)
+}
+
 impl DirectoryPort for ExplorerFilesystem {
     fn read_directory(&self, directory: &Path) -> Arc<Vec<DirEntry>> {
         let mut entries = match fs::read_dir(directory) {

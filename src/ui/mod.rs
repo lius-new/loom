@@ -12,6 +12,7 @@ pub mod context_menu;
 pub mod diff_editor;
 pub(crate) mod editor;
 pub(crate) mod editor_binding;
+pub mod explorer;
 pub mod git_badge;
 pub mod git_confirm;
 pub mod git_menu;

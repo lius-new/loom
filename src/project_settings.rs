@@ -129,7 +129,9 @@ mod tests {
         .unwrap();
 
         let mut app = crate::state::AppState::new();
-        app.workspace_folders = vec![with.clone(), without.clone()];
+        app.explorer
+            .model
+            .restore(vec![with.clone(), without.clone()], Vec::new());
         app.refresh_project_settings();
         assert_eq!(app.project_settings.len(), 1);
         assert_eq!(app.project_settings[0].1.errors.len(), 1);

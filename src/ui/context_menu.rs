@@ -11,7 +11,6 @@ use lgui::services::{Clipboard, ServicesContextExt};
 use lgui::text::measure_width;
 use unicode_width::UnicodeWidthStr;
 
-use crate::features::explorer::roots;
 use crate::state::{AppState, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
@@ -193,13 +192,13 @@ const FILE_ENTRIES: &[Entry] = &[
 fn context_root(app: &AppState) -> Option<PathBuf> {
     app.workspace
         .active_path()
-        .and_then(|active| roots::root_for_path(&app.workspace_folders, active))
-        .or_else(|| app.workspace_folders.first())
+        .and_then(|active| app.explorer.model.root_for_path(active))
+        .or_else(|| app.explorer.model.roots().first())
         .cloned()
 }
 
 fn context_target(app: &AppState) -> Option<ExplorerContextTarget> {
-    app.context_menu_target.clone().or_else(|| {
+    app.explorer.ui.menu_target.clone().or_else(|| {
         context_root(app).map(|path| ExplorerContextTarget {
             path,
             kind: ExplorerTargetKind::Directory,
@@ -208,7 +207,7 @@ fn context_target(app: &AppState) -> Option<ExplorerContextTarget> {
 }
 
 pub(crate) fn workspace_root_for_path(app: &AppState, path: &Path) -> Option<PathBuf> {
-    roots::root_for_path(&app.workspace_folders, path).cloned()
+    app.explorer.model.root_for_path(path).cloned()
 }
 
 pub(crate) fn copy_target_path(
@@ -257,7 +256,7 @@ pub fn render(
 ) -> Element {
     let s = state.get();
     let target = context_target(&s);
-    let has_item_target = s.context_menu_target.is_some();
+    let has_item_target = s.explorer.ui.menu_target.is_some();
     let entries = if target
         .as_ref()
         .is_some_and(|target| target.kind == ExplorerTargetKind::File)
@@ -267,7 +266,8 @@ pub fn render(
         DIRECTORY_ENTRIES
     };
     let can_remove = target.as_ref().is_some_and(|target| {
-        target.kind == ExplorerTargetKind::Directory && s.workspace_folders.contains(&target.path)
+        target.kind == ExplorerTargetKind::Directory
+            && s.explorer.model.roots().contains(&target.path)
     });
 
     // Size the menu to its widest entry (label + optional shortcut).
@@ -320,9 +320,9 @@ pub fn render(
         .on_pointer_down_with_button(move |_cx, p, _button| {
             if !card.contains(p.point) {
                 st_close.update(move |app| {
-                    app.context_menu = None;
-                    app.context_menu_target = None;
-                    app.context_menu_hover = None;
+                    app.explorer.ui.menu = None;
+                    app.explorer.ui.menu_target = None;
+                    app.explorer.ui.menu_hover = None;
                 });
             }
         });
@@ -346,9 +346,9 @@ pub fn render(
     .event_policy(EventPolicy::INTERACTIVE)
     .on_event_capture(UiEventKind::PointerMove, move |_cx, _p| {
         st_clear.try_update(|app| {
-            let changed = app.context_menu_hover.is_some();
+            let changed = app.explorer.ui.menu_hover.is_some();
             if changed {
-                app.context_menu_hover = None;
+                app.explorer.ui.menu_hover = None;
             }
             changed
         });
@@ -385,7 +385,7 @@ pub fn render(
                     card.right - MENU_BORDER,
                     y + ITEM_H,
                 );
-                let hovered = enabled && s.context_menu_hover == Some(index);
+                let hovered = enabled && s.explorer.ui.menu_hover == Some(index);
                 let idx = index;
                 let label = *label;
                 let action = *action;
@@ -411,14 +411,14 @@ pub fn render(
                 .on_event(UiEventKind::PointerMove, move |_cx, _p| {
                     st_hover.try_update(move |app| {
                         let changed = if enabled {
-                            app.context_menu_hover != Some(idx)
+                            app.explorer.ui.menu_hover != Some(idx)
                         } else {
-                            app.context_menu_hover.is_some()
+                            app.explorer.ui.menu_hover.is_some()
                         };
                         if enabled {
-                            app.context_menu_hover = Some(idx);
+                            app.explorer.ui.menu_hover = Some(idx);
                         } else {
-                            app.context_menu_hover = None;
+                            app.explorer.ui.menu_hover = None;
                         }
                         changed
                     });
@@ -428,9 +428,9 @@ pub fn render(
                         return;
                     }
                     st_click.update(move |app| {
-                        app.context_menu = None;
-                        app.context_menu_target = None;
-                        app.context_menu_hover = None;
+                        app.explorer.ui.menu = None;
+                        app.explorer.ui.menu_target = None;
+                        app.explorer.ui.menu_hover = None;
                     });
                     match action {
                         MenuAction::NewFile | MenuAction::NewFolder => {
@@ -447,7 +447,7 @@ pub fn render(
                         }
                         MenuAction::RefreshExplorer => {
                             st_click.update(|app| {
-                                crate::file_tree::refresh_all_loaded_directories(app);
+                                workspace_actions::refresh_explorer(app);
                                 app.workspace.reconcile_disk();
                             });
                         }
@@ -583,7 +583,10 @@ mod tests {
     #[test]
     fn context_root_falls_back_to_the_first_workspace_folder() {
         let mut app = AppState::new();
-        app.workspace_folders = vec![PathBuf::from("first"), PathBuf::from("second")];
+        app.explorer.model.restore(
+            vec![PathBuf::from("first"), PathBuf::from("second")],
+            Vec::new(),
+        );
 
         assert_eq!(context_root(&app), Some(PathBuf::from("first")));
     }
@@ -591,10 +594,13 @@ mod tests {
     #[test]
     fn context_root_prefers_the_deepest_root_containing_the_active_file() {
         let mut app = AppState::new();
-        app.workspace_folders = vec![
-            PathBuf::from("workspace"),
-            PathBuf::from("workspace/nested"),
-        ];
+        app.explorer.model.restore(
+            vec![
+                PathBuf::from("workspace"),
+                PathBuf::from("workspace/nested"),
+            ],
+            Vec::new(),
+        );
         app.workspace
             .open_path(PathBuf::from("workspace/nested/src/main.rs"), String::new());
 
@@ -639,8 +645,10 @@ mod tests {
     #[test]
     fn an_explicit_directory_target_takes_priority_over_the_background_root() {
         let mut app = AppState::new();
-        app.workspace_folders = vec![PathBuf::from("workspace")];
-        app.context_menu_target = Some(ExplorerContextTarget {
+        app.explorer
+            .model
+            .restore(vec![PathBuf::from("workspace")], Vec::new());
+        app.explorer.ui.menu_target = Some(ExplorerContextTarget {
             path: PathBuf::from("workspace/src"),
             kind: ExplorerTargetKind::Directory,
         });

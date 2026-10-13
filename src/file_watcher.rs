@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use notify::event::ModifyKind;
 use notify::{Config, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 
+use crate::infrastructure::explorer_filesystem::ExplorerFilesystem;
 use crate::model::workspace::ReconcileResult;
 use crate::state::AppState;
 
@@ -51,10 +52,10 @@ impl FileChangeBatch {
 pub(crate) fn apply_batch(app: &mut AppState, batch: &FileChangeBatch) -> bool {
     let paths = batch.paths().map(Path::to_path_buf).collect::<Vec<_>>();
     let tree_changed = if batch.requires_full_rescan {
-        crate::file_tree::refresh_all_loaded_directories(app)
+        app.explorer.model.refresh_all(&ExplorerFilesystem)
     } else {
-        crate::file_tree::refresh_affected_paths(
-            app,
+        app.explorer.model.refresh_affected(
+            &ExplorerFilesystem,
             batch
                 .changes
                 .iter()
@@ -96,13 +97,13 @@ pub(crate) fn prepare_batch(app: &AppState, batch: &FileChangeBatch) -> Prepared
     let disk_updates = app
         .workspace
         .prepare_disk_updates(&paths, batch.requires_full_rescan);
-    let mut working = app.clone();
-    working.pending_file_tree_refresh = false;
+    let mut working = app.explorer.model.clone();
+    working.clear_pending_refresh();
     if batch.requires_full_rescan {
-        crate::file_tree::refresh_all_loaded_directories(&mut working);
+        working.refresh_all(&ExplorerFilesystem);
     } else {
-        crate::file_tree::refresh_affected_paths(
-            &mut working,
+        working.refresh_affected(
+            &ExplorerFilesystem,
             batch
                 .changes
                 .iter()
@@ -111,23 +112,24 @@ pub(crate) fn prepare_batch(app: &AppState, batch: &FileChangeBatch) -> Prepared
         );
     }
     let directories = app
-        .dir_entries
-        .iter()
+        .explorer
+        .model
+        .listings()
         .filter_map(|(key, previous)| {
-            let next = working.dir_entries.get(key);
+            let next = working.listing(key);
             (next != Some(previous)).then(|| (key.clone(), previous.clone(), next.cloned()))
         })
         .collect();
     PreparedFileBatch {
-        roots: app.workspace_folders.clone(),
+        roots: app.explorer.model.roots().to_vec(),
         directories,
         disk_updates,
-        defer_tree: working.pending_file_tree_refresh,
+        defer_tree: working.pending_refresh(),
         invalidate_search: !app.search.ui.query.text().is_empty()
             && (batch.requires_full_rescan
                 || crate::infrastructure::search_filesystem::paths_affect_search(
                     &app.search.spec(),
-                    &app.workspace_folders,
+                    app.explorer.model.roots(),
                     &batch
                         .changes
                         .iter()
@@ -144,26 +146,26 @@ pub(crate) fn prepare_batch(app: &AppState, batch: &FileChangeBatch) -> Prepared
 pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch) -> (bool, bool) {
     let mut changed = false;
     let mut retry = false;
-    if app.workspace_folders == batch.roots {
-        if batch.defer_tree || app.explorer_create.is_some() || app.explorer_rename.is_some() {
-            app.pending_file_tree_refresh = true;
+    if app.explorer.model.roots() == batch.roots {
+        if batch.defer_tree || app.explorer.model.editing() {
+            app.explorer.model.defer_refresh();
         } else {
-            app.pending_file_tree_refresh = false;
+            app.explorer.model.clear_pending_refresh();
             for (key, previous, next) in &batch.directories {
                 if app
-                    .dir_entries
-                    .get(key)
+                    .explorer
+                    .model
+                    .listing(key)
                     .is_some_and(|current| Arc::ptr_eq(current, previous))
                 {
                     let old = if let Some(next) = next {
-                        app.dir_entries.insert(key.clone(), next.clone())
+                        app.explorer.model.insert_listing(key.clone(), next.clone())
                     } else {
-                        app.expanded.remove(key);
-                        app.dir_entries.remove(key)
+                        app.explorer.model.unload(key)
                     };
                     crate::background_ui::retire(old);
                     changed = true;
-                } else if app.dir_entries.contains_key(key) {
+                } else if app.explorer.model.listing(key).is_some() {
                     retry = true;
                 }
             }
@@ -183,9 +185,9 @@ pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch)
     });
     let content_reloaded = outcomes.iter().any(|result| {
         matches!(result, ReconcileResult::Reloaded(path)
-            if app.workspace_folders.iter().any(|root| path.starts_with(root)))
+            if app.explorer.model.roots().iter().any(|root| path.starts_with(root)))
     });
-    if app.workspace_folders == batch.roots
+    if app.explorer.model.roots() == batch.roots
         && (batch.invalidate_search || content_reloaded)
         && !app.search.ui.query.text().is_empty()
         && !app.search.model.status().cancelled
@@ -669,10 +671,12 @@ mod tests {
     fn outdated_directory_notifications_request_a_fresh_read() {
         let root = temp_directory("delayed-notification");
         let mut app = AppState::new();
-        app.workspace_folders.push(root.clone());
+        app.explorer.model.restore(vec![root.clone()], Vec::new());
         let key = root.to_string_lossy().into_owned();
-        app.dir_entries
-            .insert(key.clone(), crate::file_tree::read_directory(&root));
+        app.explorer.model.insert_listing(
+            key.clone(),
+            crate::infrastructure::explorer_filesystem::read_directory(&root),
+        );
         fs::write(root.join("first.txt"), "first").unwrap();
         let full = FileChangeBatch {
             changes: Vec::new(),
@@ -685,7 +689,7 @@ mod tests {
         assert_eq!(apply_prepared_batch(&mut app, second), (false, true));
         let retry = prepare_batch(&app, &full);
         assert_eq!(apply_prepared_batch(&mut app, retry), (true, false));
-        assert_eq!(app.dir_entries[&key].len(), 2);
+        assert_eq!(app.explorer.model.listing(&key).unwrap().len(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -697,7 +701,7 @@ mod tests {
         fs::write(root.join("target/generated.txt"), "generated").unwrap();
         fs::write(root.join("a.txt"), "needle").unwrap();
         let mut app = AppState::new();
-        app.workspace_folders.push(root.clone());
+        app.explorer.model.restore(vec![root.clone()], Vec::new());
         app.search.ui.query.set_text("needle");
         // Search is cached even when another drawer is visible.
         for (name, expected) in [("target/generated.txt", 0), ("a.txt", 1)] {
@@ -750,10 +754,12 @@ mod tests {
         fs::write(&open_path, "before").unwrap();
 
         let mut app = AppState::new();
-        app.workspace_folders.push(root.clone());
+        app.explorer.model.restore(vec![root.clone()], Vec::new());
         let root_key = root.to_string_lossy().into_owned();
-        app.dir_entries
-            .insert(root_key.clone(), crate::file_tree::read_directory(&root));
+        app.explorer.model.insert_listing(
+            root_key.clone(),
+            crate::infrastructure::explorer_filesystem::read_directory(&root),
+        );
         app.workspace.open_path(open_path.clone(), "before".into());
 
         fs::write(&open_path, "after and longer").unwrap();
@@ -778,7 +784,10 @@ mod tests {
             "after and longer"
         );
         assert!(
-            app.dir_entries[&root_key]
+            app.explorer
+                .model
+                .listing(&root_key)
+                .unwrap()
                 .iter()
                 .any(|entry| entry.name == "added.txt")
         );

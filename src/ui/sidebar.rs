@@ -15,7 +15,6 @@ use lgui::core::{
 };
 use lgui::prelude::{Color, Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
-use crate::file_tree::read_directory;
 use crate::git::{GitStoreSnapshot, PathDecoration};
 #[cfg(test)]
 use crate::state::DirEntry;
@@ -82,8 +81,8 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
             clear_hover.try_update(|app| {
-                let changed = app.tree_hovered_path.is_some();
-                app.tree_hovered_path = None;
+                let changed = app.explorer.ui.hovered_path.is_some();
+                app.explorer.ui.hovered_path = None;
                 changed
             });
         })
@@ -91,21 +90,23 @@ pub fn render(
             if button == PointerButton::Right {
                 st_menu.update(move |app| {
                     app.editor.tab_context_menu = None;
-                    app.context_menu = Some((p.point.x, p.point.y));
-                    app.context_menu_target = None;
+                    app.explorer.ui.menu = Some((p.point.x, p.point.y));
+                    app.explorer.ui.menu_target = None;
                 });
             }
         });
     bar = bar.child(capture);
 
     // Content: empty-state prompt, or all root folders in the current project.
-    if s.workspace_folders.is_empty() {
+    if s.explorer.model.roots().is_empty() {
         for el in empty_state(content_rect, state.clone()) {
             bar = bar.child(el);
         }
     } else {
         let roots = s
-            .workspace_folders
+            .explorer
+            .model
+            .roots()
             .iter()
             .map(|dir| {
                 let key = dir.to_string_lossy().into_owned();
@@ -121,7 +122,7 @@ pub fn render(
             .map(|(_, key, name)| tree_content_right(key, name, &s, content_rect.left))
             .fold(content_rect.right, f32::max);
         let max_scroll_x = (content_right - content_rect.right).max(0.0);
-        let scroll_x = s.tree_scroll_x.clamp(0.0, max_scroll_x);
+        let scroll_x = s.explorer.ui.scroll_x.clamp(0.0, max_scroll_x);
 
         let mut y = content_rect.top;
         let indent = content_rect.left + INDENT;
@@ -132,7 +133,7 @@ pub fn render(
         // Each root starts a fresh sticky ancestry so adjacent workspaces push
         // one another out at the top edge instead of nesting visually.
         for (root_path, key, root_name) in roots {
-            let is_expanded = s.expanded.contains(&key);
+            let is_expanded = s.explorer.model.is_expanded(&key);
             let root = StickyDirectory {
                 key: key.clone(),
                 name: root_name.clone(),
@@ -146,7 +147,9 @@ pub fn render(
                 depth: 0,
                 sticky_path: path.clone(),
             });
-            if s.explorer_rename
+            if s.explorer
+                .model
+                .rename_request()
                 .as_ref()
                 .is_some_and(|request| request.path == root_path)
             {
@@ -170,14 +173,16 @@ pub fn render(
                     0.0,
                     is_expanded,
                     false,
-                    s.tree_hovered_path.as_deref() == Some(key.as_str()),
+                    s.explorer.ui.hovered_path.as_deref() == Some(key.as_str()),
                     theme::c().text_soft,
                     &state,
                 ));
             }
             y += ROW_H;
 
-            if s.explorer_create
+            if s.explorer
+                .model
+                .create_request()
                 .as_ref()
                 .is_some_and(|request| request.parent == root_path)
             {
@@ -221,7 +226,7 @@ pub fn render(
         let content_bottom = y;
 
         let max_scroll = (content_bottom - content_rect.bottom).max(0.0);
-        let scroll = s.tree_scroll.clamp(0.0, max_scroll);
+        let scroll = s.explorer.ui.scroll.clamp(0.0, max_scroll);
 
         let st = state.clone();
         bar = bar.on_event(UiEventKind::Wheel, move |_cx, payload| {
@@ -231,8 +236,10 @@ pub fn render(
                     WheelUnit::Pixels => (delta.x, delta.y),
                 };
                 st.update(move |app| {
-                    app.tree_scroll = (app.tree_scroll - step_y).clamp(0.0, max_scroll);
-                    app.tree_scroll_x = (app.tree_scroll_x - step_x).clamp(0.0, max_scroll_x);
+                    app.explorer.ui.scroll =
+                        (app.explorer.ui.scroll - step_y).clamp(0.0, max_scroll);
+                    app.explorer.ui.scroll_x =
+                        (app.explorer.ui.scroll_x - step_x).clamp(0.0, max_scroll_x);
                 });
             }
         });
@@ -271,7 +278,7 @@ pub fn render(
             ));
         }
 
-        if max_scroll > 0.0 && (s.sidebar_hovered || s.scrollbar_dragging) {
+        if max_scroll > 0.0 && (s.explorer.ui.hovered || s.explorer.ui.scrollbar_dragging) {
             bar = bar.child(vertical_scrollbar(
                 content_rect,
                 content_bottom,
@@ -279,7 +286,9 @@ pub fn render(
                 state.clone(),
             ));
         }
-        if max_scroll_x > 0.0 && (s.sidebar_hovered || s.horizontal_scrollbar_dragging) {
+        if max_scroll_x > 0.0
+            && (s.explorer.ui.hovered || s.explorer.ui.horizontal_scrollbar_dragging)
+        {
             bar = bar.child(horizontal_scrollbar(
                 content_rect,
                 content_right,
@@ -302,22 +311,22 @@ pub fn render(
         handle_rect,
         UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
         CursorIcon::ResizeHorizontal,
-        s.resizing_sidebar,
+        s.drawer.resizing,
     )
     .on_pointer_down_with_button(move |_cx, _p, button| {
         if button == PointerButton::Left {
-            st_down.update(move |app| app.resizing_sidebar = true);
+            st_down.update(move |app| app.drawer.resizing = true);
         }
     })
     .on_pointer_drag(move |_cx, p| {
         st_move.update(move |app| {
-            if app.resizing_sidebar {
-                app.sidebar_w = resized_sidebar_width(win_right, p.point.x);
+            if app.drawer.resizing {
+                app.drawer.width = resized_sidebar_width(win_right, p.point.x);
             }
         });
     })
     .on_pointer_up(move |_cx, _p| {
-        st_up.update(move |app| app.resizing_sidebar = false);
+        st_up.update(move |app| app.drawer.resizing = false);
     });
     if s.application_layout.is_none() {
         bar = bar.child(handle);
@@ -344,7 +353,7 @@ pub(super) fn drawer_icon(
 pub(crate) fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
     use crate::input::action::Action;
     use crate::state::DrawerMode;
-    let mode = state.get().drawer_mode;
+    let mode = state.get().drawer.mode;
     let mut header = panel(rect, VisualStyle::filled(theme::c().sidebar));
     for (index, label, icon, target, action) in [
         (
@@ -422,9 +431,9 @@ pub(crate) fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
             .cursor(CursorIcon::Pointer)
             .on_click(move || {
                 collapse_state.update(|app| {
-                    app.show_drawer = false;
-                    app.sidebar_hovered = false;
-                    app.tree_hovered_path = None;
+                    app.drawer.visible = false;
+                    app.explorer.ui.hovered = false;
+                    app.explorer.ui.hovered_path = None;
                     app.search.blur();
                 });
             })
@@ -600,12 +609,14 @@ fn create_row(
 ) -> Element {
     let snapshot = state.get();
     let kind = snapshot
-        .explorer_create
+        .explorer
+        .model
+        .create_request()
         .as_ref()
         .map_or(ExplorerCreateKind::File, |request| request.kind);
-    let border = if snapshot.explorer_create_error.is_some() {
+    let border = if snapshot.explorer.ui.create_error.is_some() {
         theme::c().error
-    } else if snapshot.explorer_create_input.focused {
+    } else if snapshot.explorer.ui.create_input.focused {
         theme::c().accent
     } else {
         theme::c().border
@@ -682,9 +693,9 @@ fn rename_row(
     id: UiId,
 ) -> Element {
     let snapshot = state.get();
-    let border = if snapshot.explorer_create_error.is_some() {
+    let border = if snapshot.explorer.ui.create_error.is_some() {
         theme::c().error
-    } else if snapshot.explorer_create_input.focused {
+    } else if snapshot.explorer.ui.create_input.focused {
         theme::c().accent
     } else {
         theme::c().border
@@ -702,13 +713,17 @@ fn rename_row(
         input_rect.bottom - 1.0,
     );
     let (label, icon) = match snapshot
-        .explorer_rename
+        .explorer
+        .model
+        .rename_request()
         .as_ref()
         .map(|request| request.kind)
     {
         Some(ExplorerTargetKind::File) => {
             let icon = snapshot
-                .explorer_rename
+                .explorer
+                .model
+                .rename_request()
                 .as_ref()
                 .and_then(|request| request.path.file_name())
                 .map(|name| crate::file_icons::icon_for_file(&name.to_string_lossy()))
@@ -765,11 +780,11 @@ fn rename_row(
 }
 
 fn explorer_create_input(app: &AppState) -> &InputState {
-    &app.explorer_create_input
+    &app.explorer.ui.create_input
 }
 
 fn explorer_create_input_mut(app: &mut AppState) -> &mut InputState {
-    &mut app.explorer_create_input
+    &mut app.explorer.ui.create_input
 }
 
 /// Explorer label color for `path`: git changes and ignored paths override
@@ -831,8 +846,8 @@ fn dir_row(
         row = row.on_pointer_move(move |_cx, _pointer| {
             let key = hover_key.clone();
             hover_state.try_update(move |app| {
-                let changed = app.tree_hovered_path.as_deref() != Some(key.as_str());
-                app.tree_hovered_path = Some(key);
+                let changed = app.explorer.ui.hovered_path.as_deref() != Some(key.as_str());
+                app.explorer.ui.hovered_path = Some(key);
                 changed
             });
         });
@@ -845,26 +860,18 @@ fn dir_row(
         match button {
             PointerButton::Left => {
                 click_state.update(move |app| {
-                    if app.expanded.contains(&key) {
-                        app.expanded.remove(&key);
-                    } else {
-                        app.expanded.insert(key.clone());
-                        if !app.dir_entries.contains_key(&key) {
-                            let entries = read_directory(Path::new(&key));
-                            app.dir_entries.insert(key.clone(), entries);
-                        }
-                    }
+                    workspace_actions::toggle_tree_directory(app, &key);
                 });
             }
             PointerButton::Right => {
                 click_state.update(move |app| {
                     app.editor.tab_context_menu = None;
-                    app.context_menu = Some((pointer.point.x, pointer.point.y));
-                    app.context_menu_target = Some(ExplorerContextTarget {
+                    app.explorer.ui.menu = Some((pointer.point.x, pointer.point.y));
+                    app.explorer.ui.menu_target = Some(ExplorerContextTarget {
                         path: PathBuf::from(key),
                         kind: ExplorerTargetKind::Directory,
                     });
-                    app.context_menu_hover = None;
+                    app.explorer.ui.menu_hover = None;
                 });
             }
             _ => return,
@@ -910,7 +917,7 @@ fn build_tree(
 ) -> Vec<Element> {
     let mut els = Vec::new();
 
-    let Some(entries) = s.dir_entries.get(dir_key) else {
+    let Some(entries) = s.explorer.model.listing(dir_key) else {
         return els;
     };
 
@@ -921,7 +928,7 @@ fn build_tree(
         let indent = rect.left + INDENT + depth as f32 * INDENT;
 
         if is_dir {
-            let is_expanded = s.expanded.contains(&key);
+            let is_expanded = s.explorer.model.is_expanded(&key);
             path.push(StickyDirectory {
                 key: key.clone(),
                 name: name.clone(),
@@ -934,7 +941,9 @@ fn build_tree(
                 depth,
                 sticky_path: path.clone(),
             });
-            if s.explorer_rename
+            if s.explorer
+                .model
+                .rename_request()
                 .as_ref()
                 .is_some_and(|request| request.path == entry.path)
             {
@@ -958,7 +967,7 @@ fn build_tree(
                     0.0,
                     is_expanded,
                     false,
-                    s.tree_hovered_path.as_deref() == Some(key.as_str()),
+                    s.explorer.ui.hovered_path.as_deref() == Some(key.as_str()),
                     tree_label_color(git, &entry.path, theme::c().text_soft),
                     state,
                 ));
@@ -972,7 +981,9 @@ fn build_tree(
             let row_rect = UiRect::new(rect.left, *y, content_right, *y + ROW_H);
             let icon_id = UiId::owned(format!("tree-file-icon-{key}"));
             let icon = crate::file_icons::icon_for_file(&name);
-            if s.explorer_rename
+            if s.explorer
+                .model
+                .rename_request()
                 .as_ref()
                 .is_some_and(|request| request.path == entry.path)
             {
@@ -996,7 +1007,7 @@ fn build_tree(
                 let label_color = tree_label_color(git, &file_path, theme::c().text_muted);
                 let row_style = if s.workspace.active_path() == Some(file_path.as_path()) {
                     VisualStyle::filled(theme::c().active_line)
-                } else if s.tree_hovered_path.as_deref() == Some(key.as_str()) {
+                } else if s.explorer.ui.hovered_path.as_deref() == Some(key.as_str()) {
                     VisualStyle::filled(theme::c().surface)
                 } else {
                     VisualStyle::default()
@@ -1011,8 +1022,9 @@ fn build_tree(
                     .on_pointer_move(move |_cx, _pointer| {
                         let key = hover_key.clone();
                         hover_state.try_update(move |app| {
-                            let changed = app.tree_hovered_path.as_deref() != Some(key.as_str());
-                            app.tree_hovered_path = Some(key);
+                            let changed =
+                                app.explorer.ui.hovered_path.as_deref() != Some(key.as_str());
+                            app.explorer.ui.hovered_path = Some(key);
                             changed
                         });
                     })
@@ -1055,12 +1067,12 @@ fn build_tree(
                                 let path = action_path.clone();
                                 st.update(move |app| {
                                     app.editor.tab_context_menu = None;
-                                    app.context_menu = Some((pointer.point.x, pointer.point.y));
-                                    app.context_menu_target = Some(ExplorerContextTarget {
+                                    app.explorer.ui.menu = Some((pointer.point.x, pointer.point.y));
+                                    app.explorer.ui.menu_target = Some(ExplorerContextTarget {
                                         path,
                                         kind: ExplorerTargetKind::File,
                                     });
-                                    app.context_menu_hover = None;
+                                    app.explorer.ui.menu_hover = None;
                                 });
                             }
                             _ => return,
@@ -1107,7 +1119,9 @@ fn build_tree(
         *y += ROW_H;
 
         if is_dir
-            && s.explorer_create
+            && s.explorer
+                .model
+                .create_request()
                 .as_ref()
                 .is_some_and(|request| request.parent.as_path() == entry.path.as_path())
         {
@@ -1122,7 +1136,7 @@ fn build_tree(
             *y += CREATE_ROW_H;
         }
 
-        if is_dir && s.expanded.contains(&key) {
+        if is_dir && s.explorer.model.is_expanded(&key) {
             // Indent guide under an expanded folder's icon: spans from the
             // folder row bottom to the bottom of its last child.
             let children_top = *y;
@@ -1162,14 +1176,14 @@ fn build_tree(
 /// a stable scroll range without measuring text during every frame.
 fn tree_content_right(root_key: &str, root_name: &str, s: &AppState, left: f32) -> f32 {
     let mut right = row_content_right(left, 0, root_name);
-    if s.expanded.contains(root_key) {
+    if s.explorer.model.is_expanded(root_key) {
         extend_content_right(root_key, 1, s, left, &mut right);
     }
     right
 }
 
 fn extend_content_right(dir_key: &str, depth: usize, s: &AppState, left: f32, right: &mut f32) {
-    let Some(entries) = s.dir_entries.get(dir_key) else {
+    let Some(entries) = s.explorer.model.listing(dir_key) else {
         return;
     };
 
@@ -1177,7 +1191,7 @@ fn extend_content_right(dir_key: &str, depth: usize, s: &AppState, left: f32, ri
         *right = right.max(row_content_right(left, depth, &entry.name));
         if entry.is_dir {
             let key = entry.path.to_string_lossy();
-            if s.expanded.contains(key.as_ref()) {
+            if s.explorer.model.is_expanded(key.as_ref()) {
                 extend_content_right(key.as_ref(), depth + 1, s, left, right);
             }
         }
@@ -1281,20 +1295,21 @@ fn vertical_scrollbar(
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down(move |_cx, p| {
         st_down.update(move |app| {
-            app.scrollbar_dragging = true;
-            app.scrollbar_drag_offset = p.point.y - thumb_top;
+            app.explorer.ui.scrollbar_dragging = true;
+            app.explorer.ui.scrollbar_drag_offset = p.point.y - thumb_top;
         });
     })
     .on_pointer_drag(move |_cx, p| {
         st_move.update(move |app| {
-            if app.scrollbar_dragging && travel > 0.0 {
-                let t = (p.point.y - track_top - app.scrollbar_drag_offset) / travel * max_scroll;
-                app.tree_scroll = t.clamp(0.0, max_scroll);
+            if app.explorer.ui.scrollbar_dragging && travel > 0.0 {
+                let t = (p.point.y - track_top - app.explorer.ui.scrollbar_drag_offset) / travel
+                    * max_scroll;
+                app.explorer.ui.scroll = t.clamp(0.0, max_scroll);
             }
         });
     })
     .on_pointer_up(move |_cx, _p| {
-        st_up.update(move |app| app.scrollbar_dragging = false);
+        st_up.update(move |app| app.explorer.ui.scrollbar_dragging = false);
     });
 
     thumb
@@ -1344,21 +1359,22 @@ fn horizontal_scrollbar(
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down(move |_cx, p| {
         st_down.update(move |app| {
-            app.horizontal_scrollbar_dragging = true;
-            app.horizontal_scrollbar_drag_offset = p.point.x - thumb_left;
+            app.explorer.ui.horizontal_scrollbar_dragging = true;
+            app.explorer.ui.horizontal_scrollbar_drag_offset = p.point.x - thumb_left;
         });
     })
     .on_pointer_drag(move |_cx, p| {
         st_move.update(move |app| {
-            if app.horizontal_scrollbar_dragging && travel > 0.0 {
-                let t = (p.point.x - track_left - app.horizontal_scrollbar_drag_offset) / travel
+            if app.explorer.ui.horizontal_scrollbar_dragging && travel > 0.0 {
+                let t = (p.point.x - track_left - app.explorer.ui.horizontal_scrollbar_drag_offset)
+                    / travel
                     * max_scroll;
-                app.tree_scroll_x = t.clamp(0.0, max_scroll);
+                app.explorer.ui.scroll_x = t.clamp(0.0, max_scroll);
             }
         });
     })
     .on_pointer_up(move |_cx, _p| {
-        st_up.update(move |app| app.horizontal_scrollbar_dragging = false);
+        st_up.update(move |app| app.explorer.ui.horizontal_scrollbar_dragging = false);
     })
 }
 
@@ -1441,9 +1457,9 @@ mod tests {
         let nested_key = "root/src";
         let long_name = "a_very_long_nested_file_name.rs";
         let mut state = AppState::new();
-        state.expanded.insert(root_key.to_string());
-        state.expanded.insert(nested_key.to_string());
-        state.dir_entries.insert(
+        state.explorer.model.set_expanded(root_key, true);
+        state.explorer.model.set_expanded(nested_key, true);
+        state.explorer.model.insert_listing(
             root_key.to_string(),
             vec![DirEntry {
                 name: "src".to_string(),
@@ -1452,7 +1468,7 @@ mod tests {
             }]
             .into(),
         );
-        state.dir_entries.insert(
+        state.explorer.model.insert_listing(
             nested_key.to_string(),
             vec![DirEntry {
                 name: long_name.to_string(),
@@ -1467,7 +1483,7 @@ mod tests {
             row_content_right(100.0, 2, long_name)
         );
 
-        state.expanded.remove(nested_key);
+        state.explorer.model.set_expanded(nested_key, false);
         assert_eq!(
             tree_content_right(root_key, "root", &state, 100.0),
             row_content_right(100.0, 1, "src")

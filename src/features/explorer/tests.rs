@@ -3,11 +3,12 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::DirEntry;
 use super::edit::{validate_create_path, validate_rename_path};
+use super::model::{ExplorerModel, Reveal};
 use super::ports::DirectoryPort;
 use super::roots::{self, MAX_RECENT_FOLDERS};
-use super::tree::{self, Listings, TreeCache};
+use super::tree::{self, TreeCache};
+use super::{DirEntry, ExplorerCreateKind, ExplorerTargetKind};
 
 /// Directories mapped to their child names; a trailing `/` marks a folder.
 #[derive(Default)]
@@ -67,16 +68,19 @@ impl DirectoryPort for MemoryDirectories {
 }
 
 fn cache(port: &MemoryDirectories, loaded: &[&str], expanded: &[&str]) -> TreeCache {
-    let listings = loaded
-        .iter()
-        .map(|path| (path.to_string(), port.read_directory(Path::new(path))))
-        .collect::<Listings>();
-    let expanded = expanded.iter().map(|path| path.to_string()).collect();
-    TreeCache::from_parts(listings, expanded)
+    let mut tree = TreeCache::default();
+    for path in loaded {
+        tree.insert_listing(path.to_string(), port.read_directory(Path::new(path)));
+    }
+    for path in expanded {
+        tree.expand(path.to_string());
+    }
+    tree
 }
 
-fn names(listings: &Listings, key: &str) -> Vec<String> {
-    listings[key]
+fn names(tree: &TreeCache, key: &str) -> Vec<String> {
+    tree.listing(key)
+        .unwrap()
         .iter()
         .map(|entry| entry.name.clone())
         .collect()
@@ -104,7 +108,7 @@ fn cached_directory_refresh_is_idempotent() {
     port = port.dir("root", &["new.txt"]);
     assert!(tree.refresh_directory(&port, Path::new("root")));
     assert!(!tree.refresh_directory(&port, Path::new("root")));
-    assert_eq!(names(&tree.into_parts().0, "root"), ["new.txt"]);
+    assert_eq!(names(&tree, "root"), ["new.txt"]);
 }
 
 #[test]
@@ -120,7 +124,7 @@ fn refresh_never_loads_lazy_directories() {
         &[PathBuf::from("root")],
         [PathBuf::from("root/child/inner.txt")]
     ));
-    assert!(!tree.into_parts().0.contains_key("root/child"));
+    assert!(!tree.is_loaded("root/child"));
 }
 
 #[test]
@@ -132,10 +136,9 @@ fn refresh_prunes_removed_descendant_cache() {
 
     port = MemoryDirectories::default().dir("root", &[]);
     assert!(tree.refresh_all(&port, &[PathBuf::from("root")]));
-    let (listings, expanded) = tree.into_parts();
-    assert!(!listings.contains_key("root/child"));
-    assert!(!expanded.contains("root/child"));
-    assert!(listings["root"].is_empty());
+    assert!(!tree.is_loaded("root/child"));
+    assert!(!tree.is_expanded("root/child"));
+    assert!(tree.listing("root").unwrap().is_empty());
 }
 
 #[test]
@@ -144,10 +147,9 @@ fn refresh_keeps_missing_roots_but_prunes_directories_outside_roots() {
     let mut tree = cache(&port, &["gone-root", "other"], &["gone-root", "other"]);
 
     assert!(tree.refresh_all(&port, &[PathBuf::from("gone-root")]));
-    let (listings, expanded) = tree.into_parts();
-    assert!(listings.contains_key("gone-root"));
-    assert!(expanded.contains("gone-root"));
-    assert!(!listings.contains_key("other"));
+    assert!(tree.is_loaded("gone-root"));
+    assert!(tree.is_expanded("gone-root"));
+    assert!(!tree.is_loaded("other"));
 }
 
 #[test]
@@ -165,19 +167,18 @@ fn refresh_affected_reloads_parents_and_loaded_paths() {
         &[PathBuf::from("root")],
         [PathBuf::from("root/added.txt"), PathBuf::from("root/src")]
     ));
-    let (listings, _) = tree.into_parts();
-    assert_eq!(names(&listings, "root"), ["src", "added.txt"]);
-    assert_eq!(names(&listings, "root/src"), ["main.rs"]);
+    assert_eq!(names(&tree, "root"), ["src", "added.txt"]);
+    assert_eq!(names(&tree, "root/src"), ["main.rs"]);
 }
 
 #[test]
 fn unchanged_refresh_keeps_listing_identity() {
     let port = MemoryDirectories::default().dir("root", &["a.txt"]);
     let mut tree = cache(&port, &["root"], &[]);
-    let before = tree.clone().into_parts().0["root"].clone();
+    let before = tree.listing("root").unwrap().clone();
 
     assert!(!tree.refresh_all(&port, &[PathBuf::from("root")]));
-    assert!(Arc::ptr_eq(&before, &tree.into_parts().0["root"]));
+    assert!(Arc::ptr_eq(&before, tree.listing("root").unwrap()));
 }
 
 #[test]
@@ -335,4 +336,226 @@ fn root_for_path_prefers_the_deepest_containing_root() {
         roots::root_for_path(&workspace_roots, Path::new("elsewhere")),
         None
     );
+}
+
+/// A path built from components, so keys match the platform separator.
+fn p(path: &str) -> PathBuf {
+    path.split('/').collect()
+}
+
+fn k(path: &str) -> String {
+    tree::key(&p(path))
+}
+
+fn model(port: &MemoryDirectories, roots: &[&str]) -> ExplorerModel {
+    let mut model = ExplorerModel::default();
+    model.restore(roots.iter().map(|root| p(root)).collect(), Vec::new());
+    model.hydrate(port);
+    model
+}
+
+#[test]
+fn refresh_is_deferred_during_inline_edit() {
+    let mut port = MemoryDirectories::default().dir("root", &[]);
+    let mut model = model(&port, &["root"]);
+    model.begin_create(PathBuf::from("root"), ExplorerCreateKind::File);
+
+    assert!(!model.refresh_all(&port));
+    assert!(!model.refresh_affected(&port, [PathBuf::from("root/x.txt")]));
+    assert!(model.pending_refresh());
+    assert!(!model.apply_pending_refresh(&port));
+
+    model.cancel_edit();
+    port = port.dir("root", &["later.txt"]);
+    assert!(model.apply_pending_refresh(&port));
+    assert!(!model.pending_refresh());
+    assert_eq!(model.listing("root").unwrap()[0].name, "later.txt");
+}
+
+#[test]
+fn opening_a_root_replaces_roots_and_listings() {
+    let port = MemoryDirectories::default()
+        .dir("first", &["sub/"])
+        .dir("first/sub", &[])
+        .dir("second", &[]);
+    let mut model = model(&port, &["first"]);
+    model.toggle_directory(&port, "first/sub");
+
+    model.open_root(&port, PathBuf::from("second"));
+
+    assert_eq!(model.roots(), [PathBuf::from("second")]);
+    assert!(model.listing("first").is_none());
+    assert!(model.listing("first/sub").is_none());
+    assert!(model.is_expanded("second"));
+    assert_eq!(model.recents()[0], PathBuf::from("second"));
+}
+
+#[test]
+fn adding_a_duplicate_root_only_refreshes_its_recency() {
+    let port = MemoryDirectories::default().dir("a", &[]).dir("b", &[]);
+    let mut model = ExplorerModel::default();
+
+    assert!(model.add_root(&port, PathBuf::from("a")));
+    assert!(model.add_root(&port, PathBuf::from("b")));
+    assert!(!model.add_root(&port, PathBuf::from("a")));
+
+    assert_eq!(model.roots(), [PathBuf::from("a"), PathBuf::from("b")]);
+    assert_eq!(model.recents(), [PathBuf::from("a"), PathBuf::from("b")]);
+}
+
+#[test]
+fn removing_a_root_cancels_edit_rows_below_it_only() {
+    let port = MemoryDirectories::default()
+        .dir("a", &["src/"])
+        .dir("a/src", &[])
+        .dir("b", &[]);
+    let mut model = model(&port, &["a", "b"]);
+
+    model.begin_create(PathBuf::from("b"), ExplorerCreateKind::Folder);
+    assert_eq!(model.remove_root(Path::new("a")), Some(false));
+    assert!(model.create_request().is_some());
+    assert_eq!(model.remove_root(Path::new("a")), None);
+
+    model.begin_rename(PathBuf::from("b/file.rs"), ExplorerTargetKind::File);
+    assert_eq!(model.remove_root(Path::new("b")), Some(true));
+    assert!(!model.editing());
+    assert!(model.roots().is_empty());
+    assert_eq!(model.listings().count(), 0);
+}
+
+#[test]
+fn rename_retargets_nested_roots_recents_and_expansion() {
+    let mut port = MemoryDirectories::default()
+        .dir("ws", &["old/"])
+        .dir("ws/old", &["inner/"])
+        .dir("ws/old/inner", &[]);
+    let mut model = model(&port, &["ws", "ws/old/inner"]);
+    model.toggle_directory(&port, &k("ws/old"));
+    model.remember(p("ws/old/inner"));
+    model.begin_rename(p("ws/old"), ExplorerTargetKind::Directory);
+
+    port = MemoryDirectories::default()
+        .dir("ws", &["new/"])
+        .dir("ws/new", &["inner/"])
+        .dir("ws/new/inner", &[]);
+    assert!(model.apply_rename(&port, &p("ws/old"), &p("ws/new")));
+
+    assert_eq!(model.roots(), [PathBuf::from("ws"), p("ws/new/inner")]);
+    assert_eq!(model.recents()[0], p("ws/new/inner"));
+    assert!(
+        model
+            .listings()
+            .all(|(key, _)| !Path::new(key).starts_with(p("ws/old")))
+    );
+    assert!(model.is_expanded(&k("ws/new")));
+    // Existing behavior: a nested root below the renamed folder keeps its
+    // place but loses its loaded listing until expanded again.
+    assert!(!model.is_expanded(&k("ws/new/inner")));
+    assert_eq!(model.listing(&k("ws")).unwrap()[0].name, "new");
+    assert!(model.rename_request().is_none());
+}
+
+#[test]
+fn renaming_a_collapsed_file_does_not_expand_it() {
+    let mut port = MemoryDirectories::default().dir("ws", &["a.rs"]);
+    let mut model = model(&port, &["ws"]);
+
+    port = MemoryDirectories::default().dir("ws", &["b.rs"]);
+    assert!(!model.apply_rename(&port, Path::new("ws/a.rs"), Path::new("ws/b.rs")));
+
+    assert!(!model.is_expanded("ws/b.rs"));
+    assert!(model.listing("ws/b.rs").is_none());
+    assert_eq!(model.listing("ws").unwrap()[0].name, "b.rs");
+}
+
+#[test]
+fn delete_drops_folders_below_and_reloads_the_parent() {
+    let mut port = MemoryDirectories::default()
+        .dir("ws", &["gone/", "kept.rs"])
+        .dir("ws/gone", &[])
+        .dir("other", &[]);
+    let mut model = model(&port, &["ws", "ws/gone"]);
+    model.remember(PathBuf::from("other"));
+    model.begin_create(PathBuf::from("ws"), ExplorerCreateKind::File);
+
+    port = MemoryDirectories::default()
+        .dir("ws", &["kept.rs"])
+        .dir("other", &[]);
+    assert!(model.apply_delete(&port, Path::new("ws/gone")));
+
+    assert_eq!(model.roots(), [PathBuf::from("ws")]);
+    assert!(!model.recents().contains(&PathBuf::from("ws/gone")));
+    assert!(model.listing("ws/gone").is_none());
+    assert_eq!(names_of(&model, "ws"), ["kept.rs"]);
+    assert!(!model.editing());
+    assert!(!model.apply_delete(&port, Path::new("ws/kept.rs")));
+}
+
+#[test]
+fn reveal_loads_ancestors_and_reports_the_visible_row() {
+    let port = MemoryDirectories::default()
+        .dir("ws", &["a/", "z.rs"])
+        .dir("ws/a", &["b/", "x.rs"])
+        .dir("ws/a/b", &["target.rs"])
+        .dir("other", &[]);
+    let mut model = model(&port, &["ws", "other"]);
+
+    assert_eq!(
+        model.reveal(&port, &p("ws/a/b/target.rs")),
+        Reveal::Revealed { row: Some(3) }
+    );
+    assert!(model.is_expanded(&k("ws/a")));
+    assert!(model.is_expanded(&k("ws/a/b")));
+    assert_eq!(
+        model.reveal(&port, &p("elsewhere/file.rs")),
+        Reveal::OutsideWorkspace
+    );
+}
+
+#[test]
+fn completed_create_expands_every_new_folder() {
+    let port = MemoryDirectories::default()
+        .dir("ws", &["a/"])
+        .dir("ws/a", &["b/"])
+        .dir("ws/a/b", &["c.rs"]);
+    let mut model = model(&port, &["ws"]);
+    model.begin_create(PathBuf::from("ws"), ExplorerCreateKind::File);
+
+    model.complete_create(
+        &port,
+        Path::new("ws"),
+        &p("ws/a/b/c.rs"),
+        ExplorerCreateKind::File,
+    );
+
+    assert!(model.is_expanded(&k("ws/a")));
+    assert!(model.is_expanded(&k("ws/a/b")));
+    assert!(!model.is_expanded(&k("ws/a/b/c.rs")));
+    assert_eq!(names_of(&model, &k("ws/a/b")), ["c.rs"]);
+    assert!(model.create_request().is_none());
+}
+
+#[test]
+fn toggling_a_directory_reads_it_once_and_keeps_it_cached() {
+    let mut port = MemoryDirectories::default()
+        .dir("ws", &["src/"])
+        .dir("ws/src", &["main.rs"]);
+    let mut model = model(&port, &["ws"]);
+
+    model.toggle_directory(&port, "ws/src");
+    assert!(model.is_expanded("ws/src"));
+    port = port.dir("ws/src", &["changed.rs"]);
+    model.toggle_directory(&port, "ws/src");
+    assert!(!model.is_expanded("ws/src"));
+    model.toggle_directory(&port, "ws/src");
+    assert_eq!(names_of(&model, "ws/src"), ["main.rs"]);
+}
+
+fn names_of(model: &ExplorerModel, key: &str) -> Vec<String> {
+    model
+        .listing(key)
+        .unwrap()
+        .iter()
+        .map(|entry| entry.name.clone())
+        .collect()
 }

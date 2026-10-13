@@ -82,18 +82,6 @@
       "owner": "features/git/private model",
       "remove_in": "R6"
     },
-    "context_menu": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "context_menu_hover": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "context_menu_target": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
     "default_shell": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
@@ -102,17 +90,17 @@
       "owner": "features/terminal/private model",
       "remove_in": "R7"
     },
-    "dir_entries": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "drawer_mode": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
     "editor": {
       "owner": "app/state/editor (composition field)",
       "remove_in": "composition"
+    },
+    "drawer": {
+      "owner": "app/state/chrome: DrawerChrome (visible/mode/width/resizing shared by Explorer and Search; R5.2 owner corrected from features/explorer)",
+      "remove_in": "composition"
+    },
+    "explorer": {
+      "owner": "app composition: features/explorer private model + ui/explorer interaction state",
+      "remove_in": "R5 migrated; root composition retained"
     },
     "editor_font": {
       "owner": "features/settings/private model",
@@ -121,26 +109,6 @@
     "editor_font_input": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
-    },
-    "expanded": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "explorer_create": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "explorer_create_error": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "explorer_create_input": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "explorer_rename": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
     },
     "git_collapsed_sections": {
       "owner": "features/git/private model",
@@ -254,14 +222,6 @@
       "owner": "features/git/private model",
       "remove_in": "R6"
     },
-    "horizontal_scrollbar_drag_offset": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "horizontal_scrollbar_dragging": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
     "keymap_search": {
       "owner": "features/keymap/private model",
       "remove_in": "R8"
@@ -269,10 +229,6 @@
     "keymap_version": {
       "owner": "features/keymap/private model",
       "remove_in": "R8"
-    },
-    "pending_file_tree_refresh": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
     },
     "pending_keystrokes": {
       "owner": "features/keymap/private model",
@@ -286,17 +242,9 @@
       "owner": "features/settings/private model",
       "remove_in": "R8"
     },
-    "recent_folders": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
     "resizing_git_sidebar": {
       "owner": "features/git/private model",
       "remove_in": "R6"
-    },
-    "resizing_sidebar": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
     },
     "resizing_terminal": {
       "owner": "features/terminal/private model",
@@ -305,14 +253,6 @@
     "runtime": {
       "owner": "app/runtime weak legacy access (no ownership)",
       "remove_in": "R8"
-    },
-    "scrollbar_drag_offset": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "scrollbar_dragging": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
     },
     "search": {
       "owner": "app composition: features/search private model + ui/search interaction state",
@@ -334,10 +274,6 @@
       "owner": "features/git/private model",
       "remove_in": "R6"
     },
-    "show_drawer": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
     "show_source_control": {
       "owner": "features/git/private model",
       "remove_in": "R6"
@@ -345,14 +281,6 @@
     "show_terminal": {
       "owner": "features/terminal/private model",
       "remove_in": "R7"
-    },
-    "sidebar_hovered": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "sidebar_w": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
     },
     "smooth_caret": {
       "owner": "features/settings/private model",
@@ -414,18 +342,6 @@
       "owner": "app/state/chrome",
       "remove_in": "R8"
     },
-    "tree_hovered_path": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "tree_scroll": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
-    "tree_scroll_x": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
-    },
     "welcome_hover": {
       "owner": "app/state/chrome",
       "remove_in": "R8"
@@ -433,10 +349,6 @@
     "workspace": {
       "owner": "app/workspace composition of domain/workspace (one atomic update)",
       "remove_in": "composition"
-    },
-    "workspace_folders": {
-      "owner": "features/explorer/private model",
-      "remove_in": "R5"
     },
     "workspace_home_hover": {
       "owner": "app/state/chrome",
@@ -536,21 +448,9 @@
       "remove_in": "R4 R5",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/file_tree.rs": {
-      "dependencies": [
-        "crate::features",
-        "crate::infrastructure",
-        "crate::state",
-        "std::fs",
-        "std::process"
-      ],
-      "remove_in": "R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.1 规则迁入 features/explorer/tree，读盘迁入 infrastructure/explorer_filesystem；本文件仅保留根状态桥接，R5.2 删除。"
-    },
     "src/file_watcher.rs": {
       "dependencies": [
         "crate::background_ui",
-        "crate::file_tree",
         "crate::infrastructure",
         "crate::model",
         "crate::state",
@@ -561,7 +461,7 @@
         "std::thread"
       ],
       "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R5.2 树刷新改由 Explorer 模型执行，准备阶段只克隆 Explorer 模型。"
     },
     "src/fonts.rs": {
       "dependencies": [
@@ -828,7 +728,6 @@
     },
     "src/ui/context_menu.rs": {
       "dependencies": [
-        "crate::file_tree",
         "crate::state",
         "crate::terminal_session",
         "crate::workspace_actions",
@@ -942,7 +841,6 @@
     },
     "src/ui/sidebar.rs": {
       "dependencies": [
-        "crate::file_tree",
         "crate::git",
         "crate::input",
         "crate::state",
@@ -1064,7 +962,6 @@
         "crate::app",
         "crate::features",
         "crate::file_loading",
-        "crate::file_tree",
         "crate::git",
         "crate::git_actions",
         "crate::infrastructure",
@@ -1245,6 +1142,103 @@
     "retired": {
       "owner": "domain/workspace",
       "migrated_in": "R4"
+    }
+  },
+  "explorer_ownership": {
+    "roots": {
+      "owner": "features/explorer/model",
+      "migrated_in": "R5.2",
+      "from": "workspace_folders"
+    },
+    "recents": {
+      "owner": "features/explorer/model",
+      "migrated_in": "R5.2",
+      "from": "recent_folders"
+    },
+    "tree": {
+      "owner": "features/explorer/model (TreeCache)",
+      "migrated_in": "R5.2",
+      "from": "dir_entries, expanded"
+    },
+    "create": {
+      "owner": "features/explorer/model",
+      "migrated_in": "R5.2",
+      "from": "explorer_create"
+    },
+    "rename": {
+      "owner": "features/explorer/model",
+      "migrated_in": "R5.2",
+      "from": "explorer_rename"
+    },
+    "pending_refresh": {
+      "owner": "features/explorer/model",
+      "migrated_in": "R5.2",
+      "from": "pending_file_tree_refresh"
+    },
+    "hovered": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "sidebar_hovered"
+    },
+    "hovered_path": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "tree_hovered_path"
+    },
+    "menu": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "context_menu"
+    },
+    "menu_target": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "context_menu_target"
+    },
+    "menu_hover": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "context_menu_hover"
+    },
+    "create_input": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "explorer_create_input"
+    },
+    "create_error": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "explorer_create_error"
+    },
+    "scroll": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "tree_scroll"
+    },
+    "scroll_x": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "tree_scroll_x"
+    },
+    "scrollbar_dragging": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "scrollbar_dragging"
+    },
+    "scrollbar_drag_offset": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "scrollbar_drag_offset"
+    },
+    "horizontal_scrollbar_dragging": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "horizontal_scrollbar_dragging"
+    },
+    "horizontal_scrollbar_drag_offset": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "R5.2",
+      "from": "horizontal_scrollbar_drag_offset"
     }
   }
 }

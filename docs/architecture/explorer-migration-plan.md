@@ -195,3 +195,15 @@ src/app/
 - 门禁：`features/explorer` 只允许 features/domain，禁止根状态/GUI 类型与例外；`explorer_filesystem` 只允许 features/domain/std::fs/std::process/windows_sys；新增 2 组负例。policy：file_tree、workspace_actions 增加 features/infrastructure 依赖，移除 workspace_actions 的 windows_sys 与 context_menu 的 std::process。
 - 测试迁移：workspace_actions 中 8 项（MRU、根不重排最近目录、新建校验 2 项、重命名校验、Windows 设备名、Windows shell 路径）与 file_tree 中 3 项（排序、幂等刷新、剪枝）改为 feature 内存端口测试或基础设施测试，原名保留；file_tree 仅保留延迟刷新测试并增加 affected 路径断言。新增：lazy 目录不被刷新、缺失根保留与根外剪枝、affected 刷新、未变化保持 Arc 身份、已存在目标拒绝、hydrate 去重/规范化、最深根、Unicode 新建名、读失败为空、新建文件不覆盖。
 - 结果：完整 workspace 测试 625 通过、0 失败、12 忽略（应用 541，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 20 项门禁自测通过；登记根字段 98、legacy exception 文件 60 不变。release、隔离启动与性能采样留到 R5 收尾统一执行。
+
+### R5.2（2026-10-13，本机自动验收）
+
+- AppState 删除 24 个 Explorer/抽屉字段，新增 `drawer: DrawerChrome`（visible/mode/width/resizing，归 app chrome，owner 更正已写入 policy）与 `explorer: ExplorerPanelState { model, ui }`。根字段登记 98 → 76。
+- 新增 `features/explorer/model.rs`：`ExplorerModel` 字段全部私有，持有 roots、recents、`TreeCache`、create/rename 请求与延迟刷新标记；提供 open/add/remove root、hydrate、apply_rename/apply_delete、toggle/set_expanded、reveal、complete_create 以及带编辑延迟的 refresh。`TreeCache` 去掉 R5.1 的 from_parts/into_parts 桥接，改为正式 API（含原 workspace_actions 的可见行计算）。
+- 新增 `ui/explorer/state.rs`：`ExplorerUiState`（hover、菜单、行内输入/错误、两向滚动与滚动条拖动）及 `dismiss_menu/clear_edit/reset_scroll`；`ExplorerPanelState` 组合模型与 UI 状态。
+- 删除 `src/file_tree.rs` 及其例外；legacy exception 文件 60 → 59。workspace_actions 的 Explorer 事务改为调用模型方法，新增 `toggle_tree_directory`、`refresh_explorer` 作为侧栏/菜单的应用入口（UI 不再直接读盘）。会话 JSON 字段不变。
+- 提前落地 R5.4 的一半：watcher `prepare_batch` 只克隆 Explorer 模型而非整个 AppState，`Arc::ptr_eq` 过期拒收语义不变；R5.4 仍需补竞态测试与性能对照。
+- 门禁：`explorer_ownership` 逐字段登记 19 项（模型 6 + UI 13），检查 ExplorerModel/ExplorerUiState 字段与登记一致且模型字段不得 `pub`；`ui/explorer` 禁止根状态类型与例外；新增 2 组门禁自测（共 22 项）。
+- 测试：原 file_tree 延迟刷新测试按原名迁入模型测试；新增 10 项模型测试（替换根、重复根、移除根取消编辑行、嵌套根重命名、折叠文件重命名、删除重载父目录、reveal 行号、新建展开链、toggle 缓存）。workspace_actions 中目录移除/重命名测试改用模型 API，重命名测试现在先打开 rename 行再断言被关闭。
+- 记录的既有行为：重命名包含嵌套 root 的目录后，该 root 保留在列表但失去已加载内容和展开状态，需要再次展开；本轮保持不变，测试固定该行为。
+- 结果：完整 workspace 634 通过、0 失败、12 忽略（应用 550，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 22 项自测通过。本机无 PowerShell 7，`startup-smoke.ps1` 未运行；改用 Windows PowerShell 5.1 等价脚本对 debug 构建做隔离 APPDATA 启动：带参数打开工作区、正常关闭写会话，再无参数重启恢复根与最近目录，均 exit 0、无强制清理。

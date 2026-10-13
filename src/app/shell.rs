@@ -368,7 +368,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             ApplicationLayout::initial(
                 content_area,
                 app.git_sidebar_w,
-                app.sidebar_w,
+                app.drawer.width,
                 app.terminal_h,
             )
         });
@@ -381,7 +381,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     theme::set(s.theme);
     crate::fonts::set(&s.editor_font, &s.terminal_font);
     let editor_layout = crate::workspace_actions::saved_app_editor_layout(&s);
-    let git_roots = s.workspace_folders.clone();
+    let git_roots = s.explorer.model.roots().to_vec();
     let mut git_target = s.workspace.git_poll_target();
     // A repository chosen in Source Control holds until the active file changes.
     git_target.pinned_repository = s
@@ -433,7 +433,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 let roots = error_roots.clone();
                 error_application.post(move || {
                     state.try_update(|app| {
-                        if app.workspace_folders != roots { return false }
+                        if app.explorer.model.roots() != roots { return false }
                         app.show_error(format!("File watching is unavailable; Explorer will refresh when Loom regains focus: {error}"));
                         true
                     });
@@ -518,14 +518,14 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             || {}
         },
     );
-    let show_drawer = s.show_drawer;
+    let show_drawer = s.drawer.visible;
     let search_key = crate::app::search::key(&s);
     let search_state = state.clone();
     let search_application = application.as_ref().clone();
     cx.use_effect(search_key.clone(), move || {
         crate::app::search::start(search_state, search_application, search_key)
     });
-    let search_visible = s.show_drawer && s.drawer_mode == crate::state::DrawerMode::Search;
+    let search_visible = s.drawer.visible && s.drawer.mode == crate::state::DrawerMode::Search;
     let query_focus = search_query_focus.clone();
     cx.use_effect((search_visible, s.search.focus_request), move || {
         if search_visible {
@@ -552,7 +552,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         || {}
     });
     let show_clone_dialog = s.show_clone_dialog;
-    let editing_explorer_entry = s.explorer_create.is_some() || s.explorer_rename.is_some();
+    let editing_explorer_entry =
+        s.explorer.model.create_request().is_some() || s.explorer.model.rename_request().is_some();
 
     // ---- Region layout ------------------------------------------------
     let titlebar_rect = UiRect::new(0.0, 0.0, w, theme::TITLEBAR_H);
@@ -622,7 +623,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         })
         .collect::<Vec<_>>();
     let tab_visibility_strips = strips.clone();
-    cx.use_effect((tab_visibility_items, s.show_drawer), move || {
+    cx.use_effect((tab_visibility_items, s.drawer.visible), move || {
         let snapshot = tab_visibility_state.get();
         let desired = tab_visibility_strips
             .iter()
@@ -673,7 +674,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         }
     });
     let terminal_cwd = {
-        s.workspace_folders
+        s.explorer
+            .model
+            .roots()
             .first()
             .cloned()
             .or_else(|| std::env::current_dir().ok())
@@ -785,7 +788,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         if editing_explorer_entry {
             mounted_create_focus.focus();
         } else {
-            if pending_tree_state.get().pending_file_tree_refresh {
+            if pending_tree_state.get().explorer.model.pending_refresh() {
                 crate::file_watcher::refresh_async(
                     pending_tree_state.clone(),
                     pending_tree_application,
@@ -850,7 +853,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         move || drop(watcher)
     });
     let project_state = state.clone();
-    cx.use_effect(s.workspace_folders.clone(), move || {
+    cx.use_effect(s.explorer.model.roots().to_vec(), move || {
         project_state.update(|app| app.refresh_project_settings());
         || {}
     });
@@ -936,11 +939,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         if let UiEventPayload::PointerMove { pointer } = payload {
             let hovered = show_drawer && explorer_rect.contains(pointer.point);
             st_hover.try_update(move |app| {
-                let changed =
-                    app.sidebar_hovered != hovered || (!hovered && app.tree_hovered_path.is_some());
-                app.sidebar_hovered = hovered;
+                let changed = app.explorer.ui.hovered != hovered
+                    || (!hovered && app.explorer.ui.hovered_path.is_some());
+                app.explorer.ui.hovered = hovered;
                 if !hovered {
-                    app.tree_hovered_path = None;
+                    app.explorer.ui.hovered_path = None;
                 }
                 changed
             });
@@ -1014,7 +1017,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         {
             st_pane_focus.try_update(move |app| {
                 let overlay = app.editor.menu.is_some()
-                    || app.context_menu.is_some()
+                    || app.explorer.ui.menu.is_some()
                     || app.editor.tab_context_menu.is_some()
                     || app.terminal_tab_context_menu.is_some()
                     || app.branch_picker.is_some()
@@ -1183,7 +1186,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         ));
     }
     if show_drawer {
-        if s.drawer_mode == crate::state::DrawerMode::Search {
+        if s.drawer.mode == crate::state::DrawerMode::Search {
             root = root.child(super::search::render(
                 explorer_rect,
                 state.clone(),
@@ -1242,7 +1245,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         terminal_tabs.clone(),
     ));
 
-    if s.context_menu.is_none()
+    if s.explorer.ui.menu.is_none()
         && s.editor.tab_context_menu.is_none()
         && s.terminal_tab_context_menu.is_none()
         && s.branch_picker.is_none()
@@ -1255,7 +1258,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     {
         root = root.child(tooltip);
     }
-    if s.context_menu.is_none()
+    if s.explorer.ui.menu.is_none()
         && s.git_menu.is_none()
         && s.git_confirm.is_none()
         && s.branch_picker.is_none()
@@ -1277,7 +1280,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             editor_focus.clone(),
         ));
     }
-    if let Some(pos) = s.context_menu {
+    if let Some(pos) = s.explorer.ui.menu {
         root = root.child(context_menu::render(
             vp,
             pos,
@@ -1435,7 +1438,7 @@ fn apply_git_scan(
     target: &crate::git::PollTarget,
     result: crate::git::GitResult<GitStoreSnapshot>,
 ) -> (bool, bool) {
-    if app.workspace_folders != roots || app.workspace.git_poll_target() != *target {
+    if app.explorer.model.roots() != roots || app.workspace.git_poll_target() != *target {
         crate::background_ui::retire(result);
         return (false, false);
     }
@@ -1477,7 +1480,9 @@ mod git_refresh_tests {
     fn rejects_success_and_failure_from_a_previous_workspace() {
         let old_roots = vec![PathBuf::from("old")];
         let mut app = AppState::new();
-        app.workspace_folders = vec![PathBuf::from("current")];
+        app.explorer
+            .model
+            .restore(vec![PathBuf::from("current")], Vec::new());
         let mut store = GitStoreSnapshot::default();
         for result in [
             Ok(GitStoreSnapshot {

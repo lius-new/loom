@@ -180,7 +180,7 @@ fn search_panel_renders_bounded_rows_and_switches_drawer_at_normal_and_small_siz
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
                 app.apply(crate::input::action::Action::OpenSearch);
-                app.workspace_folders.push("demo".into());
+                app.explorer.model.restore(vec!["demo".into()], Vec::new());
                 app.search.ui.query.set_text("needle");
                 app.search.ui.filters_open = true;
                 app.search.ui.include.set_text("*.rs, *.ts");
@@ -467,7 +467,7 @@ fn search_panel_renders_bounded_rows_and_switches_drawer_at_normal_and_small_siz
                 );
             }
             assert_eq!(
-                exposed.lock().unwrap().as_ref().unwrap().get().drawer_mode,
+                exposed.lock().unwrap().as_ref().unwrap().get().drawer.mode,
                 crate::state::DrawerMode::Files
             );
         }
