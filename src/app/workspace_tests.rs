@@ -1,6 +1,6 @@
 use super::*;
-use crate::git::diff::UnifiedDiff;
-use crate::git::{DiffContent, DiffTarget};
+use crate::features::git::diff::UnifiedDiff;
+use crate::features::git::{DiffContent, DiffTarget};
 use loom_editor_core::text::EditKind;
 
 #[test]
@@ -194,7 +194,7 @@ fn diff_tabs_are_reused_and_are_not_persisted_as_editable_files() {
 
 #[test]
 fn background_diff_refresh_preserves_tabs_focus_and_views() {
-    use crate::git::error::{GitError, GitErrorKind};
+    use crate::features::git::error::{GitError, GitErrorKind};
     use std::collections::BTreeMap;
     let mut workspace = Workspace::new();
     let root = PathBuf::from("repo");
@@ -500,7 +500,7 @@ fn prepared_disk_and_diff_notifications_apply_without_rereading_files() {
 
 #[test]
 fn changes_tab_reuses_identity_and_preserves_file_anchor_and_collapsed_sections() {
-    use crate::git::{ChangeDiff, ChangeGroup};
+    use crate::features::git::{ChangeDiff, ChangeGroup};
     let root = PathBuf::from("repo");
     let request = DiffRequest {
         repository_root: root.clone(),
@@ -554,7 +554,7 @@ fn changes_tab_reuses_identity_and_preserves_file_anchor_and_collapsed_sections(
     assert_eq!(workspace.apply_prepared_git_diffs(&diffs, false).len(), 1);
     assert_eq!(
         workspace.active_scroll().1,
-        y + 25.0 + 20.0 * crate::model::diff_document::row_height()
+        y + 25.0 + 20.0 * crate::ui::diff_editor::row_h()
     );
     assert!(workspace.collapsed_diffs(pane).contains(&third));
     assert_eq!(workspace.git_poll_target().diffs, [request]);

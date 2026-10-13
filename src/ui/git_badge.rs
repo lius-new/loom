@@ -7,7 +7,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Color, Element, State, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::git::{GitStoreSnapshot, RepositorySnapshot, RepositoryState};
+use crate::features::git::{GitStoreSnapshot, RepositorySnapshot, RepositoryState};
 use crate::git_actions::{self, SyncPlan};
 use crate::state::AppState;
 use crate::theme;

@@ -506,7 +506,7 @@ pub(crate) fn pointer_down(
 fn ime_cursor_rect(app: &AppState, rect: UiRect) -> UiRect {
     let view = super::editor_view::snapshot(
         app.clone(),
-        crate::git::GitStoreSnapshot::default(),
+        crate::features::git::GitStoreSnapshot::default(),
         app.workspace.active_pane(),
         rect,
     );

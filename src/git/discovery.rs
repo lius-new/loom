@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::command::{GitCommand, GitCommandRunner};
-use super::error::{GitErrorKind, GitResult};
+use crate::features::git::error::{GitErrorKind, GitResult};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveredRepository {
@@ -73,7 +73,7 @@ fn from_git_marker(root: &Path) -> GitResult<DiscoveredRepository> {
             .strip_prefix("gitdir:")
             .map(str::trim)
             .ok_or_else(|| {
-                super::error::GitError::new(
+                crate::features::git::error::GitError::new(
                     GitErrorKind::InvalidOutput,
                     "The .git file does not contain a gitdir path.",
                 )

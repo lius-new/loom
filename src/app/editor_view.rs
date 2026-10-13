@@ -3,7 +3,7 @@ use lgui::prelude::{State, UiRect};
 
 use super::{editor, state::AppState};
 use crate::domain::identity::PaneId;
-use crate::git::GitStoreSnapshot;
+use crate::features::git::GitStoreSnapshot;
 use crate::ui::editor_binding::{Binding, DocumentMeta, Event, Preedit, ViewDocument, ViewState};
 
 pub(crate) fn menu(

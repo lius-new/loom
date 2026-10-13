@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId};
 use lgui::prelude::{Element, State, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::git::GitStoreSnapshot;
+use crate::features::git::GitStoreSnapshot;
 use crate::git_actions::{self, StashMode};
 use crate::input::action::Action;
 use crate::state::AppState;

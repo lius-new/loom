@@ -149,3 +149,11 @@ test('root state cannot re-export Explorer types again',()=>{
   const clean='use crate::features::explorer::DirEntry;\npub struct AppState { pub explorer: u8 }\nimpl AppState {}';
   assert.ok(!violations({'src/app/state.rs':clean},p).some(e=>e.includes('must not be re-exported')));
 });
+test('Git rules cannot regain root state, GUI, processes or exceptions',()=>{
+  for(const source of ['use crate::state::AppState;','use lgui::prelude::*;','use std::fs;','use std::process::Command;','fn run() { std::thread::spawn(|| {}); }','use crate::git::GitService;','use crate::infrastructure::ui_dispatch;','fn f(w: &Workspace) {}']) {
+    assert.ok(violations({'src/features/git/parser.rs':source},policy()).length>0,source);
+  }
+  assert.deepEqual(violations({'src/features/git/snapshot.rs':'use crate::features::git::types::RepositoryId;\nuse crate::domain::line_change::LineChange;\nuse loom_editor_core::text::display_width;'},policy()),[]);
+  const p=policy();p.exceptions['src/features/git/diff.rs']={dependencies:['std::fs'],reason:'bad',remove_in:'R8'};
+  assert.ok(violations({'src/features/git/diff.rs':'use std::fs;'},p).some(e=>e.includes('Git feature cannot have migration exceptions')));
+});

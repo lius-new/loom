@@ -16,7 +16,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
 
-use crate::git::{BranchInfo, GitResult, GitStoreSnapshot, OperationKind, WorktreeInfo};
+use crate::features::git::{BranchInfo, GitResult, GitStoreSnapshot, OperationKind, WorktreeInfo};
 use crate::state::AppState;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::{git_actions, theme};

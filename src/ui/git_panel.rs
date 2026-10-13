@@ -8,7 +8,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
-use crate::git::{
+use crate::features::git::{
     ChangeKind, CommitSummary, ConflictSide, DiffTarget, FileState, GitStoreSnapshot,
     RepositorySnapshot, RepositoryState, StashInfo, WorktreeInfo,
 };
@@ -781,8 +781,8 @@ mod virtualization_tests {
 
     #[test]
     fn bottom_sections_stay_pinned_and_scroll_independently_from_changes() {
-        use crate::git::RepositoryId;
-        use crate::git::store::{GitPresentation, RepositoryPresentation};
+        use crate::features::git::RepositoryId;
+        use crate::features::git::snapshot::{GitPresentation, RepositoryPresentation};
         use lgui::application::{AppView, ApplicationContext};
         use lgui::core::{
             InputEvent, Point, PointerData, UiScale, WheelDelta, dispatch_runtime_output,
@@ -804,7 +804,7 @@ mod virtualization_tests {
             worktree_root: PathBuf::from("loom"),
             git_dir: PathBuf::from("loom/.git"),
             common_dir: PathBuf::from("loom/.git"),
-            head: crate::git::HeadState::Branch("main".into()),
+            head: crate::features::git::HeadState::Branch("main".into()),
             upstream: None,
             ahead: 0,
             behind: 0,
@@ -1155,11 +1155,11 @@ mod virtualization_tests {
         let source = PathBuf::from("worktree-ui-test-source");
         let target = PathBuf::from("worktree-ui-test-linked");
         let repository = RepositorySnapshot {
-            id: crate::git::RepositoryId(1),
+            id: crate::features::git::RepositoryId(1),
             worktree_root: source.clone(),
             git_dir: source.join(".git"),
             common_dir: source.join(".git"),
-            head: crate::git::HeadState::Branch("main".into()),
+            head: crate::features::git::HeadState::Branch("main".into()),
             upstream: None,
             ahead: 0,
             behind: 0,
@@ -1581,7 +1581,7 @@ pub struct CommitCard {
     pub oid: String,
     /// The commit's row on screen when the card was requested.
     pub anchor: UiRect,
-    pub details: Result<crate::git::CommitDetails, String>,
+    pub details: Result<crate::features::git::CommitDetails, String>,
 }
 
 const CARD_W: f32 = 420.0;
@@ -1668,7 +1668,7 @@ pub fn render_commit_card(viewport: UiRect, app: &AppState) -> Option<Element> {
     }
     lines.push(Line::Separator);
     let mut footer = vec![(
-        crate::model::diff_document::short_oid(&card.oid).to_owned(),
+        crate::features::git::diff_document::short_oid(&card.oid).to_owned(),
         theme::c().text_soft,
     )];
     if let Some(summary) = summary.filter(|summary| !summary.decorations.is_empty()) {
@@ -2859,7 +2859,7 @@ fn file_row(
             PointerButton::Left => {
                 // Like Explorer, defer opening until release so a drag can
                 // land on a pane or create a split instead of opening Changes.
-                let request = crate::git::DiffRequest {
+                let request = crate::features::git::DiffRequest {
                     repository_root: menu_repository.clone(),
                     path: menu_path.clone(),
                     target,
@@ -3059,7 +3059,7 @@ mod action_tests {
             assert_eq!(
                 drag.source,
                 FileDragSource::Changes {
-                    request: crate::git::DiffRequest {
+                    request: crate::features::git::DiffRequest {
                         repository_root: "repo".into(),
                         path: "src/a.rs".into(),
                         target
@@ -3224,11 +3224,11 @@ mod action_tests {
     #[test]
     fn the_banner_names_the_operation_and_rebase_progress() {
         let mut repository = RepositorySnapshot {
-            id: crate::git::RepositoryId(1),
+            id: crate::features::git::RepositoryId(1),
             worktree_root: PathBuf::from("repo"),
             git_dir: PathBuf::from("repo/.git"),
             common_dir: PathBuf::from("repo/.git"),
-            head: crate::git::HeadState::Branch("main".into()),
+            head: crate::features::git::HeadState::Branch("main".into()),
             upstream: None,
             ahead: 0,
             behind: 0,

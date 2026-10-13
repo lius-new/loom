@@ -7,10 +7,10 @@ use std::path::PathBuf;
 use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId};
 use lgui::prelude::{Element, State, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::git::{DiffTarget, GitStoreSnapshot, RepositoryState};
+use crate::features::git::diff_document::ChangeBlock;
+use crate::features::git::{DiffTarget, GitStoreSnapshot, RepositoryState};
 use crate::git_actions;
 use crate::input::action::Action;
-use crate::model::diff_document::ChangeBlock;
 use crate::state::AppState;
 use crate::theme;
 use crate::ui::branch_picker::Checkout;

@@ -6,7 +6,6 @@
 //! * `workspace` — open documents and the panes that show them.
 
 pub mod application_layout;
-pub mod diff_document;
 pub mod document;
 pub mod pane_layout;
 pub mod text;

@@ -12,7 +12,7 @@ use lgui::prelude::{Element, State, UiRect};
 use lgui::services::ServicesContextExt;
 
 use crate::features::explorer::{ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
-use crate::git::{GitStoreSnapshot, PathDecoration};
+use crate::features::git::{GitStoreSnapshot, PathDecoration};
 use crate::state::{AppState, FileDragSource, FileDragState};
 use crate::terminal_session::TerminalTabs;
 use crate::ui::components::state_access::StateAccess;

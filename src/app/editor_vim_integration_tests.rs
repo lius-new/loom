@@ -12,7 +12,7 @@ use lgui::core::{
 use lgui::prelude::{State, UiRect, group};
 use lgui::session::UiSession;
 
-use crate::git::GitStoreSnapshot;
+use crate::features::git::GitStoreSnapshot;
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;

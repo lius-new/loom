@@ -6,39 +6,44 @@ use std::thread;
 
 use lgui::prelude::State;
 
-use crate::git::error::GitErrorKind;
-use crate::git::store::operation;
-use crate::git::{
-    CliGitBackend, ConflictSide, GitError, GitResult, GitService, GitStoreSnapshot, HeadState,
-    OperationKind, RemoteInfo, RepositorySnapshot, RepositoryState,
+use crate::features::git::diff_document::{ChangeBlock, DiffDocument};
+use crate::features::git::error::GitErrorKind;
+use crate::features::git::snapshot::operation;
+use crate::features::git::{
+    ConflictSide, GitError, GitResult, GitStoreSnapshot, HeadState, OperationKind, RemoteInfo,
+    RepositorySnapshot, RepositoryState,
 };
-use crate::model::diff_document::{ChangeBlock, DiffDocument};
+use crate::git::{CliGitBackend, GitService};
 use crate::state::{AppState, TabDrop};
 use crate::ui::branch_picker::{BranchListing, Checkout};
 use crate::ui::git_confirm::{GitConfirm, GitConfirmAction};
 use crate::ui::git_panel::{ExpandedCommit, GitHistory};
 use crate::ui::stash_switch::StashSwitchRequest;
 
-pub fn open_diff(state: &State<AppState>, request: crate::git::DiffRequest, untracked: bool) {
+pub fn open_diff(
+    state: &State<AppState>,
+    request: crate::features::git::DiffRequest,
+    untracked: bool,
+) {
     open_diff_with_focus(state, request, untracked, None, None);
 }
 
 pub(crate) fn open_diff_at(
     state: &State<AppState>,
-    request: crate::git::DiffRequest,
+    request: crate::features::git::DiffRequest,
     untracked: bool,
     drop: TabDrop,
 ) -> bool {
     open_diff_with_focus(state, request, untracked, None, Some(drop))
 }
 
-pub fn open_changes(state: &State<AppState>, file: crate::git::DiffRequest) {
+pub fn open_changes(state: &State<AppState>, file: crate::features::git::DiffRequest) {
     let mut revealed = false;
     state.update(|app| {
         if let Some(id) = app.workspace.diff_id_for(
             &file.repository_root,
             Path::new(""),
-            crate::git::DiffTarget::Changes,
+            crate::features::git::DiffTarget::Changes,
         ) && let Some(pane) = app.workspace.pane_of(id)
         {
             app.workspace.activate(pane, id);
@@ -50,10 +55,10 @@ pub fn open_changes(state: &State<AppState>, file: crate::git::DiffRequest) {
         }
     });
     if !revealed {
-        let request = crate::git::DiffRequest {
+        let request = crate::features::git::DiffRequest {
             repository_root: file.repository_root.clone(),
             path: PathBuf::new(),
-            target: crate::git::DiffTarget::Changes,
+            target: crate::features::git::DiffTarget::Changes,
         };
         open_diff_with_focus(state, request, false, Some(file), None);
     }
@@ -61,9 +66,9 @@ pub fn open_changes(state: &State<AppState>, file: crate::git::DiffRequest) {
 
 fn open_diff_with_focus(
     state: &State<AppState>,
-    request: crate::git::DiffRequest,
+    request: crate::features::git::DiffRequest,
     untracked: bool,
-    focus: Option<crate::git::DiffRequest>,
+    focus: Option<crate::features::git::DiffRequest>,
     drop: Option<TabDrop>,
 ) -> bool {
     let app = state.get();
@@ -88,7 +93,7 @@ fn open_diff_with_focus(
         .name("loom-git-open-diff".into())
         .spawn(move || {
             let result = crate::git::service().and_then(|service| {
-                if request.target == crate::git::DiffTarget::Changes {
+                if request.target == crate::features::git::DiffTarget::Changes {
                     let content = service.refresh_diff(&request, &GitStoreSnapshot::default())?;
                     return Ok(Arc::new(DiffDocument::from_content(request, content)));
                 }
@@ -99,14 +104,14 @@ fn open_diff_with_focus(
                 )?;
                 let document = if diff.files.is_empty()
                     && untracked
-                    && request.target != crate::git::DiffTarget::HeadToIndex
+                    && request.target != crate::features::git::DiffTarget::HeadToIndex
                 {
                     let content = crate::git::store::read_untracked(
                         &request.repository_root.join(&request.path),
                     )?;
                     DiffDocument::from_content(request, content)
                 } else {
-                    crate::model::diff_document::DiffDocument::from_unified(
+                    crate::features::git::diff_document::DiffDocument::from_unified(
                         request.repository_root,
                         request.path,
                         request.target,
@@ -747,7 +752,7 @@ pub fn apply_block(
     store: &State<GitStoreSnapshot>,
     root: &Path,
     path: PathBuf,
-    target: crate::git::DiffTarget,
+    target: crate::features::git::DiffTarget,
     block: ChangeBlock,
     action: BlockAction,
 ) -> bool {
@@ -790,12 +795,12 @@ fn apply_block_with(
     backend: &CliGitBackend,
     root: &Path,
     path: &Path,
-    target: crate::git::DiffTarget,
+    target: crate::features::git::DiffTarget,
     block: ChangeBlock,
     action: BlockAction,
 ) -> GitResult<()> {
     let raw = backend.zero_context_diff(root, target, path)?;
-    let diff = crate::git::diff::split_raw_diff(&raw)?;
+    let diff = crate::features::git::diff::split_raw_diff(&raw)?;
     let hunk = diff
         .hunks
         .iter()
@@ -979,10 +984,10 @@ pub fn open_commit_changes(
     oid: String,
     focus: Option<PathBuf>,
 ) {
-    let focus = focus.map(|path| crate::git::DiffRequest {
+    let focus = focus.map(|path| crate::features::git::DiffRequest {
         repository_root: root.clone(),
         path,
-        target: crate::git::DiffTarget::Commit,
+        target: crate::features::git::DiffTarget::Commit,
     });
     let mut revealed = false;
     state.update(|app| {
@@ -1007,10 +1012,10 @@ pub fn open_commit_changes(
         return;
     };
     let sequence = app.git_open_diff_sequence + 1;
-    let loading = crate::git::DiffRequest {
+    let loading = crate::features::git::DiffRequest {
         repository_root: root.clone(),
         path: PathBuf::new(),
-        target: crate::git::DiffTarget::Commit,
+        target: crate::features::git::DiffTarget::Commit,
     };
     state.update(|app| {
         app.git_open_diff_sequence = sequence;
@@ -1128,7 +1133,7 @@ pub fn revert_commit(
         });
         return false;
     }
-    let short = crate::model::diff_document::short_oid(&oid).to_owned();
+    let short = crate::features::git::diff_document::short_oid(&oid).to_owned();
     run_with(
         state,
         store,
@@ -1854,7 +1859,9 @@ fn run(
     repository: RepositorySnapshot,
     kind: OperationKind,
     message: impl Into<String>,
-    action: impl FnOnce(&GitService, &std::path::Path) -> crate::git::GitResult<()> + Send + 'static,
+    action: impl FnOnce(&GitService, &std::path::Path) -> crate::features::git::GitResult<()>
+    + Send
+    + 'static,
 ) -> bool {
     run_with(state, store, repository, kind, message, action, |_, ()| {})
 }
@@ -1866,7 +1873,9 @@ fn run_with<T: Send + 'static>(
     repository: RepositorySnapshot,
     kind: OperationKind,
     message: impl Into<String>,
-    action: impl FnOnce(&GitService, &std::path::Path) -> crate::git::GitResult<T> + Send + 'static,
+    action: impl FnOnce(&GitService, &std::path::Path) -> crate::features::git::GitResult<T>
+    + Send
+    + 'static,
     on_success: impl FnOnce(&mut AppState, T) + Send + 'static,
 ) -> bool {
     if store.get().operation.is_some() {
@@ -1951,13 +1960,13 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
-    use crate::git::{RepositoryFeatures, RepositoryId, RepositoryState, UpstreamState};
+    use crate::features::git::{RepositoryFeatures, RepositoryId, RepositoryState, UpstreamState};
 
     fn dropped_diff(path: &str) -> Arc<DiffDocument> {
         Arc::new(DiffDocument::added(
             "repo".into(),
             path.into(),
-            crate::git::DiffTarget::IndexToWorktree,
+            crate::features::git::DiffTarget::IndexToWorktree,
             "added\n",
         ))
     }
@@ -2068,8 +2077,8 @@ mod tests {
 
     #[test]
     fn diff_drop_async_reads_preserve_comparison_and_ignore_failed_or_stale_destinations() {
-        use crate::git::{DiffRequest, DiffTarget};
-        use crate::model::diff_document::DiffRowKind;
+        use crate::features::git::diff_document::DiffRowKind;
+        use crate::features::git::{DiffRequest, DiffTarget};
         use crate::model::pane_layout::Direction;
         use lgui::application::{AppView, ApplicationHandle};
         use lgui::core::UiScale;
@@ -2261,7 +2270,7 @@ mod tests {
                     "add".into(),
                     "--force".into(),
                     "--".into(),
-                    crate::git::types::comparable_path(&duplicate)
+                    crate::features::git::types::comparable_path(&duplicate)
                         .as_os_str()
                         .to_owned(),
                     "feature/topic".into(),
@@ -2291,7 +2300,7 @@ mod tests {
                     "lock".into(),
                     "--reason".into(),
                     "in use".into(),
-                    crate::git::types::comparable_path(&path)
+                    crate::features::git::types::comparable_path(&path)
                         .as_os_str()
                         .to_owned(),
                 ]),
@@ -2308,7 +2317,7 @@ mod tests {
                 GitCommand::new().cwd(&root).args([
                     std::ffi::OsString::from("worktree"),
                     "unlock".into(),
-                    crate::git::types::comparable_path(&path)
+                    crate::features::git::types::comparable_path(&path)
                         .as_os_str()
                         .to_owned(),
                 ]),
@@ -2476,7 +2485,7 @@ mod tests {
 
     #[test]
     fn real_repository_stages_unstages_and_discards_single_changes() {
-        use crate::git::DiffTarget;
+        use crate::features::git::DiffTarget;
         let Some((root, backend)) = crate::git::backend::tests::repository() else {
             return;
         };
@@ -2581,7 +2590,7 @@ mod tests {
             .clone();
         assert_eq!(
             backend.commit_files(&root, &head).unwrap(),
-            [(crate::git::ChangeKind::Added, path.clone())]
+            [(crate::features::git::ChangeKind::Added, path.clone())]
         );
         let shown = backend.commit_full_diff(&root, &head, &path).unwrap();
         assert_eq!(shown.files[0].hunks[0].new_lines, 8);

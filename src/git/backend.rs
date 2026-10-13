@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::command::{CancellationToken, GitCommand, GitCommandRunner, nul_pathspec};
-use super::diff::{UnifiedDiff, parse_unified};
 use super::discovery::{self, DiscoveredRepository};
-use super::error::{GitError, GitErrorKind, GitResult};
-use super::parser::{parse_branches, parse_log, parse_numstat, parse_porcelain_v2};
 use super::runtime::GitRuntime;
-use super::types::*;
+use crate::features::git::diff::{UnifiedDiff, parse_unified};
+use crate::features::git::error::{GitError, GitErrorKind, GitResult};
+use crate::features::git::parser::{parse_branches, parse_log, parse_numstat, parse_porcelain_v2};
+use crate::features::git::types::*;
 
 pub trait GitBackend: Send + Sync {
     fn runtime(&self) -> &GitRuntime;
@@ -1803,8 +1803,8 @@ pub(crate) mod tests {
 
     #[test]
     fn repository_changes_keep_both_sides_and_refresh_new_and_removed_files() {
+        use crate::features::git::diff_document::DiffDocument;
         use crate::git::GitService;
-        use crate::model::diff_document::DiffDocument;
         let Some((root, backend)) = repository() else {
             return;
         };
@@ -1903,8 +1903,8 @@ pub(crate) mod tests {
 
     #[test]
     fn commit_changes_list_every_file_of_the_commit() {
+        use crate::features::git::diff_document::DiffDocument;
         use crate::git::GitService;
-        use crate::model::diff_document::DiffDocument;
         let Some((root, backend)) = repository() else {
             return;
         };
@@ -1985,8 +1985,9 @@ pub(crate) mod tests {
 
     #[test]
     fn polling_reloads_open_diffs_after_edits_stage_commit_and_deletion() {
-        use crate::git::diff::DiffLine;
-        use crate::git::{GitService, PollControl, PollTarget};
+        use crate::features::git::PollTarget;
+        use crate::features::git::diff::DiffLine;
+        use crate::git::{GitService, PollControl};
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         let Some((root, backend)) = repository() else {
             return;

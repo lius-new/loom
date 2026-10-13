@@ -2,8 +2,8 @@
 use super::workspace::*;
 use crate::domain::document::{DiskState, FileMeta};
 use crate::domain::identity::{FileId, PaneId};
-use crate::git::{DiffContent, DiffRequest, DiffTarget, GitResult, PollTarget};
-use crate::model::diff_document::DiffDocument;
+use crate::features::git::diff_document::DiffDocument;
+use crate::features::git::{DiffContent, DiffRequest, DiffTarget, GitResult, PollTarget};
 use std::path::Path;
 use std::sync::Arc;
 type OpenDocument = crate::domain::workspace::OpenDocument<DiffDocument, DiffRequest>;
@@ -228,7 +228,7 @@ impl Workspace {
                     let old_layout = current.changes_layout(split, &document.collapsed_diffs);
                     let new_layout = next.changes_layout(split, &document.collapsed_diffs);
                     for view in document.views.values_mut() {
-                        let row = view.scroll_y / crate::model::diff_document::row_height();
+                        let row = view.scroll_y / crate::ui::diff_editor::row_h();
                         if let Some(old) = old_layout
                             .sections
                             .iter()
@@ -241,7 +241,7 @@ impl Workspace {
                                 .find(|item| new_sections[item.index].request() == request)
                             {
                                 view.scroll_y = (new.top as f32 + row - old.top as f32).max(0.0)
-                                    * crate::model::diff_document::row_height();
+                                    * crate::ui::diff_editor::row_h();
                             }
                         }
                     }
@@ -271,7 +271,7 @@ impl Workspace {
             .find(|item| sections[item.index].request() == *request)
             && let Some(view) = document.views.get_mut(&pane)
         {
-            view.scroll_y = section.top as f32 * crate::model::diff_document::row_height();
+            view.scroll_y = section.top as f32 * crate::ui::diff_editor::row_h();
         }
     }
 

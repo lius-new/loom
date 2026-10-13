@@ -1,25 +1,22 @@
 //! Git integration boundary.
 //!
-//! UI code never starts `git` directly.  Runtime selection, process policy,
-//! parsing and repository state all live below this module.
+//! UI code never starts `git` directly. Runtime selection, process policy
+//! and polling live here; parsing and repository state are in
+//! `features::git`.
 
 pub mod backend;
 pub mod command;
-pub mod diff;
 pub mod discovery;
-pub mod error;
-pub mod parser;
 pub mod runtime;
 pub mod store;
-pub mod types;
 
 pub use backend::CliGitBackend;
-pub use error::{GitError, GitResult};
 pub use runtime::GitRuntimeManager;
-pub use store::{GitService, GitStoreSnapshot, PollControl, PollTarget};
-pub use types::*;
+pub use store::{GitService, PollControl};
 
 use std::path::PathBuf;
+
+use crate::features::git::{GitError, GitResult, GitStoreSnapshot, PollTarget};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;

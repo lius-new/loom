@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::error::{GitError, GitErrorKind, GitResult};
 use super::runtime::GitRuntime;
+use crate::features::git::error::{GitError, GitErrorKind, GitResult};
 
 #[derive(Clone, Debug, Default)]
 pub struct CancellationToken(Arc<AtomicBool>);
@@ -167,7 +167,7 @@ impl GitCommandRunner {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if self.runtime.source == super::types::GitRuntimeSource::Managed {
+        if self.runtime.source == crate::features::git::types::GitRuntimeSource::Managed {
             let mut paths = vec![
                 self.runtime.root.join("bin"),
                 self.runtime.root.join("cmd"),

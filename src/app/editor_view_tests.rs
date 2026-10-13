@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::identity::PaneId;
-use crate::git::{GitStoreSnapshot, LineChange};
+use crate::features::git::{GitStoreSnapshot, LineChange};
 use crate::model::text::TextBuffer;
 use lgui::core::{CursorIcon, KeyState, PointerButton, UiId};
 use lgui::core::{KeyModifiers, KeyboardEvent, LogicalKey};

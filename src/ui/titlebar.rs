@@ -10,7 +10,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
 
-use crate::git::GitStoreSnapshot;
+use crate::features::git::GitStoreSnapshot;
 use crate::input::action::Action;
 use crate::state::AppState;
 use crate::theme;

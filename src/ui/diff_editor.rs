@@ -8,12 +8,12 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
-use crate::fonts;
-use crate::git::{DiffTarget, GitStoreSnapshot};
-use crate::git_actions::{self, BlockAction};
-use crate::model::diff_document::{
+use crate::features::git::diff_document::{
     ChangesLayout, DiffDocument, DiffRow, DiffRowKind, SplitDiffRow,
 };
+use crate::features::git::{DiffTarget, GitStoreSnapshot};
+use crate::fonts;
+use crate::git_actions::{self, BlockAction};
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
@@ -25,8 +25,9 @@ const MARKER_W: f32 = 20.0;
 const BUTTON_H: f32 = 22.0;
 const BUTTON_GAP: f32 = 4.0;
 
-fn row_h() -> f32 {
-    crate::model::diff_document::row_height()
+/// Height of one diff row; rows grow with the editor font size.
+pub(crate) fn row_h() -> f32 {
+    crate::features::git::diff_document::row_height_for(crate::fonts::editor().size)
 }
 
 /// Render the diff shown by `pane` into `rect`.
@@ -65,7 +66,7 @@ pub fn render(
             match &document.revision {
                 Some(revision) => format!(
                     "Commit {} · {files} files",
-                    crate::model::diff_document::short_oid(revision)
+                    crate::features::git::diff_document::short_oid(revision)
                 ),
                 None => format!("All Changes · {files} files"),
             }
@@ -703,7 +704,7 @@ fn render_changes(
         }
         let open_state = state.clone();
         let focus = editor_focus.clone();
-        let untracked = section.group == crate::git::ChangeGroup::Untracked;
+        let untracked = section.group == crate::features::git::ChangeGroup::Untracked;
         let revision = overview.revision.clone();
         file_header = file_header.child(
             toolbar_button(
@@ -1029,7 +1030,9 @@ mod tests {
     }
 
     fn sample_overview(extra_files: usize) -> DiffDocument {
-        use crate::git::{ChangeDiff, ChangeGroup, DiffContent, DiffRequest, diff::parse_unified};
+        use crate::features::git::{
+            ChangeDiff, ChangeGroup, DiffContent, DiffRequest, diff::parse_unified,
+        };
         let file = |path: &str, group, target, patch: &str| ChangeDiff {
             path: path.into(),
             group,
@@ -1228,7 +1231,7 @@ mod tests {
 
     #[test]
     fn inline_overview_draws_added_and_deleted_display_rows_without_scrolling() {
-        use crate::git::diff::parse_unified;
+        use crate::features::git::diff::parse_unified;
         use lgui::application::AppView;
         use lgui::core::UiScale;
         use lgui::session::UiSession;
@@ -1306,8 +1309,8 @@ mod tests {
     }
 
     fn diff_expands_tabs_before_rendering(split: bool) {
-        use crate::git::{DiffTarget, diff::parse_unified};
-        use crate::model::diff_document::DiffDocument;
+        use crate::features::git::diff_document::DiffDocument;
+        use crate::features::git::{DiffTarget, diff::parse_unified};
         use lgui::application::AppView;
         use lgui::core::UiScale;
         use lgui::session::UiSession;
@@ -1356,8 +1359,8 @@ mod tests {
     }
 
     fn scrollbars_drag_and_release(split: bool) {
-        use crate::git::DiffTarget;
-        use crate::model::diff_document::DiffDocument;
+        use crate::features::git::DiffTarget;
+        use crate::features::git::diff_document::DiffDocument;
         use lgui::application::{AppView, ApplicationContext};
         use lgui::core::{
             InputEvent, Point, PointerButton, PointerData, UiEventKind, UiEventPayload, UiScale,
@@ -1402,7 +1405,7 @@ mod tests {
                     PaneId::new(1),
                     viewport,
                     state,
-                    cx.state(crate::git::GitStoreSnapshot::default()),
+                    cx.state(crate::features::git::GitStoreSnapshot::default()),
                     focus,
                 ))
         });

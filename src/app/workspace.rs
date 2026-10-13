@@ -2,9 +2,9 @@
 use crate::domain::identity::{FileId, PaneId};
 use crate::domain::pane_layout::Direction;
 use crate::domain::workspace as domain;
-use crate::git::DiffRequest;
+use crate::features::git::DiffRequest;
+use crate::features::git::diff_document::DiffDocument;
 use crate::infrastructure::workspace_filesystem as filesystem;
-use crate::model::diff_document::DiffDocument;
 pub use domain::{AppPage, OpenMode, ReconcileResult};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};

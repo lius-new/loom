@@ -3,9 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::git::diff::{DiffLine, UnifiedDiff};
-use crate::git::{ChangeGroup, DiffContent, DiffRequest, DiffTarget, LineChange};
-use crate::model::text::display_width;
+use super::diff::{DiffLine, UnifiedDiff};
+use super::{ChangeGroup, DiffContent, DiffRequest, DiffTarget, LineChange};
+use loom_editor_core::text::display_width;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,11 +55,6 @@ pub struct DiffDocument {
 
 /// Diff row height at the default 12px code size.
 const MIN_ROW_HEIGHT: f32 = 20.0;
-
-/// Height of one diff row; rows grow with the editor font size.
-pub fn row_height() -> f32 {
-    row_height_for(crate::fonts::editor().size)
-}
 
 pub fn row_height_for(font_size: f32) -> f32 {
     (font_size * MIN_ROW_HEIGHT / 12.0)
@@ -678,7 +673,7 @@ fn line_number(value: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::diff::parse_unified;
+    use crate::features::git::diff::parse_unified;
 
     #[test]
     fn change_blocks_are_numbered_like_zero_context_hunks() {

@@ -10,7 +10,7 @@ use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
 use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, component, group};
 use lgui::window::WindowFocusChanged;
 
-use crate::git::GitStoreSnapshot;
+use crate::features::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
 use crate::model::application_layout::{ApplicationLayout, Content};
 use crate::settings_persistence;
@@ -1442,8 +1442,8 @@ fn apply_git_scan(
     app: &mut AppState,
     current: &mut GitStoreSnapshot,
     roots: &[std::path::PathBuf],
-    target: &crate::git::PollTarget,
-    result: crate::git::GitResult<GitStoreSnapshot>,
+    target: &crate::features::git::PollTarget,
+    result: crate::features::git::GitResult<GitStoreSnapshot>,
 ) -> (bool, bool) {
     if app.explorer.model.roots() != roots || app.workspace.git_poll_target() != *target {
         crate::background_ui::retire(result);
@@ -1473,14 +1473,14 @@ fn apply_git_scan(
 
 struct GitScanNotification {
     roots: Vec<std::path::PathBuf>,
-    target: crate::git::PollTarget,
-    result: crate::git::GitResult<GitStoreSnapshot>,
+    target: crate::features::git::PollTarget,
+    result: crate::features::git::GitResult<GitStoreSnapshot>,
 }
 
 #[cfg(test)]
 mod git_refresh_tests {
     use super::*;
-    use crate::git::{GitError, PollTarget, error::GitErrorKind};
+    use crate::features::git::{GitError, PollTarget, error::GitErrorKind};
     use std::path::PathBuf;
 
     #[test]

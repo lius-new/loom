@@ -8,7 +8,7 @@ use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, pan
 use lgui::services::ServicesContextExt;
 
 use crate::features::explorer::{ExplorerContextTarget, ExplorerTargetKind};
-use crate::git::{ConflictSide, DiffRequest, DiffTarget, GitStoreSnapshot};
+use crate::features::git::{ConflictSide, DiffRequest, DiffTarget, GitStoreSnapshot};
 use crate::git_actions;
 use crate::state::AppState;
 use crate::theme;

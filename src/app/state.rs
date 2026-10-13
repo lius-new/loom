@@ -59,7 +59,7 @@ pub enum FileDragSource {
         clicks: u8,
     },
     Changes {
-        request: crate::git::DiffRequest,
+        request: crate::features::git::DiffRequest,
         untracked: bool,
     },
 }
@@ -227,7 +227,7 @@ pub struct AppState {
     pub git_split_diff: bool,
     pub git_inline_blame: bool,
     pub git_open_diff_sequence: u64,
-    pub git_diff_loading: Option<crate::git::DiffRequest>,
+    pub git_diff_loading: Option<crate::features::git::DiffRequest>,
     /// The title bar's branch picker, while it is open.
     pub branch_picker: Option<crate::ui::branch_picker::BranchPicker>,
     /// The picker's filter. Kept outside `branch_picker` so the input's
@@ -248,7 +248,7 @@ pub struct AppState {
     /// The hover card of a history commit; shown while its row is hovered.
     pub git_commit_card: Option<crate::ui::git_panel::CommitCard>,
     /// Hover card details already read, by commit id.
-    pub git_commit_details: HashMap<String, Result<crate::git::CommitDetails, String>>,
+    pub git_commit_details: HashMap<String, Result<crate::features::git::CommitDetails, String>>,
     /// A repository chosen in Source Control, with the active file at the
     /// time; it stays active until the active file changes.
     pub git_pinned_repository: Option<(PathBuf, Option<PathBuf>)>,
@@ -430,7 +430,7 @@ impl AppState {
 
     /// Applies an editor font preference, keeping open views on the same line.
     pub fn set_editor_font(&mut self, font: crate::fonts::FontSettings) {
-        use crate::model::diff_document::row_height_for;
+        use crate::features::git::diff_document::row_height_for;
         let font = font.clamped();
         if font.family != self.editor_font.family {
             self.editor_font_input.set_text(font.family.clone());
@@ -795,8 +795,8 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::{DiffTarget, diff::UnifiedDiff};
-    use crate::model::diff_document::DiffDocument;
+    use crate::features::git::diff_document::DiffDocument;
+    use crate::features::git::{DiffTarget, diff::UnifiedDiff};
     use std::path::PathBuf;
 
     #[test]

@@ -11,10 +11,10 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
+use crate::features::git::diff_document::{ChangeBlock, DiffDocument, DiffRow, DiffRowKind};
+use crate::features::git::{DiffTarget, GitStoreSnapshot, LineChange};
 use crate::fonts;
-use crate::git::{DiffTarget, GitStoreSnapshot, LineChange};
 use crate::git_actions::{self, BlockAction};
-use crate::model::diff_document::{ChangeBlock, DiffDocument, DiffRow, DiffRowKind};
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
@@ -79,7 +79,11 @@ fn hunk_at(document: &DiffDocument, line: usize) -> Option<(ChangeBlock, Vec<Dif
 }
 
 /// Read the unstaged change at `line`, or else the staged one.
-fn load(root: &Path, relative: &Path, line: usize) -> crate::git::GitResult<Option<Hunk>> {
+fn load(
+    root: &Path,
+    relative: &Path,
+    line: usize,
+) -> crate::features::git::GitResult<Option<Hunk>> {
     let service = crate::git::service()?;
     for target in [DiffTarget::IndexToWorktree, DiffTarget::HeadToIndex] {
         let diff = service.backend().parsed_full_diff(
@@ -449,7 +453,7 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::diff::parse_unified;
+    use crate::features::git::diff::parse_unified;
 
     #[test]
     fn finds_the_change_covering_a_gutter_line_with_its_rows() {

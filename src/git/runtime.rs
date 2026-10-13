@@ -5,8 +5,8 @@ use std::process::{Command, Stdio};
 use serde::Deserialize;
 
 use super::command::hide_console_window;
-use super::error::{GitError, GitErrorKind, GitResult};
-use super::types::{GitCapabilities, GitRuntimeSource, GitVersion};
+use crate::features::git::error::{GitError, GitErrorKind, GitResult};
+use crate::features::git::types::{GitCapabilities, GitRuntimeSource, GitVersion};
 
 #[derive(Clone, Debug)]
 pub struct GitRuntime {

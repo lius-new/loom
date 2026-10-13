@@ -17,7 +17,7 @@ use lgui::services::ServicesContextExt;
 
 use crate::app::editor_vim as vim_input;
 use crate::config_watcher::{self, ConfigWatcher};
-use crate::git::GitStoreSnapshot;
+use crate::features::git::GitStoreSnapshot;
 use crate::input::action::Action;
 use crate::input::context::KeyContext;
 use crate::input::context_stack::{self, EDITOR, TERMINAL, VIM};
