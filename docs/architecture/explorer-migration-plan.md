@@ -193,7 +193,7 @@ src/app/
 - 命名校验、最近目录 MRU/hydrate、最深根匹配迁入 feature；`MAX_RECENT_FOLDERS` 从 app/workspace_session 移到 `roots`。回收站、文件剪贴板、在文件管理器中显示、新建/重命名 I/O 迁入基础设施；`context_menu::reveal_target` 改为 `workspace_actions::reveal_item`（git_menu、tab_context_menu 同步）。
 - 与方案的偏差：`refresh.rs` 并入 `tree.rs`（规则不足以单列）；`model.rs` 推迟到 R5.2 与状态归属一起落地。
 - 门禁：`features/explorer` 只允许 features/domain，禁止根状态/GUI 类型与例外；`explorer_filesystem` 只允许 features/domain/std::fs/std::process/windows_sys；新增 2 组负例。policy：file_tree、workspace_actions 增加 features/infrastructure 依赖，移除 workspace_actions 的 windows_sys 与 context_menu 的 std::process。
-- 测试迁移：workspace_actions 中 8 项（MRU、根不重排最近目录、新建校验 2 项、重命名校验、Windows 设备名、Windows shell 路径）与 file_tree 中 3 项（排序、幂等刷新、剪枝）改为 feature 内存端口测试或基础设施测试，原名保留；file_tree 仅保留延迟刷新测试并增加 affected 路径断言。新增：lazy 目录不被刷新、缺失根保留与根外剪枝、affected 刷新、未变化保持 Arc 身份、已存在目标拒绝、hydrate 去重/规范化、最深根、Unicode 新建名、读失败为空、新建文件不覆盖。
+- 测试迁移：workspace_actions 中 7 项（MRU、根不重排最近目录、新建校验 2 项、重命名校验、Windows 设备名、Windows shell 路径；R5.6 复核更正，原记为 8 项）与 file_tree 中 3 项（排序、幂等刷新、剪枝）改为 feature 内存端口测试或基础设施测试，原名保留；file_tree 仅保留延迟刷新测试并增加 affected 路径断言。新增：lazy 目录不被刷新、缺失根保留与根外剪枝、affected 刷新、未变化保持 Arc 身份、已存在目标拒绝、hydrate 去重/规范化、最深根、Unicode 新建名、读失败为空、新建文件不覆盖。
 - 结果：完整 workspace 测试 625 通过、0 失败、12 忽略（应用 541，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 20 项门禁自测通过；登记根字段 98、legacy exception 文件 60 不变。release、隔离启动与性能采样留到 R5 收尾统一执行。
 
 ### R5.2（2026-10-13，本机自动验收）
@@ -235,3 +235,10 @@ src/app/
 - 门禁/登记：删除两个文件的例外与根状态适配器登记（legacy exception 文件 59 → 57，根状态适配器 25 → 23）；为菜单宽度测量单独允许 `unicode_width`（与编辑器视图同例）。
 - 测试：原 sidebar 5 项、context_menu 7 项按原名迁到新视图（改用 `ExplorerPanelState` 与 `active_path` 参数）；新增 6 项 `explorer_view` 测试，在真实会话中渲染抽屉与菜单后经命令驱动：菜单替换标签菜单、两次按下形成双击待定拖动、提交按当前编辑行分派到重命名/新建、仅在拖动期间改变宽度、菜单命令无目标不执行、展开/折叠与悬停/菜单状态下重复渲染。
 - 结果：完整 workspace 650 通过、0 失败、13 忽略（应用 566，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 22 项自测通过；Windows PowerShell 5.1 隔离启动/恢复 smoke 通过。原生交互（点击、拖放、IME、右键菜单视觉）仍需人工验收。
+
+### R5.6（2026-10-13，本机自动验收）
+
+- 删除 `crate::state` 对 DirEntry、ExplorerContextTarget、ExplorerCreateKind、ExplorerTargetKind 的 re-export；app/explorer、file_watcher、git_menu、tab_context_menu 直接引用 `features::explorer`。新增门禁规则与负例：根状态不得 re-export Explorer 类型（自测 23 项）。
+- 关闭 R5 登记：remove_in 含 R5 的 5 个例外按剩余内容改登记——file_icons、file_loading、file_watcher、workspace_home 转 R8，workspace_actions 转 R6 R8，各自写明剩余部分为何不属于 Explorer；policy 新增 `phase5` 摘要。
+- 文档：新增 [Explorer 迁移](explorer-migration.md) 与 [R5 报告](results/2026-10-13-r5-explorer/report.md)；更新整体进度与阶段 1 文档指针。复核测试迁移计数并更正 R5.1 记录。
+- 结果：完整 workspace 650 通过、0 失败、13 忽略；workspace-tests 16 通过；fmt、CI 参数 clippy、门禁与 23 项自测通过；release 构建通过；debug 与 release 隔离启动/恢复 smoke 通过。

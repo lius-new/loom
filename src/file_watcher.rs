@@ -80,8 +80,8 @@ pub(crate) fn apply_batch(app: &mut AppState, batch: &FileChangeBatch) -> bool {
 
 type PreparedDirectory = (
     String,
-    Arc<Vec<crate::state::DirEntry>>,
-    Option<Arc<Vec<crate::state::DirEntry>>>,
+    Arc<Vec<crate::features::explorer::DirEntry>>,
+    Option<Arc<Vec<crate::features::explorer::DirEntry>>>,
 );
 
 pub(crate) struct PreparedFileBatch {
@@ -906,9 +906,10 @@ mod tests {
         fs::write(root.join("added.txt"), "added").unwrap();
 
         let prepared = prepare_batch(&app, &full_rescan());
-        app.explorer
-            .model
-            .begin_create(root.clone(), crate::state::ExplorerCreateKind::File);
+        app.explorer.model.begin_create(
+            root.clone(),
+            crate::features::explorer::ExplorerCreateKind::File,
+        );
 
         assert_eq!(apply_prepared_batch(&mut app, prepared), (false, false));
         assert!(names(&app, &root).is_empty());

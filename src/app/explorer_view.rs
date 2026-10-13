@@ -453,7 +453,10 @@ mod tests {
             action: MenuAction::RemoveFolder,
             target: None,
         });
-        assert_eq!(h.state.get().explorer.model.roots(), std::slice::from_ref(&root));
+        assert_eq!(
+            h.state.get().explorer.model.roots(),
+            std::slice::from_ref(&root)
+        );
 
         h.run(Command::Menu {
             action: MenuAction::RemoveFolder,

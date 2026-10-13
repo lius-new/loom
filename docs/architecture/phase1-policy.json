@@ -426,8 +426,8 @@
       "dependencies": [
         "lgui"
       ],
-      "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5 收尾：图标注册是 Explorer、标签与 Git 共享的 UI 资源，不属于 Explorer 状态，随 R8 chrome 整理。"
     },
     "src/file_loading.rs": {
       "dependencies": [
@@ -443,12 +443,13 @@
         "lgui",
         "std::thread"
       ],
-      "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5 收尾：本文件只改为调用 app/explorer::open_tree_file；文件加载 worker 属于工作区打开流程，未排入 R5，随 R8 收尾迁入 app/infrastructure。"
     },
     "src/file_watcher.rs": {
       "dependencies": [
         "crate::background_ui",
+        "crate::features",
         "crate::infrastructure",
         "crate::model",
         "crate::state",
@@ -458,8 +459,8 @@
         "std::process",
         "std::thread"
       ],
-      "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R5.2 树刷新改由 Explorer 模型执行，准备阶段只克隆 Explorer 模型。"
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R5.2 树刷新改由 Explorer 模型执行，准备阶段只克隆 Explorer 模型。 R5 收尾：Explorer 部分只经模型 API 与 DirEntry 类型；剩余 notify 服务、搜索失效与磁盘对账协调随 R8 拆为 infrastructure 服务与 app 协调。"
     },
     "src/fonts.rs": {
       "dependencies": [
@@ -762,6 +763,7 @@
     "src/ui/git_menu.rs": {
       "dependencies": [
         "crate::app",
+        "crate::features",
         "crate::git",
         "crate::git_actions",
         "crate::state"
@@ -860,6 +862,7 @@
     "src/ui/tab_context_menu.rs": {
       "dependencies": [
         "crate::app",
+        "crate::features",
         "crate::model",
         "crate::state",
         "crate::workspace_actions",
@@ -923,8 +926,8 @@
         "crate::terminal_session",
         "crate::workspace_actions"
       ],
-      "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5 收尾：剩余根依赖为主表面悬停/焦点、打开文件与 Source Control 开关等 chrome。"
     },
     "src/window_geometry.rs": {
       "dependencies": [
@@ -949,8 +952,8 @@
         "std::process",
         "std::thread"
       ],
-      "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R4 会话保存/恢复转交 app/workspace_session；Explorer 与文件命令保留本文件各自阶段的登记。 R5.1 命名校验与根目录规则转交 features/explorer，回收站/剪贴板/显示位置转交 infrastructure/explorer_filesystem；其余 Explorer 命令在 R5.3 迁入 app/explorer。 R5.3 Explorer 命令、抽屉文件打开与文件夹管理已迁入 app/explorer；本文件只剩关闭/保存、会话包装、打开文件对话框与克隆（R6）。"
+      "remove_in": "R6 R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R4 会话保存/恢复转交 app/workspace_session；Explorer 与文件命令保留本文件各自阶段的登记。 R5.1 命名校验与根目录规则转交 features/explorer，回收站/剪贴板/显示位置转交 infrastructure/explorer_filesystem；其余 Explorer 命令在 R5.3 迁入 app/explorer。 R5.3 Explorer 命令、抽屉文件打开与文件夹管理已迁入 app/explorer；本文件只剩关闭/保存、会话包装、打开文件对话框与克隆（R6）。 R5 收尾：Explorer 部分已全部迁出；克隆随 R6，关闭/保存与会话包装随 R8。"
     }
   },
   "phase2": {
@@ -1214,5 +1217,15 @@
       "migrated_in": "R5.2",
       "from": "horizontal_scrollbar_drag_offset"
     }
+  },
+  "phase5": {
+    "explorer_has_no_exceptions": true,
+    "explorer_model_fields_private": true,
+    "root_state_aliases_removed": [
+      "DirEntry",
+      "ExplorerContextTarget",
+      "ExplorerCreateKind",
+      "ExplorerTargetKind"
+    ]
   }
 }

@@ -4,9 +4,10 @@ use lgui::core::{CursorIcon, EventPolicy, UiEventKind};
 use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
 use lgui::services::ServicesContextExt;
 
+use crate::features::explorer::{ExplorerContextTarget, ExplorerTargetKind};
 use crate::model::document::FileId;
 use crate::model::pane_layout::{Direction, PaneId};
-use crate::state::{AppState, ExplorerContextTarget, ExplorerTargetKind};
+use crate::state::AppState;
 use crate::theme;
 use crate::workspace_actions::{self, TabCloseScope};
 

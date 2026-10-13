@@ -1,6 +1,6 @@
 # 阶段 1：接线、状态归属和运行时边界
 
-> 最新状态见 [整体进度](progress.md)、[编辑器迁移说明](editor-migration.md) 和 [工作区域迁移](workspace-migration.md)。下文保留阶段 1 的历史截止记录。
+> 最新状态见 [整体进度](progress.md)、[编辑器迁移说明](editor-migration.md)、[工作区域迁移](workspace-migration.md) 和 [Explorer 迁移](explorer-migration.md)。下文保留阶段 1 的历史截止记录。
 
 阶段 1 建立可逐片迁移的边界。Workspace 仍在原有一次 State 更新中完成跨文档、跨 pane 事务，尚未拆开工作区，也未进入阶段 2 的搜索模块迁移。
 

@@ -10,12 +10,11 @@ use lgui::prelude::State;
 
 use crate::features::explorer::model::Reveal;
 use crate::features::explorer::ports::FileOpsPort;
+use crate::features::explorer::{ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::features::explorer::{edit, roots};
 use crate::infrastructure::explorer_filesystem::ExplorerFilesystem;
 use crate::model::document::FileId;
-use crate::state::{
-    AppState, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind, TabDrop,
-};
+use crate::state::{AppState, TabDrop};
 use crate::workspace_actions::read_text_file;
 use crate::workspace_persistence;
 

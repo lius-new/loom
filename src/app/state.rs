@@ -14,10 +14,6 @@ use crate::theme::ThemeId;
 use crate::ui::components::input::InputState;
 
 pub use crate::ui::drawer::DrawerMode;
-// Explorer types keep their root-state paths until R5.6 removes the alias.
-pub use crate::features::explorer::{
-    DirEntry, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind,
-};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseContinuation {

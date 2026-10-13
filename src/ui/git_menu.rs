@@ -7,9 +7,10 @@ use lgui::core::{CursorIcon, EventPolicy, UiEventContext, UiEventKind, UiFocusHa
 use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
 use lgui::services::ServicesContextExt;
 
+use crate::features::explorer::{ExplorerContextTarget, ExplorerTargetKind};
 use crate::git::{ConflictSide, DiffRequest, DiffTarget, GitStoreSnapshot};
 use crate::git_actions;
-use crate::state::{AppState, ExplorerContextTarget, ExplorerTargetKind};
+use crate::state::AppState;
 use crate::theme;
 use crate::ui::git_panel::{CONFLICTS, STAGED, UNTRACKED};
 

@@ -185,6 +185,8 @@ export function violations(sources, policy) {
     for(const field of actual)if(!registered.includes(field))problems.push(`${name}.${field}: no registered owner`);
     for(const field of registered)if(!actual.includes(field))problems.push(`${name}.${field}: obsolete ownership entry`);
   }
+  const rootState=sources['src/app/state.rs'];
+  if(rootState&&/\bpub\s+use\s+crate\s*::\s*features\s*::\s*explorer\b/.test(tokens(rootState).join(' ')))problems.push('Explorer types must not be re-exported from the root state');
   const explorerModel=sources['src/features/explorer/model.rs'];
   if(explorerModel) {
     const ts=tokens(explorerModel),start=ts.findIndex((t,i)=>t==='struct'&&ts[i+1]==='ExplorerModel');

@@ -142,3 +142,10 @@ test('Explorer view cannot read the application root or keep exceptions',()=>{
   const p=policy();p.exceptions['src/ui/explorer/view.rs']={dependencies:['crate::state'],reason:'bad',remove_in:'R8'};
   assert.ok(violations({'src/ui/explorer/view.rs':'use crate::state::Root;'},p).some(e=>e.includes('Explorer view cannot have migration exceptions')));
 });
+test('root state cannot re-export Explorer types again',()=>{
+  const state='pub use crate::features::explorer::{DirEntry, ExplorerTargetKind};\npub struct AppState { pub explorer: u8 }\nimpl AppState {}';
+  const p=policy();p.state_ownership={explorer:{owner:'app composition',remove_in:'composition'}};
+  assert.ok(violations({'src/app/state.rs':state},p).some(e=>e.includes('must not be re-exported')));
+  const clean='use crate::features::explorer::DirEntry;\npub struct AppState { pub explorer: u8 }\nimpl AppState {}';
+  assert.ok(!violations({'src/app/state.rs':clean},p).some(e=>e.includes('must not be re-exported')));
+});
