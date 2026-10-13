@@ -11,6 +11,7 @@ mod editor_vim_integration_tests;
 pub(crate) mod explorer;
 pub(crate) mod explorer_view;
 pub(crate) mod git;
+mod git_poll;
 mod git_tasks;
 #[cfg(test)]
 mod phase0_baseline;

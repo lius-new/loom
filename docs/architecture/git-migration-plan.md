@@ -180,3 +180,11 @@ Git 展示数据或发出命令。
 - 登记：runtime 桥接由 git_actions 改为 app/git、app/git_tasks；删除 git_actions 例外（legacy exception 文件 50 → 49）；Git 视图与 hunk 预览的 `crate::git_actions` 依赖改为临时 `crate::app`，R6.6 移除。
 - 测试：git_actions 的 11 项测试随文件迁移、名称不变；新增 5 项 git_tasks 测试（第二个操作被拒、完成只在 UI 回合应用并清空提交输入、失败保留输入并记录错误、worker 无法启动撤销标记、新操作清除旧错误）。
 - 结果：完整 workspace 663 通过、0 失败、13 忽略（应用 579，编辑核心 68，独立域 16）；fmt、CI 参数 clippy、门禁与 26 项自测通过；隔离启动/恢复 smoke 通过。
+
+### R6.5（2026-10-13，本机自动验收）
+
+- 新增 `app/git_poll.rs`：`poll_target`（活动文件、打开的 diff、在活动文件未变时仍有效的固定仓库）、`history_key`、`start`（2 s 轮询）、`deliver` 与 `apply_scan`。shell 只保留 effect 接线，原 `apply_git_scan`、`GitScanNotification` 与 `git_refresh_tests` 删除，两项测试按原名迁入。
+- **修复既有缺陷**：轮询器发布的目标包含固定仓库，而原 `apply_git_scan` 用不含固定仓库的 `workspace.git_poll_target()` 比较，因此在 Source Control 中选定仓库后、活动文件变化前，所有扫描都被当作过期丢弃（暂存等操作后状态不刷新）。现在设置轮询目标与校验扫描使用同一个 `poll_target`。回归测试在恢复旧比较时失败（已验证），修复后通过。
+- 新增测试：固定仓库期间扫描持续生效、固定前开始的扫描被拒且固定随活动文件变化失效、旧代次不覆盖新代次、历史仅在抽屉与历史分区可见时跟随活动仓库。
+- 性能：本步未改动快照准备、轮询线程或渲染路径，前后对照没有可比较的差异；面板渲染对照放在改动视图的 R6.6。
+- 结果：完整 workspace 667 通过、0 失败、13 忽略（应用 583，编辑核心 68，独立域 16）；fmt、CI 参数 clippy、门禁与 26 项自测通过；隔离启动/恢复 smoke 通过。

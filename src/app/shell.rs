@@ -214,26 +214,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         .state_with(move || {
             crate::background_ui::LatestNotification::new(
                 notification_application,
-                move |notification: GitScanNotification| {
-                    let mut retired = None;
-                    notification_state.try_update(|app| {
-                        let mut diffs_changed = false;
-                        notification_store.try_update(|current| {
-                            let old = current.clone();
-                            let (store_changed, changed) = apply_git_scan(
-                                app,
-                                current,
-                                &notification.roots,
-                                &notification.target,
-                                notification.result,
-                            );
-                            retired = Some(old);
-                            diffs_changed = changed;
-                            store_changed
-                        });
-                        diffs_changed
-                    });
-                    crate::background_ui::retire(retired);
+                move |notification: super::git_poll::GitScanNotification| {
+                    super::git_poll::deliver(
+                        &notification_state,
+                        &notification_store,
+                        notification,
+                    );
                 },
             )
         })
@@ -382,32 +368,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     crate::fonts::set(&s.editor_font, &s.terminal_font);
     let editor_layout = crate::workspace_actions::saved_app_editor_layout(&s);
     let git_roots = s.explorer.model.roots().to_vec();
-    let mut git_target = s.workspace.git_poll_target();
-    // A repository chosen in Source Control holds until the active file changes.
-    git_target.pinned_repository = s
-        .git
-        .model
-        .pinned_for(git_target.active_path.as_deref())
-        .cloned();
+    let git_target = super::git_poll::poll_target(&s);
     // Keep the history of the active repository's HEAD while it is shown.
-    let history_key = {
-        let git = git_store.get();
-        git.active()
-            .filter(|_| {
-                s.source_control.visible
-                    && !s
-                        .git
-                        .ui
-                        .collapsed_sections
-                        .contains(&crate::ui::git_panel::HISTORY)
-            })
-            .map(|repository| {
-                (
-                    repository.worktree_root.clone(),
-                    repository.head_oid.clone(),
-                )
-            })
-    };
+    let history_key = super::git_poll::history_key(&s, &git_store.get());
     let history_state = state.clone();
     cx.use_effect(history_key.clone(), move || {
         if let Some((root, head)) = history_key {
@@ -462,19 +425,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         || {}
     });
     cx.use_effect(git_roots.clone(), move || {
-        let scan_roots = git_roots.clone();
-        let handle = crate::infrastructure::git::start_polling(
-            git_roots,
-            git_poll,
-            Duration::from_millis(2_000),
-            move |target, result| {
-                scan_notifications.send(GitScanNotification {
-                    roots: scan_roots.clone(),
-                    target: target.clone(),
-                    result,
-                });
-            },
-        );
+        let handle = super::git_poll::start(git_roots, git_poll, move |notification| {
+            scan_notifications.send(notification)
+        });
         move || drop(handle)
     });
     cx.use_effect(editor_layout.clone(), move || {
@@ -1444,123 +1397,4 @@ fn pane_strip_rect(pane: UiRect) -> UiRect {
 /// A pane's surface below its tab strip.
 fn pane_body_rect(pane: UiRect) -> UiRect {
     UiRect::new(pane.left, pane.top + theme::TABS_H, pane.right, pane.bottom)
-}
-
-fn apply_git_scan(
-    app: &mut AppState,
-    current: &mut GitStoreSnapshot,
-    roots: &[std::path::PathBuf],
-    target: &crate::features::git::PollTarget,
-    result: crate::features::git::GitResult<GitStoreSnapshot>,
-) -> (bool, bool) {
-    if app.explorer.model.roots() != roots || app.workspace.git_poll_target() != *target {
-        crate::background_ui::retire(result);
-        return (false, false);
-    }
-    if result
-        .as_ref()
-        .is_ok_and(|next| next.generation < current.generation)
-    {
-        crate::background_ui::retire(result);
-        return (false, false);
-    }
-    let diffs_changed = if let Ok(next) = &result
-        && next.generation >= current.generation
-    {
-        let retired = app
-            .workspace
-            .apply_prepared_git_diffs(&next.presentation.diffs, app.git.ui.split_diff);
-        let changed = !retired.is_empty();
-        crate::background_ui::retire(retired);
-        changed
-    } else {
-        false
-    };
-    (current.apply_scan(result), diffs_changed)
-}
-
-struct GitScanNotification {
-    roots: Vec<std::path::PathBuf>,
-    target: crate::features::git::PollTarget,
-    result: crate::features::git::GitResult<GitStoreSnapshot>,
-}
-
-#[cfg(test)]
-mod git_refresh_tests {
-    use super::*;
-    use crate::features::git::{GitError, PollTarget, error::GitErrorKind};
-    use std::path::PathBuf;
-
-    #[test]
-    fn rejects_success_and_failure_from_a_previous_workspace() {
-        let old_roots = vec![PathBuf::from("old")];
-        let mut app = AppState::new();
-        app.explorer
-            .model
-            .restore(vec![PathBuf::from("current")], Vec::new());
-        let mut store = GitStoreSnapshot::default();
-        for result in [
-            Ok(GitStoreSnapshot {
-                generation: 100,
-                initializing: false,
-                ..Default::default()
-            }),
-            Err(GitError::new(GitErrorKind::Other, "old scan failed")),
-        ] {
-            assert_eq!(
-                apply_git_scan(
-                    &mut app,
-                    &mut store,
-                    &old_roots,
-                    &PollTarget::default(),
-                    result
-                ),
-                (false, false)
-            );
-        }
-        assert_eq!(store.generation, 0);
-        assert!(store.last_error.is_none());
-    }
-
-    #[test]
-    fn rejects_a_scan_for_a_tab_that_is_no_longer_active() {
-        let mut app = AppState::new();
-        app.workspace
-            .open_path(PathBuf::from("a.txt"), String::new());
-        let target = app.workspace.git_poll_target();
-        app.workspace
-            .open_path(PathBuf::from("b.txt"), String::new());
-        let mut store = GitStoreSnapshot::default();
-        assert_eq!(
-            apply_git_scan(
-                &mut app,
-                &mut store,
-                &[],
-                &target,
-                Ok(GitStoreSnapshot {
-                    generation: 100,
-                    initializing: false,
-                    ..Default::default()
-                })
-            ),
-            (false, false)
-        );
-        assert_eq!(store.generation, 0);
-        let current_target = app.workspace.git_poll_target();
-        assert_eq!(
-            apply_git_scan(
-                &mut app,
-                &mut store,
-                &[],
-                &current_target,
-                Ok(GitStoreSnapshot {
-                    generation: 101,
-                    initializing: false,
-                    ..Default::default()
-                })
-            ),
-            (true, false)
-        );
-        assert_eq!(store.generation, 101);
-    }
 }
