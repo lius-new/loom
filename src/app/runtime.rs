@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::file_loading::FileLoader;
-use crate::git::PollControl;
+use crate::infrastructure::git::PollControl;
 use lgui::ApplicationHandle;
 
 #[derive(Default)]

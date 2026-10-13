@@ -27,7 +27,6 @@ mod file_icons;
 mod file_loading;
 mod file_watcher;
 mod fonts;
-mod git;
 mod git_actions;
 use features::keymap as input;
 mod domain;

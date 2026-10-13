@@ -181,7 +181,7 @@ impl GitService {
             };
             repositories.insert(id, snapshot);
         }
-        let runtime = self.backend.runtime();
+        let runtime = self.backend.git_runtime();
         let mut snapshot = GitStoreSnapshot {
             repositories: repositories.into(),
             active_repository: None,

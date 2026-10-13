@@ -119,7 +119,7 @@ impl GitCommandRunner {
         Self { runtime }
     }
 
-    pub fn runtime(&self) -> &GitRuntime {
+    pub fn git_runtime(&self) -> &GitRuntime {
         &self.runtime
     }
 

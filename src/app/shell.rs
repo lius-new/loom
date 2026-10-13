@@ -461,7 +461,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     cx.use_effect(git_roots.clone(), move || {
         let scan_roots = git_roots.clone();
-        let handle = crate::git::start_polling(
+        let handle = crate::infrastructure::git::start_polling(
             git_roots,
             git_poll,
             Duration::from_millis(2_000),

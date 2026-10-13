@@ -13,7 +13,7 @@ use crate::features::git::{
     ConflictSide, GitError, GitResult, GitStoreSnapshot, HeadState, OperationKind, RemoteInfo,
     RepositorySnapshot, RepositoryState,
 };
-use crate::git::{CliGitBackend, GitService};
+use crate::infrastructure::git::{CliGitBackend, GitService};
 use crate::state::{AppState, TabDrop};
 use crate::ui::branch_picker::{BranchListing, Checkout};
 use crate::ui::git_confirm::{GitConfirm, GitConfirmAction};
@@ -92,7 +92,7 @@ fn open_diff_with_focus(
     let spawned = thread::Builder::new()
         .name("loom-git-open-diff".into())
         .spawn(move || {
-            let result = crate::git::service().and_then(|service| {
+            let result = crate::infrastructure::git::service().and_then(|service| {
                 if request.target == crate::features::git::DiffTarget::Changes {
                     let content = service.refresh_diff(&request, &GitStoreSnapshot::default())?;
                     return Ok(Arc::new(DiffDocument::from_content(request, content)));
@@ -106,7 +106,7 @@ fn open_diff_with_focus(
                     && untracked
                     && request.target != crate::features::git::DiffTarget::HeadToIndex
                 {
-                    let content = crate::git::store::read_untracked(
+                    let content = crate::infrastructure::git::service::read_untracked(
                         &request.repository_root.join(&request.path),
                     )?;
                     DiffDocument::from_content(request, content)
@@ -887,7 +887,7 @@ pub fn load_history(state: &State<AppState>, root: PathBuf, head: Option<String>
             let commits = if head.is_none() {
                 Ok(Vec::new())
             } else {
-                crate::git::service()
+                crate::infrastructure::git::service()
                     .and_then(|service| {
                         service
                             .backend()
@@ -930,7 +930,7 @@ pub fn toggle_commit(state: &State<AppState>, root: PathBuf, oid: String) {
     let _ = thread::Builder::new()
         .name("loom-git-commit-files".into())
         .spawn(move || {
-            let files = crate::git::service()
+            let files = crate::infrastructure::git::service()
                 .and_then(|service| service.backend().commit_files(&root, &oid))
                 .map_err(|error| error.user_message());
             application.post(move || {
@@ -960,7 +960,7 @@ pub fn open_commit_diff(state: &State<AppState>, root: PathBuf, oid: String, pat
     let _ = thread::Builder::new()
         .name("loom-git-commit-diff".into())
         .spawn(move || {
-            let result = crate::git::service().and_then(|service| {
+            let result = crate::infrastructure::git::service().and_then(|service| {
                 let diff = service.backend().commit_full_diff(&root, &oid, &path)?;
                 Ok(Arc::new(DiffDocument::commit(root, path, oid, diff)))
             });
@@ -1025,7 +1025,7 @@ pub fn open_commit_changes(
     let spawned = thread::Builder::new()
         .name("loom-git-commit-changes".into())
         .spawn(move || {
-            let result = crate::git::service().and_then(|service| {
+            let result = crate::infrastructure::git::service().and_then(|service| {
                 let content = service.commit_changes(&root, &oid)?;
                 Ok(Arc::new(DiffDocument::commit_changes(root, oid, content)))
             });
@@ -1089,7 +1089,7 @@ pub fn hover_commit(
             let cached = app.git_commit_details.get(&oid).cloned();
             drop(app);
             let details = cached.unwrap_or_else(|| {
-                crate::git::service()
+                crate::infrastructure::git::service()
                     .and_then(|service| service.backend().commit_details(&root, &oid))
                     .map_err(|error| error.user_message())
             });
@@ -1616,7 +1616,7 @@ pub fn load_branches(state: &State<AppState>, repository: PathBuf, sequence: u64
     let spawned = thread::Builder::new()
         .name("loom-git-branches".into())
         .spawn(move || {
-            let result = crate::git::service().and_then(|service| {
+            let result = crate::infrastructure::git::service().and_then(|service| {
                 let branches = service.backend().branches(&repository)?;
                 let worktrees = service.backend().worktrees(&repository)?;
                 Ok((branches, worktrees))
@@ -1901,7 +1901,7 @@ fn run_with<T: Send + 'static>(
     let spawned = thread::Builder::new()
         .name(format!("loom-git-{kind:?}").to_ascii_lowercase())
         .spawn(move || {
-            let result = crate::git::service().and_then(|service| action(&service, &repository.worktree_root));
+            let result = crate::infrastructure::git::service().and_then(|service| action(&service, &repository.worktree_root));
             let disk_updates = if result.is_ok() {
                 state.get().workspace.prepare_disk_updates(&[], true)
             } else { Vec::new() };
@@ -2087,7 +2087,8 @@ mod tests {
         use std::sync::Mutex;
         use std::time::{Duration, Instant};
 
-        let (root, backend) = crate::git::backend::tests::repository().expect("Git runtime");
+        let (root, backend) =
+            crate::infrastructure::git::backend::tests::repository().expect("Git runtime");
         std::fs::write(root.join("file.txt"), "base\n").unwrap();
         backend.stage(&root, &["file.txt".into()]).unwrap();
         backend.commit(&root, "base", false, false).unwrap();
@@ -2225,9 +2226,9 @@ mod tests {
 
     #[test]
     fn real_repository_manages_worktrees_without_switching_the_source() {
-        use crate::git::backend::GitBackend;
-        use crate::git::command::GitCommand;
-        let (root, backend) = crate::git::backend::tests::repository()
+        use crate::infrastructure::git::backend::GitBackend;
+        use crate::infrastructure::git::command::GitCommand;
+        let (root, backend) = crate::infrastructure::git::backend::tests::repository()
             .expect("Git runtime for worktree integration test");
         let root = std::fs::canonicalize(root).unwrap();
         std::fs::write(root.join("file.txt"), "base\n").unwrap();
@@ -2486,7 +2487,7 @@ mod tests {
     #[test]
     fn real_repository_stages_unstages_and_discards_single_changes() {
         use crate::features::git::DiffTarget;
-        let Some((root, backend)) = crate::git::backend::tests::repository() else {
+        let Some((root, backend)) = crate::infrastructure::git::backend::tests::repository() else {
             return;
         };
         let path = PathBuf::from("lines.txt");
@@ -2495,11 +2496,11 @@ mod tests {
         // the index whatever the machine's `core.autocrlf`.
         backend
             .runner()
-            .run(crate::git::command::GitCommand::new().cwd(&root).args([
-                "config",
-                "core.autocrlf",
-                "false",
-            ]))
+            .run(
+                crate::infrastructure::git::command::GitCommand::new()
+                    .cwd(&root)
+                    .args(["config", "core.autocrlf", "false"]),
+            )
             .unwrap();
         std::fs::write(&file, "a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh\r\n").unwrap();
         backend.stage(&root, std::slice::from_ref(&path)).unwrap();
@@ -2599,7 +2600,7 @@ mod tests {
 
     #[test]
     fn real_repository_switches_with_stashed_changes() {
-        let Some((root, backend)) = crate::git::backend::tests::repository() else {
+        let Some((root, backend)) = crate::infrastructure::git::backend::tests::repository() else {
             return;
         };
         let file = root.join("file.txt");
@@ -2678,7 +2679,7 @@ mod tests {
         backend
             .runner()
             .run(
-                crate::git::command::GitCommand::new()
+                crate::infrastructure::git::command::GitCommand::new()
                     .cwd(&root)
                     .args(["reset", "--hard"]),
             )

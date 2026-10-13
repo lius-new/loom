@@ -79,6 +79,7 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/explorer_filesystem.rs')return ['features','domain','std::fs','std::process','windows_sys'].includes(root);
   if(file.startsWith('src/features/search/'))return ['features','domain','globset','regex','unicode_segmentation'].includes(root);
   if(file.startsWith('src/infrastructure/search_filesystem'))return ['features','domain','ignore','std::fs','std::process'].includes(root);
+  if(file.startsWith('src/infrastructure/git/'))return ['infrastructure','features','domain','serde','std::fs','std::process','std::thread'].includes(root);
   if(file==='src/infrastructure/workspace_filesystem.rs')return ['infrastructure','domain','std::fs'].includes(root);
   if(file==='src/infrastructure/session_filesystem.rs')return ['infrastructure','domain','serde','serde_json','std::fs','std::process'].includes(root);
   if(file==='src/ui/editor/view.rs'&&root==='unicode_width')return true;
@@ -139,6 +140,7 @@ export function violations(sources, policy) {
     if(file.startsWith('src/ui/explorer/')&&policy.exceptions[file])problems.push(file+': Explorer view cannot have migration exceptions');
     if(file.startsWith('src/features/git/')&&ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','InputState','UiRect','State','Command','Child'].includes(t)))problems.push(file+': Git feature must be framework/root/process independent');
     if(file.startsWith('src/features/git/')&&policy.exceptions[file])problems.push(file+': Git feature cannot have migration exceptions');
+    if(file.startsWith('src/infrastructure/git/')&&(policy.exceptions[file]||ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','UiRect'].includes(t))))problems.push(file+': Git infrastructure must stay free of root state, GUI and exceptions');
     if(file.startsWith('src/features/explorer/')&&policy.exceptions[file])problems.push(file+': Explorer feature cannot have migration exceptions');
     if((file.startsWith('src/features/search/')||file.startsWith('src/ui/search/'))&&policy.exceptions[file])problems.push(file+': Search cannot have migration exceptions');
     if(file==='src/model/workspace.rs'&&deps.some(d=>['crate::search','crate::search_actions','crate::features'].includes(d)))problems.push('Workspace must expose generic snapshots, not Search DTOs');

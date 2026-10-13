@@ -154,3 +154,10 @@ Git 展示数据或发出命令。
 - 门禁：`features/git` 只依赖 features/domain，禁止根状态/GUI/进程类型与例外；新增负例（自测 24 项）。policy：删除 model/diff_document 例外（legacy exception 文件 57 → 56）；7 个 Git/diff 视图与 key_actions 去掉 `crate::git` 依赖（只用类型）；src/git 剩余文件与 git_actions、hunk_peek 登记 `crate::features`。
 - 测试：store 的 7 项快照测试按原名迁入 snapshot，4 项 PollControl 测试留在 store；types/error/parser/diff/diff_document 测试随文件迁移，名称不变。
 - 结果：完整 workspace 650 通过、0 失败、13 忽略（与 R5 相同，纯迁移无新增）；fmt、CI 参数 clippy、门禁与 24 项自测通过；隔离启动/恢复 smoke 通过。
+
+### R6.2（2026-10-13，本机自动验收）
+
+- `src/git/` 删除：command、runtime、discovery、backend 原样迁入 `infrastructure/git/`，`store.rs` 改名 `service.rs`（`GitService`、`PollControl`、轮询线程），`mod.rs` 保留 `service()`/`start_polling`/`PollingHandle`。全仓引用改为 `crate::infrastructure::git`，不保留别名。
+- Git 运行时访问器 `runtime()` 改名 `git_runtime()`：原名与 `AppRuntime` 桥接的词法检查冲突，使 backend/store 被登记为 runtime 桥接；改名后两项登记删除，实际不涉及应用运行时。
+- 门禁：`infrastructure/git` 只允许 infrastructure/features/domain、std::fs/process/thread 与 serde，禁止根状态/GUI 与例外；新增负例（自测 25 项）。policy：删除 src/git 6 个例外（legacy exception 文件 56 → 50）与 2 个 runtime 桥接；git_actions、hunk_peek、workspace_actions 的 `crate::git` 依赖改登记为 `crate::infrastructure`。
+- 结果：完整 workspace 650 通过、0 失败、13 忽略（纯迁移）；fmt、CI 参数 clippy、门禁与 25 项自测通过；隔离启动/恢复 smoke 通过。进程参数、超时、取消与运行时解析未改动。

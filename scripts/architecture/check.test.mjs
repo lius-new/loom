@@ -157,3 +157,10 @@ test('Git rules cannot regain root state, GUI, processes or exceptions',()=>{
   const p=policy();p.exceptions['src/features/git/diff.rs']={dependencies:['std::fs'],reason:'bad',remove_in:'R8'};
   assert.ok(violations({'src/features/git/diff.rs':'use std::fs;'},p).some(e=>e.includes('Git feature cannot have migration exceptions')));
 });
+test('Git infrastructure is limited to process, file and thread services',()=>{
+  const file='src/infrastructure/git/backend.rs';
+  assert.deepEqual(violations({[file]:'use crate::features::git::types::*;\nuse std::process::Command;\nuse std::fs;\nuse serde::Deserialize;\nfn f(){ std::thread::spawn(||{}); }'},policy()),[]);
+  for(const source of ['use crate::state::AppState;','use lgui::prelude::*;','use crate::app::git;','use crate::ui::git;','fn f(w: &Workspace) {}'])assert.ok(violations({[file]:source},policy()).length>0,source);
+  const p=policy();p.exceptions[file]={dependencies:['lgui'],reason:'bad',remove_in:'R8'};
+  assert.ok(violations({[file]:'use lgui::prelude::*;'},p).some(e=>e.includes('Git infrastructure must stay free')));
+});

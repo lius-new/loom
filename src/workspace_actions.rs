@@ -313,11 +313,11 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
     thread::Builder::new()
         .name("loom-git-clone".to_owned())
         .spawn(move || {
-            let result = crate::git::service().and_then(|service| {
+            let result = crate::infrastructure::git::service().and_then(|service| {
                 service.clone_repository(
                     &url,
                     &target,
-                    &crate::git::command::CancellationToken::default(),
+                    &crate::infrastructure::git::command::CancellationToken::default(),
                 )
             });
 

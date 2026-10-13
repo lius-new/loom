@@ -84,7 +84,7 @@ fn load(
     relative: &Path,
     line: usize,
 ) -> crate::features::git::GitResult<Option<Hunk>> {
-    let service = crate::git::service()?;
+    let service = crate::infrastructure::git::service()?;
     for target in [DiffTarget::IndexToWorktree, DiffTarget::HeadToIndex] {
         let diff = service.backend().parsed_full_diff(
             root,

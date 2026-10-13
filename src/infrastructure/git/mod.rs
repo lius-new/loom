@@ -1,18 +1,16 @@
-//! Git integration boundary.
-//!
-//! UI code never starts `git` directly. Runtime selection, process policy
-//! and polling live here; parsing and repository state are in
-//! `features::git`.
+//! Git process adapters: runtime selection, the command runner, repository
+//! discovery, the CLI backend and the status poller. Parsing and repository
+//! state live in `features::git`; UI code never starts `git` directly.
 
 pub mod backend;
 pub mod command;
 pub mod discovery;
 pub mod runtime;
-pub mod store;
+pub mod service;
 
-pub use backend::CliGitBackend;
-pub use runtime::GitRuntimeManager;
-pub use store::{GitService, PollControl};
+pub use self::backend::CliGitBackend;
+pub use self::runtime::GitRuntimeManager;
+pub use self::service::{GitService, PollControl};
 
 use std::path::PathBuf;
 

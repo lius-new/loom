@@ -12,7 +12,7 @@ use crate::features::git::parser::{parse_branches, parse_log, parse_numstat, par
 use crate::features::git::types::*;
 
 pub trait GitBackend: Send + Sync {
-    fn runtime(&self) -> &GitRuntime;
+    fn git_runtime(&self) -> &GitRuntime;
     fn discover(&self, roots: &[PathBuf]) -> GitResult<Vec<DiscoveredRepository>>;
     fn status(
         &self,
@@ -241,7 +241,7 @@ impl CliGitBackend {
     }
 
     pub fn unstage(&self, repository: &Path, paths: &[PathBuf]) -> GitResult<()> {
-        if self.runtime().capabilities.restore {
+        if self.git_runtime().capabilities.restore {
             self.pathspec_command(repository, &["restore", "--staged"], paths)?;
         } else {
             self.pathspec_command(repository, &["reset", "HEAD"], paths)?;
@@ -250,7 +250,7 @@ impl CliGitBackend {
     }
 
     pub fn restore_worktree(&self, repository: &Path, paths: &[PathBuf]) -> GitResult<()> {
-        if !self.runtime().capabilities.restore {
+        if !self.git_runtime().capabilities.restore {
             return Err(GitError::new(
                 GitErrorKind::Unsupported,
                 "This Git runtime does not support safe restore.",
@@ -1084,7 +1084,7 @@ impl CliGitBackend {
         if paths.is_empty() {
             return Ok(());
         }
-        if self.runtime().capabilities.pathspec_from_file {
+        if self.git_runtime().capabilities.pathspec_from_file {
             let mut args = prefix.iter().map(OsString::from).collect::<Vec<_>>();
             args.extend([
                 OsString::from("--pathspec-from-file=-"),
@@ -1108,8 +1108,8 @@ impl CliGitBackend {
 }
 
 impl GitBackend for CliGitBackend {
-    fn runtime(&self) -> &GitRuntime {
-        self.runner.runtime()
+    fn git_runtime(&self) -> &GitRuntime {
+        self.runner.git_runtime()
     }
 
     fn discover(&self, roots: &[PathBuf]) -> GitResult<Vec<DiscoveredRepository>> {
@@ -1506,7 +1506,7 @@ fn path_from_git_bytes(value: &[u8]) -> PathBuf {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::git::runtime::GitRuntimeManager;
+    use crate::infrastructure::git::runtime::GitRuntimeManager;
 
     pub(crate) fn repository() -> Option<(PathBuf, CliGitBackend)> {
         let runtime = GitRuntimeManager::default().resolve().ok()?;
@@ -1804,7 +1804,7 @@ pub(crate) mod tests {
     #[test]
     fn repository_changes_keep_both_sides_and_refresh_new_and_removed_files() {
         use crate::features::git::diff_document::DiffDocument;
-        use crate::git::GitService;
+        use crate::infrastructure::git::GitService;
         let Some((root, backend)) = repository() else {
             return;
         };
@@ -1904,7 +1904,7 @@ pub(crate) mod tests {
     #[test]
     fn commit_changes_list_every_file_of_the_commit() {
         use crate::features::git::diff_document::DiffDocument;
-        use crate::git::GitService;
+        use crate::infrastructure::git::GitService;
         let Some((root, backend)) = repository() else {
             return;
         };
@@ -1987,7 +1987,7 @@ pub(crate) mod tests {
     fn polling_reloads_open_diffs_after_edits_stage_commit_and_deletion() {
         use crate::features::git::PollTarget;
         use crate::features::git::diff::DiffLine;
-        use crate::git::{GitService, PollControl};
+        use crate::infrastructure::git::{GitService, PollControl};
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         let Some((root, backend)) = repository() else {
             return;
