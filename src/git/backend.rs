@@ -1524,6 +1524,18 @@ pub(crate) mod tests {
             .runner()
             .run(GitCommand::new().cwd(&root).args(["init", "-b", "main"]))
             .ok()?;
+        // These synthetic fixtures assert exact LF bytes after checkout.
+        // Pin only their local policy, independently of system/user defaults.
+        for (key, value) in [("core.autocrlf", "false"), ("core.eol", "lf")] {
+            backend
+                .runner()
+                .run(
+                    GitCommand::new()
+                        .cwd(&root)
+                        .args(["config", "--local", key, value]),
+                )
+                .expect("set the temporary repository's fixture line endings");
+        }
         backend
             .runner()
             .run(

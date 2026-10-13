@@ -2,13 +2,13 @@
 //!
 //! The card sizes to its message (long messages end in "…"), takes its icon
 //! color from the toast kind, and dismisses itself on click; the timer that
-//! clears it lives in `app.rs`.
+//! clears it lives in `app/shell.rs`.
 
 use lgui::core::{CursorIcon, EventPolicy, UiEventContext};
-use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, text};
 
 use super::tabs::{ellipsize, measure};
-use crate::state::{AppState, ToastKind};
+use crate::domain::notification::{Toast, ToastKind};
 use crate::theme;
 
 const HEIGHT: f32 = 34.0;
@@ -31,9 +31,12 @@ fn icon(kind: ToastKind) -> (&'static str, Color) {
     }
 }
 
-pub fn render(rect: UiRect, state: State<AppState>) -> Element {
-    let s = state.get();
-    let Some(toast) = s.toast.clone() else {
+pub fn render(
+    rect: UiRect,
+    toast: Option<Toast>,
+    dismiss: impl Fn(u64) + Send + Sync + 'static,
+) -> Element {
+    let Some(toast) = toast else {
         return panel(UiRect::new(0.0, 0.0, 0.0, 0.0), VisualStyle::default());
     };
     let c = theme::c();
@@ -73,7 +76,6 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
     );
 
     let id = toast.id;
-    let dismiss_state = state.clone();
     theme::bordered(card, c.surface, border, 8.0, 1.0)
         .shadow(
             ShadowStyle::new(Color::BLACK)
@@ -84,7 +86,7 @@ pub fn render(rect: UiRect, state: State<AppState>) -> Element {
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move |_cx: &mut UiEventContext| {
-            dismiss_state.try_update(|app| app.dismiss_toast(id));
+            dismiss(id);
         })
         .child(text(
             icon_rect,

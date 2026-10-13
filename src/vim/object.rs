@@ -93,12 +93,16 @@ pub fn quote(buffer: &TextBuffer, offset: usize, quote: char, around: bool) -> O
         }
     }
     let (open, close) = quotes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0], pair[1]))
         .find(|&(open, close)| offset >= open && offset <= close)
         .or_else(|| {
             quotes
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| (pair[0], pair[1]))
                 .find(|&(open, _)| open > offset)
         })?;

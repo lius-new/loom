@@ -1,8 +1,8 @@
 //! UI layer: chrome components, each rendering a self-contained region.
 //!
 //! Every module exposes a `render(rect, …)` function returning an `Element`.
-//! Components read `AppState` through `State<AppState>` and never talk to
-//! each other directly — the root (`app.rs`) owns layout and composition.
+//! Migrated components accept data and callbacks; legacy State<AppState>
+//! adapters remain registered. app/shell.rs owns layout and composition.
 
 pub mod branch_picker;
 pub mod clone_repository;
@@ -17,7 +17,7 @@ pub mod git_panel;
 pub mod keymap_page;
 pub mod layout_map;
 pub mod pane_sash;
-pub mod search_panel;
+pub mod search;
 pub mod settings;
 pub mod sidebar;
 pub mod stash_switch;

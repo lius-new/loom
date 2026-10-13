@@ -1,0 +1,68 @@
+[
+  {
+    "message": "unused import: `ChangeSet`",
+    "file": "src/model/text/mod.rs",
+    "line": 21,
+    "column": 25
+  },
+  {
+    "message": "very complex type used. Consider factoring parts into `type` definitions",
+    "file": "src/app.rs",
+    "line": 126,
+    "column": 48
+  },
+  {
+    "message": "very complex type used. Consider factoring parts into `type` definitions",
+    "file": "src/file_watcher.rs",
+    "line": 82,
+    "column": 18
+  },
+  {
+    "message": "unnecessary use of `to_owned`",
+    "file": "src/ui/terminal_tab_context_menu.rs",
+    "line": 355,
+    "column": 10
+  },
+  {
+    "message": "using `chunks_exact` with a constant chunk size",
+    "file": "src/vim/object.rs",
+    "line": 96,
+    "column": 10
+  },
+  {
+    "message": "using `chunks_exact` with a constant chunk size",
+    "file": "src/vim/object.rs",
+    "line": 101,
+    "column": 18
+  },
+  {
+    "message": "using `chunks_exact_mut` with a constant chunk size",
+    "file": "src/ui/branch_picker.rs",
+    "line": 1273,
+    "column": 33
+  },
+  {
+    "message": "using `chunks_exact_mut` with a constant chunk size",
+    "file": "src/ui/diff_editor.rs",
+    "line": 1159,
+    "column": 37
+  },
+  {
+    "message": "using `chunks_exact_mut` with a constant chunk size",
+    "file": "src/ui/git_confirm.rs",
+    "line": 475,
+    "column": 37
+  },
+  {
+    "message": "unnecessary use of `clone` to create a slice from a reference",
+    "file": "src/ui/git_panel.rs",
+    "line": 1230,
+    "column": 9
+  },
+  {
+    "message": "using `chunks_exact_mut` with a constant chunk size",
+    "file": "src/ui/terminal_settings.rs",
+    "line": 659,
+    "column": 35
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "open_folders": ["workspace"],
+  "recent_folders": ["workspace", "previous"],
+  "window": {"x": 120, "y": 80, "width": 900.0, "height": 600.0, "maximized": false},
+  "editor_layout": {
+    "root": {
+      "split": {
+        "axis": "horizontal",
+        "children": [
+          {"size": 0.4, "node": {"pane": {
+            "items": ["workspace/main.rs", "workspace/中文.txt"],
+            "active": "workspace/中文.txt"
+          }}},
+          {"size": 0.6, "node": {"pane": {
+            "items": ["workspace/lib.rs"],
+            "active": "workspace/lib.rs"
+          }}}
+        ]
+      }
+    },
+    "active_pane": 1
+  },
+  "terminal_tabs": ["power_shell", "cmd", "bash"],
+  "terminal_groups": [0, 0, 1],
+  "terminal_widths": [1.5, 0.5, 1.0],
+  "terminal_purposes": ["Testing", null, "Development"],
+  "terminal_directories": ["workspace", null, "workspace/中文 folder"],
+  "active_terminal": 1,
+  "show_terminal": true,
+  "terminal_height": 320.0,
+  "source_control_open": true
+}

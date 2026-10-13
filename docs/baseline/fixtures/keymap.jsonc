@@ -1,0 +1,18 @@
+// Valid bindings survive an invalid action; comments and trailing commas parse.
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "secondary-s": "editor::Save",
+      "secondary-y": null,
+      "secondary-k secondary-d": ["pane::ActivateItem", 0],
+      "alt-up": "fixture::UnknownAction",
+    },
+  },
+  {
+    "context": "Vim && mode == insert",
+    "bindings": {
+      "j k": ["vim::Keys", "<Esc>"],
+    },
+  },
+]

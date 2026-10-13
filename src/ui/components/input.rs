@@ -13,7 +13,9 @@ use crate::editor::commands::{self, Command};
 use crate::editor::normal::{self, Movement};
 use crate::model::text::{EditorMut, Selection, TextBuffer};
 
+use super::state_access::StateAccess;
 use super::text::SingleLineText;
+use std::sync::Arc;
 
 const TEXT_INSET: f32 = 6.0;
 const CURSOR_MARGIN: f32 = 8.0;
@@ -78,7 +80,8 @@ impl InputState {
 
 #[derive(Clone)]
 pub struct InputBinding<T> {
-    state: State<T>,
+    state: StateAccess<T>,
+    legacy_state: Option<State<T>>,
     read: fn(&T) -> &InputState,
     write: fn(&mut T) -> &mut InputState,
 }
@@ -92,7 +95,25 @@ where
         read: fn(&T) -> &InputState,
         write: fn(&mut T) -> &mut InputState,
     ) -> Self {
-        Self { state, read, write }
+        Self {
+            state: state.clone().into(),
+            legacy_state: Some(state),
+            read,
+            write,
+        }
+    }
+
+    pub fn new_access(
+        state: StateAccess<T>,
+        read: fn(&T) -> &InputState,
+        write: fn(&mut T) -> &mut InputState,
+    ) -> Self {
+        Self {
+            state,
+            legacy_state: None,
+            read,
+            write,
+        }
     }
 
     fn get(&self) -> InputState {
@@ -123,12 +144,52 @@ pub struct InputOptions<T> {
     pub on_blur: Option<fn(&State<T>)>,
 }
 
+pub struct AccessInputOptions {
+    pub label: &'static str,
+    pub placeholder: &'static str,
+    pub style: InputStyle,
+    pub on_submit: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub on_cancel: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub on_blur: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
 pub fn render<T>(
     rect: UiRect,
     id: UiId,
     focus: UiFocusHandle,
     binding: InputBinding<T>,
     options: InputOptions<T>,
+) -> Element
+where
+    T: Clone + Send + 'static,
+{
+    let state = binding
+        .legacy_state
+        .clone()
+        .expect("use render_access for projected input bindings");
+    let callback = |action: Option<fn(&State<T>)>| -> Option<Arc<dyn Fn() + Send + Sync>> {
+        action.map(|action| {
+            let state = state.clone();
+            Arc::new(move || action(&state)) as Arc<dyn Fn() + Send + Sync>
+        })
+    };
+    let options = AccessInputOptions {
+        label: options.label,
+        placeholder: options.placeholder,
+        style: options.style,
+        on_submit: callback(options.on_submit),
+        on_cancel: callback(options.on_cancel),
+        on_blur: callback(options.on_blur),
+    };
+    render_access(rect, id, focus, binding, options)
+}
+
+pub fn render_access<T>(
+    rect: UiRect,
+    id: UiId,
+    focus: UiFocusHandle,
+    binding: InputBinding<T>,
+    options: AccessInputOptions,
 ) -> Element
 where
     T: Clone + Send + 'static,
@@ -149,8 +210,6 @@ where
     let on_submit = options.on_submit;
     let on_cancel = options.on_cancel;
     let on_blur = options.on_blur;
-    let action_state = binding.state.clone();
-    let blur_action_state = binding.state.clone();
     let content = UiRect::new(
         rect.left + text_inset,
         rect.top,
@@ -291,17 +350,17 @@ where
             return;
         };
         if command == Command::Enter {
-            if let Some(on_submit) = on_submit {
-                on_submit(&action_state);
+            if let Some(on_submit) = &on_submit {
+                on_submit();
             }
             cx.prevent_default();
             cx.stop_propagation();
             return;
         }
         if command == Command::Escape
-            && let Some(on_cancel) = on_cancel
+            && let Some(on_cancel) = &on_cancel
         {
-            on_cancel(&action_state);
+            on_cancel();
             cx.prevent_default();
             cx.stop_propagation();
             return;
@@ -326,8 +385,8 @@ where
             input.preedit_cursor = None;
             input.editor().break_undo_group();
         });
-        if let Some(on_blur) = on_blur {
-            on_blur(&blur_action_state);
+        if let Some(on_blur) = &on_blur {
+            on_blur();
         }
     });
 

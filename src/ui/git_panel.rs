@@ -1227,7 +1227,10 @@ mod virtualization_tests {
             session.render_view(&view, viewport, UiScale::ONE);
         }
         let app = state.get();
-        assert_eq!(app.workspace_folders, [source.clone()]);
+        assert_eq!(
+            app.workspace_folders.as_slice(),
+            std::slice::from_ref(&source)
+        );
         assert!(app.git_pinned_repository.is_none());
         assert!(app.toast.is_none()); // The click did not also open the row.
         let confirm = app.git_confirm.unwrap();

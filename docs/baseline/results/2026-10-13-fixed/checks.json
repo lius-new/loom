@@ -1,0 +1,322 @@
+[
+  {
+    "name": "format",
+    "command": "cargo fmt --all -- --check",
+    "exit_code": 0,
+    "elapsed_seconds": 1.2788749,
+    "log": "logs/format.log"
+  },
+  {
+    "name": "clippy",
+    "command": "cargo clippy --locked --offline --all-targets -- -D warnings -A clippy::redundant_closure_call -A clippy::collapsible_if -A clippy::too_many_arguments -A clippy::let_and_return -A clippy::manual_div_ceil",
+    "exit_code": 0,
+    "elapsed_seconds": 7.1054555,
+    "log": "logs/clippy.log"
+  },
+  {
+    "name": "tests-native",
+    "command": "cargo test --locked --offline -- --nocapture",
+    "exit_code": 0,
+    "elapsed_seconds": 23.9213616,
+    "log": "logs/tests-native.log"
+  },
+  {
+    "name": "tests-isolated",
+    "command": "cargo test --locked --offline -- --nocapture",
+    "exit_code": 0,
+    "elapsed_seconds": 8.0844877,
+    "log": "logs/tests-isolated.log"
+  },
+  {
+    "name": "native-terminal-smoke",
+    "command": "cargo test --locked --offline terminal_session::tests::supported_shells_round_trip_through_real_conpty_sessions -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 2.7176793,
+    "log": "logs/native-terminal-smoke.log"
+  },
+  {
+    "name": "native-launcher-smoke",
+    "command": "cargo test --locked --offline terminal_session::tests::launcher_backed_shell_is_idle_then_detects_and_clears_programs -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 6.3732848,
+    "log": "logs/native-launcher-smoke.log"
+  },
+  {
+    "name": "native-bash-replacement-smoke",
+    "command": "cargo test --locked --offline terminal_session::tests::exited_shell_launchers_do_not_hide_unknown_applications -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 5.6042268,
+    "log": "logs/native-bash-replacement-smoke.log"
+  },
+  {
+    "name": "native-program-name-smoke",
+    "command": "cargo test --locked --offline terminal_session::tests::running_application_is_detected_and_cleared_in_each_real_shell -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 11.4486516,
+    "log": "logs/native-program-name-smoke.log"
+  },
+  {
+    "name": "perf-legacy-editor-0",
+    "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.3343697,
+    "log": "logs/perf-legacy-editor-0.log"
+  },
+  {
+    "name": "perf-legacy-editor-1",
+    "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.4569497,
+    "log": "logs/perf-legacy-editor-1.log"
+  },
+  {
+    "name": "perf-legacy-editor-2",
+    "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.3515768,
+    "log": "logs/perf-legacy-editor-2.log"
+  },
+  {
+    "name": "perf-legacy-editor-3",
+    "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.4093893,
+    "log": "logs/perf-legacy-editor-3.log"
+  },
+  {
+    "name": "perf-legacy-editor-4",
+    "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.3907792,
+    "log": "logs/perf-legacy-editor-4.log"
+  },
+  {
+    "name": "perf-legacy-editor-5",
+    "command": "cargo test --release --locked --offline editor::baseline_tests::perf_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.369206,
+    "log": "logs/perf-legacy-editor-5.log"
+  },
+  {
+    "name": "perf-ui-interaction-0",
+    "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.4965697,
+    "log": "logs/perf-ui-interaction-0.log"
+  },
+  {
+    "name": "perf-ui-interaction-1",
+    "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.469665,
+    "log": "logs/perf-ui-interaction-1.log"
+  },
+  {
+    "name": "perf-ui-interaction-2",
+    "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.5007314,
+    "log": "logs/perf-ui-interaction-2.log"
+  },
+  {
+    "name": "perf-ui-interaction-3",
+    "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.4459556,
+    "log": "logs/perf-ui-interaction-3.log"
+  },
+  {
+    "name": "perf-ui-interaction-4",
+    "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.513899,
+    "log": "logs/perf-ui-interaction-4.log"
+  },
+  {
+    "name": "perf-ui-interaction-5",
+    "command": "cargo test --release --locked --offline editor::editor_view::tests::large_file_interaction_baseline -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 1.5294409,
+    "log": "logs/perf-ui-interaction-5.log"
+  },
+  {
+    "name": "perf-tab-pointer-0",
+    "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.8077404,
+    "log": "logs/perf-tab-pointer-0.log"
+  },
+  {
+    "name": "perf-tab-pointer-1",
+    "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.8324214,
+    "log": "logs/perf-tab-pointer-1.log"
+  },
+  {
+    "name": "perf-tab-pointer-2",
+    "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.8210622,
+    "log": "logs/perf-tab-pointer-2.log"
+  },
+  {
+    "name": "perf-tab-pointer-3",
+    "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.8121235,
+    "log": "logs/perf-tab-pointer-3.log"
+  },
+  {
+    "name": "perf-tab-pointer-4",
+    "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.8197951,
+    "log": "logs/perf-tab-pointer-4.log"
+  },
+  {
+    "name": "perf-tab-pointer-5",
+    "command": "cargo test --release --locked --offline ui::tabs::tests::pointer_updates_with_many_tabs -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.8260485,
+    "log": "logs/perf-tab-pointer-5.log"
+  },
+  {
+    "name": "perf-file-0",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 2.692741,
+    "log": "logs/perf-file-0.log"
+  },
+  {
+    "name": "perf-file-1",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 2.5696635,
+    "log": "logs/perf-file-1.log"
+  },
+  {
+    "name": "perf-file-2",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 2.5461778,
+    "log": "logs/perf-file-2.log"
+  },
+  {
+    "name": "perf-file-3",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 2.6256605,
+    "log": "logs/perf-file-3.log"
+  },
+  {
+    "name": "perf-file-4",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 2.6710994,
+    "log": "logs/perf-file-4.log"
+  },
+  {
+    "name": "perf-file-5",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_file_preparation -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 2.669453,
+    "log": "logs/perf-file-5.log"
+  },
+  {
+    "name": "perf-search-0",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.8152566,
+    "log": "logs/perf-search-0.log"
+  },
+  {
+    "name": "perf-search-1",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.7984058,
+    "log": "logs/perf-search-1.log"
+  },
+  {
+    "name": "perf-search-2",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.7959172,
+    "log": "logs/perf-search-2.log"
+  },
+  {
+    "name": "perf-search-3",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.7914461,
+    "log": "logs/perf-search-3.log"
+  },
+  {
+    "name": "perf-search-4",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.7998924,
+    "log": "logs/perf-search-4.log"
+  },
+  {
+    "name": "perf-search-5",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_search_scan_and_cancel -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.7923296,
+    "log": "logs/perf-search-5.log"
+  },
+  {
+    "name": "perf-terminal-0",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.7899633,
+    "log": "logs/perf-terminal-0.log"
+  },
+  {
+    "name": "perf-terminal-1",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.7631812,
+    "log": "logs/perf-terminal-1.log"
+  },
+  {
+    "name": "perf-terminal-2",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.793263,
+    "log": "logs/perf-terminal-2.log"
+  },
+  {
+    "name": "perf-terminal-3",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.7604299,
+    "log": "logs/perf-terminal-3.log"
+  },
+  {
+    "name": "perf-terminal-4",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.7727728,
+    "log": "logs/perf-terminal-4.log"
+  },
+  {
+    "name": "perf-terminal-5",
+    "command": "cargo test --release --locked --offline editor::phase0_baseline::phase0_perf_terminal_parser -- --exact --ignored --nocapture --test-threads=1",
+    "exit_code": 0,
+    "elapsed_seconds": 0.8191383,
+    "log": "logs/perf-terminal-5.log"
+  },
+  {
+    "name": "tests-release",
+    "command": "cargo test --release --locked --offline -- --nocapture",
+    "exit_code": 0,
+    "log": "logs/tests-release.log"
+  },
+  {
+    "name": "release-app-build",
+    "command": "cargo build --release --locked --offline --bin Loom",
+    "exit_code": 0,
+    "log": "logs/release-app-build.log"
+  }
+]

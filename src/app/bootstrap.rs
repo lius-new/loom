@@ -1,0 +1,185 @@
+use super::shell;
+use crate::{file_icons, launch, ui, window_geometry};
+#[cfg(not(target_os = "windows"))]
+use image::imageops::FilterType;
+use lgui::icons::SvgIconRegistry;
+use lgui::prelude::*;
+use lgui::{WinitApplication, WinitWindowIcon, WinitWindowOptions};
+
+pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
+    launch::init(std::env::args_os().skip(1));
+    let native_window_options = native_window_options()?;
+    let window_options = window_geometry::restore_options(
+        WindowOptions::new("loom")
+            .title("Loom")
+            .size(Size::new(900.0, 600.0))
+            // Frameless: we render our own custom title bar (see ui/titlebar.rs).
+            .native_titlebar(false)
+            // Windows 11 DWM rounded corners.
+            .corner_radius(8)
+            .on_close_requested(window_geometry::handle_close_requested)
+            .with_platform_options(native_window_options),
+    );
+
+    Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
+        .svg_icons(svg_icons())
+        .provide(RendererKind::Skia(GraphicsPreference::Auto))
+        .memory_options(MemoryOptions::unbounded(
+            ImageCachePolicy::WhileVisible,
+            false,
+        ))
+        .window_options(window_options)
+        .run(shell::app)?;
+    Ok(())
+}
+
+pub(crate) fn svg_icons() -> SvgIconRegistry {
+    file_icons::register(
+        // Codicons are drawn on a 16px grid; render them at theme::ICON_SIZE
+        // so their 1px strokes land on whole pixels.
+        SvgIconRegistry::new()
+            .with_icon(
+                ui::components::loading_indicator::ICON_KEY,
+                ui::components::loading_indicator::SVG,
+            )
+            .with_icon("panel-left", icondata::VsLayoutSidebarLeft)
+            .with_icon("check", icondata::VsCheck)
+            .with_icon("terminal", icondata::VsTerminal)
+            .with_icon("plus", icondata::VsAdd)
+            .with_icon("chevron-down", icondata::VsChevronDown)
+            .with_icon("chevron-right", icondata::VsChevronRight)
+            .with_icon("explorer", icondata::VsLayers)
+            .with_icon("settings", icondata::VsSettingsGear)
+            .with_icon("close", icondata::VsClose)
+            // Codicon's `remove` spans 14 of 16 px and reads wider than
+            // `plus` beside it; this one matches the plus visually.
+            .with_icon("minus", include_str!("../../assets/icons/minus.svg"))
+            .with_icon("source-control", icondata::VsSourceControl)
+            .with_icon("arrow-up", icondata::VsArrowUp)
+            .with_icon("arrow-down", icondata::VsArrowDown)
+            .with_icon("cloud", icondata::VsCloud)
+            .with_icon("cloud-upload", icondata::VsCloudUpload)
+            .with_icon("refresh", icondata::VsRefresh)
+            .with_icon("sync", icondata::VsSync)
+            .with_icon("search", icondata::VsSearch)
+            .with_icon("search-case", icondata::VsCaseSensitive)
+            .with_icon("search-word", icondata::VsWholeWord)
+            .with_icon("search-regex", icondata::VsRegex)
+            .with_icon("search-stop", icondata::VsDebugStop)
+            .with_icon("search-clear", icondata::VsClearAll)
+            .with_icon("search-collapse", icondata::VsCollapseAll)
+            .with_icon("discard", icondata::VsDiscard)
+            .with_icon("go-to-file", icondata::VsGoToFile)
+            .with_icon("arrow-left", icondata::VsArrowLeft)
+            .with_icon("arrow-right", icondata::VsArrowRight)
+            .with_icon("git-stash", icondata::VsGitStash)
+            .with_icon("git-stash-apply", icondata::VsGitStashApply)
+            .with_icon("git-stash-pop", icondata::VsGitStashPop)
+            .with_icon("trash", icondata::VsTrash)
+            .with_icon("list-tree", icondata::VsListTree)
+            .with_icon("list-flat", icondata::VsListFlat)
+            .with_icon("worktree-open", icondata::VsFolderOpened)
+            .with_icon("repo", icondata::VsRepo)
+            .with_icon("git-commit", icondata::VsGitCommit)
+            .with_icon("diff", icondata::LuArrowLeftRight)
+            // No Codicon equivalent yet.
+            .with_icon("git-branch", icondata::LuGitBranch)
+            .with_icon("command", icondata::LuCommand)
+            // Filled caption silhouettes avoid fragile subpixel SVG strokes.
+            .with_icon(
+                "window-minimize",
+                include_str!("../../assets/icons/window-minimize.svg"),
+            )
+            .with_icon(
+                "window-maximize",
+                include_str!("../../assets/icons/window-maximize.svg"),
+            )
+            .with_icon(
+                "window-restore",
+                include_str!("../../assets/icons/window-restore.svg"),
+            )
+            .with_icon(
+                "window-close",
+                include_str!("../../assets/icons/window-close.svg"),
+            ),
+    )
+}
+
+fn native_window_options() -> Result<WinitWindowOptions, Box<dyn std::error::Error>> {
+    #[cfg(target_os = "windows")]
+    {
+        // Match the embedded multi-size executable icon exactly. Winit's runtime
+        // RGBA-to-HICON conversion renders differently from the PE icon resource.
+        let options = WinitWindowOptions::new().window_icon(icon_from_ico_frame(16)?);
+        return Ok(options.taskbar_icon(icon_from_ico_frame(32)?));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let source = image::load_from_memory_with_format(
+            include_bytes!("../../icons/source/app-icon-transparent-1024.png"),
+            image::ImageFormat::Png,
+        )?
+        .into_rgba8();
+        let window_pixels = image::imageops::resize(&source, 32, 32, FilterType::Lanczos3);
+        let window_icon = WinitWindowIcon::from_rgba(window_pixels.into_raw(), 32, 32)?;
+        Ok(WinitWindowOptions::new().window_icon(window_icon))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn icon_from_ico_frame(size: u32) -> Result<WinitWindowIcon, Box<dyn std::error::Error>> {
+    let ico = include_bytes!("../../icons/app.ico");
+    let entry_count = u16::from_le_bytes([ico[4], ico[5]]) as usize;
+
+    for index in 0..entry_count {
+        let entry = 6 + index * 16;
+        if entry + 16 > ico.len() {
+            break;
+        }
+        let width = if ico[entry] == 0 {
+            256
+        } else {
+            u32::from(ico[entry])
+        };
+        let height = if ico[entry + 1] == 0 {
+            256
+        } else {
+            u32::from(ico[entry + 1])
+        };
+        if width != size || height != size {
+            continue;
+        }
+
+        let image_length = u32::from_le_bytes([
+            ico[entry + 8],
+            ico[entry + 9],
+            ico[entry + 10],
+            ico[entry + 11],
+        ]) as usize;
+        let image_offset = u32::from_le_bytes([
+            ico[entry + 12],
+            ico[entry + 13],
+            ico[entry + 14],
+            ico[entry + 15],
+        ]) as usize;
+        let image_end = image_offset
+            .checked_add(image_length)
+            .filter(|end| *end <= ico.len())
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid ICO frame")
+            })?;
+        let pixels = image::load_from_memory_with_format(
+            &ico[image_offset..image_end],
+            image::ImageFormat::Png,
+        )?
+        .into_rgba8();
+        return Ok(WinitWindowIcon::from_rgba(pixels.into_raw(), size, size)?);
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("Missing {size}x{size} PNG frame in icons/app.ico"),
+    )
+    .into())
+}

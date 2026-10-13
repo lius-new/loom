@@ -77,13 +77,15 @@ pub(crate) fn apply_batch(app: &mut AppState, batch: &FileChangeBatch) -> bool {
     tree_changed || document_changed
 }
 
+type PreparedDirectory = (
+    String,
+    Arc<Vec<crate::state::DirEntry>>,
+    Option<Arc<Vec<crate::state::DirEntry>>>,
+);
+
 pub(crate) struct PreparedFileBatch {
     roots: Vec<PathBuf>,
-    directories: Vec<(
-        String,
-        Arc<Vec<crate::state::DirEntry>>,
-        Option<Arc<Vec<crate::state::DirEntry>>>,
-    )>,
+    directories: Vec<PreparedDirectory>,
     disk_updates: Vec<crate::model::workspace::PreparedDiskUpdate>,
     defer_tree: bool,
     invalidate_search: bool,
@@ -121,9 +123,9 @@ pub(crate) fn prepare_batch(app: &AppState, batch: &FileChangeBatch) -> Prepared
         directories,
         disk_updates,
         defer_tree: working.pending_file_tree_refresh,
-        invalidate_search: !app.search.query.text().is_empty()
+        invalidate_search: !app.search.ui.query.text().is_empty()
             && (batch.requires_full_rescan
-                || crate::search::paths_affect_search(
+                || crate::infrastructure::search_filesystem::paths_affect_search(
                     &app.search.spec(),
                     &app.workspace_folders,
                     &batch
@@ -185,10 +187,10 @@ pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch)
     });
     if app.workspace_folders == batch.roots
         && (batch.invalidate_search || content_reloaded)
-        && !app.search.query.text().is_empty()
-        && !app.search.cancelled
+        && !app.search.ui.query.text().is_empty()
+        && !app.search.model.status().cancelled
     {
-        app.search.refresh += 1;
+        app.search.ui.refresh += 1;
         changed = true;
     }
     (changed, retry)
@@ -696,7 +698,7 @@ mod tests {
         fs::write(root.join("a.txt"), "needle").unwrap();
         let mut app = AppState::new();
         app.workspace_folders.push(root.clone());
-        app.search.query.set_text("needle");
+        app.search.ui.query.set_text("needle");
         // Search is cached even when another drawer is visible.
         for (name, expected) in [("target/generated.txt", 0), ("a.txt", 1)] {
             let prepared = prepare_batch(
@@ -710,7 +712,7 @@ mod tests {
                 },
             );
             apply_prepared_batch(&mut app, prepared);
-            assert_eq!(app.search.refresh, expected);
+            assert_eq!(app.search.ui.refresh, expected);
         }
         let full = FileChangeBatch {
             changes: Vec::new(),
@@ -719,7 +721,7 @@ mod tests {
         let prepared = prepare_reconciliation(&app);
         apply_prepared_batch(&mut app, prepared);
         assert_eq!(
-            app.search.refresh, 1,
+            app.search.ui.refresh, 1,
             "Focus alone must not restart a search"
         );
         app.workspace.open_path(root.join("a.txt"), "needle".into());
@@ -727,14 +729,14 @@ mod tests {
         let prepared = prepare_reconciliation(&app);
         apply_prepared_batch(&mut app, prepared);
         assert_eq!(
-            app.search.refresh, 2,
+            app.search.ui.refresh, 2,
             "An actual clean-buffer reload must invalidate results"
         );
-        app.search.cancelled = true;
+        app.search.model.fixture_status().cancelled = true;
         let prepared = prepare_batch(&app, &full);
         apply_prepared_batch(&mut app, prepared);
         assert_eq!(
-            app.search.refresh, 2,
+            app.search.ui.refresh, 2,
             "Watcher events must respect an explicit stop"
         );
         fs::remove_dir_all(root).unwrap();

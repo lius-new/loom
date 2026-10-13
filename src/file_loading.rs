@@ -130,7 +130,7 @@ impl FileLoader {
 
 /// Returns false only before the application has installed its worker.
 pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<TabDrop>) -> bool {
-    let Some(loader) = app.file_loader.clone() else {
+    let Some(loader) = app.runtime().and_then(|runtime| runtime.file_loader()) else {
         return false;
     };
     let origin_pane = app.workspace.active_pane();
@@ -174,7 +174,7 @@ pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<T
 
 pub fn cancel(app: &mut AppState) {
     app.pending_file = None;
-    if let Some(loader) = &app.file_loader {
+    if let Some(loader) = app.runtime().and_then(|runtime| runtime.file_loader()) {
         loader.current.store(0, Ordering::Release);
     }
 }
@@ -264,6 +264,7 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_support::UiTasks;
     use lgui::{
         application::AppView,
         core::UiScale,
@@ -271,11 +272,11 @@ mod tests {
         session::UiSession,
     };
     use std::sync::Mutex;
-    type Task = Box<dyn FnOnce() + Send>;
 
     struct Harness {
         state: State<AppState>,
-        tasks: Arc<Mutex<Vec<Task>>>,
+        tasks: UiTasks,
+        runtime: Arc<crate::app::runtime::AppRuntime>,
         _session: UiSession,
     }
     impl Harness {
@@ -298,15 +299,16 @@ mod tests {
             let mut session = UiSession::new();
             session.render_view(&view, rect, UiScale::ONE);
             let state = exposed.lock().unwrap().clone().unwrap();
-            let tasks = Arc::new(Mutex::new(Vec::new()));
-            let queue = tasks.clone();
-            let application =
-                ApplicationHandle::new(move |task| queue.lock().unwrap().push(task), || {});
+            let tasks = UiTasks::default();
+            let application = tasks.application();
+            let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
+            state.update(|app| app.attach_runtime(&runtime));
             let loader = FileLoader::with_prepare(state.clone(), application, prepare);
-            state.update(|app| app.file_loader = Some(loader));
+            runtime.install_file_loader(loader);
             Self {
                 state,
                 tasks,
+                runtime,
                 _session: session,
             }
         }
@@ -322,9 +324,7 @@ mod tests {
         fn pump_until(&self, predicate: impl Fn(&AppState) -> bool) {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
-                for task in std::mem::take(&mut *self.tasks.lock().unwrap()) {
-                    task();
-                }
+                self.tasks.run_all();
                 if predicate(&self.state.get()) {
                     break;
                 }
@@ -335,7 +335,7 @@ mod tests {
     }
     impl Drop for Harness {
         fn drop(&mut self) {
-            self.state.get().file_loader.as_ref().unwrap().shutdown();
+            self.runtime.clear_file_loader();
         }
     }
 
@@ -355,11 +355,9 @@ mod tests {
             let pending = app.pending_file.as_ref().unwrap();
             let generation = pending.generation;
             let started = pending.started;
-            assert!(!show_indicator(
-                app,
-                generation,
-                started + Duration::from_millis(299)
-            ));
+            let mut clock = crate::app::test_support::ManualClock::default();
+            clock.advance(Duration::from_millis(299));
+            assert!(!show_indicator(app, generation, started + clock.elapsed()));
             assert!(!app.pending_file.as_ref().unwrap().indicator);
             // An unrelated UI click and edit complete while the worker is held.
             app.show_drawer = !app.show_drawer;

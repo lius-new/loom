@@ -199,22 +199,12 @@ pub fn render(
             app.git_split_ratio,
         ))
     } else {
-        root.child(render_inline(
-            body_rect,
-            &document.rows,
-            scroll_x,
-            scroll_y,
-        ))
+        root.child(render_inline(body_rect, &document.rows, scroll_x, scroll_y))
     };
 
     if !document.blocks.is_empty() {
         root = root.child(block_buttons(
-            body_rect,
-            document,
-            &starts,
-            scroll_y,
-            &state,
-            &store,
+            body_rect, document, &starts, scroll_y, &state, &store,
         ));
     }
 
@@ -233,11 +223,8 @@ pub fn render(
                     if app.git_split_drag != Some(pane) || body_rect.width() <= 0.0 {
                         return false;
                     }
-                    let position = crate::ui::pane_sash::split_position(
-                        body_rect.left,
-                        body_rect.right,
-                        x,
-                    );
+                    let position =
+                        crate::ui::pane_sash::split_position(body_rect.left, body_rect.right, x);
                     app.git_split_ratio = (position - body_rect.left) / body_rect.width();
                     true
                 });
@@ -1156,7 +1143,7 @@ mod tests {
                     },
                 );
                 let mut pixels = surface.pixels().to_vec();
-                for pixel in pixels.chunks_exact_mut(4) {
+                for pixel in pixels.as_chunks_mut::<4>().0 {
                     pixel.swap(0, 2);
                 }
                 image::save_buffer(path, &pixels, 1800, 1200, image::ColorType::Rgba8).unwrap();

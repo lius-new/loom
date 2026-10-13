@@ -232,32 +232,34 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
         | Action::SearchToggleRegex
         | Action::SearchToggleFilters => {
             env.state.update(|app| match action {
-                Action::SearchToggleCase => app.search.case_sensitive = !app.search.case_sensitive,
-                Action::SearchToggleWord => app.search.whole_word = !app.search.whole_word,
-                Action::SearchToggleRegex => app.search.regex = !app.search.regex,
-                _ => crate::search_actions::toggle_filters(&mut app.search),
+                Action::SearchToggleCase => {
+                    app.search.ui.case_sensitive = !app.search.ui.case_sensitive
+                }
+                Action::SearchToggleWord => app.search.ui.whole_word = !app.search.ui.whole_word,
+                Action::SearchToggleRegex => app.search.ui.regex = !app.search.ui.regex,
+                _ => crate::app::search::toggle_filters(&mut app.search),
             });
             true
         }
         Action::SearchRefresh | Action::SearchCancel => {
             if action == Action::SearchRefresh {
-                crate::search_actions::refresh(&env.state);
+                crate::app::search::refresh(&env.state);
             } else {
-                crate::search_actions::cancel(&env.state);
+                crate::app::search::cancel(&env.state);
             }
             true
         }
         Action::SearchNext | Action::SearchPrevious | Action::SearchOpen => {
             if action != Action::SearchOpen {
                 env.state.update(|app| {
-                    crate::search_actions::move_selection(
+                    crate::app::search::move_selection(
                         app,
                         if action == Action::SearchNext { 1 } else { -1 },
                     )
                 });
             }
             if let Some(application) = env.application.try_resource::<ApplicationHandle>() {
-                crate::search_actions::navigate_selected(
+                crate::app::search::navigate_selected(
                     &env.state,
                     application.as_ref().clone(),
                     env.editor_rect,

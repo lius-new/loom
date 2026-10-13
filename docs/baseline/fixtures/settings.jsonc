@@ -1,0 +1,14 @@
+// Stage 0 synthetic fixture: no real user configuration.
+{
+  "default_shell": "bash",
+  "editor_font": {
+    "family": "Fixture Mono",
+    "size": 16,
+    "line_height": 200,
+  },
+  "vim": {
+    "enabled": true,
+    "system_clipboard": false,
+  },
+  "smooth_caret": "invalid boolean",
+}

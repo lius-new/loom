@@ -1,0 +1,2023 @@
+{
+  "schema": 1,
+  "records": [
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "file_read_cached",
+      "value": 0.6455000000000001,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 1,
+      "log": "perf-file-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "document_prepare",
+      "value": 26.427300000000002,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 1,
+      "log": "perf-file-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "file_read_cached",
+      "value": 5.5546,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 1,
+      "log": "perf-file-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "document_prepare",
+      "value": 234.89950000000002,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 1,
+      "log": "perf-file-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "file_read_cached",
+      "value": 35.2677,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 1,
+      "log": "perf-file-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "document_prepare",
+      "value": 1497.3325,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 1,
+      "log": "perf-file-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "file_read_cached",
+      "value": 0.6785,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 2,
+      "log": "perf-file-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "document_prepare",
+      "value": 23.076900000000002,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 2,
+      "log": "perf-file-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "file_read_cached",
+      "value": 4.897399999999999,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 2,
+      "log": "perf-file-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "document_prepare",
+      "value": 231.659,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 2,
+      "log": "perf-file-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "file_read_cached",
+      "value": 34.5779,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 2,
+      "log": "perf-file-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "document_prepare",
+      "value": 1521.0933,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 2,
+      "log": "perf-file-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "file_read_cached",
+      "value": 0.6227,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 3,
+      "log": "perf-file-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "document_prepare",
+      "value": 27.273,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 3,
+      "log": "perf-file-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "file_read_cached",
+      "value": 6.8817,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 3,
+      "log": "perf-file-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "document_prepare",
+      "value": 247.6591,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 3,
+      "log": "perf-file-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "file_read_cached",
+      "value": 36.1302,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 3,
+      "log": "perf-file-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "document_prepare",
+      "value": 1534.959,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 3,
+      "log": "perf-file-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "file_read_cached",
+      "value": 0.6754,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 4,
+      "log": "perf-file-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "document_prepare",
+      "value": 24.0841,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 4,
+      "log": "perf-file-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "file_read_cached",
+      "value": 5.824400000000001,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 4,
+      "log": "perf-file-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "document_prepare",
+      "value": 242.32119999999998,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 4,
+      "log": "perf-file-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "file_read_cached",
+      "value": 36.6421,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 4,
+      "log": "perf-file-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "document_prepare",
+      "value": 1519.9442,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 4,
+      "log": "perf-file-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "file_read_cached",
+      "value": 0.6539,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 5,
+      "log": "perf-file-5.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-1m",
+      "metric": "document_prepare",
+      "value": 26.1475,
+      "unit": "ms",
+      "bytes": 1048576,
+      "operations": 1,
+      "sample": 5,
+      "log": "perf-file-5.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "file_read_cached",
+      "value": 5.5983,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 5,
+      "log": "perf-file-5.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-10m",
+      "metric": "document_prepare",
+      "value": 264.8473,
+      "unit": "ms",
+      "bytes": 10485760,
+      "operations": 1,
+      "sample": 5,
+      "log": "perf-file-5.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "file_read_cached",
+      "value": 35.463300000000004,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 5,
+      "log": "perf-file-5.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ascii-64m",
+      "metric": "document_prepare",
+      "value": 1756.8109000000002,
+      "unit": "ms",
+      "bytes": 67108864,
+      "operations": 1,
+      "sample": 5,
+      "log": "perf-file-5.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "typing_per_char",
+      "value": 0.024120000000000003,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "paste_1m",
+      "value": 27.2213,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "undo_paste",
+      "value": 0.291,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "select_all_indent",
+      "value": 27.3909,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "history_bytes_rounded",
+      "value": 0,
+      "unit": "bytes",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "typing_per_char",
+      "value": 0.152565,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "paste_1m",
+      "value": 27.1151,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "undo_paste",
+      "value": 0.718,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "select_all_indent",
+      "value": 277.571,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "history_bytes_rounded",
+      "value": 314572.8,
+      "unit": "bytes",
+      "sample": 1,
+      "log": "perf-legacy-editor-1.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "typing_per_char",
+      "value": 0.030129000000000003,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "paste_1m",
+      "value": 26.8026,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "undo_paste",
+      "value": 0.3064,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "select_all_indent",
+      "value": 29.5219,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "history_bytes_rounded",
+      "value": 0,
+      "unit": "bytes",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "typing_per_char",
+      "value": 0.17547800000000002,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "paste_1m",
+      "value": 27.7553,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "undo_paste",
+      "value": 0.98,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "select_all_indent",
+      "value": 271.2523,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "history_bytes_rounded",
+      "value": 314572.8,
+      "unit": "bytes",
+      "sample": 2,
+      "log": "perf-legacy-editor-2.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "typing_per_char",
+      "value": 0.023971,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "paste_1m",
+      "value": 26.7922,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "undo_paste",
+      "value": 0.2878,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "select_all_indent",
+      "value": 30.0176,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "history_bytes_rounded",
+      "value": 0,
+      "unit": "bytes",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "typing_per_char",
+      "value": 0.154743,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "paste_1m",
+      "value": 27.795,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "undo_paste",
+      "value": 0.7031000000000001,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "select_all_indent",
+      "value": 304.8001,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "history_bytes_rounded",
+      "value": 314572.8,
+      "unit": "bytes",
+      "sample": 3,
+      "log": "perf-legacy-editor-3.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "typing_per_char",
+      "value": 0.024235,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "paste_1m",
+      "value": 26.9098,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "undo_paste",
+      "value": 0.2878,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "select_all_indent",
+      "value": 27.5539,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "history_bytes_rounded",
+      "value": 0,
+      "unit": "bytes",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "typing_per_char",
+      "value": 0.160256,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "paste_1m",
+      "value": 26.9646,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "undo_paste",
+      "value": 0.8205,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "select_all_indent",
+      "value": 270.7579,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "history_bytes_rounded",
+      "value": 314572.8,
+      "unit": "bytes",
+      "sample": 4,
+      "log": "perf-legacy-editor-4.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "typing_per_char",
+      "value": 0.024415,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "paste_1m",
+      "value": 28.5763,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "undo_paste",
+      "value": 0.2958,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "select_all_indent",
+      "value": 27.9893,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "history_bytes_rounded",
+      "value": 0,
+      "unit": "bytes",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "typing_per_char",
+      "value": 0.155974,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "paste_1m",
+      "value": 28.9037,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "undo_paste",
+      "value": 0.8007000000000001,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "select_all_indent",
+      "value": 279.8756,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "history_bytes_rounded",
+      "value": 314572.8,
+      "unit": "bytes",
+      "sample": 5,
+      "log": "perf-legacy-editor-5.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_scan_cached",
+      "value": 30.787200000000002,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 100,
+      "sample": 1,
+      "log": "perf-search-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_cancel_latency",
+      "value": 0.0771,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 1,
+      "sample": 1,
+      "log": "perf-search-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_scan_cached",
+      "value": 28.962999999999997,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 100,
+      "sample": 2,
+      "log": "perf-search-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_cancel_latency",
+      "value": 0.12380000000000001,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 1,
+      "sample": 2,
+      "log": "perf-search-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_scan_cached",
+      "value": 25.7469,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 100,
+      "sample": 3,
+      "log": "perf-search-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_cancel_latency",
+      "value": 0.0707,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 1,
+      "sample": 3,
+      "log": "perf-search-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_scan_cached",
+      "value": 26.3078,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 100,
+      "sample": 4,
+      "log": "perf-search-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_cancel_latency",
+      "value": 0.0795,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 1,
+      "sample": 4,
+      "log": "perf-search-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_scan_cached",
+      "value": 24.9396,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 100,
+      "sample": 5,
+      "log": "perf-search-5.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "100-files-6.25m",
+      "metric": "search_cancel_latency",
+      "value": 0.0637,
+      "unit": "ms",
+      "bytes": 6553600,
+      "operations": 1,
+      "sample": 5,
+      "log": "perf-search-5.log"
+    },
+    {
+      "scenario": "100-tabs",
+      "metric": "pointer_update",
+      "value": 0.06274300000000001,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-tab-pointer-1.log"
+    },
+    {
+      "scenario": "500-tabs",
+      "metric": "pointer_update",
+      "value": 0.383659,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-tab-pointer-1.log"
+    },
+    {
+      "scenario": "100-tabs",
+      "metric": "pointer_update",
+      "value": 0.06357800000000001,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-tab-pointer-2.log"
+    },
+    {
+      "scenario": "500-tabs",
+      "metric": "pointer_update",
+      "value": 0.382039,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-tab-pointer-2.log"
+    },
+    {
+      "scenario": "100-tabs",
+      "metric": "pointer_update",
+      "value": 0.062721,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-tab-pointer-3.log"
+    },
+    {
+      "scenario": "500-tabs",
+      "metric": "pointer_update",
+      "value": 0.37438299999999997,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-tab-pointer-3.log"
+    },
+    {
+      "scenario": "100-tabs",
+      "metric": "pointer_update",
+      "value": 0.06681999999999999,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-tab-pointer-4.log"
+    },
+    {
+      "scenario": "500-tabs",
+      "metric": "pointer_update",
+      "value": 0.37305,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-tab-pointer-4.log"
+    },
+    {
+      "scenario": "100-tabs",
+      "metric": "pointer_update",
+      "value": 0.060203000000000007,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-tab-pointer-5.log"
+    },
+    {
+      "scenario": "500-tabs",
+      "metric": "pointer_update",
+      "value": 0.383536,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-tab-pointer-5.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ansi-unicode-8m",
+      "metric": "terminal_parse",
+      "value": 83.7,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 1,
+      "sample": 1,
+      "log": "perf-terminal-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "24x80-screen",
+      "metric": "terminal_screen_snapshot_100",
+      "value": 0.3293,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 100,
+      "sample": 1,
+      "log": "perf-terminal-1.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ansi-unicode-8m",
+      "metric": "terminal_parse",
+      "value": 83.9933,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 1,
+      "sample": 2,
+      "log": "perf-terminal-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "24x80-screen",
+      "metric": "terminal_screen_snapshot_100",
+      "value": 0.42700000000000005,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 100,
+      "sample": 2,
+      "log": "perf-terminal-2.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ansi-unicode-8m",
+      "metric": "terminal_parse",
+      "value": 84.2924,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 1,
+      "sample": 3,
+      "log": "perf-terminal-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "24x80-screen",
+      "metric": "terminal_screen_snapshot_100",
+      "value": 0.3417,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 100,
+      "sample": 3,
+      "log": "perf-terminal-3.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ansi-unicode-8m",
+      "metric": "terminal_parse",
+      "value": 81.6229,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 1,
+      "sample": 4,
+      "log": "perf-terminal-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "24x80-screen",
+      "metric": "terminal_screen_snapshot_100",
+      "value": 0.2907,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 100,
+      "sample": 4,
+      "log": "perf-terminal-4.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "ansi-unicode-8m",
+      "metric": "terminal_parse",
+      "value": 83.29899999999999,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 1,
+      "sample": 5,
+      "log": "perf-terminal-5.log"
+    },
+    {
+      "schema": 1,
+      "scenario": "24x80-screen",
+      "metric": "terminal_screen_snapshot_100",
+      "value": 0.3476,
+      "unit": "ms",
+      "bytes": 8388597,
+      "operations": 100,
+      "sample": 5,
+      "log": "perf-terminal-5.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_document_prepare",
+      "value": 187.6586,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-ui-interaction-1.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 15.3921,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-ui-interaction-1.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 5.0984,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-ui-interaction-1.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_document_prepare",
+      "value": 76.6925,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-ui-interaction-1.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 13.4137,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-ui-interaction-1.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 4.1116,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-ui-interaction-1.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_document_prepare",
+      "value": 375.2765,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-ui-interaction-1.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 31.2292,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-ui-interaction-1.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_20_edits_and_renders",
+      "value": 12.8639,
+      "unit": "ms",
+      "sample": 1,
+      "log": "perf-ui-interaction-1.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_document_prepare",
+      "value": 196.7869,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-ui-interaction-2.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 15.5776,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-ui-interaction-2.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 5.2966,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-ui-interaction-2.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_document_prepare",
+      "value": 81.8611,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-ui-interaction-2.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 13.2366,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-ui-interaction-2.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 4.3335,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-ui-interaction-2.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_document_prepare",
+      "value": 394.3813,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-ui-interaction-2.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 32.5534,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-ui-interaction-2.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_20_edits_and_renders",
+      "value": 12.4481,
+      "unit": "ms",
+      "sample": 2,
+      "log": "perf-ui-interaction-2.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_document_prepare",
+      "value": 195.6532,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-ui-interaction-3.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 16.4685,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-ui-interaction-3.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 5.3031,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-ui-interaction-3.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_document_prepare",
+      "value": 78.5999,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-ui-interaction-3.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 13.0121,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-ui-interaction-3.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 4.1373,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-ui-interaction-3.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_document_prepare",
+      "value": 390.7532,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-ui-interaction-3.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 31.7136,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-ui-interaction-3.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_20_edits_and_renders",
+      "value": 12.858,
+      "unit": "ms",
+      "sample": 3,
+      "log": "perf-ui-interaction-3.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_document_prepare",
+      "value": 188.7285,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-ui-interaction-4.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 15.1816,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-ui-interaction-4.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 4.9184,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-ui-interaction-4.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_document_prepare",
+      "value": 78.4975,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-ui-interaction-4.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 13.49,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-ui-interaction-4.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 4.1493,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-ui-interaction-4.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_document_prepare",
+      "value": 379.2814,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-ui-interaction-4.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 34.3801,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-ui-interaction-4.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_20_edits_and_renders",
+      "value": 13.3234,
+      "unit": "ms",
+      "sample": 4,
+      "log": "perf-ui-interaction-4.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_document_prepare",
+      "value": 198.1242,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-ui-interaction-5.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 15.6492,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-ui-interaction-5.log"
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 5.081,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-ui-interaction-5.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_document_prepare",
+      "value": 82.5692,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-ui-interaction-5.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 13.0591,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-ui-interaction-5.log"
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_20_edits_and_renders",
+      "value": 4.3275,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-ui-interaction-5.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_document_prepare",
+      "value": 379.4273,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-ui-interaction-5.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_100_viewports_and_clicks",
+      "value": 31.7948,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-ui-interaction-5.log"
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_20_edits_and_renders",
+      "value": 12.2661,
+      "unit": "ms",
+      "sample": 5,
+      "log": "perf-ui-interaction-5.log"
+    }
+  ],
+  "statistics": [
+    {
+      "scenario": "ascii-1m",
+      "metric": "file_read_cached",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.6539,
+      "min": 0.6227,
+      "max": 0.6785
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "document_prepare",
+      "samples": 5,
+      "unit": "ms",
+      "median": 26.1475,
+      "min": 23.076900000000002,
+      "max": 27.273
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "file_read_cached",
+      "samples": 5,
+      "unit": "ms",
+      "median": 5.5983,
+      "min": 4.897399999999999,
+      "max": 6.8817
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "document_prepare",
+      "samples": 5,
+      "unit": "ms",
+      "median": 242.32119999999998,
+      "min": 231.659,
+      "max": 264.8473
+    },
+    {
+      "scenario": "ascii-64m",
+      "metric": "file_read_cached",
+      "samples": 5,
+      "unit": "ms",
+      "median": 35.463300000000004,
+      "min": 34.5779,
+      "max": 36.6421
+    },
+    {
+      "scenario": "ascii-64m",
+      "metric": "document_prepare",
+      "samples": 5,
+      "unit": "ms",
+      "median": 1521.0933,
+      "min": 1497.3325,
+      "max": 1756.8109000000002
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "typing_per_char",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.024235,
+      "min": 0.023971,
+      "max": 0.030129000000000003
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "paste_1m",
+      "samples": 5,
+      "unit": "ms",
+      "median": 26.9098,
+      "min": 26.7922,
+      "max": 28.5763
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "undo_paste",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.291,
+      "min": 0.2878,
+      "max": 0.3064
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "select_all_indent",
+      "samples": 5,
+      "unit": "ms",
+      "median": 27.9893,
+      "min": 27.3909,
+      "max": 30.0176
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "history_bytes_rounded",
+      "samples": 5,
+      "unit": "bytes",
+      "median": 0,
+      "min": 0,
+      "max": 0
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "typing_per_char",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.155974,
+      "min": 0.152565,
+      "max": 0.17547800000000002
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "paste_1m",
+      "samples": 5,
+      "unit": "ms",
+      "median": 27.7553,
+      "min": 26.9646,
+      "max": 28.9037
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "undo_paste",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.8007000000000001,
+      "min": 0.7031000000000001,
+      "max": 0.98
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "select_all_indent",
+      "samples": 5,
+      "unit": "ms",
+      "median": 277.571,
+      "min": 270.7579,
+      "max": 304.8001
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "history_bytes_rounded",
+      "samples": 5,
+      "unit": "bytes",
+      "median": 314572.8,
+      "min": 314572.8,
+      "max": 314572.8
+    },
+    {
+      "scenario": "100-files-6.25m",
+      "metric": "search_scan_cached",
+      "samples": 5,
+      "unit": "ms",
+      "median": 26.3078,
+      "min": 24.9396,
+      "max": 30.787200000000002
+    },
+    {
+      "scenario": "100-files-6.25m",
+      "metric": "search_cancel_latency",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.0771,
+      "min": 0.0637,
+      "max": 0.12380000000000001
+    },
+    {
+      "scenario": "100-tabs",
+      "metric": "pointer_update",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.06274300000000001,
+      "min": 0.060203000000000007,
+      "max": 0.06681999999999999
+    },
+    {
+      "scenario": "500-tabs",
+      "metric": "pointer_update",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.382039,
+      "min": 0.37305,
+      "max": 0.383659
+    },
+    {
+      "scenario": "ansi-unicode-8m",
+      "metric": "terminal_parse",
+      "samples": 5,
+      "unit": "ms",
+      "median": 83.7,
+      "min": 81.6229,
+      "max": 84.2924
+    },
+    {
+      "scenario": "24x80-screen",
+      "metric": "terminal_screen_snapshot_100",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.3417,
+      "min": 0.2907,
+      "max": 0.42700000000000005
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_document_prepare",
+      "samples": 5,
+      "unit": "ms",
+      "median": 195.6532,
+      "min": 187.6586,
+      "max": 198.1242
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "samples": 5,
+      "unit": "ms",
+      "median": 15.5776,
+      "min": 15.1816,
+      "max": 16.4685
+    },
+    {
+      "scenario": "8 MiB single line",
+      "metric": "ui_20_edits_and_renders",
+      "samples": 5,
+      "unit": "ms",
+      "median": 5.0984,
+      "min": 4.9184,
+      "max": 5.3031
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_document_prepare",
+      "samples": 5,
+      "unit": "ms",
+      "median": 78.5999,
+      "min": 76.6925,
+      "max": 82.5692
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_100_viewports_and_clicks",
+      "samples": 5,
+      "unit": "ms",
+      "median": 13.2366,
+      "min": 13.0121,
+      "max": 13.49
+    },
+    {
+      "scenario": "Unicode single line",
+      "metric": "ui_20_edits_and_renders",
+      "samples": 5,
+      "unit": "ms",
+      "median": 4.1493,
+      "min": 4.1116,
+      "max": 4.3335
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_document_prepare",
+      "samples": 5,
+      "unit": "ms",
+      "median": 379.4273,
+      "min": 375.2765,
+      "max": 394.3813
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_100_viewports_and_clicks",
+      "samples": 5,
+      "unit": "ms",
+      "median": 31.7948,
+      "min": 31.2292,
+      "max": 34.3801
+    },
+    {
+      "scenario": "many short lines",
+      "metric": "ui_20_edits_and_renders",
+      "samples": 5,
+      "unit": "ms",
+      "median": 12.858,
+      "min": 12.2661,
+      "max": 13.3234
+    }
+  ],
+  "checks": [
+    {
+      "log": "native-bash-replacement-smoke.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "native-launcher-smoke.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "native-program-name-smoke.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "native-terminal-smoke.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-file-0.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-file-1.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-file-2.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-file-3.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-file-4.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-file-5.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-legacy-editor-0.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-legacy-editor-1.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-legacy-editor-2.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-legacy-editor-3.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-legacy-editor-4.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-legacy-editor-5.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-search-0.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-search-1.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-search-2.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-search-3.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-search-4.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-search-5.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-tab-pointer-0.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-tab-pointer-1.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-tab-pointer-2.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-tab-pointer-3.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-tab-pointer-4.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-tab-pointer-5.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-terminal-0.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-terminal-1.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-terminal-2.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-terminal-3.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-terminal-4.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-terminal-5.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-ui-interaction-0.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-ui-interaction-1.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-ui-interaction-2.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-ui-interaction-3.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-ui-interaction-4.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "perf-ui-interaction-5.log",
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 593
+    },
+    {
+      "log": "tests-isolated.log",
+      "result": "ok",
+      "passed": 582,
+      "failed": 0,
+      "ignored": 12,
+      "filtered": 0
+    },
+    {
+      "log": "tests-native.log",
+      "result": "ok",
+      "passed": 582,
+      "failed": 0,
+      "ignored": 12,
+      "filtered": 0
+    },
+    {
+      "log": "tests-release.log",
+      "result": "ok",
+      "passed": 582,
+      "failed": 0,
+      "ignored": 12,
+      "filtered": 0
+    }
+  ],
+  "notices": []
+}

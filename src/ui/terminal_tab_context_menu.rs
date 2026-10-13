@@ -352,7 +352,7 @@ fn purpose_row(row: UiRect, label: &str, selected: bool) -> Element {
         )
         .children(cx.children)
     })
-    .key(label.to_owned())
+    .key(label)
     .event_policy(EventPolicy::INTERACTIVE)
     .cursor(CursorIcon::Pointer)
     .semantics(Semantics::new(SemanticRole::Button).name(label))

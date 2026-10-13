@@ -1,0 +1,1499 @@
+{
+  "schema": 1,
+  "scope": "Lexical root-dependency gate including cfg(test); not a Rust type or macro resolver.",
+  "aliases": {
+    "state": "app/state",
+    "input": "features/keymap",
+    "background_ui": "infrastructure/ui_dispatch",
+    "svg_icons": "app/bootstrap (cfg(test) only)"
+  },
+  "root_state_adapters": [
+    "src/ui/branch_picker.rs",
+    "src/ui/clone_repository.rs",
+    "src/ui/close_confirmation.rs",
+    "src/ui/context_menu.rs",
+    "src/ui/diff_editor.rs",
+    "src/ui/git_badge.rs",
+    "src/ui/git_confirm.rs",
+    "src/ui/git_menu.rs",
+    "src/ui/git_panel.rs",
+    "src/ui/keymap_page.rs",
+    "src/ui/layout_map.rs",
+    "src/ui/mod.rs",
+    "src/ui/pane_sash.rs",
+    "src/ui/search_panel.rs",
+    "src/ui/settings.rs",
+    "src/ui/sidebar.rs",
+    "src/ui/stash_switch.rs",
+    "src/ui/statusbar.rs",
+    "src/ui/tab_context_menu.rs",
+    "src/ui/tabs.rs",
+    "src/ui/terminal.rs",
+    "src/ui/terminal_settings.rs",
+    "src/ui/terminal_tab_context_menu.rs",
+    "src/ui/titlebar.rs",
+    "src/ui/welcome.rs",
+    "src/ui/workspace_home.rs"
+  ],
+  "runtime_bridges": [
+    "src/app/runtime.rs",
+    "src/editor/caret.rs",
+    "src/editor/hunk_peek.rs",
+    "src/editor/vim_integration_tests.rs",
+    "src/file_loading.rs",
+    "src/git/backend.rs",
+    "src/git/store.rs",
+    "src/git_actions.rs",
+    "src/search_actions.rs",
+    "src/ui/components/loading_indicator.rs",
+    "src/ui/terminal.rs",
+    "src/ui/terminal_settings.rs",
+    "src/workspace_actions.rs"
+  ],
+  "state_ownership": {
+    "application_layout": {
+      "owner": "app/state/layout",
+      "remove_in": "R7"
+    },
+    "application_sash_drag": {
+      "owner": "app/state/layout",
+      "remove_in": "R7"
+    },
+    "branch_picker": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "branch_picker_input": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "clone_input_focused": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "clone_repository_error": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "clone_repository_url": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "cloning_repository": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "close_request": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "context_menu": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "context_menu_hover": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "context_menu_target": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "default_shell": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "default_shell_fallback": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "dir_entries": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "drawer_mode": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "editor": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "editor_font": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "editor_font_input": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "editor_gutter_hover": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "editor_horizontal_scrollbar_drag_offset": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "editor_horizontal_scrollbar_dragging": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "editor_hovered": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "editor_hunk_peek": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "editor_vertical_scrollbar_drag_offset": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "editor_vertical_scrollbar_dragging": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "expanded": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "explorer_create": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "explorer_create_error": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "explorer_create_input": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "explorer_rename": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "file_drag": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "focused": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "git_collapsed_sections": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_commit_amend": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_commit_card": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_commit_details": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_commit_input": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_commit_signoff": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_confirm": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_details_scroll": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_details_scrollbar_drag_offset": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_details_scrollbar_dragging": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_diff_loading": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_expanded_repositories": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_history": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_history_commit": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_hover": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_inline_blame": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_menu": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_open_diff_sequence": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_pinned_repository": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_scroll": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_scrollbar_drag_offset": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_scrollbar_dragging": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_sidebar_hovered": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_sidebar_w": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_split_diff": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_split_drag": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_split_ratio": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "git_tree_view": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "horizontal_scrollbar_drag_offset": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "horizontal_scrollbar_dragging": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "keymap_search": {
+      "owner": "features/keymap/private model",
+      "remove_in": "R8"
+    },
+    "keymap_version": {
+      "owner": "features/keymap/private model",
+      "remove_in": "R8"
+    },
+    "pending_file": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "pending_file_tree_refresh": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "pending_keystrokes": {
+      "owner": "features/keymap/private model",
+      "remove_in": "R8"
+    },
+    "pending_keystrokes_seq": {
+      "owner": "features/keymap/private model",
+      "remove_in": "R8"
+    },
+    "project_settings": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "recent_folders": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "resizing_git_sidebar": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "resizing_sidebar": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "resizing_terminal": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "runtime": {
+      "owner": "app/runtime weak legacy access (no ownership)",
+      "remove_in": "R8"
+    },
+    "sash_drag": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "scrollbar_drag_offset": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "scrollbar_dragging": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "search": {
+      "owner": "features/search/private model",
+      "remove_in": "R2"
+    },
+    "selecting_terminal": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "shell_editor": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "shell_options": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "show_clone_dialog": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "show_drawer": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "show_source_control": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "show_terminal": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "sidebar_hovered": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "sidebar_w": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "smooth_caret": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "stash_switch": {
+      "owner": "features/git/private model",
+      "remove_in": "R6"
+    },
+    "tab_context_menu": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "tab_drag": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "tab_hovered": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "tab_scroll": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "tab_scrollbar_drag_offset": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "tab_scrollbar_dragging": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "tab_strip_hovered": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "terminal_cursor_blink": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "terminal_focused": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "terminal_font": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "terminal_font_input": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "terminal_h": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "terminal_profiles": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "terminal_shell_menu": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "terminal_shell_scroll": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "terminal_split_drag": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "terminal_tab_context_menu": {
+      "owner": "features/terminal/private model",
+      "remove_in": "R7"
+    },
+    "theme": {
+      "owner": "features/settings/private model",
+      "remove_in": "R8"
+    },
+    "toast": {
+      "owner": "app/state/chrome",
+      "remove_in": "R8"
+    },
+    "toast_seq": {
+      "owner": "app/state/chrome",
+      "remove_in": "R8"
+    },
+    "tree_hovered_path": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "tree_scroll": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "tree_scroll_x": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "vim": {
+      "owner": "app/state/editor_interaction",
+      "remove_in": "R3"
+    },
+    "welcome_hover": {
+      "owner": "app/state/chrome",
+      "remove_in": "R8"
+    },
+    "workspace": {
+      "owner": "domain/workspace (one atomic update)",
+      "remove_in": "R3 R4"
+    },
+    "workspace_folders": {
+      "owner": "features/explorer/private model",
+      "remove_in": "R5"
+    },
+    "workspace_home_hover": {
+      "owner": "app/state/chrome",
+      "remove_in": "R8"
+    }
+  },
+  "exceptions": {
+    "src/config_watcher.rs": {
+      "dependencies": [
+        "crate::workspace_persistence",
+        "notify",
+        "std::fs",
+        "std::thread"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/baseline_tests.rs": {
+      "dependencies": [
+        "crate::editor",
+        "crate::model",
+        "crate::state",
+        "lgui"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/caret.rs": {
+      "dependencies": [
+        "crate::fonts",
+        "crate::model",
+        "crate::theme",
+        "lgui"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/commands.rs": {
+      "dependencies": [
+        "crate::model",
+        "lgui"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/editor_view.rs": {
+      "dependencies": [
+        "crate::editor",
+        "crate::fonts",
+        "crate::git",
+        "crate::key_actions",
+        "crate::model",
+        "crate::state",
+        "crate::theme",
+        "crate::ui",
+        "crate::vim",
+        "lgui",
+        "unicode_segmentation",
+        "unicode_width",
+        "vim"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/edit_menu.rs": {
+      "dependencies": [
+        "crate::input",
+        "crate::key_actions",
+        "crate::state",
+        "crate::theme",
+        "crate::vim",
+        "lgui"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/gutter.rs": {
+      "dependencies": [
+        "crate::fonts",
+        "crate::theme",
+        "lgui"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/hunk_peek.rs": {
+      "dependencies": [
+        "crate::fonts",
+        "crate::git",
+        "crate::git_actions",
+        "crate::model",
+        "crate::state",
+        "crate::theme",
+        "crate::ui",
+        "lgui",
+        "std::thread"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/interaction.rs": {
+      "dependencies": [
+        "crate::model",
+        "lgui"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/normal.rs": {
+      "dependencies": [
+        "crate::model"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/phase0_baseline.rs": {
+      "dependencies": [
+        "crate::input",
+        "crate::model",
+        "crate::search",
+        "crate::settings_persistence",
+        "crate::terminal_session",
+        "crate::workspace_actions",
+        "crate::workspace_persistence",
+        "std::fs",
+        "std::process",
+        "std::thread"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/syntax.rs": {
+      "dependencies": [
+        "crate::model",
+        "crate::theme",
+        "lgui",
+        "unicode_segmentation"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/vim_input.rs": {
+      "dependencies": [
+        "crate::fonts",
+        "crate::model",
+        "crate::state",
+        "crate::vim",
+        "crate::workspace_actions",
+        "lgui"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/editor/vim_integration_tests.rs": {
+      "dependencies": [
+        "crate::fonts",
+        "crate::git",
+        "crate::key_actions",
+        "crate::model",
+        "crate::state",
+        "crate::terminal_session",
+        "crate::theme",
+        "crate::ui",
+        "crate::vim",
+        "lgui"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/features/keymap/action.rs": {
+      "dependencies": [
+        "Movement",
+        "crate::editor",
+        "serde_json"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/features/keymap/context_stack.rs": {
+      "dependencies": [
+        "crate::editor",
+        "crate::state",
+        "crate::ui",
+        "crate::vim",
+        "lgui"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/features/keymap/keymap_file.rs": {
+      "dependencies": [
+        "crate::jsonc",
+        "crate::workspace_persistence",
+        "serde_json",
+        "std::fs"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/features/keymap/keystroke.rs": {
+      "dependencies": [
+        "lgui"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/features/keymap/mod.rs": {
+      "dependencies": [
+        "bindings"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/file_icons.rs": {
+      "dependencies": [
+        "lgui"
+      ],
+      "remove_in": "R4 R5",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/file_loading.rs": {
+      "dependencies": [
+        "crate::app",
+        "crate::background_ui",
+        "crate::model",
+        "crate::state",
+        "crate::svg_icons",
+        "crate::ui",
+        "crate::workspace_actions",
+        "crate::workspace_persistence",
+        "image",
+        "lgui",
+        "std::thread"
+      ],
+      "remove_in": "R4 R5",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/file_tree.rs": {
+      "dependencies": [
+        "crate::state",
+        "std::fs",
+        "std::process"
+      ],
+      "remove_in": "R4 R5",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/file_watcher.rs": {
+      "dependencies": [
+        "crate::background_ui",
+        "crate::file_tree",
+        "crate::model",
+        "crate::search",
+        "crate::state",
+        "lgui",
+        "notify",
+        "std::fs",
+        "std::process",
+        "std::thread"
+      ],
+      "remove_in": "R4 R5",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/fonts.rs": {
+      "dependencies": [
+        "crate::theme",
+        "lgui",
+        "serde"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/git/backend.rs": {
+      "dependencies": [
+        "crate::git",
+        "crate::model",
+        "std::fs",
+        "std::process"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/git/command.rs": {
+      "dependencies": [
+        "std::process",
+        "std::thread"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/git/discovery.rs": {
+      "dependencies": [
+        "std::fs"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/git/mod.rs": {
+      "dependencies": [
+        "backend",
+        "error",
+        "runtime",
+        "std::thread",
+        "store",
+        "types"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/git/runtime.rs": {
+      "dependencies": [
+        "serde",
+        "std::fs",
+        "std::process"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/git/store.rs": {
+      "dependencies": [
+        "crate::git",
+        "crate::model",
+        "std::fs",
+        "std::thread"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/git_actions.rs": {
+      "dependencies": [
+        "crate::app",
+        "crate::background_ui",
+        "crate::file_watcher",
+        "crate::git",
+        "crate::model",
+        "crate::state",
+        "crate::ui",
+        "crate::workspace_actions",
+        "lgui",
+        "std::fs",
+        "std::thread"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/jsonc.rs": {
+      "dependencies": [
+        "serde_json"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/key_actions.rs": {
+      "dependencies": [
+        "crate::config_watcher",
+        "crate::editor",
+        "crate::git",
+        "crate::git_actions",
+        "crate::input",
+        "crate::project_settings",
+        "crate::search_actions",
+        "crate::settings_persistence",
+        "crate::state",
+        "crate::terminal_session",
+        "crate::ui",
+        "crate::vim",
+        "crate::workspace_actions",
+        "crate::workspace_persistence",
+        "lgui",
+        "std::fs",
+        "std::thread"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/model/application_layout.rs": {
+      "dependencies": [
+        "lgui"
+      ],
+      "remove_in": "R3 R4",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/model/diff_document.rs": {
+      "dependencies": [
+        "crate::fonts",
+        "crate::git",
+        "crate::model"
+      ],
+      "remove_in": "R3 R4",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/model/document.rs": {
+      "dependencies": [
+        "crate::theme",
+        "lgui",
+        "std::fs"
+      ],
+      "remove_in": "R3 R4",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/model/pane_layout.rs": {
+      "dependencies": [
+        "lgui"
+      ],
+      "remove_in": "R3 R4",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/model/text/buffer.rs": {
+      "dependencies": [
+        "unicode_segmentation"
+      ],
+      "remove_in": "R3 R4",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/model/text/lines.rs": {
+      "dependencies": [
+        "unicode_segmentation",
+        "unicode_width"
+      ],
+      "remove_in": "R3 R4",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/model/text/mod.rs": {
+      "dependencies": [
+        "buffer",
+        "change",
+        "editor",
+        "history",
+        "lines",
+        "selection"
+      ],
+      "remove_in": "R3 R4",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/model/workspace.rs": {
+      "dependencies": [
+        "crate::background_ui",
+        "crate::git",
+        "crate::model",
+        "crate::search",
+        "lgui",
+        "std::fs",
+        "std::process"
+      ],
+      "remove_in": "R3 R4",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/project_settings.rs": {
+      "dependencies": [
+        "crate::settings_persistence",
+        "crate::state",
+        "crate::terminal_session",
+        "std::fs",
+        "std::process",
+        "std::thread"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/search.rs": {
+      "dependencies": [
+        "crate::model",
+        "globset",
+        "ignore",
+        "regex",
+        "std::fs",
+        "std::process",
+        "unicode_segmentation"
+      ],
+      "remove_in": "R2",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/search_actions.rs": {
+      "dependencies": [
+        "crate::background_ui",
+        "crate::editor",
+        "crate::input",
+        "crate::model",
+        "crate::search",
+        "crate::state",
+        "crate::ui",
+        "lgui",
+        "std::fs",
+        "std::process",
+        "std::thread"
+      ],
+      "remove_in": "R2",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/session_restore.rs": {
+      "dependencies": [
+        "crate::background_ui",
+        "crate::file_loading",
+        "crate::model",
+        "crate::state",
+        "crate::theme",
+        "crate::ui",
+        "crate::workspace_actions",
+        "crate::workspace_persistence",
+        "lgui",
+        "std::thread"
+      ],
+      "remove_in": "R4 R5",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/settings_persistence.rs": {
+      "dependencies": [
+        "crate::fonts",
+        "crate::jsonc",
+        "crate::terminal_profiles",
+        "crate::terminal_session",
+        "crate::theme",
+        "crate::vim",
+        "crate::workspace_persistence",
+        "serde",
+        "serde_json",
+        "std::fs"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/terminal_directory.rs": {
+      "dependencies": [
+        "base64",
+        "portable_pty",
+        "std::fs",
+        "std::process",
+        "std::thread"
+      ],
+      "remove_in": "R7",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/terminal_mouse.rs": {
+      "dependencies": [
+        "lgui",
+        "vt100"
+      ],
+      "remove_in": "R7",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/terminal_profiles.rs": {
+      "dependencies": [
+        "crate::terminal_session",
+        "libc",
+        "serde"
+      ],
+      "remove_in": "R7",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/terminal_program.rs": {
+      "dependencies": [
+        "std::fs",
+        "std::process",
+        "std::thread",
+        "windows_sys"
+      ],
+      "remove_in": "R7",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/terminal_session.rs": {
+      "dependencies": [
+        "conpty",
+        "crate::model",
+        "crate::terminal_directory",
+        "crate::terminal_mouse",
+        "crate::terminal_profiles",
+        "crate::terminal_program",
+        "crate::theme",
+        "crate::workspace_persistence",
+        "lgui",
+        "portable_pty",
+        "serde",
+        "std::fs",
+        "std::process",
+        "std::thread"
+      ],
+      "remove_in": "R7",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/theme.rs": {
+      "dependencies": [
+        "lgui",
+        "serde"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/branch_picker.rs": {
+      "dependencies": [
+        "crate::git",
+        "crate::git_actions",
+        "crate::state",
+        "crate::svg_icons",
+        "image"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/clone_repository.rs": {
+      "dependencies": [
+        "crate::input",
+        "crate::state",
+        "crate::workspace_actions"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/close_confirmation.rs": {
+      "dependencies": [
+        "crate::input",
+        "crate::state",
+        "crate::workspace_actions"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/components/input.rs": {
+      "dependencies": [
+        "crate::editor",
+        "crate::model"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/components/text.rs": {
+      "dependencies": [
+        "unicode_width"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/context_menu.rs": {
+      "dependencies": [
+        "crate::file_tree",
+        "crate::state",
+        "crate::terminal_session",
+        "crate::workspace_actions",
+        "std::process",
+        "unicode_width"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/diff_editor.rs": {
+      "dependencies": [
+        "crate::editor",
+        "crate::git",
+        "crate::git_actions",
+        "crate::model",
+        "crate::state",
+        "crate::svg_icons",
+        "image",
+        "std::fs"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/git_badge.rs": {
+      "dependencies": [
+        "crate::git",
+        "crate::git_actions",
+        "crate::state"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/git_confirm.rs": {
+      "dependencies": [
+        "crate::git",
+        "crate::git_actions",
+        "crate::input",
+        "crate::model",
+        "crate::state",
+        "crate::svg_icons",
+        "image"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/git_menu.rs": {
+      "dependencies": [
+        "crate::git",
+        "crate::git_actions",
+        "crate::state",
+        "crate::workspace_actions"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/git_panel.rs": {
+      "dependencies": [
+        "crate::git",
+        "crate::git_actions",
+        "crate::model",
+        "crate::state",
+        "crate::svg_icons",
+        "crate::workspace_actions",
+        "image"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/keymap_page.rs": {
+      "dependencies": [
+        "crate::input",
+        "crate::key_actions",
+        "crate::state"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/layout_map.rs": {
+      "dependencies": [
+        "crate::model",
+        "crate::state",
+        "crate::terminal_session"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/mod.rs": {
+      "dependencies": [
+        "crate::state"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/pane_sash.rs": {
+      "dependencies": [
+        "crate::model",
+        "crate::state"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/search_panel.rs": {
+      "dependencies": [
+        "crate::app",
+        "crate::input",
+        "crate::search",
+        "crate::search_actions",
+        "crate::state",
+        "crate::svg_icons",
+        "image",
+        "unicode_segmentation"
+      ],
+      "remove_in": "R2",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/settings.rs": {
+      "dependencies": [
+        "crate::editor",
+        "crate::input",
+        "crate::key_actions",
+        "crate::settings_persistence",
+        "crate::state"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/sidebar.rs": {
+      "dependencies": [
+        "crate::file_tree",
+        "crate::git",
+        "crate::input",
+        "crate::state",
+        "crate::workspace_actions"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/stash_switch.rs": {
+      "dependencies": [
+        "crate::git",
+        "crate::git_actions",
+        "crate::input",
+        "crate::state"
+      ],
+      "remove_in": "R6",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/statusbar.rs": {
+      "dependencies": [
+        "crate::editor",
+        "crate::input",
+        "crate::state",
+        "crate::terminal_session",
+        "crate::vim"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/tabs.rs": {
+      "dependencies": [
+        "crate::file_loading",
+        "crate::model",
+        "crate::state",
+        "crate::workspace_actions"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/tab_context_menu.rs": {
+      "dependencies": [
+        "crate::model",
+        "crate::state",
+        "crate::workspace_actions",
+        "std::fs",
+        "std::process"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/terminal.rs": {
+      "dependencies": [
+        "crate::model",
+        "crate::state",
+        "crate::terminal_profiles",
+        "crate::terminal_session"
+      ],
+      "remove_in": "R7",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/terminal_settings.rs": {
+      "dependencies": [
+        "crate::key_actions",
+        "crate::state",
+        "crate::terminal_profiles",
+        "crate::terminal_session",
+        "image"
+      ],
+      "remove_in": "R7",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/terminal_tab_context_menu.rs": {
+      "dependencies": [
+        "crate::state",
+        "crate::terminal_session"
+      ],
+      "remove_in": "R7",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/titlebar.rs": {
+      "dependencies": [
+        "crate::git",
+        "crate::input",
+        "crate::state",
+        "crate::window_geometry"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/welcome.rs": {
+      "dependencies": [
+        "crate::state",
+        "crate::workspace_actions"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/ui/workspace_home.rs": {
+      "dependencies": [
+        "crate::state",
+        "crate::terminal_session",
+        "crate::workspace_actions"
+      ],
+      "remove_in": "R4 R5",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/vim/ex.rs": {
+      "dependencies": [
+        "crate::model"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/vim/exec.rs": {
+      "dependencies": [
+        "crate::editor",
+        "crate::model"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/vim/insert.rs": {
+      "dependencies": [
+        "crate::editor",
+        "crate::model",
+        "unicode_segmentation"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/vim/key.rs": {
+      "dependencies": [
+        "crate::input"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/vim/mod.rs": {
+      "dependencies": [
+        "command",
+        "crate::model",
+        "key",
+        "register"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/vim/motion.rs": {
+      "dependencies": [
+        "crate::model"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/vim/object.rs": {
+      "dependencies": [
+        "crate::model"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/vim/search.rs": {
+      "dependencies": [
+        "regex"
+      ],
+      "remove_in": "R2",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/vim/tests.rs": {
+      "dependencies": [
+        "crate::model"
+      ],
+      "remove_in": "R3",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/window_geometry.rs": {
+      "dependencies": [
+        "crate::workspace_persistence",
+        "lgui",
+        "std::process",
+        "windows_sys"
+      ],
+      "remove_in": "R8",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/workspace_actions.rs": {
+      "dependencies": [
+        "crate::file_loading",
+        "crate::file_tree",
+        "crate::git",
+        "crate::git_actions",
+        "crate::input",
+        "crate::model",
+        "crate::project_settings",
+        "crate::state",
+        "crate::workspace_persistence",
+        "lgui",
+        "std::fs",
+        "std::process",
+        "std::thread",
+        "windows_sys"
+      ],
+      "remove_in": "R4 R5",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    },
+    "src/workspace_persistence.rs": {
+      "dependencies": [
+        "crate::terminal_session",
+        "serde",
+        "std::fs",
+        "std::process"
+      ],
+      "remove_in": "R4 R5",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    }
+  }
+}

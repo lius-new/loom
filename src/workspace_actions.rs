@@ -276,7 +276,10 @@ fn open_tree_file_with(
 /// dragged, otherwise open it where it was dropped. Returns whether the
 /// editor should take focus.
 pub(crate) fn finish_file_drag(app: &mut AppState) -> bool {
-    if app.file_loader.is_some() {
+    if app
+        .runtime()
+        .is_some_and(|runtime| runtime.file_loader().is_some())
+    {
         if let Some(drag) = app.file_drag.take() {
             let crate::state::FileDragSource::Explorer { clicks } = drag.source else {
                 return false;
@@ -1265,7 +1268,10 @@ pub(crate) fn open_launch_paths(app: &mut AppState, paths: Vec<PathBuf>) {
                 replaced_workspace = true;
             }
         } else {
-            if app.file_loader.is_some() {
+            if app
+                .runtime()
+                .is_some_and(|runtime| runtime.file_loader().is_some())
+            {
                 if let Some(id) = app.workspace.file_id_for_path(&path) {
                     app.workspace.set_active(id);
                 } else {

@@ -67,7 +67,7 @@ fn open_diff_with_focus(
     drop: Option<TabDrop>,
 ) -> bool {
     let app = state.get();
-    let Some(application) = app.git_application else {
+    let Some(application) = app.runtime().and_then(|runtime| runtime.application()) else {
         return false;
     };
     let roots = app.workspace_folders;
@@ -868,7 +868,11 @@ pub const HISTORY_LIMIT: usize = 50;
 /// Load the newest commits of `root`'s HEAD, which is at `head`, into the
 /// Source Control history. Read-only, so it runs beside any operation.
 pub fn load_history(state: &State<AppState>, root: PathBuf, head: Option<String>) {
-    let Some(application) = state.get().git_application else {
+    let Some(application) = state
+        .get()
+        .runtime()
+        .and_then(|runtime| runtime.application())
+    else {
         return;
     };
     let worker_state = state.clone();
@@ -906,7 +910,7 @@ pub fn toggle_commit(state: &State<AppState>, root: PathBuf, oid: String) {
         .git_history_commit
         .as_ref()
         .is_some_and(|commit| commit.oid == oid);
-    let application = app.git_application;
+    let application = app.runtime().and_then(|runtime| runtime.application());
     let toggled = oid.clone();
     state.update(move |app| {
         app.git_history_commit = (!collapse).then_some(ExpandedCommit {
@@ -940,7 +944,11 @@ pub fn toggle_commit(state: &State<AppState>, root: PathBuf, oid: String) {
 
 /// Open `path`'s diff in commit `oid`.
 pub fn open_commit_diff(state: &State<AppState>, root: PathBuf, oid: String, path: PathBuf) {
-    let Some(application) = state.get().git_application else {
+    let Some(application) = state
+        .get()
+        .runtime()
+        .and_then(|runtime| runtime.application())
+    else {
         return;
     };
     let worker_state = state.clone();
@@ -995,7 +1003,7 @@ pub fn open_commit_changes(
         return;
     }
     let app = state.get();
-    let Some(application) = app.git_application else {
+    let Some(application) = app.runtime().and_then(|runtime| runtime.application()) else {
         return;
     };
     let sequence = app.git_open_diff_sequence + 1;
@@ -1056,7 +1064,11 @@ pub fn hover_commit(
     oid: String,
     anchor: lgui::prelude::UiRect,
 ) {
-    let Some(application) = state.get().git_application else {
+    let Some(application) = state
+        .get()
+        .runtime()
+        .and_then(|runtime| runtime.application())
+    else {
         return;
     };
     let hovered = crate::ui::git_panel::GitHover::Commit(oid.clone());
@@ -1160,7 +1172,12 @@ pub fn open_worktree(
     let path = std::fs::canonicalize(&path).unwrap_or(path);
     state.update(|app| crate::workspace_actions::add_folder(app, path.clone()));
     select_repository(state, store, path);
-    state.get().git_poll_control.request_refresh();
+    state
+        .get()
+        .runtime()
+        .map(|runtime| runtime.git_poll_control())
+        .unwrap_or_default()
+        .request_refresh();
     true
 }
 
@@ -1175,7 +1192,12 @@ pub fn add_worktree_folder(state: &State<AppState>, path: PathBuf) {
         return;
     }
     state.update(|app| crate::workspace_actions::add_folder(app, path));
-    state.get().git_poll_control.request_refresh();
+    state
+        .get()
+        .runtime()
+        .map(|runtime| runtime.git_poll_control())
+        .unwrap_or_default()
+        .request_refresh();
 }
 
 fn default_worktree_path(repository: &Path, checkout: &Checkout) -> PathBuf {
@@ -1578,7 +1600,11 @@ fn publish_remote(remotes: &[RemoteInfo]) -> Option<&str> {
 /// List `repository`'s branches into the open branch picker opened as
 /// `sequence`. Read-only, so it runs beside any write operation.
 pub fn load_branches(state: &State<AppState>, repository: PathBuf, sequence: u64) {
-    let Some(application) = state.get().git_application else {
+    let Some(application) = state
+        .get()
+        .runtime()
+        .and_then(|runtime| runtime.application())
+    else {
         return;
     };
     let worker_state = state.clone();
@@ -1847,10 +1873,13 @@ fn run_with<T: Send + 'static>(
         return false;
     }
     let app = state.get();
-    let Some(application) = app.git_application else {
+    let Some(application) = app.runtime().and_then(|runtime| runtime.application()) else {
         return false;
     };
-    let poll_control = app.git_poll_control;
+    let poll_control = app
+        .runtime()
+        .map(|runtime| runtime.git_poll_control())
+        .unwrap_or_default();
     let message = message.into();
     store.update(move |snapshot| {
         snapshot.operation = Some(operation(kind, message, false));
@@ -2070,6 +2099,8 @@ mod tests {
             let queue = tasks.clone();
             let application =
                 ApplicationHandle::new(move |task| queue.lock().unwrap().push(task), || {});
+            let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
+            runtime.set_application(application);
             let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
             let output = exposed.clone();
             let roots = vec![root.clone()];
@@ -2077,7 +2108,7 @@ mod tests {
             let view: AppView = Arc::new(move |cx| {
                 let state = cx.state_with(|| {
                     let mut app = AppState::new();
-                    app.git_application = Some(application.clone());
+                    app.attach_runtime(&runtime);
                     app.workspace_folders = roots.clone();
                     app.workspace.open_path("current.txt".into(), "keep".into());
                     app

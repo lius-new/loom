@@ -341,7 +341,7 @@ pub(super) fn drawer_icon(
     precompiled(UiElement::icon(id.into(), rect, key).icon_style(IconStyle::new(color)))
 }
 
-pub(super) fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
+pub(crate) fn drawer_header(rect: UiRect, state: State<AppState>) -> Element {
     use crate::input::action::Action;
     use crate::state::DrawerMode;
     let mode = state.get().drawer_mode;

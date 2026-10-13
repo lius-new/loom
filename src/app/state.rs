@@ -132,29 +132,7 @@ pub enum TerminalTabMenuKind {
     Purpose,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToastKind {
-    Info,
-    Success,
-    Error,
-}
-
-impl ToastKind {
-    /// How long the toast stays up; errors linger so they can be read.
-    pub fn duration(self) -> std::time::Duration {
-        std::time::Duration::from_millis(match self {
-            Self::Info | Self::Success => 3_000,
-            Self::Error => 6_000,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Toast {
-    pub id: u64,
-    pub kind: ToastKind,
-    pub message: String,
-}
+pub(crate) use crate::domain::notification::{Toast, ToastKind};
 
 /// Top-level content shown in the editor region.
 ///
@@ -181,18 +159,19 @@ pub enum DrawerMode {
 
 #[derive(Clone)]
 pub struct AppState {
+    // R1 legacy command bridge: snapshots never own runtime services.
+    runtime: std::sync::Weak<crate::app::runtime::AppRuntime>,
     pub editor: crate::editor::interaction::EditorInteraction,
     /// Vim editing behaviour, when enabled in Settings.
     pub vim: crate::vim::Vim,
     pub workspace: Workspace,
-    pub file_loader: Option<crate::file_loading::FileLoader>,
     pub pending_file: Option<crate::file_loading::PendingFile>,
     /// Focus of the shared welcome/home/editor surface, retained across swaps.
     pub focused: bool,
     /// File explorer drawer on the right.
     pub show_drawer: bool,
     pub drawer_mode: DrawerMode,
-    pub search: crate::search_actions::SearchState,
+    pub search: crate::ui::search::state::SearchPanelState,
     /// Source Control drawer on the left. It is independent from Explorer.
     pub show_source_control: bool,
     /// Visibility of the default terminal region, independent of detached regions.
@@ -349,9 +328,6 @@ pub struct AppState {
     pub git_tree_view: bool,
     pub git_split_diff: bool,
     pub git_inline_blame: bool,
-    /// Shared by UI commands and the single repository scan worker.
-    pub git_poll_control: crate::git::PollControl,
-    pub git_application: Option<lgui::ApplicationHandle>,
     pub git_open_diff_sequence: u64,
     pub git_diff_loading: Option<crate::git::DiffRequest>,
     /// The title bar's branch picker, while it is open.
@@ -389,12 +365,24 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Temporary access for registered legacy commands; new views use projections.
+    pub(crate) fn runtime(&self) -> Option<std::sync::Arc<crate::app::runtime::AppRuntime>> {
+        self.runtime.upgrade()
+    }
+
+    pub(crate) fn attach_runtime(
+        &mut self,
+        runtime: &std::sync::Arc<crate::app::runtime::AppRuntime>,
+    ) {
+        self.runtime = std::sync::Arc::downgrade(runtime);
+    }
+
     pub fn new() -> Self {
         Self {
+            runtime: Default::default(),
             editor: Default::default(),
             vim: Default::default(),
             workspace: Workspace::new(),
-            file_loader: None,
             pending_file: None,
             focused: false,
             show_drawer: true,
@@ -498,8 +486,6 @@ impl AppState {
             git_tree_view: false,
             git_split_diff: false,
             git_inline_blame: false,
-            git_poll_control: crate::git::PollControl::default(),
-            git_application: None,
             git_open_diff_sequence: 0,
             git_diff_loading: None,
             branch_picker: None,

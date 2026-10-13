@@ -42,6 +42,11 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Check architecture boundaries
+        run: |
+          node --test scripts/architecture/check.test.mjs
+          node scripts/architecture/check.mjs
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

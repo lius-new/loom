@@ -14,3 +14,6 @@ pub mod syntax;
 pub mod vim_input;
 #[cfg(test)]
 mod vim_integration_tests;
+
+#[cfg(test)]
+mod phase0_baseline;

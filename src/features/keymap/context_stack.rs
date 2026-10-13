@@ -111,13 +111,13 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         stack.push(input);
     } else if app.show_drawer
         && app.drawer_mode == crate::state::DrawerMode::Search
-        && (app.search.query.focused
-            || app.search.include.focused
-            || app.search.exclude.focused
-            || app.search.results_focused)
+        && (app.search.ui.query.focused
+            || app.search.ui.include.focused
+            || app.search.ui.exclude.focused
+            || app.search.ui.results_focused)
     {
         let mut input = KeyContext::new(INPUT);
-        input.add(if app.search.results_focused {
+        input.add(if app.search.ui.results_focused {
             "SearchResults"
         } else {
             "SearchInput"
@@ -313,7 +313,7 @@ mod tests {
             Some(Action::OpenSearch)
         );
         app.apply(Action::OpenSearch);
-        app.search.query.focused = true;
+        app.search.ui.query.focused = true;
         assert_eq!(
             action(&app, named(NamedKey::ArrowDown, KeyModifiers::empty())),
             Some(Action::SearchNext)
@@ -323,8 +323,8 @@ mod tests {
             Some(Action::SearchCancel)
         );
         assert_eq!(action(&app, character("a", secondary())), None);
-        app.search.query.focused = false;
-        app.search.results_focused = true;
+        app.search.ui.query.focused = false;
+        app.search.ui.results_focused = true;
         assert_eq!(
             action(&app, named(NamedKey::ArrowUp, KeyModifiers::empty())),
             Some(Action::SearchPrevious)

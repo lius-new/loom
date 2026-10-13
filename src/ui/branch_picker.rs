@@ -1270,7 +1270,7 @@ mod tests {
                 },
             );
             let mut pixels = surface.pixels().to_vec();
-            for pixel in pixels.chunks_exact_mut(4) {
+            for pixel in pixels.as_chunks_mut::<4>().0 {
                 pixel.swap(0, 2);
             }
             image::save_buffer(path, &pixels, 920, 840, image::ColorType::Rgba8).unwrap();

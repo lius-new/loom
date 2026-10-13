@@ -1087,20 +1087,22 @@ impl Workspace {
         ))
     }
 
-    /// Documents are shared across panes, so each searchable file appears once.
-    pub fn search_snapshots(&self) -> Vec<crate::search::BufferSnapshot> {
+    /// Documents are shared across panes, so each text document appears once.
+    pub fn text_snapshots(&self) -> Vec<crate::domain::document_snapshot::DocumentSnapshot> {
         self.documents
             .values()
             .filter(|document| document.is_text())
-            .map(|document| crate::search::BufferSnapshot {
-                path: document.meta.path.clone(),
-                text: document.buffer.text_snapshot(),
-                version: document.buffer.version(),
-            })
+            .map(
+                |document| crate::domain::document_snapshot::DocumentSnapshot {
+                    path: document.meta.path.clone(),
+                    text: document.buffer.text_snapshot(),
+                    version: document.buffer.version(),
+                },
+            )
             .collect()
     }
 
-    pub fn search_versions(&self) -> Vec<(PathBuf, u64)> {
+    pub fn dirty_text_versions(&self) -> Vec<(PathBuf, u64)> {
         let mut versions = self
             .documents
             .values()

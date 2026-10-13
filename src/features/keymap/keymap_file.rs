@@ -18,7 +18,7 @@ use super::keystroke::Keystroke;
 use crate::jsonc::strip as strip_jsonc;
 use crate::workspace_persistence::config_path;
 
-const DEFAULT_KEYMAP: &str = include_str!("../../assets/keymaps/default.json");
+const DEFAULT_KEYMAP: &str = include_str!("../../../assets/keymaps/default.json");
 pub const FILE_NAME: &str = "keymap.json";
 
 pub const USER_TEMPLATE: &str = r#"// Loom key bindings. Entries here override the built-in defaults.

@@ -1,6 +1,5 @@
 //! Runtime document identity and metadata.
 
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -106,11 +105,7 @@ impl DiskState {
     }
 }
 
-pub fn content_hash(contents: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    contents.hash(&mut hasher);
-    hasher.finish()
-}
+pub use crate::domain::document_snapshot::content_hash;
 
 impl FileMeta {
     pub fn from_path(path: PathBuf) -> Self {

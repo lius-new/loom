@@ -656,7 +656,7 @@ mod tests {
                 && let Some(path) = std::env::var_os("LOOM_PROFILE_PREVIEW")
             {
                 let mut rgba = surface.pixels().to_vec();
-                for pixel in rgba.chunks_exact_mut(4) {
+                for pixel in rgba.as_chunks_mut::<4>().0 {
                     pixel.swap(0, 2);
                 }
                 image::save_buffer(

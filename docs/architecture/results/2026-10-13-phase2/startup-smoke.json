@@ -1,0 +1,19 @@
+{
+  "exe": "C:\\Users\\yys\\loom\\target\\release\\Loom.exe",
+  "sha256": "8F3B399793DDA3B0FD8A133B168E7D8B69836AB41CD09D644F63E4FD7DBB3CB4",
+  "child_appdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-13\\c-users-yys-loom\\work\\phase2-startup-appdata",
+  "user_configuration_modified": false,
+  "window_style": "Hidden",
+  "started_at": "2026-10-13T18:22:13.6632280+08:00",
+  "pid": 16288,
+  "alive_after_4_seconds": true,
+  "root_effect_configuration_files": [
+    "workspace.json"
+  ],
+  "close_requested": true,
+  "clean_exit": true,
+  "exit_code": 0,
+  "result": "passed",
+  "forced_cleanup": false,
+  "finished_at": "2026-10-13T18:22:17.7562030+08:00"
+}

@@ -138,7 +138,11 @@ fn open_at(
     relative: PathBuf,
     line: usize,
 ) {
-    let Some(application) = state.get().git_application else {
+    let Some(application) = state
+        .get()
+        .runtime()
+        .and_then(|runtime| runtime.application())
+    else {
         return;
     };
     let peek = HunkPeek {

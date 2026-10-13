@@ -1,6 +1,5 @@
-//! Root component: owns `AppState`, computes layout regions, wires the global
-//! keymap, and composes every UI module. No module talks to another directly —
-//! all cross-cutting state lives in `AppState`.
+//! Application shell: composes legacy state and independently owned runtime.
+//! Transaction boundaries remain in Workspace; feature migration follows R1.
 
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
@@ -28,6 +27,11 @@ use crate::ui::{
 use crate::window_geometry;
 use crate::workspace_persistence;
 
+type TerminalProgramUpdate = (
+    Vec<(u64, Option<String>)>,
+    Vec<(u64, Option<std::path::PathBuf>)>,
+);
+
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // Pure caret composition frames keep the app's layout, text and hooks cached.
     component(cx.viewport(), |cx, _| render_app(cx))
@@ -47,11 +51,18 @@ fn save_terminals(tabs: &TerminalTabs, visible: bool, height: f32) {
 }
 
 fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
-    let state = cx.state_with(AppState::restored);
+    let runtime = cx
+        .state_with(|| std::sync::Arc::new(super::runtime::AppRuntime::default()))
+        .get();
+    let state = cx.state_with(|| {
+        let mut state = AppState::restored();
+        state.attach_runtime(&runtime);
+        state
+    });
     let git_store = cx.state_with(GitStoreSnapshot::default);
     // Never updated through `State`, so map changes never re-render the app.
     let layout_map_store = cx.state_with(layout_map::MapStore::default).get();
-    let git_poll_control = state.get().git_poll_control;
+    let git_poll_control = runtime.git_poll_control();
     let terminal_tabs = cx.state_with(|| {
         let session = workspace_persistence::load();
         let mut tabs = TerminalTabs::restored_with_groups(
@@ -87,6 +98,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let application = application_context.resource::<ApplicationHandle>();
     let loading_state = state.clone();
     let loading_application = application.as_ref().clone();
+    let loading_runtime = runtime.clone();
     cx.use_effect((), move || {
         let restore = crate::session_restore::SessionRestore::new(
             loading_state.clone(),
@@ -94,10 +106,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         );
         let loader =
             crate::file_loading::FileLoader::new(loading_state.clone(), loading_application);
-        loading_state.update(|app| app.file_loader = Some(loader.clone()));
+        loading_runtime.install_file_loader(loader);
         move || {
             restore.shutdown();
-            loader.shutdown();
+            loading_runtime.clear_file_loader();
         }
     });
     let program_sessions = terminal_tab_snapshot
@@ -123,10 +135,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             let (stop_sender, stop_receiver) = mpsc::channel();
             let notifications = crate::background_ui::LatestNotification::new(
                 program_application,
-                move |(programs, directories): (
-                    Vec<(u64, Option<String>)>,
-                    Vec<(u64, Option<std::path::PathBuf>)>,
-                )| {
+                move |(programs, directories): TerminalProgramUpdate| {
                     program_tabs.update(|tabs| {
                         tabs.update_programs(&programs);
                         tabs.update_directories(&directories);
@@ -192,11 +201,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         },
     );
-    let dispatch_state = state.clone();
+    let dispatch_runtime = runtime.clone();
     let dispatch_handle = application.as_ref().clone();
     cx.use_effect((), move || {
-        dispatch_state.update(|app| app.git_application = Some(dispatch_handle));
-        || {}
+        dispatch_runtime.set_application(dispatch_handle);
+        move || dispatch_runtime.clear_application()
     });
     let notification_state = state.clone();
     let notification_store = git_store.clone();
@@ -510,11 +519,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         },
     );
     let show_drawer = s.show_drawer;
-    let search_key = crate::search_actions::key(&s);
+    let search_key = crate::app::search::key(&s);
     let search_state = state.clone();
     let search_application = application.as_ref().clone();
     cx.use_effect(search_key.clone(), move || {
-        crate::search_actions::start(search_state, search_application, search_key)
+        crate::app::search::start(search_state, search_application, search_key)
     });
     let search_visible = s.show_drawer && s.drawer_mode == crate::state::DrawerMode::Search;
     let query_focus = search_query_focus.clone();
@@ -1162,13 +1171,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
     if show_drawer {
         if s.drawer_mode == crate::state::DrawerMode::Search {
-            root = root.child(crate::ui::search_panel::render(
+            root = root.child(super::search::render(
                 explorer_rect,
                 state.clone(),
                 application.as_ref().clone(),
                 editor_focus.clone(),
                 code_rect,
-                crate::ui::search_panel::Inputs {
+                crate::ui::search::view::Inputs {
                     ids: [search_query_id, search_include_id, search_exclude_id],
                     focus: [
                         search_query_focus,
@@ -1331,7 +1340,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             editor_focus.clone(),
         ));
     }
-    root = root.child(toast::render(vp, state.clone()));
+    root = root.child(toast::render(
+        vp,
+        super::presentation::toast(&state),
+        super::presentation::dismiss_toast(state.clone()),
+    ));
 
     // Drag feedback goes last: inserting it earlier would shift the index of
     // the elements after it and drop the pressed element's pointer capture.

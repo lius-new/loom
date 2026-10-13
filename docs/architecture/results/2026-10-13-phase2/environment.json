@@ -1,0 +1,36 @@
+{
+  "captured_at": "2026-10-13T18:16:55.0120405+08:00",
+  "head": "5ade2963ac1f2046b7ac54f6d2c58d5bf724bf45",
+  "timezone": "China Standard Time",
+  "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\r\nbinary: rustc\r\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\r\ncommit-date: 2026-08-18\r\nhost: x86_64-pc-windows-msvc\r\nrelease: 1.98.0\r\nLLVM version: 22.1.8",
+  "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+  "rustfmt": "rustfmt 1.9.0-stable (88d9e12ae1 2026-08-18)",
+  "clippy": "clippy 0.1.98 (88d9e12ae1 2026-08-18)",
+  "git": "git version 2.55.0.windows.4",
+  "node": "v24.19.0",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "processor": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+  "logical_processors": 12,
+  "rustup_available": false,
+  "lock_sha256": "8E60A3117C5294406747E4964D3E69B2A31AB7E380F6E9ACD40AA0BB86DBCC0C",
+  "manifest_sha256": "93B02658669CFC34FB072477F9C610D86A49C036F44662F32156EF56DEF63BB3",
+  "lgui_source": "source = \"git+https://github.com/lius-new/lgui.git#46e13848aefd9fd92f3370f111a5a0216c811438\"",
+  "inherited_git_autocrlf": "file:C:/Program Files/Git/etc/gitconfig\ttrue",
+  "perf_samples": 5,
+  "performance_set": "All",
+  "warmup_samples_per_filter": 1,
+  "hardware": {
+    "os": {
+      "Caption": "Microsoft Windows 11 专业版中文版",
+      "Version": "10.0.26200",
+      "BuildNumber": "26200",
+      "OSArchitecture": "64 位"
+    },
+    "cpu": {
+      "Name": "AMD Ryzen 5 5600GT with Radeon Graphics        ",
+      "NumberOfCores": 6,
+      "NumberOfLogicalProcessors": 12
+    },
+    "physical_memory_bytes": 33605750784
+  }
+}

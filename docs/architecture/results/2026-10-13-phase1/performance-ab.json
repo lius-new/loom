@@ -1,0 +1,93 @@
+{
+  "method": "Each filter has 1 warmup per binary and 5 measured samples; A/B order alternates each sample; all 118 phase 0 Rust source hashes verified; package and executable names changed for build isolation.",
+  "statistics": [
+    {
+      "scenario": "ascii-1m",
+      "metric": "file_read_cached",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.7071,
+      "min": 0.6597999999999999,
+      "max": 0.7274,
+      "control_median": 0.6726,
+      "delta_percent": 5.129348795718114
+    },
+    {
+      "scenario": "ascii-1m",
+      "metric": "document_prepare",
+      "samples": 5,
+      "unit": "ms",
+      "median": 25.018800000000002,
+      "min": 23.4503,
+      "max": 28.337,
+      "control_median": 22.8165,
+      "delta_percent": 9.652225363223987
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "file_read_cached",
+      "samples": 5,
+      "unit": "ms",
+      "median": 4.9651,
+      "min": 4.7791,
+      "max": 5.8062000000000005,
+      "control_median": 5.1444,
+      "delta_percent": -3.485343285903131
+    },
+    {
+      "scenario": "ascii-10m",
+      "metric": "document_prepare",
+      "samples": 5,
+      "unit": "ms",
+      "median": 236.8554,
+      "min": 232.3699,
+      "max": 260.5954,
+      "control_median": 226.9571,
+      "delta_percent": 4.361308811224673
+    },
+    {
+      "scenario": "ascii-64m",
+      "metric": "file_read_cached",
+      "samples": 5,
+      "unit": "ms",
+      "median": 36.2036,
+      "min": 35.0075,
+      "max": 37.520900000000005,
+      "control_median": 36.1683,
+      "delta_percent": 0.0975992789265634
+    },
+    {
+      "scenario": "ascii-64m",
+      "metric": "document_prepare",
+      "samples": 5,
+      "unit": "ms",
+      "median": 1533.7937,
+      "min": 1504.9695000000002,
+      "max": 1660.9682,
+      "control_median": 1471.8865,
+      "delta_percent": 4.205976479844065
+    },
+    {
+      "scenario": "100-files-6.25m",
+      "metric": "search_scan_cached",
+      "samples": 5,
+      "unit": "ms",
+      "median": 25.6311,
+      "min": 24.4357,
+      "max": 26.7612,
+      "control_median": 24.164,
+      "delta_percent": 6.071428571428572
+    },
+    {
+      "scenario": "100-files-6.25m",
+      "metric": "search_cancel_latency",
+      "samples": 5,
+      "unit": "ms",
+      "median": 0.07050000000000001,
+      "min": 0.047599999999999996,
+      "max": 0.1263,
+      "control_median": 0.1194,
+      "delta_percent": -40.95477386934673
+    }
+  ]
+}
