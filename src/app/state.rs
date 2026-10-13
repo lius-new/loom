@@ -502,8 +502,12 @@ impl AppState {
                     self.git.ui.hovered = false;
                 }
             }
-            Action::MenuSelectNext => crate::ui::branch_picker::move_selection(self, 1),
-            Action::MenuSelectPrevious => crate::ui::branch_picker::move_selection(self, -1),
+            Action::MenuSelectNext => {
+                crate::ui::git::branch_picker::move_selection(&mut self.git, 1)
+            }
+            Action::MenuSelectPrevious => {
+                crate::ui::git::branch_picker::move_selection(&mut self.git, -1)
+            }
             Action::OpenExplorer => {
                 self.drawer.visible = true;
                 self.drawer.mode = DrawerMode::Files;
@@ -806,7 +810,7 @@ mod tests {
             app.git
                 .ui
                 .collapsed_sections
-                .contains(&crate::ui::git_panel::HISTORY)
+                .contains(&crate::ui::git::panel::HISTORY)
         );
     }
 }

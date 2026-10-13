@@ -10,7 +10,6 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
 
-use crate::features::git::GitStoreSnapshot;
 use crate::input::action::Action;
 use crate::state::AppState;
 use crate::theme;
@@ -98,11 +97,11 @@ fn window_icon_rect(button: UiRect, scale: UiScale) -> UiRect {
     scale.logical_rect(PhysicalRect::new(left, top, left + size, top + size))
 }
 
-pub fn render(rect: UiRect, state: State<AppState>, git_store: State<GitStoreSnapshot>) -> Element {
+pub fn render(rect: UiRect, state: State<AppState>, git_controls: Element) -> Element {
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar)).window_drag_region();
 
     // ---- Left: repository, branch and sync ----------------------------
-    bar = super::git_badge::attach(bar, rect, rect.left + 8.0, state.clone(), git_store);
+    bar = bar.child(git_controls);
 
     // ---- Right cluster (anchored to the window controls) --------------
     // Flush with the window edge, like native caption buttons, so the close

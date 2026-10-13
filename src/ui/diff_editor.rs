@@ -8,16 +8,17 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
 
-use crate::app::git::BlockAction;
+use crate::features::git::DiffTarget;
+use crate::features::git::actions::BlockAction;
 use crate::features::git::diff_document::{
     ChangesLayout, DiffDocument, DiffRow, DiffRowKind, SplitDiffRow,
 };
-use crate::features::git::{DiffTarget, GitStoreSnapshot};
 use crate::fonts;
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
 use crate::theme;
 use crate::ui::editor::view::{self as editor_view, SCROLLBAR_SIZE, ScrollMetrics};
+use crate::ui::git::commands::{Binding as GitBinding, Command as GitCommand};
 
 const TOOLBAR_H: f32 = 34.0;
 const NUMBER_W: f32 = 44.0;
@@ -35,7 +36,7 @@ pub fn render(
     pane: PaneId,
     rect: UiRect,
     state: State<AppState>,
-    store: State<GitStoreSnapshot>,
+    git_commands: GitBinding,
     editor_focus: UiFocusHandle,
     scrollbars: crate::ui::editor_binding::Binding,
 ) -> Element {
@@ -189,7 +190,7 @@ pub fn render(
             scroll_y,
             app.editor.diff_split.ratio,
             &state,
-            &store,
+            &git_commands,
             editor_focus,
         ))
     } else if split {
@@ -206,7 +207,12 @@ pub fn render(
 
     if !document.blocks.is_empty() {
         root = root.child(block_buttons(
-            body_rect, document, &starts, scroll_y, &state, &store,
+            body_rect,
+            document,
+            &starts,
+            scroll_y,
+            &state,
+            &git_commands,
         ));
     }
 
@@ -521,8 +527,8 @@ fn block_buttons(
     document: &DiffDocument,
     starts: &[usize],
     scroll_y: f32,
-    state: &State<AppState>,
-    store: &State<GitStoreSnapshot>,
+    _state: &State<AppState>,
+    git_commands: &GitBinding,
 ) -> Element {
     let actions: &[(BlockAction, &str)] = match document.target {
         DiffTarget::HeadToIndex => &[(BlockAction::Unstage, "Unstage")],
@@ -542,8 +548,7 @@ fn block_buttons(
             let width = super::tabs::measure(label, theme::SMALL, 400) + 14.0;
             let button = UiRect::new(right - width, top + 2.0, right, top + row_h() - 2.0);
             right = button.left - 4.0;
-            let click_state = state.clone();
-            let click_store = store.clone();
+            let click_commands = git_commands.clone();
             let root = document.repository_root.clone();
             let path = document.path.clone();
             let target = document.target;
@@ -556,22 +561,19 @@ fn block_buttons(
                     .cursor(CursorIcon::Pointer)
                     .on_click(move |cx: &mut lgui::core::UiEventContext| {
                         if action == BlockAction::Discard {
-                            crate::app::git::request_discard_block(
-                                &click_state,
-                                root.clone(),
-                                path.clone(),
+                            click_commands.dispatch(GitCommand::RequestDiscardBlock {
+                                root: root.clone(),
+                                path: path.clone(),
                                 block,
-                            );
+                            });
                         } else {
-                            crate::app::git::apply_block(
-                                &click_state,
-                                &click_store,
-                                &root,
-                                path.clone(),
+                            click_commands.dispatch(GitCommand::ApplyBlock {
+                                root: root.clone(),
+                                path: path.clone(),
                                 target,
                                 block,
                                 action,
-                            );
+                            });
                         }
                         cx.stop_propagation();
                     })
@@ -595,7 +597,7 @@ fn render_changes(
     scroll_y: f32,
     ratio: f32,
     state: &State<AppState>,
-    store: &State<GitStoreSnapshot>,
+    git_commands: &GitBinding,
     editor_focus: UiFocusHandle,
 ) -> Element {
     let sections = overview.sections.as_ref().unwrap();
@@ -702,7 +704,7 @@ fn render_changes(
                 theme::mono_right(theme::c().text_dim, theme::SMALL),
             ));
         }
-        let open_state = state.clone();
+        let open_commands = git_commands.clone();
         let focus = editor_focus.clone();
         let untracked = section.group == crate::features::git::ChangeGroup::Untracked;
         let revision = overview.revision.clone();
@@ -723,13 +725,19 @@ fn render_changes(
             .on_click(move |cx: &mut lgui::core::UiEventContext| {
                 cx.stop_propagation();
                 match &revision {
-                    Some(revision) => crate::app::git::open_commit_diff(
-                        &open_state,
-                        request.repository_root.clone(),
-                        revision.clone(),
-                        request.path.clone(),
-                    ),
-                    None => crate::app::git::open_diff(&open_state, request.clone(), untracked),
+                    Some(revision) => {
+                        open_commands.dispatch(GitCommand::OpenCommitDiff {
+                            root: request.repository_root.clone(),
+                            oid: revision.clone(),
+                            path: request.path.clone(),
+                        });
+                    }
+                    None => {
+                        open_commands.dispatch(GitCommand::OpenDiff {
+                            request: request.clone(),
+                            untracked,
+                        });
+                    }
                 }
                 focus.focus();
             }),
@@ -778,7 +786,7 @@ fn render_changes(
                     &document.change_starts(split),
                     local_y,
                     state,
-                    store,
+                    git_commands,
                 ));
             }
         }
@@ -1018,6 +1026,7 @@ fn navigate_change(app: &mut AppState, starts: &[usize], next: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::git::GitStoreSnapshot;
     fn render(
         pane: PaneId,
         rect: UiRect,
@@ -1026,7 +1035,14 @@ mod tests {
         focus: UiFocusHandle,
     ) -> Element {
         let binding = crate::app::editor_view::binding(state.clone(), store.clone(), pane, rect);
-        super::render(pane, rect, state, store, focus, binding)
+        super::render(
+            pane,
+            rect,
+            state.clone(),
+            crate::app::git_view::binding(&state, &store),
+            focus,
+            binding,
+        )
     }
 
     fn sample_overview(extra_files: usize) -> DiffDocument {

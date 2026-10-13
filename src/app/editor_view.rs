@@ -217,7 +217,7 @@ pub(crate) fn binding(
                     if let Some(repo) = store.repository_for_path(&meta.path)
                         && let Some(relative) = repo.relative_path(&meta.path)
                     {
-                        crate::editor::hunk_peek::toggle(
+                        super::git_peek::toggle(
                             &dispatcher,
                             pane,
                             meta.path.clone(),
@@ -233,7 +233,7 @@ pub(crate) fn binding(
         },
         {
             let git = overlay_git;
-            // The overlay remains a registered Git adapter until its R6 migration.
+            // Git loading and navigation stay in application composition.
             move |placement| {
                 let app = state.get();
                 let meta = app
@@ -249,9 +249,9 @@ pub(crate) fn binding(
                 let store = git.get();
                 let repo = store.repository_for_path(&meta.path)?;
                 let relative = repo.relative_path(&meta.path)?;
-                Some(crate::editor::hunk_peek::render(
+                Some(crate::ui::git::hunk_peek::render(
                     peek,
-                    crate::editor::hunk_peek::PeekContext {
+                    crate::ui::git::hunk_peek::PeekContext {
                         pane,
                         rect: placement.rect,
                         code_left: placement.code_left,
@@ -264,8 +264,7 @@ pub(crate) fn binding(
                         relative: &relative,
                         changes: store.line_changes.get(&meta.path),
                     },
-                    &state,
-                    &git,
+                    &super::git_view::binding(&state, &git),
                 ))
             }
         },

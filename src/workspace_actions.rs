@@ -5,7 +5,6 @@ use std::io::Read;
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
-use std::thread;
 
 use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
 use lgui::prelude::State;
@@ -273,107 +272,6 @@ pub fn choose_file(state: &State<AppState>) -> bool {
     opened
 }
 
-/// Ask for a destination and clone the URL currently entered in the clone
-/// dialog. Git runs off the UI thread; a successful clone becomes the active
-/// workspace automatically.
-pub fn clone_repository(state: &State<AppState>) -> bool {
-    let url = state.get().git.ui.clone_url.trim().to_owned();
-    if url.is_empty() {
-        state.update(|app| {
-            app.git.ui.clone_error = Some("Enter a repository URL.".to_owned());
-        });
-        return false;
-    }
-    let Some(directory_name) = repository_directory_name(&url) else {
-        state.update(|app| {
-            app.git.ui.clone_error = Some("The repository URL has no project name.".to_owned());
-        });
-        return false;
-    };
-
-    let mut options = FileDialogOptions::new().title("Select Repository Location");
-    if let Some(directory) = state.get().explorer.model.roots().first().cloned() {
-        options = options.directory(directory);
-    }
-    let Some(parent) = system_file_dialogs().pick_folder(&options) else {
-        return false;
-    };
-    let target = parent.join(directory_name);
-    if target.exists() {
-        let message = format!("{} already exists.", target.display());
-        state.update(move |app| app.git.ui.clone_error = Some(message));
-        return false;
-    }
-
-    state.update(|app| {
-        app.git.model.begin_clone();
-        app.git.ui.clone_error = None;
-    });
-    let clone_state = state.clone();
-    thread::Builder::new()
-        .name("loom-git-clone".to_owned())
-        .spawn(move || {
-            let result = crate::infrastructure::git::service().and_then(|service| {
-                service.clone_repository(
-                    &url,
-                    &target,
-                    &crate::infrastructure::git::command::CancellationToken::default(),
-                )
-            });
-
-            clone_state.update(move |app| {
-                app.git.model.finish_clone();
-                match result {
-                    Ok(()) => {
-                        app.toast = None;
-                        crate::app::explorer::load_folder(app, target);
-                        app.git.ui.clone_visible = false;
-                        app.git.ui.clone_url.clear();
-                        app.git.ui.clone_error = None;
-                        app.git.ui.clone_input_focused = false;
-                    }
-                    Err(error) => {
-                        app.git.ui.clone_error = Some(error.user_message());
-                    }
-                }
-            });
-        })
-        .map(|_| true)
-        .unwrap_or_else(|error| {
-            state.update(move |app| {
-                app.git.model.finish_clone();
-                app.git.ui.clone_error = Some(format!("Could not start git: {error}"));
-            });
-            false
-        })
-}
-
-fn repository_directory_name(url: &str) -> Option<String> {
-    let without_query = url.split(['?', '#']).next().unwrap_or(url);
-    let trimmed = without_query.trim_end_matches(['/', '\\']);
-    let name = trimmed
-        .rsplit(['/', '\\', ':'])
-        .next()
-        .unwrap_or(trimmed)
-        .strip_suffix(".git")
-        .unwrap_or_else(|| trimmed.rsplit(['/', '\\', ':']).next().unwrap_or(trimmed))
-        .trim();
-    if name.is_empty() || matches!(name, "." | "..") {
-        None
-    } else {
-        Some(name.to_owned())
-    }
-}
-
-fn first_error_line(stderr: &str) -> String {
-    stderr
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("Git clone failed.")
-        .to_owned()
-}
-
 pub(crate) fn read_text_file(path: &Path) -> Result<String, String> {
     let name = path
         .file_name()
@@ -405,6 +303,16 @@ pub(crate) fn read_text_file(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn read_all_but(missing: &'static str) -> impl FnMut(&Path) -> Result<String, String> {
+        move |path| {
+            if path == Path::new(missing) {
+                Err("missing".to_owned())
+            } else {
+                Ok(format!("// {}", path.display()))
+            }
+        }
+    }
+
     use crate::model::text::EditKind;
 
     #[test]
@@ -776,32 +684,6 @@ mod tests {
         assert!(app.workspace.meta(id).is_some());
         assert!(app.workspace.is_dirty(id));
         assert!(app.editor.close_request.is_none());
-    }
-
-    #[test]
-    fn derives_clone_directory_from_common_repository_urls() {
-        assert_eq!(
-            repository_directory_name("https://github.com/owner/project.git"),
-            Some("project".to_owned())
-        );
-        assert_eq!(
-            repository_directory_name("git@github.com:owner/project.git"),
-            Some("project".to_owned())
-        );
-        assert_eq!(
-            repository_directory_name("https://example.test/owner/project/"),
-            Some("project".to_owned())
-        );
-    }
-
-    fn read_all_but(missing: &'static str) -> impl FnMut(&Path) -> Result<String, String> {
-        move |path| {
-            if path == Path::new(missing) {
-                Err("missing".to_owned())
-            } else {
-                Ok(format!("// {}", path.display()))
-            }
-        }
     }
 
     #[test]

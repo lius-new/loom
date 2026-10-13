@@ -4,8 +4,6 @@
 //! Migrated components accept data and callbacks; legacy State<AppState>
 //! adapters remain registered. app/shell.rs owns layout and composition.
 
-pub mod branch_picker;
-pub mod clone_repository;
 pub mod close_confirmation;
 pub mod components;
 pub mod diff_editor;
@@ -14,16 +12,11 @@ pub(crate) mod editor;
 pub(crate) mod editor_binding;
 pub mod explorer;
 pub mod git;
-pub mod git_badge;
-pub mod git_confirm;
-pub mod git_menu;
-pub mod git_panel;
 pub mod keymap_page;
 pub mod layout_map;
 pub mod pane_sash;
 pub mod search;
 pub mod settings;
-pub mod stash_switch;
 pub mod statusbar;
 pub mod tab_context_menu;
 pub mod tab_layout;

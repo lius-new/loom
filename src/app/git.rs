@@ -7,6 +7,9 @@ use std::thread;
 
 use lgui::prelude::State;
 
+use crate::features::git::actions::{
+    BlockAction, BranchListing, Checkout, StashMode, SyncPlan, sync_plan,
+};
 use crate::features::git::diff_document::{ChangeBlock, DiffDocument};
 use crate::features::git::error::GitErrorKind;
 use crate::features::git::model::GitHistory;
@@ -16,9 +19,8 @@ use crate::features::git::{
 };
 use crate::infrastructure::git::{CliGitBackend, GitService};
 use crate::state::{AppState, TabDrop};
-use crate::ui::branch_picker::{BranchListing, Checkout};
-use crate::ui::git_confirm::{GitConfirm, GitConfirmAction};
-use crate::ui::stash_switch::StashSwitchRequest;
+use crate::ui::git::confirm::{GitConfirm, GitConfirmAction};
+use crate::ui::git::stash_switch::StashSwitchRequest;
 
 pub fn open_diff(
     state: &State<AppState>,
@@ -734,14 +736,6 @@ pub fn drop_stash(
     )
 }
 
-/// What to do with one change block of an open diff.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BlockAction {
-    Stage,
-    Unstage,
-    Discard,
-}
-
 /// Apply `action` to `block` of `path`'s `target` diff. The change is cut
 /// from a fresh zero-context diff, so it applies exactly as Git sees it now.
 pub fn apply_block(
@@ -1057,7 +1051,7 @@ pub fn hover_commit(
     else {
         return;
     };
-    let hovered = crate::ui::git_panel::GitHover::Commit(oid.clone());
+    let hovered = crate::ui::git::panel::GitHover::Commit(oid.clone());
     let worker_state = state.clone();
     let _ = thread::Builder::new()
         .name("loom-git-commit-card".into())
@@ -1080,7 +1074,7 @@ pub fn hover_commit(
                         .model
                         .cache_commit_detail(oid.clone(), details.clone());
                     if app.git.ui.hover.as_ref() == Some(&hovered) {
-                        app.git.ui.commit_card = Some(crate::ui::git_panel::CommitCard {
+                        app.git.ui.commit_card = Some(crate::ui::git::panel::CommitCard {
                             oid,
                             anchor,
                             details,
@@ -1481,37 +1475,6 @@ pub fn undo_last_commit(state: &State<AppState>, store: &State<GitStoreSnapshot>
     )
 }
 
-/// What the title bar's sync button does for the checked-out branch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SyncPlan {
-    /// Push a branch with no upstream and make the remote branch its upstream.
-    Publish,
-    /// Up to date as far as we know: look for new remote commits.
-    Fetch,
-    /// Behind the upstream: pull, then push local commits if also ahead.
-    Pull {
-        then_push: bool,
-    },
-    Push,
-}
-
-/// The sync action for `repository`, or `None` without a branch to sync.
-pub fn sync_plan(repository: &RepositorySnapshot) -> Option<SyncPlan> {
-    let HeadState::Branch(_) = repository.head else {
-        return None;
-    };
-    if repository.upstream.is_none() {
-        return Some(SyncPlan::Publish);
-    }
-    Some(match (repository.ahead, repository.behind) {
-        (0, 0) => SyncPlan::Fetch,
-        (_, 0) => SyncPlan::Push,
-        (ahead, _) => SyncPlan::Pull {
-            then_push: ahead > 0,
-        },
-    })
-}
-
 /// Run the active repository's [`SyncPlan`].
 pub fn sync(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
     let Some(repository) = active_repository(store) else {
@@ -1657,17 +1620,6 @@ pub fn fetch_branches(state: &State<AppState>, store: &State<GitStoreSnapshot>) 
             }
         },
     )
-}
-
-/// How a checkout treats uncommitted changes that are in its way.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StashMode {
-    /// Leave them alone; Git refuses a switch that would overwrite them.
-    Refuse,
-    /// Stash them and leave them in the stash.
-    Keep,
-    /// Stash them and reapply them on the new branch.
-    Carry,
 }
 
 #[derive(Debug, PartialEq, Eq)]

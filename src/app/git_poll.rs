@@ -45,7 +45,7 @@ pub(crate) fn history_key(
                     .git
                     .ui
                     .collapsed_sections
-                    .contains(&crate::ui::git_panel::HISTORY)
+                    .contains(&crate::ui::git::panel::HISTORY)
         })
         .map(|repository| {
             (
@@ -263,6 +263,31 @@ mod tests {
             (false, false)
         );
         assert_eq!(store.generation, 9);
+    }
+
+    #[test]
+    fn removing_the_pinned_repository_rejects_its_late_scan() {
+        let mut app = AppState::new();
+        app.workspace
+            .open_path("repo/a.rs".into(), "preserve".into());
+        app.git
+            .model
+            .pin_repository("repo".into(), Some("repo/a.rs".into()));
+        let target = poll_target(&app);
+        app.git.model.unpin(std::path::Path::new("repo"));
+        let mut current = GitStoreSnapshot::default();
+        assert_eq!(
+            apply_scan(&mut app, &mut current, &[], &target, scan(99)),
+            (false, false)
+        );
+        assert_eq!(current.generation, 0);
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "preserve");
+        let next_target = poll_target(&app);
+        assert_eq!(
+            apply_scan(&mut app, &mut current, &[], &next_target, scan(100)),
+            (true, false)
+        );
+        assert_eq!(current.generation, 100);
     }
 
     #[test]

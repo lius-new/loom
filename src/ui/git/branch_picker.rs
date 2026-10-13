@@ -4,32 +4,36 @@
 //! filtered by the query. A query that names no branch offers to create it.
 //! Remote branches are refreshed only by the picker's explicit fetch, so
 //! opening it is fast and never prompts for credentials.
+use crate::features::git::actions::{BranchListing, Checkout};
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use lgui::core::{
     CursorIcon, EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiEventContext,
     UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip, precompiled,
 };
-use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, text};
 
-use crate::features::git::{BranchInfo, GitResult, GitStoreSnapshot, OperationKind, WorktreeInfo};
-use crate::state::AppState;
+use crate::features::git::{BranchInfo, OperationKind, WorktreeInfo};
 use crate::theme;
-use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
+use crate::ui::components::input::{
+    self, AccessInputOptions, InputBinding, InputState, InputStyle,
+};
+use crate::ui::git::commands::{Binding, Command, Snapshot};
+use crate::ui::git::state::GitPanelState;
 
-const CARD_W: f32 = 420.0;
-const PAD: f32 = 6.0;
-const TITLE_H: f32 = 26.0;
-const INPUT_H: f32 = 26.0;
-const ROW_H: f32 = 22.0;
-const HEADER_H: f32 = 22.0;
-const WORKTREE_H: f32 = 24.0;
-const MAX_LIST_H: f32 = ROW_H * 12.0;
-const TEXT_MARGIN: f32 = 6.0;
+pub(crate) const CARD_W: f32 = 420.0;
+pub(crate) const PAD: f32 = 6.0;
+pub(crate) const TITLE_H: f32 = 26.0;
+pub(crate) const INPUT_H: f32 = 26.0;
+pub(crate) const ROW_H: f32 = 22.0;
+pub(crate) const HEADER_H: f32 = 22.0;
+pub(crate) const WORKTREE_H: f32 = 24.0;
+pub(crate) const MAX_LIST_H: f32 = ROW_H * 12.0;
+pub(crate) const TEXT_MARGIN: f32 = 6.0;
 
 static NEXT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -54,46 +58,11 @@ pub struct BranchPicker {
 }
 
 impl BranchPicker {
-    fn view(&self, query: &str) -> (usize, f32) {
+    pub(crate) fn view(&self, query: &str) -> (usize, f32) {
         if self.query == query {
             (self.selected, self.scroll)
         } else {
             (0, 0.0)
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum BranchListing {
-    Loading,
-    Ready {
-        branches: Arc<[BranchInfo]>,
-        worktrees: Arc<[WorktreeInfo]>,
-    },
-    Failed(String),
-}
-
-impl BranchListing {
-    pub fn from_result(result: GitResult<(Vec<BranchInfo>, Vec<WorktreeInfo>)>) -> Self {
-        match result {
-            Ok((branches, worktrees)) => Self::Ready {
-                branches: branches.into(),
-                worktrees: worktrees.into(),
-            },
-            Err(error) => Self::Failed(error.user_message()),
-        }
-    }
-
-    fn branches(&self) -> &[BranchInfo] {
-        match self {
-            Self::Ready { branches, .. } => branches,
-            Self::Loading | Self::Failed(_) => &[],
-        }
-    }
-    fn worktrees(&self) -> &[WorktreeInfo] {
-        match self {
-            Self::Ready { worktrees, .. } => worktrees,
-            Self::Loading | Self::Failed(_) => &[],
         }
     }
 }
@@ -104,29 +73,6 @@ pub enum Row {
     Create(String),
     Branch(BranchInfo),
     Worktree(WorktreeInfo),
-}
-
-/// What choosing a row does.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Checkout {
-    Switch(String),
-    Create(String),
-    /// Create a local branch tracking this remote branch.
-    Track(String),
-    OpenWorktree {
-        branch: String,
-        path: PathBuf,
-    },
-}
-
-impl Checkout {
-    /// The branch being checked out, as the user chose it.
-    pub fn target(&self) -> &str {
-        match self {
-            Self::Switch(name) | Self::Create(name) | Self::Track(name) => name,
-            Self::OpenWorktree { branch, .. } => branch,
-        }
-    }
 }
 
 /// Rows for `query`: a create entry, then local branches (current first),
@@ -184,7 +130,10 @@ pub fn checkout_for(row: &Row, branches: &[BranchInfo]) -> Option<Checkout> {
     }
 }
 
-fn tracking_local<'a>(remote: &BranchInfo, branches: &'a [BranchInfo]) -> Option<&'a BranchInfo> {
+pub(crate) fn tracking_local<'a>(
+    remote: &BranchInfo,
+    branches: &'a [BranchInfo],
+) -> Option<&'a BranchInfo> {
     let short = remote.name.split_once('/').map(|(_, name)| name);
     branches
         .iter()
@@ -197,7 +146,7 @@ fn tracking_local<'a>(remote: &BranchInfo, branches: &'a [BranchInfo]) -> Option
         })
 }
 
-fn branch_worktrees<'a>(
+pub(crate) fn branch_worktrees<'a>(
     branch: &BranchInfo,
     branches: &[BranchInfo],
     worktrees: &'a [WorktreeInfo],
@@ -216,7 +165,7 @@ fn branch_worktrees<'a>(
         .collect()
 }
 
-fn picker_rows(picker: &BranchPicker, query: &str) -> Vec<Row> {
+pub(crate) fn picker_rows(picker: &BranchPicker, query: &str) -> Vec<Row> {
     let branches = picker.listing.branches();
     let worktrees = picker.listing.worktrees();
     rows(branches, query)
@@ -240,10 +189,10 @@ fn picker_rows(picker: &BranchPicker, query: &str) -> Vec<Row> {
         .collect()
 }
 
-fn toggle_worktrees(state: &State<AppState>, branch: String, index: usize) {
+pub(crate) fn toggle_worktrees(state: &Binding, branch: String, index: usize) {
     state.update(move |app| {
-        let query = app.git.ui.branch_picker_input.text().to_owned();
-        if let Some(picker) = app.git.ui.branch_picker.as_mut() {
+        let query = app.ui.branch_picker_input.text().to_owned();
+        if let Some(picker) = app.ui.branch_picker.as_mut() {
             if !picker.collapsed_worktrees.insert(branch.clone()) {
                 picker.collapsed_worktrees.remove(&branch);
             }
@@ -253,7 +202,7 @@ fn toggle_worktrees(state: &State<AppState>, branch: String, index: usize) {
     });
 }
 
-fn local_checkout(branch: &BranchInfo) -> Option<Checkout> {
+pub(crate) fn local_checkout(branch: &BranchInfo) -> Option<Checkout> {
     if branch.current {
         None
     } else if let Some(path) = &branch.worktree_path {
@@ -267,13 +216,13 @@ fn local_checkout(branch: &BranchInfo) -> Option<Checkout> {
 }
 
 /// An occupied branch must be opened in its existing worktree instead.
-fn worktree_checkout_for(row: &Row, branches: &[BranchInfo]) -> Option<Checkout> {
+pub(crate) fn worktree_checkout_for(row: &Row, branches: &[BranchInfo]) -> Option<Checkout> {
     checkout_for(row, branches)
         .filter(|checkout| !matches!(checkout, Checkout::OpenWorktree { .. }))
 }
 
 /// A conservative subset of `git check-ref-format`; Git reports the rest.
-fn valid_branch_name(name: &str) -> bool {
+pub(crate) fn valid_branch_name(name: &str) -> bool {
     !name.is_empty()
         && name != "@"
         && !name.starts_with(['-', '/', '.'])
@@ -289,7 +238,7 @@ fn valid_branch_name(name: &str) -> bool {
         })
 }
 
-fn row_height(row: &Row) -> f32 {
+pub(crate) fn row_height(row: &Row) -> f32 {
     match row {
         Row::Header(_) => HEADER_H,
         Row::Create(_) | Row::Branch(_) => ROW_H,
@@ -298,7 +247,7 @@ fn row_height(row: &Row) -> f32 {
 }
 
 /// Indices of the rows that can be selected.
-fn selectable(rows: &[Row]) -> Vec<usize> {
+pub(crate) fn selectable(rows: &[Row]) -> Vec<usize> {
     rows.iter()
         .enumerate()
         .filter(|(_, row)| !matches!(row, Row::Header(_)))
@@ -306,13 +255,13 @@ fn selectable(rows: &[Row]) -> Vec<usize> {
         .collect()
 }
 
-struct ListLayout {
+pub(crate) struct ListLayout {
     tops: Vec<f32>,
     content_h: f32,
     view_h: f32,
 }
 
-fn layout(rows: &[Row]) -> ListLayout {
+pub(crate) fn layout(rows: &[Row]) -> ListLayout {
     let mut tops = Vec::with_capacity(rows.len());
     let mut y = 0.0;
     for row in rows {
@@ -327,13 +276,13 @@ fn layout(rows: &[Row]) -> ListLayout {
 }
 
 impl ListLayout {
-    fn max_scroll(&self) -> f32 {
+    pub(crate) fn max_scroll(&self) -> f32 {
         (self.content_h - self.view_h).max(0.0)
     }
 
     /// `scroll` adjusted so row `index` is visible, with its section header
     /// when the header directly precedes it.
-    fn reveal(&self, rows: &[Row], index: usize, scroll: f32) -> f32 {
+    pub(crate) fn reveal(&self, rows: &[Row], index: usize, scroll: f32) -> f32 {
         let top = if index > 0 && matches!(rows[index - 1], Row::Header(_)) {
             self.tops[index - 1]
         } else {
@@ -352,9 +301,9 @@ impl ListLayout {
 }
 
 /// Move the selection by `delta` items, wrapping at either end.
-pub fn move_selection(app: &mut AppState, delta: isize) {
-    let query = app.git.ui.branch_picker_input.text().to_owned();
-    let Some(picker) = app.git.ui.branch_picker.as_mut() else {
+pub fn move_selection(app: &mut GitPanelState, delta: isize) {
+    let query = app.ui.branch_picker_input.text().to_owned();
+    let Some(picker) = app.ui.branch_picker.as_mut() else {
         return;
     };
     let rows = picker_rows(picker, &query);
@@ -371,24 +320,25 @@ pub fn move_selection(app: &mut AppState, delta: isize) {
 
 /// Open the picker for the active repository; without one, show Source
 /// Control, which explains how to get one.
-pub fn open(state: &State<AppState>, store: &State<GitStoreSnapshot>, anchor_x: f32) {
+pub fn open(state: &Binding, store: &Snapshot, anchor_x: f32) {
     let Some(repository) = store
         .get()
         .active()
         .map(|repository| repository.worktree_root.clone())
     else {
-        state.update(|app| app.source_control.visible = true);
+        state.dispatch(Command::ShowSourceControl);
         return;
     };
     let sequence = NEXT_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
     let repository_name = repository.file_name().map_or_else(
-        || super::display_path(&repository),
+        || crate::ui::display_path(&repository),
         |name| name.to_string_lossy().into_owned(),
     );
     let picker_repository = repository.clone();
+    let restore_terminal = state.frame().terminal_focused;
     state.update(move |app| {
-        app.git.ui.branch_picker_input = InputState::default();
-        app.git.ui.branch_picker = Some(BranchPicker {
+        app.ui.branch_picker_input = InputState::default();
+        app.ui.branch_picker = Some(BranchPicker {
             repository: picker_repository,
             repository_name,
             anchor_x,
@@ -398,24 +348,29 @@ pub fn open(state: &State<AppState>, store: &State<GitStoreSnapshot>, anchor_x: 
             scroll: 0.0,
             query: String::new(),
             sequence,
-            restore_terminal: app.terminal_focused,
+            restore_terminal,
         });
     });
-    crate::app::git::load_branches(state, repository, sequence);
+    {
+        state.dispatch(Command::LoadBranches {
+            repository,
+            sequence,
+        });
+    };
 }
 
 /// Choose the selected row. Returns whether the picker was open.
-pub fn confirm(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub fn confirm(state: &Binding, store: &Snapshot) -> bool {
     choose(state, store, None)
 }
 
 /// Choose item `index`, or the selected item without one.
-fn choose(state: &State<AppState>, store: &State<GitStoreSnapshot>, index: Option<usize>) -> bool {
+pub(crate) fn choose(state: &Binding, _store: &Snapshot, index: Option<usize>) -> bool {
     let app = state.get();
-    let Some(picker) = app.git.ui.branch_picker else {
+    let Some(picker) = app.ui.branch_picker else {
         return false;
     };
-    let query = app.git.ui.branch_picker_input.text();
+    let query = app.ui.branch_picker_input.text();
     let branches = picker.listing.branches();
     let rows = picker_rows(&picker, query);
     let index = index.unwrap_or_else(|| picker.view(query).0);
@@ -429,24 +384,22 @@ fn choose(state: &State<AppState>, store: &State<GitStoreSnapshot>, index: Optio
         return true;
     }
     let checkout = checkout_for(row, branches);
-    state.update(|app| app.git.ui.branch_picker = None);
+    state.update(|app| app.ui.branch_picker = None);
     if let Some(checkout) = checkout {
-        crate::app::git::checkout(
-            state,
-            store,
-            &picker.repository,
+        state.dispatch(Command::Checkout {
+            root: picker.repository.to_path_buf(),
             checkout,
-            crate::app::git::StashMode::Refuse,
-        );
+            mode: crate::features::git::actions::StashMode::Refuse,
+        });
     }
     true
 }
 
-fn measure(s: &str, size: f32, weight: i32) -> f32 {
-    super::tabs::measure(s, size, weight)
+pub(crate) fn measure(s: &str, size: f32, weight: i32) -> f32 {
+    crate::ui::tabs::measure(s, size, weight)
 }
 
-fn icon(id: impl Into<UiId>, key: &'static str, rect: UiRect, color: Color) -> Element {
+pub(crate) fn icon(id: impl Into<UiId>, key: &'static str, rect: UiRect, color: Color) -> Element {
     precompiled(UiElement::icon(id.into(), rect, key).icon_style(IconStyle::new(color)))
 }
 
@@ -457,8 +410,8 @@ pub fn render(
     top: f32,
     picker: &BranchPicker,
     query: &str,
-    state: State<AppState>,
-    store: State<GitStoreSnapshot>,
+    state: Binding,
+    store: Snapshot,
     input_focus: UiFocusHandle,
     input_id: UiId,
 ) -> Element {
@@ -494,7 +447,7 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .on_pointer_down_with_button(move |_cx, pointer, _button| {
             if !card.contains(pointer.point) {
-                close_state.update(|app| app.git.ui.branch_picker = None);
+                close_state.update(|app| app.ui.branch_picker = None);
             }
         });
 
@@ -515,8 +468,8 @@ pub fn render(
                     WheelUnit::Pixels => delta.y,
                 };
                 wheel_state.update(move |app| {
-                    let query = app.git.ui.branch_picker_input.text().to_owned();
-                    if let Some(picker) = app.git.ui.branch_picker.as_mut() {
+                    let query = app.ui.branch_picker_input.text().to_owned();
+                    if let Some(picker) = app.ui.branch_picker.as_mut() {
                         let (selected, scroll) = picker.view(&query);
                         picker.selected = selected;
                         picker.scroll = (scroll - step).clamp(0.0, max_scroll);
@@ -562,7 +515,6 @@ pub fn render(
     } else {
         let enabled = operation.is_none();
         let fetch_state = state.clone();
-        let fetch_store = store.clone();
         surface = surface.child(
             panel(fetch_rect, VisualStyle::default().radius(4.0))
                 .event_policy(EventPolicy::INTERACTIVE)
@@ -574,7 +526,7 @@ pub fn render(
                 })
                 .on_click(move || {
                     if enabled {
-                        crate::app::git::fetch_branches(&fetch_state, &fetch_store);
+                        fetch_state.dispatch(Command::FetchBranches);
                     }
                 })
                 .child(icon(
@@ -627,7 +579,7 @@ pub fn render(
         search_icon,
         theme::c().text_dim,
     ));
-    surface = surface.child(input::render(
+    surface = surface.child(input::render_access(
         UiRect::new(
             field.left + 22.0,
             field.top + 1.0,
@@ -636,8 +588,8 @@ pub fn render(
         ),
         input_id,
         input_focus,
-        InputBinding::new(state.clone(), filter_state, filter_state_mut),
-        InputOptions {
+        InputBinding::new_access(state.panel.clone(), filter_state, filter_state_mut),
+        AccessInputOptions {
             label: "Branch name",
             placeholder: "Filter branches, or type a name to create one",
             style: InputStyle {
@@ -743,7 +695,7 @@ pub fn render(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn item_row(
+pub(crate) fn item_row(
     rect: UiRect,
     row: &Row,
     index: usize,
@@ -754,8 +706,8 @@ fn item_row(
     expanded: bool,
     main_worktree: Option<&std::path::Path>,
     worktree_checkout: Option<Checkout>,
-    state: State<AppState>,
-    store: State<GitStoreSnapshot>,
+    state: Binding,
+    store: Snapshot,
 ) -> Element {
     if let Row::Worktree(worktree) = row {
         return worktree_item(
@@ -885,14 +837,15 @@ fn item_row(
     } else {
         (measure(&meta, theme::SMALL, 400) + TEXT_MARGIN).min(rect.width() * 0.58)
     };
-    let meta = super::tabs::ellipsize(&meta, (meta_w - TEXT_MARGIN).max(0.0), theme::SMALL, 400);
+    let meta =
+        crate::ui::tabs::ellipsize(&meta, (meta_w - TEXT_MARGIN).max(0.0), theme::SMALL, 400);
     let label_right = if action.is_some() {
         action_rect.left - 8.0
     } else {
         trailing_right - meta_w - 8.0
     }
     .max(rect.left + 50.0);
-    let label = super::tabs::ellipsize(
+    let label = crate::ui::tabs::ellipsize(
         &label,
         (label_right - rect.left - 50.0 - TEXT_MARGIN).max(0.0),
         theme::UI_SIZE,
@@ -944,11 +897,12 @@ fn item_row(
             .cursor(CursorIcon::Pointer)
             .on_click(move |cx: &mut UiEventContext| {
                 cx.stop_propagation();
-                crate::app::git::request_create_worktree(
-                    &state,
-                    repository.clone(),
-                    checkout.clone(),
-                );
+                {
+                    state.dispatch(Command::RequestCreateWorktree {
+                        repository: repository.clone(),
+                        checkout: checkout.clone(),
+                    });
+                };
             })
             .child(text(action_rect, "New Worktree", label_style)),
         );
@@ -956,10 +910,10 @@ fn item_row(
     item
 }
 
-fn select_hovered(state: &State<AppState>, index: usize) {
+pub(crate) fn select_hovered(state: &Binding, index: usize) {
     state.try_update(move |app| {
-        let query = app.git.ui.branch_picker_input.text().to_owned();
-        let Some(picker) = app.git.ui.branch_picker.as_mut() else {
+        let query = app.ui.branch_picker_input.text().to_owned();
+        let Some(picker) = app.ui.branch_picker.as_mut() else {
             return false;
         };
         let (selected, scroll) = picker.view(&query);
@@ -974,22 +928,22 @@ fn select_hovered(state: &State<AppState>, index: usize) {
 }
 
 #[derive(Clone, Copy)]
-enum WorktreeAction {
+pub(crate) enum WorktreeAction {
     Open,
     Add,
     Delete,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn worktree_item(
+pub(crate) fn worktree_item(
     rect: UiRect,
     worktree: &WorktreeInfo,
     index: usize,
     selected: bool,
     repository: &std::path::Path,
     main_worktree: Option<&std::path::Path>,
-    state: State<AppState>,
-    store: State<GitStoreSnapshot>,
+    state: Binding,
+    store: Snapshot,
 ) -> Element {
     let current = worktree.path == repository;
     let locked = worktree.locked.is_some();
@@ -1019,7 +973,7 @@ fn worktree_item(
         measure(status, theme::SMALL, 400) + 10.0
     };
     let label_right = (buttons_left - status_w - 8.0).max(rect.left + 54.0);
-    let path_label = super::tabs::ellipsize(
+    let path_label = crate::ui::tabs::ellipsize(
         &worktree_label(&worktree.path, repository),
         (label_right - rect.left - 54.0).max(0.0),
         theme::SMALL,
@@ -1097,7 +1051,7 @@ fn worktree_item(
         let left = buttons_left + slot as f32 * 20.0;
         let action_rect = UiRect::new(left, rect.top + 2.0, left + 20.0, rect.bottom - 2.0);
         let action_state = state.clone();
-        let action_store = store.clone();
+
         let source = repository.to_path_buf();
         let path = worktree.path.clone();
         item = item.child(
@@ -1115,20 +1069,21 @@ fn worktree_item(
             .cursor(CursorIcon::Pointer)
             .on_click(move |cx: &mut UiEventContext| {
                 cx.stop_propagation();
-                action_state.update(|app| app.git.ui.branch_picker = None);
+                action_state.update(|app| app.ui.branch_picker = None);
                 match action {
                     WorktreeAction::Open => {
-                        crate::app::git::open_worktree(&action_state, &action_store, path.clone());
+                        action_state.dispatch(Command::OpenWorktree { path: path.clone() });
                     }
                     WorktreeAction::Add => {
-                        crate::app::git::add_worktree_folder(&action_state, path.clone())
+                        action_state.dispatch(Command::AddWorktreeFolder { path: path.clone() });
                     }
-                    WorktreeAction::Delete => crate::app::git::request_remove_worktree(
-                        &action_state,
-                        source.clone(),
-                        path.clone(),
-                        false,
-                    ),
+                    WorktreeAction::Delete => {
+                        action_state.dispatch(Command::RequestRemoveWorktree {
+                            repository: source.clone(),
+                            path: path.clone(),
+                            force: false,
+                        });
+                    }
                 }
             })
             .child(icon(
@@ -1142,394 +1097,20 @@ fn worktree_item(
     item
 }
 
-fn worktree_label(path: &std::path::Path, repository: &std::path::Path) -> String {
+pub(crate) fn worktree_label(path: &std::path::Path, repository: &std::path::Path) -> String {
     if let Some(parent) = repository.parent()
         && let Ok(relative) = path.strip_prefix(parent)
     {
-        format!("../{}", super::display_path(relative))
+        format!("../{}", crate::ui::display_path(relative))
     } else {
-        super::display_path(path)
+        crate::ui::display_path(path)
     }
 }
 
-fn filter_state(app: &AppState) -> &InputState {
-    &app.git.ui.branch_picker_input
+pub(crate) fn filter_state(app: &GitPanelState) -> &InputState {
+    &app.ui.branch_picker_input
 }
 
-fn filter_state_mut(app: &mut AppState) -> &mut InputState {
-    &mut app.git.ui.branch_picker_input
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn inline_worktree_action_targets_its_branch_without_switching() {
-        use crate::ui::git_confirm::GitConfirmAction;
-        use lgui::application::{AppView, ApplicationContext};
-        use lgui::core::{
-            InputEvent, Point, PointerButton, PointerData, UiScale, dispatch_runtime_output,
-        };
-        use lgui::session::UiSession;
-        use std::sync::Mutex;
-
-        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
-        let output = exposed.clone();
-        let viewport = UiRect::new(0.0, 0.0, 460.0, 420.0);
-        let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
-                let mut app = AppState::new();
-                let mut branches = sample();
-                let mut occupied = branch("fix/login", false, false, None);
-                occupied.worktree_path = Some(PathBuf::from("projects/loom-fix-login"));
-                branches.insert(2, occupied);
-                open_picker(&mut app, branches);
-                let picker = app.git.ui.branch_picker.as_mut().unwrap();
-                picker.repository = PathBuf::from("projects/loom");
-                picker.repository_name = "loom".into();
-                picker.anchor_x = 8.0;
-                picker.selected = 2;
-                if let BranchListing::Ready { worktrees, .. } = &mut picker.listing {
-                    *worktrees = vec![
-                        worktree("projects/loom", "main"),
-                        worktree("projects/loom-fix-login", "fix/login"),
-                        worktree("projects/loom-fix-login-review", "fix/login"),
-                    ]
-                    .into();
-                }
-                app
-            });
-            let store = cx.state_with(GitStoreSnapshot::default);
-            *output.lock().unwrap() = Some(state.clone());
-            let app = state.get();
-            let input_id = cx.use_stable_id();
-            let input_focus = cx.focus_handle(input_id.clone());
-            let root = panel(viewport, VisualStyle::filled(theme::c().bg));
-            if let Some(picker) = app.git.ui.branch_picker.as_ref() {
-                root.child(render(
-                    viewport,
-                    24.0,
-                    picker,
-                    app.git.ui.branch_picker_input.text(),
-                    state,
-                    store,
-                    input_focus,
-                    input_id,
-                ))
-            } else {
-                root
-            }
-        });
-        let context = ApplicationContext::empty(Default::default());
-        let _text = lgui::backend::install_text_environment(
-            &context,
-            lgui::render_skia::skia_text_system_handle(),
-        );
-        let mut session = UiSession::new();
-        session.render_view(&view, viewport, UiScale::ONE);
-        let state = exposed.lock().unwrap().clone().unwrap();
-        let node = session
-            .tree()
-            .nodes()
-            .iter()
-            .find(|node| {
-                node.semantics
-                    .as_ref()
-                    .and_then(|semantics| semantics.name.as_deref())
-                    == Some("Check out feature in a new worktree")
-            })
-            .expect("Selected branch has an inline worktree action");
-        let rect = node.layout_rect;
-        let point = Point::new(
-            (rect.left + rect.right) / 2.0,
-            (rect.top + rect.bottom) / 2.0,
-        );
-        assert!(rect.height() < ROW_H);
-
-        if let Some(path) = std::env::var_os("LOOM_BRANCH_PICKER_PREVIEW") {
-            use lgui::core::PhysicalRect;
-            use lgui::icons::IconRegistration;
-            use lgui::renderer::{FrameInfo, FrameReason};
-            let icons = crate::svg_icons();
-            context
-                .resources()
-                .provide(IconRegistration(Arc::new(icons)));
-            let scale = UiScale::new(2.0);
-            let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(4 * 1024 * 1024);
-            let frame = FrameInfo::new(
-                PhysicalRect::new(0, 0, 920, 840),
-                &[],
-                scale,
-                FrameReason::SceneChange,
-                true,
-            );
-            lgui::assets::backend::with_render_resources(
-                &context,
-                lgui::RenderResources::new(),
-                || {
-                    surface
-                        .draw(&session.tree().scene().project_to_physical(scale), &frame)
-                        .unwrap();
-                },
-            );
-            let mut pixels = surface.pixels().to_vec();
-            for pixel in pixels.as_chunks_mut::<4>().0 {
-                pixel.swap(0, 2);
-            }
-            image::save_buffer(path, &pixels, 920, 840, image::ColorType::Rgba8).unwrap();
-            state.update(|app| app.git.ui.branch_picker.as_mut().unwrap().selected = 2);
-            session.render_view(&view, viewport, UiScale::ONE);
-        }
-
-        for input in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-        ] {
-            let events = session.handle_input(input);
-            dispatch_runtime_output(
-                events,
-                &context,
-                &lgui::window::WindowId::new("branch-worktree-action-test"),
-                |action| session.handle_default_action(action),
-                |_| {},
-            );
-            session.render_view(&view, viewport, UiScale::ONE);
-        }
-        let app = state.get();
-        assert!(app.git.ui.branch_picker.is_none());
-        assert_eq!(
-            app.git.ui.confirm.unwrap().action,
-            GitConfirmAction::CreateWorktree {
-                repository: PathBuf::from("projects/loom"),
-                path: PathBuf::from("projects/loom-feature"),
-                checkout: Checkout::Switch("feature".into()),
-            }
-        );
-    }
-
-    fn worktree(path: &str, branch: &str) -> WorktreeInfo {
-        WorktreeInfo {
-            path: path.into(),
-            oid: "abc".into(),
-            branch: Some(branch.into()),
-            bare: false,
-            detached: false,
-            locked: None,
-        }
-    }
-
-    #[test]
-    fn every_worktree_of_a_branch_gets_its_own_child_row() {
-        let mut app = AppState::new();
-        open_picker(&mut app, sample());
-        let picker = app.git.ui.branch_picker.as_mut().unwrap();
-        if let BranchListing::Ready { worktrees, .. } = &mut picker.listing {
-            *worktrees = vec![
-                worktree("/repo-feature", "feature"),
-                worktree("/repo-feature-review", "feature"),
-            ]
-            .into();
-        }
-        let expanded = picker_rows(picker, "feature");
-        assert_eq!(
-            names(&expanded),
-            [
-                "[LOCAL]",
-                "feature",
-                "@/repo-feature",
-                "@/repo-feature-review"
-            ]
-        );
-        assert_eq!(selectable(&expanded).len(), 3);
-        picker.collapsed_worktrees.insert("feature".into());
-        assert_eq!(
-            names(&picker_rows(picker, "feature")),
-            ["[LOCAL]", "feature"]
-        );
-    }
-
-    fn branch(name: &str, remote: bool, current: bool, upstream: Option<&str>) -> BranchInfo {
-        BranchInfo {
-            name: name.into(),
-            remote,
-            current,
-            oid: "0".into(),
-            upstream: upstream.map(Into::into),
-            worktree_path: None,
-        }
-    }
-
-    fn sample() -> Vec<BranchInfo> {
-        vec![
-            branch("feature", false, false, None),
-            branch("main", false, true, Some("origin/main")),
-            branch("origin/main", true, false, None),
-            branch("origin/release/1.0", true, false, None),
-        ]
-    }
-
-    fn names(rows: &[Row]) -> Vec<String> {
-        rows.iter()
-            .map(|row| match row {
-                Row::Header(label) => format!("[{label}]"),
-                Row::Create(name) => format!("+{name}"),
-                Row::Branch(branch) => branch.name.clone(),
-                Row::Worktree(worktree) => format!("@{}", worktree.path.display()),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn lists_current_branch_first_then_remotes() {
-        assert_eq!(
-            names(&rows(&sample(), "")),
-            [
-                "[LOCAL]",
-                "main",
-                "feature",
-                "[REMOTE]",
-                "origin/main",
-                "origin/release/1.0"
-            ]
-        );
-    }
-
-    #[test]
-    fn filters_case_insensitively_and_offers_to_create() {
-        assert_eq!(
-            names(&rows(&sample(), "REL")),
-            ["+REL", "[REMOTE]", "origin/release/1.0"]
-        );
-        // An existing name, local or remote, is not offered for creation.
-        assert_eq!(names(&rows(&sample(), "feature")), ["[LOCAL]", "feature"]);
-        assert_eq!(
-            names(&rows(&sample(), "origin/main")),
-            ["[REMOTE]", "origin/main"]
-        );
-        assert_eq!(names(&rows(&sample(), "no such")), Vec::<String>::new());
-    }
-
-    #[test]
-    fn rejects_invalid_branch_names() {
-        for name in [
-            "", "-x", "a..b", "a b", "a~1", "x.lock", "a/", "/a", "@", "a@{1",
-        ] {
-            assert!(!valid_branch_name(name), "{name:?}");
-        }
-        for name in ["topic", "feature/login", "fix-1.2"] {
-            assert!(valid_branch_name(name), "{name:?}");
-        }
-    }
-
-    #[test]
-    fn remote_rows_reuse_matching_local_branches() {
-        let branches = sample();
-        let remote = |name: &str| Row::Branch(branch(name, true, false, None));
-        // Tracked by the current branch: nothing to do.
-        assert_eq!(checkout_for(&remote("origin/main"), &branches), None);
-        assert_eq!(
-            checkout_for(&remote("origin/release/1.0"), &branches),
-            Some(Checkout::Track("origin/release/1.0".into()))
-        );
-        assert_eq!(
-            checkout_for(&remote("origin/feature"), &branches),
-            Some(Checkout::Switch("feature".into()))
-        );
-        assert_eq!(
-            checkout_for(&Row::Branch(branches[0].clone()), &branches),
-            Some(Checkout::Switch("feature".into()))
-        );
-        assert_eq!(
-            checkout_for(&Row::Branch(branches[1].clone()), &branches),
-            None
-        );
-        assert_eq!(
-            checkout_for(&Row::Create("topic".into()), &branches),
-            Some(Checkout::Create("topic".into()))
-        );
-    }
-
-    #[test]
-    fn occupied_local_and_tracking_branches_open_their_worktree() {
-        let mut branches = sample();
-        let path = PathBuf::from("../repo-feature");
-        branches[0].worktree_path = Some(path.clone());
-        branches[0].upstream = Some("origin/feature".into());
-        let expected = Some(Checkout::OpenWorktree {
-            branch: "feature".into(),
-            path,
-        });
-        assert_eq!(
-            checkout_for(&Row::Branch(branches[0].clone()), &branches),
-            expected
-        );
-        let remote = Row::Branch(branch("origin/feature", true, false, None));
-        assert_eq!(checkout_for(&remote, &branches), expected);
-        assert_eq!(worktree_checkout_for(&remote, &branches), None);
-        assert_eq!(
-            worktree_checkout_for(&Row::Branch(branches[1].clone()), &branches),
-            None
-        );
-        // A remote with no local branch is available for a new tracking worktree.
-        let remote = Row::Branch(branch("origin/release/1.0", true, false, None));
-        assert_eq!(
-            worktree_checkout_for(&remote, &branches),
-            Some(Checkout::Track("origin/release/1.0".into()))
-        );
-    }
-
-    fn open_picker(app: &mut AppState, branches: Vec<BranchInfo>) {
-        app.git.ui.branch_picker = Some(BranchPicker {
-            repository: PathBuf::from("repo"),
-            repository_name: "repo".into(),
-            anchor_x: 0.0,
-            listing: BranchListing::Ready {
-                branches: branches.into(),
-                worktrees: Arc::from([]),
-            },
-            collapsed_worktrees: BTreeSet::new(),
-            selected: 0,
-            scroll: 0.0,
-            query: String::new(),
-            sequence: 1,
-            restore_terminal: false,
-        });
-    }
-
-    #[test]
-    fn selection_wraps_and_resets_when_the_filter_changes() {
-        let mut app = AppState::new();
-        open_picker(&mut app, sample());
-        move_selection(&mut app, -1);
-        assert_eq!(app.git.ui.branch_picker.as_ref().unwrap().selected, 3);
-        move_selection(&mut app, 1);
-        assert_eq!(app.git.ui.branch_picker.as_ref().unwrap().selected, 0);
-        move_selection(&mut app, 1);
-        app.git.ui.branch_picker_input.set_text("rel");
-        let picker = app.git.ui.branch_picker.as_ref().unwrap();
-        assert_eq!(picker.view("rel"), (0, 0.0));
-    }
-
-    #[test]
-    fn keyboard_selection_scrolls_into_view() {
-        let mut app = AppState::new();
-        let branches = (0..30)
-            .map(|index| branch(&format!("b{index:02}"), false, index == 0, None))
-            .collect();
-        open_picker(&mut app, branches);
-        move_selection(&mut app, -1);
-        let picker = app.git.ui.branch_picker.as_ref().unwrap();
-        assert_eq!(picker.selected, 29);
-        // Header plus 30 rows, scrolled so the last row ends at the bottom.
-        assert_eq!(picker.scroll, HEADER_H + 30.0 * ROW_H - MAX_LIST_H);
-        move_selection(&mut app, 1);
-        assert_eq!(app.git.ui.branch_picker.as_ref().unwrap().scroll, 0.0);
-    }
+pub(crate) fn filter_state_mut(app: &mut GitPanelState) -> &mut InputState {
+    &mut app.ui.branch_picker_input
 }

@@ -4,19 +4,17 @@
 use std::path::PathBuf;
 
 use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId};
-use lgui::prelude::{Element, State, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::app::git::StashMode;
-use crate::features::git::GitStoreSnapshot;
-use crate::input::action::Action;
-use crate::state::AppState;
+use crate::features::git::actions::Checkout;
+use crate::features::git::actions::StashMode;
 use crate::theme;
-use crate::ui::branch_picker::Checkout;
+use crate::ui::git::commands::{Binding, Command, Snapshot};
 
-const CARD_W: f32 = 520.0;
-const CARD_H: f32 = 186.0;
+pub(crate) const CARD_W: f32 = 520.0;
+pub(crate) const CARD_H: f32 = 186.0;
 /// Files named in the message before the rest are counted.
-const LISTED_FILES: usize = 3;
+pub(crate) const LISTED_FILES: usize = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StashSwitchRequest {
@@ -29,7 +27,7 @@ pub struct StashSwitchRequest {
 }
 
 /// `a`, `a and b`, `a, b and c`, or `a, b, c and 2 more files`.
-fn describe_files(files: &[String]) -> String {
+pub(crate) fn describe_files(files: &[String]) -> String {
     match files {
         [] => "your files".to_owned(),
         [only] => only.clone(),
@@ -48,30 +46,21 @@ fn describe_files(files: &[String]) -> String {
 
 /// Resolve the open request: `Some(mode)` retries the switch that way,
 /// `None` cancels it.
-fn resolve(state: &State<AppState>, store: &State<GitStoreSnapshot>, mode: Option<StashMode>) {
-    let Some(request) = state.get().git.ui.stash_switch else {
+pub(crate) fn resolve(state: &Binding, mode: Option<StashMode>) {
+    let Some(request) = state.get().ui.stash_switch else {
         return;
     };
-    state.update(|app| app.git.ui.stash_switch = None);
+    state.update(|app| app.ui.stash_switch = None);
     if let Some(mode) = mode {
-        crate::app::git::checkout(state, store, &request.repository, request.checkout, mode);
+        state.dispatch(Command::Checkout {
+            root: request.repository.to_path_buf(),
+            checkout: request.checkout,
+            mode,
+        });
     }
 }
 
-/// Perform a `dialog::` action from the keymap: Confirm stashes and
-/// switches, Secondary carries the changes over and Cancel stays put.
-pub fn perform(state: &State<AppState>, store: &State<GitStoreSnapshot>, action: Action) -> bool {
-    let mode = match action {
-        Action::DialogConfirm => Some(StashMode::Keep),
-        Action::DialogSecondary => Some(StashMode::Carry),
-        Action::DialogCancel => None,
-        _ => return false,
-    };
-    resolve(state, store, mode);
-    true
-}
-
-fn centered(mut style: TextStyle) -> TextStyle {
+pub(crate) fn centered(mut style: TextStyle) -> TextStyle {
     style.align = TextAlign::Center;
     style
 }
@@ -79,8 +68,8 @@ fn centered(mut style: TextStyle) -> TextStyle {
 pub fn render(
     viewport: UiRect,
     request: &StashSwitchRequest,
-    state: State<AppState>,
-    store: State<GitStoreSnapshot>,
+    state: Binding,
+    _store: Snapshot,
     dialog_id: UiId,
 ) -> Element {
     let target = request.checkout.target().to_owned();
@@ -145,12 +134,11 @@ pub fn render(
     let keep_rect = button(card.right - 140.0, card.right - 22.0);
 
     let cancel_state = state.clone();
-    let cancel_store = store.clone();
     root = root.child(
         theme::bordered(cancel_rect, theme::c().sidebar, theme::c().border, 4.0, 1.0)
             .event_policy(EventPolicy::INTERACTIVE)
             .cursor(CursorIcon::Pointer)
-            .on_click(move || resolve(&cancel_state, &cancel_store, None))
+            .on_click(move || resolve(&cancel_state, None))
             .child(text(
                 cancel_rect,
                 "Cancel",
@@ -158,12 +146,11 @@ pub fn render(
             )),
     );
     let carry_state = state.clone();
-    let carry_store = store.clone();
     root = root.child(
         theme::bordered(carry_rect, theme::c().sidebar, theme::c().border, 4.0, 1.0)
             .event_policy(EventPolicy::INTERACTIVE)
             .cursor(CursorIcon::Pointer)
-            .on_click(move || resolve(&carry_state, &carry_store, Some(StashMode::Carry)))
+            .on_click(move || resolve(&carry_state, Some(StashMode::Carry)))
             .child(text(
                 carry_rect,
                 "Bring Changes",
@@ -177,32 +164,11 @@ pub fn render(
         )
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
-        .on_click(move || resolve(&state, &store, Some(StashMode::Keep)))
+        .on_click(move || resolve(&state, Some(StashMode::Keep)))
         .child(text(
             keep_rect,
             "Stash and Switch",
             centered(theme::sans_semibold(theme::c().on_accent, theme::UI_SIZE)),
         )),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn files(names: &[&str]) -> Vec<String> {
-        names.iter().map(|name| (*name).to_owned()).collect()
-    }
-
-    #[test]
-    fn names_a_few_files_and_counts_the_rest() {
-        assert_eq!(describe_files(&[]), "your files");
-        assert_eq!(describe_files(&files(&["a"])), "a");
-        assert_eq!(describe_files(&files(&["a", "b"])), "a and b");
-        assert_eq!(describe_files(&files(&["a", "b", "c"])), "a, b and c");
-        assert_eq!(
-            describe_files(&files(&["a", "b", "c", "d", "e"])),
-            "a, b, c and 2 more files"
-        );
-    }
 }

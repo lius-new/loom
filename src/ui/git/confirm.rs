@@ -5,18 +5,17 @@
 use std::path::PathBuf;
 
 use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId};
-use lgui::prelude::{Element, State, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
 
+use crate::features::git::actions::Checkout;
 use crate::features::git::diff_document::ChangeBlock;
-use crate::features::git::{DiffTarget, GitStoreSnapshot, RepositoryState};
-use crate::input::action::Action;
-use crate::state::AppState;
+use crate::features::git::{DiffTarget, RepositoryState};
 use crate::theme;
-use crate::ui::branch_picker::Checkout;
+use crate::ui::git::commands::{Binding, Command, Snapshot};
 
-const CARD_W: f32 = 480.0;
-const CARD_H: f32 = 156.0;
-const WORKTREE_CARD_H: f32 = 258.0;
+pub(crate) const CARD_W: f32 = 480.0;
+pub(crate) const CARD_H: f32 = 156.0;
+pub(crate) const WORKTREE_CARD_H: f32 = 258.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitConfirmAction {
@@ -64,11 +63,11 @@ pub struct GitConfirm {
 }
 
 /// Close the dialog, performing its action when `confirmed`.
-fn resolve(state: &State<AppState>, store: &State<GitStoreSnapshot>, confirmed: bool) {
-    let Some(confirm) = state.get().git.ui.confirm else {
+pub(crate) fn resolve(state: &Binding, confirmed: bool) {
+    let Some(confirm) = state.get().ui.confirm else {
         return;
     };
-    state.update(|app| app.git.ui.confirm = None);
+    state.update(|app| app.ui.confirm = None);
     if !confirmed {
         return;
     }
@@ -78,63 +77,69 @@ fn resolve(state: &State<AppState>, store: &State<GitStoreSnapshot>, confirmed: 
             path,
             checkout,
         } => {
-            crate::app::git::create_worktree(state, store, &repository, path, checkout);
+            state.dispatch(Command::CreateWorktree {
+                root: repository.to_path_buf(),
+                path,
+                checkout,
+            });
         }
         GitConfirmAction::RemoveWorktree {
             repository,
             path,
             force,
         } => {
-            crate::app::git::remove_worktree(state, store, &repository, path, force);
+            state.dispatch(Command::RemoveWorktree {
+                root: repository.to_path_buf(),
+                path,
+                force,
+            });
         }
         GitConfirmAction::Discard {
             repository,
             tracked,
             untracked,
         } => {
-            crate::app::git::discard_paths(state, store, &repository, tracked, untracked);
+            state.dispatch(Command::DiscardPaths {
+                root: repository.to_path_buf(),
+                tracked,
+                untracked,
+            });
         }
         GitConfirmAction::StageAllAndCommit => {
-            crate::app::git::commit_all(state, store);
+            state.dispatch(Command::CommitAll);
         }
         GitConfirmAction::AbortOperation {
             repository,
             operation,
         } => {
-            crate::app::git::abort_operation(state, store, &repository, operation);
+            state.dispatch(Command::AbortOperation {
+                root: repository.to_path_buf(),
+                operation,
+            });
         }
         GitConfirmAction::DropStash { repository, oid } => {
-            crate::app::git::drop_stash(state, store, &repository, oid);
+            state.dispatch(Command::DropStash {
+                root: repository.to_path_buf(),
+                oid,
+            });
         }
         GitConfirmAction::DiscardBlock {
             repository,
             path,
             block,
         } => {
-            crate::app::git::apply_block(
-                state,
-                store,
-                &repository,
+            state.dispatch(Command::ApplyBlock {
+                root: repository.to_path_buf(),
                 path,
-                DiffTarget::IndexToWorktree,
+                target: DiffTarget::IndexToWorktree,
                 block,
-                crate::app::git::BlockAction::Discard,
-            );
+                action: crate::features::git::actions::BlockAction::Discard,
+            });
         }
     }
 }
 
-/// Perform a `dialog::` action from the keymap.
-pub fn perform(state: &State<AppState>, store: &State<GitStoreSnapshot>, action: Action) -> bool {
-    match action {
-        Action::DialogConfirm => resolve(state, store, true),
-        Action::DialogCancel => resolve(state, store, false),
-        _ => return false,
-    }
-    true
-}
-
-fn centered(mut style: TextStyle) -> TextStyle {
+pub(crate) fn centered(mut style: TextStyle) -> TextStyle {
     style.align = TextAlign::Center;
     style
 }
@@ -142,8 +147,8 @@ fn centered(mut style: TextStyle) -> TextStyle {
 pub fn render(
     viewport: UiRect,
     confirm: &GitConfirm,
-    state: State<AppState>,
-    store: State<GitStoreSnapshot>,
+    state: Binding,
+    store: Snapshot,
     dialog_id: UiId,
 ) -> Element {
     let worktree = match &confirm.action {
@@ -209,7 +214,7 @@ pub fn render(
     }
 
     let button_top = card.bottom - 46.0;
-    let confirm_w = super::tabs::measure(confirm.confirm_label, theme::UI_SIZE, 600) + 36.0;
+    let confirm_w = crate::ui::tabs::measure(confirm.confirm_label, theme::UI_SIZE, 600) + 36.0;
     let confirm_rect = UiRect::new(
         card.right - 22.0 - confirm_w,
         button_top,
@@ -224,13 +229,12 @@ pub fn render(
     );
 
     let cancel_state = state.clone();
-    let cancel_store = store.clone();
     root = root.child(
         theme::bordered(cancel_rect, theme::c().sidebar, theme::c().border, 4.0, 1.0)
             .event_policy(EventPolicy::INTERACTIVE)
             .semantics(Semantics::new(SemanticRole::Button).name("Cancel"))
             .cursor(CursorIcon::Pointer)
-            .on_click(move || resolve(&cancel_state, &cancel_store, false))
+            .on_click(move || resolve(&cancel_state, false))
             .child(text(
                 cancel_rect,
                 "Cancel",
@@ -247,7 +251,7 @@ pub fn render(
             .event_policy(EventPolicy::INTERACTIVE)
             .semantics(Semantics::new(SemanticRole::Button).name(confirm.confirm_label))
             .cursor(CursorIcon::Pointer)
-            .on_click(move || resolve(&state, &store, true))
+            .on_click(move || resolve(&state, true))
             .child(text(
                 confirm_rect,
                 confirm.confirm_label,
@@ -256,20 +260,20 @@ pub fn render(
     )
 }
 
-fn worktree_form(
+pub(crate) fn worktree_form(
     card: UiRect,
     path: &std::path::Path,
     checkout: &Checkout,
-    state: State<AppState>,
-    store: State<GitStoreSnapshot>,
+    state: Binding,
+    _store: Snapshot,
 ) -> Element {
     let left = card.left + 22.0;
     let right = card.right - 22.0;
     let branch =
-        super::tabs::ellipsize(checkout.target(), right - left - 74.0, theme::UI_SIZE, 400);
+        crate::ui::tabs::ellipsize(checkout.target(), right - left - 74.0, theme::UI_SIZE, 400);
     let browse = UiRect::new(right - 82.0, card.top + 138.0, right, card.top + 170.0);
     let location = UiRect::new(left, browse.top, browse.left - 8.0, browse.bottom);
-    let full_path = super::display_path(path);
+    let full_path = crate::ui::display_path(path);
     let path_label = location_label(&full_path, (location.width() - 20.0).max(0.0));
     let close = UiRect::new(
         card.right - 38.0,
@@ -278,7 +282,6 @@ fn worktree_form(
         card.top + 38.0,
     );
     let close_state = state.clone();
-    let close_store = store;
     let location_state = state.clone();
     let mut form = panel(card, VisualStyle::default())
         .child(text(
@@ -310,7 +313,9 @@ fn worktree_form(
                         .value(full_path),
                 )
                 .cursor(CursorIcon::Pointer)
-                .on_click(move || crate::app::git::choose_worktree_location(&location_state))
+                .on_click(move || {
+                    location_state.dispatch(Command::ChooseWorktreeLocation);
+                })
                 .child(text(
                     UiRect::new(
                         location.left + 10.0,
@@ -327,7 +332,9 @@ fn worktree_form(
                 .event_policy(EventPolicy::INTERACTIVE)
                 .semantics(Semantics::new(SemanticRole::Button).name("Choose worktree location"))
                 .cursor(CursorIcon::Pointer)
-                .on_click(move || crate::app::git::choose_worktree_location(&state))
+                .on_click(move || {
+                    state.dispatch(Command::ChooseWorktreeLocation);
+                })
                 .child(text(
                     browse,
                     "Browse…",
@@ -344,8 +351,8 @@ fn worktree_form(
             .event_policy(EventPolicy::INTERACTIVE)
             .semantics(Semantics::new(SemanticRole::Button).name("Close"))
             .cursor(CursorIcon::Pointer)
-            .on_click(move || resolve(&close_state, &close_store, false))
-            .child(super::drawer::drawer_icon(
+            .on_click(move || resolve(&close_state, false))
+            .child(crate::ui::drawer::drawer_icon(
                 "worktree-dialog.close",
                 "close",
                 theme::icon_rect(close),
@@ -356,163 +363,15 @@ fn worktree_form(
 }
 
 /// Keep the destination directory visible when its parent path is long.
-fn location_label(path: &str, width: f32) -> String {
-    if super::tabs::measure(path, theme::UI_SIZE, 400) <= width {
+pub(crate) fn location_label(path: &str, width: f32) -> String {
+    if crate::ui::tabs::measure(path, theme::UI_SIZE, 400) <= width {
         return path.to_owned();
     }
     for (offset, _) in path.char_indices().skip(1) {
         let label = format!("…{}", &path[offset..]);
-        if super::tabs::measure(&label, theme::UI_SIZE, 400) <= width {
+        if crate::ui::tabs::measure(&label, theme::UI_SIZE, 400) <= width {
             return label;
         }
     }
     String::new()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use lgui::application::{AppView, ApplicationContext};
-    use lgui::core::{
-        InputEvent, Point, PointerButton, PointerData, UiScale, dispatch_runtime_output,
-    };
-    use lgui::session::UiSession;
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn worktree_form_shows_destination_and_cancels_at_normal_and_narrow_widths() {
-        for width in [640.0, 360.0] {
-            let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
-            let output = exposed.clone();
-            let viewport = UiRect::new(0.0, 0.0, width, 420.0);
-            let destination = PathBuf::from(r"D:\Documents\cprojects\loom-feature-login");
-            let expected_path = super::super::display_path(&destination);
-            let view: AppView = Arc::new(move |cx| {
-                let state = cx.state_with(|| {
-                    let mut app = AppState::new();
-                    app.git.ui.confirm = Some(GitConfirm {
-                        title: "New Worktree".into(),
-                        message: String::new(),
-                        confirm_label: "Create",
-                        destructive: false,
-                        action: GitConfirmAction::CreateWorktree {
-                            repository: PathBuf::from(r"D:\Documents\cprojects\loom"),
-                            path: destination.clone(),
-                            checkout: Checkout::Switch("feature/login".into()),
-                        },
-                        restore_terminal: false,
-                    });
-                    app
-                });
-                let store = cx.state_with(GitStoreSnapshot::default);
-                let dialog_id = cx.use_stable_id();
-                *output.lock().unwrap() = Some(state.clone());
-                let root = panel(viewport, VisualStyle::filled(theme::c().bg));
-                if let Some(confirm) = state.get().git.ui.confirm {
-                    root.child(render(viewport, &confirm, state, store, dialog_id))
-                } else {
-                    root
-                }
-            });
-            let context = ApplicationContext::empty(Default::default());
-            let _text = lgui::backend::install_text_environment(
-                &context,
-                lgui::render_skia::skia_text_system_handle(),
-            );
-            let mut session = UiSession::new();
-            session.render_view(&view, viewport, UiScale::ONE);
-            let find = |name: &str| {
-                session
-                    .tree()
-                    .nodes()
-                    .iter()
-                    .find(|node| {
-                        node.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name)
-                    })
-                    .unwrap_or_else(|| panic!("Missing dialog control: {name}"))
-            };
-            let location = find("Worktree location");
-            assert_eq!(
-                location.semantics.as_ref().unwrap().value.as_deref(),
-                Some(expected_path.as_str())
-            );
-            assert!(location.layout_rect.left >= viewport.left);
-            assert!(
-                location.layout_rect.right <= find("Choose worktree location").layout_rect.left
-            );
-            let cancel = find("Cancel").layout_rect;
-            assert!(find("Create").layout_rect.right <= viewport.right);
-
-            if width == 640.0
-                && let Some(path) = std::env::var_os("LOOM_WORKTREE_DIALOG_PREVIEW")
-            {
-                use lgui::core::PhysicalRect;
-                use lgui::icons::IconRegistration;
-                use lgui::renderer::{FrameInfo, FrameReason};
-                context
-                    .resources()
-                    .provide(IconRegistration(Arc::new(crate::svg_icons())));
-                let scale = UiScale::new(2.0);
-                let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(8 * 1024 * 1024);
-                let frame = FrameInfo::new(
-                    PhysicalRect::new(0, 0, 1280, 840),
-                    &[],
-                    scale,
-                    FrameReason::SceneChange,
-                    true,
-                );
-                lgui::assets::backend::with_render_resources(
-                    &context,
-                    lgui::RenderResources::new(),
-                    || {
-                        surface
-                            .draw(&session.tree().scene().project_to_physical(scale), &frame)
-                            .unwrap();
-                    },
-                );
-                let mut pixels = surface.pixels().to_vec();
-                for pixel in pixels.as_chunks_mut::<4>().0 {
-                    pixel.swap(0, 2);
-                }
-                image::save_buffer(path, &pixels, 1280, 840, image::ColorType::Rgba8).unwrap();
-            }
-
-            let point = Point::new(
-                (cancel.left + cancel.right) / 2.0,
-                (cancel.top + cancel.bottom) / 2.0,
-            );
-            for input in [
-                InputEvent::PointerDown {
-                    pointer: PointerData::mouse(point),
-                    button: PointerButton::Left,
-                },
-                InputEvent::PointerUp {
-                    pointer: PointerData::mouse(point),
-                    button: PointerButton::Left,
-                },
-            ] {
-                let events = session.handle_input(input);
-                dispatch_runtime_output(
-                    events,
-                    &context,
-                    &lgui::window::WindowId::new("worktree-dialog-test"),
-                    |action| session.handle_default_action(action),
-                    |_| {},
-                );
-                session.render_view(&view, viewport, UiScale::ONE);
-            }
-            assert!(
-                exposed
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .unwrap()
-                    .get()
-                    .git
-                    .ui
-                    .confirm
-                    .is_none()
-            );
-        }
-    }
 }

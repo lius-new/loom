@@ -27,6 +27,13 @@ pub(crate) use bootstrap::run;
 #[cfg(test)]
 pub(crate) use bootstrap::svg_icons;
 
+mod git_clone;
+mod git_peek;
+#[cfg(test)]
+mod git_performance;
+pub(crate) mod git_view;
+#[cfg(test)]
+mod git_view_tests;
 pub(crate) mod search;
 mod search_tasks;
 pub(crate) mod workspace;

@@ -5,30 +5,30 @@
 use lgui::core::{
     CursorIcon, EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiId, precompiled,
 };
-use lgui::prelude::{Color, Element, State, TextStyle, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Color, Element, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::app::git::SyncPlan;
+use crate::features::git::actions::SyncPlan;
 use crate::features::git::{GitStoreSnapshot, RepositorySnapshot, RepositoryState};
-use crate::state::AppState;
 use crate::theme;
+use crate::ui::git::commands::{Binding, Command, Snapshot};
 
-const BADGE_H: f32 = 22.0;
-const BADGE_PAD: f32 = 8.0;
-const BADGE_ICON: f32 = 14.0;
+pub(crate) const BADGE_H: f32 = 22.0;
+pub(crate) const BADGE_PAD: f32 = 8.0;
+pub(crate) const BADGE_ICON: f32 = 14.0;
 /// Gap between an icon and the text it labels.
-const ICON_GAP: f32 = 5.0;
+pub(crate) const ICON_GAP: f32 = 5.0;
 /// Gap between the badge's groups: repository, branch, operation.
-const GROUP_GAP: f32 = 8.0;
+pub(crate) const GROUP_GAP: f32 = 8.0;
 /// Gap between the badge, the sync button and the operation message.
-const ITEM_GAP: f32 = 2.0;
+pub(crate) const ITEM_GAP: f32 = 2.0;
 /// Extra right margin inside each text rect so the last glyph is not clipped.
-const TEXT_MARGIN: f32 = 6.0;
+pub(crate) const TEXT_MARGIN: f32 = 6.0;
 
-fn measure(s: &str, style: &TextStyle) -> f32 {
-    super::tabs::measure(s, style.height, style.weight)
+pub(crate) fn measure(s: &str, style: &TextStyle) -> f32 {
+    crate::ui::tabs::measure(s, style.height, style.weight)
 }
 
-enum BadgePiece {
+pub(crate) enum BadgePiece {
     Icon {
         id: &'static str,
         key: &'static str,
@@ -41,7 +41,7 @@ enum BadgePiece {
 }
 
 impl BadgePiece {
-    fn width(&self) -> f32 {
+    pub(crate) fn width(&self) -> f32 {
         match self {
             Self::Icon { .. } => BADGE_ICON,
             Self::Text { label, style } => measure(label, style),
@@ -55,11 +55,11 @@ pub fn attach(
     mut bar: Element,
     rect: UiRect,
     left: f32,
-    state: State<AppState>,
-    store: State<GitStoreSnapshot>,
+    state: Binding,
+    store: Snapshot,
 ) -> Element {
     let git = store.get();
-    let picker_open = state.get().git.ui.branch_picker.is_some();
+    let picker_open = state.get().ui.branch_picker.is_some();
 
     // Repository and branch: opens the branch picker below the title bar.
     let (badge, mut right) = badge_element(rect, left, badge_pieces(&git), picker_open);
@@ -77,7 +77,7 @@ pub fn attach(
 
     // Sync: publish, pull, push or fetch, whichever is due.
     if let Some(repository) = git.active()
-        && let Some(plan) = crate::app::git::sync_plan(repository)
+        && let Some(plan) = crate::features::git::actions::sync_plan(repository)
     {
         let enabled = git.operation.is_none();
         let color = if enabled {
@@ -102,7 +102,7 @@ pub fn attach(
                 })
                 .on_click(move || {
                     if enabled {
-                        crate::app::git::sync(&state, &store);
+                        state.dispatch(Command::Sync);
                     }
                 }),
         );
@@ -123,7 +123,7 @@ pub fn attach(
 
 /// The badge's contents, each with the gap before it: the repository, the
 /// branch (`*` when dirty), then an operation in progress.
-fn badge_pieces(git: &GitStoreSnapshot) -> Vec<(f32, BadgePiece)> {
+pub(crate) fn badge_pieces(git: &GitStoreSnapshot) -> Vec<(f32, BadgePiece)> {
     let Some(repository) = git.active() else {
         let color = theme::c().text_ghost;
         return vec![
@@ -155,7 +155,7 @@ fn badge_pieces(git: &GitStoreSnapshot) -> Vec<(f32, BadgePiece)> {
         theme::c().text_muted
     };
     let name = repository.worktree_root.file_name().map_or_else(
-        || super::display_path(&repository.worktree_root),
+        || crate::ui::display_path(&repository.worktree_root),
         |name| name.to_string_lossy().into_owned(),
     );
     let mut pieces = vec![
@@ -206,7 +206,7 @@ fn badge_pieces(git: &GitStoreSnapshot) -> Vec<(f32, BadgePiece)> {
 }
 
 /// The badge label for an operation Git is in the middle of.
-fn operation_label(state: RepositoryState) -> Option<&'static str> {
+pub(crate) fn operation_label(state: RepositoryState) -> Option<&'static str> {
     match state {
         RepositoryState::MergeInProgress => Some("MERGING"),
         RepositoryState::RebaseInProgress => Some("REBASING"),
@@ -221,7 +221,7 @@ fn operation_label(state: RepositoryState) -> Option<&'static str> {
 
 /// The sync button's contents: a publish icon for a branch with no
 /// upstream, else the sync icon with the commits behind and ahead.
-fn sync_pieces(
+pub(crate) fn sync_pieces(
     repository: &RepositorySnapshot,
     plan: SyncPlan,
     color: Color,
@@ -230,7 +230,7 @@ fn sync_pieces(
         return vec![(
             0.0,
             BadgePiece::Icon {
-                id: "titlebar.git.publish",
+                id: "titlebar.publish",
                 key: "cloud-upload",
                 color,
             },
@@ -239,14 +239,14 @@ fn sync_pieces(
     let mut pieces = vec![(
         0.0,
         BadgePiece::Icon {
-            id: "titlebar.git.sync",
+            id: "titlebar.sync",
             key: "sync",
             color,
         },
     )];
     for (count, id, key) in [
-        (repository.behind, "titlebar.git.behind", "arrow-down"),
-        (repository.ahead, "titlebar.git.ahead", "arrow-up"),
+        (repository.behind, "titlebar.behind", "arrow-down"),
+        (repository.ahead, "titlebar.ahead", "arrow-up"),
     ] {
         if count > 0 {
             pieces.push((ICON_GAP, BadgePiece::Icon { id, key, color }));
@@ -263,7 +263,7 @@ fn sync_pieces(
 }
 
 /// What the sync button says it will do, for assistive technology.
-fn sync_name(plan: SyncPlan) -> &'static str {
+pub(crate) fn sync_name(plan: SyncPlan) -> &'static str {
     match plan {
         SyncPlan::Publish => "Publish branch",
         SyncPlan::Fetch => "Fetch from remote",
@@ -275,7 +275,7 @@ fn sync_name(plan: SyncPlan) -> &'static str {
 
 /// A badge laid out from `pieces`, its left edge at `left`, centered in the
 /// bar `rect`. Returns it without a click handler, and its right edge.
-fn badge_element(
+pub(crate) fn badge_element(
     rect: UiRect,
     left: f32,
     pieces: Vec<(f32, BadgePiece)>,

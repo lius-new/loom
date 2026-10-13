@@ -4,12 +4,12 @@
 use std::collections::HashSet;
 
 use crate::features::git::model::GitModel;
-use crate::ui::branch_picker::BranchPicker;
 use crate::ui::components::input::InputState;
-use crate::ui::git_confirm::GitConfirm;
-use crate::ui::git_menu::GitMenu;
-use crate::ui::git_panel::{CommitCard, GitHover};
-use crate::ui::stash_switch::StashSwitchRequest;
+use crate::ui::git::branch_picker::BranchPicker;
+use crate::ui::git::confirm::GitConfirm;
+use crate::ui::git::menu::GitMenu;
+use crate::ui::git::panel::{CommitCard, GitHover};
+use crate::ui::git::stash_switch::StashSwitchRequest;
 
 #[derive(Clone)]
 pub struct GitUiState {
@@ -66,9 +66,9 @@ impl Default for GitUiState {
             commit_signoff: false,
             expanded_repositories: HashSet::new(),
             collapsed_sections: [
-                crate::ui::git_panel::WORKTREES,
-                crate::ui::git_panel::STASHES,
-                crate::ui::git_panel::HISTORY,
+                crate::ui::git::panel::WORKTREES,
+                crate::ui::git::panel::STASHES,
+                crate::ui::git::panel::HISTORY,
             ]
             .into_iter()
             .collect(),

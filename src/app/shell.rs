@@ -1,5 +1,9 @@
 //! Application shell: composes legacy state and independently owned runtime.
 //! Transaction boundaries remain in Workspace; feature migration follows R1.
+use crate::ui::git::{
+    branch_picker, clone as clone_repository, confirm as git_confirm, menu as git_menu,
+    panel as git_panel, stash_switch,
+};
 
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
@@ -19,8 +23,7 @@ use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::editor::view as editor_view;
 use crate::ui::{
-    branch_picker, clone_repository, close_confirmation, diff_editor, git_confirm, git_menu,
-    git_panel, keymap_page, layout_map, pane_sash, settings, stash_switch, statusbar,
+    close_confirmation, diff_editor, keymap_page, layout_map, pane_sash, settings, statusbar,
     tab_context_menu, tabs, terminal, terminal_tab_context_menu, titlebar, toast, welcome,
     workspace_home,
 };
@@ -1077,7 +1080,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.child(titlebar::render(
         titlebar_rect,
         state.clone(),
-        git_store.clone(),
+        crate::ui::git::badge::attach(
+            group(titlebar_rect),
+            titlebar_rect,
+            titlebar_rect.left + 8.0,
+            super::git_view::binding(&state, &git_store),
+            git_store.clone().into(),
+        ),
     ));
 
     for (&(pane, strip), &(_, body)) in strips.iter().zip(bodies.iter()) {
@@ -1106,7 +1115,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 pane,
                 body,
                 state.clone(),
-                git_store.clone(),
+                super::git_view::binding(&state, &git_store),
                 editor_focus.clone(),
                 super::editor_view::binding(state.clone(), git_store.clone(), pane, body),
             ),
@@ -1139,8 +1148,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     if source_control_left {
         root = root.child(git_panel::render(
             source_control_rect,
-            state.clone(),
-            git_store.clone(),
+            super::git_view::binding(&state, &git_store),
+            git_store.clone().into(),
             editor_focus.clone(),
             commit_input_focus,
             commit_input_id,
@@ -1233,7 +1242,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         && s.git.ui.stash_switch.is_none()
         && !show_clone_dialog
         && s.editor.close_request.is_none()
-        && let Some(card) = git_panel::render_commit_card(vp, &s)
+        && let Some(card) = git_panel::render_commit_card(vp, &s.git)
     {
         root = root.child(card);
     }
@@ -1275,8 +1284,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             titlebar_rect.bottom,
             picker,
             s.git.ui.branch_picker_input.text(),
-            state.clone(),
-            git_store.clone(),
+            super::git_view::binding(&state, &git_store),
+            git_store.clone().into(),
             branch_picker_input_focus.clone(),
             branch_picker_input_id.clone(),
         ));
@@ -1285,8 +1294,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         root = root.child(stash_switch::render(
             vp,
             request,
-            state.clone(),
-            git_store.clone(),
+            super::git_view::binding(&state, &git_store),
+            git_store.clone().into(),
             stash_switch_id.clone(),
         ));
     }
@@ -1294,8 +1303,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         root = root.child(git_menu::render(
             vp,
             menu,
-            state.clone(),
-            git_store.clone(),
+            super::git_view::binding(&state, &git_store),
+            git_store.clone().into(),
             editor_focus.clone(),
         ));
     }
@@ -1303,15 +1312,15 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         root = root.child(git_confirm::render(
             vp,
             confirm,
-            state.clone(),
-            git_store.clone(),
+            super::git_view::binding(&state, &git_store),
+            git_store.clone().into(),
             git_confirm_id.clone(),
         ));
     }
     if show_clone_dialog {
         root = root.child(clone_repository::render(
             vp,
-            state.clone(),
+            super::git_view::binding(&state, &git_store),
             clone_input_focus,
             clone_input_id,
         ));

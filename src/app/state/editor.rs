@@ -57,7 +57,7 @@ pub struct EditorState {
     /// Whether the pointer is currently inside the visible code editor.
     pub editor_hovered: Option<PaneId>,
     /// The Git change peeked at from its gutter bar.
-    pub editor_hunk_peek: Option<crate::editor::hunk_peek::HunkPeek>,
+    pub editor_hunk_peek: Option<crate::ui::git::hunk_peek::HunkPeek>,
     /// Pointer y offset from the editor vertical thumb's top.
     pub editor_vertical_scrollbar_drag_offset: f32,
     /// True while the editor's vertical overlay scrollbar is being dragged.

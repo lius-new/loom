@@ -4,20 +4,20 @@
 use std::path::PathBuf;
 
 use lgui::core::{CursorIcon, EventPolicy, UiEventContext, UiEventKind, UiFocusHandle};
-use lgui::prelude::{Color, Element, ShadowStyle, State, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, text};
 use lgui::services::ServicesContextExt;
 
-use crate::features::explorer::{ExplorerContextTarget, ExplorerTargetKind};
 use crate::features::git::{ConflictSide, DiffRequest, DiffTarget, GitStoreSnapshot};
-use crate::state::AppState;
 use crate::theme;
-use crate::ui::git_panel::{CONFLICTS, STAGED, UNTRACKED};
+use crate::ui::git::commands::{Binding, Command, Snapshot};
+use crate::ui::git::panel::{CONFLICTS, STAGED, UNTRACKED};
+use crate::ui::git::state::GitPanelState;
 
-const MENU_W: f32 = 220.0;
-const PAD: f32 = 4.0;
-const ITEM_H: f32 = 22.0;
-const SEP_H: f32 = 5.0;
-const CHECK_W: f32 = 22.0;
+pub(crate) const MENU_W: f32 = 220.0;
+pub(crate) const PAD: f32 = 4.0;
+pub(crate) const ITEM_H: f32 = 22.0;
+pub(crate) const SEP_H: f32 = 5.0;
+pub(crate) const CHECK_W: f32 = 22.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GitMenuTarget {
@@ -46,7 +46,7 @@ pub struct GitMenu {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MenuAction {
+pub(crate) enum MenuAction {
     OpenChanges,
     OpenFile,
     Stage,
@@ -67,7 +67,7 @@ enum MenuAction {
     RevertCommit,
 }
 
-enum Entry {
+pub(crate) enum Entry {
     Item {
         label: String,
         /// `Some` for a checkable item.
@@ -77,7 +77,7 @@ enum Entry {
     Separator,
 }
 
-fn item(label: &str, action: MenuAction) -> Entry {
+pub(crate) fn item(label: &str, action: MenuAction) -> Entry {
     Entry::Item {
         label: label.into(),
         checked: None,
@@ -85,7 +85,11 @@ fn item(label: &str, action: MenuAction) -> Entry {
     }
 }
 
-fn entries(target: &GitMenuTarget, app: &AppState, git: &GitStoreSnapshot) -> Vec<Entry> {
+pub(crate) fn entries(
+    target: &GitMenuTarget,
+    app: &GitPanelState,
+    git: &GitStoreSnapshot,
+) -> Vec<Entry> {
     match target {
         GitMenuTarget::File { section, .. } => {
             let mut entries = vec![
@@ -123,12 +127,12 @@ fn entries(target: &GitMenuTarget, app: &AppState, git: &GitStoreSnapshot) -> Ve
         GitMenuTarget::Commit => vec![
             Entry::Item {
                 label: "Amend Last Commit".into(),
-                checked: Some(app.git.ui.commit_amend),
+                checked: Some(app.ui.commit_amend),
                 action: MenuAction::ToggleAmend,
             },
             Entry::Item {
                 label: "Sign Off".into(),
-                checked: Some(app.git.ui.commit_signoff),
+                checked: Some(app.ui.commit_signoff),
                 action: MenuAction::ToggleSignoff,
             },
             Entry::Separator,
@@ -146,7 +150,7 @@ fn entries(target: &GitMenuTarget, app: &AppState, git: &GitStoreSnapshot) -> Ve
                 .values()
                 .enumerate()
                 .map(|(index, repository)| Entry::Item {
-                    label: super::display_path(&repository.worktree_root),
+                    label: crate::ui::display_path(&repository.worktree_root),
                     checked: Some(Some(repository.id) == active),
                     action: MenuAction::SelectRepository(index),
                 })
@@ -155,12 +159,12 @@ fn entries(target: &GitMenuTarget, app: &AppState, git: &GitStoreSnapshot) -> Ve
     }
 }
 
-fn perform(
+pub(crate) fn perform(
     action: MenuAction,
     target: &GitMenuTarget,
     cx: &mut UiEventContext,
-    state: &State<AppState>,
-    store: &State<GitStoreSnapshot>,
+    state: &Binding,
+    store: &Snapshot,
     editor_focus: &UiFocusHandle,
 ) {
     if let GitMenuTarget::File {
@@ -173,65 +177,66 @@ fn perform(
         let paths = vec![path.clone()];
         match action {
             MenuAction::OpenChanges => {
-                crate::app::git::open_diff(
-                    state,
-                    DiffRequest {
-                        repository_root: repository.clone(),
-                        path: path.clone(),
-                        target: if *section == STAGED {
-                            DiffTarget::HeadToIndex
-                        } else {
-                            DiffTarget::IndexToWorktree
+                {
+                    state.dispatch(Command::OpenDiff {
+                        request: DiffRequest {
+                            repository_root: repository.clone(),
+                            path: path.clone(),
+                            target: if *section == STAGED {
+                                DiffTarget::HeadToIndex
+                            } else {
+                                DiffTarget::IndexToWorktree
+                            },
                         },
-                    },
-                    *section == UNTRACKED,
-                );
+                        untracked: *section == UNTRACKED,
+                    });
+                };
                 editor_focus.focus();
             }
             MenuAction::OpenFile => {
-                let mut focus = false;
-                state.update(|app| {
-                    focus = crate::app::explorer::open_tree_file(app, absolute, 2);
-                });
-                if focus {
+                if state.dispatch(Command::OpenFile { path: absolute }) {
                     editor_focus.focus();
                 }
             }
             MenuAction::Stage => {
-                crate::app::git::stage_paths(state, store, paths);
+                state.dispatch(Command::StagePaths { paths });
             }
             MenuAction::Unstage => {
-                crate::app::git::unstage_paths(state, store, paths);
+                state.dispatch(Command::UnstagePaths { paths });
             }
             MenuAction::Discard => {
                 if *section == UNTRACKED {
-                    crate::app::git::request_discard(state, store, Vec::new(), paths);
+                    state.dispatch(Command::RequestDiscard {
+                        tracked: Vec::new(),
+                        untracked: paths,
+                    });
                 } else {
-                    crate::app::git::request_discard(state, store, paths, Vec::new());
+                    state.dispatch(Command::RequestDiscard {
+                        tracked: paths,
+                        untracked: Vec::new(),
+                    });
                 }
             }
             MenuAction::CopyPath | MenuAction::CopyRelativePath => {
-                crate::app::explorer::copy_path(
-                    state,
-                    cx.application().clipboard().as_ref(),
-                    &absolute,
-                    action == MenuAction::CopyRelativePath,
-                );
-            }
-            MenuAction::Reveal => crate::app::explorer::reveal_item(
-                state,
-                &ExplorerContextTarget {
+                state.dispatch(Command::CopyPath {
                     path: absolute,
-                    kind: ExplorerTargetKind::File,
-                },
-            ),
+                    relative: action == MenuAction::CopyRelativePath,
+                    clipboard: cx.application().clipboard(),
+                });
+            }
+            MenuAction::Reveal => {
+                state.dispatch(Command::Reveal { path: absolute });
+            }
             MenuAction::KeepCurrent | MenuAction::TakeIncoming => {
                 let side = if action == MenuAction::KeepCurrent {
                     ConflictSide::Ours
                 } else {
                     ConflictSide::Theirs
                 };
-                crate::app::git::resolve_conflict(state, store, path.clone(), side);
+                state.dispatch(Command::ResolveConflict {
+                    path: path.clone(),
+                    side,
+                });
             }
             MenuAction::ToggleAmend
             | MenuAction::ToggleSignoff
@@ -246,28 +251,35 @@ fn perform(
     if let GitMenuTarget::HistoryCommit { repository, oid } = target {
         match action {
             MenuAction::OpenCommitChanges => {
-                crate::app::git::open_commit_changes(state, repository.clone(), oid.clone(), None);
+                {
+                    state.dispatch(Command::OpenCommitChanges {
+                        root: repository.clone(),
+                        oid: oid.clone(),
+                        focus: None,
+                    });
+                };
                 editor_focus.focus();
             }
             MenuAction::RevertCommit => {
-                crate::app::git::revert_commit(state, store, repository, oid.clone());
+                state.dispatch(Command::RevertCommit {
+                    root: (repository).to_path_buf(),
+                    oid: oid.clone(),
+                });
             }
             _ => {}
         }
         return;
     }
     match action {
-        MenuAction::ToggleAmend => {
-            state.update(|app| app.git.ui.commit_amend = !app.git.ui.commit_amend)
-        }
+        MenuAction::ToggleAmend => state.update(|app| app.ui.commit_amend = !app.ui.commit_amend),
         MenuAction::ToggleSignoff => {
-            state.update(|app| app.git.ui.commit_signoff = !app.git.ui.commit_signoff)
+            state.update(|app| app.ui.commit_signoff = !app.ui.commit_signoff)
         }
         MenuAction::UndoCommit => {
-            crate::app::git::undo_last_commit(state, store);
+            state.dispatch(Command::UndoLastCommit);
         }
         MenuAction::StashAll => {
-            crate::app::git::stash_all(state, store);
+            state.dispatch(Command::StashAll);
         }
         MenuAction::SelectRepository(index) => {
             let root = store
@@ -277,22 +289,24 @@ fn perform(
                 .nth(index)
                 .map(|repository| repository.worktree_root.clone());
             if let Some(root) = root {
-                crate::app::git::select_repository(state, store, root);
+                {
+                    state.dispatch(Command::SelectRepository { root });
+                };
             }
         }
         _ => {}
     }
 }
 
-fn measure(s: &str) -> f32 {
-    super::tabs::measure(s, theme::UI_SIZE, 400)
+pub(crate) fn measure(s: &str) -> f32 {
+    crate::ui::tabs::measure(s, theme::UI_SIZE, 400)
 }
 
 pub fn render(
     viewport: UiRect,
     menu: &GitMenu,
-    state: State<AppState>,
-    store: State<GitStoreSnapshot>,
+    state: Binding,
+    store: Snapshot,
     editor_focus: UiFocusHandle,
 ) -> Element {
     let app = state.get();
@@ -342,7 +356,7 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .on_pointer_down_with_button(move |_cx, pointer, _button| {
             if !card.contains(pointer.point) {
-                close_state.update(|app| app.git.ui.menu = None);
+                close_state.update(|app| app.ui.menu = None);
             }
         });
     let clear_state = state.clone();
@@ -356,7 +370,7 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
             clear_state.try_update(|app| {
-                let Some(menu) = app.git.ui.menu.as_mut() else {
+                let Some(menu) = app.ui.menu.as_mut() else {
                     return false;
                 };
                 menu.hover.take().is_some()
@@ -400,7 +414,7 @@ pub fn render(
         .cursor(CursorIcon::Pointer)
         .on_event(UiEventKind::PointerMove, move |_cx, _payload| {
             hover_state.try_update(move |app| {
-                let Some(menu) = app.git.ui.menu.as_mut() else {
+                let Some(menu) = app.ui.menu.as_mut() else {
                     return false;
                 };
                 let changed = menu.hover != Some(idx);
@@ -409,7 +423,7 @@ pub fn render(
             });
         })
         .on_click(move |cx: &mut UiEventContext| {
-            click_state.update(|app| app.git.ui.menu = None);
+            click_state.update(|app| app.ui.menu = None);
             perform(
                 action,
                 &target,
@@ -425,7 +439,7 @@ pub fn render(
             theme::c().text_soft
         };
         if checked == Some(true) {
-            row = row.child(super::drawer::drawer_icon(
+            row = row.child(crate::ui::drawer::drawer_icon(
                 "git-menu.check",
                 "check",
                 UiRect::new(
@@ -452,89 +466,4 @@ pub fn render(
         index += 1;
     }
     overlay.child(surface)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ui::git_panel::UNSTAGED;
-
-    fn labels(target: &GitMenuTarget, app: &AppState) -> Vec<String> {
-        entries(target, app, &GitStoreSnapshot::default())
-            .into_iter()
-            .filter_map(|entry| match entry {
-                Entry::Item { label, .. } => Some(label),
-                Entry::Separator => None,
-            })
-            .collect()
-    }
-
-    fn file(section: u8) -> GitMenuTarget {
-        GitMenuTarget::File {
-            repository: PathBuf::from("repo"),
-            path: PathBuf::from("src/main.rs"),
-            section,
-        }
-    }
-
-    #[test]
-    fn file_menus_offer_the_section_actions() {
-        let app = AppState::new();
-        assert!(
-            labels(&file(STAGED), &app)
-                .iter()
-                .any(|label| label == "Unstage Changes")
-        );
-        assert!(
-            !labels(&file(STAGED), &app)
-                .iter()
-                .any(|label| label == "Discard Changes")
-        );
-        let unstaged = labels(&file(UNSTAGED), &app);
-        assert!(
-            unstaged.iter().any(|label| label == "Stage Changes")
-                && unstaged.iter().any(|label| label == "Discard Changes")
-        );
-        assert!(
-            labels(&file(UNTRACKED), &app)
-                .iter()
-                .any(|label| label == "Delete File")
-        );
-        let conflicts = labels(&file(CONFLICTS), &app);
-        assert!(
-            conflicts.iter().any(|label| label == "Keep Current (Ours)")
-                && conflicts.iter().any(|label| label == "Mark as Resolved")
-        );
-    }
-
-    #[test]
-    fn history_commit_menu_offers_open_and_revert() {
-        let target = GitMenuTarget::HistoryCommit {
-            repository: PathBuf::from("repo"),
-            oid: "abc".into(),
-        };
-        assert_eq!(
-            labels(&target, &AppState::new()),
-            ["Open Commit Changes", "Revert Commit"]
-        );
-    }
-
-    #[test]
-    fn commit_menu_reflects_the_options() {
-        let mut app = AppState::new();
-        app.git.ui.commit_amend = true;
-        let entries = entries(&GitMenuTarget::Commit, &app, &GitStoreSnapshot::default());
-        let checked = entries
-            .iter()
-            .filter_map(|entry| match entry {
-                Entry::Item {
-                    label,
-                    checked: Some(checked),
-                    ..
-                } => Some((label.as_str(), *checked)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(checked, [("Amend Last Commit", true), ("Sign Off", false)]);
-    }
 }

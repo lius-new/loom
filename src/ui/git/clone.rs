@@ -4,20 +4,18 @@ use lgui::core::{
     CursorIcon, EventPolicy, KeyState, LogicalKey, NamedKey, SemanticRole, Semantics, UiElement,
     UiFocusHandle, UiId,
 };
-use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 
-use crate::input::action::Action;
-use crate::state::AppState;
 use crate::theme;
-use crate::workspace_actions;
+use crate::ui::git::commands::{Binding, Command};
 
-const CARD_W: f32 = 480.0;
-const CARD_H: f32 = 188.0;
-const INPUT_CHAR_W: f32 = 7.2;
+pub(crate) const CARD_W: f32 = 480.0;
+pub(crate) const CARD_H: f32 = 188.0;
+pub(crate) const INPUT_CHAR_W: f32 = 7.2;
 
 pub fn render(
     viewport: UiRect,
-    state: State<AppState>,
+    state: Binding,
     input_focus: UiFocusHandle,
     input_id: UiId,
 ) -> Element {
@@ -75,21 +73,21 @@ pub fn render(
             VisualStyle::default().radius(4.0),
         )
         .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(if snapshot.git.model.cloning() {
+        .cursor(if snapshot.model.cloning() {
             CursorIcon::NotAllowed
         } else {
             CursorIcon::Pointer
         })
         .on_click(move || {
             close_state.update(|app| {
-                if !app.git.model.cloning() {
-                    app.git.ui.clone_visible = false;
-                    app.git.ui.clone_input_focused = false;
-                    app.git.ui.clone_error = None;
+                if !app.model.cloning() {
+                    app.ui.clone_visible = false;
+                    app.ui.clone_input_focused = false;
+                    app.ui.clone_error = None;
                 }
             });
         })
-        .child(super::drawer::drawer_icon(
+        .child(crate::ui::drawer::drawer_icon(
             "clone-dialog.close",
             "close",
             theme::icon_rect(UiRect::new(
@@ -103,27 +101,27 @@ pub fn render(
     );
 
     let available_chars = ((input_rect.width() - 22.0) / INPUT_CHAR_W).floor() as usize;
-    let display_value = visible_tail(&snapshot.git.ui.clone_url, available_chars);
+    let display_value = visible_tail(&snapshot.ui.clone_url, available_chars);
     let display_len = display_value.chars().count();
-    let placeholder = snapshot.git.ui.clone_url.is_empty();
+    let placeholder = snapshot.ui.clone_url.is_empty();
     let label = if placeholder {
         "https://github.com/owner/repository.git".to_owned()
     } else {
         display_value
     };
-    let input_style = if snapshot.git.ui.clone_error.is_some() {
+    let input_style = if snapshot.ui.clone_error.is_some() {
         theme::c().error
-    } else if snapshot.git.ui.clone_input_focused {
+    } else if snapshot.ui.clone_input_focused {
         theme::c().accent
     } else {
         theme::c().border
     };
     let mut semantics = Semantics::new(SemanticRole::TextInput)
         .name("Repository URL")
-        .value(snapshot.git.ui.clone_url.clone());
-    semantics.state.disabled = snapshot.git.model.cloning();
-    semantics.state.invalid = snapshot.git.ui.clone_error.is_some();
-    semantics.text.character_count = Some(snapshot.git.ui.clone_url.chars().count());
+        .value(snapshot.ui.clone_url.clone());
+    semantics.state.disabled = snapshot.model.cloning();
+    semantics.state.invalid = snapshot.ui.clone_error.is_some();
+    semantics.text.character_count = Some(snapshot.ui.clone_url.chars().count());
 
     let field_state = state.clone();
     let key_state = state.clone();
@@ -150,7 +148,7 @@ pub fn render(
     })
     .event_policy(EventPolicy::INTERACTIVE)
     .semantics(semantics)
-    .cursor(if snapshot.git.model.cloning() {
+    .cursor(if snapshot.model.cloning() {
         CursorIcon::NotAllowed
     } else {
         CursorIcon::Text
@@ -160,9 +158,9 @@ pub fn render(
         if !input.is_empty() {
             let input = input.replace(['\r', '\n'], "");
             field_state.update(move |app| {
-                if !app.git.model.cloning() {
-                    app.git.ui.clone_url.push_str(&input);
-                    app.git.ui.clone_error = None;
+                if !app.model.cloning() {
+                    app.ui.clone_url.push_str(&input);
+                    app.ui.clone_error = None;
                 }
             });
             cx.stop_propagation();
@@ -171,9 +169,9 @@ pub fn render(
     .on_change(move |_cx, value| {
         let value = value.unwrap_or_default().replace(['\r', '\n'], "");
         change_state.update(move |app| {
-            if !app.git.model.cloning() {
-                app.git.ui.clone_url = value;
-                app.git.ui.clone_error = None;
+            if !app.model.cloning() {
+                app.ui.clone_url = value;
+                app.ui.clone_error = None;
             }
         });
     })
@@ -184,17 +182,17 @@ pub fn render(
         // Enter and Esc arrive as `dialog::` actions (see `perform`).
         if event.key == LogicalKey::Named(NamedKey::Backspace) {
             key_state.update(|app| {
-                if !app.git.model.cloning() {
-                    app.git.ui.clone_url.pop();
-                    app.git.ui.clone_error = None;
+                if !app.model.cloning() {
+                    app.ui.clone_url.pop();
+                    app.ui.clone_error = None;
                 }
             });
             cx.prevent_default();
             cx.stop_propagation();
         }
     })
-    .on_focus(move |_cx| focus_state.update(|app| app.git.ui.clone_input_focused = true))
-    .on_blur(move |_cx| blur_state.update(|app| app.git.ui.clone_input_focused = false))
+    .on_focus(move |_cx| focus_state.update(|app| app.ui.clone_input_focused = true))
+    .on_blur(move |_cx| blur_state.update(|app| app.ui.clone_input_focused = false))
     .child(panel(
         UiRect::new(
             input_rect.left,
@@ -250,11 +248,11 @@ pub fn render(
     ));
     root = root.child(input_element);
 
-    if snapshot.git.ui.clone_input_focused && !snapshot.git.model.cloning() && !placeholder {
+    if snapshot.ui.clone_input_focused && !snapshot.model.cloning() && !placeholder {
         root = root.child(panel(ime_rect, VisualStyle::filled(theme::c().text)));
     }
 
-    if let Some(error) = snapshot.git.ui.clone_error.as_ref() {
+    if let Some(error) = snapshot.ui.clone_error.as_ref() {
         root = root.child(text(
             UiRect::new(
                 card.left + 20.0,
@@ -283,17 +281,17 @@ pub fn render(
     root = root.child(
         theme::bordered(cancel_rect, theme::c().sidebar, theme::c().border, 4.0, 1.0)
             .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(if snapshot.git.model.cloning() {
+            .cursor(if snapshot.model.cloning() {
                 CursorIcon::NotAllowed
             } else {
                 CursorIcon::Pointer
             })
             .on_click(move || {
                 cancel_state.update(|app| {
-                    if !app.git.model.cloning() {
-                        app.git.ui.clone_visible = false;
-                        app.git.ui.clone_input_focused = false;
-                        app.git.ui.clone_error = None;
+                    if !app.model.cloning() {
+                        app.ui.clone_visible = false;
+                        app.ui.clone_input_focused = false;
+                        app.ui.clone_error = None;
                     }
                 });
             })
@@ -304,7 +302,7 @@ pub fn render(
             )),
     );
 
-    let can_clone = !snapshot.git.model.cloning() && !snapshot.git.ui.clone_url.trim().is_empty();
+    let can_clone = !snapshot.model.cloning() && !snapshot.ui.clone_url.trim().is_empty();
     let action_state = state;
     root.child(
         panel(
@@ -324,12 +322,12 @@ pub fn render(
         })
         .on_click(move || {
             if can_clone {
-                workspace_actions::clone_repository(&action_state);
+                action_state.dispatch(Command::CloneRepository);
             }
         })
         .child(text(
             clone_rect,
-            if snapshot.git.model.cloning() {
+            if snapshot.model.cloning() {
                 "Cloning..."
             } else {
                 "Clone"
@@ -339,46 +337,16 @@ pub fn render(
     )
 }
 
-/// Perform a `dialog::` action from the keymap: Confirm starts the clone,
-/// Cancel closes the dialog unless a clone is already running.
-pub fn perform(state: &State<AppState>, action: Action) -> bool {
-    match action {
-        Action::DialogConfirm => {
-            workspace_actions::clone_repository(state);
-        }
-        Action::DialogCancel => state.update(|app| {
-            if !app.git.model.cloning() {
-                app.git.ui.clone_visible = false;
-                app.git.ui.clone_input_focused = false;
-                app.git.ui.clone_error = None;
-            }
-        }),
-        _ => return false,
-    }
-    true
-}
-
-fn centered(mut style: lgui::prelude::TextStyle) -> lgui::prelude::TextStyle {
+pub(crate) fn centered(mut style: lgui::prelude::TextStyle) -> lgui::prelude::TextStyle {
     style.align = lgui::prelude::TextAlign::Center;
     style
 }
 
-fn visible_tail(value: &str, max_chars: usize) -> String {
+pub(crate) fn visible_tail(value: &str, max_chars: usize) -> String {
     let count = value.chars().count();
     if count <= max_chars {
         return value.to_owned();
     }
     let keep = max_chars.saturating_sub(1);
     format!("…{}", value.chars().skip(count - keep).collect::<String>())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn long_repository_url_keeps_its_editing_tail_visible() {
-        assert_eq!(visible_tail("abcdefgh", 5), "…efgh");
-        assert_eq!(visible_tail("repo", 8), "repo");
-    }
 }

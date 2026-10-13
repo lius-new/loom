@@ -21,7 +21,6 @@ mod app;
 mod infrastructure;
 use infrastructure::ui_dispatch as background_ui;
 mod config_watcher;
-mod editor;
 mod features;
 mod file_icons;
 mod file_loading;

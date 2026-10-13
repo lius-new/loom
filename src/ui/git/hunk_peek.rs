@@ -4,19 +4,18 @@
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
-use std::thread;
 
 use lgui::core::{
     CursorIcon, EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiId, clip, precompiled,
 };
-use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, TextAlign, UiRect, VisualStyle, panel, text};
 
-use crate::app::git::BlockAction;
+use super::commands::{Binding, Command};
+use crate::domain::pane_layout::PaneId;
+use crate::features::git::actions::BlockAction;
 use crate::features::git::diff_document::{ChangeBlock, DiffDocument, DiffRow, DiffRowKind};
-use crate::features::git::{DiffTarget, GitStoreSnapshot, LineChange};
+use crate::features::git::{DiffTarget, LineChange};
 use crate::fonts;
-use crate::model::pane_layout::PaneId;
-use crate::state::AppState;
 use crate::theme;
 
 const HEADER_H: f32 = 28.0;
@@ -51,7 +50,7 @@ pub struct Hunk {
 
 /// The 1-based file lines `block` covers, as the gutter marks them: a
 /// removal is marked on the line after it.
-fn block_lines(block: &ChangeBlock) -> RangeInclusive<usize> {
+pub(crate) fn block_lines(block: &ChangeBlock) -> RangeInclusive<usize> {
     if block.new_lines == 0 {
         let line = block.new_start + 1;
         line..=line
@@ -61,7 +60,7 @@ fn block_lines(block: &ChangeBlock) -> RangeInclusive<usize> {
 }
 
 /// The change of `document` that covers file line `line`, with its rows.
-fn hunk_at(document: &DiffDocument, line: usize) -> Option<(ChangeBlock, Vec<DiffRow>)> {
+pub(crate) fn hunk_at(document: &DiffDocument, line: usize) -> Option<(ChangeBlock, Vec<DiffRow>)> {
     let starts = document.change_starts(false);
     document
         .blocks
@@ -76,106 +75,6 @@ fn hunk_at(document: &DiffDocument, line: usize) -> Option<(ChangeBlock, Vec<Dif
                 .collect();
             (*block, rows)
         })
-}
-
-/// Read the unstaged change at `line`, or else the staged one.
-fn load(
-    root: &Path,
-    relative: &Path,
-    line: usize,
-) -> crate::features::git::GitResult<Option<Hunk>> {
-    let service = crate::infrastructure::git::service()?;
-    for target in [DiffTarget::IndexToWorktree, DiffTarget::HeadToIndex] {
-        let diff = service.backend().parsed_full_diff(
-            root,
-            target,
-            std::slice::from_ref(&relative.to_path_buf()),
-        )?;
-        let document =
-            DiffDocument::from_unified(root.to_path_buf(), relative.to_path_buf(), target, diff);
-        if let Some((block, rows)) = hunk_at(&document, line) {
-            return Ok(Some(Hunk {
-                root: root.to_path_buf(),
-                relative: relative.to_path_buf(),
-                target,
-                block,
-                rows,
-                lines: block_lines(&block),
-            }));
-        }
-    }
-    Ok(None)
-}
-
-/// Open the peek of the change at `line` in `pane`, or close it when it
-/// already shows that change.
-pub fn toggle(
-    state: &State<AppState>,
-    pane: PaneId,
-    path: PathBuf,
-    root: PathBuf,
-    relative: PathBuf,
-    line: usize,
-) {
-    let mut open = true;
-    state.update(|app| {
-        if let Some(peek) = &app.editor.editor_hunk_peek
-            && peek.pane == pane
-            && peek.path == path
-            && (peek.line == line
-                || matches!(&peek.content, Some(Ok(Some(hunk))) if hunk.lines.contains(&line)))
-        {
-            app.editor.editor_hunk_peek = None;
-            open = false;
-        }
-    });
-    if open {
-        open_at(state, pane, path, root, relative, line);
-    }
-}
-
-fn open_at(
-    state: &State<AppState>,
-    pane: PaneId,
-    path: PathBuf,
-    root: PathBuf,
-    relative: PathBuf,
-    line: usize,
-) {
-    let Some(application) = state
-        .get()
-        .runtime()
-        .and_then(|runtime| runtime.application())
-    else {
-        return;
-    };
-    let peek = HunkPeek {
-        pane,
-        path,
-        line,
-        content: None,
-    };
-    let pending = peek.clone();
-    state.update(move |app| app.editor.editor_hunk_peek = Some(pending));
-    let worker_state = state.clone();
-    let _ = thread::Builder::new()
-        .name("loom-git-hunk-peek".into())
-        .spawn(move || {
-            let result = load(&root, &relative, line).map_err(|error| error.user_message());
-            application.post(move || {
-                worker_state.update(move |app| {
-                    // Keep only the answer to the peek still open.
-                    if let Some(current) = app.editor.editor_hunk_peek.as_mut()
-                        && current.pane == peek.pane
-                        && current.path == peek.path
-                        && current.line == peek.line
-                        && current.content.is_none()
-                    {
-                        current.content = Some(result);
-                    }
-                });
-            });
-        });
 }
 
 /// Runs of adjacent changed lines, in file order, for "change i of n" and
@@ -207,12 +106,7 @@ pub struct PeekContext<'a> {
     pub changes: Option<&'a BTreeMap<usize, LineChange>>,
 }
 
-pub fn render(
-    peek: &HunkPeek,
-    cx: PeekContext<'_>,
-    state: &State<AppState>,
-    store: &State<GitStoreSnapshot>,
-) -> Element {
+pub fn render(peek: &HunkPeek, cx: PeekContext<'_>, state: &Binding) -> Element {
     let pane = cx.pane;
     let runs = cx.changes.map(change_runs).unwrap_or_default();
     let run_index = runs.iter().position(|run| run.contains(&peek.line));
@@ -293,7 +187,7 @@ pub fn render(
 
     let close_state = state.clone();
     let close = icon_button("close", "Close").on_click(move || {
-        close_state.update(|app| app.editor.editor_hunk_peek = None);
+        close_state.dispatch(Command::ClosePeek);
     });
     let mut header_buttons = vec![close];
     for (icon, name, step) in [
@@ -311,20 +205,16 @@ pub fn render(
         let (max_y, viewport_h) = (cx.max_y, cx.viewport_h);
         header_buttons.push(icon_button(icon, name).on_click(move || {
             let Some(line) = target else { return };
-            nav_state.update(|app| {
-                let (x, _) = app.workspace.scroll(pane);
-                let y = ((line - 1) as f32 * fonts::editor().line_h - viewport_h / 3.0)
-                    .clamp(0.0, max_y);
-                app.workspace.set_scroll(pane, x, y);
-            });
-            open_at(
-                &nav_state,
+            let y =
+                ((line - 1) as f32 * fonts::editor().line_h - viewport_h / 3.0).clamp(0.0, max_y);
+            nav_state.dispatch(Command::NavigatePeek {
                 pane,
-                path.clone(),
-                root_path.clone(),
-                relative.clone(),
+                path: path.clone(),
+                root: root_path.clone(),
+                relative: relative.clone(),
                 line,
-            );
+                y,
+            });
         }));
     }
     for button in header_buttons {
@@ -347,7 +237,6 @@ pub fn render(
             let mut style = theme::mono(theme::c().text, theme::SMALL);
             style.align = TextAlign::Center;
             let action_state = state.clone();
-            let action_store = store.clone();
             let hunk = hunk.clone();
             root = root.child(
                 panel(
@@ -360,24 +249,21 @@ pub fn render(
                 .semantics(Semantics::new(SemanticRole::Button).name(label))
                 .child(text(rect, label, style))
                 .on_click(move || {
-                    action_state.update(|app| app.editor.editor_hunk_peek = None);
+                    action_state.dispatch(Command::ClosePeek);
                     if action == BlockAction::Discard {
-                        crate::app::git::request_discard_block(
-                            &action_state,
-                            hunk.root.clone(),
-                            hunk.relative.clone(),
-                            hunk.block,
-                        );
+                        action_state.dispatch(Command::RequestDiscardBlock {
+                            root: hunk.root.clone(),
+                            path: hunk.relative.clone(),
+                            block: hunk.block,
+                        });
                     } else {
-                        crate::app::git::apply_block(
-                            &action_state,
-                            &action_store,
-                            &hunk.root,
-                            hunk.relative.clone(),
-                            hunk.target,
-                            hunk.block,
+                        action_state.dispatch(Command::ApplyBlock {
+                            root: hunk.root.clone(),
+                            path: hunk.relative.clone(),
+                            target: hunk.target,
+                            block: hunk.block,
                             action,
-                        );
+                        });
                     }
                 }),
             );
@@ -454,6 +340,101 @@ pub fn render(
 mod tests {
     use super::*;
     use crate::features::git::diff::parse_unified;
+
+    #[test]
+    fn stage_click_emits_a_hunk_command_without_an_application_root() {
+        use crate::ui::git::state::GitPanelState;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{
+            InputEvent, Point, PointerButton, PointerData, UiScale, dispatch_runtime_output,
+        };
+        use lgui::session::UiSession;
+        use std::sync::{Arc, Mutex};
+
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let output = recorded.clone();
+        let block = ChangeBlock {
+            old_start: 1,
+            old_lines: 1,
+            new_start: 1,
+            new_lines: 1,
+        };
+        let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
+        let view: AppView = Arc::new(move |cx| {
+            let panel = cx.state(GitPanelState::default());
+            let output = output.clone();
+            let binding = Binding::new(panel.into(), Default::default, move |command| {
+                output.lock().unwrap().push(command);
+                true
+            });
+            let peek = HunkPeek {
+                pane: PaneId::new(1),
+                path: "repo/f.rs".into(),
+                line: 1,
+                content: Some(Ok(Some(Hunk {
+                    root: "repo".into(),
+                    relative: "f.rs".into(),
+                    target: DiffTarget::IndexToWorktree,
+                    block,
+                    rows: Vec::new(),
+                    lines: 1..=1,
+                }))),
+            };
+            render(
+                &peek,
+                PeekContext {
+                    pane: peek.pane,
+                    rect: viewport,
+                    code_left: 40.0,
+                    code_right: 560.0,
+                    scroll_y: 0.0,
+                    max_y: 0.0,
+                    viewport_h: 300.0,
+                    path: &peek.path,
+                    root: Path::new("repo"),
+                    relative: Path::new("f.rs"),
+                    changes: None,
+                },
+                &binding,
+            )
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let rect = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| node.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some("Stage"))
+            .unwrap()
+            .hit_rect;
+        let point = Point::new(
+            (rect.left + rect.right) / 2.0,
+            (rect.top + rect.bottom) / 2.0,
+        );
+        let context = ApplicationContext::empty(Default::default());
+        for event in [
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+            InputEvent::PointerUp {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+        ] {
+            dispatch_runtime_output(
+                session.handle_input(event),
+                &context,
+                &lgui::window::WindowId::new("git-peek-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+        }
+        let commands = recorded.lock().unwrap();
+        assert!(
+            matches!(commands.as_slice(),[Command::ClosePeek,Command::ApplyBlock{root,path,target:DiffTarget::IndexToWorktree,block:actual,action:BlockAction::Stage}] if root==Path::new("repo") && path==Path::new("f.rs") && *actual==block)
+        );
+    }
 
     #[test]
     fn finds_the_change_covering_a_gutter_line_with_its_rows() {

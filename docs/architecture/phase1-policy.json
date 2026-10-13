@@ -8,20 +8,13 @@
     "svg_icons": "app/bootstrap (cfg(test) only)"
   },
   "root_state_adapters": [
-    "src/ui/branch_picker.rs",
-    "src/ui/clone_repository.rs",
     "src/ui/close_confirmation.rs",
     "src/ui/diff_editor.rs",
-    "src/ui/git_badge.rs",
-    "src/ui/git_confirm.rs",
-    "src/ui/git_menu.rs",
-    "src/ui/git_panel.rs",
     "src/ui/keymap_page.rs",
     "src/ui/layout_map.rs",
     "src/ui/mod.rs",
     "src/ui/pane_sash.rs",
     "src/ui/settings.rs",
-    "src/ui/stash_switch.rs",
     "src/ui/statusbar.rs",
     "src/ui/tab_context_menu.rs",
     "src/ui/tabs.rs",
@@ -39,12 +32,12 @@
     "src/app/git_tasks.rs",
     "src/app/runtime.rs",
     "src/app/search.rs",
-    "src/editor/hunk_peek.rs",
     "src/file_loading.rs",
     "src/ui/components/loading_indicator.rs",
     "src/ui/editor/caret.rs",
     "src/ui/terminal.rs",
-    "src/ui/terminal_settings.rs"
+    "src/ui/terminal_settings.rs",
+    "src/app/git_peek.rs"
   ],
   "state_ownership": {
     "application_layout": {
@@ -218,22 +211,6 @@
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/editor/hunk_peek.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::features",
-        "crate::fonts",
-        "crate::infrastructure",
-        "crate::model",
-        "crate::state",
-        "crate::theme",
-        "crate::ui",
-        "lgui",
-        "std::thread"
-      ],
-      "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 文本视图仅通过应用提供的覆盖层入口访问；Git diff 读取、异步加载与操作迁移属于 R6。 R6.1 Git 类型、解析、diff、快照与 DiffDocument 迁入 features/git，改引用 crate::features。 R6.2 Git 进程适配迁入 infrastructure/git，改引用 crate::infrastructure。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/features/keymap/action.rs": {
       "dependencies": [
@@ -462,25 +439,6 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/ui/branch_picker.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::state",
-        "crate::svg_icons",
-        "image"
-      ],
-      "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
-    },
-    "src/ui/clone_repository.rs": {
-      "dependencies": [
-        "crate::input",
-        "crate::state",
-        "crate::workspace_actions"
-      ],
-      "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/ui/close_confirmation.rs": {
       "dependencies": [
         "crate::input",
@@ -507,46 +465,7 @@
         "std::fs"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 的新增应用依赖仅在旧 UI 集成测试中构造窄 scrollbar binding。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
-    },
-    "src/ui/git_badge.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::state"
-      ],
-      "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
-    },
-    "src/ui/git_confirm.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::input",
-        "crate::state",
-        "crate::svg_icons",
-        "image"
-      ],
-      "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
-    },
-    "src/ui/git_menu.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::features",
-        "crate::state"
-      ],
-      "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；抽屉文件打开随 R6 Git 迁移。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
-    },
-    "src/ui/git_panel.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::model",
-        "crate::state",
-        "crate::svg_icons",
-        "image"
-      ],
-      "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；抽屉文件打开随 R6 Git 迁移。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 的新增应用依赖仅在旧 UI 集成测试中构造窄 scrollbar binding。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。 R6 Git 操作改为语义命令；只读文档布局与窗格/分栏交互仍为 R8 适配。"
     },
     "src/ui/keymap_page.rs": {
       "dependencies": [
@@ -591,15 +510,6 @@
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 把原 Vim 调用转到应用命令入口。"
-    },
-    "src/ui/stash_switch.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::input",
-        "crate::state"
-      ],
-      "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/ui/statusbar.rs": {
       "dependencies": [
@@ -704,18 +614,16 @@
     "src/workspace_actions.rs": {
       "dependencies": [
         "crate::app",
-        "crate::infrastructure",
         "crate::input",
         "crate::model",
         "crate::project_settings",
         "crate::state",
         "lgui",
         "std::fs",
-        "std::process",
-        "std::thread"
+        "std::process"
       ],
-      "remove_in": "R6 R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R4 会话保存/恢复转交 app/workspace_session；Explorer 与文件命令保留本文件各自阶段的登记。 R5.1 命名校验与根目录规则转交 features/explorer，回收站/剪贴板/显示位置转交 infrastructure/explorer_filesystem；其余 Explorer 命令在 R5.3 迁入 app/explorer。 R5.3 Explorer 命令、抽屉文件打开与文件夹管理已迁入 app/explorer；本文件只剩关闭/保存、会话包装、打开文件对话框与克隆（R6）。 R5 收尾：Explorer 部分已全部迁出；克隆随 R6，关闭/保存与会话包装随 R8。 R6.2 Git 进程适配迁入 infrastructure/git，改引用 crate::infrastructure。"
+      "remove_in": "R8",
+      "reason": "R8 文件关闭/保存、会话包装与打开文件对话框适配。R6 克隆事务和 URL 规则已分别迁入 app/git_clone 与 features/git/clone_url。"
     }
   },
   "phase2": {
@@ -744,9 +652,8 @@
       "migrated_in": "R3"
     },
     "editor_hunk_peek": {
-      "owner": "app/state/editor (Git overlay adapter)",
-      "migrated_in": "R3",
-      "remove_in": "R6"
+      "owner": "app/state/editor: inline Git peek interaction, rendered by ui/git/hunk_peek and loaded by app/git_peek",
+      "migrated_in": "R6.6"
     },
     "editor_vertical_scrollbar_drag_offset": {
       "owner": "app/state/editor",
@@ -1161,5 +1068,29 @@
       "migrated_in": "R6.3",
       "from": "clone_input_focused"
     }
+  },
+  "phase6": {
+    "status": "completed locally; native and cross-platform acceptance pending",
+    "feature": "features/git",
+    "infrastructure": "infrastructure/git",
+    "views": "ui/git",
+    "composition": [
+      "app/git",
+      "app/git_tasks",
+      "app/git_poll",
+      "app/git_view",
+      "app/git_peek",
+      "app/git_clone"
+    ],
+    "retained_composition": [
+      "GitPanelState root field",
+      "SidebarChrome",
+      "editor diff_split and editor_hunk_peek"
+    ],
+    "no_migration_exceptions": [
+      "features/git",
+      "infrastructure/git",
+      "ui/git"
+    ]
   }
 }

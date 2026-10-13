@@ -28,9 +28,9 @@ use crate::input::keystroke::Keystroke;
 use crate::settings_persistence::{self, UserSettings};
 use crate::state::AppState;
 use crate::terminal_session::{TerminalController, TerminalTabs};
+use crate::ui::close_confirmation;
 use crate::ui::editor::view as editor_view;
 use crate::ui::terminal::{self, ClipboardShortcut};
-use crate::ui::{branch_picker, clone_repository, close_confirmation, git_confirm, stash_switch};
 use crate::workspace_actions;
 
 /// Everything actions need to act on, captured once per frame.
@@ -348,16 +348,16 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
                     action,
                 )
             } else if clone_dialog {
-                clone_repository::perform(&env.state, action)
+                crate::app::git_view::perform_clone(&env.state, action)
             } else if stash_switch {
-                stash_switch::perform(&env.state, &env.git_store, action)
+                crate::app::git_view::perform_stash_switch(&env.state, &env.git_store, action)
             } else if git_confirm {
-                git_confirm::perform(&env.state, &env.git_store, action)
+                crate::app::git_view::perform_confirm(&env.state, &env.git_store, action)
             } else {
                 false
             }
         }
-        Action::MenuConfirm => branch_picker::confirm(&env.state, &env.git_store),
+        Action::MenuConfirm => crate::app::git_view::confirm_branch(&env.state, &env.git_store),
         Action::GitCommit => {
             crate::app::git::commit(&env.state, &env.git_store);
             true

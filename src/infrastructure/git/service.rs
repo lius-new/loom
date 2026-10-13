@@ -573,6 +573,26 @@ mod tests {
     }
 
     #[test]
+    fn pausing_preserves_an_in_flight_scan_but_removing_its_pin_invalidates_it() {
+        let control = PollControl::default();
+        let target = PollTarget {
+            pinned_repository: Some("repo".into()),
+            ..Default::default()
+        };
+        control.set_target(target.clone());
+        let (revision, scanned) = control.begin_scan();
+        assert_eq!(scanned, target);
+        control.set_paused(true);
+        // Existing pause policy stops interval scans; it does not cancel work
+        // already running. Explicit refresh/retarget still wakes a paused poller.
+        assert!(control.is_current(revision));
+        control.set_target(PollTarget::default());
+        assert!(!control.is_current(revision));
+        assert!(control.wait(Duration::from_secs(60), &AtomicBool::new(false)));
+        assert_eq!(control.begin_scan().1.pinned_repository, None);
+    }
+
+    #[test]
     fn stopping_ends_the_wait() {
         let control = PollControl::default();
         let stopped = Arc::new(AtomicBool::new(false));
