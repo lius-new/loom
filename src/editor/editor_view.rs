@@ -594,7 +594,10 @@ pub fn render(
                 rect,
                 metrics,
                 has_horizontal,
-                &change_marks(changes, line_count),
+                fonts::editor().line_h,
+                change_marks(changes, line_count)
+                    .into_iter()
+                    .map(|mark| (mark.first, mark.lines, mark.change)),
             ));
         }
         if has_vertical {
@@ -656,11 +659,12 @@ pub fn render(
 /// Git change marks along the editor's right edge, independent of the
 /// scrollbar, which draws over them. Lines map to the ruler as they do to
 /// the scroll range, so a file that fits shows each mark beside its line.
-fn overview_ruler(
+pub(crate) fn overview_ruler(
     rect: UiRect,
     metrics: ScrollMetrics,
     has_horizontal: bool,
-    marks: &[OverviewMark],
+    row_height: f32,
+    marks: impl IntoIterator<Item = (usize, usize, LineChange)>,
 ) -> Element {
     let corner = if has_horizontal { SCROLLBAR_SIZE } else { 0.0 };
     let lane = UiRect::new(
@@ -683,18 +687,17 @@ fn overview_ruler(
             VisualStyle::filled(color),
         ))
     };
-    for mark in marks {
-        let top = (lane.top + mark.first as f32 * fonts::editor().line_h * scale)
-            .min(lane.bottom - MIN_MARK_LENGTH);
-        let bottom = (lane.top + (mark.first + mark.lines) as f32 * fonts::editor().line_h * scale)
-            .max(top + MIN_MARK_LENGTH);
+    for (first, lines, change) in marks {
+        let top = (lane.top + first as f32 * row_height * scale).min(lane.bottom - MIN_MARK_LENGTH);
+        let bottom =
+            (lane.top + (first + lines) as f32 * row_height * scale).max(top + MIN_MARK_LENGTH);
         // Marks closer than a pixel draw as one, so huge files stay cheap.
         match &mut last {
-            Some((_, end, change)) if *change == mark.change && top <= *end + 1.0 => {
+            Some((_, end, previous_change)) if *previous_change == change && top <= *end + 1.0 => {
                 *end = end.max(bottom)
             }
             _ => {
-                if let Some(previous) = last.replace((top, bottom, mark.change)) {
+                if let Some(previous) = last.replace((top, bottom, change)) {
                     ruler = flush(ruler, previous);
                 }
             }

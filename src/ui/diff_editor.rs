@@ -250,6 +250,18 @@ pub fn render(
         || (app.workspace.active_pane() == pane
             && (app.editor_vertical_scrollbar_dragging
                 || app.editor_horizontal_scrollbar_dragging));
+    if !split && document.sections.is_none() {
+        let marks = document.inline_change_marks();
+        if !marks.is_empty() && marks.len() <= 10_000 {
+            root = root.child(editor_view::overview_ruler(
+                body_rect,
+                metrics,
+                max_x > 0.0,
+                row_h(),
+                marks.iter().copied(),
+            ));
+        }
+    }
     if max_y > 0.0 {
         root = root.child(editor_view::vertical_scrollbar(
             pane,
@@ -1094,6 +1106,12 @@ mod tests {
             let mut session = UiSession::new();
             session.render_view(&view, viewport, UiScale::ONE);
             let state = exposed.lock().unwrap().clone().unwrap();
+            assert!(!session.tree().nodes().iter().any(|node| {
+                node.layout_rect.left == viewport.right - SCROLLBAR_SIZE + 1.0
+                    && node.layout_rect.width() == 4.0
+                    && matches!(node.style.fill, Some(color) if color == theme::c().diff.add_mark
+                        || color == theme::c().diff.del_mark)
+            }), "All Changes must not show overview marks");
             let texts = || {
                 session
                     .tree()
@@ -1199,6 +1217,75 @@ mod tests {
                 "Offscreen files must not create UI nodes"
             );
         }
+    }
+
+    #[test]
+    fn inline_overview_draws_added_and_deleted_display_rows_without_scrolling() {
+        use crate::git::diff::parse_unified;
+        use lgui::application::AppView;
+        use lgui::core::UiScale;
+        use lgui::session::UiSession;
+        use std::sync::Arc;
+
+        // Source line 10 appears at display row 1 after the hunk header.
+        let document = DiffDocument::from_unified(
+            "repo".into(),
+            "a.txt".into(),
+            DiffTarget::IndexToWorktree,
+            parse_unified(
+                "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -10,3 +12,3 @@\n-old\n-older\n+new\n+newer\n same\n",
+            )
+            .unwrap(),
+        );
+        let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state_with(|| {
+                let mut app = AppState::new();
+                app.git_split_diff = false;
+                app.workspace.open_diff(document.clone());
+                app
+            });
+            let store = cx.state_with(GitStoreSnapshot::default);
+            let id = cx.use_stable_id();
+            render(
+                state.get().workspace.active_pane(),
+                viewport,
+                state,
+                store,
+                cx.focus_handle(id),
+            )
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let marks = session
+            .tree()
+            .nodes()
+            .iter()
+            .filter(|node| {
+                node.layout_rect.left == viewport.right - SCROLLBAR_SIZE + 1.0
+                    && node.layout_rect.width() == 4.0
+                    && node.style.fill.is_some()
+            })
+            .map(|node| (node.layout_rect, node.style.fill.unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            marks,
+            [
+                (
+                    UiRect::new(589.0, TOOLBAR_H + row_h(), 593.0, TOOLBAR_H + 3.0 * row_h()),
+                    theme::c().diff.del_mark,
+                ),
+                (
+                    UiRect::new(
+                        589.0,
+                        TOOLBAR_H + 3.0 * row_h(),
+                        593.0,
+                        TOOLBAR_H + 5.0 * row_h()
+                    ),
+                    theme::c().diff.add_mark,
+                ),
+            ]
+        );
     }
 
     #[test]

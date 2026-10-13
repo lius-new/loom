@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::git::diff::{DiffLine, UnifiedDiff};
-use crate::git::{ChangeGroup, DiffContent, DiffRequest, DiffTarget};
+use crate::git::{ChangeGroup, DiffContent, DiffRequest, DiffTarget, LineChange};
 use crate::model::text::display_width;
 use std::collections::BTreeSet;
 
@@ -102,11 +102,30 @@ struct DiffMetrics {
     longest_split: usize,
     inline_starts: Arc<Vec<usize>>,
     split_starts: Arc<Vec<usize>>,
+    /// Runs in inline display-row coordinates, including deleted rows and hunk headers.
+    inline_marks: Arc<Vec<(usize, usize, LineChange)>>,
 }
 
 impl DiffMetrics {
     fn new(rows: &[DiffRow], split_rows: &[SplitDiffRow]) -> Self {
+        let mut inline_marks: Vec<(usize, usize, LineChange)> = Vec::new();
+        for (index, row) in rows.iter().enumerate() {
+            let change = match row.kind {
+                DiffRowKind::Addition => LineChange::Added,
+                DiffRowKind::Deletion => LineChange::Deleted,
+                _ => continue,
+            };
+            match inline_marks.last_mut() {
+                Some((first, lines, previous))
+                    if *previous == change && *first + *lines == index =>
+                {
+                    *lines += 1;
+                }
+                _ => inline_marks.push((index, 1, change)),
+            }
+        }
         Self {
+            inline_marks: inline_marks.into(),
             additions: rows
                 .iter()
                 .filter(|row| row.kind == DiffRowKind::Addition)
@@ -506,6 +525,10 @@ impl DiffDocument {
         } else {
             self.metrics.inline_starts.clone()
         }
+    }
+
+    pub fn inline_change_marks(&self) -> &[(usize, usize, LineChange)] {
+        &self.metrics.inline_marks
     }
 
     pub fn longest_line(&self, split: bool) -> usize {
