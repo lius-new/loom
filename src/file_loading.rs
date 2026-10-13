@@ -316,11 +316,7 @@ mod tests {
         }
         fn open(&self, path: &str) {
             self.state.update(|app| {
-                assert!(crate::workspace_actions::open_tree_file(
-                    app,
-                    path.into(),
-                    1
-                ));
+                assert!(crate::app::explorer::open_tree_file(app, path.into(), 1));
             });
         }
         fn pump_until(&self, predicate: impl Fn(&AppState) -> bool) {
@@ -374,7 +370,7 @@ mod tests {
         assert_eq!(h.state.get().workspace.active(), before);
         // Double-click promotion does not restart the timer or disk operation.
         h.state.update(|app| {
-            crate::workspace_actions::open_tree_file(app, "slow.json".into(), 2);
+            crate::app::explorer::open_tree_file(app, "slow.json".into(), 2);
         });
         release.send(()).unwrap();
         h.pump_until(|app| app.editor.pending_file.is_none());

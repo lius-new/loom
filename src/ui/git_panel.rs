@@ -2939,7 +2939,7 @@ fn file_row(
                         let mut focus = false;
                         let open_path = open_path.clone();
                         action_state.update(|app| {
-                            focus = crate::workspace_actions::open_tree_file(app, open_path, 2);
+                            focus = crate::app::explorer::open_tree_file(app, open_path, 2);
                         });
                         if focus {
                             open_focus.focus();
@@ -3017,7 +3017,7 @@ mod action_tests {
                         }
                     })
                     .on_event_capture(UiEventKind::PointerUp, move |_cx, _payload| {
-                        crate::workspace_actions::finish_drawer_file_drag(&release);
+                        crate::app::explorer::finish_drawer_file_drag(&release);
                     })
                     .child(file_row(
                         UiRect::new(600.0, 0.0, 900.0, ROW_H),

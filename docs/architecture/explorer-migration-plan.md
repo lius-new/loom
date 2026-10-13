@@ -207,3 +207,11 @@ src/app/
 - 测试：原 file_tree 延迟刷新测试按原名迁入模型测试；新增 10 项模型测试（替换根、重复根、移除根取消编辑行、嵌套根重命名、折叠文件重命名、删除重载父目录、reveal 行号、新建展开链、toggle 缓存）。workspace_actions 中目录移除/重命名测试改用模型 API，重命名测试现在先打开 rename 行再断言被关闭。
 - 记录的既有行为：重命名包含嵌套 root 的目录后，该 root 保留在列表但失去已加载内容和展开状态，需要再次展开；本轮保持不变，测试固定该行为。
 - 结果：完整 workspace 634 通过、0 失败、12 忽略（应用 550，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 22 项自测通过。本机无 PowerShell 7，`startup-smoke.ps1` 未运行；改用 Windows PowerShell 5.1 等价脚本对 debug 构建做隔离 APPDATA 启动：带参数打开工作区、正常关闭写会话，再无参数重启恢复根与最近目录，均 exit 0、无强制清理。
+
+### R5.3（2026-10-13，本机自动验收）
+
+- 新增 `app/explorer.rs`：34 个 Explorer 命令与事务从 `workspace_actions.rs` 迁入（抽屉文件打开/拖放、目录展开与刷新、reveal、文件夹对话框、行内新建/重命名、复制/剪切、回收站、显示位置、根目录打开/添加/移除/forget、最近目录、启动参数与 hydrate、persist）。去掉重复前缀：`begin_create`、`cancel_edit`、`finish_create`、`begin_rename`、`finish_rename`、`copy_item`、`delete_item`、`remove_root`、`refresh`、`toggle_directory`、`reveal_file`；不保留旧名转发。
+- `workspace_actions.rs` 2429 → 1001 行，只剩关闭/保存、会话包装、打开文件对话框、`read_text_file` 与克隆（R6）；其例外依赖从 15 项减到 10 项（移除 features、file_loading、git_actions、infrastructure、workspace_persistence），runtime 桥接登记随文件加载入口移到 `app/explorer.rs`。
+- 调用方改为 `crate::app::explorer::*`。sidebar、context_menu、welcome、tab_context_menu 及 git_menu、git_panel 因此登记临时 `crate::app` 依赖（UI→app 方向）：前四个在 R5.5 改为语义命令后移除，Git 两个随 R6 迁移。git_actions 不再依赖 workspace_actions。
+- 测试：13 项 Explorer 相关测试按原名迁到 `app/explorer_tests.rs`（大文件打开、启动参数 2、文件夹添加/替换/移除 3、拖放 4、重命名 2、删除 1）；新增 4 项在真实 `State<AppState>` 上运行的命令测试：有未保存文档的目录拒绝删除且不触碰磁盘、Unicode 文件重命名同步磁盘/标签/列表、非法重命名保留编辑行与错误、嵌套新建（含尾部斜杠建目录）展开整条路径并打开新文件。原计划的“重命名期间晚到 watcher 结果”归入 R5.4 竞态测试。
+- 结果：完整 workspace 638 通过、0 失败、12 忽略（应用 554，编辑核心 65+3，独立域 16）；fmt、CI 参数 clippy、门禁与 22 项自测通过；根字段 76、legacy exception 文件 59 不变。Windows PowerShell 5.1 隔离启动/恢复 smoke 通过。

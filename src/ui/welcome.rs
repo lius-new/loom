@@ -235,7 +235,7 @@ fn action_row(
                 }
             }
             StartAction::OpenFolder => {
-                workspace_actions::choose_folder(&click_state);
+                crate::app::explorer::choose_folder(&click_state);
             }
         })
         .child(text(
@@ -297,7 +297,7 @@ fn recent_workspace_card(
             });
         })
         .on_click(move || {
-            workspace_actions::open_recent_folder(&click_state, workspace_path.clone());
+            crate::app::explorer::open_recent_folder(&click_state, workspace_path.clone());
         })
         .child(text(
             UiRect::new(

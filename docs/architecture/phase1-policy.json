@@ -35,19 +35,19 @@
     "src/ui/workspace_home.rs"
   ],
   "runtime_bridges": [
+    "src/app/editor_vim_integration_tests.rs",
+    "src/app/explorer.rs",
     "src/app/runtime.rs",
     "src/app/search.rs",
-    "src/ui/editor/caret.rs",
     "src/editor/hunk_peek.rs",
-    "src/app/editor_vim_integration_tests.rs",
     "src/file_loading.rs",
     "src/git/backend.rs",
     "src/git/store.rs",
     "src/git_actions.rs",
     "src/ui/components/loading_indicator.rs",
+    "src/ui/editor/caret.rs",
     "src/ui/terminal.rs",
-    "src/ui/terminal_settings.rs",
-    "src/workspace_actions.rs"
+    "src/ui/terminal_settings.rs"
   ],
   "state_ownership": {
     "application_layout": {
@@ -537,13 +537,12 @@
         "crate::model",
         "crate::state",
         "crate::ui",
-        "crate::workspace_actions",
         "lgui",
         "std::fs",
         "std::thread"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 文件夹添加/移除与回收站改由 app/explorer 提供。"
     },
     "src/jsonc.rs": {
       "dependencies": [
@@ -728,13 +727,13 @@
     },
     "src/ui/context_menu.rs": {
       "dependencies": [
+        "crate::app",
         "crate::state",
         "crate::terminal_session",
-        "crate::workspace_actions",
         "unicode_width"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；R5.5 改为语义命令后移除。"
     },
     "src/ui/diff_editor.rs": {
       "dependencies": [
@@ -774,26 +773,26 @@
     },
     "src/ui/git_menu.rs": {
       "dependencies": [
+        "crate::app",
         "crate::git",
         "crate::git_actions",
-        "crate::state",
-        "crate::workspace_actions"
+        "crate::state"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；抽屉文件打开随 R6 Git 迁移。"
     },
     "src/ui/git_panel.rs": {
       "dependencies": [
+        "crate::app",
         "crate::git",
         "crate::git_actions",
         "crate::model",
         "crate::state",
         "crate::svg_icons",
-        "crate::workspace_actions",
         "image"
       ],
       "remove_in": "R6",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；抽屉文件打开随 R6 Git 迁移。"
     },
     "src/ui/keymap_page.rs": {
       "dependencies": [
@@ -841,13 +840,13 @@
     },
     "src/ui/sidebar.rs": {
       "dependencies": [
+        "crate::app",
         "crate::git",
         "crate::input",
-        "crate::state",
-        "crate::workspace_actions"
+        "crate::state"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；R5.5 改为语义命令后移除。"
     },
     "src/ui/stash_switch.rs": {
       "dependencies": [
@@ -882,6 +881,7 @@
     },
     "src/ui/tab_context_menu.rs": {
       "dependencies": [
+        "crate::app",
         "crate::model",
         "crate::state",
         "crate::workspace_actions",
@@ -889,7 +889,7 @@
         "std::process"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；reveal 在 R5.5 改为命令；关闭命令按原阶段迁移。"
     },
     "src/ui/terminal.rs": {
       "dependencies": [
@@ -932,11 +932,12 @@
     },
     "src/ui/welcome.rs": {
       "dependencies": [
+        "crate::app",
         "crate::state",
         "crate::workspace_actions"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.3 Explorer 命令迁入 app/explorer，暂以 crate::app 直接调用；R5.5 改为最近目录投影与命令后移除。"
     },
     "src/ui/workspace_home.rs": {
       "dependencies": [
@@ -960,23 +961,18 @@
     "src/workspace_actions.rs": {
       "dependencies": [
         "crate::app",
-        "crate::features",
-        "crate::file_loading",
         "crate::git",
-        "crate::git_actions",
-        "crate::infrastructure",
         "crate::input",
         "crate::model",
         "crate::project_settings",
         "crate::state",
-        "crate::workspace_persistence",
         "lgui",
         "std::fs",
         "std::process",
         "std::thread"
       ],
       "remove_in": "R4 R5",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R4 会话保存/恢复转交 app/workspace_session；Explorer 与文件命令保留本文件各自阶段的登记。 R5.1 命名校验与根目录规则转交 features/explorer，回收站/剪贴板/显示位置转交 infrastructure/explorer_filesystem；其余 Explorer 命令在 R5.3 迁入 app/explorer。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R4 会话保存/恢复转交 app/workspace_session；Explorer 与文件命令保留本文件各自阶段的登记。 R5.1 命名校验与根目录规则转交 features/explorer，回收站/剪贴板/显示位置转交 infrastructure/explorer_filesystem；其余 Explorer 命令在 R5.3 迁入 app/explorer。 R5.3 Explorer 命令、抽屉文件打开与文件夹管理已迁入 app/explorer；本文件只剩关闭/保存、会话包装、打开文件对话框与克隆（R6）。"
     }
   },
   "phase2": {

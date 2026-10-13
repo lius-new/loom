@@ -14,7 +14,6 @@ use unicode_width::UnicodeWidthStr;
 use crate::state::{AppState, ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::terminal_session::TerminalTabs;
 use crate::theme;
-use crate::workspace_actions;
 
 const MENU_PAD: f32 = 4.0; // padding above/below the item list
 const ITEM_H: f32 = 22.0; // item row height
@@ -442,12 +441,12 @@ pub fn render(
                                 } else {
                                     ExplorerCreateKind::Folder
                                 };
-                                workspace_actions::begin_explorer_create(&st_click, parent, kind);
+                                crate::app::explorer::begin_create(&st_click, parent, kind);
                             }
                         }
                         MenuAction::RefreshExplorer => {
                             st_click.update(|app| {
-                                workspace_actions::refresh_explorer(app);
+                                crate::app::explorer::refresh(app);
                                 app.workspace.reconcile_disk();
                             });
                         }
@@ -471,7 +470,7 @@ pub fn render(
                         }
                         MenuAction::Cut | MenuAction::Copy => {
                             if let Some(target) = action_target.as_ref() {
-                                workspace_actions::copy_explorer_item(
+                                crate::app::explorer::copy_item(
                                     &st_click,
                                     &target.path,
                                     matches!(action, MenuAction::Cut),
@@ -480,7 +479,7 @@ pub fn render(
                         }
                         MenuAction::Rename => {
                             if let Some(target) = action_target.clone() {
-                                workspace_actions::begin_explorer_rename(
+                                crate::app::explorer::begin_rename(
                                     &st_click,
                                     target.path,
                                     target.kind,
@@ -489,22 +488,20 @@ pub fn render(
                         }
                         MenuAction::Delete => {
                             if let Some(target) = action_target.clone() {
-                                workspace_actions::delete_explorer_item(&st_click, target.path);
+                                crate::app::explorer::delete_item(&st_click, target.path);
                             }
                         }
                         MenuAction::AddFolder => {
-                            workspace_actions::choose_folder_to_add(&st_click);
+                            crate::app::explorer::choose_folder_to_add(&st_click);
                         }
                         MenuAction::RemoveFolder => {
                             if let Some(root) = action_target.clone() {
-                                workspace_actions::remove_folder_from_workspace(
-                                    &st_click, root.path,
-                                );
+                                crate::app::explorer::remove_root(&st_click, root.path);
                             }
                         }
                         MenuAction::RevealInFileExplorer => {
                             if let Some(target) = action_target.as_ref() {
-                                workspace_actions::reveal_item(&st_click, target);
+                                crate::app::explorer::reveal_item(&st_click, target);
                             }
                         }
                         MenuAction::CopyPath => {

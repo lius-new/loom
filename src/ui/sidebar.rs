@@ -24,7 +24,6 @@ use crate::state::{
 use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::ui::components::scrollbar;
-use crate::workspace_actions;
 
 const HEADER_H: f32 = theme::TABS_H;
 const ROW_H: f32 = 20.0;
@@ -517,7 +516,7 @@ fn empty_state(rect: UiRect, state: State<AppState>) -> Vec<Element> {
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
-            workspace_actions::choose_folder(&st);
+            crate::app::explorer::choose_folder(&st);
         })
         .child(drawer_icon(
             "sidebar.empty.open-folder",
@@ -656,9 +655,9 @@ fn create_row(
                 caret: theme::c().text,
                 selection: theme::c().accent,
             },
-            on_submit: Some(workspace_actions::finish_explorer_create),
-            on_cancel: Some(workspace_actions::cancel_explorer_create),
-            on_blur: Some(workspace_actions::cancel_explorer_create),
+            on_submit: Some(crate::app::explorer::finish_create),
+            on_cancel: Some(crate::app::explorer::cancel_edit),
+            on_blur: Some(crate::app::explorer::cancel_edit),
         },
     );
 
@@ -753,9 +752,9 @@ fn rename_row(
                 caret: theme::c().text,
                 selection: theme::c().accent,
             },
-            on_submit: Some(workspace_actions::finish_explorer_rename),
-            on_cancel: Some(workspace_actions::cancel_explorer_create),
-            on_blur: Some(workspace_actions::cancel_explorer_create),
+            on_submit: Some(crate::app::explorer::finish_rename),
+            on_cancel: Some(crate::app::explorer::cancel_edit),
+            on_blur: Some(crate::app::explorer::cancel_edit),
         },
     );
     panel(
@@ -860,7 +859,7 @@ fn dir_row(
         match button {
             PointerButton::Left => {
                 click_state.update(move |app| {
-                    workspace_actions::toggle_tree_directory(app, &key);
+                    crate::app::explorer::toggle_directory(app, &key);
                 });
             }
             PointerButton::Right => {
@@ -1058,7 +1057,7 @@ fn build_tree(
                                 } else {
                                     let path = action_path.clone();
                                     st.update(move |app| {
-                                        workspace_actions::open_tree_file(app, path, 2);
+                                        crate::app::explorer::open_tree_file(app, path, 2);
                                     });
                                     focus.focus();
                                 }

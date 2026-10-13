@@ -359,7 +359,7 @@ pub fn discard_paths(
                 let mut deleted = Vec::new();
                 for path in &untracked {
                     let path = root.join(path);
-                    match crate::workspace_actions::move_path_to_trash(&path) {
+                    match crate::app::explorer::move_path_to_trash(&path) {
                         Ok(true) => deleted.push(path),
                         Ok(false) => {}
                         Err(error) => return Err(GitError::new(GitErrorKind::Io, error)),
@@ -370,7 +370,7 @@ pub fn discard_paths(
         },
         |app, deleted| {
             for path in deleted {
-                crate::workspace_actions::apply_deleted_path_state(app, &path);
+                crate::app::explorer::apply_deleted_path_state(app, &path);
             }
         },
     )
@@ -1170,7 +1170,7 @@ pub fn open_worktree(
         return false;
     }
     let path = std::fs::canonicalize(&path).unwrap_or(path);
-    state.update(|app| crate::workspace_actions::add_folder(app, path.clone()));
+    state.update(|app| crate::app::explorer::add_folder(app, path.clone()));
     select_repository(state, store, path);
     state
         .get()
@@ -1191,7 +1191,7 @@ pub fn add_worktree_folder(state: &State<AppState>, path: PathBuf) {
         });
         return;
     }
-    state.update(|app| crate::workspace_actions::add_folder(app, path));
+    state.update(|app| crate::app::explorer::add_folder(app, path));
     state
         .get()
         .runtime()
@@ -1329,7 +1329,7 @@ pub fn create_worktree(
         },
         move |app, ()| {
             let path = std::fs::canonicalize(&created).unwrap_or(created);
-            crate::workspace_actions::add_folder(app, path.clone());
+            crate::app::explorer::add_folder(app, path.clone());
             app.git_pinned_repository =
                 Some((path, app.workspace.active_path().map(Path::to_path_buf)));
             app.git_history_commit = None;
@@ -1461,7 +1461,7 @@ pub fn remove_worktree(
         },
         move |app, removed| {
             if removed {
-                crate::workspace_actions::forget_worktree(app, &target);
+                crate::app::explorer::forget_worktree(app, &target);
                 app.show_success("Deleted worktree. Its branch was kept.");
             } else {
                 app.git_confirm = Some(worktree_removal_confirmation(

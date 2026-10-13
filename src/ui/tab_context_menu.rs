@@ -270,10 +270,10 @@ pub fn render(viewport: UiRect, state: State<AppState>) -> Element {
                             );
                         }
                         Action::RevealInTree => {
-                            workspace_actions::reveal_file_in_tree(&click_state, target);
+                            crate::app::explorer::reveal_file(&click_state, target);
                         }
                         Action::RevealInFileExplorer => {
-                            crate::workspace_actions::reveal_item(
+                            crate::app::explorer::reveal_item(
                                 &click_state,
                                 &ExplorerContextTarget {
                                     path: action_path.clone(),

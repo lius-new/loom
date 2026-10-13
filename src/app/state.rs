@@ -386,9 +386,9 @@ impl AppState {
         app.show_source_control = session.source_control_open;
         app.apply_settings(crate::settings_persistence::load());
         app.refresh_shells();
-        crate::workspace_actions::hydrate_workspace_folders(&mut app);
+        crate::app::explorer::hydrate_workspace_folders(&mut app);
         crate::workspace_actions::hydrate_editor_layout(&mut app, session.editor_layout);
-        crate::workspace_actions::open_launch_paths(&mut app, crate::launch::take_paths());
+        crate::app::explorer::open_launch_paths(&mut app, crate::launch::take_paths());
         app
     }
 

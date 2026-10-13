@@ -398,7 +398,7 @@ fn open_keymap_file(env: &KeyEnv) {
 pub fn open_user_keymap(state: &State<AppState>) -> bool {
     match keymap_file::ensure_user_file() {
         Ok(path) => {
-            state.update(move |app| workspace_actions::open_launch_paths(app, vec![path]));
+            state.update(move |app| crate::app::explorer::open_launch_paths(app, vec![path]));
             true
         }
         Err(error) => {
@@ -452,7 +452,7 @@ fn open_settings_file(env: &KeyEnv) {
 pub fn open_user_settings(state: &State<AppState>) -> bool {
     match settings_persistence::ensure_user_file() {
         Ok(path) => {
-            state.update(move |app| workspace_actions::open_launch_paths(app, vec![path]));
+            state.update(move |app| crate::app::explorer::open_launch_paths(app, vec![path]));
             true
         }
         Err(error) => {
@@ -488,7 +488,7 @@ pub fn open_project_settings(state: &State<AppState>) -> bool {
     };
     match crate::project_settings::ensure(&root) {
         Ok(path) => {
-            state.update(move |app| workspace_actions::open_launch_paths(app, vec![path]));
+            state.update(move |app| crate::app::explorer::open_launch_paths(app, vec![path]));
             true
         }
         Err(error) => {

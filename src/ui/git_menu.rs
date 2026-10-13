@@ -191,7 +191,7 @@ fn perform(
             MenuAction::OpenFile => {
                 let mut focus = false;
                 state.update(|app| {
-                    focus = crate::workspace_actions::open_tree_file(app, absolute, 2);
+                    focus = crate::app::explorer::open_tree_file(app, absolute, 2);
                 });
                 if focus {
                     editor_focus.focus();
@@ -218,7 +218,7 @@ fn perform(
                     action == MenuAction::CopyRelativePath,
                 );
             }
-            MenuAction::Reveal => crate::workspace_actions::reveal_item(
+            MenuAction::Reveal => crate::app::explorer::reveal_item(
                 state,
                 &ExplorerContextTarget {
                     path: absolute,
