@@ -5,7 +5,8 @@
     "state": "app/state",
     "input": "features/keymap",
     "background_ui": "infrastructure/ui_dispatch",
-    "svg_icons": "app/bootstrap (cfg(test) only)"
+    "svg_icons": "app/bootstrap (cfg(test) only)",
+    "workspace_actions": "app/workspace_commands (R8 composition seam; old UI callers removed in R8.4/R8.5)"
   },
   "root_state_adapters": [
     "src/ui/close_confirmation.rs",
@@ -158,16 +159,6 @@
     }
   },
   "exceptions": {
-    "src/config_watcher.rs": {
-      "dependencies": [
-        "crate::workspace_persistence",
-        "notify",
-        "std::fs",
-        "std::thread"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/features/keymap/action.rs": {
       "dependencies": [
         "Movement",
@@ -189,7 +180,6 @@
     },
     "src/features/keymap/keymap_file.rs": {
       "dependencies": [
-        "crate::jsonc",
         "crate::workspace_persistence",
         "serde_json",
         "std::fs"
@@ -210,13 +200,6 @@
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/file_icons.rs": {
-      "dependencies": [
-        "lgui"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5 收尾：图标注册是 Explorer、标签与 Git 共享的 UI 资源，不属于 Explorer 状态，随 R8 chrome 整理。"
     },
     "src/file_loading.rs": {
       "dependencies": [
@@ -251,30 +234,11 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R5.2 树刷新改由 Explorer 模型执行，准备阶段只克隆 Explorer 模型。 R5 收尾：Explorer 部分只经模型 API 与 DirEntry 类型；剩余 notify 服务、搜索失效与磁盘对账协调随 R8 拆为 infrastructure 服务与 app 协调。"
     },
-    "src/fonts.rs": {
-      "dependencies": [
-        "crate::theme",
-        "lgui",
-        "serde"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/jsonc.rs": {
-      "dependencies": [
-        "serde_json"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/key_actions.rs": {
       "dependencies": [
         "crate::app",
-        "crate::config_watcher",
         "crate::features",
         "crate::input",
-        "crate::project_settings",
-        "crate::settings_persistence",
         "crate::state",
         "crate::ui",
         "crate::workspace_actions",
@@ -293,41 +257,6 @@
       ],
       "remove_in": "R8",
       "reason": "R4 的兼容导出指向 app/workspace 组合容器；纯域规则已迁入 domain/workspace。旧 UI 按各自登记阶段迁移，新增代码使用实际边界。"
-    },
-    "src/project_settings.rs": {
-      "dependencies": [
-        "crate::settings_persistence",
-        "crate::state",
-        "std::fs",
-        "std::process",
-        "std::thread",
-        "crate::features"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
-    },
-    "src/settings_persistence.rs": {
-      "dependencies": [
-        "crate::fonts",
-        "crate::jsonc",
-        "crate::theme",
-        "crate::vim",
-        "crate::workspace_persistence",
-        "serde",
-        "serde_json",
-        "std::fs",
-        "crate::features"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
-    },
-    "src/theme.rs": {
-      "dependencies": [
-        "lgui",
-        "serde"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
     "src/ui/close_confirmation.rs": {
       "dependencies": [
@@ -386,7 +315,6 @@
         "crate::app",
         "crate::input",
         "crate::key_actions",
-        "crate::settings_persistence",
         "crate::state"
       ],
       "remove_in": "R8",
@@ -461,20 +389,6 @@
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/workspace_actions.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::input",
-        "crate::model",
-        "crate::project_settings",
-        "crate::state",
-        "lgui",
-        "std::fs",
-        "std::process"
-      ],
-      "remove_in": "R8",
-      "reason": "R8 文件关闭/保存、会话包装与打开文件对话框适配。R6 克隆事务和 URL 规则已分别迁入 app/git_clone 与 features/git/clone_url。"
     }
   },
   "phase2": {

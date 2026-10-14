@@ -8,7 +8,7 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, UiRect, VisualStyle, panel};
 
-use crate::theme;
+use crate::ui::theme;
 
 /// Page shown in the right-hand drawer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

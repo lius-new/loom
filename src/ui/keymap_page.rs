@@ -11,9 +11,9 @@ use crate::input::action::{ACTIONS, Action};
 use crate::input::keymap::{self, Keymap};
 use crate::input::keymap_file;
 use crate::state::AppState;
-use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::ui::tabs::{TEXT_MARGIN, measure};
+use crate::ui::theme;
 
 const MAX_PAGE_W: f32 = 880.0;
 const PAGE_PAD_X: f32 = 32.0;

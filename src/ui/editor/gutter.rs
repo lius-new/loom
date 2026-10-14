@@ -6,8 +6,8 @@ use std::ops::{Range, RangeInclusive};
 use lgui::core::ellipse;
 use lgui::prelude::{Color, Element, UiRect, VisualStyle, group, text};
 
-use crate::fonts;
-use crate::theme;
+use crate::ui::fonts;
+use crate::ui::theme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GutterDecoration {

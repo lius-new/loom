@@ -12,7 +12,7 @@ use super::bindings as commands;
 use super::bindings::{Binding, FrameRequest, Sessions, View as TerminalTabs};
 use super::state::TerminalTabMenuKind;
 use crate::features::terminal::TERMINAL_PURPOSES as PURPOSES;
-use crate::theme;
+use crate::ui::theme;
 
 use crate::features::terminal::actions::{
     MenuAction as Action, close_targets as model_close_targets,

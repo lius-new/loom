@@ -3,8 +3,8 @@ mod tests {
     use crate::app::terminal_profiles::*;
     use crate::features::terminal::{ShellKind, profiles::ShellProfile};
     use crate::state::AppState;
-    use crate::theme;
     use crate::ui::terminal::settings::render;
+    use crate::ui::theme;
     use lgui::prelude::{State, UiRect, VisualStyle, panel};
 
     #[test]

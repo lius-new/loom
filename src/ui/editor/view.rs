@@ -18,9 +18,9 @@ use super::gutter;
 use super::syntax;
 use crate::domain::identity::PaneId;
 use crate::domain::line_change::LineChange;
-use crate::fonts;
-use crate::theme;
 use crate::ui::editor_binding::{Binding, Event, PeekPlacement, ViewState};
+use crate::ui::fonts;
+use crate::ui::theme;
 use loom_editor_core::text::TextBuffer;
 use loom_editor_core::vim::CursorShape;
 

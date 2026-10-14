@@ -9,8 +9,8 @@ use lgui::prelude::{Color, Element, TextStyle, UiRect, VisualStyle, panel, text}
 
 use crate::features::git::actions::SyncPlan;
 use crate::features::git::{GitStoreSnapshot, RepositorySnapshot, RepositoryState};
-use crate::theme;
 use crate::ui::git::commands::{Binding, Command, Snapshot};
+use crate::ui::theme;
 
 pub(crate) const BADGE_H: f32 = 22.0;
 pub(crate) const BADGE_PAD: f32 = 8.0;

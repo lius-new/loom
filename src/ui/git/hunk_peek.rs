@@ -15,8 +15,8 @@ use crate::domain::pane_layout::PaneId;
 use crate::features::git::actions::BlockAction;
 use crate::features::git::diff_document::{ChangeBlock, DiffDocument, DiffRow, DiffRowKind};
 use crate::features::git::{DiffTarget, LineChange};
-use crate::fonts;
-use crate::theme;
+use crate::ui::fonts;
+use crate::ui::theme;
 
 const HEADER_H: f32 = 28.0;
 const MAX_ROWS: usize = 14;

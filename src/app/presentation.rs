@@ -52,7 +52,7 @@ mod tests {
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
         let state = exposed.lock().unwrap().clone().unwrap();
-        let point = Point::new(300.0, viewport.bottom - crate::theme::STATUS_H - 30.0);
+        let point = Point::new(300.0, viewport.bottom - crate::ui::theme::STATUS_H - 30.0);
         let click = |session: &mut UiSession| {
             for event in [
                 InputEvent::PointerDown {

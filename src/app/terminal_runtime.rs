@@ -26,9 +26,9 @@ pub(crate) trait TerminalDisplay {
 impl TerminalDisplay for TerminalController {
     fn snapshot(&self) -> TerminalSnapshot {
         let palette = Palette {
-            ansi: crate::theme::c().ansi,
-            foreground: crate::theme::c().text.0,
-            background: crate::theme::c().bg.0,
+            ansi: crate::ui::theme::c().ansi,
+            foreground: crate::ui::theme::c().text.0,
+            background: crate::ui::theme::c().bg.0,
         };
         self.snapshot_with_palette(&palette)
     }
@@ -37,9 +37,9 @@ impl TerminalDisplay for TerminalController {
 impl TerminalDisplay for crate::infrastructure::terminal::runtime::TerminalHandle {
     fn snapshot(&self) -> TerminalSnapshot {
         let palette = Palette {
-            ansi: crate::theme::c().ansi,
-            foreground: crate::theme::c().text.0,
-            background: crate::theme::c().bg.0,
+            ansi: crate::ui::theme::c().ansi,
+            foreground: crate::ui::theme::c().text.0,
+            background: crate::ui::theme::c().bg.0,
         };
         self.snapshot_with_palette(&palette)
     }

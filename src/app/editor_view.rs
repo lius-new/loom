@@ -100,7 +100,8 @@ pub(crate) fn snapshot(
     let visible_lines = document
         .as_ref()
         .map(|doc| {
-            let left = rect.left + crate::fonts::editor().gutter_w() + crate::theme::CODE_PAD;
+            let left =
+                rect.left + crate::ui::fonts::editor().gutter_w() + crate::ui::theme::CODE_PAD;
             let metrics = crate::ui::editor::view::scroll_metrics(rect, left, &doc.buffer);
             crate::ui::editor::view::visible_line_range(
                 doc.scroll.1.clamp(0.0, metrics.max_y),

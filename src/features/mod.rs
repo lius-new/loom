@@ -6,3 +6,5 @@ pub(crate) mod keymap;
 pub(crate) mod search;
 
 pub(crate) mod terminal;
+
+pub mod settings;

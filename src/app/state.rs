@@ -17,8 +17,8 @@ use crate::input::keystroke::Keystroke;
 use crate::model::document::FileId;
 use crate::model::pane_layout::{Direction, PaneId};
 use crate::model::workspace::{AppPage, Workspace};
-use crate::theme::ThemeId;
 use crate::ui::components::input::InputState;
+use crate::ui::theme::ThemeId;
 
 pub use crate::ui::drawer::DrawerMode;
 
@@ -122,7 +122,7 @@ impl Default for SidebarChrome {
     fn default() -> Self {
         Self {
             visible: false,
-            width: crate::theme::SIDEBAR_W,
+            width: crate::ui::theme::SIDEBAR_W,
             resizing: false,
         }
     }
@@ -143,7 +143,7 @@ impl Default for DrawerChrome {
         Self {
             visible: true,
             mode: DrawerMode::Files,
-            width: crate::theme::SIDEBAR_W,
+            width: crate::ui::theme::SIDEBAR_W,
             resizing: false,
         }
     }
@@ -175,13 +175,16 @@ pub struct AppState {
     pub shell_options: Vec<crate::features::terminal::profiles::ShellOption>,
     pub terminal_cursor_blink: bool,
     pub smooth_caret: bool,
-    pub editor_font: crate::fonts::FontSettings,
-    pub terminal_font: crate::fonts::FontSettings,
+    pub editor_font: crate::ui::fonts::FontSettings,
+    pub terminal_font: crate::ui::fonts::FontSettings,
     /// Font family fields on the Settings page; committed on Enter or blur.
     pub editor_font_input: crate::ui::components::input::InputState,
     pub terminal_font_input: crate::ui::components::input::InputState,
     /// Each workspace folder's `.loom/settings.json`, when it has one.
-    pub project_settings: Vec<(PathBuf, crate::project_settings::ProjectSettings)>,
+    pub project_settings: Vec<(
+        PathBuf,
+        crate::infrastructure::project_settings::ProjectSettings,
+    )>,
     /// Notification above the status bar; cleared by its timer or close button.
     pub toast: Option<Toast>,
     /// Source of `Toast::id`, so a replacement restarts the dismiss timer.
@@ -232,8 +235,8 @@ impl AppState {
             shell_options: crate::infrastructure::terminal::profiles::options(&[]),
             terminal_cursor_blink: true,
             smooth_caret: true,
-            editor_font: crate::fonts::FontSettings::EDITOR,
-            terminal_font: crate::fonts::FontSettings::TERMINAL,
+            editor_font: crate::ui::fonts::FontSettings::EDITOR,
+            terminal_font: crate::ui::fonts::FontSettings::TERMINAL,
             editor_font_input: Default::default(),
             terminal_font_input: Default::default(),
             project_settings: Vec::new(),
@@ -261,7 +264,7 @@ impl AppState {
             .model
             .restore(session.open_folders, session.recent_folders);
         app.source_control.visible = session.source_control_open;
-        app.apply_settings(crate::settings_persistence::load());
+        app.apply_settings(crate::infrastructure::settings_filesystem::load());
         app.refresh_shells();
         crate::app::explorer::hydrate_workspace_folders(&mut app);
         crate::workspace_actions::hydrate_editor_layout(&mut app, session.editor_layout);
@@ -270,8 +273,8 @@ impl AppState {
     }
 
     /// The preferences stored in `settings.json`.
-    pub fn settings(&self) -> crate::settings_persistence::Settings {
-        crate::settings_persistence::Settings {
+    pub fn settings(&self) -> crate::infrastructure::settings_filesystem::Settings {
+        crate::infrastructure::settings_filesystem::Settings {
             theme: self.theme,
             default_shell: self.default_shell,
             terminal_profiles: self.terminal_profiles.clone(),
@@ -288,7 +291,10 @@ impl AppState {
 
     /// Applies preferences read from `settings.json`; returns whether
     /// anything changed.
-    pub fn apply_settings(&mut self, settings: crate::settings_persistence::Settings) -> bool {
+    pub fn apply_settings(
+        &mut self,
+        settings: crate::infrastructure::settings_filesystem::Settings,
+    ) -> bool {
         if settings == self.settings() {
             return false;
         }
@@ -316,7 +322,7 @@ impl AppState {
     }
 
     /// Applies an editor font preference, keeping open views on the same line.
-    pub fn set_editor_font(&mut self, font: crate::fonts::FontSettings) {
+    pub fn set_editor_font(&mut self, font: crate::ui::fonts::FontSettings) {
         use crate::features::git::diff_document::row_height_for;
         let font = font.clamped();
         if font.family != self.editor_font.family {
@@ -333,7 +339,7 @@ impl AppState {
         self.editor_font = font;
     }
 
-    pub fn set_terminal_font(&mut self, font: crate::fonts::FontSettings) {
+    pub fn set_terminal_font(&mut self, font: crate::ui::fonts::FontSettings) {
         let font = font.clamped();
         if font.family != self.terminal_font.family {
             self.terminal_font_input.set_text(font.family.clone());
@@ -375,14 +381,17 @@ impl AppState {
     }
 
     /// The user's settings with the project settings for `path` applied.
-    pub fn settings_at(&self, path: Option<&Path>) -> crate::settings_persistence::Settings {
+    pub fn settings_at(
+        &self,
+        path: Option<&Path>,
+    ) -> crate::infrastructure::settings_filesystem::Settings {
         let settings = self.settings();
         let project = path
             .and_then(|path| self.workspace_folder_of(path))
             .and_then(|root| self.project_settings.iter().find(|(r, _)| r == root));
         match project {
             Some((_, project)) => {
-                crate::settings_persistence::overlay(&settings, &project.overrides)
+                crate::infrastructure::settings_filesystem::overlay(&settings, &project.overrides)
             }
             None => settings,
         }
@@ -391,7 +400,7 @@ impl AppState {
     /// Re-reads every workspace folder's `.loom/settings.json`, reporting
     /// problems that are new since the last read.
     pub fn refresh_project_settings(&mut self) {
-        use crate::project_settings::{self, ProjectSettings};
+        use crate::infrastructure::project_settings::{self as project_settings, ProjectSettings};
         let mut fresh = Vec::new();
         for root in self.explorer.model.roots() {
             let project = match project_settings::read(root) {
@@ -527,9 +536,9 @@ impl AppState {
                 let size = match action {
                     Action::IncreaseFontSize => self.editor_font.size.saturating_add(1),
                     Action::DecreaseFontSize => self.editor_font.size.saturating_sub(1),
-                    _ => crate::fonts::FontSettings::EDITOR.size,
+                    _ => crate::ui::fonts::FontSettings::EDITOR.size,
                 };
-                self.set_editor_font(crate::fonts::FontSettings {
+                self.set_editor_font(crate::ui::fonts::FontSettings {
                     size,
                     ..self.editor_font.clone()
                 });
@@ -765,7 +774,7 @@ mod tests {
     fn source_control_chrome_and_diff_split_keep_their_defaults() {
         let app = AppState::new();
         assert!(!app.source_control.visible);
-        assert_eq!(app.source_control.width, crate::theme::SIDEBAR_W);
+        assert_eq!(app.source_control.width, crate::ui::theme::SIDEBAR_W);
         assert_eq!(app.editor.diff_split.ratio, 0.5);
         assert!(app.editor.diff_split.drag.is_none());
         assert!(

@@ -15,8 +15,8 @@ use crate::model::document::{FileId, FileMeta};
 use crate::model::pane_layout::{Direction, PaneId};
 use crate::model::workspace::AppPage;
 use crate::state::{AppState, MainSurface, TabContextMenuState, TabDragState, TabDrop};
-use crate::theme;
 use crate::ui::tab_layout::{self, TabLayoutInput, TabLayoutResult};
+use crate::ui::theme;
 
 /// Horizontal padding inside each tab pill (px-3 in the mockup).
 pub(super) const PAD: f32 = 12.0;
@@ -239,7 +239,7 @@ fn tab_badge(app: &AppState, id: FileId, meta: &FileMeta) -> TabBadge {
         TabBadge::Icon(icon, theme::c().badge.diff)
     } else {
         TabBadge::Icon(
-            crate::file_icons::icon_for_file(&meta.name),
+            crate::ui::file_icons::icon_for_file(&meta.name),
             theme::c().text_muted,
         )
     }
@@ -1022,7 +1022,7 @@ pub fn render(
         } else {
             icon(
                 UiId::owned(format!("tabs.pending.{}", pane.get())),
-                crate::file_icons::icon_for_file(&meta.name),
+                crate::ui::file_icons::icon_for_file(&meta.name),
                 badge_rect,
                 theme::c().text_muted,
             )

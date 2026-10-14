@@ -89,9 +89,9 @@ fn emit(n: usize, metric: &str, start: Instant, iterations: usize, nodes: usize)
 #[test]
 #[ignore = "opt-in R7 production terminal snapshot, frame and projection comparison"]
 fn terminal_production_benchmark() {
-    crate::fonts::set(
-        &crate::fonts::FontSettings::EDITOR,
-        &crate::fonts::FontSettings::TERMINAL,
+    crate::ui::fonts::set(
+        &crate::ui::fonts::FontSettings::EDITOR,
+        &crate::ui::fonts::FontSettings::TERMINAL,
     );
     for n in [1, 8, 32] {
         let tabs = make_tabs(n);

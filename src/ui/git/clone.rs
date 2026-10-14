@@ -6,8 +6,8 @@ use lgui::core::{
 };
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 
-use crate::theme;
 use crate::ui::git::commands::{Binding, Command};
+use crate::ui::theme;
 
 pub(crate) const CARD_W: f32 = 480.0;
 pub(crate) const CARD_H: f32 = 188.0;

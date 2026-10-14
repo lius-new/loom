@@ -171,8 +171,10 @@ pub(crate) fn run(
         Command::Resize { width } => {
             state.update(|app| {
                 if app.source_control.resizing {
-                    app.source_control.width =
-                        width.clamp(crate::theme::SIDEBAR_MIN_W, crate::theme::SIDEBAR_MAX_W)
+                    app.source_control.width = width.clamp(
+                        crate::ui::theme::SIDEBAR_MIN_W,
+                        crate::ui::theme::SIDEBAR_MAX_W,
+                    )
                 }
             });
             true
@@ -355,13 +357,13 @@ mod tests {
         view.dispatch(Command::Resize { width: 100_000.0 });
         assert_eq!(
             state.get().source_control.width,
-            crate::theme::SIDEBAR_MAX_W
+            crate::ui::theme::SIDEBAR_MAX_W
         );
         view.dispatch(Command::ResizeEnd);
         view.dispatch(Command::Resize { width: 0.0 });
         assert_eq!(
             state.get().source_control.width,
-            crate::theme::SIDEBAR_MAX_W
+            crate::ui::theme::SIDEBAR_MAX_W
         );
         assert!(!state.get().source_control.resizing);
     }

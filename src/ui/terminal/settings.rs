@@ -2,13 +2,13 @@
 
 use crate::features::terminal::ShellKind;
 use crate::features::terminal::profiles::format_arguments;
-use crate::theme;
 use crate::ui::components::input::{
     self, AccessInputOptions, InputBinding, InputState, InputStyle,
 };
 use crate::ui::tabs::{TEXT_MARGIN, ellipsize, measure};
 use crate::ui::terminal::settings_binding::{Binding, Command, Frame};
 use crate::ui::terminal::state::{ProfileEditor, TerminalUiState};
+use crate::ui::theme;
 use lgui::core::{CursorIcon, EventPolicy};
 use lgui::prelude::{Element, TextAlign, UiRect, VisualStyle, component, group, panel, text};
 

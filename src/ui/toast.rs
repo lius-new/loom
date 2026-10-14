@@ -9,7 +9,7 @@ use lgui::prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, tex
 
 use super::tabs::{ellipsize, measure};
 use crate::domain::notification::{Toast, ToastKind};
-use crate::theme;
+use crate::ui::theme;
 
 const HEIGHT: f32 = 34.0;
 const MAX_W: f32 = 560.0;

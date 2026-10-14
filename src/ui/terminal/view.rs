@@ -18,12 +18,12 @@ use lgui::services::ServicesContextExt;
 
 use crate::features::terminal::SessionId;
 use crate::features::terminal::{TerminalRun, TerminalSize};
-use crate::fonts;
-use crate::theme;
+use crate::ui::fonts;
 use crate::ui::tabs::{
     GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
     TEXT_MARGIN, ellipsize, measure,
 };
+use crate::ui::theme;
 
 const HEADER_H: f32 = 34.0;
 const BODY_PAD_X: f32 = 12.0;

@@ -8,12 +8,12 @@ use lgui::prelude::{
     Color, Element, State, TextAlign, UiRect, VisualStyle, component, group, panel, text,
 };
 
-use crate::fonts::{self, FontSettings};
 use crate::input::action::Action;
 use crate::state::AppState;
-use crate::theme::{self, ThemeId};
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
+use crate::ui::fonts::{self, FontSettings};
 use crate::ui::tabs::{TEXT_MARGIN, measure};
+use crate::ui::theme::{self, ThemeId};
 
 const MAX_PAGE_W: f32 = 720.0;
 const PAGE_PAD_X: f32 = 32.0;
@@ -1035,7 +1035,7 @@ mod tests {
         let mut app = AppState::new();
         assert!(!app.apply_settings(app.settings()));
 
-        let file = crate::settings_persistence::parse(
+        let file = crate::features::settings::rules::parse(
             r#"{ "smooth_caret": false, "vim": { "enabled": true }, "editor_font": { "family": "Consolas", "size": 99 } }"#,
         )
         .unwrap();

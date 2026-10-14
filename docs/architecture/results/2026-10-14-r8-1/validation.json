@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "scope": "R8.1 local automated acceptance complete; R8.2 next",
+  "base": "0caaf0701f35a0b437523f0b06fa0b8550e8e9b9",
+  "branch": "refactor/r8-chrome",
+  "environment": {
+    "rust": "1.98.0",
+    "pinned": "1.97.1",
+    "pinned_tested": false,
+    "locked_offline": true,
+    "dependency_files_unchanged": true
+  },
+  "workspace": {
+    "passed": 711,
+    "failed": 0,
+    "ignored": 15,
+    "application": 614,
+    "editor": 68,
+    "domain_repeated": 29
+  },
+  "mapping": {
+    "before_application": 629,
+    "missing": 0,
+    "moved": 51,
+    "added_behavior": 0,
+    "source_before": 698,
+    "source_after": 698,
+    "ignored_changed": 0
+  },
+  "gate": {
+    "description": "Architecture gate passed: 245 source files; 30 root, 30 editor and 9 workspace owned fields; 23 tracked legacy exception files.",
+    "node": 51,
+    "architecture": 48,
+    "report": 3,
+    "exceptions": 23,
+    "root_ui_adapters": 12,
+    "root_fields": 30
+  },
+  "checks": [
+    {
+      "name": "all-targets",
+      "result": "passed"
+    },
+    {
+      "name": "fmt",
+      "result": "passed"
+    },
+    {
+      "name": "strict CI Clippy",
+      "result": "passed"
+    },
+    {
+      "name": "workspace debug",
+      "result": "passed"
+    },
+    {
+      "name": "release app build",
+      "result": "passed"
+    },
+    {
+      "name": "isolated startup",
+      "result": "passed"
+    }
+  ],
+  "startup": {
+    "exe": "C:\\Users\\yys\\loom\\target\\release\\Loom.exe",
+    "sha256": "8F76ECE99973A2EA99207895F9FFE43F37297AD2DE3138A8535567B8F0808471",
+    "child_appdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r81-startup\\startup-fixture\\appdata",
+    "child_localappdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r81-startup\\startup-fixture\\localappdata",
+    "window_style": "Hidden",
+    "started_at": "2026-10-14T13:54:07.0610062+08:00",
+    "result": "passed",
+    "forced_cleanup": false,
+    "pid": 6392,
+    "alive_after_4_seconds": true,
+    "root_effect_configuration_files": [
+      "workspace.json"
+    ],
+    "close_requested": true,
+    "exit_code": 0,
+    "clean_exit": true,
+    "saved_synthetic_workspace": true,
+    "finished_at": "2026-10-14T13:54:11.1353607+08:00"
+  },
+  "hashes": {
+    "debug": "94a35d5566308d0eccf3e3f97ef09842bb827f36a5a10ed24eb024bc98418bde",
+    "app": "8f76ece99973a2ea99207895f9ffe43f37297ad2de3138a8535567b8f0808471"
+  },
+  "raw": "target/baseline/2026-10-14-r8-1",
+  "pending": [
+    "R8.2-R8.6",
+    "R8 final frozen performance A/B and default/isolated/release full regression",
+    "fixed 1.97.1 and manual/cross-platform/remote CI/install matrix"
+  ]
+}

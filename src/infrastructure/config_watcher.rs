@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use notify::{RecursiveMode, Watcher};
 
-use crate::workspace_persistence::config_path;
+use crate::infrastructure::session_filesystem::config_path;
 
 /// Editors often save in several steps; wait this long for them to settle.
 const RELOAD_QUIET_WINDOW: Duration = Duration::from_millis(200);

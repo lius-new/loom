@@ -17,8 +17,9 @@ use lgui::services::ServicesContextExt;
 
 use crate::app::editor_vim as vim_input;
 use crate::app::terminal::{self, ClipboardShortcut};
-use crate::config_watcher::{self, ConfigWatcher};
 use crate::features::git::GitStoreSnapshot;
+use crate::infrastructure::config_watcher::{self as config_watcher, ConfigWatcher};
+use crate::infrastructure::settings_filesystem::{self as settings_persistence, UserSettings};
 use crate::infrastructure::terminal::runtime::TerminalHandle;
 use crate::input::action::Action;
 use crate::input::context::KeyContext;
@@ -27,7 +28,6 @@ use crate::input::dispatcher::{self, Replay};
 use crate::input::keymap;
 use crate::input::keymap_file::{self, UserKeymap};
 use crate::input::keystroke::Keystroke;
-use crate::settings_persistence::{self, UserSettings};
 use crate::state::AppState;
 use crate::ui::close_confirmation;
 use crate::ui::editor::view as editor_view;
@@ -493,7 +493,7 @@ pub fn open_project_settings(state: &State<AppState>) -> bool {
         state.update(|app| app.show_error("Open a folder to add project settings."));
         return false;
     };
-    match crate::project_settings::ensure(&root) {
+    match crate::infrastructure::project_settings::ensure(&root) {
         Ok(path) => {
             state.update(move |app| crate::app::explorer::open_launch_paths(app, vec![path]));
             true

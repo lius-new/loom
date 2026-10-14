@@ -3,7 +3,7 @@
 use lgui::core::{CursorIcon, EventPolicy, UiElement, UiId, UiScale};
 use lgui::prelude::{Element, UiRect, VisualStyle};
 
-use crate::theme;
+use crate::ui::theme;
 
 pub fn render(
     key: impl Into<String>,

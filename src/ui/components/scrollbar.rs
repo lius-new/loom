@@ -3,7 +3,7 @@
 use lgui::core::{CursorIcon, UiElement};
 use lgui::prelude::{Element, UiRect, VisualStyle};
 
-use crate::theme;
+use crate::ui::theme;
 
 pub const SIZE: f32 = 12.0;
 pub const INSET: f32 = 2.0;

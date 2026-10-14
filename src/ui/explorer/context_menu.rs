@@ -15,8 +15,8 @@ use super::commands::{Command, Commands, MenuAction};
 use super::state::ExplorerPanelState;
 use crate::features::explorer::model::ExplorerModel;
 use crate::features::explorer::{ExplorerContextTarget, ExplorerTargetKind};
-use crate::theme;
 use crate::ui::components::state_access::StateAccess;
+use crate::ui::theme;
 
 const MENU_PAD: f32 = 4.0; // padding above/below the item list
 const ITEM_H: f32 = 22.0; // item row height

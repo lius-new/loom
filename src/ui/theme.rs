@@ -6,7 +6,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lgui::prelude::{Color, Element, Stroke, TextAlign, TextStyle, UiRect, VisualStyle, panel};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 // ---- Palettes ----------------------------------------------------------
 
@@ -377,35 +376,10 @@ const HIGH_CONTRAST: Palette = Palette {
     ],
 };
 
-/// A built-in theme. Stored in `settings.json` as the theme's string id; an
-/// unknown id loads as the default theme.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ThemeId(usize); // index into THEMES; 0 is the default
-
+pub use crate::features::settings::theme_id::ThemeId;
 impl ThemeId {
-    pub fn all() -> impl Iterator<Item = Self> {
-        (0..THEMES.len()).map(Self)
-    }
-
-    pub fn parse(id: &str) -> Option<Self> {
-        THEMES.iter().position(|theme| theme.id == id).map(Self)
-    }
-
     pub fn theme(self) -> &'static Theme {
-        &THEMES[self.0]
-    }
-}
-
-impl Serialize for ThemeId {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.theme().id)
-    }
-}
-
-impl<'de> Deserialize<'de> for ThemeId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let id = String::deserialize(deserializer)?;
-        Ok(Self::parse(&id).unwrap_or_default())
+        &THEMES[self.index()]
     }
 }
 
@@ -417,11 +391,11 @@ pub fn c() -> &'static Palette {
 }
 
 pub fn current() -> ThemeId {
-    ThemeId(CURRENT.load(Ordering::Relaxed))
+    ThemeId::from_index(CURRENT.load(Ordering::Relaxed))
 }
 
 pub fn set(id: ThemeId) {
-    CURRENT.store(id.0, Ordering::Relaxed);
+    CURRENT.store(id.index(), Ordering::Relaxed);
 }
 
 // ---- Layout metrics (px) ----------------------------------------------
@@ -522,6 +496,10 @@ mod tests {
 
     #[test]
     fn theme_ids_are_unique() {
+        assert_eq!(
+            ThemeId::all().map(ThemeId::id).collect::<Vec<_>>(),
+            THEMES.iter().map(|theme| theme.id).collect::<Vec<_>>()
+        );
         for (index, theme) in THEMES.iter().enumerate() {
             assert!(
                 THEMES[index + 1..].iter().all(|other| other.id != theme.id),

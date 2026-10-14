@@ -7,9 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::features::terminal::ShellKind;
+use crate::infrastructure::settings_filesystem::{self as settings_persistence, Scope};
 use crate::input::action::Action;
 use crate::input::keymap::BindingSource;
-use crate::settings_persistence::{self, Scope};
 use crate::workspace_persistence::{SavedPaneNode, WorkspaceSession};
 
 #[test]

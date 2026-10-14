@@ -12,7 +12,7 @@ use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
 
 use crate::input::action::Action;
 use crate::state::AppState;
-use crate::theme;
+use crate::ui::theme;
 use crate::window_geometry;
 
 /// Windows 11 caption close-button red, the same in light and dark themes.

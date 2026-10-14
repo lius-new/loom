@@ -62,3 +62,8 @@ mod terminal_view_tests;
 
 #[cfg(test)]
 mod terminal_performance;
+
+#[cfg(test)]
+mod settings_project_tests;
+
+pub(crate) mod workspace_commands;

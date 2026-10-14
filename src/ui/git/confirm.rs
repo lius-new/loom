@@ -10,8 +10,8 @@ use lgui::prelude::{Element, TextAlign, TextStyle, UiRect, VisualStyle, panel, t
 use crate::features::git::actions::Checkout;
 use crate::features::git::diff_document::ChangeBlock;
 use crate::features::git::{DiffTarget, RepositoryState};
-use crate::theme;
 use crate::ui::git::commands::{Binding, Command, Snapshot};
+use crate::ui::theme;
 
 pub(crate) const CARD_W: f32 = 480.0;
 pub(crate) const CARD_H: f32 = 156.0;

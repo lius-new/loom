@@ -2,9 +2,9 @@
 use super::editor_vim as vim_input;
 use crate::app::state::AppState;
 use crate::app::state::editor::{DragSelection, ImeSession, SelectionUnit};
-use crate::fonts;
-use crate::theme;
 use crate::ui::editor::view::*;
+use crate::ui::fonts;
+use crate::ui::theme;
 use crate::vim;
 use lgui::core::PointerButton;
 use lgui::prelude::{State, UiRect};

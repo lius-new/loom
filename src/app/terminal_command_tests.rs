@@ -303,7 +303,7 @@ fn profile_binding_preserves_literal_arguments_project_default_and_closed_draft_
         app.default_shell = ShellKind::Cmd;
         app.project_settings.push((
             root.clone(),
-            crate::project_settings::ProjectSettings {
+            crate::infrastructure::project_settings::ProjectSettings {
                 overrides: [("default_shell".into(), serde_json::json!("bash"))]
                     .into_iter()
                     .collect(),

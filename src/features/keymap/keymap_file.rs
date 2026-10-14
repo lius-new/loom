@@ -15,7 +15,7 @@ use super::action::Action;
 use super::context::ContextPredicate;
 use super::keymap::{Binding, BindingSource, Keymap};
 use super::keystroke::Keystroke;
-use crate::jsonc::strip as strip_jsonc;
+use crate::features::settings::jsonc::strip as strip_jsonc;
 use crate::workspace_persistence::config_path;
 
 const DEFAULT_KEYMAP: &str = include_str!("../../../assets/keymaps/default.json");

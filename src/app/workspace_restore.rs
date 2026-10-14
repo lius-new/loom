@@ -178,7 +178,7 @@ mod tests {
                 let focus = cx.focus_handle(UiId::new("restore-surface"));
                 let pane = state.get().workspace.active_pane();
                 group(rect)
-                    .child(panel(rect, VisualStyle::filled(crate::theme::c().bg)))
+                    .child(panel(rect, VisualStyle::filled(crate::ui::theme::c().bg)))
                     .child(crate::ui::tabs::render(
                         pane,
                         UiRect::new(0.0, 0.0, 800.0, 36.0),

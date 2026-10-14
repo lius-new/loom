@@ -13,12 +13,12 @@ use crate::features::git::actions::BlockAction;
 use crate::features::git::diff_document::{
     ChangesLayout, DiffDocument, DiffRow, DiffRowKind, SplitDiffRow,
 };
-use crate::fonts;
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
-use crate::theme;
 use crate::ui::editor::view::{self as editor_view, SCROLLBAR_SIZE, ScrollMetrics};
+use crate::ui::fonts;
 use crate::ui::git::commands::{Binding as GitBinding, Command as GitCommand};
+use crate::ui::theme;
 
 const TOOLBAR_H: f32 = 34.0;
 const NUMBER_W: f32 = 44.0;
@@ -28,7 +28,7 @@ const BUTTON_GAP: f32 = 4.0;
 
 /// Height of one diff row; rows grow with the editor font size.
 pub(crate) fn row_h() -> f32 {
-    crate::features::git::diff_document::row_height_for(crate::fonts::editor().size)
+    crate::features::git::diff_document::row_height_for(crate::ui::fonts::editor().size)
 }
 
 /// Render the diff shown by `pane` into `rect`.

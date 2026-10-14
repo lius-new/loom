@@ -4,9 +4,9 @@ use crate::app::terminal_binding::TerminalTabs;
 use crate::domain::application_layout::{ApplicationLayout, Content, Placement, Visibility};
 use crate::domain::pane_layout::{Axis, Direction};
 use crate::state::AppState;
-#[cfg(test)]
-use crate::theme;
 use crate::ui::terminal::layout_binding::{MapScene, MapSignal, TerminalDrag, Zone};
+#[cfg(test)]
+use crate::ui::theme;
 use lgui::core::{CursorIcon, Observable, ObservableListener, Point};
 #[cfg(test)]
 use lgui::core::{LogicalKey, NamedKey};

@@ -13,7 +13,6 @@ use crate::features::git::{
     ChangeKind, CommitSummary, ConflictSide, DiffTarget, FileState, RepositorySnapshot,
     RepositoryState, StashInfo, WorktreeInfo,
 };
-use crate::theme;
 use crate::ui::components::input::{
     self, AccessInputOptions, InputBinding, InputState, InputStyle,
 };
@@ -21,6 +20,7 @@ use crate::ui::components::scrollbar;
 use crate::ui::git::commands::{Binding, Command, Snapshot};
 use crate::ui::git::menu::{GitMenu, GitMenuTarget};
 use crate::ui::git::state::GitPanelState;
+use crate::ui::theme;
 
 pub(crate) const TOPLINE_H: f32 = theme::TABS_H;
 pub(crate) const PROMPT_H: f32 = 32.0;

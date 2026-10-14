@@ -1,7 +1,7 @@
 //! Language badge colors are presentation policy.
 use lgui::prelude::Color;
 
-use crate::theme;
+use crate::ui::theme;
 
 use crate::domain::language::Language;
 

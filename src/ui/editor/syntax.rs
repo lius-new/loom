@@ -7,7 +7,7 @@
 use lgui::prelude::Color;
 
 use crate::domain::language::Language;
-use crate::theme;
+use crate::ui::theme;
 use std::{cell::RefCell, collections::HashMap};
 use unicode_segmentation::UnicodeSegmentation;
 

@@ -315,3 +315,11 @@ test('final terminal gate rejects old declarations and hidden native resources i
   for(const module of ['layout_map','terminal_settings','terminal_tab_context_menu'])assert.ok(violations({'src/ui/mod.rs':`pub mod ${module};`},policy()).some(e=>e.includes('old terminal UI module aliases')));
   for(const source of ['type Hidden = Arc<RunningProcess>;','pub struct View { resources: Wrapper<Registry> }','use std::{fs as files, process as native};','let cwd = std::env::current_dir();'])assert.ok(violations({'src/ui/terminal/new.rs':source},policy()).some(e=>e.includes('Terminal projection view')));
 });
+
+test('settings pure rules reject GUI native services nested resources and ancestor escapes',()=>{
+  for(const source of ['use lgui::State;','use std::{fs as native};','std::env::current_dir();','struct Model { nested: Wrapper<AppRuntime> }','use super::super::state::AppState;','include!("adapter.rs");'])assert.ok(violations({'src/features/settings/fake.rs':source},policy()).length>0,source);
+});
+test('settings native adapters and removed root paths cannot retain application capabilities',()=>{
+  for(const file of ['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs','src/infrastructure/config_watcher.rs'])assert.ok(violations({[file]:'use crate::app::state::AppState;'},policy()).length>0,file);
+  for(const file of ['src/theme.rs','src/fonts.rs','src/file_icons.rs','src/jsonc.rs','src/settings_persistence.rs','src/project_settings.rs','src/config_watcher.rs','src/workspace_actions.rs'])assert.ok(violations({[file]:'fn retained() {}'},policy()).some(e=>e.includes('removed R8.1')),file);
+});

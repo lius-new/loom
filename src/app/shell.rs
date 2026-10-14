@@ -18,12 +18,12 @@ use crate::app::terminal_effects;
 use crate::app::{layout_map, terminal_view as terminal};
 use crate::domain::application_layout::{ApplicationLayout, Content};
 use crate::features::git::GitStoreSnapshot;
+use crate::infrastructure::settings_filesystem as settings_persistence;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
-use crate::settings_persistence;
 use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
-use crate::theme;
 use crate::ui::editor::view as editor_view;
 use crate::ui::terminal::menu as terminal_tab_context_menu;
+use crate::ui::theme;
 use crate::ui::{
     close_confirmation, diff_editor, keymap_page, pane_sash, settings, statusbar, tab_context_menu,
     tabs, titlebar, toast, welcome, workspace_home,
@@ -251,7 +251,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let s = state.get();
     layout_map::refresh(&s, &layout_map_store, content_area, session_ids.clone());
     theme::set(s.theme);
-    crate::fonts::set(&s.editor_font, &s.terminal_font);
+    crate::ui::fonts::set(&s.editor_font, &s.terminal_font);
     let editor_layout = crate::workspace_actions::saved_app_editor_layout(&s);
     let git_roots = s.explorer.model.roots().to_vec();
     let git_target = super::git_poll::poll_target(&s);

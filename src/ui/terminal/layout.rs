@@ -2,7 +2,7 @@
 use super::layout_binding::{MapBinding, MapCommand, MapSignal};
 use crate::domain::application_layout::{Content, Placement};
 use crate::domain::pane_layout::{Axis, Direction};
-use crate::theme;
+use crate::ui::theme;
 use lgui::core::{CursorIcon, LogicalKey, NamedKey, UiEventKind, UiEventPayload};
 use lgui::prelude::{Element, Stroke, UiRect, VisualStyle, component, panel};
 const CELL_RADIUS: f32 = 6.0;

@@ -21,11 +21,11 @@ use lgui::prelude::{Color, Element, TextAlign, UiRect, VisualStyle, panel, text}
 use super::commands::{Command, Commands, Decoration, EditInput, Frame, GitTone};
 use super::state::ExplorerPanelState;
 use crate::features::explorer::{ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
-use crate::theme;
 use crate::ui::components::input::{self, AccessInputOptions, InputBinding, InputStyle};
 use crate::ui::components::scrollbar;
 use crate::ui::components::state_access::StateAccess;
 use crate::ui::drawer::drawer_icon;
+use crate::ui::theme;
 
 const HEADER_H: f32 = theme::TABS_H;
 const ROW_H: f32 = 20.0;
@@ -323,7 +323,7 @@ fn empty_state(rect: UiRect, commands: &Commands) -> Vec<Element> {
     let icon = theme::bordered(icon_rect, theme::c().surface, theme::c().border, 10.0, 1.0).child(
         drawer_icon(
             "sidebar.empty.folder",
-            crate::file_icons::FOLDER_ICON,
+            crate::ui::file_icons::FOLDER_ICON,
             UiRect::new(
                 icon_rect.left + 12.0,
                 icon_rect.top + 12.0,
@@ -383,7 +383,7 @@ fn empty_state(rect: UiRect, commands: &Commands) -> Vec<Element> {
         .on_click(move || open.dispatch(Command::ChooseFolder))
         .child(drawer_icon(
             "sidebar.empty.open-folder",
-            crate::file_icons::FOLDER_OPEN_ICON,
+            crate::ui::file_icons::FOLDER_OPEN_ICON,
             UiRect::new(
                 btn_rect.left + 12.0,
                 btn_rect.top + 10.0,
@@ -511,9 +511,9 @@ fn create_row(tree: &TreeContext<'_>, y: f32, indent: f32) -> Element {
         .map_or(ExplorerCreateKind::File, |request| request.kind);
     let border = edit_border(tree.panel);
     let icon = if kind == ExplorerCreateKind::Folder {
-        crate::file_icons::FOLDER_ICON
+        crate::ui::file_icons::FOLDER_ICON
     } else {
-        crate::file_icons::DEFAULT_FILE_ICON
+        crate::ui::file_icons::DEFAULT_FILE_ICON
     };
     let input_rect = UiRect::new(
         indent + TREE_LABEL_OFFSET,
@@ -578,16 +578,16 @@ fn rename_row(tree: &TreeContext<'_>, y: f32, indent: f32, is_expanded: bool) ->
         Some(ExplorerTargetKind::File) => {
             let icon = request
                 .and_then(|request| request.path.file_name())
-                .map(|name| crate::file_icons::icon_for_file(&name.to_string_lossy()))
-                .unwrap_or(crate::file_icons::DEFAULT_FILE_ICON);
+                .map(|name| crate::ui::file_icons::icon_for_file(&name.to_string_lossy()))
+                .unwrap_or(crate::ui::file_icons::DEFAULT_FILE_ICON);
             ("Rename file", icon)
         }
         _ => (
             "Rename folder",
             if is_expanded {
-                crate::file_icons::FOLDER_OPEN_ICON
+                crate::ui::file_icons::FOLDER_OPEN_ICON
             } else {
-                crate::file_icons::FOLDER_ICON
+                crate::ui::file_icons::FOLDER_ICON
             },
         ),
     };
@@ -669,9 +669,9 @@ fn dir_row(
         content_right - 12.0
     };
     let icon = if is_expanded {
-        crate::file_icons::FOLDER_OPEN_ICON
+        crate::ui::file_icons::FOLDER_OPEN_ICON
     } else {
-        crate::file_icons::FOLDER_ICON
+        crate::ui::file_icons::FOLDER_ICON
     };
     let layer = if sticky { "sticky" } else { "content" };
     let fid = UiId::owned(format!("tree-{layer}-{key}"));
@@ -736,7 +736,7 @@ fn file_row(
     let content_right = tree.content_right;
     let row_rect = UiRect::new(tree.rect.left, y, content_right, y + ROW_H);
     let icon_id = UiId::owned(format!("tree-file-icon-{key}"));
-    let icon = crate::file_icons::icon_for_file(&name);
+    let icon = crate::ui::file_icons::icon_for_file(&name);
     let decoration = (tree.frame.decorate)(entry_path);
     let label_color = tree_label_color(decoration, theme::c().text_muted);
     let row_style = if tree.frame.active_path == Some(entry_path) {

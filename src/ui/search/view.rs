@@ -11,12 +11,12 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::commands::{self as search_actions, Command, Commands, FILE_ROW_H, MATCH_ROW_H};
 use super::state::SearchPanelState;
 use crate::features::search::{FileMatches, Results};
-use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputState, InputStyle};
 use crate::ui::components::scrollbar;
 use crate::ui::components::state_access::StateAccess;
 use crate::ui::components::text::SingleLineText;
 use crate::ui::drawer::drawer_icon;
+use crate::ui::theme;
 
 // Search uses the compact UI scale for dense result lists.
 const TEXT_SIZE: f32 = theme::SMALL;
@@ -856,7 +856,7 @@ fn results(
                 ))
                 .child(drawer_icon(
                     UiId::owned(format!("search-file-icon-{}", file.path.display())),
-                    crate::file_icons::icon_for_file(&name),
+                    crate::ui::file_icons::icon_for_file(&name),
                     UiRect::new(
                         area.left + 25.0,
                         area.top + 5.0,

@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use crate::domain::identity::FileId;
 use crate::domain::identity::PaneId;
-use crate::fonts;
+use crate::ui::fonts;
 
 const DURATION_MS: f32 = 80.0;
 const FRAME_INTERVAL_MS: u64 = 8;
@@ -188,7 +188,7 @@ mod tests {
     use super::*;
 
     fn caret_at(rect: UiRect, context: CaretContext) -> Element {
-        let style = VisualStyle::filled(crate::theme::c().accent);
+        let style = VisualStyle::filled(crate::ui::theme::c().accent);
         render(rect, [rect.left, rect.top], style, context, true)
     }
 

@@ -16,7 +16,7 @@ use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text}
 
 use crate::input::action::Action;
 use crate::state::AppState;
-use crate::theme;
+use crate::ui::theme;
 
 /// Padding between the bar's right edge and the last item.
 const EDGE_PAD: f32 = 12.0;

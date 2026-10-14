@@ -20,27 +20,20 @@
 mod app;
 mod infrastructure;
 use infrastructure::ui_dispatch as background_ui;
-mod config_watcher;
 mod features;
-mod file_icons;
 mod file_loading;
 mod file_watcher;
-mod fonts;
 use features::keymap as input;
 mod domain;
-mod jsonc;
 mod key_actions;
 mod launch;
 mod model;
-mod project_settings;
-use app::workspace_restore as session_restore;
-mod settings_persistence;
 use app::state;
-mod theme;
+use app::workspace_restore as session_restore;
 mod ui;
 use loom_editor_core::vim;
 mod window_geometry;
-mod workspace_actions;
+use app::workspace_commands as workspace_actions;
 use app::workspace_session as workspace_persistence;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

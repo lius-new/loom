@@ -15,7 +15,7 @@ use lgui::session::UiSession;
 use crate::features::git::GitStoreSnapshot;
 use crate::model::pane_layout::PaneId;
 use crate::state::AppState;
-use crate::theme;
+use crate::ui::theme;
 use crate::vim::Mode;
 
 struct Ui {
@@ -111,7 +111,7 @@ impl Ui {
         };
         // Focus the editor with a click at the start of the text.
         let point = PointerData::mouse(Point::new(
-            crate::fonts::editor().gutter_w() + theme::CODE_PAD,
+            crate::ui::fonts::editor().gutter_w() + theme::CODE_PAD,
             5.0,
         ));
         ui.send(InputEvent::PointerDown {

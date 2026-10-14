@@ -297,7 +297,7 @@ pub fn render(
             rect.left,
             rect.top,
             rect.right,
-            rect.top + crate::theme::TABS_H,
+            rect.top + crate::ui::theme::TABS_H,
         ),
         &state,
     );

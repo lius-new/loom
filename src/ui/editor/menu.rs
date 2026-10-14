@@ -1,5 +1,5 @@
 //! Context menu shares the same commands and clipboard path as keyboard editing.
-use crate::theme;
+use crate::ui::theme;
 use lgui::core::UiFocusHandle;
 use lgui::core::{CursorIcon, EventPolicy};
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};

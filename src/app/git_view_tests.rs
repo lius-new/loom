@@ -2,11 +2,11 @@
 use crate::features::git::actions::*;
 use crate::features::git::model::*;
 use crate::features::git::*;
-use crate::theme;
 use crate::ui::components::input::InputState;
 use crate::ui::git::confirm::{GitConfirm, GitConfirmAction};
 use crate::ui::git::menu::{GitMenu, GitMenuTarget};
 use crate::ui::git::panel::{CONFLICTS, STAGED, UNTRACKED};
+use crate::ui::theme;
 use lgui::core::*;
 use lgui::prelude::*;
 use std::collections::BTreeSet;

@@ -8,9 +8,9 @@ use lgui::prelude::{State, UiRect};
 use lgui::services::Clipboard as SystemClipboard;
 
 use super::editor::reveal_cursor;
-use crate::fonts;
 use crate::state::AppState;
 use crate::ui::editor::view::page_lines;
+use crate::ui::fonts;
 use crate::vim::{self, Key, Request, ScrollPosition};
 
 /// The application as Vim's host for one key or command.

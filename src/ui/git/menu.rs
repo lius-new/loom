@@ -8,10 +8,10 @@ use lgui::prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, tex
 use lgui::services::ServicesContextExt;
 
 use crate::features::git::{ConflictSide, DiffRequest, DiffTarget, GitStoreSnapshot};
-use crate::theme;
 use crate::ui::git::commands::{Binding, Command, Snapshot};
 use crate::ui::git::panel::{CONFLICTS, STAGED, UNTRACKED};
 use crate::ui::git::state::GitPanelState;
+use crate::ui::theme;
 
 pub(crate) const MENU_W: f32 = 220.0;
 pub(crate) const PAD: f32 = 4.0;

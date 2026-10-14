@@ -18,12 +18,12 @@ use lgui::core::{
 use lgui::prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, text};
 
 use crate::features::git::{BranchInfo, OperationKind, WorktreeInfo};
-use crate::theme;
 use crate::ui::components::input::{
     self, AccessInputOptions, InputBinding, InputState, InputStyle,
 };
 use crate::ui::git::commands::{Binding, Command, Snapshot};
 use crate::ui::git::state::GitPanelState;
+use crate::ui::theme;
 
 pub(crate) const CARD_W: f32 = 420.0;
 pub(crate) const PAD: f32 = 6.0;

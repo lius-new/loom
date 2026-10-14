@@ -9,7 +9,7 @@ impl Default for TerminalChrome {
     fn default() -> Self {
         Self {
             show_terminal: false,
-            terminal_h: crate::theme::TERMINAL_H,
+            terminal_h: crate::ui::theme::TERMINAL_H,
             resizing_terminal: false,
         }
     }

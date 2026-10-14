@@ -4,18 +4,13 @@
 //! The Settings page edits it member by member, so the user's comments and
 //! layout survive; hand edits are picked up by a file watcher.
 
-use std::fs;
-use std::io;
-use std::sync::{Mutex, OnceLock};
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use super::font::FontSettings;
+use super::jsonc;
+use super::theme_id::ThemeId;
 use crate::features::terminal::ShellKind;
-use crate::fonts::FontSettings;
-use crate::jsonc;
-use crate::theme::ThemeId;
-use crate::workspace_persistence::config_path;
 
 pub const FILE_NAME: &str = "settings.json";
 
@@ -56,7 +51,7 @@ pub struct VimSettings {
     pub smart_case: bool,
 }
 
-impl From<VimSettings> for crate::vim::Options {
+impl From<VimSettings> for loom_editor_core::vim::Options {
     fn from(settings: VimSettings) -> Self {
         Self {
             enabled: settings.enabled,
@@ -67,8 +62,8 @@ impl From<VimSettings> for crate::vim::Options {
     }
 }
 
-impl From<crate::vim::Options> for VimSettings {
-    fn from(options: crate::vim::Options) -> Self {
+impl From<loom_editor_core::vim::Options> for VimSettings {
+    fn from(options: loom_editor_core::vim::Options) -> Self {
         Self {
             enabled: options.enabled,
             system_clipboard: options.system_clipboard,
@@ -109,14 +104,6 @@ fn default_terminal_font() -> FontSettings {
 pub struct LoadOutcome {
     pub settings: Settings,
     pub errors: Vec<String>,
-}
-
-/// The result of reading `settings.json`.
-pub enum UserSettings {
-    Missing,
-    Loaded(LoadOutcome),
-    /// The file as a whole is unusable; nothing in it applies.
-    Invalid(String),
 }
 
 /// Settings a project's `.loom/settings.json` may override. Everything else
@@ -266,7 +253,7 @@ fn to_map(settings: &Settings) -> Map<String, Value> {
 
 /// Edit `text` so it parses to `new` instead of `current`, touching only
 /// the members that changed. A value set back to its default is removed.
-fn patch(text: &str, current: &Settings, new: &Settings) -> Option<String> {
+pub(crate) fn patch(text: &str, current: &Settings, new: &Settings) -> Option<String> {
     let defaults = to_map(&Settings::default());
     let current = to_map(current);
     let mut text = text.to_owned();
@@ -319,103 +306,6 @@ pub fn template() -> String {
     text
 }
 
-pub fn read() -> UserSettings {
-    let _guard = settings_lock().lock().expect("settings lock poisoned");
-    let Some(path) = config_path(FILE_NAME) else {
-        return UserSettings::Missing;
-    };
-    match fs::read_to_string(&path) {
-        Ok(contents) => match parse(&contents) {
-            Ok(outcome) => UserSettings::Loaded(outcome),
-            Err(error) => UserSettings::Invalid(error),
-        },
-        Err(error) if error.kind() == io::ErrorKind::NotFound => UserSettings::Missing,
-        Err(error) => UserSettings::Invalid(error.to_string()),
-    }
-}
-
-/// The settings to start with; problems are reported by the first reload.
-pub fn load() -> Settings {
-    match read() {
-        UserSettings::Loaded(outcome) => outcome.settings,
-        UserSettings::Missing | UserSettings::Invalid(_) => Settings::default(),
-    }
-}
-
-/// Write the members of `settings` that differ from what the file holds.
-/// A file that does not parse is left alone so a half-finished hand edit
-/// is never overwritten.
-pub fn save(settings: &Settings) -> io::Result<()> {
-    let _guard = settings_lock().lock().expect("settings lock poisoned");
-    let path = config_path(FILE_NAME).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "could not determine the user configuration directory",
-        )
-    })?;
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            if *settings == Settings::default() {
-                return Ok(());
-            }
-            template()
-        }
-        Err(error) => return Err(error),
-    };
-    let invalid = |error: String| io::Error::new(io::ErrorKind::InvalidData, error);
-    let current = parse(&text).map_err(invalid)?.settings;
-    let patched = patch(&text, &current, settings)
-        .ok_or_else(|| invalid("expected an object of settings".to_owned()))?;
-    if patched == text && path.exists() {
-        return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&path, &patched)?;
-    *last_written().lock().expect("settings lock poisoned") = Some(patched);
-    Ok(())
-}
-
-/// Whether `text` is exactly what `save` last wrote, so the watcher can
-/// skip reloading the app's own writes.
-pub fn is_own_write(text: &str) -> bool {
-    last_written()
-        .lock()
-        .expect("settings lock poisoned")
-        .as_deref()
-        == Some(text)
-}
-
-/// Create `settings.json` from the template if it does not exist yet.
-pub fn ensure_user_file() -> io::Result<std::path::PathBuf> {
-    let _guard = settings_lock().lock().expect("settings lock poisoned");
-    let path = config_path(FILE_NAME).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "could not determine the user configuration directory",
-        )
-    })?;
-    if !path.exists() {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&path, template())?;
-    }
-    Ok(path)
-}
-
-fn last_written() -> &'static Mutex<Option<String>> {
-    static LAST: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-    LAST.get_or_init(Default::default)
-}
-
-fn settings_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,31 +353,6 @@ mod tests {
         let decoded: Settings = serde_json::from_str("{}").unwrap();
 
         assert_eq!(decoded, Settings::default());
-    }
-
-    #[test]
-    fn custom_default_keeps_its_id_across_settings_and_workspace_json() {
-        let settings = Settings {
-            default_shell: ShellKind::Custom(7),
-            ..Settings::default()
-        };
-        let json = serde_json::to_string(&settings).unwrap();
-        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
-        let session = crate::workspace_persistence::WorkspaceSession {
-            terminal_tabs: vec![
-                ShellKind::PowerShell,
-                ShellKind::System,
-                ShellKind::Custom(7),
-            ],
-            ..Default::default()
-        };
-        assert_eq!(
-            serde_json::from_str::<crate::workspace_persistence::WorkspaceSession>(
-                &serde_json::to_string(&session).unwrap()
-            )
-            .unwrap(),
-            session
-        );
     }
 }
 

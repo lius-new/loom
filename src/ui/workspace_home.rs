@@ -11,8 +11,8 @@ use lgui::core::{
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
 use crate::state::AppState;
-use crate::theme;
 use crate::ui::tabs::{TEXT_MARGIN, ellipsize, measure};
+use crate::ui::theme;
 use crate::workspace_actions;
 
 const MAX_PAGE_W: f32 = 620.0;

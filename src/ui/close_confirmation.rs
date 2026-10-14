@@ -9,7 +9,7 @@ use lgui::window::WindowManager;
 
 use crate::input::action::Action;
 use crate::state::{AppState, CloseContinuation};
-use crate::theme;
+use crate::ui::theme;
 use crate::workspace_actions;
 
 const CARD_W: f32 = 520.0;

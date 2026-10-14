@@ -91,6 +91,9 @@ export function allowed(file, dependency) {
   if(root==='loom_editor_core')return true;
   if(own==='app'||file==='src/main.rs')return true;
   if(own==='domain')return root==='domain'||(file==='src/domain/workspace_session.rs'&&['serde','serde_json'].includes(root));
+  if(file.startsWith('src/features/settings/'))return ['features','domain','serde','serde_json'].includes(root);
+  if(['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs'].includes(file))return ['infrastructure','features','domain','std::fs'].includes(root);
+  if(file==='src/infrastructure/config_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
   if(file.startsWith('src/features/terminal/'))return ['features','domain','serde','vt100'].includes(root);
   if(file.startsWith('src/features/explorer/'))return ['features','domain'].includes(root);
   if(file.startsWith('src/features/git/'))return ['features','domain'].includes(root);
@@ -138,6 +141,14 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
+    const settingsRules=file.startsWith('src/features/settings/');
+    const settingsNative=['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs','src/infrastructure/config_watcher.rs'].includes(file);
+    if(settingsRules||settingsNative) {
+      if(policy.exceptions[file]||ts.some(t=>['AppState','AppRuntime','Workspace','State','ApplicationHandle','InputState','UiRect','KeyboardEvent','TerminalController','FileLoader'].includes(t)))problems.push(file+': Settings rules/adapters must stay free of root state, GUI and exceptions');
+      if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super')||/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Settings rules/adapters cannot include or escape to application sources');
+    }
+    if(settingsRules&&terminalStandardServices(ts))problems.push(file+': Settings rules cannot access standard I/O or environment services');
+    if(['src/theme.rs','src/fonts.rs','src/file_icons.rs','src/jsonc.rs','src/settings_persistence.rs','src/project_settings.rs','src/config_watcher.rs','src/workspace_actions.rs'].includes(file))problems.push(file+': removed R8.1 root path must not be restored');
     if(deps.includes('crate::terminal_session'))problems.push(file+': old terminal composition path is removed');
     if(file==='src/main.rs'&&ts.some((t,i)=>t==='mod'&&['terminal_session','terminal_mouse','terminal_directory','terminal_profiles','terminal_program'].includes(ts[i+1])))problems.push(file+': old terminal module alias is removed');
     if(file==='src/ui/mod.rs'&&ts.some((t,i)=>t==='mod'&&['layout_map','terminal_settings','terminal_tab_context_menu'].includes(ts[i+1])))problems.push(file+': old terminal UI module aliases are removed');

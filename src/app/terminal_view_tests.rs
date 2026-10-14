@@ -7,7 +7,7 @@ mod tests {
     use crate::state::AppState;
     use crate::ui::terminal::keys::key_bytes;
     use crate::ui::terminal::view::*;
-    use crate::{fonts, theme};
+    use crate::ui::{fonts, theme};
     use lgui::ApplicationHandle;
     use lgui::core::{EventPolicy, Point, PointerButton, UiElement, UiId};
     use lgui::core::{KeyState, KeyboardEvent, LogicalKey, NamedKey};

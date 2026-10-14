@@ -8,7 +8,7 @@ use crate::features::explorer::{ExplorerContextTarget, ExplorerTargetKind};
 use crate::model::document::FileId;
 use crate::model::pane_layout::{Direction, PaneId};
 use crate::state::AppState;
-use crate::theme;
+use crate::ui::theme;
 use crate::workspace_actions::{self, TabCloseScope};
 
 const MENU_W: f32 = 224.0;
