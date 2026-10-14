@@ -684,3 +684,11 @@ mod generation_tests {
         ));
     }
 }
+
+#[cfg(test)]
+impl TerminalController {
+    pub(crate) fn bench_seed(&self, bytes: &[u8]) {
+        lock(&self.inner.parser).process(bytes);
+        *lock(&self.inner.status) = TerminalStatus::Running;
+    }
+}

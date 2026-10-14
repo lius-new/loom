@@ -309,3 +309,9 @@ test('all terminal views reject root model infrastructure aliases and source inc
   }
   for(const file of ['src/ui/terminal.rs','src/ui/layout_map.rs','src/ui/terminal_settings.rs','src/ui/terminal_tab_context_menu.rs'])assert.ok(violations({[file]:'fn render() {}'},policy()).some(e=>e.includes('removed R7.6')));
 });
+
+test('final terminal gate rejects old declarations and hidden native resources in views',()=>{
+  for(const module of ['terminal_session','terminal_mouse','terminal_directory','terminal_profiles','terminal_program'])assert.ok(violations({'src/main.rs':`mod ${module};`},policy()).some(e=>e.includes('old terminal module alias')));
+  for(const module of ['layout_map','terminal_settings','terminal_tab_context_menu'])assert.ok(violations({'src/ui/mod.rs':`pub mod ${module};`},policy()).some(e=>e.includes('old terminal UI module aliases')));
+  for(const source of ['type Hidden = Arc<RunningProcess>;','pub struct View { resources: Wrapper<Registry> }','use std::{fs as files, process as native};','let cwd = std::env::current_dir();'])assert.ok(violations({'src/ui/terminal/new.rs':source},policy()).some(e=>e.includes('Terminal projection view')));
+});

@@ -46,6 +46,13 @@ for (const name of fs.readdirSync(logs).filter(name => name.endsWith('.log')).so
       const record = JSON.parse(line.slice(marker + 'LOOM_BASELINE '.length));
       rows.push({ ...record, sample, log: name });
     }
+    const terminalMarker = line.indexOf('R7_TERMINAL_PERF ');
+    if (terminalMarker >= 0) {
+      const record = JSON.parse(line.slice(terminalMarker + 'R7_TERMINAL_PERF '.length));
+      add('terminal-' + record.sessions + '-sessions', record.metric, record.milliseconds, 'ms', sample, name,
+        { sessions: record.sessions, iterations: record.iterations, nodes: record.nodes,
+          viewport: record.viewport, scale: record.scale, screen: record.screen });
+    }
     if (line.includes('LOOM_BASELINE_STATUS')) notices.push({ log: name, reason: line.trim() });
     let match = /(\d+) MB: typing (\S+)\/char, paste 1 MB (\S+), undo (\S+), select-all indent (\S+), history ([\d.]+) MB/.exec(line);
     if (match) {

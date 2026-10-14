@@ -1,4 +1,4 @@
-//! Temporary view/store binding while terminal views await R7.6.
+//! Application model store and weak runtime projection; UI consumes plain frames.
 //! State contains only TerminalModel; projections and operation handles are weak.
 use crate::features::terminal::model::{TerminalMetadata, TerminalModel};
 use crate::features::terminal::{SessionId, ShellKind};
@@ -80,6 +80,20 @@ impl TerminalTab {
     }
 }
 impl TerminalTabs {
+    pub fn frame_metadata(
+        &self,
+    ) -> std::collections::HashMap<SessionId, (String, Option<PathBuf>)> {
+        let ids = self
+            .model
+            .tabs()
+            .iter()
+            .map(|tab| tab.id())
+            .collect::<Vec<_>>();
+        self.runtime
+            .upgrade()
+            .map(|runtime| runtime.metadata(&ids))
+            .unwrap_or_default()
+    }
     pub fn model(&self) -> &TerminalModel {
         &self.model
     }

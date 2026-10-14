@@ -39,6 +39,17 @@ impl<R: Resource> Registry<R> {
     {
         self.entries.lock().unwrap().0.get(&id).cloned()
     }
+    /// Clone current resources in one lookup pass; callers release this lock
+    /// before inspecting controllers or disposing any resource.
+    pub fn get_many(&self, ids: &[SessionId]) -> Vec<(SessionId, R)>
+    where
+        R: Clone,
+    {
+        let entries = self.entries.lock().unwrap();
+        ids.iter()
+            .filter_map(|id| entries.0.get(id).cloned().map(|entry| (*id, entry)))
+            .collect()
+    }
     pub fn remove(&self, id: SessionId) -> bool {
         let entry = {
             let mut entries = self.entries.lock().unwrap();

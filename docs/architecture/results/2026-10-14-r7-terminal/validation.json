@@ -1,0 +1,330 @@
+{
+  "schema": 1,
+  "date": "2026-10-14",
+  "scope": "R7.1-R7.7 local automated acceptance complete; R8 not started",
+  "base": "b414223822337bd61b840950cd94826921e10a72",
+  "previous_checkpoint": "1ed00ca68521f624aa5e1c25b125793d0560c8c5",
+  "branch": "refactor/r7-terminal",
+  "environment": {
+    "rustc": "1.98.0",
+    "cargo": "1.98.0",
+    "pinned": "1.97.1",
+    "pinned_tested": false,
+    "dependencies_unchanged": true,
+    "offline_locked": true
+  },
+  "suites": {
+    "default": {
+      "results": [
+        {
+          "status": "ok",
+          "passed": 614,
+          "failed": 0,
+          "ignored": 15
+        },
+        {
+          "status": "ok",
+          "passed": 65,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "passed": 711,
+      "failed": 0,
+      "ignored": 15
+    },
+    "isolated": {
+      "results": [
+        {
+          "status": "ok",
+          "passed": 614,
+          "failed": 0,
+          "ignored": 15
+        },
+        {
+          "status": "ok",
+          "passed": 65,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "passed": 711,
+      "failed": 0,
+      "ignored": 15
+    },
+    "release": {
+      "results": [
+        {
+          "status": "ok",
+          "passed": 614,
+          "failed": 0,
+          "ignored": 15
+        },
+        {
+          "status": "ok",
+          "passed": 65,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        }
+      ],
+      "passed": 711,
+      "failed": 0,
+      "ignored": 15
+    }
+  },
+  "counts": {
+    "application": 614,
+    "editor": 68,
+    "domain_repeated": 29,
+    "new_behavior": 25,
+    "new_domain_repeats": 13,
+    "new_ignored_benchmark": 1,
+    "old_ignored": 14
+  },
+  "test_mapping": {
+    "before_application": 603,
+    "missing": 0,
+    "source_before": 672,
+    "source_after": 698,
+    "moved": 81,
+    "added_declarations": 26
+  },
+  "gate": {
+    "description": "Architecture gate passed: 239 source files; 30 root, 30 editor and 9 workspace owned fields; 31 tracked legacy exception files.",
+    "node": 49,
+    "architecture": 46,
+    "report": 3,
+    "exceptions": 31,
+    "terminal_exceptions": 0,
+    "root_ui_adapters": 12,
+    "terminal_root_ui_adapters": 0
+  },
+  "checks": [
+    {
+      "name": "all-targets",
+      "result": "passed"
+    },
+    {
+      "name": "fmt",
+      "result": "passed"
+    },
+    {
+      "name": "strict CI Clippy",
+      "result": "passed"
+    },
+    {
+      "name": "debug default workspace",
+      "result": "passed"
+    },
+    {
+      "name": "debug isolated Git workspace",
+      "result": "passed"
+    },
+    {
+      "name": "release workspace",
+      "result": "passed"
+    },
+    {
+      "name": "release app build",
+      "result": "passed"
+    },
+    {
+      "name": "four exact ConPTY smoke",
+      "result": "passed"
+    },
+    {
+      "name": "isolated startup",
+      "result": "passed"
+    },
+    {
+      "name": "no-args two-terminal restore",
+      "result": "passed"
+    },
+    {
+      "name": "PowerShell runner syntax",
+      "result": "passed"
+    },
+    {
+      "name": "twelve-metric report integration",
+      "result": "passed"
+    }
+  ],
+  "native": [
+    "supported_shells_round_trip_through_real_conpty_sessions",
+    "launcher_backed_shell_is_idle_then_detects_and_clears_programs",
+    "exited_shell_launchers_do_not_hide_unknown_applications",
+    "running_application_is_detected_and_cleared_in_each_real_shell"
+  ],
+  "startup": {
+    "exe": "C:\\Users\\yys\\loom\\target\\release\\Loom.exe",
+    "sha256": "702A6B2094EDEB7FA24CD0D5D716A6D55C9DBFBAD49586E502B591526C8EE4B6",
+    "child_appdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r77-startup-final\\startup-fixture\\appdata",
+    "child_localappdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r77-startup-final\\startup-fixture\\localappdata",
+    "window_style": "Hidden",
+    "started_at": "2026-10-14T13:29:01.7850681+08:00",
+    "result": "passed",
+    "forced_cleanup": false,
+    "pid": 19632,
+    "alive_after_4_seconds": true,
+    "root_effect_configuration_files": [
+      "workspace.json"
+    ],
+    "close_requested": true,
+    "exit_code": 0,
+    "clean_exit": true,
+    "saved_synthetic_workspace": true,
+    "finished_at": "2026-10-14T13:29:05.8666069+08:00"
+  },
+  "restore": {
+    "exe": "C:\\Users\\yys\\loom\\target\\release\\Loom.exe",
+    "sha256": "702A6B2094EDEB7FA24CD0D5D716A6D55C9DBFBAD49586E502B591526C8EE4B6",
+    "child_appdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r77-restore-final\\startup-fixture\\appdata",
+    "child_localappdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r77-restore-final\\startup-fixture\\localappdata",
+    "window_style": "Hidden",
+    "started_at": "2026-10-14T13:29:06.3954203+08:00",
+    "result": "passed",
+    "forced_cleanup": false,
+    "pid": 1432,
+    "alive_after_4_seconds": true,
+    "root_effect_configuration_files": [
+      "workspace.json"
+    ],
+    "close_requested": true,
+    "exit_code": 0,
+    "clean_exit": true,
+    "no_arguments": true,
+    "restored_terminal_count": 2,
+    "restored_group": [
+      0,
+      0
+    ],
+    "saved_synthetic_workspace": true,
+    "finished_at": "2026-10-14T13:29:10.4632730+08:00"
+  },
+  "restored_fields": {
+    "terminal_tabs": [
+      "power_shell",
+      "cmd"
+    ],
+    "terminal_groups": [
+      0,
+      0
+    ],
+    "terminal_widths": [
+      1.5,
+      0.5
+    ],
+    "terminal_purposes": [
+      "Testing",
+      null
+    ],
+    "terminal_directories": [
+      "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r77-restore-final\\startup-fixture\\workspace",
+      "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r77-restore-final\\startup-fixture\\workspace"
+    ],
+    "active_terminal": 1,
+    "show_terminal": true,
+    "terminal_height": 240
+  },
+  "hashes": {
+    "debug": "cdfda4cd5f3bccd71199ac9c0fe7eec79959d2f8d1a6bab5a33ea8e0c8612603",
+    "release_test": "558495c502250c164a4bc76f3365c8cbd4676c5a6419a5cbfede2f993b86112c",
+    "app": "702a6b2094edeb7fa24cd0d5d716a6d55c9dbfbad49586e502b591526c8ee4b6",
+    "cargo_lock": "17f3c22be57a60764146e0e421519c43f96940c12f8e8ba9e3668bd90d223cfd",
+    "rust_toolchain": "8e390d6a0838315f972690f46ef8bae8b7ecc9ee6c1ed70140ef852869c2482e"
+  },
+  "raw_directory": "target/baseline/2026-10-14-r7-terminal",
+  "performance_summary": {
+    "common_metrics": 31,
+    "common_over_10_percent": 0,
+    "terminal_metrics": 12,
+    "ui_nodes": [
+      163,
+      226,
+      442
+    ],
+    "projection_increase_percent": "19.9-56.5",
+    "projection_additional_us": "0.176-0.876"
+  },
+  "pending": [
+    "pinned Rust 1.97.1",
+    "native manual IME/visual/focus/clipboard/TUI and full interaction matrix",
+    "Linux/macOS",
+    "remote CI",
+    "staged/portable/installer and real install/uninstall",
+    "native input latency, CPU/memory if measured separately"
+  ],
+  "r8_started": false
+}

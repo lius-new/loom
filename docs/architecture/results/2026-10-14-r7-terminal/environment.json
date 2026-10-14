@@ -1,0 +1,22 @@
+{
+  "recorded_at": "2026-10-14T13:39:34.1343624+08:00",
+  "os": {
+    "Caption": "Microsoft Windows 11 专业版中文版",
+    "Version": "10.0.26200",
+    "BuildNumber": "26200",
+    "OSArchitecture": "64 位"
+  },
+  "cpu": {
+    "Name": "AMD Ryzen 5 5600GT with Radeon Graphics        ",
+    "NumberOfCores": 6,
+    "NumberOfLogicalProcessors": 12
+  },
+  "memory_bytes": 33605750784,
+  "powershell": "7.6.5",
+  "node": "v24.19.0",
+  "git": "git version 2.55.0.windows.4",
+  "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+  "pinned_toolchain_tested": false,
+  "no_parallel_builds_during_sampling": true
+}

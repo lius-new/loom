@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "scope": "R7 final; exact preserved files versus frozen R7.5 checkpoint plus previous checkpoint audits",
+  "checks": [
+    {
+      "file": "src/features/terminal/model.rs",
+      "equal": true,
+      "sha256": "5ff20869331f280023a6d270d73199606fc72bc5e32f8778133584ace781c31e"
+    },
+    {
+      "file": "src/features/terminal/input.rs",
+      "equal": true,
+      "sha256": "fcbbe1e3bb9d8c3f0ed15dedb3c168fcd97c9b5ecb81c518b1fb5ac8ba5cd3b8"
+    },
+    {
+      "file": "src/features/terminal/mouse.rs",
+      "equal": true,
+      "sha256": "c37486af730113497a9569441baf6055eedf0c0a0f189986cd861a8c69dd148e"
+    },
+    {
+      "file": "src/features/terminal/screen.rs",
+      "equal": true,
+      "sha256": "2d0ff99b14220ec0b8e1ec08ea944d5d4deeb2225d2a9ecf67e59628722ef3a3"
+    },
+    {
+      "file": "src/features/terminal/profiles.rs",
+      "equal": true,
+      "sha256": "15ca77a2d0ccc2a46a8e33f51bfcdc23eed60d4dfb2bcb9278a8ce24ad4c0388"
+    },
+    {
+      "file": "src/features/terminal/program.rs",
+      "equal": true,
+      "sha256": "9d7fae27b9ab1c892463143b86c49b03fbfab1796f384a3a481607aa4378940c"
+    },
+    {
+      "file": "src/features/terminal/types.rs",
+      "equal": true,
+      "sha256": "cc2ce20c7fd5f8e5e94c54c713f09ea6a2e12716dafab127396100b1ee667b1c"
+    },
+    {
+      "file": "src/infrastructure/terminal/pty.rs",
+      "equal": true,
+      "sha256": "84c6d3fb064cd63bcb3bbed21587521dc5ad2bb15b2925d56b1998aaa0dfa014"
+    },
+    {
+      "file": "src/infrastructure/terminal/profiles.rs",
+      "equal": true,
+      "sha256": "d7bad1454e0120b13271b439fd05df9bc191f2f0dc006fc4e21dfdfc0a78e567"
+    },
+    {
+      "file": "src/infrastructure/terminal/integration.rs",
+      "equal": true,
+      "sha256": "c57d5f092b43f990598209d1540c3e89b2179797321d607d64f2ada37286c3aa"
+    },
+    {
+      "file": "src/infrastructure/terminal/program.rs",
+      "equal": true,
+      "sha256": "77189bb249de3e17f84661c6d651e2b9a3bd01e19d2179b6236835b645e77b2d"
+    },
+    {
+      "file": "src/domain/application_layout.rs",
+      "equal": true,
+      "sha256": "0e9dff22ed7f3287c93ed834511f6403403da169d0144a113d7f153136e602e2"
+    },
+    {
+      "file": "src/app/workspace_session.rs",
+      "equal": true,
+      "sha256": "065de17f30ad2b9538b266c2072d2fce1cab161fda7d53bc8055985acc26828f"
+    }
+  ],
+  "prior_audits": [
+    "../2026-10-14-r7-1/validation.json",
+    "../2026-10-14-r7-2/source-audit.json",
+    "../2026-10-14-r7-3/source-audit.json",
+    "../2026-10-14-r7-4/source-audit.json",
+    "../2026-10-14-r7-5/source-audit.json",
+    "../2026-10-14-r7-6/source-audit.json"
+  ],
+  "deleted_paths": [
+    "src/terminal_session.rs",
+    "src/terminal_mouse.rs",
+    "src/terminal_directory.rs",
+    "src/terminal_profiles.rs",
+    "src/terminal_program.rs",
+    "src/model/application_layout.rs",
+    "src/ui/terminal.rs",
+    "src/ui/terminal_settings.rs",
+    "src/ui/terminal_tab_context_menu.rs",
+    "src/ui/layout_map.rs"
+  ],
+  "changed_algorithms": [
+    "lifecycle generation check and commits",
+    "weak app/model ports",
+    "app effect cancellation/mount ownership",
+    "semantic command target recheck",
+    "UI frame composition and bulk metadata lookup"
+  ],
+  "changed_algorithms_validation": "Full workspace old-test mapping and new deterministic/native ownership/notification regressions; no claim of byte-identical runtime coordination."
+}

@@ -74,6 +74,21 @@ impl TerminalRuntime {
             shell,
         }
     }
+    pub fn metadata(
+        &self,
+        ids: &[SessionId],
+    ) -> std::collections::HashMap<SessionId, (String, Option<PathBuf>)> {
+        self.sessions
+            .get_many(ids)
+            .into_iter()
+            .map(|(id, controller)| {
+                (
+                    id,
+                    (controller.short_label(), controller.working_directory()),
+                )
+            })
+            .collect()
+    }
     pub fn shutdown(&self) {
         self.sessions.shutdown();
     }

@@ -59,3 +59,6 @@ pub(crate) mod layout_map;
 pub(crate) mod terminal_view;
 #[cfg(test)]
 mod terminal_view_tests;
+
+#[cfg(test)]
+mod terminal_performance;

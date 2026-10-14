@@ -167,6 +167,7 @@ eol = lf
             $filters['file'] = 'app::phase0_baseline::phase0_perf_file_preparation'
             $filters['search'] = 'app::phase0_baseline::phase0_perf_search_scan_and_cancel'
             $filters['terminal'] = 'app::phase0_baseline::phase0_perf_terminal_parser'
+            $filters['terminal-production'] = 'app::terminal_performance::terminal_production_benchmark'
         }
         foreach ($item in $filters.GetEnumerator()) {
             for ($sample = 0; $sample -le $Samples; $sample++) {

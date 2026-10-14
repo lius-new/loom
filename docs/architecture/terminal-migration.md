@@ -1,19 +1,19 @@
 # R7 终端迁移当前结构
 
-2026-10-14，R7.1–R7.6 完成当前机器自动验收，R7.7 尚未开始。步骤见 [方案](terminal-migration-plan.md)，当前结果见 [R7.4 验收](results/2026-10-14-r7-4/report.md)。
+2026-10-14：R7.1–R7.7 本机自动验收完成。见 [方案](terminal-migration-plan.md) 和 [最终验收](results/2026-10-14-r7-terminal/report.md)。R8 未开始。
 
-features/terminal 提供纯类型、屏幕/选区、输入/鼠标/OSC、参数/候选、稳定程序规则、TerminalModel/TerminalMetadata、TerminalAvailability 与菜单 close_targets 规则。会话模型只持元数据，10 私有字段登记；没有 controller、服务、PTY 或 profile 副本。domain/application_layout 提供纯布局拓扑和计划，GUI 键适配在 ui/terminal/keys。
+features/terminal 提供纯类型、TerminalModel/TerminalMetadata、屏幕/选区、输入/鼠标/OSC、profile 参数和候选、稳定程序和菜单目标规则。模型只保存私有元数据，3 项模型字段和 7 项会话字段登记；不含控制器、PTY、线程、writer 或 profile 服务。domain/application_layout 管理纯布局拓扑和计划，GUI 键适配留在 ui/terminal/keys。
 
-AppRuntime.terminals 是会话运行时所有者，infrastructure/terminal/runtime/registry 按 SessionId 持有控制器；session/pty/profiles/integration/program 负责原生资源、shell、目录与进程探测。关闭身份不能重建，shutdown 明确释放资源。app/terminal_binding 仍是 effect 和完整窄视图迁移前的临时绑定：底层 State<TerminalModel>，投影和会话句柄通过 Weak 按身份访问资源，快照不保活进程。
+AppRuntime.terminals 是运行时所有者。infrastructure/terminal 的 registry/runtime 按 SessionId 管理控制器，session/pty/profiles/integration/program 管理原生进程、线程、shell 发现、目录与前台程序探测。关闭身份永久退休，shutdown/close 幂等。app/terminal_binding 将 State<TerminalModel> 与弱资源访问连接；保存模型、投影、会话句柄或 UI 端口不会保活进程。移动只改元数据和布局，保持同一 PTY；split 才新建资源。
 
-AppState 组合 ApplicationLayoutState、TerminalChrome 和 TerminalPanelState（feature availability + TerminalUiState）。13 项旧根字段和 editor 终端点击状态已迁出；交互/草稿属 ui/terminal/state，默认区域显示/高度属 app chrome，布局/sash 属 app layout。六项设置字段仍属 R8。
+AppState 组合 ApplicationLayoutState、TerminalChrome 和 TerminalPanelState。13 项旧根字段与 editor 终端点击状态已迁到明确所有者，22 项终端归属字段登记。UI 选择/焦点/菜单/滚动/表单/拖动属 ui/terminal/state，默认区域显示/高度属 app chrome，布局/sash 属 app layout。default_shell、terminal_profiles、shell_options、terminal_cursor_blink、terminal_font、terminal_font_input 六项配置归 R8，暂保留原设置所有者。
 
-app/terminal 协调新建、选择、split、关闭/批量关闭、用途、toggle、输入、剪贴板与鼠标操作。命令持明确 SessionId/菜单目标，执行前重查目标；模型和布局顺序更新，完成回合检查归属，随后清理原生资源。app/terminal_profiles 处理校验/ID/发现/保存/删除/default 和项目 shell 提示；ui/terminal_settings 仅接收 Frame、Command、StateAccess，输入使用 projected binding。草稿在关闭后保留给迟到 blur。
+app/terminal 协调新建、选择、split、关闭/批量关闭、用途、toggle、输入/剪贴板/鼠标；按 SessionId 和菜单目标执行前重查。先更新模型与布局、完成回合检查归属，再处置原生资源，不宣称跨 store 原子事务。app/terminal_profiles 协调 profile 校验、ID、发现、保存/删除/default 与项目 shell 提示；关闭后保留草稿给迟到 blur。
 
-旧 terminal_session、terminal_mouse、model/application_layout、terminal_profiles、terminal_directory、terminal_program 已删除。pure feature 和 infrastructure 无例外；legacy exception 34，根/editor/workspace 字段 30/30/9，根 UI 适配器 15，22 项新终端归属字段登记。
+app/terminal_effects 协调恢复、profile 刷新、可见区域启动、探测、label、blink、保存和清理。reader/waiter 在生命周期锁内核对 generation 并提交，通知在锁外调用；UI 队列按 SessionId、generation 和 effect lease 拒收旧结果。mount 代次防止旧 cleanup 停止新 mount。隐藏区域不杀进程，保存执行时读实时 cwd，8 项会话 JSON 字段和未保存文档退出顺序保持。
 
-R7.5 effect/通知/持久化协调和 R7.6 完整终端/布局窄视图尚未开始；shell 内生产 effect 仅改状态访问路径。当前实际 Rust 1.98.0；固定 1.97.1、原生人工、其他平台、远端 CI、安装打包及完整性能 A/B 保留待验，R7 整体尚未结束。
+ui/terminal/{view,menu,settings,layout} 仅接收值帧、TerminalUiState 投影和语义命令端口，保留绘制、键鼠适配和框架 capture/hover/release 事实。app/terminal_view 组合端口，批量读取资源元数据后生成纯帧；资源查找锁不跨控制器检查。app/layout_map 持有 MapStore、几何场景、计划提交和 settle，保留独立订阅、区域内零额外通知。UI 不访问 AppState、Workspace、AppRuntime、控制器或基础设施。
 
-R7.5 本机自动验收：effect/恢复/启动/探测/保存/清理迁入 app/terminal_effects，输出/退出生命周期锁内核对代次，UI 通知按 SessionId/代次/effect lease 拒收旧结果，旧 cleanup 不停止替换 mount。710 通过、14 忽略，新增 8 项，619 旧应用入口无缺失；47 自测、架构、fmt、Clippy、release、四原生 smoke、隔离启动通过。实际 Rust 1.98.0；固定工具链、原生人工/跨平台和最终性能验收保留。详见 [R7.5 验收](results/2026-10-14-r7-5/report.md)。继续 R7.6，R8 未开始。
+旧 terminal_session、terminal_mouse、terminal_directory、terminal_profiles、terminal_program、model/application_layout，以及四个旧 UI 路径已删除，无别名或兼容重导出。终端 feature/infrastructure/UI 无例外、无根 UI 适配器；全仓库仍有 31 项 R8 遗留例外和 12 个其他领域根 UI 适配器，根/editor/workspace 字段为 30/30/9。
 
-R7.6：四旧 UI 路径删除，新视图只接收帧、投影和命令。app 持有 MapStore、几何计划和 settle，UI 保留 hover/release。711 通过、14 忽略，627 个旧应用入口无缺失，新增 1 项端口不保活运行时回归。48 自测、门禁、fmt、Clippy、release、四原生 smoke、隔离启动通过。238 Rust 文件、31 例外、12 根 UI 适配器。详见 [R7.6 验收](results/2026-10-14-r7-6/report.md)。继续 R7.7，R8 未开始。
+最终 workspace 三种环境均 711 通过、15 ignored；原 603 应用入口和原 14 ignored 无丢失，新增 25 项行为、13 项域重复验证和 1 项 opt-in 基准分列。工程门禁、四项原生 smoke、隔离启动/恢复通过。性能和剩余人工/跨平台验收详见最终报告；实际 Rust 1.98.0，固定 1.97.1 尚未复验，不能据此宣称全部平台验收完成。

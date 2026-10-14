@@ -14,20 +14,52 @@ use lgui::prelude::{Element, State, UiRect};
 use std::sync::Arc;
 
 fn session_frame(tab: crate::app::terminal_binding::TerminalTab) -> SessionFrame {
+    let short_label = tab.controller.short_label();
+    let title = match tab.purpose.as_ref().or(tab.running_program.as_ref()) {
+        Some(name) => format!("{short_label} · {name}"),
+        None => short_label.clone(),
+    };
     SessionFrame {
         id: tab.id,
         group_id: tab.group_id,
         width_weight: tab.width_weight,
         shell: tab.controller.shell(),
-        short_label: tab.controller.short_label(),
-        title: tab.label(),
+        short_label,
+        title,
         cwd: tab.working_directory(),
         purpose: tab.purpose,
         running_program: tab.running_program,
     }
 }
 pub(crate) fn project(tabs: TerminalTabs) -> View {
-    let values = tabs.tabs().into_iter().map(session_frame).collect();
+    let mut live = tabs.frame_metadata();
+    let values = tabs
+        .model()
+        .tabs()
+        .iter()
+        .map(|tab| {
+            let (short_label, cwd) = live
+                .remove(&tab.id())
+                .unwrap_or_else(|| (tab.shell().short_label().to_owned(), None));
+            let purpose = tab.purpose();
+            let running_program = tab.running_program();
+            let title = match purpose.as_ref().or(running_program.as_ref()) {
+                Some(name) => format!("{short_label} · {name}"),
+                None => short_label.clone(),
+            };
+            SessionFrame {
+                id: tab.id(),
+                group_id: tab.group_id(),
+                width_weight: tab.width_weight(),
+                shell: tab.shell(),
+                short_label,
+                title,
+                cwd: cwd.or_else(|| tab.cwd()),
+                purpose,
+                running_program,
+            }
+        })
+        .collect();
     View::new(tabs.into_model(), values)
 }
 pub(crate) fn binding(

@@ -139,7 +139,8 @@ export function violations(sources, policy) {
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
     if(deps.includes('crate::terminal_session'))problems.push(file+': old terminal composition path is removed');
-    if(file==='src/main.rs'&&ts.some((t,i)=>t==='mod'&&ts[i+1]==='terminal_session'))problems.push(file+': old terminal module alias is removed');
+    if(file==='src/main.rs'&&ts.some((t,i)=>t==='mod'&&['terminal_session','terminal_mouse','terminal_directory','terminal_profiles','terminal_program'].includes(ts[i+1])))problems.push(file+': old terminal module alias is removed');
+    if(file==='src/ui/mod.rs'&&ts.some((t,i)=>t==='mod'&&['layout_map','terminal_settings','terminal_tab_context_menu'].includes(ts[i+1])))problems.push(file+': old terminal UI module aliases are removed');
     if(file==='src/app/shell.rs'&&ts.some(t=>['SustainedProgram','ProgramProbe','ensure_started','save_terminal_state','DirectoryReports'].includes(t)))problems.push(file+': terminal effect behavior belongs to app/terminal_effects');
     if(file==='src/app/terminal_effects.rs'&&ts.some((t,i)=>t==='struct'&&ts[i+1]==='Observation')) {
       const fields=structFields(source,'Observation');
@@ -196,8 +197,9 @@ export function violations(sources, policy) {
     }
     if(['src/ui/terminal.rs','src/ui/terminal_settings.rs','src/ui/terminal_tab_context_menu.rs','src/ui/layout_map.rs'].includes(file))problems.push(file+': removed R7.6 terminal view path must not be restored');
     if(file==='src/ui/terminal_settings.rs'||file.startsWith('src/ui/terminal/')) {
-        if(ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','TerminalController','TerminalHandle','TerminalRuntime'].includes(t))||deps.some(d=>['crate::app','crate::state','crate::infrastructure','crate::key_actions','crate::model','crate::workspace_actions'].includes(d)))problems.push(file+': Terminal projection view must use narrow state and commands');
+        if(ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','TerminalController','TerminalHandle','TerminalRuntime','TerminalInner','RunningProcess','Registry'].includes(t))||deps.some(d=>['crate::app','crate::state','crate::infrastructure','crate::key_actions','crate::model','crate::workspace_actions'].includes(d)))problems.push(file+': Terminal projection view must use narrow state and commands');
         if(policy.exceptions[file])problems.push(file+': Terminal projection view cannot have migration exceptions');
+        if(terminalStandardServices(ts)||deps.some(d=>['std::fs','std::process','std::thread','std::net'].includes(d)))problems.push(file+': Terminal projection view cannot perform native I/O or environment work');
         if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Terminal projection view cannot include root sources');
         if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super'))problems.push(file+': Terminal projection view cannot escape through ancestor paths');
     }
