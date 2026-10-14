@@ -331,13 +331,6 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R6.1 Git 类型、解析、diff、快照与 DiffDocument 迁入 features/git，改引用 crate::features。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
-    "src/model/application_layout.rs": {
-      "dependencies": [
-        "lgui"
-      ],
-      "remove_in": "R3 R4",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/model/workspace.rs": {
       "dependencies": [
         "crate::app"
@@ -349,29 +342,28 @@
       "dependencies": [
         "crate::settings_persistence",
         "crate::state",
-        "crate::terminal_session",
         "std::fs",
         "std::process",
-        "std::thread"
+        "std::thread",
+        "crate::features"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
     },
     "src/settings_persistence.rs": {
       "dependencies": [
         "crate::fonts",
         "crate::jsonc",
-        "crate::terminal_profiles",
-        "crate::terminal_session",
         "crate::theme",
         "crate::vim",
         "crate::workspace_persistence",
         "serde",
         "serde_json",
-        "std::fs"
+        "std::fs",
+        "crate::features"
       ],
       "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
     },
     "src/terminal_directory.rs": {
       "dependencies": [
@@ -384,52 +376,44 @@
       "remove_in": "R7",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/terminal_mouse.rs": {
-      "dependencies": [
-        "lgui",
-        "vt100"
-      ],
-      "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/terminal_profiles.rs": {
       "dependencies": [
         "crate::terminal_session",
         "libc",
-        "serde"
+        "crate::features"
       ],
       "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
     },
     "src/terminal_program.rs": {
       "dependencies": [
         "std::fs",
         "std::process",
         "std::thread",
-        "windows_sys"
+        "windows_sys",
+        "crate::features"
       ],
       "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
     },
     "src/terminal_session.rs": {
       "dependencies": [
         "conpty",
         "crate::model",
         "crate::terminal_directory",
-        "crate::terminal_mouse",
         "crate::terminal_profiles",
         "crate::terminal_program",
         "crate::theme",
         "crate::workspace_persistence",
         "lgui",
         "portable_pty",
-        "serde",
         "std::fs",
         "std::process",
-        "std::thread"
+        "std::thread",
+        "crate::features"
       ],
       "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
     },
     "src/theme.rs": {
       "dependencies": [
@@ -547,9 +531,7 @@
     },
     "src/ui/terminal.rs": {
       "dependencies": [
-        "crate::model",
         "crate::state",
-        "crate::terminal_profiles",
         "crate::terminal_session"
       ],
       "remove_in": "R7",
@@ -560,7 +542,6 @@
         "crate::key_actions",
         "crate::state",
         "crate::terminal_profiles",
-        "crate::terminal_session",
         "image"
       ],
       "remove_in": "R7",
@@ -1092,5 +1073,18 @@
       "infrastructure/git",
       "ui/git"
     ]
+  },
+  "phase7_1": {
+    "status": "completed on current machine with Rust 1.98.0; fixed 1.97.1 and native/cross-platform acceptance pending",
+    "pure_rules": "features/terminal",
+    "application_layout": "domain/application_layout",
+    "retained_runtime": [
+      "terminal_session",
+      "terminal_directory startup/integration",
+      "terminal_profiles discovery",
+      "terminal_program OS adapters"
+    ],
+    "next": "R7.2 not started",
+    "completed_on": "2026-10-14"
   }
 }

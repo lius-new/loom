@@ -10,3 +10,5 @@ pub(crate) mod line_change;
 pub mod pane_layout;
 pub mod workspace;
 pub mod workspace_session;
+
+pub mod application_layout;

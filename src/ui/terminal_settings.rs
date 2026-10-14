@@ -1,8 +1,9 @@
 //! Terminal choices and editable user profiles on the Settings page.
 
+use crate::features::terminal::ShellKind;
+use crate::features::terminal::profiles::{ShellProfile, format_arguments, parse_arguments};
 use crate::state::AppState;
-use crate::terminal_profiles::{ShellProfile, format_arguments, parse_arguments, resolve_program};
-use crate::terminal_session::ShellKind;
+use crate::terminal_profiles::resolve_program;
 use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::ui::tabs::{TEXT_MARGIN, ellipsize, measure};
@@ -267,7 +268,7 @@ pub fn render(rect: UiRect, app: &AppState, state: State<AppState>) -> Element {
 
 fn shell_row(
     row: UiRect,
-    option: &crate::terminal_profiles::ShellOption,
+    option: &crate::features::terminal::profiles::ShellOption,
     app: &AppState,
     state: State<AppState>,
 ) -> Element {

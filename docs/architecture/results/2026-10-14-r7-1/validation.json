@@ -1,0 +1,229 @@
+{
+  "schema": 1,
+  "date": "2026-10-14",
+  "timezone": "Asia/Shanghai",
+  "base": "b414223822337bd61b840950cd94826921e10a72",
+  "branch": "refactor/r7-terminal",
+  "scope": "R7.1 only; R7.2 not started",
+  "environment": {
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "node": "v24.19.0",
+    "pinned_rust": "1.97.1",
+    "pinned_toolchain_tested": false
+  },
+  "checks": [
+    {
+      "name": "workspace-before",
+      "command": "cargo test --locked --offline --workspace -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        {
+          "status": "ok",
+          "passed": 589,
+          "failed": 0,
+          "ignored": 14
+        },
+        {
+          "status": "ok",
+          "passed": 65,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 16,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "workspace-after",
+      "command": "cargo test --locked --offline --workspace -- --nocapture",
+      "exit_code": 0,
+      "results": [
+        {
+          "status": "ok",
+          "passed": 591,
+          "failed": 0,
+          "ignored": 14
+        },
+        {
+          "status": "ok",
+          "passed": 65,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 29,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "status": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "compile-all-targets",
+      "command": "cargo check --locked --offline --workspace --all-targets",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": "cargo fmt --all -- --check",
+      "exit_code": 0
+    },
+    {
+      "name": "ci-clippy",
+      "command": "cargo clippy --locked --offline --workspace --all-targets -- -D warnings -A clippy::redundant_closure_call -A clippy::collapsible_if -A clippy::too_many_arguments -A clippy::let_and_return -A clippy::manual_div_ceil",
+      "exit_code": 0
+    },
+    {
+      "name": "architecture",
+      "command": "node scripts/architecture/check.mjs",
+      "exit_code": 0
+    },
+    {
+      "name": "node-self-tests",
+      "command": "node --test scripts/architecture/check.test.mjs scripts/baseline/test-results.test.mjs",
+      "exit_code": 0,
+      "passed": 36
+    },
+    {
+      "name": "release-build",
+      "command": "cargo build --release --locked --offline --bin Loom",
+      "exit_code": 0
+    },
+    {
+      "name": "supported_shells_round_trip_through_real_conpty_sessions",
+      "command": "cargo test --locked --offline terminal_session::tests::supported_shells_round_trip_through_real_conpty_sessions -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "passed": 1
+    },
+    {
+      "name": "launcher_backed_shell_is_idle_then_detects_and_clears_programs",
+      "command": "cargo test --locked --offline terminal_session::tests::launcher_backed_shell_is_idle_then_detects_and_clears_programs -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "passed": 1
+    },
+    {
+      "name": "exited_shell_launchers_do_not_hide_unknown_applications",
+      "command": "cargo test --locked --offline terminal_session::tests::exited_shell_launchers_do_not_hide_unknown_applications -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "passed": 1
+    },
+    {
+      "name": "running_application_is_detected_and_cleared_in_each_real_shell",
+      "command": "cargo test --locked --offline terminal_session::tests::running_application_is_detected_and_cleared_in_each_real_shell -- --exact --ignored --nocapture --test-threads=1",
+      "exit_code": 0,
+      "passed": 1
+    }
+  ],
+  "source_tests": {
+    "moved": 34,
+    "added_behaviors": 2,
+    "missing": 0,
+    "ignored_changed": 0
+  },
+  "workspace": {
+    "passed": 688,
+    "failed": 0,
+    "ignored": 14,
+    "application": 591,
+    "editor": 68,
+    "domain_repeated": 29
+  },
+  "gate": {
+    "source_files": 212,
+    "root_fields": 40,
+    "editor_fields": 31,
+    "workspace_fields": 9,
+    "legacy_exceptions": 39,
+    "root_state_adapters": 16,
+    "architecture_self_tests": 33,
+    "report_self_tests": 3
+  },
+  "startup": {
+    "exe": "C:\\Users\\yys\\loom\\target\\release\\Loom.exe",
+    "sha256": "DF7DCF1FF147E8E59F3715CC00A9E32B870C174026524B1139C48DBE2083160E",
+    "child_appdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r7-startup\\startup-fixture\\appdata",
+    "child_localappdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r7-startup\\startup-fixture\\localappdata",
+    "window_style": "Hidden",
+    "started_at": "2026-10-14T09:38:50.2816569+08:00",
+    "result": "passed",
+    "forced_cleanup": false,
+    "pid": 20828,
+    "alive_after_4_seconds": true,
+    "root_effect_configuration_files": [
+      "workspace.json"
+    ],
+    "close_requested": true,
+    "exit_code": 0,
+    "clean_exit": true,
+    "saved_synthetic_workspace": true,
+    "finished_at": "2026-10-14T09:38:54.3542504+08:00"
+  },
+  "before_performance": {
+    "base": "b414223822337bd61b840950cd94826921e10a72",
+    "timezone": "Asia/Shanghai",
+    "binary": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r7-before-release-tests.exe",
+    "binary_sha256": "cbde892ec3631eb029c68c4c2651fe40ac37c986122c9cf769ed5316570ce0a2",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "profile": "release",
+    "note": "Frozen before source, sampled on current machine after editing the live checkout. No after comparison or optimization claim.",
+    "metrics": 31,
+    "records": 155,
+    "notices": 0,
+    "samples_per_group": 5,
+    "warmup_per_group": 1,
+    "after_comparison": false
+  },
+  "hashes": {
+    "before_debug": "9f869fcbd4e6a926b710c82bdbec403ce447bd883024f2484f523f67fc770d4f",
+    "before_release_tests": "cbde892ec3631eb029c68c4c2651fe40ac37c986122c9cf769ed5316570ce0a2",
+    "after_debug": "7467d96fcc138c9ae38d9efe0d3ec004b15851c8575214f82c82d016b3f8dfe6",
+    "release_app": "df7dcf1ff147e8e59f3715cc00a9e32b870c174026524b1139c48dbe2083160e"
+  },
+  "raw_directory": "target/baseline/2026-10-14-r7-1",
+  "limitations": [
+    "Fixed Rust 1.97.1 verification pending",
+    "Native manual visual/IME/focus, macOS/Linux, remote CI and packaging/installation pending",
+    "R7 full production performance A/B pending"
+  ]
+}

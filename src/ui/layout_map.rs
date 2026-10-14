@@ -1,5 +1,5 @@
 //! The miniature itself is the drop surface. Hit tests and fills share rectangles.
-use crate::model::application_layout::{
+use crate::domain::application_layout::{
     ApplicationLayout, Content, DropPlan, Placement, RegionId, Visibility,
 };
 use crate::model::pane_layout::{Axis, Direction};
@@ -181,7 +181,7 @@ impl MapScene {
         visible: Visibility,
         sessions: Vec<u64>,
     ) -> Self {
-        let snapshot = layout.snapshot(viewport, visible);
+        let snapshot = layout.snapshot(viewport.into(), visible);
         let width = viewport.width() * MAP_FRACTION;
         let height = viewport.height() * MAP_FRACTION;
         let scale = ((width - 2.0 * OUTER_BAND).max(1.0) / viewport.width().max(1.0))
@@ -206,7 +206,7 @@ impl MapScene {
         });
         let mut divider_rects = vec![];
         for divider in &dividers {
-            let scope = project(divider.parent);
+            let scope = project(divider.parent.into());
             let r = match divider.axis {
                 Axis::Horizontal => {
                     let x = left + (divider.position - viewport.left) * scale;
@@ -276,7 +276,7 @@ impl MapScene {
         }
         let mut cells = vec![];
         for (id, content, real) in snapshot.regions {
-            let mut r = project(real);
+            let mut r = project(real.into());
             // The cell cannot claim its neighbour's divider band.
             for (axis, band) in &divider_rects {
                 match axis {
@@ -342,7 +342,7 @@ impl MapScene {
             zone.plan = layout.plan(
                 session,
                 &zone.placement,
-                viewport,
+                viewport.into(),
                 visible,
                 sessions.clone(),
             );
@@ -440,7 +440,7 @@ pub fn finish(
         .and_then(|s| drag.hover.and_then(|i| s.zones[i].plan.clone()));
     if let Some(plan) = plan
         && let Some(layout) = &mut app.application_layout
-        && layout.commit(plan, viewport, visible, sessions)
+        && layout.commit(plan, viewport.into(), visible, sessions)
     {
         return (true, Some(drag.session));
     }
@@ -697,7 +697,7 @@ fn inset(r: UiRect, by: f32) -> UiRect {
 }
 
 pub fn render_divider(
-    divider: crate::model::application_layout::Divider,
+    divider: crate::domain::application_layout::Divider,
     state: State<AppState>,
 ) -> Element {
     use lgui::core::PointerButton;
@@ -768,14 +768,14 @@ mod tests {
         let mut app = AppState::new();
         app.show_terminal = true;
         app.source_control.visible = true;
-        let mut layout = ApplicationLayout::initial(r, 220.0, 220.0, 240.0);
+        let mut layout = ApplicationLayout::initial(r.into(), 220.0, 220.0, 240.0);
         layout.sync(&[(1, 1), (2, 2)], Some(1));
         // The default strip remains region 4; a deliberately detached tab is 7.
         let plan = layout
             .plan(
                 2,
                 &Placement::Side(4, Direction::Right),
-                r,
+                r.into(),
                 visibility(&app),
                 vec![1, 2],
             )
@@ -930,7 +930,7 @@ mod tests {
             .plan(
                 1,
                 &Placement::Side(1, Direction::Down),
-                r,
+                r.into(),
                 visibility(&app),
                 vec![1, 2],
             )
@@ -956,11 +956,11 @@ mod tests {
         let map = MapStore::default();
         let mut app = AppState::new();
         app.show_terminal = true;
-        let mut layout = ApplicationLayout::initial(r, 220.0, 220.0, 240.0);
+        let mut layout = ApplicationLayout::initial(r.into(), 220.0, 220.0, 240.0);
         layout.sync(&[(1, 1), (2, 1)], Some(1));
         assert_eq!(
             layout
-                .snapshot(r, visibility(&app))
+                .snapshot(r.into(), visibility(&app))
                 .regions
                 .iter()
                 .filter(|(_, c, _)| matches!(c, Content::Terminal { .. }))
@@ -971,7 +971,7 @@ mod tests {
             .plan(
                 1,
                 &Placement::Side(1, Direction::Right),
-                r,
+                r.into(),
                 visibility(&app),
                 vec![1, 2],
             )
@@ -1022,8 +1022,12 @@ mod tests {
                 let mut a = AppState::new();
                 a.show_terminal = true;
                 a.source_control.visible = true;
-                a.application_layout =
-                    Some(ApplicationLayout::initial(viewport, 220.0, 220.0, 240.0));
+                a.application_layout = Some(ApplicationLayout::initial(
+                    viewport.into(),
+                    220.0,
+                    220.0,
+                    240.0,
+                ));
                 a
             });
             *output.lock().unwrap() = Some((state.clone(), tabs.clone()));
@@ -1044,7 +1048,7 @@ mod tests {
                 .application_layout
                 .as_ref()
                 .unwrap()
-                .snapshot(viewport, visibility(&app));
+                .snapshot(viewport.into(), visibility(&app));
             let id = UiId::new("layout-terminal-focus");
             let focus = cx.focus_handle(id.clone());
             let editor_id = UiId::new("layout-editor-focus");
@@ -1060,7 +1064,7 @@ mod tests {
             for (region, content, r) in snapshot.regions {
                 if matches!(content, Content::Terminal { .. }) {
                     root = root.child(crate::ui::terminal::render_region(
-                        r,
+                        r.into(),
                         state.clone(),
                         view_map.clone(),
                         editor_focus.clone(),
@@ -1079,7 +1083,7 @@ mod tests {
                     };
                     root = root.child(
                         Element::new(move |cx| {
-                            UiElement::panel(element_id, r, VisualStyle::default())
+                            UiElement::panel(element_id, r.into(), VisualStyle::default())
                                 .children(cx.children)
                         })
                         .event_policy(EventPolicy::INTERACTIVE),
@@ -1135,7 +1139,7 @@ mod tests {
             .application_layout
             .as_ref()
             .unwrap()
-            .snapshot(viewport, visibility(&app));
+            .snapshot(viewport.into(), visibility(&app));
         assert!(!snapshot.dividers.is_empty());
         for divider in snapshot.dividers {
             let point = match divider.axis {
@@ -1296,7 +1300,7 @@ mod tests {
             .application_layout
             .as_ref()
             .unwrap()
-            .snapshot(viewport, visibility(&resized));
+            .snapshot(viewport.into(), visibility(&resized));
         let left = snapshot
             .regions
             .iter()
@@ -1405,7 +1409,7 @@ mod tests {
         // The + button of a moved item still creates in the default strip.
         let app = state.get();
         let layout = app.application_layout.as_ref().unwrap();
-        let snapshot = layout.snapshot(viewport, visibility(&app));
+        let snapshot = layout.snapshot(viewport.into(), visibility(&app));
         let moved_rect = snapshot.regions.iter().find(|r| r.0 == 7).unwrap().2;
         let plus = Point::new(moved_rect.right - 19.0, moved_rect.top + 17.0);
         send(&mut session, down(plus));
@@ -1413,7 +1417,7 @@ mod tests {
         assert_eq!(tabs.get().tabs().len(), 3);
         let app = state.get();
         let layout = app.application_layout.as_ref().unwrap();
-        let snapshot = layout.snapshot(viewport, visibility(&app));
+        let snapshot = layout.snapshot(viewport.into(), visibility(&app));
         let new_id = layout.terminal_region(3).unwrap();
         let new_rect = snapshot.regions.iter().find(|r| r.0 == new_id).unwrap().2;
         let default_rect = snapshot.regions.iter().find(|r| r.0 == 4).unwrap().2;
@@ -1478,12 +1482,12 @@ mod tests {
                     .plan(
                         id,
                         &Placement::Outer(Direction::Up),
-                        viewport,
+                        viewport.into(),
                         v,
                         vec![1, 2, 3],
                     )
                     .unwrap();
-                assert!(layout.commit(plan, viewport, v, &[1, 2, 3]));
+                assert!(layout.commit(plan, viewport.into(), v, &[1, 2, 3]));
             }
         });
         session.render_view(&view, viewport, UiScale::ONE);

@@ -15,69 +15,17 @@ use std::time::Duration;
 use lgui::ApplicationHandle;
 #[cfg(not(windows))]
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use serde::{Deserialize, Serialize};
+
+use crate::features::terminal::input::paste_bytes;
+use crate::features::terminal::screen::{
+    GridPoint, Palette, Selection, line_runs, selection_text, visible_selection,
+};
+use crate::features::terminal::{
+    SessionId, ShellKind, TERMINAL_PURPOSES, TerminalSize, TerminalSnapshot, TerminalStatus,
+};
 
 const SCROLLBACK_ROWS: usize = 2_000;
-pub const TERMINAL_PURPOSES: &[&str] = &[
-    "Development",
-    "Server",
-    "Testing",
-    "Build",
-    "Debugging",
-    "Other",
-];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TerminalSize {
-    pub rows: u16,
-    pub cols: u16,
-    pub pixel_width: u16,
-    pub pixel_height: u16,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ShellKind {
-    PowerShell,
-    Cmd,
-    Bash,
-    System,
-    Custom(u64),
-}
-
-impl Default for ShellKind {
-    fn default() -> Self {
-        if cfg!(windows) {
-            Self::PowerShell
-        } else {
-            Self::System
-        }
-    }
-}
-
 impl ShellKind {
-    pub const ALL: [Self; 3] = [Self::PowerShell, Self::Cmd, Self::Bash];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::PowerShell => "PowerShell",
-            Self::Cmd => "Command Prompt",
-            Self::Bash => "Bash",
-            Self::System => "System default",
-            Self::Custom(_) => "Custom terminal",
-        }
-    }
-
-    pub const fn short_label(self) -> &'static str {
-        match self {
-            Self::PowerShell => "pwsh",
-            Self::Cmd => "cmd",
-            Self::Bash => "bash",
-            Self::System => "shell",
-            Self::Custom(_) => "custom",
-        }
-    }
-
     fn candidates(self) -> &'static [&'static str] {
         match self {
             Self::PowerShell => &["pwsh.exe", "powershell.exe", "pwsh", "powershell"],
@@ -86,7 +34,6 @@ impl ShellKind {
             Self::System | Self::Custom(_) => &[],
         }
     }
-
     fn command(self) -> PathBuf {
         if self == Self::System {
             return crate::terminal_profiles::builtin(self)
@@ -106,86 +53,6 @@ impl ShellKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TerminalStatus {
-    Idle,
-    Starting,
-    Running,
-    Exited(u32),
-    Stopped,
-    Failed(String),
-}
-
-impl TerminalStatus {
-    pub fn message(&self) -> Option<String> {
-        match self {
-            Self::Idle | Self::Running => None,
-            Self::Starting => Some("Starting terminal…".to_owned()),
-            Self::Exited(code) => Some(format!("Process exited with code {code}")),
-            Self::Stopped => Some("Terminal stopped — press + to start it again".to_owned()),
-            Self::Failed(error) => Some(format!("Unable to start terminal: {error}")),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TerminalCellStyle {
-    pub foreground: Option<u32>,
-    pub background: Option<u32>,
-    pub bold: bool,
-    pub dim: bool,
-    pub underline: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TerminalRun {
-    pub start_col: u16,
-    pub columns: u16,
-    pub text: String,
-    pub style: TerminalCellStyle,
-}
-
-#[derive(Clone, Debug)]
-pub struct TerminalSnapshot {
-    pub shell: ShellKind,
-    pub shell_name: String,
-    pub notice: Option<String>,
-    pub status: TerminalStatus,
-    pub rows: u16,
-    pub cols: u16,
-    pub lines: Vec<Vec<TerminalRun>>,
-    pub cursor: (u16, u16),
-    pub cursor_visible: bool,
-    pub application_cursor: bool,
-    /// Selected cells per visible row as `(row, start_col, end_col)`, end exclusive.
-    pub selection: Vec<(u16, u16, u16)>,
-}
-
-/// A cell boundary in coordinates that survive scrolling the view: row `0` is
-/// the top of the live screen and negative rows are in the scrollback.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct GridPoint {
-    row: i64,
-    col: u16,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Selection {
-    anchor: GridPoint,
-    head: GridPoint,
-}
-
-impl Selection {
-    fn ordered(self) -> Option<(GridPoint, GridPoint)> {
-        let (start, end) = if self.anchor <= self.head {
-            (self.anchor, self.head)
-        } else {
-            (self.head, self.anchor)
-        };
-        (start != end).then_some((start, end))
-    }
-}
-
 #[derive(Clone)]
 pub struct TerminalController {
     inner: Arc<TerminalInner>,
@@ -193,7 +60,7 @@ pub struct TerminalController {
 
 #[derive(Clone)]
 pub struct TerminalTab {
-    pub id: u64,
+    pub id: SessionId,
     /// Sessions with the same group share a tab and render side by side.
     pub group_id: u64,
     pub width_weight: f32,
@@ -224,7 +91,7 @@ pub struct TerminalTabs {
     tabs: Vec<TerminalTab>,
     active_id: Option<u64>,
     next_id: u64,
-    profiles: Vec<crate::terminal_profiles::ShellProfile>,
+    profiles: Vec<crate::features::terminal::profiles::ShellProfile>,
 }
 
 impl TerminalTabs {
@@ -382,7 +249,7 @@ impl TerminalTabs {
         }
     }
 
-    pub fn set_profiles(&mut self, profiles: &[crate::terminal_profiles::ShellProfile]) {
+    pub fn set_profiles(&mut self, profiles: &[crate::features::terminal::profiles::ShellProfile]) {
         self.profiles = profiles.to_vec();
         for tab in &self.tabs {
             tab.controller.set_profile(
@@ -568,10 +435,10 @@ struct TerminalInner {
     shell: Mutex<ShellKind>,
     status: Mutex<TerminalStatus>,
     selection: Mutex<Option<Selection>>,
-    mouse: Mutex<crate::terminal_mouse::TerminalMouse>,
+    mouse: Mutex<crate::features::terminal::mouse::TerminalMouse>,
     generation: AtomicU64,
     cwd: Mutex<Option<PathBuf>>,
-    profile: Mutex<Option<crate::terminal_profiles::ShellProfile>>,
+    profile: Mutex<Option<crate::features::terminal::profiles::ShellProfile>>,
     notice: Mutex<Option<String>>,
 }
 
@@ -610,7 +477,7 @@ impl TerminalController {
                 shell: Mutex::new(shell),
                 status: Mutex::new(TerminalStatus::Idle),
                 selection: Mutex::new(None),
-                mouse: Mutex::new(crate::terminal_mouse::TerminalMouse::default()),
+                mouse: Mutex::new(crate::features::terminal::mouse::TerminalMouse::default()),
                 generation: AtomicU64::new(0),
                 cwd: Mutex::new(None),
                 profile: Mutex::new(None),
@@ -637,7 +504,7 @@ impl TerminalController {
         *lock(&self.inner.shell)
     }
 
-    fn set_profile(&self, profile: Option<crate::terminal_profiles::ShellProfile>) {
+    fn set_profile(&self, profile: Option<crate::features::terminal::profiles::ShellProfile>) {
         *lock(&self.inner.profile) = profile;
     }
 
@@ -664,7 +531,7 @@ impl TerminalController {
         &self,
         probe: &crate::terminal_program::ProgramProbe,
         preferred: Option<u32>,
-    ) -> Option<crate::terminal_program::ProgramCandidate> {
+    ) -> Option<crate::features::terminal::program::ProgramCandidate> {
         if !matches!(*lock(&self.inner.status), TerminalStatus::Running) {
             return None;
         }
@@ -711,18 +578,18 @@ impl TerminalController {
         *lock(&self.inner.selection) = None;
 
         let cwd = crate::terminal_directory::starting_directory(cwd, None);
-        *lock(&self.inner.mouse) = crate::terminal_mouse::TerminalMouse::default();
+        *lock(&self.inner.mouse) = crate::features::terminal::mouse::TerminalMouse::default();
         *lock(&self.inner.cwd) = cwd.clone();
         let selected = if matches!(shell, ShellKind::Custom(_)) {
             lock(&self.inner.profile)
                 .as_ref()
-                .map(crate::terminal_profiles::ShellOption::custom)
+                .map(crate::features::terminal::profiles::ShellOption::custom)
         } else {
             crate::terminal_profiles::builtin(shell)
         };
         let available = selected
             .clone()
-            .filter(crate::terminal_profiles::ShellOption::available);
+            .filter(crate::features::terminal::profiles::ShellOption::available);
         let launch = available
             .clone()
             .or_else(|| crate::terminal_profiles::defaults().into_iter().next());
@@ -761,7 +628,7 @@ impl TerminalController {
                     .spawn(move || {
                         let mut bytes = [0_u8; 8 * 1024];
                         let mut directories =
-                            crate::terminal_directory::DirectoryReports::default();
+                            crate::features::terminal::directory::DirectoryReports::default();
                         loop {
                             let count = match reader.read(&mut bytes) {
                                 Ok(count) => count,
@@ -850,14 +717,14 @@ impl TerminalController {
 
     pub fn scroll(&self, rows: i32) {
         let mut parser = lock(&self.inner.parser);
-        crate::terminal_mouse::scroll_history(parser.screen_mut(), rows);
+        crate::features::terminal::mouse::scroll_history(parser.screen_mut(), rows);
     }
 
     pub fn set_mouse_position(&self, row: u16, col: u16) {
         lock(&self.inner.mouse).set_position(row, col);
     }
 
-    pub fn wheel(&self, delta: f32, modifiers: lgui::core::KeyModifiers) {
+    pub fn wheel(&self, delta: f32, modifiers: crate::features::terminal::input::Modifiers) {
         let bytes = {
             let mut parser = lock(&self.inner.parser);
             lock(&self.inner.mouse).wheel(parser.screen_mut(), delta, modifiers)
@@ -917,7 +784,14 @@ impl TerminalController {
         let parser = lock(&self.inner.parser);
         let screen = parser.screen();
         let (rows, cols) = screen.size();
-        let lines = (0..rows).map(|row| line_runs(screen, row, cols)).collect();
+        let palette = Palette {
+            ansi: crate::theme::c().ansi,
+            foreground: crate::theme::c().text.0,
+            background: crate::theme::c().bg.0,
+        };
+        let lines = (0..rows)
+            .map(|row| line_runs(screen, row, cols, &palette))
+            .collect();
         let selection = lock(&self.inner.selection)
             .and_then(Selection::ordered)
             .map(|(start, end)| visible_selection(start, end, screen.scrollback(), rows, cols))
@@ -972,7 +846,7 @@ fn spawn_shell(
 
 #[cfg(windows)]
 fn spawn_shell_option(
-    option: &crate::terminal_profiles::ShellOption,
+    option: &crate::features::terminal::profiles::ShellOption,
     cwd: Option<&Path>,
     size: TerminalSize,
 ) -> Result<SpawnedShell, String> {
@@ -1108,7 +982,7 @@ fn shell_friendly_path(path: &Path) -> PathBuf {
 
 #[cfg(not(windows))]
 fn spawn_shell_option(
-    option: &crate::terminal_profiles::ShellOption,
+    option: &crate::features::terminal::profiles::ShellOption,
     cwd: Option<&Path>,
     size: TerminalSize,
 ) -> Result<SpawnedShell, String> {
@@ -1265,215 +1139,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn visible_selection(
-    start: GridPoint,
-    end: GridPoint,
-    scrollback: usize,
-    rows: u16,
-    cols: u16,
-) -> Vec<(u16, u16, u16)> {
-    (0..rows)
-        .filter_map(|row| {
-            let grid_row = i64::from(row) - scrollback as i64;
-            if grid_row < start.row || grid_row > end.row {
-                return None;
-            }
-            let from = if grid_row == start.row { start.col } else { 0 };
-            let to = if grid_row == end.row { end.col } else { cols };
-            (from < to).then_some((row, from, to))
-        })
-        .collect()
-}
-
-/// Reads the selected text row by row, scrolling the parser's view as needed
-/// so rows above the visible screen can still be copied.
-fn selection_text(screen: &mut vt100::Screen, start: GridPoint, end: GridPoint) -> String {
-    let original_scrollback = screen.scrollback();
-    let (rows, cols) = screen.size();
-    let mut text = String::new();
-    for grid_row in start.row..=end.row {
-        screen.set_scrollback(usize::try_from(-grid_row).unwrap_or(0));
-        let Ok(row) = u16::try_from(grid_row + screen.scrollback() as i64) else {
-            continue;
-        };
-        if row >= rows {
-            continue;
-        }
-        let from = if grid_row == start.row { start.col } else { 0 };
-        let to = if grid_row == end.row { end.col } else { cols };
-        if from < to {
-            let line = screen
-                .rows(from, to - from)
-                .nth(usize::from(row))
-                .unwrap_or_default();
-            text.push_str(line.trim_end_matches(' '));
-        }
-        if grid_row != end.row && !screen.row_wrapped(row) {
-            text.push('\n');
-        }
-    }
-    screen.set_scrollback(original_scrollback);
-    text
-}
-
-fn paste_bytes(value: &str, bracketed: bool) -> Vec<u8> {
-    // Shells submit lines on carriage return; a bare LF would not run them.
-    let normalized = value.replace("\r\n", "\r").replace('\n', "\r");
-    let mut bytes = Vec::with_capacity(normalized.len() + 12);
-    if bracketed {
-        bytes.extend_from_slice(b"\x1b[200~");
-        // The payload must not be able to end bracketing early.
-        bytes.extend_from_slice(normalized.replace("\x1b[201~", "").as_bytes());
-        bytes.extend_from_slice(b"\x1b[201~");
-    } else {
-        bytes.extend_from_slice(normalized.as_bytes());
-    }
-    bytes
-}
-
-fn line_runs(screen: &vt100::Screen, row: u16, cols: u16) -> Vec<TerminalRun> {
-    let mut runs = Vec::new();
-    let mut current: Option<TerminalRun> = None;
-
-    let mut col = 0;
-    while col < cols {
-        let Some(cell) = screen.cell(row, col) else {
-            col += 1;
-            continue;
-        };
-        if cell.is_wide_continuation() {
-            col += 1;
-            continue;
-        }
-        let style = cell_style(cell);
-        let cell_text = if cell.has_contents() {
-            cell.contents()
-        } else {
-            " "
-        };
-        let columns = if cell.is_wide() && col + 1 < cols {
-            2
-        } else {
-            1
-        };
-
-        // Skia shapes a fallback CJK font by its own glyph advances, while a
-        // terminal positions every wide cell on an exact two-column grid.
-        // Keeping a wide cell out of neighboring text runs prevents paragraph
-        // shaping from moving or clipping it when the two width models differ.
-        if columns == 2 {
-            if let Some(run) = current.take() {
-                push_visible_run(&mut runs, run);
-            }
-            push_visible_run(
-                &mut runs,
-                TerminalRun {
-                    start_col: col,
-                    columns,
-                    text: cell_text.to_owned(),
-                    style,
-                },
-            );
-            col += columns;
-            continue;
-        }
-
-        match current.as_mut() {
-            Some(run) if run.style == style => {
-                run.columns += columns;
-                run.text.push_str(cell_text);
-            }
-            Some(_) => {
-                let run = current.take().expect("current terminal run exists");
-                push_visible_run(&mut runs, run);
-                current = Some(TerminalRun {
-                    start_col: col,
-                    columns,
-                    text: cell_text.to_owned(),
-                    style,
-                });
-            }
-            None => {
-                current = Some(TerminalRun {
-                    start_col: col,
-                    columns,
-                    text: cell_text.to_owned(),
-                    style,
-                });
-            }
-        }
-        col += columns;
-    }
-    if let Some(run) = current {
-        push_visible_run(&mut runs, run);
-    }
-    runs
-}
-
-fn push_visible_run(runs: &mut Vec<TerminalRun>, mut run: TerminalRun) {
-    if run.style.background.is_none() {
-        let trimmed = run.text.trim_end_matches(' ');
-        let removed = run.text.len() - trimmed.len();
-        run.columns = run.columns.saturating_sub(removed as u16);
-        run.text.truncate(trimmed.len());
-    }
-    if !run.text.is_empty() || run.style.background.is_some() {
-        runs.push(run);
-    }
-}
-
-fn cell_style(cell: &vt100::Cell) -> TerminalCellStyle {
-    let mut foreground = terminal_color(cell.fgcolor());
-    let mut background = terminal_color(cell.bgcolor());
-    if cell.inverse() {
-        std::mem::swap(&mut foreground, &mut background);
-        if foreground.is_none() {
-            foreground = Some(crate::theme::c().bg.0);
-        }
-        if background.is_none() {
-            background = Some(crate::theme::c().text.0);
-        }
-    }
-    TerminalCellStyle {
-        foreground,
-        background,
-        bold: cell.bold(),
-        dim: cell.dim(),
-        underline: cell.underline(),
-    }
-}
-
-fn terminal_color(color: vt100::Color) -> Option<u32> {
-    match color {
-        vt100::Color::Default => None,
-        vt100::Color::Rgb(red, green, blue) => {
-            Some((u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue))
-        }
-        vt100::Color::Idx(index) => Some(indexed_color(index)),
-    }
-}
-
-fn indexed_color(index: u8) -> u32 {
-    let ansi = &crate::theme::c().ansi;
-    match index {
-        0..=15 => ansi[index as usize],
-        16..=231 => {
-            let index = index - 16;
-            let red = index / 36;
-            let green = (index % 36) / 6;
-            let blue = index % 6;
-            let channel = |value: u8| if value == 0 { 0 } else { 55 + value * 40 };
-            (u32::from(channel(red)) << 16)
-                | (u32::from(channel(green)) << 8)
-                | u32::from(channel(blue))
-        }
-        232..=255 => {
-            let value = 8 + (index - 232) * 10;
-            (u32::from(value) << 16) | (u32::from(value) << 8) | u32::from(value)
-        }
-    }
-}
-
 fn find_executable(command: &str) -> Option<PathBuf> {
     let command_path = Path::new(command);
     if command_path.components().count() > 1 && command_path.is_file() {
@@ -1512,7 +1177,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn custom_profiles_preserve_arguments_split_configuration_and_missing_path_fallback() {
-        use crate::terminal_profiles::ShellProfile;
+        use crate::features::terminal::profiles::ShellProfile;
         use std::time::{Instant, SystemTime, UNIX_EPOCH};
         let root = env::temp_dir().join(format!(
             "loom-custom-shell-{}-{}",
@@ -1629,7 +1294,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn conpty_delivers_wheels_as_native_mouse_records_and_restores_history() {
-        use lgui::core::KeyModifiers;
+        use crate::features::terminal::input::Modifiers as KeyModifiers;
         use std::time::Instant;
 
         if !ShellKind::Bash.command().is_file() {
@@ -1913,14 +1578,6 @@ mod tests {
     }
 
     #[test]
-    fn shell_labels_are_stable() {
-        assert_eq!(
-            ShellKind::ALL.map(ShellKind::short_label),
-            ["pwsh", "cmd", "bash"]
-        );
-    }
-
-    #[test]
     fn tab_names_keep_shell_type_and_prioritize_purpose_then_running_program() {
         let mut tabs =
             TerminalTabs::restored(vec![ShellKind::Bash, ShellKind::Bash, ShellKind::Cmd], None);
@@ -1998,86 +1655,6 @@ mod tests {
         assert_eq!(tabs.tabs()[0].purpose.as_deref(), Some("Other"));
     }
 
-    #[test]
-    fn indexed_terminal_colors_include_the_ansi_and_rgb_cube_ranges() {
-        assert_eq!(indexed_color(1), 0xcd3131);
-        assert_eq!(indexed_color(16), 0x000000);
-        assert_eq!(indexed_color(231), 0xffffff);
-        assert_eq!(indexed_color(255), 0xeeeeee);
-    }
-
-    #[test]
-    fn ansi_parser_produces_colored_runs() {
-        let mut parser = vt100::Parser::new(2, 20, 0);
-        parser.process(b"plain \x1b[31mred\x1b[0m");
-        let runs = line_runs(parser.screen(), 0, 20);
-        assert!(runs.iter().any(|run| run.text.contains("plain")));
-        assert!(
-            runs.iter()
-                .any(|run| { run.text == "red" && run.style.foreground == Some(0xcd3131) })
-        );
-    }
-
-    #[test]
-    fn wide_terminal_cells_keep_their_two_column_positions() {
-        let mut parser = vt100::Parser::new(2, 20, 0);
-        parser.process("A中文B".as_bytes());
-
-        let runs = line_runs(parser.screen(), 0, 20);
-        let visible = runs
-            .iter()
-            .map(|run| (run.start_col, run.columns, run.text.as_str()))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            visible,
-            vec![(0, 1, "A"), (1, 2, "中"), (3, 2, "文"), (5, 1, "B")]
-        );
-    }
-
-    #[test]
-    fn selection_text_spans_rows_and_joins_wrapped_lines() {
-        let mut parser = vt100::Parser::new(3, 6, 0);
-        parser.process(b"abcdefgh\r\nxyz   ");
-        let text = selection_text(
-            parser.screen_mut(),
-            GridPoint { row: 0, col: 2 },
-            GridPoint { row: 2, col: 2 },
-        );
-        assert_eq!(text, "cdefgh\nxy");
-    }
-
-    #[test]
-    fn selection_text_reads_rows_in_scrollback() {
-        let mut parser = vt100::Parser::new(2, 10, 10);
-        parser.process(b"one\r\ntwo\r\nthree");
-        let text = selection_text(
-            parser.screen_mut(),
-            GridPoint { row: -1, col: 0 },
-            GridPoint { row: 0, col: 3 },
-        );
-        assert_eq!(text, "one\ntwo");
-        assert_eq!(parser.screen().scrollback(), 0);
-    }
-
-    #[test]
-    fn visible_selection_follows_the_scrolled_view() {
-        let start = GridPoint { row: -1, col: 2 };
-        let end = GridPoint { row: 0, col: 3 };
-        assert_eq!(visible_selection(start, end, 0, 2, 10), vec![(0, 0, 3)]);
-        assert_eq!(
-            visible_selection(start, end, 1, 2, 10),
-            vec![(0, 2, 10), (1, 0, 3)]
-        );
-    }
-
-    #[test]
-    fn paste_normalizes_newlines_and_honors_bracketed_mode() {
-        assert_eq!(paste_bytes("a\r\nb\nc", false), b"a\rb\rc");
-        assert_eq!(paste_bytes("ls", true), b"\x1b[200~ls\x1b[201~");
-        assert_eq!(paste_bytes("x\x1b[201~y", true), b"\x1b[200~xy\x1b[201~");
-    }
-
     #[cfg(windows)]
     #[test]
     fn shell_cwd_drops_the_verbatim_prefix() {
@@ -2152,7 +1729,7 @@ mod tests {
 
     #[test]
     fn moving_a_group_leader_preserves_controller_cwd_scrollback_and_selection() {
-        use crate::model::application_layout::{ApplicationLayout, Placement, Visibility};
+        use crate::domain::application_layout::{ApplicationLayout, Placement, Visibility};
         use crate::model::pane_layout::Direction;
         use lgui::prelude::UiRect;
         let mut tabs = TerminalTabs::restored(vec![], None);
@@ -2176,19 +1753,19 @@ mod tests {
             files: true,
             terminal: true,
         };
-        let mut layout = ApplicationLayout::initial(rect, 200.0, 200.0, 240.0);
+        let mut layout = ApplicationLayout::initial(rect.into(), 200.0, 200.0, 240.0);
         layout.sync(&[(first, first), (sibling, first)], Some(first));
         let plan = layout
             .plan(
                 first,
                 &Placement::Side(1, Direction::Right),
-                rect,
+                rect.into(),
                 visible,
                 vec![first, sibling],
             )
             .unwrap();
         let destination = plan.destination;
-        assert!(layout.commit(plan, rect, visible, &[first, sibling]));
+        assert!(layout.commit(plan, rect.into(), visible, &[first, sibling]));
         tabs.detach_group(first);
         tabs.select(first);
         let (sessions, active) = layout.terminal_view(destination).unwrap();
@@ -2335,7 +1912,8 @@ mod tests {
     #[test]
     #[ignore = "manual launcher-backed ConPTY detection regression"]
     fn launcher_backed_shell_is_idle_then_detects_and_clears_programs() {
-        use crate::terminal_program::{ProgramProbe, SustainedProgram};
+        use crate::features::terminal::program::SustainedProgram;
+        use crate::terminal_program::ProgramProbe;
         use std::time::{Duration, Instant};
         let (controller, application) = start_launcher_backed_test_shell();
         let console = lock(&controller.inner.process)
@@ -2389,7 +1967,8 @@ mod tests {
     #[test]
     #[ignore = "manual Git Bash process replacement smoke test"]
     fn exited_shell_launchers_do_not_hide_unknown_applications() {
-        use crate::terminal_program::{ProgramProbe, SustainedProgram};
+        use crate::features::terminal::program::SustainedProgram;
+        use crate::terminal_program::ProgramProbe;
         use std::time::{Duration, Instant};
 
         let name = format!("loom-session-probe-{}", std::process::id());
@@ -2465,7 +2044,8 @@ mod tests {
     #[test]
     #[ignore = "manual Windows ConPTY process-name smoke test"]
     fn running_application_is_detected_and_cleared_in_each_real_shell() {
-        use crate::terminal_program::{ProgramProbe, SustainedProgram};
+        use crate::features::terminal::program::SustainedProgram;
+        use crate::terminal_program::ProgramProbe;
         use std::time::{Duration, Instant};
 
         for shell in ShellKind::ALL {

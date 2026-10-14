@@ -37,7 +37,6 @@ use app::workspace_restore as session_restore;
 mod settings_persistence;
 use app::state;
 mod terminal_directory;
-mod terminal_mouse;
 mod terminal_profiles;
 mod terminal_program;
 mod terminal_session;

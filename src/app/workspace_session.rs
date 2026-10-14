@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::terminal_session::ShellKind;
+use crate::features::terminal::ShellKind;
 
 use crate::infrastructure::session_filesystem as filesystem;
 #[cfg(test)]

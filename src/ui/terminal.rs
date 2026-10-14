@@ -1,22 +1,24 @@
 //! Bottom terminal panel backed by a real platform PTY.
 
+mod keys;
+use self::keys::key_bytes;
+
 use std::sync::Arc;
 
 use lgui::ApplicationHandle;
 use lgui::core::{
-    CursorIcon, EventPolicy, IconStyle, KeyState, KeyboardEvent, LogicalKey, NamedKey, Point,
-    PointerButton, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId, WheelUnit, clip,
+    CursorIcon, EventPolicy, IconStyle, Point, PointerButton, SemanticRole, Semantics, UiElement,
+    UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::prelude::{Color, Element, State, UiRect, VisualStyle, component, group, panel, text};
 use lgui::services::{Clipboard, ClipboardError, ServicesContextExt};
 
+#[cfg(test)]
+use crate::features::terminal::ShellKind;
+use crate::features::terminal::{TerminalRun, TerminalSize};
 use crate::fonts;
 use crate::state::AppState;
-#[cfg(test)]
-use crate::terminal_session::ShellKind;
-use crate::terminal_session::{
-    TerminalController, TerminalRun, TerminalSize, TerminalTab, TerminalTabs,
-};
+use crate::terminal_session::{TerminalController, TerminalTab, TerminalTabs};
 use crate::theme;
 use crate::ui::tabs::{
     GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
@@ -217,7 +219,7 @@ pub fn render_region(
     terminal_tabs: State<TerminalTabs>,
     application: Arc<ApplicationHandle>,
     cursor_blink_visible: bool,
-    region: crate::model::application_layout::RegionId,
+    region: crate::domain::application_layout::RegionId,
 ) -> Element {
     let app = state.get();
     let (sessions, active) = app
@@ -718,7 +720,7 @@ fn render_session(
             WheelUnit::Pixels => delta.y / (terminal_line_h() * 3.0),
         };
         if lines.is_finite() && lines != 0.0 {
-            wheel_controller.wheel(lines, wheel_state.get().editor.modifiers);
+            wheel_controller.wheel(lines, keys::modifiers(wheel_state.get().editor.modifiers));
             wheel_application.request_frame();
             cx.stop_propagation();
         }
@@ -1055,7 +1057,7 @@ fn render_terminal_tabs(
 
 fn render_screen(
     content: UiRect,
-    snapshot: &crate::terminal_session::TerminalSnapshot,
+    snapshot: &crate::features::terminal::TerminalSnapshot,
     focused: bool,
     cursor_blink_visible: bool,
 ) -> Element {
@@ -1375,90 +1377,6 @@ fn terminal_cursor_rect(content: UiRect, cursor: (u16, u16), rows: u16, cols: u1
     )
 }
 
-fn key_bytes(event: &KeyboardEvent, application_cursor: bool) -> Option<Vec<u8>> {
-    if event.state != KeyState::Down {
-        return None;
-    }
-
-    let shift = event.modifiers.shift();
-    let alt = event.modifiers.alt();
-    let ctrl = event.modifiers.ctrl();
-    // xterm modifier parameter: 1 + Shift(1) + Alt(2) + Ctrl(4).
-    let modifier = 1 + u8::from(shift) + 2 * u8::from(alt) + 4 * u8::from(ctrl);
-    if let LogicalKey::Named(named) = &event.key {
-        let cursor_final = match named {
-            NamedKey::ArrowUp => Some('A'),
-            NamedKey::ArrowDown => Some('B'),
-            NamedKey::ArrowRight => Some('C'),
-            NamedKey::ArrowLeft => Some('D'),
-            NamedKey::Home => Some('H'),
-            NamedKey::End => Some('F'),
-            _ => None,
-        };
-        if let Some(final_byte) = cursor_final {
-            return Some(
-                if modifier > 1 {
-                    format!("\x1b[1;{modifier}{final_byte}")
-                } else if application_cursor {
-                    format!("\x1bO{final_byte}")
-                } else {
-                    format!("\x1b[{final_byte}")
-                }
-                .into_bytes(),
-            );
-        }
-        let tilde_code = match named {
-            NamedKey::Insert => Some(2),
-            NamedKey::Delete => Some(3),
-            NamedKey::PageUp => Some(5),
-            NamedKey::PageDown => Some(6),
-            _ => None,
-        };
-        if let Some(code) = tilde_code {
-            return Some(
-                if modifier > 1 {
-                    format!("\x1b[{code};{modifier}~")
-                } else {
-                    format!("\x1b[{code}~")
-                }
-                .into_bytes(),
-            );
-        }
-        if *named == NamedKey::Backspace {
-            // Ctrl+Backspace deletes a word (^H), Alt+Backspace sends ESC DEL.
-            return Some(match (ctrl, alt) {
-                (true, _) => b"\x08".to_vec(),
-                (false, true) => b"\x1b\x7f".to_vec(),
-                (false, false) => b"\x7f".to_vec(),
-            });
-        }
-    }
-
-    if event.modifiers.ctrl()
-        && let LogicalKey::Character(value) = &event.key
-        && let Some(character) = value.chars().next()
-        && value.chars().count() == 1
-    {
-        let lower = character.to_ascii_lowercase();
-        // These remain editor-wide shortcuts while the terminal is focused.
-        if matches!(lower, 'p' | 'b' | 'g' | '`') {
-            return None;
-        }
-        if lower.is_ascii_lowercase() {
-            return Some(vec![(lower as u8) & 0x1f]);
-        }
-    }
-
-    let bytes: &[u8] = match &event.key {
-        LogicalKey::Named(NamedKey::Enter) => b"\r",
-        LogicalKey::Named(NamedKey::Tab) if shift => b"\x1b[Z",
-        LogicalKey::Named(NamedKey::Tab) => b"\t",
-        LogicalKey::Named(NamedKey::Escape) => b"\x1b",
-        _ => return None,
-    };
-    Some(bytes.to_vec())
-}
-
 fn resized_height(panel_bottom: f32, pointer_y: f32, max_height: f32) -> f32 {
     (panel_bottom - pointer_y).clamp(theme::TERMINAL_MIN_H, max_height)
 }
@@ -1466,11 +1384,12 @@ fn resized_height(panel_bottom: f32, pointer_y: f32, max_height: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lgui::core::{KeyState, KeyboardEvent, LogicalKey, NamedKey};
 
     #[test]
     fn shell_menu_keeps_missing_profiles_disabled_and_creates_custom_sessions_in_layout() {
-        use crate::model::application_layout::ApplicationLayout;
-        use crate::terminal_profiles::{ShellOption, ShellProfile};
+        use crate::domain::application_layout::ApplicationLayout;
+        use crate::features::terminal::profiles::{ShellOption, ShellProfile};
         use lgui::application::{AppView, ApplicationContext};
         use lgui::core::{InputEvent, PointerData, UiScale, dispatch_runtime_output};
         use lgui::session::UiSession;
@@ -1495,7 +1414,7 @@ mod tests {
                     .map(ShellOption::custom)
                     .collect();
                 app.shell_options[0].program = None;
-                let mut layout = ApplicationLayout::initial(viewport, 40.0, 40.0, 200.0);
+                let mut layout = ApplicationLayout::initial(viewport.into(), 40.0, 40.0, 200.0);
                 layout.attach(1);
                 app.application_layout = Some(layout);
                 app.terminal_shell_menu = true;

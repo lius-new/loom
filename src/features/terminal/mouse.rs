@@ -1,7 +1,7 @@
 //! Wheel routing follows the application's live mouse reporting mode. Ordinary
 //! shell output stays in terminal scrollback; TUIs receive mouse reports instead.
 
-use lgui::core::KeyModifiers;
+use crate::features::terminal::input::Modifiers;
 use vt100::{MouseProtocolEncoding, MouseProtocolMode, Screen};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,7 +24,7 @@ impl TerminalMouse {
 
     /// Positive deltas scroll up. One wheel notch is one application event;
     /// applications apply their own speed, while local history moves three rows.
-    pub fn wheel(&mut self, screen: &mut Screen, delta: f32, modifiers: KeyModifiers) -> Vec<u8> {
+    pub fn wheel(&mut self, screen: &mut Screen, delta: f32, modifiers: Modifiers) -> Vec<u8> {
         if !delta.is_finite() || delta == 0.0 {
             return Vec::new();
         }
@@ -124,11 +124,11 @@ mod tests {
             let mut mouse = TerminalMouse::default();
             mouse.set_position(7, 13);
             assert_eq!(
-                mouse.wheel(parser.screen_mut(), 1.0, KeyModifiers::empty()),
+                mouse.wheel(parser.screen_mut(), 1.0, Modifiers::empty()),
                 b"\x1b[<64;14;8M"
             );
             assert_eq!(
-                mouse.wheel(parser.screen_mut(), -2.0, KeyModifiers::empty()),
+                mouse.wheel(parser.screen_mut(), -2.0, Modifiers::empty()),
                 b"\x1b[<65;14;8M\x1b[<65;14;8M"
             );
             assert_eq!(parser.screen().scrollback(), 0);
@@ -136,7 +136,7 @@ mod tests {
                 mouse.wheel(
                     parser.screen_mut(),
                     1.0,
-                    KeyModifiers::CONTROL | KeyModifiers::ALT
+                    Modifiers::CONTROL | Modifiers::ALT
                 ),
                 b"\x1b[<88;14;8M"
             );
@@ -178,7 +178,7 @@ mod tests {
         let mut mouse = TerminalMouse::default();
         assert!(
             mouse
-                .wheel(parser.screen_mut(), 1.0, KeyModifiers::empty())
+                .wheel(parser.screen_mut(), 1.0, Modifiers::empty())
                 .is_empty()
         );
         assert_eq!(parser.screen().scrollback(), 3);
@@ -186,29 +186,29 @@ mod tests {
         parser.process(b"\x1b[?1003h\x1b[?1006h");
         assert!(
             mouse
-                .wheel(parser.screen_mut(), 1.0, KeyModifiers::SHIFT)
+                .wheel(parser.screen_mut(), 1.0, Modifiers::SHIFT)
                 .is_empty()
         );
         assert_eq!(parser.screen().scrollback(), 3);
         parser.screen_mut().set_scrollback(0);
         parser.process(b"\x1b[?1049h");
         assert_eq!(
-            mouse.wheel(parser.screen_mut(), 1.0, KeyModifiers::empty()),
+            mouse.wheel(parser.screen_mut(), 1.0, Modifiers::empty()),
             b"\x1b[<64;1;1M"
         );
         parser.process(b"\x1b[?1003l\x1b[?1006l\x1b[?1049l");
         assert!(
             mouse
-                .wheel(parser.screen_mut(), 1.0, KeyModifiers::empty())
+                .wheel(parser.screen_mut(), 1.0, Modifiers::empty())
                 .is_empty()
         );
         assert_eq!(parser.screen().scrollback(), 3);
-        mouse.wheel(parser.screen_mut(), -1.0, KeyModifiers::empty());
+        mouse.wheel(parser.screen_mut(), -1.0, Modifiers::empty());
         assert_eq!(parser.screen().scrollback(), 0);
         parser.process(b"\x1b[?9h");
         assert!(
             mouse
-                .wheel(parser.screen_mut(), 1.0, KeyModifiers::empty())
+                .wheel(parser.screen_mut(), 1.0, Modifiers::empty())
                 .is_empty()
         );
         assert_eq!(parser.screen().scrollback(), 3);
@@ -223,36 +223,36 @@ mod tests {
         for _ in 0..3 {
             assert!(
                 mouse
-                    .wheel(parser.screen_mut(), 0.25, KeyModifiers::empty())
+                    .wheel(parser.screen_mut(), 0.25, Modifiers::empty())
                     .is_empty()
             );
         }
         assert_eq!(
-            mouse.wheel(parser.screen_mut(), 0.25, KeyModifiers::empty()),
+            mouse.wheel(parser.screen_mut(), 0.25, Modifiers::empty()),
             b"\x1b[<64;20;3M"
         );
-        mouse.wheel(parser.screen_mut(), 0.75, KeyModifiers::empty());
+        mouse.wheel(parser.screen_mut(), 0.75, Modifiers::empty());
         assert!(
             mouse
-                .wheel(parser.screen_mut(), -0.25, KeyModifiers::empty())
+                .wheel(parser.screen_mut(), -0.25, Modifiers::empty())
                 .is_empty()
         );
         assert_eq!(
-            mouse.wheel(parser.screen_mut(), -0.75, KeyModifiers::empty()),
+            mouse.wheel(parser.screen_mut(), -0.75, Modifiers::empty()),
             b"\x1b[<65;20;3M"
         );
-        mouse.wheel(parser.screen_mut(), 0.75, KeyModifiers::empty());
+        mouse.wheel(parser.screen_mut(), 0.75, Modifiers::empty());
         parser.process(b"\x1b[?1003l");
-        mouse.wheel(parser.screen_mut(), 0.25, KeyModifiers::empty());
+        mouse.wheel(parser.screen_mut(), 0.25, Modifiers::empty());
         parser.process(b"\x1b[?1003h");
         assert!(
             mouse
-                .wheel(parser.screen_mut(), 0.25, KeyModifiers::empty())
+                .wheel(parser.screen_mut(), 0.25, Modifiers::empty())
                 .is_empty()
         );
         assert!(
             mouse
-                .wheel(parser.screen_mut(), f32::NAN, KeyModifiers::empty())
+                .wheel(parser.screen_mut(), f32::NAN, Modifiers::empty())
                 .is_empty()
         );
     }

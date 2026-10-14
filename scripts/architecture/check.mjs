@@ -59,6 +59,23 @@ export function dependencies(source) {
   return [...found].sort();
 }
 
+
+function terminalStandardServices(ts) {
+  const forbidden=['io','env'];
+  for(let i=0;i<ts.length;i++) {
+    if(ts[i]!=='std'||ts[i+1]!=='::')continue;
+    if(forbidden.includes(ts[i+2]))return true;
+    if(ts[i+2]!=='{')continue;
+    let depth=1;
+    for(let j=i+3;j<ts.length&&depth;j++) {
+      if(ts[j]==='{')depth++;
+      else if(ts[j]==='}')depth--;
+      else if(depth===1&&forbidden.includes(ts[j])&&(ts[j-1]==='{'||ts[j-1]===','))return true;
+    }
+  }
+  return false;
+}
+
 export function layer(file) {
   if(file.startsWith('crates/workspace-tests/'))return 'domain-verification';
   if(file.startsWith('crates/editor-core/'))return 'core';
@@ -74,6 +91,7 @@ export function allowed(file, dependency) {
   if(root==='loom_editor_core')return true;
   if(own==='app'||file==='src/main.rs')return true;
   if(own==='domain')return root==='domain'||(file==='src/domain/workspace_session.rs'&&['serde','serde_json'].includes(root));
+  if(file.startsWith('src/features/terminal/'))return ['features','domain','serde','vt100'].includes(root);
   if(file.startsWith('src/features/explorer/'))return ['features','domain'].includes(root);
   if(file.startsWith('src/features/git/'))return ['features','domain'].includes(root);
   if(file==='src/infrastructure/explorer_filesystem.rs')return ['features','domain','std::fs','std::process','windows_sys'].includes(root);
@@ -119,6 +137,8 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
+    if(['src/model/application_layout.rs','src/terminal_mouse.rs'].includes(file))problems.push(file+': removed R7.1 paths must not be restored');
+    if(['src/terminal_session.rs','src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs'].includes(file)&&/\bpub(?:\s*\([^)]*\))?\s+use\s+crate\s*::\s*features\s*::\s*terminal\b/.test(ts.join(' ')))problems.push(file+': terminal types must use their feature paths, not legacy re-exports');
     if(layer(file)==='domain-verification') {
       if(policy.exceptions[file])problems.push(`${file}: domain verification cannot have migration exceptions`);
       if(ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!')||(/#\s*\[\s*path\s*=/.test(source)&&(file!=='crates/workspace-tests/src/isolated.rs'||!/^#\[path = "\.\.\/\.\.\/\.\.\/src\/domain\/mod\.rs"\]$/m.test(source))))problems.push(`${file}: domain verification can only include the production domain entry point`);
@@ -127,6 +147,12 @@ export function violations(sources, policy) {
       if(policy.exceptions[file])problems.push(`${file}: editing core cannot have migration exceptions`);
       if(ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','KeyboardEvent','Keystroke','UiRect','InputState'].includes(t)))problems.push(`${file}: editing core must not depend on application/platform state`);
       if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(`${file}: editing core cannot include sources outside its crate boundary`);
+    }
+    if(file.startsWith('src/features/terminal/')) {
+      if(terminalStandardServices(ts))problems.push(file+': Terminal rules cannot access standard I/O or environment services');
+      if(ts.some(t=>['AppState','AppRuntime','Workspace','State','ApplicationHandle','KeyboardEvent','KeyModifiers','InputState','UiRect','TerminalController','TerminalInner','RunningProcess','FileLoader','AtomicBool','AtomicU64','Mutex','RwLock','Command','Child'].includes(t)))problems.push(file+': Terminal rules must be framework/root/runtime independent');
+      if(policy.exceptions[file])problems.push(file+': Terminal rules cannot have migration exceptions');
+      if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Terminal rules cannot include adapter sources');
     }
     if(file.startsWith('src/features/search/')&&ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','InputState','UiRect'].includes(t)))problems.push(file+': Search feature must be framework/root independent');
     if(file.startsWith('src/ui/search/')&&ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle'].includes(t)))problems.push(file+': Search view must use projections and commands');

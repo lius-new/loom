@@ -79,7 +79,7 @@ pub fn ensure(root: &Path) -> io::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal_session::ShellKind;
+    use crate::features::terminal::ShellKind;
 
     #[test]
     fn only_project_keys_apply() {

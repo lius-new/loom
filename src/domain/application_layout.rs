@@ -1,6 +1,6 @@
 //! Window content topology. Sizes and terminal ownership are independent of PTYs.
-use super::pane_layout::{Axis, Direction};
-use lgui::prelude::UiRect;
+use crate::domain::geometry::Rect;
+use crate::domain::pane_layout::{Axis, Direction};
 use std::collections::{HashMap, HashSet};
 
 pub type RegionId = u64;
@@ -93,12 +93,12 @@ pub struct Divider {
     pub before: usize,
     pub after: usize,
     pub axis: Axis,
-    pub parent: UiRect,
+    pub parent: Rect,
     pub position: f32,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
-    pub regions: Vec<(RegionId, Content, UiRect)>,
+    pub regions: Vec<(RegionId, Content, Rect)>,
     pub dividers: Vec<Divider>,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -118,13 +118,13 @@ pub struct DropPlan {
     pub layout: ApplicationLayout,
     pub destination: RegionId,
     pub session: u64,
-    pub viewport: UiRect,
+    pub viewport: Rect,
     pub visibility: Visibility,
     pub sessions: Vec<u64>,
 }
 
 impl ApplicationLayout {
-    pub fn initial(rect: UiRect, git_width: f32, files_width: f32, terminal_height: f32) -> Self {
+    pub fn initial(rect: Rect, git_width: f32, files_width: f32, terminal_height: f32) -> Self {
         let terminal_height = terminal_height
             .max(120.0)
             .min(rect.height().max(240.0) - 120.0);
@@ -302,7 +302,7 @@ impl ApplicationLayout {
             self.version = before.version + 1;
         }
     }
-    pub fn content_rect(&self, snapshot: &Snapshot, kind: &Content) -> Option<UiRect> {
+    pub fn content_rect(&self, snapshot: &Snapshot, kind: &Content) -> Option<Rect> {
         snapshot
             .regions
             .iter()
@@ -332,7 +332,7 @@ impl ApplicationLayout {
         &self,
         session: u64,
         target: &Placement,
-        rect: UiRect,
+        rect: Rect,
         visible: Visibility,
         sessions: Vec<u64>,
     ) -> Option<DropPlan> {
@@ -456,7 +456,7 @@ impl ApplicationLayout {
     pub fn commit(
         &mut self,
         plan: DropPlan,
-        rect: UiRect,
+        rect: Rect,
         visibility: Visibility,
         sessions: &[u64],
     ) -> bool {
@@ -514,7 +514,7 @@ impl ApplicationLayout {
             .default_terminal
             .filter(|id| self.root.find(*id).is_some());
     }
-    pub fn snapshot(&self, rect: UiRect, visible: Visibility) -> Snapshot {
+    pub fn snapshot(&self, rect: Rect, visible: Visibility) -> Snapshot {
         let mut snapshot = Snapshot {
             regions: vec![],
             dividers: vec![],
@@ -528,7 +528,7 @@ impl ApplicationLayout {
         );
         snapshot
     }
-    fn fit(&mut self, rect: UiRect, visible: Visibility) -> bool {
+    fn fit(&mut self, rect: Rect, visible: Visibility) -> bool {
         let visible = self.scoped_visibility(visible);
         let min = minimum(&self.root, visible);
         if min.0 > rect.width() + 0.01 || min.1 > rect.height() + 0.01 {
@@ -537,7 +537,7 @@ impl ApplicationLayout {
         fn fit(
             node: &Node,
             sizes: &mut HashMap<RegionId, Vec<f32>>,
-            rect: UiRect,
+            rect: Rect,
             visible: RegionVisibility,
         ) {
             if let Node::Split { id, axis, children } = node {
@@ -659,7 +659,7 @@ fn min_extent(n: &Node, axis: Axis, v: RegionVisibility) -> f32 {
         Axis::Vertical => m.1,
     }
 }
-fn extent(r: UiRect, a: Axis) -> f32 {
+fn extent(r: Rect, a: Axis) -> f32 {
     match a {
         Axis::Horizontal => r.width(),
         Axis::Vertical => r.height(),
@@ -669,7 +669,7 @@ fn allocations(
     children: &[Node],
     weights: &[f32],
     axis: Axis,
-    rect: UiRect,
+    rect: Rect,
     v: RegionVisibility,
 ) -> Vec<f32> {
     let extent = extent(rect, axis).max(0.0);
@@ -710,7 +710,7 @@ fn allocations(
     }
     out
 }
-fn child_rects(rect: UiRect, axis: Axis, allocations: &[f32]) -> Vec<UiRect> {
+fn child_rects(rect: Rect, axis: Axis, allocations: &[f32]) -> Vec<Rect> {
     let mut position = match axis {
         Axis::Horizontal => rect.left,
         Axis::Vertical => rect.top,
@@ -721,8 +721,8 @@ fn child_rects(rect: UiRect, axis: Axis, allocations: &[f32]) -> Vec<UiRect> {
             let start = position;
             position += a;
             match axis {
-                Axis::Horizontal => UiRect::new(start, rect.top, position, rect.bottom),
-                Axis::Vertical => UiRect::new(rect.left, start, rect.right, position),
+                Axis::Horizontal => Rect::new(start, rect.top, position, rect.bottom),
+                Axis::Vertical => Rect::new(rect.left, start, rect.right, position),
             }
         })
         .collect()
@@ -730,7 +730,7 @@ fn child_rects(rect: UiRect, axis: Axis, allocations: &[f32]) -> Vec<UiRect> {
 fn geometry(
     node: &Node,
     sizes: &HashMap<RegionId, Vec<f32>>,
-    rect: UiRect,
+    rect: Rect,
     v: RegionVisibility,
     out: &mut Snapshot,
 ) {
@@ -770,19 +770,19 @@ fn geometry(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::domain::application_layout::*;
     const V: Visibility = Visibility {
         git: true,
         files: true,
         terminal: true,
     };
-    fn setup() -> (ApplicationLayout, UiRect) {
-        let rect = UiRect::new(0.0, 30.0, 1200.0, 800.0);
+    fn setup() -> (ApplicationLayout, Rect) {
+        let rect = Rect::new(0.0, 30.0, 1200.0, 800.0);
         let mut layout = ApplicationLayout::initial(rect, 220.0, 220.0, 240.0);
         layout.sync(&[(10, 10), (11, 11)], Some(10));
         (layout, rect)
     }
-    fn region(layout: &ApplicationLayout, rect: UiRect, id: u64) -> UiRect {
+    fn region(layout: &ApplicationLayout, rect: Rect, id: u64) -> Rect {
         layout
             .snapshot(rect, V)
             .regions
@@ -836,7 +836,7 @@ mod tests {
                 .plan(
                     10,
                     &Placement::Outer(Direction::Right),
-                    UiRect::new(0.0, 0.0, 450.0, 300.0),
+                    Rect::new(0.0, 0.0, 450.0, 300.0),
                     V,
                     vec![10, 11]
                 )
@@ -990,7 +990,7 @@ mod tests {
 
     #[test]
     fn moving_the_last_default_session_does_not_move_the_default_ownership() {
-        let rect = UiRect::new(0.0, 0.0, 1600.0, 900.0);
+        let rect = Rect::new(0.0, 0.0, 1600.0, 900.0);
         let mut layout = ApplicationLayout::initial(rect, 220.0, 220.0, 240.0);
         layout.sync(&[(10, 10)], Some(10));
         let source = layout.terminal_region(10).unwrap();
@@ -1062,7 +1062,7 @@ mod tests {
         assert!(!layout.commit(plan.clone(), rect, V, &[11]));
         assert!(!layout.commit(
             plan.clone(),
-            UiRect::new(0.0, 0.0, 1300.0, 800.0),
+            Rect::new(0.0, 0.0, 1300.0, 800.0),
             V,
             &[10, 11]
         ));
@@ -1079,7 +1079,7 @@ mod tests {
     #[test]
     fn resizing_after_window_shrink_keeps_the_other_boundary_fixed() {
         let (mut layout, _) = setup();
-        let small = UiRect::new(0.0, 0.0, 500.0, 600.0);
+        let small = Rect::new(0.0, 0.0, 500.0, 600.0);
         let before = layout.snapshot(small, V);
         let files = region(&layout, small, 3);
         let sash = before
@@ -1094,7 +1094,7 @@ mod tests {
 
     #[test]
     fn new_sessions_share_one_tab_strip_independently_of_legacy_groups() {
-        let rect = UiRect::new(0.0, 0.0, 1600.0, 800.0);
+        let rect = Rect::new(0.0, 0.0, 1600.0, 800.0);
         let mut layout = ApplicationLayout::initial(rect, 220.0, 220.0, 240.0);
         layout.sync(&[(1, 1), (2, 1), (3, 3)], Some(1));
         let snapshot = layout.snapshot(rect, V);
@@ -1147,7 +1147,7 @@ mod tests {
 
     #[test]
     fn new_sessions_recreate_the_default_strip_when_all_previous_items_were_moved() {
-        let rect = UiRect::new(0.0, 0.0, 1600.0, 900.0);
+        let rect = Rect::new(0.0, 0.0, 1600.0, 900.0);
         let mut layout = ApplicationLayout::initial(rect, 220.0, 220.0, 240.0);
         layout.sync(&[(10, 10)], Some(10));
         let moved = layout.terminal_region(10).unwrap();
@@ -1174,7 +1174,7 @@ mod tests {
 
     #[test]
     fn a_single_tab_can_be_detached_beside_its_shared_source() {
-        let rect = UiRect::new(0.0, 0.0, 1600.0, 800.0);
+        let rect = Rect::new(0.0, 0.0, 1600.0, 800.0);
         let mut layout = ApplicationLayout::initial(rect, 220.0, 220.0, 240.0);
         layout.sync(&[(1, 1), (2, 1)], Some(1));
         let plan = layout

@@ -192,3 +192,31 @@ test('root state cannot re-export Git types again',()=>{
   const source='pub use crate::features::git::{GitStoreSnapshot, DiffTarget}; pub struct AppState { pub git: u8 }\nimpl AppState {}';
   assert.ok(violations({'src/app/state.rs':source},p).some(e=>e.includes('Git types must not be re-exported')));
 });
+
+test('terminal rules reject GUI, root state, runtime resources and direct I/O',()=>{
+  const file='src/features/terminal/new.rs';
+  for(const source of ['use lgui::core::*;','use crate::state::AppState;','use crate::terminal_session::TerminalController;','use std::{fs,process,thread};','use conpty::Process;','pub struct Runtime { value: Mutex<u32> }','use unknown_external::Thing;','use std::io::{Read, Write};','use std::{io as stream, env};','let dir = std::env::current_dir();'])assert.ok(violations({[file]:source},policy()).length>0);
+  assert.deepEqual(violations({[file]:'use serde::{Serialize, Deserialize}; use vt100::Screen; use crate::features::terminal::ShellKind;'},policy()),[]);
+});
+test('terminal rules cannot regain exceptions or include runtime sources',()=>{
+  const file='src/features/terminal/new.rs',p=policy();
+  p.exceptions[file]={dependencies:['lgui'],remove_in:'R7',reason:'bad'};
+  assert.ok(violations({[file]:'use lgui::ApplicationHandle;'},p).some(e=>e.includes('cannot have migration exceptions')));
+  for(const source of ['include!("../../terminal_session.rs");','#[path = "../../terminal_session.rs"] mod old;'])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('cannot include adapter sources')));
+});
+test('application layout cannot regain GUI, parent paths, I/O or exceptions',()=>{
+  const file='src/domain/application_layout.rs';
+  for(const source of ['use lgui::prelude::UiRect;','use super::pane_layout::Axis;','use std::{fs,thread};','include!("../model/application_layout.rs");'])assert.ok(violations({[file]:source},policy()).length>0);
+  const p=policy();p.exceptions[file]={dependencies:['lgui'],remove_in:'R8',reason:'bad'};
+  assert.ok(violations({[file]:'use lgui::prelude::*;'},p).some(e=>e.includes('domain cannot have migration exceptions')));
+  assert.deepEqual(violations({[file]:'use crate::domain::{geometry::Rect, pane_layout::{Axis, Direction}};'},policy()),[]);
+});
+
+test('removed terminal and layout paths cannot return as compatibility aliases',()=>{
+  for(const file of ['src/model/application_layout.rs','src/terminal_mouse.rs'])assert.ok(violations({[file]:'pub use crate::domain::application_layout::*;'},policy()).some(e=>e.includes('removed R7.1 paths')));
+  for(const file of ['src/terminal_session.rs','src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs']) {
+    const p=policy();p.exceptions[file]={dependencies:['crate::features'],remove_in:'R7.2',reason:'remaining runtime'};
+    for(const visibility of ['pub','pub(crate)'])assert.ok(violations({[file]:visibility+' use crate::features::terminal::ShellKind;'},p).some(e=>e.includes('legacy re-exports')));
+    assert.deepEqual(violations({[file]:'use crate::features::terminal::ShellKind;'},p),[]);
+  }
+});

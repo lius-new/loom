@@ -3,12 +3,12 @@ pub(crate) mod editor;
 
 use std::path::{Path, PathBuf};
 
+use crate::features::terminal::ShellKind;
 use crate::input::action::Action;
 use crate::input::keystroke::Keystroke;
 use crate::model::document::FileId;
 use crate::model::pane_layout::{Direction, PaneId};
 use crate::model::workspace::{AppPage, Workspace};
-use crate::terminal_session::ShellKind;
 use crate::theme::ThemeId;
 use crate::ui::components::input::InputState;
 
@@ -182,14 +182,14 @@ pub struct AppState {
     pub terminal_shell_menu: bool,
     pub terminal_shell_scroll: usize,
     pub terminal_tab_context_menu: Option<TerminalTabContextMenuState>,
-    pub application_layout: Option<crate::model::application_layout::ApplicationLayout>,
-    pub application_sash_drag: Option<crate::model::application_layout::Divider>,
+    pub application_layout: Option<crate::domain::application_layout::ApplicationLayout>,
+    pub application_sash_drag: Option<crate::domain::application_layout::Divider>,
     /// Shell used for terminals that are not opened from the shell selector.
     /// Active color theme, applied at the start of every frame.
     pub theme: ThemeId,
     pub default_shell: ShellKind,
-    pub terminal_profiles: Vec<crate::terminal_profiles::ShellProfile>,
-    pub shell_options: Vec<crate::terminal_profiles::ShellOption>,
+    pub terminal_profiles: Vec<crate::features::terminal::profiles::ShellProfile>,
+    pub shell_options: Vec<crate::features::terminal::profiles::ShellOption>,
     pub shell_editor: Option<crate::ui::terminal_settings::ProfileEditor>,
     /// The shell standing in for an unavailable default, if any.
     pub default_shell_fallback: Option<ShellKind>,
@@ -390,15 +390,18 @@ impl AppState {
     /// The shell new terminals launch: the saved default when available,
     /// otherwise the first available option.
     pub fn effective_shell(&self) -> ShellKind {
-        crate::terminal_profiles::effective_default(self.default_shell, &self.shell_options)
-            .unwrap_or(self.default_shell)
+        crate::features::terminal::profiles::effective_default(
+            self.default_shell,
+            &self.shell_options,
+        )
+        .unwrap_or(self.default_shell)
     }
 
     /// `effective_shell` for a terminal starting in `cwd`, honoring the
     /// project settings of the workspace folder that holds it.
     pub fn effective_shell_at(&self, cwd: Option<&Path>) -> ShellKind {
         let preferred = self.settings_at(cwd).default_shell;
-        crate::terminal_profiles::effective_default(preferred, &self.shell_options)
+        crate::features::terminal::profiles::effective_default(preferred, &self.shell_options)
             .unwrap_or(preferred)
     }
 

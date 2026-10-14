@@ -5,7 +5,6 @@
 //! * `pane_layout` — the split tree that arranges editor panes.
 //! * `workspace` — open documents and the panes that show them.
 
-pub mod application_layout;
 pub mod document;
 pub mod pane_layout;
 pub mod text;

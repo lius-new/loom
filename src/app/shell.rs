@@ -14,9 +14,9 @@ use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
 use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, component, group};
 use lgui::window::WindowFocusChanged;
 
+use crate::domain::application_layout::{ApplicationLayout, Content};
 use crate::features::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
-use crate::model::application_layout::{ApplicationLayout, Content};
 use crate::settings_persistence;
 use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
 use crate::terminal_session::TerminalTabs;
@@ -150,7 +150,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 .spawn(move || {
                     let mut trackers = program_sessions
                         .iter()
-                        .map(|_| crate::terminal_program::SustainedProgram::default())
+                        .map(|_| crate::features::terminal::program::SustainedProgram::default())
                         .collect::<Vec<_>>();
                     let mut previous = program_sessions
                         .iter()
@@ -355,7 +355,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let before = app.application_layout.clone();
         let layout = app.application_layout.get_or_insert_with(|| {
             ApplicationLayout::initial(
-                content_area,
+                content_area.into(),
                 app.source_control.width,
                 app.drawer.width,
                 app.terminal_h,
@@ -518,12 +518,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let statusbar_rect = UiRect::new(0.0, h - theme::STATUS_H, w, h);
     let application_layout = s.application_layout.as_ref().unwrap();
     let layout_visibility = layout_map::visibility(&s);
-    let application_snapshot = application_layout.snapshot(content_area, layout_visibility);
+    let application_snapshot = application_layout.snapshot(content_area.into(), layout_visibility);
     let source_control_left = s.source_control.visible;
     // Each pane is a tab strip above its surface; the focused pane's rects
     // drive the editor-wide handlers (selection auto-scroll, menus, keys).
     let editor_area = application_layout
         .content_rect(&application_snapshot, &Content::Editor)
+        .map(UiRect::from)
         .unwrap_or(content_area);
     let focused_pane = s.workspace.active_pane();
     let pane_rects: Vec<_> = s
@@ -601,9 +602,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let source_control_rect = application_layout
         .content_rect(&application_snapshot, &Content::Git)
+        .map(UiRect::from)
         .unwrap_or_default();
     let explorer_rect = application_layout
         .content_rect(&application_snapshot, &Content::Files)
+        .map(UiRect::from)
         .unwrap_or_default();
     let drag_state = state.clone();
     let dragging = s.editor.drag.is_some();
@@ -651,7 +654,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             let sessions = terminal_tab_snapshot
                 .region_view(&ids, active)
                 .active_group();
-            let rects = terminal::session_rects(*rect, &sessions);
+            let rects = terminal::session_rects((*rect).into(), &sessions);
             sessions
                 .into_iter()
                 .zip(rects)
@@ -1198,7 +1201,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             continue;
         }
         root = root.child(terminal::render_region(
-            *rect,
+            (*rect).into(),
             state.clone(),
             layout_map_store.clone(),
             editor_focus.clone(),

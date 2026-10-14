@@ -11,8 +11,9 @@ use lgui::prelude::{
     Color, Element, RenderCx, ShadowStyle, State, UiRect, VisualStyle, panel, text,
 };
 
+use crate::features::terminal::TERMINAL_PURPOSES as PURPOSES;
 use crate::state::{AppState, TerminalTabMenuKind};
-use crate::terminal_session::{TERMINAL_PURPOSES as PURPOSES, TerminalTabs};
+use crate::terminal_session::TerminalTabs;
 use crate::theme;
 
 const MENU_W: f32 = 224.0;
@@ -370,7 +371,7 @@ fn purpose_row(row: UiRect, label: &str, selected: bool) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal_session::ShellKind;
+    use crate::features::terminal::ShellKind;
 
     #[test]
     fn actions_target_the_clicked_terminal_and_preserve_unclosed_sessions() {

@@ -1,0 +1,577 @@
+{
+  "schema": 1,
+  "base": "b414223822337bd61b840950cd94826921e10a72",
+  "before_source_declarations": 672,
+  "after_source_declarations": 674,
+  "moved_source_tests": [
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "outer_moves_beyond_drawers_and_preview_is_pure",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "outer_moves_beyond_drawers_and_preview_is_pure",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "narrow_drawer_split_fits_by_redistributing_surplus",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "narrow_drawer_split_fits_by_redistributing_surplus",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "moving_beside_another_terminal_keeps_both_items_and_stable_ids",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "moving_beside_another_terminal_keeps_both_items_and_stable_ids",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "divider_insertion_resize_and_hidden_regions_keep_topology",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "divider_insertion_resize_and_hidden_regions_keep_topology",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "detached_sessions_keep_visibility_when_the_default_region_is_hidden",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "detached_sessions_keep_visibility_when_the_default_region_is_hidden",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "moving_the_last_default_session_does_not_move_the_default_ownership",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "moving_the_last_default_session_does_not_move_the_default_ownership",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "returning_to_the_default_tab_group_restores_its_visibility_scope",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "returning_to_the_default_tab_group_restores_its_visibility_scope",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "stale_model_viewport_visibility_or_closed_session_cannot_commit",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "stale_model_viewport_visibility_or_closed_session_cannot_commit",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "resizing_after_window_shrink_keeps_the_other_boundary_fixed",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "resizing_after_window_shrink_keeps_the_other_boundary_fixed",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "new_sessions_share_one_tab_strip_independently_of_legacy_groups",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "new_sessions_share_one_tab_strip_independently_of_legacy_groups",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "new_sessions_stay_in_default_strip_after_selecting_a_moved_terminal",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "new_sessions_stay_in_default_strip_after_selecting_a_moved_terminal",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "new_sessions_recreate_the_default_strip_when_all_previous_items_were_moved",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "new_sessions_recreate_the_default_strip_when_all_previous_items_were_moved",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/model/application_layout.rs",
+        "name": "a_single_tab_can_be_detached_beside_its_shared_source",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/domain/application_layout.rs",
+        "name": "a_single_tab_can_be_detached_beside_its_shared_source",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_directory.rs",
+        "name": "reports_survive_every_possible_read_boundary",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/directory.rs",
+        "name": "reports_survive_every_possible_read_boundary",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_directory.rs",
+        "name": "rejects_invalid_reports_and_recovers_after_oversized_or_cancelled_osc",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/directory.rs",
+        "name": "rejects_invalid_reports_and_recovers_after_oversized_or_cancelled_osc",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_mouse.rs",
+        "name": "application_wheel_reports_match_live_tracking_modes",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/mouse.rs",
+        "name": "application_wheel_reports_match_live_tracking_modes",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_mouse.rs",
+        "name": "mouse_encodings_preserve_coordinates_without_overflow",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/mouse.rs",
+        "name": "mouse_encodings_preserve_coordinates_without_overflow",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_mouse.rs",
+        "name": "ordinary_history_shift_override_and_application_exit_restore_scrolling",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/mouse.rs",
+        "name": "ordinary_history_shift_override_and_application_exit_restore_scrolling",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_mouse.rs",
+        "name": "fractional_wheels_accumulate_and_reset_on_direction_or_mode_changes",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/mouse.rs",
+        "name": "fractional_wheels_accumulate_and_reset_on_direction_or_mode_changes",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_profiles.rs",
+        "name": "unix_default_follows_user_shell_then_login_shell_then_sh",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/profiles.rs",
+        "name": "unix_default_follows_user_shell_then_login_shell_then_sh",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_profiles.rs",
+        "name": "argument_editor_preserves_empty_values_quotes_windows_paths_and_literals",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/profiles.rs",
+        "name": "argument_editor_preserves_empty_values_quotes_windows_paths_and_literals",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_program.rs",
+        "name": "only_sustained_processes_get_labels_and_exit_resets_immediately",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/program.rs",
+        "name": "only_sustained_processes_get_labels_and_exit_resets_immediately",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_program.rs",
+        "name": "repeated_short_processes_and_program_switches_do_not_reuse_elapsed_time",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/program.rs",
+        "name": "repeated_short_processes_and_program_switches_do_not_reuse_elapsed_time",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_program.rs",
+        "name": "ancestor_probe_follows_structural_launcher_chains",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/program.rs",
+        "name": "ancestor_probe_follows_structural_launcher_chains",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_program.rs",
+        "name": "session_ownership_survives_exited_launchers_and_isolates_other_terminals",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/program.rs",
+        "name": "session_ownership_survives_exited_launchers_and_isolates_other_terminals",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_program.rs",
+        "name": "a_sustained_application_keeps_its_label_when_it_spawns_helpers",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/program.rs",
+        "name": "a_sustained_application_keeps_its_label_when_it_spawns_helpers",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "shell_labels_are_stable",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/types.rs",
+        "name": "shell_labels_are_stable",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "indexed_terminal_colors_include_the_ansi_and_rgb_cube_ranges",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/screen.rs",
+        "name": "indexed_terminal_colors_include_the_ansi_and_rgb_cube_ranges",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "ansi_parser_produces_colored_runs",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/screen.rs",
+        "name": "ansi_parser_produces_colored_runs",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "wide_terminal_cells_keep_their_two_column_positions",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/screen.rs",
+        "name": "wide_terminal_cells_keep_their_two_column_positions",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "selection_text_spans_rows_and_joins_wrapped_lines",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/screen.rs",
+        "name": "selection_text_spans_rows_and_joins_wrapped_lines",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "selection_text_reads_rows_in_scrollback",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/screen.rs",
+        "name": "selection_text_reads_rows_in_scrollback",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "visible_selection_follows_the_scrolled_view",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/screen.rs",
+        "name": "visible_selection_follows_the_scrolled_view",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "paste_normalizes_newlines_and_honors_bracketed_mode",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/input.rs",
+        "name": "paste_normalizes_newlines_and_honors_bracketed_mode",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    }
+  ],
+  "added_source_tests": [
+    {
+      "file": "src/features/terminal/input.rs",
+      "name": "shell_control_keys_keep_workspace_shortcuts_and_paste_payload_separate",
+      "ignored": false
+    },
+    {
+      "file": "src/features/terminal/screen.rs",
+      "name": "caller_palette_controls_ansi_and_inverse_default_colors",
+      "ignored": false
+    }
+  ],
+  "missing_source_tests": [],
+  "changed_ignored": [],
+  "before_application_test_list": 603,
+  "missing_application_executed_tests": [],
+  "before_results": [
+    {
+      "status": "ok",
+      "passed": 589,
+      "failed": 0,
+      "ignored": 14
+    },
+    {
+      "status": "ok",
+      "passed": 65,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "after_results": [
+    {
+      "status": "ok",
+      "passed": 591,
+      "failed": 0,
+      "ignored": 14
+    },
+    {
+      "status": "ok",
+      "passed": 65,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 29,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "counting_note": "Source declarations include platform cfg. Application names come from the frozen before executable and the complete after test log. Independent domain repeats are listed separately from added behaviors."
+}

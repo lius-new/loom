@@ -11,9 +11,9 @@ use std::sync::{Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::features::terminal::ShellKind;
 use crate::fonts::FontSettings;
 use crate::jsonc;
-use crate::terminal_session::ShellKind;
 use crate::theme::ThemeId;
 use crate::workspace_persistence::config_path;
 
@@ -26,7 +26,7 @@ pub struct Settings {
     #[serde(default)]
     pub default_shell: ShellKind,
     #[serde(default)]
-    pub terminal_profiles: Vec<crate::terminal_profiles::ShellProfile>,
+    pub terminal_profiles: Vec<crate::features::terminal::profiles::ShellProfile>,
     #[serde(default = "default_true")]
     pub terminal_cursor_blink: bool,
     #[serde(default = "default_true")]
@@ -425,7 +425,7 @@ mod tests {
         let settings = Settings {
             theme: ThemeId::parse("ember").unwrap(),
             default_shell: ShellKind::Bash,
-            terminal_profiles: vec![crate::terminal_profiles::ShellProfile {
+            terminal_profiles: vec![crate::features::terminal::profiles::ShellProfile {
                 id: 7,
                 name: "My shell".into(),
                 program: "/custom/fish".into(),
