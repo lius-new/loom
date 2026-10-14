@@ -40,3 +40,5 @@ pub(crate) mod workspace;
 mod workspace_git;
 pub(crate) mod workspace_restore;
 pub(crate) mod workspace_session;
+
+pub(crate) mod terminal_runtime;

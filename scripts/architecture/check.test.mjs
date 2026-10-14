@@ -214,9 +214,19 @@ test('application layout cannot regain GUI, parent paths, I/O or exceptions',()=
 
 test('removed terminal and layout paths cannot return as compatibility aliases',()=>{
   for(const file of ['src/model/application_layout.rs','src/terminal_mouse.rs'])assert.ok(violations({[file]:'pub use crate::domain::application_layout::*;'},policy()).some(e=>e.includes('removed R7.1 paths')));
-  for(const file of ['src/terminal_session.rs','src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs']) {
+  for(const file of ['src/terminal_session.rs']) {
     const p=policy();p.exceptions[file]={dependencies:['crate::features'],remove_in:'R7.2',reason:'remaining runtime'};
     for(const visibility of ['pub','pub(crate)'])assert.ok(violations({[file]:visibility+' use crate::features::terminal::ShellKind;'},p).some(e=>e.includes('legacy re-exports')));
     assert.deepEqual(violations({[file]:'use crate::features::terminal::ShellKind;'},p),[]);
   }
+});
+
+test('terminal infrastructure rejects GUI, root/application dependencies and exceptions',()=>{
+ const file='src/infrastructure/terminal/session.rs';
+ for(const source of ['use lgui::ApplicationHandle;','use crate::app::state::AppState;','use crate::ui::terminal;','use crate::terminal_session::TerminalTabs;','pub use crate::{app::terminal_runtime as runtime, ui::terminal};','use super::super::super::app::terminal_runtime;','include!("../../app/state.rs");','#[path = "../../app/state.rs"] mod old;'])assert.ok(violations({[file]:source},policy()).length>0);
+ const p=policy();p.exceptions[file]={dependencies:['lgui'],remove_in:'R7',reason:'bad'};assert.ok(violations({[file]:'use lgui::ApplicationHandle;'},p).some(e=>e.includes('free of root state')));
+ assert.deepEqual(violations({[file]:'use crate::features::terminal::ShellKind; use conpty::Process; use std::{fs,process,thread};'},policy()),[]);
+});
+test('removed terminal system adapters cannot return as aliases',()=>{
+ for(const file of ['src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs'])assert.ok(violations({[file]:'pub use crate::infrastructure::terminal::*;'},policy()).some(e=>e.includes('removed R7.2 adapters')));
 });

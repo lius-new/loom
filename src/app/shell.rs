@@ -167,7 +167,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                             continue;
                         }
                         let now = std::time::Instant::now();
-                        let probe = crate::terminal_program::ProgramProbe::new();
+                        let probe = crate::infrastructure::terminal::program::ProgramProbe::new();
                         let programs = program_sessions
                             .iter()
                             .zip(&mut trackers)
@@ -679,7 +679,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_visible = active_visible_terminal.is_some();
     cx.use_effect(terminal_start_key, move || {
         for (_, terminal_start, cwd, size) in terminal_starts {
-            let cwd = crate::terminal_directory::starting_directory(
+            let cwd = crate::infrastructure::terminal::integration::starting_directory(
                 cwd.as_deref(),
                 terminal_cwd.as_deref(),
             );

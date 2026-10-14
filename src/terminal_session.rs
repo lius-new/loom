@@ -1,62 +1,9 @@
-//! A single real terminal session backed by the platform PTY.
-//!
-//! The UI reads immutable snapshots from this type. PTY output is parsed on a
-//! background thread and asks the application event loop for another frame.
-
-use std::env;
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
-use std::thread;
-#[cfg(windows)]
-use std::time::Duration;
-
-use lgui::ApplicationHandle;
-#[cfg(not(windows))]
-use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
-
-use crate::features::terminal::input::paste_bytes;
-use crate::features::terminal::screen::{
-    GridPoint, Palette, Selection, line_runs, selection_text, visible_selection,
-};
-use crate::features::terminal::{
-    SessionId, ShellKind, TERMINAL_PURPOSES, TerminalSize, TerminalSnapshot, TerminalStatus,
-};
-
-const SCROLLBACK_ROWS: usize = 2_000;
-impl ShellKind {
-    fn candidates(self) -> &'static [&'static str] {
-        match self {
-            Self::PowerShell => &["pwsh.exe", "powershell.exe", "pwsh", "powershell"],
-            Self::Cmd => &["cmd.exe", "cmd"],
-            Self::Bash => &["bash.exe", "bash"],
-            Self::System | Self::Custom(_) => &[],
-        }
-    }
-    fn command(self) -> PathBuf {
-        if self == Self::System {
-            return crate::terminal_profiles::builtin(self)
-                .and_then(|p| p.program)
-                .unwrap_or_else(|| "/bin/sh".into());
-        }
-        #[cfg(windows)]
-        if self == Self::Bash
-            && let Some(git_bash) = find_git_bash()
-        {
-            return git_bash;
-        }
-        self.candidates()
-            .iter()
-            .find_map(|candidate| find_executable(candidate))
-            .unwrap_or_else(|| PathBuf::from(self.candidates().first().copied().unwrap_or("")))
-    }
-}
-
-#[derive(Clone)]
-pub struct TerminalController {
-    inner: Arc<TerminalInner>,
-}
+//! Legacy terminal tab/model composition, retained until R7.3.
+#[cfg(test)]
+use crate::features::terminal::TerminalSize;
+use crate::features::terminal::{SessionId, ShellKind, TERMINAL_PURPOSES};
+use crate::infrastructure::terminal::session::TerminalController;
+use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct TerminalTab {
@@ -429,750 +376,21 @@ impl Default for TerminalTabs {
     }
 }
 
-struct TerminalInner {
-    parser: Mutex<vt100::Parser>,
-    process: Mutex<Option<RunningProcess>>,
-    shell: Mutex<ShellKind>,
-    status: Mutex<TerminalStatus>,
-    selection: Mutex<Option<Selection>>,
-    mouse: Mutex<crate::features::terminal::mouse::TerminalMouse>,
-    generation: AtomicU64,
-    cwd: Mutex<Option<PathBuf>>,
-    profile: Mutex<Option<crate::features::terminal::profiles::ShellProfile>>,
-    notice: Mutex<Option<String>>,
-}
-
-struct RunningProcess {
-    _integration: crate::terminal_directory::ShellIntegration,
-    pid: u32,
-    #[cfg(windows)]
-    console: Option<Arc<crate::terminal_program::SessionConsole>>,
-    #[cfg(windows)]
-    process: conpty::Process,
-    #[cfg(not(windows))]
-    master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
-    #[cfg(not(windows))]
-    killer: Box<dyn ChildKiller + Send + Sync>,
-    size: TerminalSize,
-}
-
-struct SpawnedShell {
-    process: RunningProcess,
-    reader: Box<dyn Read + Send>,
-    #[cfg(not(windows))]
-    child: Box<dyn portable_pty::Child + Send + Sync>,
-}
-
-impl TerminalController {
-    pub fn new() -> Self {
-        Self::with_shell(ShellKind::default())
-    }
-
-    pub fn with_shell(shell: ShellKind) -> Self {
-        Self {
-            inner: Arc::new(TerminalInner {
-                parser: Mutex::new(vt100::Parser::new(24, 80, SCROLLBACK_ROWS)),
-                process: Mutex::new(None),
-                shell: Mutex::new(shell),
-                status: Mutex::new(TerminalStatus::Idle),
-                selection: Mutex::new(None),
-                mouse: Mutex::new(crate::features::terminal::mouse::TerminalMouse::default()),
-                generation: AtomicU64::new(0),
-                cwd: Mutex::new(None),
-                profile: Mutex::new(None),
-                notice: Mutex::new(None),
-            }),
-        }
-    }
-
-    pub fn ensure_started(
-        &self,
-        cwd: Option<&Path>,
-        size: TerminalSize,
-        application: Arc<ApplicationHandle>,
-    ) {
-        let should_start = matches!(*lock(&self.inner.status), TerminalStatus::Idle);
-        if should_start {
-            self.restart(self.shell(), cwd, size, application);
-        } else {
-            self.resize(size);
-        }
-    }
-
-    pub fn shell(&self) -> ShellKind {
-        *lock(&self.inner.shell)
-    }
-
-    fn set_profile(&self, profile: Option<crate::features::terminal::profiles::ShellProfile>) {
-        *lock(&self.inner.profile) = profile;
-    }
-
-    pub fn shell_name(&self) -> String {
-        lock(&self.inner.profile)
-            .as_ref()
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| self.shell().label().into())
-    }
-
-    pub fn short_label(&self) -> String {
-        lock(&self.inner.profile)
-            .as_ref()
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| self.shell().short_label().into())
-    }
-
-    pub fn working_directory(&self) -> Option<PathBuf> {
-        lock(&self.inner.cwd).clone()
-    }
-
-    /// Inspect the OS process outside reactive UI state locks.
-    pub fn program_candidate(
-        &self,
-        probe: &crate::terminal_program::ProgramProbe,
-        preferred: Option<u32>,
-    ) -> Option<crate::features::terminal::program::ProgramCandidate> {
-        if !matches!(*lock(&self.inner.status), TerminalStatus::Running) {
-            return None;
-        }
-        #[cfg(windows)]
-        let (pid, console) = {
-            let process = lock(&self.inner.process);
-            let process = process.as_ref()?;
-            (process.pid, process.console.clone())
-        };
-        #[cfg(windows)]
-        {
-            if let Some(console) = console
-                && let Some(members) = console.members()
-            {
-                return probe.session_candidate(&members, &console.baseline, preferred);
-            }
-            probe.candidate(pid, None)
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = preferred;
-            let (pid, foreground) = {
-                let process = lock(&self.inner.process);
-                let process = process.as_ref()?;
-                let foreground = process.master.process_group_leader().map(|pid| pid as u32);
-                (process.pid, foreground)
-            };
-            probe.candidate(pid, foreground)
-        }
-    }
-
-    pub fn restart(
-        &self,
-        shell: ShellKind,
-        cwd: Option<&Path>,
-        size: TerminalSize,
-        application: Arc<ApplicationHandle>,
-    ) {
-        let generation = self.inner.generation.fetch_add(1, Ordering::AcqRel) + 1;
-        self.kill_current();
-        *lock(&self.inner.shell) = shell;
-        *lock(&self.inner.status) = TerminalStatus::Starting;
-        *lock(&self.inner.parser) = vt100::Parser::new(size.rows, size.cols, SCROLLBACK_ROWS);
-        *lock(&self.inner.selection) = None;
-
-        let cwd = crate::terminal_directory::starting_directory(cwd, None);
-        *lock(&self.inner.mouse) = crate::features::terminal::mouse::TerminalMouse::default();
-        *lock(&self.inner.cwd) = cwd.clone();
-        let selected = if matches!(shell, ShellKind::Custom(_)) {
-            lock(&self.inner.profile)
-                .as_ref()
-                .map(crate::features::terminal::profiles::ShellOption::custom)
-        } else {
-            crate::terminal_profiles::builtin(shell)
-        };
-        let available = selected
-            .clone()
-            .filter(crate::features::terminal::profiles::ShellOption::available);
-        let launch = available
-            .clone()
-            .or_else(|| crate::terminal_profiles::defaults().into_iter().next());
-        *lock(&self.inner.notice) = if available.is_none() {
-            launch.as_ref().map(|fallback| {
-                format!(
-                    "{} is unavailable; using {}.",
-                    selected
-                        .as_ref()
-                        .map(|s| s.name.as_str())
-                        .unwrap_or(shell.label()),
-                    fallback.name
-                )
-            })
-        } else {
-            None
-        };
-        // The tab keeps its configured shell, so a restored session or a
-        // restart after the profile is repaired launches that shell again.
-        let spawned = launch
-            .ok_or_else(|| "No usable shell was found. Add a terminal in Settings.".to_owned())
-            .and_then(|launch| spawn_shell_option(&launch, cwd.as_deref(), size));
-        match spawned {
-            Ok(spawned) => {
-                let mut reader = spawned.reader;
-                #[cfg(not(windows))]
-                let mut child = spawned.child;
-                *lock(&self.inner.process) = Some(spawned.process);
-                *lock(&self.inner.status) = TerminalStatus::Running;
-                application.request_frame();
-
-                let reader_inner = Arc::downgrade(&self.inner);
-                let reader_application = Arc::clone(&application);
-                thread::Builder::new()
-                    .name("loom-terminal-output".to_owned())
-                    .spawn(move || {
-                        let mut bytes = [0_u8; 8 * 1024];
-                        let mut directories =
-                            crate::features::terminal::directory::DirectoryReports::default();
-                        loop {
-                            let count = match reader.read(&mut bytes) {
-                                Ok(count) => count,
-                                Err(error) => {
-                                    if let Some(inner) = current_inner(&reader_inner, generation) {
-                                        *lock(&inner.status) = TerminalStatus::Failed(format!(
-                                            "terminal output stream failed: {error}"
-                                        ));
-                                        reader_application.request_frame();
-                                    }
-                                    break;
-                                }
-                            };
-                            if count == 0 {
-                                break;
-                            }
-                            let Some(inner) = current_inner(&reader_inner, generation) else {
-                                break;
-                            };
-                            if let Some(cwd) = directories.process(&bytes[..count]) {
-                                *lock(&inner.cwd) = Some(cwd);
-                            }
-                            lock(&inner.parser).process(&bytes[..count]);
-                            reader_application.request_frame();
-                        }
-                    })
-                    .expect("terminal output thread should start");
-
-                spawn_waiter(
-                    Arc::downgrade(&self.inner),
-                    generation,
-                    #[cfg(not(windows))]
-                    child,
-                    application,
-                );
-            }
-            Err(error) => {
-                *lock(&self.inner.status) = TerminalStatus::Failed(error);
-                application.request_frame();
-            }
-        }
-    }
-
-    pub fn terminate(&self, application: &ApplicationHandle) {
-        self.inner.generation.fetch_add(1, Ordering::AcqRel);
-        self.kill_current();
-        *lock(&self.inner.status) = TerminalStatus::Stopped;
-        application.request_frame();
-    }
-
-    pub fn write(&self, bytes: &[u8]) {
-        lock(&self.inner.parser).screen_mut().set_scrollback(0);
-        // Typing into the shell ends the selection, as in other terminals.
-        *lock(&self.inner.selection) = None;
-        let mut process = lock(&self.inner.process);
-        let Some(process) = process.as_mut() else {
-            return;
-        };
-        if let Err(error) = process
-            .writer
-            .write_all(bytes)
-            .and_then(|_| process.writer.flush())
-        {
-            *lock(&self.inner.status) = TerminalStatus::Failed(error.to_string());
-        }
-    }
-
-    pub fn resize(&self, size: TerminalSize) {
-        {
-            let mut parser = lock(&self.inner.parser);
-            if parser.screen().size() != (size.rows, size.cols) {
-                let scrollback = parser.screen().scrollback();
-                parser.screen_mut().set_size(size.rows, size.cols);
-                parser.screen_mut().set_scrollback(scrollback);
-            }
-        }
-
-        let mut process = lock(&self.inner.process);
-        let Some(process) = process.as_mut() else {
-            return;
-        };
-        if process.size != size && resize_process(process, size).is_ok() {
-            process.size = size;
-        }
-    }
-
-    pub fn scroll(&self, rows: i32) {
-        let mut parser = lock(&self.inner.parser);
-        crate::features::terminal::mouse::scroll_history(parser.screen_mut(), rows);
-    }
-
-    pub fn set_mouse_position(&self, row: u16, col: u16) {
-        lock(&self.inner.mouse).set_position(row, col);
-    }
-
-    pub fn wheel(&self, delta: f32, modifiers: crate::features::terminal::input::Modifiers) {
-        let bytes = {
-            let mut parser = lock(&self.inner.parser);
-            lock(&self.inner.mouse).wheel(parser.screen_mut(), delta, modifiers)
-        };
-        if !bytes.is_empty() {
-            self.write(&bytes);
-        }
-    }
-
-    /// Writes pasted text, wrapping it for shells that enabled bracketed paste.
-    pub fn paste(&self, value: &str) {
-        if value.is_empty() {
-            return;
-        }
-        let bracketed = lock(&self.inner.parser).screen().bracketed_paste();
-        self.write(&paste_bytes(value, bracketed));
-    }
-
-    /// Starts a selection at a visible cell boundary.
-    pub fn begin_selection(&self, row: u16, col: u16) {
-        let point = self.grid_point(row, col);
-        *lock(&self.inner.selection) = Some(Selection {
-            anchor: point,
-            head: point,
-        });
-    }
-
-    /// Moves the free end of the selection to a visible cell boundary.
-    pub fn extend_selection(&self, row: u16, col: u16) {
-        let point = self.grid_point(row, col);
-        if let Some(selection) = lock(&self.inner.selection).as_mut() {
-            selection.head = point;
-        }
-    }
-
-    pub fn clear_selection(&self) -> bool {
-        lock(&self.inner.selection).take().is_some()
-    }
-
-    pub fn selected_text(&self) -> Option<String> {
-        let mut parser = lock(&self.inner.parser);
-        let (start, end) = (*lock(&self.inner.selection))?.ordered()?;
-        Some(selection_text(parser.screen_mut(), start, end))
-    }
-
-    fn grid_point(&self, row: u16, col: u16) -> GridPoint {
-        let parser = lock(&self.inner.parser);
-        let screen = parser.screen();
-        let (rows, cols) = screen.size();
-        GridPoint {
-            row: i64::from(row.min(rows.saturating_sub(1))) - screen.scrollback() as i64,
-            col: col.min(cols),
-        }
-    }
-
-    pub fn snapshot(&self) -> TerminalSnapshot {
-        let parser = lock(&self.inner.parser);
-        let screen = parser.screen();
-        let (rows, cols) = screen.size();
-        let palette = Palette {
-            ansi: crate::theme::c().ansi,
-            foreground: crate::theme::c().text.0,
-            background: crate::theme::c().bg.0,
-        };
-        let lines = (0..rows)
-            .map(|row| line_runs(screen, row, cols, &palette))
-            .collect();
-        let selection = lock(&self.inner.selection)
-            .and_then(Selection::ordered)
-            .map(|(start, end)| visible_selection(start, end, screen.scrollback(), rows, cols))
-            .unwrap_or_default();
-        TerminalSnapshot {
-            shell: self.shell(),
-            shell_name: self.shell_name(),
-            notice: lock(&self.inner.notice).clone(),
-            status: lock(&self.inner.status).clone(),
-            rows,
-            cols,
-            lines,
-            cursor: screen.cursor_position(),
-            cursor_visible: !screen.hide_cursor() && screen.scrollback() == 0,
-            application_cursor: screen.application_cursor(),
-            selection,
-        }
-    }
-
-    fn kill_current(&self) {
-        if let Some(mut process) = lock(&self.inner.process).take() {
-            terminate_process(&mut process);
-        }
-    }
-}
-
-impl Default for TerminalController {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Drop for TerminalInner {
-    fn drop(&mut self) {
-        if let Ok(process) = self.process.get_mut()
-            && let Some(mut process) = process.take()
-        {
-            terminate_process(&mut process);
-        }
-    }
-}
-
-#[cfg(windows)]
-fn spawn_shell(
-    shell: ShellKind,
-    cwd: Option<&Path>,
-    size: TerminalSize,
-) -> Result<SpawnedShell, String> {
-    let program = shell.command();
-    spawn_shell_program(shell, cwd, size, &program)
-}
-
-#[cfg(windows)]
-fn spawn_shell_option(
-    option: &crate::features::terminal::profiles::ShellOption,
-    cwd: Option<&Path>,
-    size: TerminalSize,
-) -> Result<SpawnedShell, String> {
-    spawn_shell_program_args(
-        option.kind,
-        cwd,
-        size,
-        option
-            .program
-            .as_deref()
-            .ok_or("Shell program is unavailable")?,
-        &option.args,
-    )
-}
-
-#[cfg(windows)]
-fn spawn_shell_program(
-    shell: ShellKind,
-    cwd: Option<&Path>,
-    size: TerminalSize,
-    program: &Path,
-) -> Result<SpawnedShell, String> {
-    spawn_shell_program_args(shell, cwd, size, program, &[])
-}
-
-#[cfg(windows)]
-fn spawn_shell_program_args(
-    _shell: ShellKind,
-    cwd: Option<&Path>,
-    size: TerminalSize,
-    program: &Path,
-    args: &[String],
-) -> Result<SpawnedShell, String> {
-    // conpty 0.7 concatenates Command arguments without quoting. Quote paths
-    // explicitly, including executables installed under Program Files.
-    let mut executable = std::ffi::OsString::from("\"");
-    executable.push(program.as_os_str());
-    executable.push("\"");
-    let mut command = std::process::Command::new(executable);
-    let integration = configure_std_command(&mut command, program, args, cwd)?;
-
-    let mut options = conpty::ProcessOptions::default();
-    options.set_console_size(Some((
-        size.cols.min(i16::MAX as u16) as i16,
-        size.rows.min(i16::MAX as u16) as i16,
-    )));
-    let mut process = options
-        .spawn(command)
-        .map_err(|error| format!("{error} ({})", program.display()))?;
-    let reader = process.output().map_err(|error| error.to_string())?;
-    let writer = process.input().map_err(|error| error.to_string())?;
-    let console = crate::terminal_program::SessionConsole::new(process.pid()).map(Arc::new);
-    Ok(SpawnedShell {
-        process: RunningProcess {
-            _integration: integration,
-            pid: process.pid(),
-            console,
-            process,
-            writer: Box::new(writer),
-            size,
-        },
-        reader: Box::new(reader),
-    })
-}
-
-#[cfg(windows)]
-fn configure_std_command(
-    command: &mut std::process::Command,
-    program: &Path,
-    args: &[String],
-    cwd: Option<&Path>,
-) -> Result<crate::terminal_directory::ShellIntegration, String> {
-    let cwd = cwd.map(shell_friendly_path);
-    let integration =
-        crate::terminal_directory::ShellIntegration::for_launch(program, args, cwd.as_deref())
-            .map_err(|error| format!("shell integration: {error}"))?;
-    for arg in integration.launch_args(args) {
-        command.arg(quote_windows_argument(&arg));
-    }
-    if let Some(cwd) = &cwd {
-        command.current_dir(cwd);
-    }
-    // conpty builds an explicit environment block when any override exists,
-    // so copy the inherited environment before adding terminal capabilities.
-    command.envs(env::vars_os());
-    command.envs(integration.env.iter().cloned());
-    command.env("TERM", "xterm-256color");
-    command.env("COLORTERM", "truecolor");
-    command.env("TERM_PROGRAM", "loom");
-    Ok(integration)
-}
-
-#[cfg(windows)]
-fn quote_windows_argument(arg: &std::ffi::OsStr) -> std::ffi::OsString {
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
-    let mut quoted = vec![34u16];
-    let mut slashes = 0;
-    for unit in arg.encode_wide() {
-        if unit == 92 {
-            slashes += 1;
-            continue;
-        }
-        quoted.extend(std::iter::repeat_n(
-            92,
-            if unit == 34 { slashes * 2 + 1 } else { slashes },
-        ));
-        quoted.push(unit);
-        slashes = 0;
-    }
-    quoted.extend(std::iter::repeat_n(92, slashes * 2));
-    quoted.push(34);
-    std::ffi::OsString::from_wide(&quoted)
-}
-
-/// `fs::canonicalize` yields verbatim paths (`\\?\D:\dir`). Shells keep that
-/// form as their location, so PowerShell would prompt with
-/// `Microsoft.PowerShell.Core\FileSystem::\\?\D:\dir`; drop the prefix.
-#[cfg(windows)]
-fn shell_friendly_path(path: &Path) -> PathBuf {
-    let Some(value) = path.to_str() else {
-        return path.to_path_buf();
-    };
-    if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{unc}"))
-    } else if let Some(local) = value.strip_prefix(r"\\?\")
-        && local.as_bytes().get(1) == Some(&b':')
-    {
-        PathBuf::from(local)
-    } else {
-        path.to_path_buf()
-    }
-}
-
-#[cfg(not(windows))]
-fn spawn_shell_option(
-    option: &crate::features::terminal::profiles::ShellOption,
-    cwd: Option<&Path>,
-    size: TerminalSize,
-) -> Result<SpawnedShell, String> {
-    let pty = native_pty_system();
-    let pty_size = PtySize {
-        rows: size.rows,
-        cols: size.cols,
-        pixel_width: size.pixel_width,
-        pixel_height: size.pixel_height,
-    };
-    let pair = pty.openpty(pty_size).map_err(|error| error.to_string())?;
-    let program = option
-        .program
-        .as_deref()
-        .ok_or("Shell program is unavailable")?;
-    let mut command = CommandBuilder::new(&program);
-    let integration =
-        crate::terminal_directory::ShellIntegration::for_launch(program, &option.args, cwd)
-            .map_err(|error| format!("shell integration: {error}"))?;
-    command.args(integration.launch_args(&option.args));
-    for (key, value) in &integration.env {
-        command.env(key, value);
-    }
-    if let Some(cwd) = cwd {
-        command.cwd(cwd.as_os_str());
-    }
-    command.env("TERM", "xterm-256color");
-    command.env("COLORTERM", "truecolor");
-    command.env("TERM_PROGRAM", "loom");
-
-    let child = pair
-        .slave
-        .spawn_command(command)
-        .map_err(|error| format!("{} ({})", error, program.display()))?;
-    drop(pair.slave);
-    let reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|error| error.to_string())?;
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|error| error.to_string())?;
-    let killer = child.clone_killer();
-    Ok(SpawnedShell {
-        process: RunningProcess {
-            _integration: integration,
-            pid: child.process_id().unwrap_or(0),
-            master: pair.master,
-            writer,
-            killer,
-            size,
-        },
-        reader,
-        child,
-    })
-}
-
-#[cfg(windows)]
-fn resize_process(process: &mut RunningProcess, size: TerminalSize) -> Result<(), String> {
-    process
-        .process
-        .resize(
-            size.cols.min(i16::MAX as u16) as i16,
-            size.rows.min(i16::MAX as u16) as i16,
-        )
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(not(windows))]
-fn resize_process(process: &mut RunningProcess, size: TerminalSize) -> Result<(), String> {
-    process
-        .master
-        .resize(PtySize {
-            rows: size.rows,
-            cols: size.cols,
-            pixel_width: size.pixel_width,
-            pixel_height: size.pixel_height,
-        })
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(windows)]
-fn terminate_process(process: &mut RunningProcess) {
-    let _ = process.process.exit(1);
-}
-
-#[cfg(not(windows))]
-fn terminate_process(process: &mut RunningProcess) {
-    let _ = process.killer.kill();
-}
-
-#[cfg(windows)]
-fn spawn_waiter(inner: Weak<TerminalInner>, generation: u64, application: Arc<ApplicationHandle>) {
-    thread::Builder::new()
-        .name("loom-terminal-wait".to_owned())
-        .spawn(move || {
-            loop {
-                let Some(inner) = current_inner(&inner, generation) else {
-                    return;
-                };
-                let exit = {
-                    let process = lock(&inner.process);
-                    let Some(process) = process.as_ref() else {
-                        return;
-                    };
-                    (!process.process.is_alive()).then(|| process.process.wait(Some(0)))
-                };
-                if let Some(exit) = exit {
-                    *lock(&inner.status) = match exit {
-                        Ok(code) => TerminalStatus::Exited(code),
-                        Err(error) => TerminalStatus::Failed(error.to_string()),
-                    };
-                    application.request_frame();
-                    return;
-                }
-                thread::sleep(Duration::from_millis(50));
-            }
-        })
-        .expect("terminal wait thread should start");
-}
-
-#[cfg(not(windows))]
-fn spawn_waiter(
-    inner: Weak<TerminalInner>,
-    generation: u64,
-    mut child: Box<dyn portable_pty::Child + Send + Sync>,
-    application: Arc<ApplicationHandle>,
-) {
-    thread::Builder::new()
-        .name("loom-terminal-wait".to_owned())
-        .spawn(move || {
-            let status = child.wait();
-            let Some(inner) = current_inner(&inner, generation) else {
-                return;
-            };
-            *lock(&inner.status) = match status {
-                Ok(status) => TerminalStatus::Exited(status.exit_code()),
-                Err(error) => TerminalStatus::Failed(error.to_string()),
-            };
-            application.request_frame();
-        })
-        .expect("terminal wait thread should start");
-}
-
-fn current_inner(inner: &Weak<TerminalInner>, generation: u64) -> Option<Arc<TerminalInner>> {
-    let inner = inner.upgrade()?;
-    (inner.generation.load(Ordering::Acquire) == generation).then_some(inner)
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn find_executable(command: &str) -> Option<PathBuf> {
-    let command_path = Path::new(command);
-    if command_path.components().count() > 1 && command_path.is_file() {
-        return Some(command_path.to_owned());
-    }
-    env::split_paths(&env::var_os("PATH")?).find_map(|directory| {
-        let candidate = directory.join(command);
-        candidate.is_file().then_some(candidate)
-    })
-}
-
-#[cfg(windows)]
-pub(crate) fn find_git_bash() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(program_files) = env::var_os("ProgramFiles") {
-        candidates.push(PathBuf::from(program_files).join("Git\\bin\\bash.exe"));
-    }
-    if let Some(program_files_x86) = env::var_os("ProgramFiles(x86)") {
-        candidates.push(PathBuf::from(program_files_x86).join("Git\\bin\\bash.exe"));
-    }
-    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-        candidates.push(PathBuf::from(local_app_data).join("Programs\\Git\\bin\\bash.exe"));
-    }
-    if let Some(git) = find_executable("git.exe")
-        && let Some(root) = git.parent().and_then(Path::parent)
-    {
-        candidates.push(root.join("bin\\bash.exe"));
-    }
-    candidates.into_iter().find(|candidate| candidate.is_file())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::terminal_runtime::TerminalDisplay;
+    #[cfg(windows)]
+    use crate::features::terminal::TerminalStatus;
+    #[cfg(windows)]
+    use crate::infrastructure::terminal::pty::shell_friendly_path;
+    use lgui::ApplicationHandle;
+    use std::env;
+    use std::sync::Arc;
+    #[cfg(windows)]
+    use std::thread;
+    #[cfg(windows)]
+    use std::{io::Write, path::Path, time::Duration};
 
     #[cfg(windows)]
     #[test]
@@ -1228,7 +446,7 @@ mod tests {
         let controller = tabs.active().unwrap().controller.clone();
         let second = tabs.split(first).unwrap();
         assert_eq!(
-            *lock(&tabs.active().unwrap().controller.inner.profile),
+            *tabs.active().unwrap().controller.test_profile(),
             Some(profile.clone())
         );
         assert_eq!(tabs.active_id(), Some(second));
@@ -1253,7 +471,7 @@ mod tests {
             .collect::<Vec<_>>();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let output = lock(&controller.inner.parser).screen().contents();
+            let output = controller.test_parser().screen().contents();
             if expected.iter().all(|arg| output.contains(arg)) {
                 break;
             }
@@ -1289,6 +507,33 @@ mod tests {
         );
         assert_eq!(tabs.profiles, vec![missing]);
         controller.terminate(&application);
+
+        // Repairing discovery must launch the configured profile again, rather
+        // than preserving the shell that was temporarily used as a fallback.
+        tabs.set_profiles(std::slice::from_ref(&profile));
+        controller.restart(
+            ShellKind::Custom(profile.id),
+            Some(&root),
+            size,
+            application.clone(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let output = controller.test_parser().screen().contents();
+            if expected.iter().all(|arg| output.contains(arg)) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "repaired custom args: {output:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(controller.shell(), ShellKind::Custom(profile.id));
+        assert_eq!(controller.short_label(), profile.name);
+        assert!(controller.snapshot().notice.is_none());
+        assert_eq!(tabs.profiles, vec![profile]);
+        controller.terminate(&application);
     }
 
     #[cfg(windows)]
@@ -1297,7 +542,7 @@ mod tests {
         use crate::features::terminal::input::Modifiers as KeyModifiers;
         use std::time::Instant;
 
-        if !ShellKind::Bash.command().is_file() {
+        if !crate::infrastructure::terminal::profiles::shell_command(ShellKind::Bash).is_file() {
             eprintln!("Git Bash not installed; skipping native mouse round trip");
             return;
         }
@@ -1314,14 +559,14 @@ mod tests {
         fn wait_for(controller: &TerminalController, predicate: impl Fn(&vt100::Screen) -> bool) {
             let deadline = Instant::now() + Duration::from_secs(10);
             while Instant::now() < deadline {
-                if predicate(lock(&controller.inner.parser).screen()) {
+                if predicate(controller.test_parser().screen()) {
                     return;
                 }
                 thread::sleep(Duration::from_millis(20));
             }
             panic!(
                 "native mouse probe timed out: {:?}",
-                lock(&controller.inner.parser).screen().contents()
+                controller.test_parser().screen().contents()
             );
         }
 
@@ -1336,11 +581,9 @@ mod tests {
             screen.contents().contains("MOUSE_READY")
                 && screen.mouse_protocol_encoding() == vt100::MouseProtocolEncoding::Sgr
         });
-        assert!(lock(&controller.inner.parser).screen().alternate_screen());
+        assert!(controller.test_parser().screen().alternate_screen());
         assert_eq!(
-            lock(&controller.inner.parser)
-                .screen()
-                .mouse_protocol_mode(),
+            controller.test_parser().screen().mouse_protocol_mode(),
             vt100::MouseProtocolMode::AnyMotion
         );
         controller.set_mouse_position(7, 13);
@@ -1364,9 +607,9 @@ mod tests {
             screen.contents().contains("history-080")
         });
         controller.wheel(1.0, KeyModifiers::empty());
-        assert_eq!(lock(&controller.inner.parser).screen().scrollback(), 3);
+        assert_eq!(controller.test_parser().screen().scrollback(), 3);
         controller.wheel(-1.0, KeyModifiers::empty());
-        assert_eq!(lock(&controller.inner.parser).screen().scrollback(), 0);
+        assert_eq!(controller.test_parser().screen().scrollback(), 0);
     }
 
     /// Runs inside the test's ConPTY to exercise the same Windows input API
@@ -1447,7 +690,7 @@ mod tests {
         assert_eq!(tabs.directories(), dirs);
         let ids = tabs.tabs().iter().map(|t| t.id).collect::<Vec<_>>();
         let changed = env::temp_dir().join("changed-live-directory");
-        *lock(&tabs.tabs()[1].controller.inner.cwd) = Some(changed.clone());
+        *tabs.tabs()[1].controller.test_cwd() = Some(changed.clone());
         assert_eq!(
             tabs.region_view(&[ids[2], ids[1]], Some(ids[1]))
                 .directories(),
@@ -1505,7 +748,7 @@ mod tests {
                 }
                 thread::sleep(Duration::from_millis(20));
             }
-            let output = lock(&controller.inner.parser).screen().contents();
+            let output = controller.test_parser().screen().contents();
             panic!(
                 "{} cwd={:?} status={:?} output={output:?}",
                 shell.label(),
@@ -1515,7 +758,7 @@ mod tests {
         }
 
         for shell in ShellKind::ALL {
-            if !shell.command().is_file() {
+            if !crate::infrastructure::terminal::profiles::shell_command(shell).is_file() {
                 eprintln!("{} not installed; skipping real shell test", shell.label());
                 continue;
             }
@@ -1569,7 +812,7 @@ mod tests {
                 tab.controller
                     .restart(shell, Some(&cwd), size, application.clone());
                 // Require a new real prompt report, not just the requested spawn cwd.
-                *lock(&tab.controller.inner.cwd) = None;
+                *tab.controller.test_cwd() = None;
                 tab.controller.write(b"\r");
                 wait_for_directory(&tab.controller, &changed, shell);
                 tab.controller.terminate(&application);
@@ -1712,10 +955,11 @@ mod tests {
             vec![first, second, third]
         );
         assert_eq!(tabs.saved_groups(), vec![0, 0, 0, 1]);
-        assert!(!Arc::ptr_eq(
-            &tabs.tabs[0].controller.inner,
-            &tabs.tabs[1].controller.inner
-        ));
+        assert!(
+            !tabs.tabs()[0]
+                .controller
+                .test_same_runtime(&tabs.tabs()[1].controller)
+        );
         tabs.select(first);
         tabs.close(first);
         assert_eq!(tabs.active_id(), Some(second));
@@ -1736,17 +980,17 @@ mod tests {
         let cwd = PathBuf::from("existing-workspace");
         let first = tabs.add_at(ShellKind::Cmd, Some(cwd.clone()));
         let sibling = tabs.split(first).unwrap();
-        let controller = tabs.tabs[0].controller.clone();
+        let controller = tabs.tabs()[0].controller.clone();
         for _ in 0..30 {
-            lock(&controller.inner.parser).process(b"preserved output\r\n");
+            controller.test_parser().process(b"preserved output\r\n");
         }
         controller.scroll(3);
         controller.begin_selection(0, 0);
         controller.extend_selection(0, 9);
         let selected = controller.selected_text();
-        let selection = *lock(&controller.inner.selection);
-        let scrollback = lock(&controller.inner.parser).screen().scrollback();
-        let generation = controller.inner.generation.load(Ordering::Acquire);
+        let selection = controller.test_selection();
+        let scrollback = controller.test_parser().screen().scrollback();
+        let generation = controller.test_generation();
         let rect = UiRect::new(0.0, 0.0, 1200.0, 800.0);
         let visible = Visibility {
             git: true,
@@ -1770,32 +1014,21 @@ mod tests {
         tabs.select(first);
         let (sessions, active) = layout.terminal_view(destination).unwrap();
         let view = tabs.region_view(&sessions, active);
-        assert!(Arc::ptr_eq(
-            &controller.inner,
-            &view.active().unwrap().controller.inner
-        ));
+        assert!(controller.test_same_runtime(&view.active().unwrap().controller));
         assert_eq!(view.active().unwrap().cwd, Some(cwd));
         assert_eq!(
-            view.active()
-                .unwrap()
-                .controller
-                .inner
-                .generation
-                .load(Ordering::Acquire),
+            view.active().unwrap().controller.test_generation(),
             generation
         );
-        assert_ne!(tabs.tabs[0].group_id, tabs.tabs[1].group_id);
+        assert_ne!(tabs.tabs()[0].group_id, tabs.tabs()[1].group_id);
         controller.resize(TerminalSize {
             rows: 12,
             cols: 60,
             pixel_width: 440,
             pixel_height: 230,
         });
-        assert_eq!(*lock(&controller.inner.selection), selection);
-        assert_eq!(
-            lock(&controller.inner.parser).screen().scrollback(),
-            scrollback
-        );
+        assert_eq!(controller.test_selection(), selection);
+        assert_eq!(controller.test_parser().screen().scrollback(), scrollback);
         assert_eq!(controller.selected_text(), selected);
         // Newly created sessions join the remaining default tab strip.
         let third = tabs.split(sibling).unwrap();
@@ -1876,34 +1109,8 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     fn start_launcher_backed_test_shell() -> (TerminalController, Arc<ApplicationHandle>) {
-        let command = ShellKind::Bash.command();
-        let program = command
-            .ancestors()
-            .skip(1)
-            .map(|parent| parent.join("bin/bash.exe"))
-            .find(|path| path != &command && path.is_file())
-            .unwrap_or(command);
-        let spawned = spawn_shell_program(
-            ShellKind::Bash,
-            None,
-            TerminalSize {
-                rows: 12,
-                cols: 80,
-                pixel_width: 560,
-                pixel_height: 228,
-            },
-            &program,
-        )
-        .unwrap();
-        let controller = TerminalController::with_shell(ShellKind::Bash);
-        let mut output = spawned.reader;
-        thread::spawn(move || {
-            let _ = std::io::copy(&mut output, &mut std::io::sink());
-        });
-        *lock(&controller.inner.process) = Some(spawned.process);
-        *lock(&controller.inner.status) = TerminalStatus::Running;
         (
-            controller,
+            crate::infrastructure::terminal::session::start_launcher_backed_test_shell(),
             Arc::new(ApplicationHandle::new(|task| task(), || {})),
         )
     }
@@ -1913,14 +1120,10 @@ mod tests {
     #[ignore = "manual launcher-backed ConPTY detection regression"]
     fn launcher_backed_shell_is_idle_then_detects_and_clears_programs() {
         use crate::features::terminal::program::SustainedProgram;
-        use crate::terminal_program::ProgramProbe;
+        use crate::infrastructure::terminal::program::ProgramProbe;
         use std::time::{Duration, Instant};
         let (controller, application) = start_launcher_backed_test_shell();
-        let console = lock(&controller.inner.process)
-            .as_ref()
-            .unwrap()
-            .console
-            .is_some();
+        let console = controller.test_has_console();
         let mut startup_tracker = SustainedProgram::default();
         let mut startup_labels = Vec::new();
         for _ in 0..20 {
@@ -1968,7 +1171,7 @@ mod tests {
     #[ignore = "manual Git Bash process replacement smoke test"]
     fn exited_shell_launchers_do_not_hide_unknown_applications() {
         use crate::features::terminal::program::SustainedProgram;
-        use crate::terminal_program::ProgramProbe;
+        use crate::infrastructure::terminal::program::ProgramProbe;
         use std::time::{Duration, Instant};
 
         let name = format!("loom-session-probe-{}", std::process::id());
@@ -1994,11 +1197,7 @@ mod tests {
         );
         let (controller, application) = start_launcher_backed_test_shell();
         assert!(
-            lock(&controller.inner.process)
-                .as_ref()
-                .unwrap()
-                .console
-                .is_some(),
+            controller.test_has_console(),
             "console observer should be available"
         );
         let command = format!("\"{}\"\r", executable.to_string_lossy().replace('\\', "/"));
@@ -2013,7 +1212,7 @@ mod tests {
             let probe = ProgramProbe::new();
             let candidate = controller.program_candidate(&probe, tracker.sustained_pid(now));
             if candidate.as_ref().is_some_and(|app| app.name == name) {
-                let pid = lock(&controller.inner.process).as_ref().unwrap().pid;
+                let pid = controller.test_pid();
                 reproduced_missing_parent |= probe
                     .candidate(pid, None)
                     .is_none_or(|entry| entry.name != name);
@@ -2045,7 +1244,7 @@ mod tests {
     #[ignore = "manual Windows ConPTY process-name smoke test"]
     fn running_application_is_detected_and_cleared_in_each_real_shell() {
         use crate::features::terminal::program::SustainedProgram;
-        use crate::terminal_program::ProgramProbe;
+        use crate::infrastructure::terminal::program::ProgramProbe;
         use std::time::{Duration, Instant};
 
         for shell in ShellKind::ALL {

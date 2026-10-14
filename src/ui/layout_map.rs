@@ -760,6 +760,7 @@ pub fn render_divider(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::terminal_runtime::TerminalDisplay;
     fn center(r: UiRect) -> Point {
         Point::new((r.left + r.right) / 2.0, (r.top + r.bottom) / 2.0)
     }

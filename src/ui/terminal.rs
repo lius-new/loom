@@ -3,6 +3,7 @@
 mod keys;
 use self::keys::key_bytes;
 
+use crate::app::terminal_runtime::TerminalDisplay;
 use std::sync::Arc;
 
 use lgui::ApplicationHandle;
@@ -17,8 +18,9 @@ use lgui::services::{Clipboard, ClipboardError, ServicesContextExt};
 use crate::features::terminal::ShellKind;
 use crate::features::terminal::{TerminalRun, TerminalSize};
 use crate::fonts;
+use crate::infrastructure::terminal::session::TerminalController;
 use crate::state::AppState;
-use crate::terminal_session::{TerminalController, TerminalTab, TerminalTabs};
+use crate::terminal_session::{TerminalTab, TerminalTabs};
 use crate::theme;
 use crate::ui::tabs::{
     GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
@@ -1389,7 +1391,7 @@ mod tests {
     #[test]
     fn shell_menu_keeps_missing_profiles_disabled_and_creates_custom_sessions_in_layout() {
         use crate::domain::application_layout::ApplicationLayout;
-        use crate::features::terminal::profiles::{ShellOption, ShellProfile};
+        use crate::features::terminal::profiles::ShellProfile;
         use lgui::application::{AppView, ApplicationContext};
         use lgui::core::{InputEvent, PointerData, UiScale, dispatch_runtime_output};
         use lgui::session::UiSession;
@@ -1411,7 +1413,7 @@ mod tests {
                 app.shell_options = app
                     .terminal_profiles
                     .iter()
-                    .map(ShellOption::custom)
+                    .map(crate::infrastructure::terminal::profiles::custom)
                     .collect();
                 app.shell_options[0].program = None;
                 let mut layout = ApplicationLayout::initial(viewport.into(), 40.0, 40.0, 200.0);

@@ -1,11 +1,13 @@
-# R7.1 终端纯规则与应用布局域
+# R7 终端迁移当前结构
 
-2026-10-14，R7.1 当前机器自动验收完成，R7.2 尚未开始。实施步骤见 [方案](terminal-migration-plan.md)，检查记录见 [验收](results/2026-10-14-r7-1/report.md)。
+2026-10-14，R7.1 和 R7.2 完成当前机器自动验收，R7.3 尚未开始。步骤见 [方案](terminal-migration-plan.md)，验收见 [R7.1](results/2026-10-14-r7-1/report.md) 和 [R7.2](results/2026-10-14-r7-2/report.md)。
 
-纯终端数据与规则在 features/terminal：types 提供 shell、身份及展示 DTO，screen 提供选区/run/调色板转换，input/mouse 处理无 GUI 协议，directory 解析 OSC，profiles 提供参数和给定候选的选择，program 处理给定进程信息和稳定标签。UI 的键转换在 ui/terminal/keys。
+features/terminal 提供纯终端类型、屏幕/run/选区、输入/滚轮/OSC、参数/候选和稳定程序规则；domain/application_layout 提供无 GUI 的布局拓扑和计划。GUI 键事件适配位于 ui/terminal/keys。
 
-屏幕 Palette 由现有运行时读取 theme 后传入，feature 无 theme、GUI、根状态或 I/O；输入修饰键在 UI 转换。application_layout 使用纯 Rect/Axis/Direction，app/UI 转换到 UiRect。布局数学与原测试保持原样，workspace-tests 编译同一份域源码。
+infrastructure/terminal 集中 PTY/进程资源：session 维护控制器与线程，pty 负责平台启动和清理，profiles 发现可执行 shell，integration 管理目录和临时启动脚本，program 查询进程与隐藏 console observer。notification 只持有应用注入的同步回调。app/terminal_runtime 适配 GUI 重绘与 theme Palette，基础设施无 GUI 或 app 反向依赖。
 
-当前仍由 terminal_session 持有 controller/PTY/线程，terminal_profiles 保留发现及自定义 option 的系统解析，terminal_directory 保留启动集成与目录验证，terminal_program 保留 OS probe/observer。TerminalTabs、effect、根状态和 UI 仍按后续阶段登记，不声称会话快照已脱离运行时。
+terminal_session 保留 TerminalTab/TerminalTabs；模型和区域快照仍共享控制器并延长资源生命周期。R7.3 才分离纯模型和按 SessionId 管理的运行时。effect、应用命令、根状态、配置卡片和 UI 接线仍留待 R7.4–R7.6；本轮仅更新所需路径和边界调用。
 
-旧 terminal_mouse 和 model/application_layout 已删除，无 re-export；门禁覆盖纯模块、旧路径和旧模块类型别名。状态字段归属保持 R7.1 前的 40/31/9 项，迁移例外为 39 个。实际使用 Rust 1.98.0，项目仍固定 1.97.1；原生人工、其他平台、远端 CI 与固定版本验证保留待验。
+旧 terminal_mouse、model/application_layout、terminal_profiles、terminal_directory、terminal_program 路径已删除，没有兼容重导出。终端纯规则、布局域和终端基础设施均无迁移例外；剩余 legacy exception 为 36 个。根/editor/workspace 字段 40/31/9，根 UI 适配器 16，尚未宣称 R7 整体收尾。
+
+保留同步启动、原线程和轮询结构、参数引用、环境合并、脚本生命周期、失败文案、依赖与会话 JSON。本机 Rust 1.98.0；固定 1.97.1、原生人工、其他平台、远端 CI、安装打包和完整性能 A/B 仍待验。

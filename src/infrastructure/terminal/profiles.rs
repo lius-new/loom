@@ -7,20 +7,18 @@ use std::path::{Path, PathBuf};
 
 use crate::features::terminal::profiles::{ShellOption, ShellProfile, system_shell_from};
 
-impl ShellOption {
-    pub fn custom(profile: &ShellProfile) -> Self {
-        Self {
-            kind: ShellKind::Custom(profile.id),
-            name: profile.name.clone(),
-            program: resolve_program(&profile.program),
-            args: profile.args.clone(),
-        }
+pub fn custom(profile: &ShellProfile) -> ShellOption {
+    ShellOption {
+        kind: ShellKind::Custom(profile.id),
+        name: profile.name.clone(),
+        program: resolve_program(&profile.program),
+        args: profile.args.clone(),
     }
 }
 
 pub fn options(profiles: &[ShellProfile]) -> Vec<ShellOption> {
     let mut options = defaults();
-    options.extend(profiles.iter().map(ShellOption::custom));
+    options.extend(profiles.iter().map(custom));
     options
 }
 
@@ -47,7 +45,7 @@ pub fn builtin(kind: ShellKind) -> Option<ShellOption> {
         }
         ShellKind::Bash => {
             #[cfg(windows)]
-            let git = crate::terminal_session::find_git_bash();
+            let git = find_git_bash();
             #[cfg(not(windows))]
             let git = None;
             git.or_else(|| resolve_program(Path::new("bash.exe")))
@@ -156,6 +154,63 @@ fn login_shell() -> Option<PathBuf> {
     None
 }
 
+fn candidates(kind: ShellKind) -> &'static [&'static str] {
+    match kind {
+        ShellKind::PowerShell => &["pwsh.exe", "powershell.exe", "pwsh", "powershell"],
+        ShellKind::Cmd => &["cmd.exe", "cmd"],
+        ShellKind::Bash => &["bash.exe", "bash"],
+        ShellKind::System | ShellKind::Custom(_) => &[],
+    }
+}
+pub(crate) fn shell_command(kind: ShellKind) -> PathBuf {
+    if kind == ShellKind::System {
+        return crate::infrastructure::terminal::profiles::builtin(kind)
+            .and_then(|p| p.program)
+            .unwrap_or_else(|| "/bin/sh".into());
+    }
+    #[cfg(windows)]
+    if kind == ShellKind::Bash
+        && let Some(git_bash) = find_git_bash()
+    {
+        return git_bash;
+    }
+    candidates(kind)
+        .iter()
+        .find_map(|candidate| find_executable(candidate))
+        .unwrap_or_else(|| PathBuf::from(candidates(kind).first().copied().unwrap_or("")))
+}
+
+fn find_executable(command: &str) -> Option<PathBuf> {
+    let command_path = Path::new(command);
+    if command_path.components().count() > 1 && command_path.is_file() {
+        return Some(command_path.to_owned());
+    }
+    env::split_paths(&env::var_os("PATH")?).find_map(|directory| {
+        let candidate = directory.join(command);
+        candidate.is_file().then_some(candidate)
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn find_git_bash() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(program_files) = env::var_os("ProgramFiles") {
+        candidates.push(PathBuf::from(program_files).join("Git\\bin\\bash.exe"));
+    }
+    if let Some(program_files_x86) = env::var_os("ProgramFiles(x86)") {
+        candidates.push(PathBuf::from(program_files_x86).join("Git\\bin\\bash.exe"));
+    }
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local_app_data).join("Programs\\Git\\bin\\bash.exe"));
+    }
+    if let Some(git) = find_executable("git.exe")
+        && let Some(root) = git.parent().and_then(Path::parent)
+    {
+        candidates.push(root.join("bin\\bash.exe"));
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,7 +224,7 @@ mod tests {
             program: PathBuf::from("/missing-loom-shell"),
             args: vec![],
         };
-        let missing = ShellOption::custom(&profile);
+        let missing = crate::infrastructure::terminal::profiles::custom(&profile);
         assert!(!missing.available());
         let available = ShellOption {
             kind: ShellKind::System,

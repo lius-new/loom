@@ -97,6 +97,7 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/explorer_filesystem.rs')return ['features','domain','std::fs','std::process','windows_sys'].includes(root);
   if(file.startsWith('src/features/search/'))return ['features','domain','globset','regex','unicode_segmentation'].includes(root);
   if(file.startsWith('src/infrastructure/search_filesystem'))return ['features','domain','ignore','std::fs','std::process'].includes(root);
+  if(file.startsWith('src/infrastructure/terminal/'))return ['infrastructure','features','domain','base64','ring','vt100','conpty','portable_pty','windows_sys','libc','std::fs','std::process','std::thread'].includes(root);
   if(file.startsWith('src/infrastructure/git/'))return ['infrastructure','features','domain','serde','std::fs','std::process','std::thread'].includes(root);
   if(file==='src/infrastructure/workspace_filesystem.rs')return ['infrastructure','domain','std::fs'].includes(root);
   if(file==='src/infrastructure/session_filesystem.rs')return ['infrastructure','domain','serde','serde_json','std::fs','std::process'].includes(root);
@@ -137,6 +138,12 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
+    if(['src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs'].includes(file))problems.push(file+': removed R7.2 adapters must not be restored');
+    if(file.startsWith('src/infrastructure/terminal/')) {
+      if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super'&&ts[i+3]==='::'&&ts[i+4]==='super'))problems.push(file+': Terminal infrastructure cannot escape to root through parent paths');
+      if(policy.exceptions[file]||ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','UiRect','InputState','State'].includes(t)))problems.push(file+': Terminal infrastructure must stay free of root state, GUI and exceptions');
+      if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Terminal infrastructure cannot include application sources');
+    }
     if(['src/model/application_layout.rs','src/terminal_mouse.rs'].includes(file))problems.push(file+': removed R7.1 paths must not be restored');
     if(['src/terminal_session.rs','src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs'].includes(file)&&/\bpub(?:\s*\([^)]*\))?\s+use\s+crate\s*::\s*features\s*::\s*terminal\b/.test(ts.join(' ')))problems.push(file+': terminal types must use their feature paths, not legacy re-exports');
     if(layer(file)==='domain-verification') {

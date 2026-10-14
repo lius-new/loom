@@ -257,7 +257,7 @@ impl AppState {
             theme: ThemeId::default(),
             default_shell: ShellKind::default(),
             terminal_profiles: Vec::new(),
-            shell_options: crate::terminal_profiles::options(&[]),
+            shell_options: crate::infrastructure::terminal::profiles::options(&[]),
             shell_editor: None,
             default_shell_fallback: None,
             terminal_cursor_blink: true,
@@ -374,7 +374,8 @@ impl AppState {
     /// Re-discovers shells. The saved default is never rewritten here, so a
     /// repaired profile becomes the default again once it is available.
     pub fn refresh_shells(&mut self) {
-        self.shell_options = crate::terminal_profiles::options(&self.terminal_profiles);
+        self.shell_options =
+            crate::infrastructure::terminal::profiles::options(&self.terminal_profiles);
         let fallback = Some(self.effective_shell()).filter(|kind| *kind != self.default_shell);
         if fallback != self.default_shell_fallback
             && let Some(fallback) = fallback

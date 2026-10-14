@@ -2,8 +2,8 @@
 
 use crate::features::terminal::ShellKind;
 use crate::features::terminal::profiles::{ShellProfile, format_arguments, parse_arguments};
+use crate::infrastructure::terminal::profiles::resolve_program;
 use crate::state::AppState;
-use crate::terminal_profiles::resolve_program;
 use crate::theme;
 use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
 use crate::ui::tabs::{TEXT_MARGIN, ellipsize, measure};

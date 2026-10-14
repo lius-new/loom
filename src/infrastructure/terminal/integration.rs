@@ -1,5 +1,4 @@
-//! Shell directory reports, independent of rendered prompt text. OSC 9;9 is
-//! also used by Windows Terminal. Keep parsing state across PTY read boundaries.
+//! Shell startup integration and working-directory validation.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -332,6 +331,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn native_bash_and_sh_report_directories_after_cd() {
+        use crate::features::terminal::directory::DirectoryReports;
         use portable_pty::{CommandBuilder, PtySize, native_pty_system};
         use std::io::{Read, Write};
         use std::time::Duration;

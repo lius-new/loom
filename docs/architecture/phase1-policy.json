@@ -326,7 +326,8 @@
         "crate::workspace_persistence",
         "lgui",
         "std::fs",
-        "std::thread"
+        "std::thread",
+        "crate::infrastructure"
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R6.1 Git 类型、解析、diff、快照与 DiffDocument 迁入 features/git，改引用 crate::features。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
@@ -365,55 +366,20 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
     },
-    "src/terminal_directory.rs": {
-      "dependencies": [
-        "base64",
-        "portable_pty",
-        "std::fs",
-        "std::process",
-        "std::thread"
-      ],
-      "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/terminal_profiles.rs": {
-      "dependencies": [
-        "crate::terminal_session",
-        "libc",
-        "crate::features"
-      ],
-      "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
-    },
-    "src/terminal_program.rs": {
-      "dependencies": [
-        "std::fs",
-        "std::process",
-        "std::thread",
-        "windows_sys",
-        "crate::features"
-      ],
-      "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
-    },
     "src/terminal_session.rs": {
       "dependencies": [
-        "conpty",
         "crate::model",
-        "crate::terminal_directory",
-        "crate::terminal_profiles",
-        "crate::terminal_program",
-        "crate::theme",
         "crate::workspace_persistence",
         "lgui",
-        "portable_pty",
         "std::fs",
         "std::process",
         "std::thread",
-        "crate::features"
+        "crate::features",
+        "crate::app",
+        "crate::infrastructure"
       ],
       "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
+      "reason": "R7.2：TerminalTabs 的模型/控制器组合和原有跨层回归保留到 R7.3；PTY 和系统适配已迁走，测试使用 cfg(test) 资源检查接口，不拥有另一套状态。"
     },
     "src/theme.rs": {
       "dependencies": [
@@ -464,10 +430,11 @@
       "dependencies": [
         "crate::model",
         "crate::state",
-        "crate::terminal_session"
+        "crate::terminal_session",
+        "crate::app"
       ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+      "remove_in": "R7",
+      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.2 原跨层测试通过 app 的主题快照适配读取控制器；布局视图收拢仍属 R7.6。 R7 方案明确该文件收尾在 R7.6，将原 R8 登记更正为 R7。"
     },
     "src/ui/mod.rs": {
       "dependencies": [
@@ -532,7 +499,9 @@
     "src/ui/terminal.rs": {
       "dependencies": [
         "crate::state",
-        "crate::terminal_session"
+        "crate::terminal_session",
+        "crate::app",
+        "crate::infrastructure"
       ],
       "remove_in": "R7",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
@@ -541,8 +510,8 @@
       "dependencies": [
         "crate::key_actions",
         "crate::state",
-        "crate::terminal_profiles",
-        "image"
+        "image",
+        "crate::infrastructure"
       ],
       "remove_in": "R7",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
@@ -1084,7 +1053,19 @@
       "terminal_profiles discovery",
       "terminal_program OS adapters"
     ],
-    "next": "R7.2 not started",
-    "completed_on": "2026-10-14"
+    "next": "R7.2 completed locally; R7.3 not started",
+    "completed_on": "2026-10-14",
+    "retained_runtime_note": "Historical R7.1 checkpoint list; PTY/system adapters migrated in R7.2."
+  },
+  "phase7_2": {
+    "status": "completed on current machine with Rust 1.98.0; fixed 1.97.1 and native/cross-platform acceptance pending",
+    "infrastructure": "infrastructure/terminal",
+    "application_adapter": "app/terminal_runtime",
+    "retained": "TerminalTabs/controller ownership and legacy cross-layer tests until R7.3",
+    "next": "R7.3 not started",
+    "completed_on": "2026-10-14",
+    "no_migration_exceptions": [
+      "infrastructure/terminal"
+    ]
   }
 }
