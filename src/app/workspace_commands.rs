@@ -1,12 +1,14 @@
 //! Shared workspace commands used by the welcome screen and editor chrome.
 
+#[cfg(test)]
 use std::fs;
-use std::io::Read;
+#[cfg(test)]
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 
-use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
+#[cfg(test)]
+use crate::infrastructure::document_filesystem::MAX_EDITABLE_FILE_BYTES;
 use lgui::prelude::State;
 
 #[cfg(test)]
@@ -21,9 +23,6 @@ use crate::domain::identity::PaneId;
 use crate::domain::workspace_session::{EditorLayout, SavedAxis, SavedChild, SavedPaneNode};
 use crate::model::document::FileId;
 use crate::state::{AppState, CloseContinuation, CloseRequest};
-
-const MAX_EDITABLE_FILE_MIB: u64 = 64;
-const MAX_EDITABLE_FILE_BYTES: u64 = MAX_EDITABLE_FILE_MIB * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabCloseScope {
@@ -46,7 +45,7 @@ pub fn save_document(state: &State<AppState>, id: FileId) -> bool {
         return false;
     };
 
-    match fs::write(&path, contents.as_bytes()) {
+    match crate::infrastructure::document_filesystem::write(&path, contents.as_bytes()) {
         Ok(()) => {
             let project_settings = crate::features::settings::project::is_settings_file(&path);
             state.update(move |app| {
@@ -208,7 +207,7 @@ fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>
         let Some((id, path, contents)) = app.workspace.save_snapshot(id) else {
             continue;
         };
-        fs::write(&path, contents.as_bytes())
+        crate::infrastructure::document_filesystem::write(&path, contents.as_bytes())
             .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
         app.workspace.mark_saved(id);
     }
@@ -255,11 +254,9 @@ pub(crate) fn close_test_directory(name: &str) -> PathBuf {
 }
 
 pub fn choose_file(state: &State<AppState>) -> bool {
-    let mut options = FileDialogOptions::new().title("Open File");
-    if let Some(directory) = state.get().explorer.model.roots().first().cloned() {
-        options = options.directory(directory);
-    }
-    let Some(path) = system_file_dialogs().pick_file(&options) else {
+    let Some(path) = crate::infrastructure::file_dialogs::pick_file(
+        state.get().explorer.model.roots().first().cloned(),
+    ) else {
         return false;
     };
 
@@ -272,33 +269,7 @@ pub fn choose_file(state: &State<AppState>) -> bool {
     opened
 }
 
-pub(crate) fn read_text_file(path: &Path) -> Result<String, String> {
-    let name = path
-        .file_name()
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string_lossy().into_owned());
-    let file = fs::File::open(path).map_err(|error| format!("Could not open {name}: {error}"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| format!("Could not open {name}: {error}"))?;
-    if !metadata.is_file() {
-        return Err(format!("Could not open {name}: not a regular file"));
-    }
-    let too_large =
-        || format!("Could not open {name}: file is larger than {MAX_EDITABLE_FILE_MIB} MiB");
-    if metadata.len() > MAX_EDITABLE_FILE_BYTES {
-        return Err(too_large());
-    }
-    // Bound the read as well: another process can grow the file after metadata.
-    let mut bytes = Vec::new();
-    file.take(MAX_EDITABLE_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("Could not open {name}: {error}"))?;
-    if bytes.len() as u64 > MAX_EDITABLE_FILE_BYTES {
-        return Err(too_large());
-    }
-    String::from_utf8(bytes).map_err(|error| format!("Could not open {name} as UTF-8: {error}"))
-}
+pub(crate) use crate::infrastructure::document_filesystem::read_text_file;
 
 #[cfg(test)]
 mod tests {

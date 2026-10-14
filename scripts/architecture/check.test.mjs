@@ -330,3 +330,7 @@ test('keymap pure rules reject hidden GUI state native I/O and ancestor includes
 test('settings and keymap views cannot recover root or native capabilities',()=>{
   for(const file of ['src/ui/settings.rs','src/ui/settings_binding.rs','src/ui/keymap_page.rs','src/ui/keymap_binding.rs'])for(const source of ['use crate::app::state::AppState;','struct Frame { hidden: Arc<TerminalHandle> }','std::env::current_dir();'])assert.ok(violations({[file]:source},policy()).length>0,file+source);
 });
+
+test('R8 native file and window adapters reject root ownership and composition escapes',()=>{
+ for(const file of ['src/infrastructure/file_loader.rs','src/infrastructure/file_watcher.rs','src/infrastructure/document_filesystem.rs','src/infrastructure/file_dialogs.rs','src/infrastructure/window_geometry.rs','src/infrastructure/launch.rs'])for(const source of ['struct Service { hidden: Wrapper<AppState> }','use crate::app::workspace;','use super::super::state::AppState;','include!("application.rs");'])assert.ok(violations({[file]:source},policy()).length>0,file+source);
+});

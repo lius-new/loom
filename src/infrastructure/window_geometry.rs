@@ -4,17 +4,10 @@
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
-use lgui::core::{Size, UiEventContext};
+use lgui::core::Size;
 use lgui::{WindowMode, WindowOptions, WindowPosition};
 
-use crate::workspace_persistence::{self, WindowGeometry};
-
-#[derive(Clone, Copy, Debug)]
-pub struct AppCloseRequested;
-
-impl lgui::events::Event for AppCloseRequested {
-    const NAME: &'static str = "loom.app_close_requested";
-}
+use crate::domain::window_geometry::WindowGeometry;
 
 const DEFAULT_WIDTH: f32 = 900.0;
 const DEFAULT_HEIGHT: f32 = 600.0;
@@ -30,8 +23,8 @@ static WINDOW_Y: AtomicI32 = AtomicI32::new(i32::MIN);
 #[cfg(target_os = "windows")]
 static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
 
-pub fn restore_options(mut options: WindowOptions) -> WindowOptions {
-    let Some(geometry) = workspace_persistence::load().window else {
+pub fn restore_options(mut options: WindowOptions, saved: Option<WindowGeometry>) -> WindowOptions {
+    let Some(geometry) = saved else {
         return options;
     };
     if !valid_size(geometry.width, geometry.height) {
@@ -74,20 +67,6 @@ pub fn observe_viewport(width: f32, height: f32) {
     remember_windowed_size(width, height);
 }
 
-pub fn handle_focus_change(focused: bool) {
-    if focused {
-        remember_native_window();
-    } else {
-        save_current();
-    }
-}
-
-pub fn handle_close_requested(context: &mut UiEventContext) {
-    save_current();
-    context.emit(AppCloseRequested);
-    context.request_frame();
-}
-
 /// lgui does not report maximize changes, so query the native window directly.
 /// Toggling maximize resizes the viewport, which re-renders the caller.
 pub fn is_maximized() -> bool {
@@ -107,8 +86,7 @@ pub fn remember_native_window() {
     let _ = main_window();
 }
 
-fn save_current() {
-    let previous = workspace_persistence::load().window;
+pub fn capture(previous: Option<WindowGeometry>) -> WindowGeometry {
     let mut geometry = previous.unwrap_or(WindowGeometry {
         x: None,
         y: None,
@@ -140,7 +118,7 @@ fn save_current() {
         }
     }
 
-    let _ = workspace_persistence::save_window_geometry(geometry);
+    geometry
 }
 
 fn remember_windowed_size(width: f32, height: f32) {

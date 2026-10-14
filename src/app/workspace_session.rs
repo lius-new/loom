@@ -13,15 +13,7 @@ pub(crate) use filesystem::session_path;
 #[cfg(test)]
 pub(crate) use filesystem::write_json;
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-pub struct WindowGeometry {
-    pub x: Option<i32>,
-    pub y: Option<i32>,
-    pub width: f32,
-    pub height: f32,
-    #[serde(default)]
-    pub maximized: bool,
-}
+pub use crate::domain::window_geometry::WindowGeometry;
 
 pub use crate::domain::workspace_session::EditorLayout;
 #[cfg(test)]

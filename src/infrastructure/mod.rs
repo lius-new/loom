@@ -14,3 +14,13 @@ pub mod project_settings;
 pub mod settings_filesystem;
 
 pub mod keymap_filesystem;
+
+pub mod file_loader;
+
+pub mod file_watcher;
+
+pub mod document_filesystem;
+pub mod file_dialogs;
+
+pub mod launch;
+pub mod window_geometry;

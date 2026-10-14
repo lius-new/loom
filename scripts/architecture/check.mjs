@@ -90,8 +90,11 @@ export function allowed(file, dependency) {
   if(own==='core')return ['identity','text','normal','commands','vim','buffer','change','editor','history','lines','selection','command','ex','exec','insert','key','motion','object','register','search','regex','unicode_segmentation','unicode_width'].includes(root);
   if(root==='loom_editor_core')return true;
   if(own==='app'||file==='src/main.rs')return true;
-  if(own==='domain')return root==='domain'||(file==='src/domain/workspace_session.rs'&&['serde','serde_json'].includes(root));
+  if(own==='domain')return root==='domain'||(['src/domain/workspace_session.rs','src/domain/window_geometry.rs'].includes(file)&&['serde','serde_json'].includes(root));
   if(file.startsWith('src/features/keymap/'))return ['features','domain','serde_json','input','Movement'].includes(root);
+  if(file==='src/infrastructure/window_geometry.rs')return ['infrastructure','domain','lgui','windows_sys','std::process'].includes(root);
+  if(file==='src/infrastructure/document_filesystem.rs')return ['infrastructure','std::fs'].includes(root);
+  if(file==='src/infrastructure/file_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
   if(file==='src/infrastructure/keymap_filesystem.rs')return ['infrastructure','features','std::fs'].includes(root);
   if(file.startsWith('src/features/settings/'))return ['features','domain','serde','serde_json'].includes(root);
   if(['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs'].includes(file))return ['infrastructure','features','domain','std::fs'].includes(root);
@@ -153,6 +156,11 @@ export function violations(sources, policy) {
     }
     if(['src/ui/settings.rs','src/ui/settings_binding.rs','src/ui/keymap_page.rs','src/ui/keymap_binding.rs'].includes(file)) {
       if(policy.exceptions[file]||terminalStandardServices(ts)||ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','TerminalController','TerminalHandle','TerminalRuntime','RunningProcess','Registry'].includes(t))||deps.some(d=>['crate::app','crate::state','crate::infrastructure','crate::key_actions','crate::workspace_actions','crate::model'].includes(d)))problems.push(file+': R8 settings/keymap views require narrow frames and commands without native resources');
+    }
+    if(['src/file_loading.rs','src/file_watcher.rs','src/window_geometry.rs','src/launch.rs','src/key_actions.rs'].includes(file))problems.push(file+': removed R8 application/native composition path must not be restored');
+    if(['src/infrastructure/file_loader.rs','src/infrastructure/file_watcher.rs','src/infrastructure/document_filesystem.rs','src/infrastructure/file_dialogs.rs','src/infrastructure/window_geometry.rs','src/infrastructure/launch.rs'].includes(file)) {
+      if(policy.exceptions[file]||ts.some(t=>['AppState','AppRuntime','Workspace','InputState','ApplicationHandle','State'].includes(t))||deps.some(d=>['crate::app','crate::state','crate::model','crate::ui','crate::workspace_persistence'].includes(d)))problems.push(file+': R8 native adapters cannot own root/application/UI state or exceptions');
+      if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super')||/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': R8 native adapters cannot include application sources');
     }
     const settingsRules=file.startsWith('src/features/settings/');
     const settingsNative=['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs','src/infrastructure/config_watcher.rs'].includes(file);

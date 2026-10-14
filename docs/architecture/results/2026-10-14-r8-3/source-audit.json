@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "scope": "R8.3 preserved bounded read/native backend/window detection functions; lifetime coordination intentionally changed and tested",
+  "checks": [
+    {
+      "before": "src/app/workspace_commands.rs",
+      "after": "src/infrastructure/document_filesystem.rs",
+      "function": "read_text_file",
+      "equal": true
+    },
+    {
+      "before": "src/file_watcher.rs",
+      "after": "src/infrastructure/file_watcher.rs",
+      "function": "normalized_roots",
+      "equal": true
+    },
+    {
+      "before": "src/file_watcher.rs",
+      "after": "src/infrastructure/file_watcher.rs",
+      "function": "coalesce_events",
+      "equal": true
+    },
+    {
+      "before": "src/file_watcher.rs",
+      "after": "src/infrastructure/file_watcher.rs",
+      "function": "change_kind",
+      "equal": true
+    },
+    {
+      "before": "src/file_watcher.rs",
+      "after": "src/infrastructure/file_watcher.rs",
+      "function": "kind_priority",
+      "equal": true
+    },
+    {
+      "before": "src/file_watcher.rs",
+      "after": "src/infrastructure/file_watcher.rs",
+      "function": "absolute_event_path",
+      "equal": true
+    },
+    {
+      "before": "src/file_watcher.rs",
+      "after": "src/infrastructure/file_watcher.rs",
+      "function": "build_native_watcher",
+      "equal": true
+    },
+    {
+      "before": "src/file_watcher.rs",
+      "after": "src/infrastructure/file_watcher.rs",
+      "function": "build_poll_watcher",
+      "equal": true
+    },
+    {
+      "before": "src/file_watcher.rs",
+      "after": "src/infrastructure/file_watcher.rs",
+      "function": "watch_roots",
+      "equal": true
+    },
+    {
+      "before": "src/window_geometry.rs",
+      "after": "src/infrastructure/window_geometry.rs",
+      "function": "valid_size",
+      "equal": true
+    },
+    {
+      "before": "src/window_geometry.rs",
+      "after": "src/infrastructure/window_geometry.rs",
+      "function": "main_window",
+      "equal": true
+    },
+    {
+      "before": "src/window_geometry.rs",
+      "after": "src/infrastructure/window_geometry.rs",
+      "function": "window_belongs_to_current_process",
+      "equal": true
+    },
+    {
+      "before": "src/window_geometry.rs",
+      "after": "src/infrastructure/window_geometry.rs",
+      "function": "remember_native_position",
+      "equal": true
+    },
+    {
+      "before": "src/window_geometry.rs",
+      "after": "src/infrastructure/window_geometry.rs",
+      "function": "saved_position_is_visible",
+      "equal": true
+    },
+    {
+      "before": "src/launch.rs",
+      "after": "src/infrastructure/launch.rs",
+      "equal": true
+    }
+  ]
+}

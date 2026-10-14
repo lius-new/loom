@@ -12,3 +12,5 @@ pub mod workspace;
 pub mod workspace_session;
 
 pub mod application_layout;
+
+pub mod window_geometry;

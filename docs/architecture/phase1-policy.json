@@ -7,7 +7,11 @@
     "background_ui": "infrastructure/ui_dispatch",
     "svg_icons": "app/bootstrap (cfg(test) only)",
     "workspace_actions": "app/workspace_commands (R8 composition seam; old UI callers removed in R8.4/R8.5)",
-    "key_actions": "app/key_actions (R8.4/R8.5 old UI seam)"
+    "key_actions": "app/key_actions (R8.4/R8.5 old UI seam)",
+    "file_loading": "app/file_loading (R8.5 caller seam)",
+    "file_watcher": "app/file_watcher (R8.5 caller seam)",
+    "window_geometry": "app/window (R8.4/R8.5 native window command seam)",
+    "launch": "infrastructure/launch (R8.5 bootstrap seam)"
   },
   "root_state_adapters": [
     "src/ui/close_confirmation.rs",
@@ -28,7 +32,7 @@
     "src/app/git_tasks.rs",
     "src/app/runtime.rs",
     "src/app/search.rs",
-    "src/file_loading.rs",
+    "src/app/file_loading.rs",
     "src/ui/components/loading_indicator.rs",
     "src/ui/editor/caret.rs",
     "src/app/terminal_view_tests.rs",
@@ -114,39 +118,6 @@
     }
   },
   "exceptions": {
-    "src/file_loading.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::background_ui",
-        "crate::model",
-        "crate::state",
-        "crate::svg_icons",
-        "crate::ui",
-        "crate::workspace_actions",
-        "crate::workspace_persistence",
-        "image",
-        "lgui",
-        "std::thread"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5 收尾：本文件只改为调用 app/explorer::open_tree_file；文件加载 worker 属于工作区打开流程，未排入 R5，随 R8 收尾迁入 app/infrastructure。"
-    },
-    "src/file_watcher.rs": {
-      "dependencies": [
-        "crate::background_ui",
-        "crate::features",
-        "crate::infrastructure",
-        "crate::model",
-        "crate::state",
-        "lgui",
-        "notify",
-        "std::fs",
-        "std::process",
-        "std::thread"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R5.2 树刷新改由 Explorer 模型执行，准备阶段只克隆 Explorer 模型。 R5 收尾：Explorer 部分只经模型 API 与 DirEntry 类型；剩余 notify 服务、搜索失效与磁盘对账协调随 R8 拆为 infrastructure 服务与 app 协调。"
-    },
     "src/model/workspace.rs": {
       "dependencies": [
         "crate::app"
@@ -256,16 +227,6 @@
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5 收尾：剩余根依赖为主表面悬停/焦点、打开文件与 Source Control 开关等 chrome。"
-    },
-    "src/window_geometry.rs": {
-      "dependencies": [
-        "crate::workspace_persistence",
-        "lgui",
-        "std::process",
-        "windows_sys"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     }
   },
   "phase2": {

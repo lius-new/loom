@@ -1,10 +1,5 @@
 //! File preparation stays off the event loop. Only a ready document is installed.
 use std::path::PathBuf;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-    mpsc,
-};
 use std::time::{Duration, Instant};
 
 use crate::model::document::FileId;
@@ -31,100 +26,56 @@ pub struct PendingFile {
 
 #[derive(Clone)]
 pub struct FileLoader {
-    current: Arc<AtomicU64>,
-    sequence: Arc<AtomicU64>,
-    work: mpsc::Sender<Option<PendingFile>>,
-    timer: mpsc::Sender<Option<PendingFile>>,
+    worker: crate::infrastructure::file_loader::Worker<PendingFile>,
 }
-
+impl crate::infrastructure::file_loader::Request for PendingFile {
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+    fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
+}
 impl FileLoader {
     pub fn new(state: State<AppState>, application: ApplicationHandle) -> Self {
         Self::with_prepare(state, application, |request| {
-            let text = crate::workspace_actions::read_text_file(&request.path)?;
+            let text = crate::app::workspace_commands::read_text_file(&request.path)?;
             Ok(PreparedTextFile::new(request.path.clone(), text))
         })
     }
-
     fn with_prepare(
         state: State<AppState>,
         application: ApplicationHandle,
         prepare: impl Fn(&PendingFile) -> Result<PreparedTextFile, String> + Send + 'static,
     ) -> Self {
-        let current = Arc::new(AtomicU64::new(0));
-        let (work, receiver) = mpsc::channel::<Option<PendingFile>>();
-        let (timer, delays) = mpsc::channel::<Option<PendingFile>>();
-        let worker_current = current.clone();
-        let worker_state = state.clone();
-        let worker_application = application.clone();
-        std::thread::Builder::new()
-            .name("loom-file-loader".into())
-            .spawn(move || {
-                while let Ok(Some(mut request)) = receiver.recv() {
-                    // Coalesce a burst before doing any more disk/index work.
-                    for next in receiver.try_iter() {
-                        let Some(next) = next else {
-                            return;
-                        };
-                        request = next;
+        let ready_state = state.clone();
+        let ready_application = application.clone();
+        let worker = crate::infrastructure::file_loader::Worker::new(
+            prepare,
+            move |generation, prepared, lease| {
+                let state = ready_state.clone();
+                ready_application.post(move || {
+                    if lease.is_current(generation) {
+                        state.try_update(|app| finish(app, generation, prepared));
+                    } else {
+                        crate::infrastructure::ui_dispatch::retire(prepared);
                     }
-                    if worker_current.load(Ordering::Acquire) != request.generation {
-                        continue;
+                });
+            },
+            move |generation, lease| {
+                let state = state.clone();
+                application.post(move || {
+                    if lease.is_current(generation) {
+                        state.try_update(|app| show_indicator(app, generation, Instant::now()));
                     }
-                    let prepared = prepare(&request);
-                    if worker_current.load(Ordering::Acquire) != request.generation {
-                        drop(prepared);
-                        continue;
-                    }
-                    let state = worker_state.clone();
-                    worker_application.post(move || {
-                        state.try_update(|app| finish(app, request.generation, prepared));
-                    });
-                }
-            })
-            .expect("could not start file loader");
-        let timer_current = current.clone();
-        std::thread::Builder::new()
-            .name("loom-file-loading-delay".into())
-            .spawn(move || {
-                while let Ok(Some(mut request)) = delays.recv() {
-                    let mut wait = INDICATOR_DELAY.saturating_sub(request.started.elapsed());
-                    loop {
-                        match delays.recv_timeout(wait) {
-                            Ok(Some(next)) => {
-                                request = next;
-                                wait = INDICATOR_DELAY.saturating_sub(request.started.elapsed());
-                            }
-                            Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                            Err(mpsc::RecvTimeoutError::Timeout) => {
-                                if timer_current.load(Ordering::Acquire) != request.generation {
-                                    break;
-                                }
-                                let generation = request.generation;
-                                let state = state.clone();
-                                application.post(move || {
-                                    state.try_update(|app| {
-                                        show_indicator(app, generation, Instant::now())
-                                    });
-                                });
-                                break;
-                            }
-                        }
-                    }
-                }
-            })
-            .expect("could not start loading delay");
-        Self {
-            current,
-            sequence: Arc::new(AtomicU64::new(0)),
-            work,
-            timer,
-        }
+                });
+            },
+            INDICATOR_DELAY,
+        );
+        Self { worker }
     }
-
     pub fn shutdown(&self) {
-        self.current.store(0, Ordering::Release);
-        let _ = self.work.send(None);
-        let _ = self.timer.send(None);
+        self.worker.shutdown();
     }
 }
 
@@ -145,8 +96,7 @@ pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<T
         }
         return true;
     }
-    let generation = loader.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-    loader.current.store(generation, Ordering::Release);
+    let generation = loader.worker.reserve_generation();
     let pane = match drop {
         Some(TabDrop::Insert { pane, .. } | TabDrop::Pane { pane, .. }) => pane,
         None => app.workspace.active_pane(),
@@ -164,19 +114,19 @@ pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<T
         folders: app.explorer.model.roots().to_vec(),
     };
     app.editor.pending_file = Some(pending.clone());
-    if loader.work.send(Some(pending.clone())).is_err() {
+    if !loader.worker.send_work(pending.clone()) {
         cancel(app);
         app.show_error("Could not start file loading.");
         return true;
     }
-    let _ = loader.timer.send(Some(pending));
+    loader.worker.send_timer(pending);
     true
 }
 
 pub fn cancel(app: &mut AppState) {
     app.editor.pending_file = None;
     if let Some(loader) = app.runtime().and_then(|runtime| runtime.file_loader()) {
-        loader.current.store(0, Ordering::Release);
+        loader.worker.invalidate();
     }
 }
 
@@ -273,7 +223,7 @@ mod tests {
         prelude::{UiRect, VisualStyle, panel},
         session::UiSession,
     };
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex, mpsc};
 
     struct Harness {
         state: State<AppState>,
@@ -618,5 +568,36 @@ mod tests {
         image
             .save(std::env::var("LOOM_TAB_PREVIEW").expect("preview destination"))
             .unwrap();
+    }
+    #[test]
+    fn queued_completion_cannot_publish_after_loader_shutdown_with_snapshot_retained() {
+        let harness = Harness::new(|request| {
+            Ok(PreparedTextFile::new(
+                request.path.clone(),
+                "late payload".into(),
+            ))
+        });
+        harness.open("queued-after-shutdown.txt");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while harness.tasks.pending_ids().is_empty() {
+            assert!(Instant::now() < deadline, "worker did not queue completion");
+            std::thread::yield_now();
+        }
+        let retained = harness.state.get();
+        harness.runtime.clear_file_loader();
+        harness.tasks.run_all();
+        assert!(
+            harness
+                .state
+                .get()
+                .workspace
+                .file_id_for_path(std::path::Path::new("queued-after-shutdown.txt"))
+                .is_none()
+        );
+        assert_eq!(
+            harness.state.get().workspace.active_path().unwrap(),
+            std::path::Path::new("current.txt")
+        );
+        assert!(retained.editor.pending_file.is_some());
     }
 }

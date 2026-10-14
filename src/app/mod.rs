@@ -74,3 +74,9 @@ pub(crate) mod key_actions;
 pub(crate) mod keymap_context;
 
 pub(crate) mod keymap_view;
+
+pub(crate) mod file_loading;
+
+pub(crate) mod file_watcher;
+
+pub(crate) mod window;

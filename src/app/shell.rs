@@ -278,14 +278,15 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             let error_roots = file_watch_roots.clone();
             let error_state = file_watch_state.clone();
             let error_application = file_watch_application.clone();
-            match crate::file_watcher::start_async(file_watch_roots, move |batch| {
+            match crate::file_watcher::start_async_scoped(file_watch_roots, move |batch, lease| {
                 let prepared = crate::file_watcher::prepare_batch(&batch_state.get(), &batch);
                 let state = batch_state.clone();
-                crate::file_watcher::notify_prepared(state, file_watch_application.clone(), prepared);
-            }, move |error| {
+                crate::file_watcher::notify_prepared_scoped(state, file_watch_application.clone(), prepared, lease);
+            }, move |error, lease| {
                 let state = error_state.clone();
                 let roots = error_roots.clone();
                 error_application.post(move || {
+                    if lease.cancelled() {return;}
                     state.try_update(|app| {
                         if app.explorer.model.roots() != roots { return false }
                         app.show_error(format!("File watching is unavailable; Explorer will refresh when Loom regains focus: {error}"));
