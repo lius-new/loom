@@ -134,8 +134,8 @@ fn request_close_tabs_in(app: &mut AppState, targets: Vec<(PaneId, FileId)>) {
     if existing.is_empty() {
         return;
     }
-    app.editor.tab_context_menu = None;
-    app.editor.tab_drag = None;
+    app.editor.tabs.tab_context_menu = None;
+    app.editor.tabs.tab_drag = None;
     app.editor.menu = None;
     // A dirty document only needs a decision when its last tab closes.
     if app

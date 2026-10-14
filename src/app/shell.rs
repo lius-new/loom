@@ -24,10 +24,7 @@ use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDr
 use crate::ui::editor::view as editor_view;
 use crate::ui::terminal::menu as terminal_tab_context_menu;
 use crate::ui::theme;
-use crate::ui::{
-    close_confirmation, diff_editor, pane_sash, statusbar, tab_context_menu, tabs, titlebar, toast,
-    welcome, workspace_home,
-};
+use crate::ui::{tabs, toast};
 use crate::window_geometry;
 use crate::workspace_persistence;
 
@@ -164,7 +161,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                         | app.terminal.ui.terminal_split_drag.take().is_some()
                         | app.layout.application_sash_drag.take().is_some();
                     crate::app::editor::finish_scrollbar_drag(app)
-                        | tabs::cancel_pointer_interaction(app)
+                        | super::tabs::cancel_pointer_interaction(app)
                         | had_pending
                         | split_drag
                 });
@@ -201,7 +198,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     targets: dirty_targets,
                     continuation: CloseContinuation::ExitApplication,
                 });
-                app.editor.tab_context_menu = None;
+                app.editor.tabs.tab_context_menu = None;
                 app.terminal.ui.terminal_tab_context_menu = None;
                 app.git.ui.clone_visible = false;
                 app.git.ui.branch_picker = None;
@@ -445,13 +442,18 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let snapshot = tab_visibility_state.get();
         let desired = tab_visibility_strips
             .iter()
-            .map(|(pane, strip)| (*pane, tabs::active_visible_scroll(*strip, &snapshot, *pane)))
+            .map(|(pane, strip)| {
+                (
+                    *pane,
+                    super::tabs::active_visible_scroll(*strip, &snapshot, *pane),
+                )
+            })
             .collect::<Vec<_>>();
         tab_visibility_state.try_update(move |app| {
             let mut changed = false;
             for (pane, scroll) in desired {
-                if (tabs::tab_scroll_x(app, pane) - scroll).abs() > f32::EPSILON {
-                    app.editor.tab_scroll.insert(pane, scroll);
+                if (super::tabs::tab_scroll_x(app, pane) - scroll).abs() > f32::EPSILON {
+                    app.editor.tabs.tab_scroll.insert(pane, scroll);
                     changed = true;
                 }
             }
@@ -794,7 +796,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             st_pane_focus.try_update(move |app| {
                 let overlay = app.editor.menu.is_some()
                     || app.explorer.ui.menu.is_some()
-                    || app.editor.tab_context_menu.is_some()
+                    || app.editor.tabs.tab_context_menu.is_some()
                     || app.terminal.ui.terminal_tab_context_menu.is_some()
                     || app.git.ui.branch_picker.is_some()
                     || app.git.ui.stash_switch.is_some()
@@ -812,7 +814,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
             st_tabs_pointer.try_update(|app| {
-                tabs::update_pointer(
+                super::tabs::update_pointer(
                     app,
                     &pointer_regions,
                     pointer.point.x,
@@ -828,21 +830,27 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.on_event_capture(UiEventKind::PointerDrag, move |_ctx, payload| {
         if let UiEventPayload::PointerDrag { pointer } = payload {
             st_tabs_drag.try_update(|app| {
-                tabs::update_pointer(app, &drag_regions, pointer.point.x, pointer.point.y, true)
+                super::tabs::update_pointer(
+                    app,
+                    &drag_regions,
+                    pointer.point.x,
+                    pointer.point.y,
+                    true,
+                )
             });
         }
     });
 
     let st_tabs_pointer_up = state.clone();
     root = root.on_event_capture(UiEventKind::PointerUp, move |_ctx, _payload| {
-        st_tabs_pointer_up.try_update(tabs::finish_pointer_interaction);
+        st_tabs_pointer_up.try_update(super::tabs::finish_pointer_interaction);
     });
 
     // A release that never arrived must not drop a stale file on the next
     // click; a file row press records a fresh drag after this runs.
     let st_stale_file_drag = state.clone();
     root = root.on_event_capture(UiEventKind::PointerDown, move |_ctx, _payload| {
-        st_stale_file_drag.try_update(|app| app.editor.file_drag.take().is_some());
+        st_stale_file_drag.try_update(|app| app.editor.tabs.file_drag.take().is_some());
     });
     // A drawer file press becomes a drag into the editor once it moves;
     // its release either opens it like a click or drops it on a pane.
@@ -851,7 +859,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.on_event_capture(UiEventKind::PointerDrag, move |_ctx, payload| {
         if let UiEventPayload::PointerDrag { pointer } = payload {
             st_file_drag.try_update(|app| {
-                tabs::update_file_drag(app, &file_drag_regions, pointer.point.x, pointer.point.y)
+                super::tabs::update_file_drag(
+                    app,
+                    &file_drag_regions,
+                    pointer.point.x,
+                    pointer.point.y,
+                )
             });
         }
     });
@@ -871,7 +884,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         if let UiEventPayload::PointerMove { pointer } = payload {
             st_editor_scrollbar_drag.try_update(|app| {
                 if app.main_surface() == MainSurface::Diff {
-                    diff_editor::drag_scrollbars(app, code_rect, pointer.point.x, pointer.point.y)
+                    crate::app::diff_view::drag_scrollbars(
+                        app,
+                        code_rect,
+                        pointer.point.x,
+                        pointer.point.y,
+                    )
                 } else {
                     crate::app::editor::drag_scrollbars(
                         app,
@@ -889,7 +907,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     // ---- Compose chrome (back-to-front) -------------------------------
-    root = root.child(titlebar::render(
+    root = root.child(super::chrome::title(
         titlebar_rect,
         state.clone(),
         crate::ui::git::badge::attach(
@@ -902,7 +920,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     ));
 
     for (&(pane, strip), &(_, body)) in strips.iter().zip(bodies.iter()) {
-        root = root.child(tabs::render(
+        root = root.child(super::tabs::render(
             pane,
             strip,
             state.clone(),
@@ -923,7 +941,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 keymap_search_id.clone(),
                 keymap_search_focus.clone(),
             ),
-            MainSurface::Diff => diff_editor::render(
+            MainSurface::Diff => crate::app::diff_view::render(
                 pane,
                 body,
                 state.clone(),
@@ -941,7 +959,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             MainSurface::Empty => Element::new(move |_cx| {
                 UiElement::panel(surface_id, body, VisualStyle::filled(theme::c().bg))
             }),
-            MainSurface::WorkspaceHome => workspace_home::render(
+            MainSurface::WorkspaceHome => super::chrome::workspace_home(
                 body,
                 state.clone(),
                 surface_id,
@@ -950,12 +968,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 terminal_tabs.clone(),
             ),
             MainSurface::Welcome => {
-                welcome::render(body, state.clone(), surface_id, editor_focus.clone())
+                super::chrome::welcome(body, state.clone(), surface_id, editor_focus.clone())
             }
         });
     }
     for sash in s.workspace.layout().sashes(editor_area.into()) {
-        root = root.child(pane_sash::render(sash, state.clone()));
+        root = root.child(super::pane_chrome::render(sash, state.clone()));
     }
     if source_control_left {
         root = root.child(git_panel::render(
@@ -1026,7 +1044,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         root = root.child(layout_map::render_divider(divider.clone(), state.clone()));
     }
 
-    root = root.child(statusbar::render(
+    root = root.child(super::chrome::status(
         statusbar_rect,
         state.clone(),
         editor_focus.clone(),
@@ -1035,7 +1053,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     ));
 
     if s.explorer.ui.menu.is_none()
-        && s.editor.tab_context_menu.is_none()
+        && s.editor.tabs.tab_context_menu.is_none()
         && s.terminal.ui.terminal_tab_context_menu.is_none()
         && s.git.ui.branch_picker.is_none()
         && s.git.ui.stash_switch.is_none()
@@ -1043,7 +1061,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         && s.git.ui.confirm.is_none()
         && !show_clone_dialog
         && s.editor.close_request.is_none()
-        && let Some(tooltip) = tabs::render_tooltip(vp, &strips, &s)
+        && let Some(tooltip) = super::tabs::render_tooltip(vp, &strips, &s)
     {
         root = root.child(tooltip);
     }
@@ -1077,8 +1095,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             &explorer_services,
         ));
     }
-    if s.editor.tab_context_menu.is_some() {
-        root = root.child(tab_context_menu::render(vp, state.clone()));
+    if s.editor.tabs.tab_context_menu.is_some() {
+        root = root.child(super::tab_menu::render(vp, state.clone()));
     }
     if s.terminal.ui.terminal_tab_context_menu.is_some() {
         root = root.child(crate::app::terminal_view::menu(
@@ -1138,7 +1156,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         ));
     }
     if s.editor.close_request.is_some() {
-        root = root.child(close_confirmation::render(
+        root = root.child(super::close_dialog::render(
             vp,
             state.clone(),
             close_dialog_id,
@@ -1156,12 +1174,14 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     // Preview where a dragged tab or drawer file would land on a pane.
     let file_drop = s
         .editor
+        .tabs
         .file_drag
         .as_ref()
         .filter(|drag| drag.active)
         .and_then(|drag| drag.drop);
     if let Some(TabDrop::Pane { pane, split }) = s
         .editor
+        .tabs
         .tab_drag
         .as_ref()
         .filter(|drag| drag.active)
@@ -1176,7 +1196,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
 
     // The dragged drawer file's name follows the pointer.
-    if let Some(drag) = s.editor.file_drag.as_ref().filter(|drag| drag.active) {
+    if let Some(drag) = s.editor.tabs.file_drag.as_ref().filter(|drag| drag.active) {
         let name = drag.path.file_name().map_or_else(
             || drag.path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),

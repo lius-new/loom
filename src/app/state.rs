@@ -33,62 +33,6 @@ pub struct CloseRequest {
     pub continuation: CloseContinuation,
 }
 
-/// Where a dragged tab lands outside its own strip.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TabDrop {
-    /// Into another pane's strip, before `index` (the tab count appends).
-    Insert { pane: PaneId, index: usize },
-    /// Onto a pane's surface: merge into it, or split it on one side.
-    Pane {
-        pane: PaneId,
-        split: Option<Direction>,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TabDragState {
-    pub pane: PaneId,
-    pub source: FileId,
-    pub pointer_origin_x: f32,
-    pub pointer_origin_y: f32,
-    /// Final index while reordering within the source strip.
-    pub target_index: usize,
-    pub active: bool,
-    /// Set while the pointer is outside the source strip over a drop target.
-    pub drop: Option<TabDrop>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum FileDragSource {
-    Explorer {
-        clicks: u8,
-    },
-    Changes {
-        request: crate::features::git::DiffRequest,
-        untracked: bool,
-    },
-}
-
-/// A file pressed in a drawer: a click on release, or a drag into the
-/// editor once the pointer moves far enough.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FileDragState {
-    pub path: PathBuf,
-    pub source: FileDragSource,
-    pub origin: (f32, f32),
-    pub point: (f32, f32),
-    pub active: bool,
-    pub drop: Option<TabDrop>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TabContextMenuState {
-    pub position: (f32, f32),
-    pub pane: PaneId,
-    pub target: FileId,
-    pub hovered: Option<usize>,
-}
-
 pub(crate) use crate::domain::notification::{Toast, ToastKind};
 
 /// Top-level content shown in the editor region.
@@ -507,11 +451,11 @@ impl AppState {
             Action::CloseOverlay => {
                 self.close_menus();
                 self.editor.close_request = None;
-                self.editor.tab_drag = None;
-                self.editor.file_drag = None;
+                self.editor.tabs.tab_drag = None;
+                self.editor.tabs.file_drag = None;
                 self.editor.sash_drag = None;
                 self.layout.application_sash_drag = None;
-                self.editor.tab_scrollbar_dragging = None;
+                self.editor.tabs.tab_scrollbar_dragging = None;
                 if !self.git.model.cloning() {
                     self.git.ui.clone_visible = false;
                     self.git.ui.clone_input_focused = false;
@@ -607,7 +551,7 @@ impl AppState {
         self.explorer.ui.menu = None;
         self.explorer.ui.menu_target = None;
         self.explorer.ui.menu_hover = None;
-        self.editor.tab_context_menu = None;
+        self.editor.tabs.tab_context_menu = None;
         self.terminal.ui.terminal_tab_context_menu = None;
         self.git.ui.branch_picker = None;
         self.git.ui.menu = None;
@@ -617,7 +561,7 @@ impl AppState {
     fn split_focused(&mut self, direction: Direction) {
         let pane = self.workspace.active_pane();
         if self.workspace.split(pane, direction).is_some() {
-            self.editor.tab_drag = None;
+            self.editor.tabs.tab_drag = None;
             self.editor.drag = None;
             self.editor.menu = None;
         }
@@ -689,6 +633,10 @@ impl AppState {
         matches
     }
 }
+
+pub use crate::ui::chrome::tab_state::{
+    FileDragSource, FileDragState, TabContextMenuState, TabDragState, TabDrop,
+};
 
 #[cfg(test)]
 mod tests {

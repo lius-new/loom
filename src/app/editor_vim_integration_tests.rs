@@ -86,7 +86,7 @@ impl Ui {
                     focus,
                 )
             } else if workspace_home == Some(true) {
-                crate::ui::workspace_home::render(
+                crate::app::chrome::workspace_home(
                     viewport,
                     state.clone(),
                     id,
@@ -95,7 +95,7 @@ impl Ui {
                     terminals,
                 )
             } else {
-                crate::ui::welcome::render(viewport, state.clone(), id, focus)
+                crate::app::chrome::welcome(viewport, state.clone(), id, focus)
             };
             crate::key_actions::attach(group(viewport).child(surface), env)
         });

@@ -458,7 +458,7 @@ pub(crate) fn pointer_down(
             app.editor.menu = Some((point.x, point.y));
             app.editor.menu_hover = None;
             app.editor.drag = None;
-            app.editor.tab_context_menu = None;
+            app.editor.tabs.tab_context_menu = None;
             app.explorer.ui.menu = None;
             app.explorer.ui.menu_target = None;
             app.explorer.ui.menu_hover = None;

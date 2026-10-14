@@ -1,9 +1,8 @@
 //! Transient pointer and IME state; selections and history live in each buffer.
-use super::{CloseRequest, FileDragState, TabContextMenuState, TabDragState};
+use super::CloseRequest;
 use crate::model::document::FileId;
 use crate::model::pane_layout::PaneId;
 use lgui::core::KeyModifiers;
-use std::collections::HashMap;
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -23,26 +22,11 @@ pub struct DragSelection {
     pub unit: SelectionUnit,
     pub point: (f32, f32),
 }
-/// Divider between the two sides of a split diff.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DiffSplit {
-    /// Pane whose divider is being dragged.
-    pub drag: Option<PaneId>,
-    /// Left side's share of the width.
-    pub ratio: f32,
-}
-
-impl Default for DiffSplit {
-    fn default() -> Self {
-        Self {
-            drag: None,
-            ratio: 0.5,
-        }
-    }
-}
+pub use crate::ui::chrome::diff_binding::DiffSplit;
 
 #[derive(Clone, Default)]
 pub struct EditorState {
+    pub tabs: crate::ui::chrome::tab_state::UiState,
     /// Pending close operation waiting for the user to resolve dirty files.
     pub close_request: Option<CloseRequest>,
     /// Side-by-side diff divider: the pane being dragged and the split.
@@ -63,26 +47,26 @@ pub struct EditorState {
     /// True while the editor's vertical overlay scrollbar is being dragged.
     pub editor_vertical_scrollbar_dragging: bool,
     /// Pending click or active drag of an Explorer or Source Control file.
-    pub file_drag: Option<FileDragState>,
+
     /// Focus of the shared welcome/home/editor surface, retained across swaps.
     pub focused: bool,
     pub pending_file: Option<crate::file_loading::PendingFile>,
     /// The pane divider being dragged.
     pub sash_drag: Option<crate::model::pane_layout::Sash>,
     /// Context menu opened for one editor tab.
-    pub tab_context_menu: Option<TabContextMenuState>,
+
     /// Pending or active left-button tab reorder gesture.
-    pub tab_drag: Option<TabDragState>,
+
     /// Open tab currently under the pointer.
-    pub tab_hovered: Option<(PaneId, FileId)>,
+
     /// Horizontal scroll offset of each pane's tab strip, in logical pixels.
-    pub tab_scroll: HashMap<PaneId, f32>,
+
     /// Pointer x offset from the tab scrollbar thumb's left edge.
-    pub tab_scrollbar_drag_offset: f32,
+
     /// The pane whose tab scrollbar thumb is being dragged.
-    pub tab_scrollbar_dragging: Option<PaneId>,
+
     /// The pane whose tab strip contains the pointer.
-    pub tab_strip_hovered: Option<PaneId>,
+
     /// Vim editing behaviour, when enabled in Settings.
     pub vim: crate::vim::Vim,
 
@@ -92,7 +76,7 @@ pub struct EditorState {
     pub caret_dragging: bool,
     pub last_click: Option<(Instant, FileId, f32, f32, u8)>,
     pub last_tree_click: Option<(Instant, PathBuf, f32, f32, u8)>,
-    pub last_tab_click: Option<(Instant, FileId, f32, f32, u8)>,
+
     pub menu: Option<(f32, f32)>,
     pub menu_hover: Option<usize>,
     /// The input method composition in progress, and the view it belongs to.
@@ -135,7 +119,7 @@ impl EditorState {
     }
 
     pub fn tab_click_count(&mut self, document: FileId, x: f32, y: f32) -> u8 {
-        next_click_count(&mut self.last_tab_click, document, x, y)
+        next_click_count(&mut self.tabs.last_tab_click, document, x, y)
     }
 }
 

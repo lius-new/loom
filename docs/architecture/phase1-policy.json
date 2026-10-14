@@ -13,18 +13,7 @@
     "window_geometry": "app/window (R8.4/R8.5 native window command seam)",
     "launch": "infrastructure/launch (R8.5 bootstrap seam)"
   },
-  "root_state_adapters": [
-    "src/ui/close_confirmation.rs",
-    "src/ui/diff_editor.rs",
-    "src/ui/mod.rs",
-    "src/ui/pane_sash.rs",
-    "src/ui/statusbar.rs",
-    "src/ui/tab_context_menu.rs",
-    "src/ui/tabs.rs",
-    "src/ui/titlebar.rs",
-    "src/ui/welcome.rs",
-    "src/ui/workspace_home.rs"
-  ],
+  "root_state_adapters": [],
   "runtime_bridges": [
     "src/app/editor_vim_integration_tests.rs",
     "src/app/explorer.rs",
@@ -125,108 +114,12 @@
       "remove_in": "R8",
       "reason": "R4 的兼容导出指向 app/workspace 组合容器；纯域规则已迁入 domain/workspace。旧 UI 按各自登记阶段迁移，新增代码使用实际边界。"
     },
-    "src/ui/close_confirmation.rs": {
-      "dependencies": [
-        "crate::input",
-        "crate::state",
-        "crate::workspace_actions"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/ui/components/text.rs": {
       "dependencies": [
         "unicode_width"
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/ui/diff_editor.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::model",
-        "crate::state",
-        "crate::svg_icons",
-        "image",
-        "std::fs"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 的新增应用依赖仅在旧 UI 集成测试中构造窄 scrollbar binding。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。 R6 Git 操作改为语义命令；只读文档布局与窗格/分栏交互仍为 R8 适配。"
-    },
-    "src/ui/mod.rs": {
-      "dependencies": [
-        "crate::state"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/ui/pane_sash.rs": {
-      "dependencies": [
-        "crate::model",
-        "crate::state"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/ui/statusbar.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::input",
-        "crate::state",
-        "crate::vim"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 把原 Vim 调用转到应用命令入口。"
-    },
-    "src/ui/tabs.rs": {
-      "dependencies": [
-        "crate::file_loading",
-        "crate::model",
-        "crate::state",
-        "crate::workspace_actions"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/ui/tab_context_menu.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::features",
-        "crate::model",
-        "crate::state",
-        "crate::workspace_actions",
-        "std::fs",
-        "std::process"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.5 reveal 与复制路径调用 app/explorer；标签菜单属于编辑器 chrome，随 R8 收窄。"
-    },
-    "src/ui/titlebar.rs": {
-      "dependencies": [
-        "crate::input",
-        "crate::state",
-        "crate::window_geometry"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R6.1 只用 Git 类型，改由 features/git 提供。"
-    },
-    "src/ui/welcome.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::state",
-        "crate::workspace_actions"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.5 Explorer 视图已改为投影与命令；欢迎页的悬停、主表面焦点、打开文件和最近目录命令属于 chrome，随 R8 收窄，届时移除 crate::app。"
-    },
-    "src/ui/workspace_home.rs": {
-      "dependencies": [
-        "crate::state",
-        "crate::workspace_actions",
-        "crate::app"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5 收尾：剩余根依赖为主表面悬停/焦点、打开文件与 Source Control 开关等 chrome。"
     }
   },
   "phase2": {
@@ -266,10 +159,6 @@
       "owner": "app/state/editor",
       "migrated_in": "R3"
     },
-    "file_drag": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
     "focused": {
       "owner": "app/state/editor",
       "migrated_in": "R3"
@@ -279,34 +168,6 @@
       "migrated_in": "R3"
     },
     "sash_drag": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
-    "tab_context_menu": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
-    "tab_drag": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
-    "tab_hovered": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
-    "tab_scroll": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
-    "tab_scrollbar_drag_offset": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
-    "tab_scrollbar_dragging": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
-    "tab_strip_hovered": {
       "owner": "app/state/editor",
       "migrated_in": "R3"
     },
@@ -334,10 +195,6 @@
       "owner": "app/state/editor",
       "migrated_in": "R3"
     },
-    "last_tab_click": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
     "menu": {
       "owner": "app/state/editor",
       "migrated_in": "R3"
@@ -351,9 +208,12 @@
       "migrated_in": "R3"
     },
     "diff_split": {
-      "owner": "app/state/editor (diff view divider; R6.3 owner corrected from features/git)",
-      "migrated_in": "R6.3",
-      "from": "git_split_drag, git_split_ratio"
+      "owner": "ui/chrome/diff_binding DiffSplit",
+      "migrated_in": "R8.4"
+    },
+    "tabs": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
     }
   },
   "workspace_core_ownership": {
@@ -920,6 +780,44 @@
     "version": {
       "owner": "features/keymap/model",
       "migrated_in": "R8.2"
+    }
+  },
+  "tabs_ui_ownership": {
+    "file_drag": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
+    },
+    "tab_context_menu": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
+    },
+    "tab_drag": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
+    },
+    "tab_hovered": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
+    },
+    "tab_scroll": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
+    },
+    "tab_scrollbar_drag_offset": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
+    },
+    "tab_scrollbar_dragging": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
+    },
+    "tab_strip_hovered": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
+    },
+    "last_tab_click": {
+      "owner": "ui/chrome/tab_state UiState",
+      "migrated_in": "R8.4"
     }
   }
 }

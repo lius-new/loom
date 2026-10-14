@@ -194,7 +194,7 @@ pub(crate) fn run(
         } => {
             state.update(|app| {
                 app.git.ui.menu = None;
-                app.editor.file_drag = Some(FileDragState {
+                app.editor.tabs.file_drag = Some(FileDragState {
                     path: request.repository_root.join(&request.path),
                     source: FileDragSource::Changes { request, untracked },
                     origin: point,
@@ -334,7 +334,7 @@ mod tests {
             point: (13.0, 29.0),
         });
         let app = state.get();
-        let drag = app.editor.file_drag.as_ref().unwrap();
+        let drag = app.editor.tabs.file_drag.as_ref().unwrap();
         assert_eq!(drag.path, std::path::Path::new("repo/f.rs"));
         assert_eq!(drag.origin, (13.0, 29.0));
         assert!(!drag.active);

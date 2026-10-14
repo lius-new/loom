@@ -579,9 +579,10 @@ mod panel_action_tests {
 
     #[test]
     fn change_rows_drag_to_editor_splits_and_buttons_do_not_arm_file_drags() {
+        use crate::app::tabs;
         use crate::model::pane_layout::Direction;
         use crate::state::{FileDragSource, TabDrop};
-        use crate::ui::tabs::{self, PaneRegion};
+        use crate::ui::tabs::PaneRegion;
         use lgui::application::{AppView, ApplicationContext};
         use lgui::core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
         use lgui::session::UiSession;
@@ -616,7 +617,7 @@ mod panel_action_tests {
                 let release = state.clone();
                 panel(viewport, VisualStyle::default())
                     .on_event_capture(UiEventKind::PointerDown, move |_cx, _payload| {
-                        clear.try_update(|app| app.editor.file_drag.take().is_some());
+                        clear.try_update(|app| app.editor.tabs.file_drag.take().is_some());
                     })
                     .on_event_capture(UiEventKind::PointerDrag, move |_cx, payload| {
                         if let UiEventPayload::PointerDrag { pointer } = payload {
@@ -668,7 +669,7 @@ mod panel_action_tests {
                 button: PointerButton::Left,
             };
             send(&mut session, down(650.0, 10.0));
-            let drag = state.get().editor.file_drag.unwrap();
+            let drag = state.get().editor.tabs.file_drag.unwrap();
             assert!(!drag.active);
             assert_eq!(
                 drag.source,
@@ -685,12 +686,12 @@ mod panel_action_tests {
                 &mut session,
                 InputEvent::PointerMove(PointerData::mouse(Point::new(649.0, 10.0))),
             );
-            assert!(!state.get().editor.file_drag.unwrap().active);
+            assert!(!state.get().editor.tabs.file_drag.unwrap().active);
             send(
                 &mut session,
                 InputEvent::PointerMove(PointerData::mouse(Point::new(590.0, 150.0))),
             );
-            let drag = state.get().editor.file_drag.unwrap();
+            let drag = state.get().editor.tabs.file_drag.unwrap();
             assert!(drag.active);
             assert_eq!(
                 drag.drop,
@@ -711,7 +712,7 @@ mod panel_action_tests {
                     button: PointerButton::Left,
                 },
             );
-            assert!(state.get().editor.file_drag.is_none());
+            assert!(state.get().editor.tabs.file_drag.is_none());
             assert_eq!(state.get().workspace.pane_ids().len(), 1);
             assert_eq!(
                 state.get().workspace.active_editor().unwrap().text(),
@@ -719,7 +720,7 @@ mod panel_action_tests {
             );
             send(&mut session, down(885.0, 10.0));
             assert!(
-                state.get().editor.file_drag.is_none(),
+                state.get().editor.tabs.file_drag.is_none(),
                 "action buttons must not start a file drag"
             );
         }

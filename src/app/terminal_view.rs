@@ -141,7 +141,7 @@ fn open_menu(
     app.editor.menu = None;
     app.explorer.ui.menu = None;
     app.explorer.ui.menu_target = None;
-    app.editor.tab_context_menu = None;
+    app.editor.tabs.tab_context_menu = None;
     app.terminal.ui.terminal_shell_menu = false;
     app.terminal.ui.terminal_tab_context_menu =
         Some(crate::ui::terminal::state::TerminalTabContextMenuState {

@@ -80,3 +80,14 @@ pub(crate) mod file_loading;
 pub(crate) mod file_watcher;
 
 pub(crate) mod window;
+
+pub(crate) mod chrome;
+
+pub(crate) mod close_dialog;
+
+pub(crate) mod pane_chrome;
+pub(crate) mod tab_menu;
+
+pub(crate) mod tabs;
+
+pub mod diff_view;

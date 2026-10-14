@@ -1,12 +1,12 @@
 //! Draggable dividers between editor panes.
 
 use lgui::core::{CursorIcon, PointerButton};
-use lgui::prelude::{Element, State, UiRect};
+use lgui::prelude::{Element, UiRect};
 
 use crate::ui::components::resize_handle;
 
-use crate::model::pane_layout::{Axis, MinSize, Sash};
-use crate::state::AppState;
+use crate::domain::pane_layout::{Axis, MinSize, Sash};
+use crate::ui::chrome::sash_binding::{Binding, Command};
 
 /// Smallest pane a sash drag may produce.
 pub const PANE_MIN: MinSize = MinSize {
@@ -54,13 +54,8 @@ pub fn horizontal(
     })
 }
 
-pub fn render(sash: Sash, state: State<AppState>) -> Element {
-    let s = state.get();
-    let active = s
-        .editor
-        .sash_drag
-        .as_ref()
-        .is_some_and(|drag| same_sash(drag, &sash));
+pub fn render(sash: Sash, state: Binding) -> Element {
+    let active = state.active(&sash);
     let (line, hit, cursor) = match sash.axis {
         Axis::Horizontal => (
             UiRect::new(
@@ -110,28 +105,19 @@ pub fn render(sash: Sash, state: State<AppState>) -> Element {
         .on_pointer_down_with_button(move |cx, _pointer, button| {
             if button == PointerButton::Left {
                 let sash = pressed.clone();
-                st_down.update(move |app| app.editor.sash_drag = Some(sash));
+                st_down.run(Command::Start(sash));
                 cx.stop_propagation();
             }
         })
         .on_pointer_drag(move |_cx, pointer| {
-            st_move.try_update(move |app| {
-                let Some(drag) = app.editor.sash_drag.clone() else {
-                    return false;
-                };
-                let position = match drag.axis {
-                    Axis::Horizontal => pointer.point.x,
-                    Axis::Vertical => pointer.point.y,
-                };
-                app.workspace.layout_mut().resize(&drag, position, PANE_MIN)
-            });
+            st_move.run(Command::Drag(pointer.point.x, pointer.point.y));
         })
         .on_pointer_up(move |_cx, _pointer| {
-            st_up.update(|app| app.editor.sash_drag = None);
+            st_up.run(Command::End);
         })
 }
 
 /// The same boundary of the same split, regardless of where it currently is.
-fn same_sash(a: &Sash, b: &Sash) -> bool {
+pub(crate) fn same_sash(a: &Sash, b: &Sash) -> bool {
     a.path == b.path && a.index == b.index && a.axis == b.axis
 }

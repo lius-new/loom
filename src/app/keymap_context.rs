@@ -43,7 +43,7 @@ pub fn facts(app: &AppState) -> ContextFacts {
         vim_active: crate::app::editor_vim::is_active(app),
         menu: app.editor.menu.is_some()
             || app.explorer.ui.menu.is_some()
-            || app.editor.tab_context_menu.is_some()
+            || app.editor.tabs.tab_context_menu.is_some()
             || app.terminal.ui.terminal_tab_context_menu.is_some()
             || app.git.ui.menu.is_some(),
     }

@@ -172,7 +172,7 @@ fn removing_a_workspace_folder_keeps_disk_documents_and_clears_tree_state() {
 }
 
 fn press_file(app: &mut AppState, path: &str, clicks: u8, drop: Option<TabDrop>) {
-    app.editor.file_drag = Some(crate::state::FileDragState {
+    app.editor.tabs.file_drag = Some(crate::state::FileDragState {
         path: PathBuf::from(path),
         source: crate::state::FileDragSource::Explorer { clicks },
         origin: (0.0, 0.0),
@@ -191,7 +191,7 @@ fn releasing_an_undragged_file_opens_it_like_a_click() {
     let mut app = AppState::new();
     press_file(&mut app, "a.rs", 1, None);
     assert!(finish_file_drag_with(&mut app, read_ok));
-    assert!(app.editor.file_drag.is_none());
+    assert!(app.editor.tabs.file_drag.is_none());
     let id = app.workspace.active().unwrap();
     assert_eq!(app.workspace.preview(), Some(id));
 

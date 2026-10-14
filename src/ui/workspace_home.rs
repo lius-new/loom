@@ -5,15 +5,13 @@
 use std::path::{Path, PathBuf};
 
 use lgui::core::{
-    CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiEventKind, UiFocusHandle, UiId,
-    clip,
+    CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiEventKind, UiId, clip,
 };
-use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 
-use crate::state::AppState;
+use crate::ui::chrome::{HomeBinding, HomeCommand};
 use crate::ui::tabs::{TEXT_MARGIN, ellipsize, measure};
 use crate::ui::theme;
-use crate::workspace_actions;
 
 const MAX_PAGE_W: f32 = 620.0;
 const PAGE_PAD_X: f32 = 32.0;
@@ -55,30 +53,12 @@ const ACTIONS: [WorkspaceAction; 3] = [
     WorkspaceAction::OpenSourceControl,
 ];
 
-#[derive(Clone)]
-struct WorkspaceHomeActions {
-    state: State<AppState>,
-    editor_focus: UiFocusHandle,
-    terminal_focus: UiFocusHandle,
-    terminal_tabs: crate::app::terminal_binding::TerminalStore,
-}
+type WorkspaceHomeActions = HomeBinding;
 
-pub fn render(
-    rect: UiRect,
-    state: State<AppState>,
-    surface_id: UiId,
-    editor_focus: UiFocusHandle,
-    terminal_focus: UiFocusHandle,
-    terminal_tabs: crate::app::terminal_binding::TerminalStore,
-) -> Element {
-    let snapshot = state.get();
-    let actions = WorkspaceHomeActions {
-        state: state.clone(),
-        editor_focus,
-        terminal_focus,
-        terminal_tabs,
-    };
-    let (title, detail) = workspace_identity(snapshot.explorer.model.roots());
+pub fn render(rect: UiRect, state: HomeBinding, surface_id: UiId) -> Element {
+    let snapshot = state.frame();
+    let actions = state.clone();
+    let (title, detail) = workspace_identity(&snapshot.paths);
     let page_w = (rect.width() - PAGE_PAD_X * 2.0).clamp(0.0, MAX_PAGE_W);
     let page_left = rect.left + (rect.width() - page_w) / 2.0;
     let page_right = page_left + page_w;
@@ -92,11 +72,7 @@ pub fn render(
     })
     .event_policy(EventPolicy::INTERACTIVE)
     .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
-        clear_hover.try_update(|app| {
-            let changed = app.workspace_home_hover.is_some();
-            app.workspace_home_hover = None;
-            changed
-        });
+        clear_hover.run(HomeCommand::Hover(None));
     });
     home = crate::ui::track_main_surface_focus(home, state.clone());
 
@@ -145,7 +121,7 @@ pub fn render(
             action_rect,
             index,
             action,
-            snapshot.workspace_home_hover == Some(index),
+            snapshot.hover == Some(index),
             actions.clone(),
         ));
         action_top += ACTION_H + ACTION_GAP;
@@ -169,7 +145,7 @@ fn action_row(
             VisualStyle::default().radius(4.0)
         },
     );
-    let hover_state = actions.state.clone();
+    let hover_state = actions.clone();
     let shortcut = action.shortcut();
     let shortcut_w = if shortcut.is_empty() {
         0.0
@@ -183,30 +159,14 @@ fn action_row(
         .semantics(Semantics::new(SemanticRole::Button).name(action.label()))
         .cursor(CursorIcon::Pointer)
         .on_pointer_move(move |_cx, _pointer| {
-            hover_state.try_update(move |app| {
-                let changed = app.workspace_home_hover != Some(index);
-                app.workspace_home_hover = Some(index);
-                changed
-            });
+            hover_state.run(HomeCommand::Hover(Some(index)));
         })
-        .on_click(move || match action {
-            WorkspaceAction::OpenFile => {
-                if workspace_actions::choose_file(&actions.state) {
-                    actions.editor_focus.focus();
-                }
-            }
-            WorkspaceAction::ToggleTerminal => crate::app::terminal::toggle_panel(
-                &actions.state,
-                &actions.terminal_tabs,
-                &actions.editor_focus,
-                &actions.terminal_focus,
-            ),
-            WorkspaceAction::OpenSourceControl => {
-                actions.state.update(|app| {
-                    app.source_control.visible = true;
-                    app.workspace_home_hover = None;
-                });
-            }
+        .on_click(move || {
+            actions.run(match action {
+                WorkspaceAction::OpenFile => HomeCommand::OpenFile,
+                WorkspaceAction::ToggleTerminal => HomeCommand::ToggleTerminal,
+                WorkspaceAction::OpenSourceControl => HomeCommand::OpenSourceControl,
+            });
         })
         .child(text(
             UiRect::new(

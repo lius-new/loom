@@ -81,7 +81,7 @@ pub(crate) fn finish_file_drag(app: &mut AppState) -> bool {
         .runtime()
         .is_some_and(|runtime| runtime.file_loader().is_some())
     {
-        if let Some(drag) = app.editor.file_drag.take() {
+        if let Some(drag) = app.editor.tabs.file_drag.take() {
             let crate::state::FileDragSource::Explorer { clicks } = drag.source else {
                 return false;
             };
@@ -106,7 +106,7 @@ fn finish_file_drag_with(
     app: &mut AppState,
     read: impl FnOnce(&Path) -> Result<String, String>,
 ) -> bool {
-    let Some(drag) = app.editor.file_drag.take() else {
+    let Some(drag) = app.editor.tabs.file_drag.take() else {
         return false;
     };
     let crate::state::FileDragSource::Explorer { clicks } = drag.source else {
@@ -163,11 +163,11 @@ pub(crate) fn finish_drawer_file_drag(state: &State<AppState>) -> bool {
     let mut changes = None;
     let mut focus = false;
     state.try_update(|app| {
-        let Some(drag) = &app.editor.file_drag else {
+        let Some(drag) = &app.editor.tabs.file_drag else {
             return false;
         };
         if matches!(drag.source, crate::state::FileDragSource::Changes { .. }) {
-            changes = app.editor.file_drag.take();
+            changes = app.editor.tabs.file_drag.take();
         } else {
             focus = finish_file_drag(app);
         }

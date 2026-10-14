@@ -15,6 +15,7 @@ use lgui::core::{KeyboardEvent, UiEventKind, UiEventPayload, UiFocusHandle};
 use lgui::prelude::{Element, State, UiRect};
 use lgui::services::ServicesContextExt;
 
+use crate::app::close_dialog as close_confirmation;
 use crate::app::editor_vim as vim_input;
 use crate::app::keymap_context::{self as context_stack, EDITOR, TERMINAL, VIM};
 use crate::app::terminal::{self, ClipboardShortcut};
@@ -29,7 +30,6 @@ use crate::input::context::KeyContext;
 use crate::input::dispatcher::{self, Replay};
 use crate::input::keystroke::Keystroke;
 use crate::state::AppState;
-use crate::ui::close_confirmation;
 use crate::ui::editor::view as editor_view;
 use crate::workspace_actions;
 

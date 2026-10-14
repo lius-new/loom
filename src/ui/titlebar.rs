@@ -8,12 +8,10 @@ use lgui::core::{
     AnimProperty, AnimationBinding, Color, CursorIcon, EventPolicy, IconStyle, PhysicalRect,
     UiElement, UiEventContext, UiId, UiScale,
 };
-use lgui::prelude::{Element, State, UiRect, VisualStyle, panel};
+use lgui::prelude::{Element, UiRect, VisualStyle, panel};
 
-use crate::input::action::Action;
-use crate::state::AppState;
+use crate::ui::chrome::TitleBinding;
 use crate::ui::theme;
-use crate::window_geometry;
 
 /// Windows 11 caption close-button red, the same in light and dark themes.
 const CLOSE_HOVER: Color = Color(0xC42B1C);
@@ -97,7 +95,8 @@ fn window_icon_rect(button: UiRect, scale: UiScale) -> UiRect {
     scale.logical_rect(PhysicalRect::new(left, top, left + size, top + size))
 }
 
-pub fn render(rect: UiRect, state: State<AppState>, git_controls: Element) -> Element {
+pub fn render(rect: UiRect, state: TitleBinding, git_controls: Element) -> Element {
+    let maximized = state.frame().maximized;
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar)).window_drag_region();
 
     // ---- Left: repository, branch and sync ----------------------------
@@ -110,7 +109,7 @@ pub fn render(rect: UiRect, state: State<AppState>, git_controls: Element) -> El
 
     // Settings, just left of the window controls.
     let settings_r = UiRect::new(right - 148.0, rect.top, right - 116.0, rect.bottom);
-    let settings_open = state.get().workspace.active_is_settings();
+    let settings_open = state.frame().settings_open;
     bar = bar.child(
         caption_button(
             "titlebar.settings.button",
@@ -126,7 +125,7 @@ pub fn render(rect: UiRect, state: State<AppState>, git_controls: Element) -> El
                 glyph: Glyph::Ui,
             },
             false,
-            move |_: &mut UiEventContext| state.update(|app| app.apply(Action::OpenSettings)),
+            move |_: &mut UiEventContext| state.open_settings(),
         )
         .cursor(CursorIcon::Pointer),
     );
@@ -154,7 +153,7 @@ pub fn render(rect: UiRect, state: State<AppState>, git_controls: Element) -> El
 
     // Maximize / restore. On Windows 11 the OS owns this button so hovering it
     // shows Snap Layouts; lgui replays its hover, press and click here.
-    let max_key = if window_geometry::is_maximized() {
+    let max_key = if maximized {
         "window-restore"
     } else {
         "window-maximize"

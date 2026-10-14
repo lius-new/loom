@@ -9,13 +9,10 @@
 //! With no active file there is no cursor position or language to report, so
 //! only the universal editor settings (indent mode, encoding) remain.
 
-use lgui::core::{
-    EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId, precompiled,
-};
-use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text};
+use lgui::core::{EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiId, precompiled};
+use lgui::prelude::{Element, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::input::action::Action;
-use crate::state::AppState;
+use crate::ui::chrome::{StatusBinding, StatusCommand};
 use crate::ui::theme;
 
 /// Padding between the bar's right edge and the last item.
@@ -33,21 +30,12 @@ fn measure(s: &str, weight: i32) -> f32 {
     super::tabs::measure(s, theme::SMALL, weight)
 }
 
-pub fn render(
-    rect: UiRect,
-    state: State<AppState>,
-    editor_focus: UiFocusHandle,
-    terminal_focus: UiFocusHandle,
-    terminal_tabs: crate::app::terminal_binding::TerminalStore,
-) -> Element {
-    let s = state.get();
+pub fn render(rect: UiRect, state: StatusBinding) -> Element {
+    let s = state.frame();
 
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
     let st = state.clone();
-    let terminal_sessions = terminal_tabs;
-    let editor_target = editor_focus;
-    let terminal_target = terminal_focus;
     let top = rect.top + (rect.height() - theme::ICON_SIZE) / 2.0;
     let icon_r = UiRect::new(
         rect.left + 10.0,
@@ -55,7 +43,7 @@ pub fn render(
         rect.left + 10.0 + theme::ICON_SIZE,
         top + theme::ICON_SIZE,
     );
-    let color = if s.default_terminal_open() {
+    let color = if s.terminal_open {
         theme::c().accent
     } else {
         theme::c().text_muted
@@ -71,12 +59,7 @@ pub fn render(
             focus: false,
         })
         .on_click(move || {
-            crate::app::terminal::toggle_panel(
-                &st,
-                &terminal_sessions,
-                &editor_target,
-                &terminal_target,
-            );
+            st.run(StatusCommand::ToggleTerminal);
         })
         .child(precompiled(
             UiElement::icon(UiId::new("statusbar.terminal"), icon_r, "terminal")
@@ -87,33 +70,28 @@ pub fn render(
     // settings are shown (no Ln/Col position, no language badge).
     let mut items: Vec<(String, TextStyle)> = Vec::new();
     // A key sequence waiting for its next keystroke, e.g. `Ctrl+K …`.
-    if !s.keymap.pending().is_empty() {
+    if !s.pending.as_slice().is_empty() {
         items.push((
             format!(
                 "{} …",
-                crate::input::keystroke::Keystroke::sequence_label(s.keymap.pending())
+                crate::features::keymap::keystroke::Keystroke::sequence_label(s.pending.as_slice())
             ),
             theme::mono_bold(theme::c().accent, theme::SMALL),
         ));
     }
-    if let Some(id) = s.workspace.active() {
-        let m = s
-            .workspace
-            .meta(id)
-            .expect("active document metadata exists");
-        if s.workspace.is_missing_on_disk(id) {
+    if let Some(file) = &s.file {
+        if file.missing {
             items.push((
                 "Deleted on Disk — Save Recreates".to_string(),
                 theme::mono_bold(theme::c().error, theme::SMALL),
             ));
-        } else if s.workspace.has_disk_conflict(id) {
+        } else if file.conflict {
             items.push((
                 "Changed on Disk".to_string(),
                 theme::mono_bold(theme::c().warning, theme::SMALL),
             ));
         }
-        if let Some(buffer) = s.workspace.active_editor() {
-            let (line, col) = buffer.line_col();
+        if let Some((line, col)) = file.cursor {
             items.push((
                 format!("Ln {}, Col {}", line + 1, col + 1),
                 theme::mono(theme::c().text_muted, theme::SMALL),
@@ -126,16 +104,16 @@ pub fn render(
                 "UTF-8".to_string(),
                 theme::mono(theme::c().text_dim, theme::SMALL),
             ));
-        } else if s.workspace.is_diff(id) {
+        } else if file.is_diff {
             items.push((
                 "Text Diff".to_string(),
                 theme::mono(theme::c().text_dim, theme::SMALL),
             ));
         }
-        if s.workspace.is_file(id) || s.workspace.is_diff(id) {
+        if file.is_file || file.is_diff {
             items.push((
-                m.lang.badge().to_string(),
-                theme::mono_bold(m.lang.badge_color(), theme::SMALL),
+                file.lang.badge().to_string(),
+                theme::mono_bold(file.lang.badge_color(), theme::SMALL),
             ));
         }
     } else {
@@ -157,7 +135,7 @@ pub fn render(
             .event_policy(EventPolicy::INTERACTIVE)
             .semantics(Semantics::new(SemanticRole::Button).name("Toggle Source Control"))
             .on_click(move || {
-                scm_state.update(|app| app.apply(Action::ToggleSourceControl));
+                scm_state.run(StatusCommand::ToggleSourceControl);
             })
             .child(precompiled(
                 UiElement::icon(
@@ -170,7 +148,7 @@ pub fn render(
                     ),
                     "source-control",
                 )
-                .icon_style(IconStyle::new(if s.source_control.visible {
+                .icon_style(IconStyle::new(if s.source_control {
                     theme::c().accent
                 } else {
                     theme::c().text_muted
@@ -179,7 +157,7 @@ pub fn render(
     );
 
     let mut left = scm_slot.right + GAP;
-    if s.git.model.diff_loading().is_some() {
+    if s.diff_loading {
         bar = bar.child(text(
             UiRect::new(left, rect.top, left + 140.0, rect.bottom),
             "Loading diff…",
@@ -187,8 +165,8 @@ pub fn render(
         ));
         left += 140.0 + GAP;
     }
-    if crate::app::editor_vim::is_active(&s) {
-        for (label, style) in vim_items(&s.editor.vim) {
+    if let Some((mode, status)) = s.vim {
+        for (label, style) in vim_status_items(mode, status) {
             let width = measure(&label, style.weight) + TEXT_MARGIN;
             bar = bar.child(text(
                 UiRect::new(left, rect.top, left + width, rect.bottom),
@@ -226,10 +204,12 @@ pub fn render(
 
 /// Vim's mode, then its command line, message or pending keys, and macro
 /// recording, left to right.
-fn vim_items(vim: &crate::vim::Vim) -> Vec<(String, TextStyle)> {
-    use crate::vim::Mode;
-    let status = vim.status();
-    let mode_color = match vim.mode() {
+fn vim_status_items(
+    mode: loom_editor_core::vim::Mode,
+    status: loom_editor_core::vim::Status,
+) -> Vec<(String, TextStyle)> {
+    use loom_editor_core::vim::Mode;
+    let mode_color = match mode {
         Mode::Normal => theme::c().text_muted,
         Mode::Insert => theme::c().accent,
         Mode::Replace => theme::c().error,
@@ -262,4 +242,9 @@ fn vim_items(vim: &crate::vim::Vim) -> Vec<(String, TextStyle)> {
         ));
     }
     items
+}
+
+#[cfg(test)]
+fn vim_items(vim: &loom_editor_core::vim::Vim) -> Vec<(String, TextStyle)> {
+    vim_status_items(vim.mode(), vim.status())
 }

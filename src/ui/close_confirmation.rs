@@ -4,43 +4,22 @@ use lgui::core::{
     CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiEventContext, UiFocusHandle,
     UiId,
 };
-use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, panel, text};
-use lgui::window::WindowManager;
+use lgui::prelude::{Element, TextAlign, UiRect, VisualStyle, panel, text};
 
-use crate::input::action::Action;
-use crate::state::{AppState, CloseContinuation};
+use crate::ui::chrome::{CloseBinding, CloseCommand, CloseOutcome};
 use crate::ui::theme;
-use crate::workspace_actions;
 
 const CARD_W: f32 = 520.0;
 const CARD_H: f32 = 174.0;
 
 pub fn render(
     viewport: UiRect,
-    state: State<AppState>,
+    state: CloseBinding,
     dialog_id: UiId,
     editor_focus: UiFocusHandle,
 ) -> Element {
-    let snapshot = state.get();
-    let Some(request) = snapshot.editor.close_request.as_ref() else {
+    let Some(message) = state.message() else {
         return panel(viewport, VisualStyle::default());
-    };
-    let dirty_targets = snapshot
-        .workspace
-        .released_by(&request.targets)
-        .into_iter()
-        .filter(|id| snapshot.workspace.is_dirty(*id))
-        .collect::<Vec<_>>();
-    let dirty_count = dirty_targets.len();
-    let target_name = dirty_targets
-        .first()
-        .and_then(|id| snapshot.workspace.meta(*id))
-        .map(|meta| meta.name.clone())
-        .unwrap_or_else(|| "this file".to_owned());
-    let message = if dirty_count == 1 {
-        format!("Do you want to save the changes you made to {target_name}?")
-    } else {
-        format!("Do you want to save changes to {dirty_count} files?")
     };
 
     let center_x = viewport.left + viewport.width() / 2.0;
@@ -133,8 +112,8 @@ pub fn render(
             .event_policy(EventPolicy::INTERACTIVE)
             .cursor(CursorIcon::Pointer)
             .on_click(move |cx: &mut UiEventContext| {
-                let continuation = workspace_actions::discard_close_request(&discard_state);
-                finish(cx, &discard_state, &discard_focus, continuation);
+                let outcome = discard_state.run(CloseCommand::Discard);
+                finish(cx, &discard_focus, outcome);
             })
             .child(text(
                 discard_rect,
@@ -150,8 +129,8 @@ pub fn render(
             .event_policy(EventPolicy::INTERACTIVE)
             .cursor(CursorIcon::Pointer)
             .on_click(move |cx: &mut UiEventContext| {
-                workspace_actions::cancel_close_request(&cancel_state);
-                finish(cx, &cancel_state, &cancel_focus, None);
+                let outcome = cancel_state.run(CloseCommand::Cancel);
+                finish(cx, &cancel_focus, outcome);
             })
             .child(text(
                 cancel_rect,
@@ -169,8 +148,8 @@ pub fn render(
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move |cx: &mut UiEventContext| {
-            let continuation = workspace_actions::save_close_request(&save_state);
-            finish(cx, &save_state, &editor_focus, continuation);
+            let outcome = save_state.run(CloseCommand::Save);
+            finish(cx, &editor_focus, outcome);
         })
         .child(text(
             save_rect,
@@ -180,49 +159,12 @@ pub fn render(
     )
 }
 
-/// Apply the outcome of a dialog decision: exit when the request was an
-/// application close, otherwise hand focus back to the editor once the
-/// request is resolved. A failed save keeps the dialog (and its focus) open.
-fn finish(
-    cx: &mut UiEventContext,
-    state: &State<AppState>,
-    editor_focus: &UiFocusHandle,
-    continuation: Option<CloseContinuation>,
-) {
-    if continuation == Some(CloseContinuation::ExitApplication) {
-        if workspace_actions::save_editor_session(state) {
-            cx.window().close();
-        }
-    } else if state.get().editor.close_request.is_none() {
+fn finish(cx: &mut UiEventContext, editor_focus: &UiFocusHandle, outcome: CloseOutcome) {
+    if outcome.exit {
+        cx.window().close();
+    } else if outcome.resolved {
         editor_focus.focus();
     }
-}
-
-/// Perform a `dialog::` action from the keymap: Confirm saves, Secondary
-/// discards ("Don't Save") and Cancel keeps the files open.
-pub fn perform(
-    state: &State<AppState>,
-    editor_focus: &UiFocusHandle,
-    windows: &WindowManager,
-    action: Action,
-) -> bool {
-    let continuation = match action {
-        Action::DialogConfirm => workspace_actions::save_close_request(state),
-        Action::DialogSecondary => workspace_actions::discard_close_request(state),
-        Action::DialogCancel => {
-            workspace_actions::cancel_close_request(state);
-            None
-        }
-        _ => return false,
-    };
-    if continuation == Some(CloseContinuation::ExitApplication) {
-        if workspace_actions::save_editor_session(state) {
-            windows.close("loom");
-        }
-    } else if state.get().editor.close_request.is_none() {
-        editor_focus.focus();
-    }
-    true
 }
 
 fn centered(mut style: lgui::prelude::TextStyle) -> lgui::prelude::TextStyle {

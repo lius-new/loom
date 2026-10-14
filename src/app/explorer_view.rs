@@ -145,14 +145,14 @@ fn run(state: &State<AppState>, services: &Services, command: Command) {
             state.update(move |app| explorer::toggle_directory(app, &key));
         }
         Command::OpenMenu { point, target } => state.update(move |app| {
-            app.editor.tab_context_menu = None;
+            app.editor.tabs.tab_context_menu = None;
             app.explorer.ui.menu = Some(point);
             app.explorer.ui.menu_target = target;
             app.explorer.ui.menu_hover = None;
         }),
         Command::PressFile { path, point } => state.update(move |app| {
             let clicks = app.editor.tree_click_count(&path, point.0, point.1);
-            app.editor.file_drag = Some(FileDragState {
+            app.editor.tabs.file_drag = Some(FileDragState {
                 path,
                 source: FileDragSource::Explorer { clicks },
                 origin: point,
@@ -359,7 +359,7 @@ mod tests {
     fn opening_the_explorer_menu_replaces_the_tab_menu() {
         let (root, mut app) = workspace("explorer-view-menu", &["a.rs"]);
         let id = app.workspace.open_path(root.join("a.rs"), String::new());
-        app.editor.tab_context_menu = Some(TabContextMenuState {
+        app.editor.tabs.tab_context_menu = Some(TabContextMenuState {
             position: (1.0, 1.0),
             pane: app.workspace.active_pane(),
             target: id,
@@ -375,7 +375,7 @@ mod tests {
         h.render();
 
         let app = h.state.get();
-        assert!(app.editor.tab_context_menu.is_none());
+        assert!(app.editor.tabs.tab_context_menu.is_none());
         assert_eq!(app.explorer.ui.menu, Some((600.0, 40.0)));
         assert_eq!(app.explorer.ui.menu_target, menu_target);
         let _ = fs::remove_dir_all(root);
@@ -394,7 +394,7 @@ mod tests {
             });
         }
 
-        let drag = h.state.get().editor.file_drag.clone().unwrap();
+        let drag = h.state.get().editor.tabs.file_drag.clone().unwrap();
         assert_eq!(drag.path, path);
         assert!(matches!(
             drag.source,

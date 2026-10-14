@@ -146,6 +146,11 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
+    if(file.startsWith('src/ui/chrome/')||['welcome','workspace_home','titlebar','statusbar','tabs','tab_context_menu','close_confirmation','pane_sash','diff_editor'].some(n=>file==='src/ui/'+n+'.rs')) {
+      if(policy.exceptions[file]||terminalStandardServices(ts)||ts.some(t=>['AppState','AppRuntime','ApplicationHandle','TerminalHandle','TerminalController','FileLoader'].includes(t))||deps.some(d=>['std::fs','std::process','std::thread'].includes(d))||deps.some(d=>d.startsWith('crate::app')||d.startsWith('crate::model')||d==='crate::state')||ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super')||/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>t==='include'&&ts[i+1]==='!'))problems.push(file+': Chrome views must use value frames and semantic ports');
+    }
+    if(file==='src/ui/chrome/tab_state.rs') {const fields=structFields(source,'UiState'),known=Object.keys(policy.tabs_ui_ownership??{});for(const f of fields)if(!known.includes(f))problems.push('TabUiState.'+f+': unregistered owner');for(const f of known)if(!fields.includes(f))problems.push('TabUiState.'+f+': stale registration');}
+
     if(file.startsWith('src/features/keymap/')) {
       if(policy.exceptions[file]||terminalStandardServices(ts)||ts.some(t=>['AppState','AppRuntime','Workspace','State','ApplicationHandle','KeyboardEvent','LogicalKey','NamedKey','KeyState','KeyModifiers','InputState','UiRect','TerminalHandle','TerminalController','TerminalRuntime','FileLoader','Child'].includes(t)))problems.push(file+': Keymap rules must be root GUI/native independent and have no exceptions');
       if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super')||/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_bytes'].includes(t)&&ts[i+1]==='!')||(ts.some((t,i)=>t==='include_str'&&ts[i+1]==='!')&&(file!=='src/features/keymap/keymap_file.rs'||!source.includes('include_str!("../../../assets/keymaps/default.json")'))))problems.push(file+': Keymap rules cannot include or escape to adapter sources');

@@ -985,7 +985,7 @@ mod tests {
             for d in snapshot.dividers {
                 root = root.child(render_divider(d, state.clone()));
             }
-            root = root.child(crate::ui::statusbar::render(
+            root = root.child(crate::app::chrome::status(
                 UiRect::new(0.0, 776.0, 1200.0, 800.0),
                 state.clone(),
                 editor_focus.clone(),

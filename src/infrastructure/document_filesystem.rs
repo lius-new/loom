@@ -35,3 +35,8 @@ pub(crate) fn read_text_file(path: &Path) -> Result<String, String> {
 pub fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
     fs::write(path, contents)
 }
+
+/// Preserve the diff toolbar open-file behavior.
+pub fn read_diff_file(path: &std::path::Path) -> std::io::Result<String> {
+    std::fs::read_to_string(path)
+}

@@ -334,3 +334,8 @@ test('settings and keymap views cannot recover root or native capabilities',()=>
 test('R8 native file and window adapters reject root ownership and composition escapes',()=>{
  for(const file of ['src/infrastructure/file_loader.rs','src/infrastructure/file_watcher.rs','src/infrastructure/document_filesystem.rs','src/infrastructure/file_dialogs.rs','src/infrastructure/window_geometry.rs','src/infrastructure/launch.rs'])for(const source of ['struct Service { hidden: Wrapper<AppState> }','use crate::app::workspace;','use super::super::state::AppState;','include!("application.rs");'])assert.ok(violations({[file]:source},policy()).length>0,file+source);
 });
+
+test('chrome views reject root runtime native access and ancestor escapes',()=>{
+ for(const file of ['src/ui/tabs.rs','src/ui/diff_editor.rs','src/ui/welcome.rs','src/ui/titlebar.rs','src/ui/statusbar.rs','src/ui/tab_context_menu.rs','src/ui/close_confirmation.rs','src/ui/pane_sash.rs','src/ui/chrome/binding.rs'])for(const source of ['struct Frame { hidden: Wrapper<AppState> }','use crate::app::workspace;','use crate::model::workspace;','std::fs::read(path);','use super::super::state;','include!("application.rs");'])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('Chrome views')),file+source);
+});
+test('tab UI state must retain explicit field ownership',()=>{assert.ok(violations({'src/ui/chrome/tab_state.rs':'struct UiState { surprise: bool }'},policy()).some(e=>e.includes('TabUiState.surprise')));});

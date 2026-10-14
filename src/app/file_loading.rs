@@ -530,7 +530,7 @@ mod tests {
                 let id = UiId::owned(format!("preview-focus-{row}"));
                 let focus = cx.focus_handle(id);
                 let pane = state.get().workspace.active_pane();
-                root = root.child(crate::ui::tabs::render(
+                root = root.child(crate::app::tabs::render(
                     pane,
                     UiRect::new(0.0, row as f32 * 36.0, 300.0, (row + 1) as f32 * 36.0),
                     state,

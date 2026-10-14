@@ -4,12 +4,11 @@ use lgui::core::{
     CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiEventKind, UiFocusHandle, UiId,
     clip,
 };
-use lgui::prelude::{Element, State, UiRect, VisualStyle, group, panel, text};
+use lgui::prelude::{Element, UiRect, VisualStyle, group, panel, text};
 
-use crate::state::AppState;
+use crate::ui::chrome::{HomeBinding, HomeCommand};
 use crate::ui::tabs::{TEXT_MARGIN, ellipsize, measure};
 use crate::ui::theme;
-use crate::workspace_actions;
 
 const MAX_PAGE_W: f32 = 760.0;
 const PAGE_PAD_X: f32 = 32.0;
@@ -36,11 +35,11 @@ const ACTIONS: [(StartAction, &str); 2] = [
 
 pub fn render(
     rect: UiRect,
-    state: State<AppState>,
+    state: HomeBinding,
     surface_id: UiId,
     editor_focus: UiFocusHandle,
 ) -> Element {
-    let snapshot = state.get();
+    let snapshot = state.frame();
     let page_w = (rect.width() - PAGE_PAD_X * 2.0).clamp(0.0, MAX_PAGE_W);
     let page_left = rect.left + (rect.width() - page_w) / 2.0;
     let page_right = page_left + page_w;
@@ -54,11 +53,7 @@ pub fn render(
     })
     .event_policy(EventPolicy::INTERACTIVE)
     .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
-        clear_hover.try_update(|app| {
-            let changed = app.welcome_hover.is_some();
-            app.welcome_hover = None;
-            changed
-        });
+        clear_hover.run(HomeCommand::Hover(None));
     });
     welcome = crate::ui::track_main_surface_focus(welcome, state.clone());
 
@@ -125,7 +120,7 @@ pub fn render(
             index,
             action,
             label,
-            snapshot.welcome_hover == Some(index),
+            snapshot.hover == Some(index),
             state.clone(),
             editor_focus.clone(),
         ));
@@ -146,7 +141,7 @@ pub fn render(
         .floor() as usize)
         .clamp(1, MAX_VISIBLE_RECENTS);
 
-    if snapshot.explorer.model.recents().is_empty() {
+    if snapshot.paths.is_empty() {
         welcome = welcome.child(empty_recent_card(UiRect::new(
             workspace_rect.left,
             list_top,
@@ -155,14 +150,7 @@ pub fn render(
         )));
     } else {
         let mut card_top = list_top;
-        for (recent_index, path) in snapshot
-            .explorer
-            .model
-            .recents()
-            .iter()
-            .take(visible_count)
-            .enumerate()
-        {
+        for (recent_index, path) in snapshot.paths.iter().take(visible_count).enumerate() {
             let hover_index = ACTIONS.len() + recent_index;
             let card = UiRect::new(
                 workspace_rect.left,
@@ -174,7 +162,7 @@ pub fn render(
                 card,
                 path,
                 hover_index,
-                snapshot.welcome_hover == Some(hover_index),
+                snapshot.hover == Some(hover_index),
                 state.clone(),
             ));
             card_top += WORKSPACE_CARD_H + WORKSPACE_CARD_GAP;
@@ -208,7 +196,7 @@ fn action_row(
     action: StartAction,
     label: &'static str,
     hovered: bool,
-    state: State<AppState>,
+    state: HomeBinding,
     editor_focus: UiFocusHandle,
 ) -> Element {
     let surface = if hovered {
@@ -222,20 +210,16 @@ fn action_row(
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_pointer_move(move |_cx, _pointer| {
-            hover_state.try_update(move |app| {
-                let changed = app.welcome_hover != Some(index);
-                app.welcome_hover = Some(index);
-                changed
-            });
+            hover_state.run(HomeCommand::Hover(Some(index)));
         })
         .on_click(move || match action {
             StartAction::OpenFile => {
-                if workspace_actions::choose_file(&click_state) {
+                if click_state.run(HomeCommand::OpenFile) {
                     editor_focus.focus();
                 }
             }
             StartAction::OpenFolder => {
-                crate::app::explorer::choose_folder(&click_state);
+                click_state.run(HomeCommand::OpenFolder);
             }
         })
         .child(text(
@@ -265,7 +249,7 @@ fn recent_workspace_card(
     path: &std::path::Path,
     hover_index: usize,
     hovered: bool,
-    state: State<AppState>,
+    state: HomeBinding,
 ) -> Element {
     let name = path
         .file_name()
@@ -290,14 +274,10 @@ fn recent_workspace_card(
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_pointer_move(move |_cx, _pointer| {
-            hover_state.try_update(move |app| {
-                let changed = app.welcome_hover != Some(hover_index);
-                app.welcome_hover = Some(hover_index);
-                changed
-            });
+            hover_state.run(HomeCommand::Hover(Some(hover_index)));
         })
         .on_click(move || {
-            crate::app::explorer::open_recent_folder(&click_state, workspace_path.clone());
+            click_state.run(HomeCommand::OpenRecent(workspace_path.clone()));
         })
         .child(text(
             UiRect::new(

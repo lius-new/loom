@@ -179,7 +179,7 @@ mod tests {
                 let pane = state.get().workspace.active_pane();
                 group(rect)
                     .child(panel(rect, VisualStyle::filled(crate::ui::theme::c().bg)))
-                    .child(crate::ui::tabs::render(
+                    .child(crate::app::tabs::render(
                         pane,
                         UiRect::new(0.0, 0.0, 800.0, 36.0),
                         state,
