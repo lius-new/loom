@@ -1,4 +1,5 @@
 //! Tab commands and cross-pane transactions; UI retains geometry and painting.
+use crate::app::context::AppContext;
 use crate::app::state::{AppState, MainSurface, TabContextMenuState, TabDragState, TabDrop};
 use crate::domain::identity::{FileId, PaneId};
 #[cfg(test)]
@@ -10,7 +11,7 @@ use crate::ui::tabs::*;
 #[cfg(test)]
 use crate::ui::theme;
 use lgui::core::UiFocusHandle;
-use lgui::prelude::{Element, State, UiRect};
+use lgui::prelude::{Element, UiRect};
 pub fn frame(app: &AppState) -> Frame<'_> {
     Frame {
         workspace: &app.workspace.core,
@@ -33,7 +34,7 @@ pub fn frame(app: &AppState) -> Frame<'_> {
             .collect(),
     }
 }
-pub fn binding(state: &State<AppState>) -> Binding {
+pub fn binding(state: &AppContext) -> Binding {
     let reader = state.clone();
     let writer = state.clone();
     Binding::new(
@@ -56,7 +57,7 @@ pub fn binding(state: &State<AppState>) -> Binding {
         move |command| run(&writer, command),
     )
 }
-pub fn run(state: &State<AppState>, command: Command) {
+pub fn run(state: &AppContext, command: Command) {
     if let Command::Close(pane, id) = command {
         crate::app::workspace_commands::request_close_tab(state, pane, id);
         return;
@@ -418,7 +419,7 @@ pub fn cancel_pointer_interaction(app: &mut AppState) -> bool {
 pub fn render(
     pane: PaneId,
     rect: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     editor_focus: UiFocusHandle,
 ) -> Element {
     crate::ui::tabs::render(pane, rect, binding(&state), editor_focus)

@@ -2,39 +2,45 @@
 //! and rename, trash, reveal, and opening files from the drawers. Each
 //! command keeps Workspace and Explorer changes in one root-state update;
 //! disk access goes through the Explorer filesystem adapter.
+use crate::app::context::AppContext;
 
 use std::path::{Path, PathBuf};
 
 use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
-use lgui::prelude::State;
 
+use crate::app::state::{AppState, TabDrop};
+use crate::app::workspace_commands::read_text_file;
+use crate::app::workspace_session as workspace_persistence;
 use crate::features::explorer::model::Reveal;
 use crate::features::explorer::ports::FileOpsPort;
 use crate::features::explorer::{ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::features::explorer::{edit, roots};
 use crate::infrastructure::explorer_filesystem::ExplorerFilesystem;
 use crate::model::document::FileId;
-use crate::state::{AppState, TabDrop};
-use crate::workspace_actions::read_text_file;
-use crate::workspace_persistence;
 
 const TREE_ROW_H: f32 = 20.0;
 
 /// Open a file clicked in the Explorer: a single click previews it, a double
 /// click keeps it open. Returns whether the editor should take focus.
-pub(crate) fn open_tree_file(app: &mut AppState, path: PathBuf, clicks: u8) -> bool {
+pub(crate) fn open_tree_file(
+    app: &mut AppState,
+    path: PathBuf,
+    clicks: u8,
+    loader: Option<&crate::app::file_loading::FileLoader>,
+) -> bool {
     if app.workspace.file_id_for_path(&path).is_some() {
-        crate::file_loading::cancel(app);
+        crate::app::file_loading::cancel(app);
         return open_tree_file_with(app, path, clicks, |_| Ok(String::new()));
-    } else if crate::file_loading::request(
+    } else if crate::app::file_loading::request(
         app,
         path.clone(),
         if clicks > 1 {
-            crate::model::workspace::OpenMode::Permanent
+            crate::app::workspace::OpenMode::Permanent
         } else {
-            crate::model::workspace::OpenMode::Preview
+            crate::app::workspace::OpenMode::Preview
         },
         None,
+        loader,
     ) {
         return true;
     }
@@ -63,7 +69,7 @@ fn open_tree_file_with(
             } else {
                 app.workspace.preview_path(path, contents);
             }
-            app.toast = None;
+            app.chrome.toast = None;
             true
         }
         Err(message) => {
@@ -76,24 +82,25 @@ fn open_tree_file_with(
 /// Release a pressed Explorer file: open it like a click when it was not
 /// dragged, otherwise open it where it was dropped. Returns whether the
 /// editor should take focus.
-pub(crate) fn finish_file_drag(app: &mut AppState) -> bool {
-    if app
-        .runtime()
-        .is_some_and(|runtime| runtime.file_loader().is_some())
-    {
+pub(crate) fn finish_file_drag(
+    app: &mut AppState,
+    loader: Option<&crate::app::file_loading::FileLoader>,
+) -> bool {
+    if loader.is_some() {
         if let Some(drag) = app.editor.tabs.file_drag.take() {
-            let crate::state::FileDragSource::Explorer { clicks } = drag.source else {
+            let crate::app::state::FileDragSource::Explorer { clicks } = drag.source else {
                 return false;
             };
             if !drag.active {
-                return open_tree_file(app, drag.path, clicks);
+                return open_tree_file(app, drag.path, clicks, loader);
             }
             if let Some(drop) = drag.drop {
-                return crate::file_loading::request(
+                return crate::app::file_loading::request(
                     app,
                     drag.path,
-                    crate::model::workspace::OpenMode::Permanent,
+                    crate::app::workspace::OpenMode::Permanent,
                     Some(drop),
+                    loader,
                 );
             }
         }
@@ -109,7 +116,7 @@ fn finish_file_drag_with(
     let Some(drag) = app.editor.tabs.file_drag.take() else {
         return false;
     };
-    let crate::state::FileDragSource::Explorer { clicks } = drag.source else {
+    let crate::app::state::FileDragSource::Explorer { clicks } = drag.source else {
         return false;
     };
     if !drag.active {
@@ -154,27 +161,31 @@ fn finish_file_drag_with(
             workspace.open_path(drag.path, contents);
         }
     }
-    app.toast = None;
+    app.chrome.toast = None;
     true
 }
 
 /// Dispatch a drawer-file release without doing Git reads on the UI thread.
-pub(crate) fn finish_drawer_file_drag(state: &State<AppState>) -> bool {
+pub(crate) fn finish_drawer_file_drag(state: &AppContext) -> bool {
+    let loader = state.services().and_then(|r| r.file_loader());
     let mut changes = None;
     let mut focus = false;
     state.try_update(|app| {
         let Some(drag) = &app.editor.tabs.file_drag else {
             return false;
         };
-        if matches!(drag.source, crate::state::FileDragSource::Changes { .. }) {
+        if matches!(
+            drag.source,
+            crate::app::state::FileDragSource::Changes { .. }
+        ) {
             changes = app.editor.tabs.file_drag.take();
         } else {
-            focus = finish_file_drag(app);
+            focus = finish_file_drag(app, loader.as_ref());
         }
         true
     });
     if let Some(drag) = changes {
-        let crate::state::FileDragSource::Changes { request, untracked } = drag.source else {
+        let crate::app::state::FileDragSource::Changes { request, untracked } = drag.source else {
             unreachable!("only changes drags are dispatched here");
         };
         if !drag.active {
@@ -200,7 +211,7 @@ pub(crate) fn refresh(app: &mut AppState) -> bool {
     app.explorer.model.refresh_all(&ExplorerFilesystem)
 }
 
-pub fn reveal_file(state: &State<AppState>, id: FileId) {
+pub fn reveal_file(state: &AppContext, id: FileId) {
     state.update(move |app| {
         let Some(path) = app.workspace.meta(id).map(|meta| meta.path.clone()) else {
             return;
@@ -218,7 +229,7 @@ pub fn reveal_file(state: &State<AppState>, id: FileId) {
     });
 }
 
-pub fn choose_folder(state: &State<AppState>) -> bool {
+pub fn choose_folder(state: &AppContext) -> bool {
     let mut options = FileDialogOptions::new().title("Open Folder");
     if let Some(directory) = state.get().explorer.model.roots().first().cloned() {
         options = options.directory(directory);
@@ -233,7 +244,7 @@ pub fn choose_folder(state: &State<AppState>) -> bool {
 
 /// Add another root folder to the current file tree without replacing the
 /// folders that are already open.
-pub fn choose_folder_to_add(state: &State<AppState>) -> bool {
+pub fn choose_folder_to_add(state: &AppContext) -> bool {
     let mut options = FileDialogOptions::new().title("Add Folder to Project");
     if let Some(directory) = state.get().explorer.model.roots().first().cloned() {
         options = options.directory(directory);
@@ -246,21 +257,21 @@ pub fn choose_folder_to_add(state: &State<AppState>) -> bool {
     true
 }
 
-pub fn begin_create(state: &State<AppState>, parent: PathBuf, kind: ExplorerCreateKind) {
+pub fn begin_create(state: &AppContext, parent: PathBuf, kind: ExplorerCreateKind) {
     state.update(move |app| {
         app.explorer.model.begin_create(parent, kind);
         app.explorer.ui.clear_edit();
     });
 }
 
-pub fn cancel_edit(state: &State<AppState>) {
+pub fn cancel_edit(state: &AppContext) {
     state.update(|app| {
         app.explorer.model.cancel_edit();
         app.explorer.ui.clear_edit();
     });
 }
 
-pub fn copy_item(state: &State<AppState>, path: &Path, cut: bool) {
+pub fn copy_item(state: &AppContext, path: &Path, cut: bool) {
     let action = if cut { "Cut" } else { "Copied" };
     match ExplorerFilesystem.set_file_clipboard(path, cut) {
         Ok(()) => {
@@ -274,7 +285,7 @@ pub fn copy_item(state: &State<AppState>, path: &Path, cut: bool) {
     }
 }
 
-pub fn begin_rename(state: &State<AppState>, path: PathBuf, kind: ExplorerTargetKind) {
+pub fn begin_rename(state: &AppContext, path: PathBuf, kind: ExplorerTargetKind) {
     let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
         state.update(|app| app.show_toast("This name cannot be edited as text."));
         return;
@@ -287,7 +298,7 @@ pub fn begin_rename(state: &State<AppState>, path: PathBuf, kind: ExplorerTarget
     });
 }
 
-pub fn finish_rename(state: &State<AppState>) {
+pub fn finish_rename(state: &AppContext) {
     let snapshot = state.get();
     let Some(request) = snapshot.explorer.model.rename_request().cloned() else {
         return;
@@ -329,13 +340,13 @@ fn apply_renamed_path_state(app: &mut AppState, old_path: &Path, new_path: &Path
         .apply_rename(&ExplorerFilesystem, old_path, new_path);
     app.explorer.ui.hovered_path = None;
     app.explorer.ui.clear_edit();
-    app.toast = None;
+    app.chrome.toast = None;
     if roots_changed {
         persist_workspace(app);
     }
 }
 
-pub fn delete_item(state: &State<AppState>, path: PathBuf) {
+pub fn delete_item(state: &AppContext, path: PathBuf) {
     if state.get().workspace.has_dirty_paths_under(&path) {
         state.update(|app| {
             app.show_toast("Save or close modified files before deleting this item.")
@@ -355,7 +366,7 @@ pub(crate) fn move_path_to_trash(path: &Path) -> Result<bool, String> {
 }
 
 /// Show a file or folder in the platform file manager.
-pub(crate) fn reveal_item(state: &State<AppState>, target: &ExplorerContextTarget) {
+pub(crate) fn reveal_item(state: &AppContext, target: &ExplorerContextTarget) {
     if let Err(error) = ExplorerFilesystem.reveal(&target.path, target.kind) {
         state.update(move |app| {
             app.show_error(format!("Could not reveal item: {error}"));
@@ -375,7 +386,7 @@ pub(crate) fn apply_deleted_path_state(app: &mut AppState, path: &Path) {
 }
 
 /// Remove a root from the current workspace without touching it on disk.
-pub fn remove_root(state: &State<AppState>, root: PathBuf) {
+pub fn remove_root(state: &AppContext, root: PathBuf) {
     let display = root
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -408,7 +419,7 @@ fn remove_folder_state(app: &mut AppState, root: &Path) -> bool {
     true
 }
 
-pub fn finish_create(state: &State<AppState>) {
+pub fn finish_create(state: &AppContext) {
     let snapshot = state.get();
     let Some(request) = snapshot.explorer.model.create_request().cloned() else {
         return;
@@ -455,12 +466,12 @@ pub fn finish_create(state: &State<AppState>) {
             app.workspace.open_path(target, String::new());
         }
         app.explorer.ui.clear_edit();
-        app.toast = None;
+        app.chrome.toast = None;
     });
 }
 
 /// Reopen a folder selected from the welcome screen's recent-workspace list.
-pub fn open_recent_folder(state: &State<AppState>, path: PathBuf) -> bool {
+pub fn open_recent_folder(state: &AppContext, path: PathBuf) -> bool {
     if !path.is_dir() {
         let display = path.display().to_string();
         state.update(move |app| {
@@ -487,8 +498,8 @@ fn replace_folder_state(app: &mut AppState, path: PathBuf) {
     app.explorer.model.open_root(&ExplorerFilesystem, path);
     app.explorer.ui.reset_scroll();
     app.drawer.visible = true;
-    app.welcome_hover = None;
-    app.toast = None;
+    app.chrome.welcome_hover = None;
+    app.chrome.toast = None;
 }
 
 pub(crate) fn add_folder(app: &mut AppState, path: PathBuf) {
@@ -514,8 +525,8 @@ fn add_folder_state(app: &mut AppState, path: PathBuf) -> bool {
         app.explorer.ui.reset_scroll();
     }
     app.drawer.visible = true;
-    app.welcome_hover = None;
-    app.toast = None;
+    app.chrome.welcome_hover = None;
+    app.chrome.toast = None;
     true
 }
 
@@ -523,7 +534,11 @@ fn add_folder_state(app: &mut AppState, path: PathBuf) -> bool {
 /// restored. The first folder replaces the workspace like Open Folder and any
 /// further folders are added to it; files open as tabs, the last one active.
 /// Unreadable paths are reported once in a toast.
-pub(crate) fn open_launch_paths(app: &mut AppState, paths: Vec<PathBuf>) {
+pub(crate) fn open_launch_paths(
+    app: &mut AppState,
+    paths: Vec<PathBuf>,
+    loader: Option<&crate::app::file_loading::FileLoader>,
+) {
     // Launch files use the same metadata-first restoration as session tabs.
     // Reading them here would still block the very first frame.
     let mut replaced_workspace = false;
@@ -538,18 +553,16 @@ pub(crate) fn open_launch_paths(app: &mut AppState, paths: Vec<PathBuf>) {
                 replaced_workspace = true;
             }
         } else {
-            if app
-                .runtime()
-                .is_some_and(|runtime| runtime.file_loader().is_some())
-            {
+            if loader.is_some() {
                 if let Some(id) = app.workspace.file_id_for_path(&path) {
                     app.workspace.set_active(id);
                 } else {
-                    crate::file_loading::request(
+                    crate::app::file_loading::request(
                         app,
                         path,
-                        crate::model::workspace::OpenMode::Permanent,
+                        crate::app::workspace::OpenMode::Permanent,
                         None,
+                        loader,
                     );
                 }
             } else {
@@ -626,7 +639,7 @@ mod tests;
 
 /// Copy `target` to the clipboard, absolute or relative to its workspace root.
 pub(crate) fn copy_path(
-    state: &State<AppState>,
+    state: &AppContext,
     clipboard: &dyn lgui::services::Clipboard,
     target: &Path,
     relative: bool,

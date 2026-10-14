@@ -1,8 +1,9 @@
 //! Profile validation, discovery and configuration commands.
+use crate::app::context::AppContext;
+use crate::app::state::AppState;
 use crate::features::terminal::ShellKind;
 use crate::features::terminal::profiles::{ShellProfile, format_arguments, parse_arguments};
 use crate::infrastructure::terminal::profiles::resolve_program;
-use crate::state::AppState;
 use crate::ui::components::input::InputState;
 use crate::ui::terminal::state::ProfileEditor;
 use std::path::PathBuf;
@@ -130,7 +131,7 @@ pub(crate) fn close_editor(app: &mut AppState) {
 /// The current project's folder name and the shell its project settings
 /// choose, when they choose one.
 pub(crate) fn project_shell(app: &AppState) -> Option<(String, String)> {
-    let root = crate::key_actions::project_settings_root(app)?;
+    let root = crate::app::key_actions::project_settings_root(app)?;
     let (_, project) = app
         .preferences
         .values()
@@ -172,15 +173,13 @@ pub(crate) fn settings_frame(app: &AppState) -> crate::ui::terminal::settings_bi
         project_shell: project_shell(app),
     }
 }
-pub(crate) fn binding(
-    state: &lgui::prelude::State<AppState>,
-) -> crate::ui::terminal::settings_binding::Binding {
+pub(crate) fn binding(state: &AppContext) -> crate::ui::terminal::settings_binding::Binding {
     use crate::ui::terminal::settings_binding::{Binding, Command};
     let reader = state.clone();
     let writer = state.clone();
     Binding::new(
         crate::ui::components::state_access::StateAccess::project(
-            state.clone(),
+            state.model(),
             |app| &app.terminal.ui,
             |app| &mut app.terminal.ui,
         ),

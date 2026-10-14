@@ -2,7 +2,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::file_loading::FileLoader;
+use crate::app::file_loading::FileLoader;
 use crate::infrastructure::git::PollControl;
 use lgui::ApplicationHandle;
 
@@ -100,15 +100,13 @@ mod tests {
     fn snapshots_do_not_keep_runtime_services_alive() {
         let runtime = Arc::new(AppRuntime::default());
         runtime.set_application(UiTasks::default().application());
-        let mut state = AppState::new();
-        state.attach_runtime(&runtime);
-        let snapshot = state.clone();
+        let state = crate::app::test_support::live(AppState::new()).with_runtime(&runtime);
+        let snapshot = state.get();
         assert_eq!(Arc::strong_count(&runtime), 1);
-        assert!(snapshot.runtime().unwrap().application().is_some());
+        assert!(state.services().unwrap().application().is_some());
         drop(runtime);
-        assert!(state.runtime().is_none());
-        assert!(snapshot.runtime().is_none());
-        assert_eq!(state.settings(), snapshot.settings());
+        assert!(state.services().is_none());
+        assert_eq!(state.get().settings(), snapshot.settings());
     }
 
     #[test]
@@ -132,12 +130,11 @@ mod tests {
         let runtime = Arc::new(AppRuntime::default());
         let token = Arc::new(AtomicBool::new(false));
         runtime.install_search_cancel(token.clone());
-        let mut state = AppState::new();
-        state.attach_runtime(&runtime);
-        drop(state.clone());
+        let state = crate::app::test_support::live(AppState::new()).with_runtime(&runtime);
+        drop(state.get());
         assert!(!token.load(Ordering::Relaxed));
         drop(runtime);
         assert!(token.load(Ordering::Relaxed));
-        assert!(state.runtime().is_none());
+        assert!(state.services().is_none());
     }
 }

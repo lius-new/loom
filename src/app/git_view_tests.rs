@@ -1,4 +1,5 @@
 #![allow(unused_imports)]
+use crate::app::context::AppContext;
 use crate::features::git::actions::*;
 use crate::features::git::model::*;
 use crate::features::git::*;
@@ -14,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 mod panel_virtualization_tests {
     use super::*;
-    use crate::state::AppState;
+    use crate::app::state::AppState;
     use crate::ui::git::panel::*;
     use lgui::prelude::State;
 
@@ -30,9 +31,7 @@ mod panel_virtualization_tests {
         use std::sync::{Arc, Mutex};
 
         let viewport = UiRect::new(0.0, 0.0, 340.0, 600.0);
-        let exposed = Arc::new(Mutex::new(
-            None::<(State<AppState>, State<GitStoreSnapshot>)>,
-        ));
+        let exposed = Arc::new(Mutex::new(None::<(AppContext, State<GitStoreSnapshot>)>));
         let output = exposed.clone();
         let id = RepositoryId(1);
         let paths = (0..10_000)
@@ -99,7 +98,7 @@ mod panel_virtualization_tests {
             ..Default::default()
         };
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.git.model.set_history(GitHistory {
                     repository: "loom".into(),
@@ -117,7 +116,7 @@ mod panel_virtualization_tests {
                         .collect()),
                 });
                 app
-            });
+            }));
             let fixture = snapshot.clone();
             let store = cx.state_with(move || fixture);
             *output.lock().unwrap() = Some((state.clone(), store.clone()));
@@ -133,7 +132,9 @@ mod panel_virtualization_tests {
         let context = ApplicationContext::empty(Default::default());
         context
             .resources()
-            .provide(lgui::icons::IconRegistration(Arc::new(crate::svg_icons())));
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                crate::app::svg_icons(),
+            )));
         let _fonts = lgui::backend::install_text_environment(
             &context,
             lgui::render_skia::skia_text_system_handle(),
@@ -388,7 +389,7 @@ mod panel_virtualization_tests {
         use lgui::session::UiSession;
         use std::sync::{Arc, Mutex};
 
-        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 300.0, 100.0);
         let source = PathBuf::from("worktree-ui-test-source");
@@ -422,11 +423,11 @@ mod panel_virtualization_tests {
         };
         let view: AppView = Arc::new(move |cx| {
             let source = repository.worktree_root.clone();
-            let state = cx.state_with(move || {
+            let state = AppContext::detached(cx.state_with(move || {
                 let mut app = AppState::new();
                 app.explorer.model.restore(vec![source], Vec::new());
                 app
-            });
+            }));
             let store = cx.state_with(GitStoreSnapshot::default);
             *output.lock().unwrap() = Some(state.clone());
             panel(viewport, VisualStyle::default()).child(worktree_row(
@@ -468,7 +469,7 @@ mod panel_virtualization_tests {
         let app = state.get();
         assert_eq!(app.explorer.model.roots(), std::slice::from_ref(&source));
         assert!(!app.git.model.has_pinned_repository());
-        assert!(app.toast.is_none()); // The click did not also open the row.
+        assert!(app.chrome.toast.is_none()); // The click did not also open the row.
         let confirm = app.git.ui.confirm.unwrap();
         assert!(confirm.destructive);
         assert_eq!(
@@ -489,11 +490,11 @@ mod panel_virtualization_tests {
         use std::sync::{Arc, Mutex};
 
         for region in [ScrollRegion::Changes, ScrollRegion::Details] {
-            let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+            let exposed = Arc::new(Mutex::new(None::<AppContext>));
             let output = exposed.clone();
             let viewport = UiRect::new(0.0, 0.0, 300.0, 300.0);
             let view: AppView = Arc::new(move |cx| {
-                let state = cx.state_with(AppState::new);
+                let state = AppContext::detached(cx.state_with(AppState::new));
                 let store = cx.state(GitStoreSnapshot::default());
                 *output.lock().unwrap() = Some(state.clone());
                 let scroll = region.scroll(&state.get().git);
@@ -573,15 +574,15 @@ mod panel_virtualization_tests {
 }
 mod panel_action_tests {
     use super::*;
-    use crate::state::AppState;
+    use crate::app::state::AppState;
     use crate::ui::git::panel::*;
     use lgui::prelude::State;
 
     #[test]
     fn change_rows_drag_to_editor_splits_and_buttons_do_not_arm_file_drags() {
+        use crate::app::state::{FileDragSource, TabDrop};
         use crate::app::tabs;
         use crate::model::pane_layout::Direction;
-        use crate::state::{FileDragSource, TabDrop};
         use crate::ui::tabs::PaneRegion;
         use lgui::application::{AppView, ApplicationContext};
         use lgui::core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
@@ -594,15 +595,15 @@ mod panel_action_tests {
             } else {
                 DiffTarget::IndexToWorktree
             };
-            let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+            let exposed = Arc::new(Mutex::new(None::<AppContext>));
             let output = exposed.clone();
             let viewport = UiRect::new(0.0, 0.0, 900.0, 400.0);
             let view: AppView = Arc::new(move |cx| {
-                let state = cx.state_with(|| {
+                let state = AppContext::detached(cx.state_with(|| {
                     let mut app = AppState::new();
                     app.workspace.open_path("current.txt".into(), "keep".into());
                     app
-                });
+                }));
                 *output.lock().unwrap() = Some(state.clone());
                 let pane = state.get().workspace.active_pane();
                 let store = cx.state_with(GitStoreSnapshot::default);
@@ -895,7 +896,7 @@ mod panel_action_tests {
 }
 mod branch_picker_tests {
     use super::*;
-    use crate::state::AppState;
+    use crate::app::state::AppState;
     use crate::ui::git::branch_picker::*;
     use lgui::prelude::State;
     use std::sync::Arc;
@@ -910,11 +911,11 @@ mod branch_picker_tests {
         use lgui::session::UiSession;
         use std::sync::Mutex;
 
-        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 460.0, 420.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 let mut branches = sample();
                 let mut occupied = branch("fix/login", false, false, None);
@@ -935,7 +936,7 @@ mod branch_picker_tests {
                     .into();
                 }
                 app
-            });
+            }));
             let store = cx.state_with(GitStoreSnapshot::default);
             *output.lock().unwrap() = Some(state.clone());
             let app = state.get();
@@ -987,7 +988,7 @@ mod branch_picker_tests {
             use lgui::core::PhysicalRect;
             use lgui::icons::IconRegistration;
             use lgui::renderer::{FrameInfo, FrameReason};
-            let icons = crate::svg_icons();
+            let icons = crate::app::svg_icons();
             context
                 .resources()
                 .provide(IconRegistration(Arc::new(icons)));
@@ -1271,7 +1272,7 @@ mod branch_picker_tests {
 }
 mod confirm_tests {
     use super::*;
-    use crate::state::AppState;
+    use crate::app::state::AppState;
     use crate::ui::git::confirm::render;
     use crate::ui::git::confirm::*;
     use lgui::application::{AppView, ApplicationContext};
@@ -1285,13 +1286,13 @@ mod confirm_tests {
     #[test]
     fn worktree_form_shows_destination_and_cancels_at_normal_and_narrow_widths() {
         for width in [640.0, 360.0] {
-            let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+            let exposed = Arc::new(Mutex::new(None::<AppContext>));
             let output = exposed.clone();
             let viewport = UiRect::new(0.0, 0.0, width, 420.0);
             let destination = PathBuf::from(r"D:\Documents\cprojects\loom-feature-login");
             let expected_path = crate::ui::display_path(&destination);
             let view: AppView = Arc::new(move |cx| {
-                let state = cx.state_with(|| {
+                let state = AppContext::detached(cx.state_with(|| {
                     let mut app = AppState::new();
                     app.git.ui.confirm = Some(GitConfirm {
                         title: "New Worktree".into(),
@@ -1306,7 +1307,7 @@ mod confirm_tests {
                         restore_terminal: false,
                     });
                     app
-                });
+                }));
                 let store = cx.state_with(GitStoreSnapshot::default);
                 let dialog_id = cx.use_stable_id();
                 *output.lock().unwrap() = Some(state.clone());
@@ -1360,7 +1361,7 @@ mod confirm_tests {
                 use lgui::renderer::{FrameInfo, FrameReason};
                 context
                     .resources()
-                    .provide(IconRegistration(Arc::new(crate::svg_icons())));
+                    .provide(IconRegistration(Arc::new(crate::app::svg_icons())));
                 let scale = UiScale::new(2.0);
                 let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(8 * 1024 * 1024);
                 let frame = FrameInfo::new(
@@ -1427,7 +1428,7 @@ mod confirm_tests {
 }
 mod menu_tests {
     use super::*;
-    use crate::state::AppState;
+    use crate::app::state::AppState;
     use crate::ui::git::menu::*;
     use crate::ui::git::panel::UNSTAGED;
     use lgui::prelude::State;
@@ -1517,7 +1518,7 @@ mod menu_tests {
 }
 mod stash_switch_tests {
     use super::*;
-    use crate::state::AppState;
+    use crate::app::state::AppState;
     use crate::ui::git::stash_switch::*;
     use lgui::prelude::State;
 
@@ -1539,7 +1540,7 @@ mod stash_switch_tests {
 }
 mod clone_tests {
     use super::*;
-    use crate::state::AppState;
+    use crate::app::state::AppState;
     use crate::ui::git::clone::*;
     use lgui::prelude::State;
 

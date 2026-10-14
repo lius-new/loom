@@ -1,15 +1,16 @@
 //! Application editor commands preserve one shared Workspace transaction.
 use super::editor_vim as vim_input;
+use crate::app::context::AppContext;
 use crate::app::state::AppState;
 use crate::app::state::editor::{DragSelection, ImeSession, SelectionUnit};
 use crate::ui::editor::view::*;
 use crate::ui::fonts;
 use crate::ui::theme;
-use crate::vim;
 use lgui::core::PointerButton;
-use lgui::prelude::{State, UiRect};
+use lgui::prelude::UiRect;
 use loom_editor_core::commands::{self, Command};
 use loom_editor_core::normal;
+use loom_editor_core::vim;
 use std::ops::Range;
 const CURSOR_REVEAL_MARGIN: f32 = 12.0;
 pub fn drag_scrollbars(app: &mut AppState, rect: UiRect, pointer_x: f32, pointer_y: f32) -> bool {
@@ -136,7 +137,7 @@ pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
 }
 
 pub fn execute_command(
-    state: &State<AppState>,
+    state: &AppContext,
     command: Command,
     rect: UiRect,
     clipboard: lgui::services::ClipboardHandle,

@@ -10,8 +10,8 @@ use lgui::prelude::UiRect;
 use lgui::services::{Clipboard, ClipboardError};
 
 use crate::app::editor::{apply_command, insert_text};
+use crate::app::state::AppState;
 use crate::model::pane_layout::Direction;
-use crate::state::AppState;
 use loom_editor_core::commands::Command;
 use loom_editor_core::normal::Movement;
 

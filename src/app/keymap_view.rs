@@ -1,16 +1,16 @@
 //! Keymap view composition; UI does not discover configuration paths.
-use crate::app::state::AppState;
+use crate::app::context::AppContext;
 use crate::features::keymap::bindings;
 use crate::ui::components::state_access::StateAccess;
 use crate::ui::keymap_binding::{Binding, Command, Frame};
 use lgui::core::{UiFocusHandle, UiId};
-use lgui::prelude::{Element, State, UiRect};
-pub fn binding(state: &State<AppState>) -> Binding {
+use lgui::prelude::{Element, UiRect};
+pub fn binding(state: &AppContext) -> Binding {
     let reader = state.clone();
     let writer = state.clone();
     Binding::new(
         StateAccess::project(
-            state.clone(),
+            state.model(),
             |app| &app.keymap_ui,
             |app| &mut app.keymap_ui,
         ),
@@ -35,7 +35,7 @@ pub fn binding(state: &State<AppState>) -> Binding {
         move |command| run(&writer, command),
     )
 }
-pub fn run(state: &State<AppState>, command: Command) {
+pub fn run(state: &AppContext, command: Command) {
     if matches!(command, Command::OpenUserFile) {
         crate::app::key_actions::open_user_keymap(state);
         return;
@@ -50,6 +50,6 @@ pub fn run(state: &State<AppState>, command: Command) {
         Command::OpenUserFile => {}
     });
 }
-pub fn render(rect: UiRect, state: State<AppState>, id: UiId, focus: UiFocusHandle) -> Element {
+pub fn render(rect: UiRect, state: AppContext, id: UiId, focus: UiFocusHandle) -> Element {
     crate::ui::keymap_page::render(rect, binding(&state), id, focus)
 }

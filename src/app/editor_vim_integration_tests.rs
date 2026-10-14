@@ -1,6 +1,7 @@
 //! Vim through the real event path: focus, the keymap's capture listener,
 //! key events, and text input that the platform only sends for keys no
 //! handler prevented.
+use crate::app::context::AppContext;
 
 use std::sync::{Arc, Mutex};
 
@@ -9,20 +10,20 @@ use lgui::core::{
     ImeEvent, InputEvent, KeyModifiers, KeyState, KeyboardEvent, LogicalKey, NamedKey, Point,
     PointerButton, PointerData, SemanticRole, UiScale, dispatch_runtime_output,
 };
-use lgui::prelude::{State, UiRect, group};
+use lgui::prelude::{UiRect, group};
 use lgui::session::UiSession;
 
+use crate::app::state::AppState;
 use crate::features::git::GitStoreSnapshot;
 use crate::model::pane_layout::PaneId;
-use crate::state::AppState;
 use crate::ui::theme;
-use crate::vim::Mode;
+use loom_editor_core::vim::Mode;
 
 struct Ui {
     session: UiSession,
     view: AppView,
     app: ApplicationContext,
-    state: State<AppState>,
+    state: AppContext,
     viewport: UiRect,
 }
 
@@ -32,14 +33,14 @@ impl Ui {
     }
 
     fn new_with_home(contents: &str, workspace_home: Option<bool>) -> Self {
-        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
         let app = ApplicationContext::empty(Default::default());
         let view_app = app.clone();
         let contents = contents.to_owned();
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state({
+            let state = AppContext::detached(cx.state({
                 let mut app = AppState::new();
                 if let Some(project) = workspace_home {
                     if project {
@@ -52,7 +53,7 @@ impl Ui {
                     app.editor.vim.options.enabled = true;
                 }
                 app
-            });
+            }));
             let git_store = cx.state(GitStoreSnapshot::default());
             let terminals = crate::app::terminal_binding::test_store(
                 cx,
@@ -64,7 +65,7 @@ impl Ui {
             let focus = cx.focus_handle(id.clone());
             let terminal_id = cx.use_stable_id();
             let terminal_focus = cx.focus_handle(terminal_id);
-            let env = crate::key_actions::KeyEnv {
+            let env = crate::app::key_actions::KeyEnv {
                 state: state.clone(),
                 git_store: git_store.clone(),
                 application: view_app.clone(),
@@ -97,7 +98,7 @@ impl Ui {
             } else {
                 crate::app::chrome::welcome(viewport, state.clone(), id, focus)
             };
-            crate::key_actions::attach(group(viewport).child(surface), env)
+            crate::app::key_actions::attach(group(viewport).child(surface), env)
         });
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
@@ -163,8 +164,8 @@ impl Ui {
 
     /// Type Vim notation: characters, `<Esc>`, `<CR>`, `<BS>` and `<C-x>`.
     fn keys(&mut self, keys: &str) {
-        for key in crate::vim::Key::parse(keys) {
-            use crate::vim::Key;
+        for key in loom_editor_core::vim::Key::parse(keys) {
+            use loom_editor_core::vim::Key;
             let (logical, modifiers) = match key {
                 Key::Char(c) => {
                     let shift = c.is_uppercase();
@@ -342,7 +343,10 @@ fn application_shortcuts_and_vim_keys_share_the_keyboard() {
     let mut ui = Ui::new("one\ntwo");
     // Ctrl+V starts a visual block instead of pasting.
     ui.keys("<C-v>j");
-    assert_eq!(ui.mode(), Mode::Visual(crate::vim::VisualKind::Block));
+    assert_eq!(
+        ui.mode(),
+        Mode::Visual(loom_editor_core::vim::VisualKind::Block)
+    );
     ui.keys("d");
     assert_eq!(ui.text(), "ne\nwo");
     // Ctrl+Z is still the application's undo.

@@ -1,6 +1,7 @@
+use crate::app::context::AppContext;
+use crate::app::state::AppState;
 use crate::app::terminal_runtime::TerminalDisplay;
 use crate::features::terminal::actions::MenuAction;
-use crate::state::AppState;
 // Application command regressions against the real model, layout and weak runtime binding.
 use super::terminal::*;
 use crate::app::terminal_binding::{TerminalStore, TerminalTabs};
@@ -8,24 +9,24 @@ use crate::domain::application_layout::{ApplicationLayout, Content, Placement};
 use crate::features::terminal::ShellKind;
 use lgui::application::AppView;
 use lgui::core::UiScale;
-use lgui::prelude::{State, UiRect, VisualStyle, panel};
+use lgui::prelude::{UiRect, VisualStyle, panel};
 use lgui::services::{Clipboard, ClipboardError};
 use lgui::session::UiSession;
 use std::sync::{Arc, Mutex};
 
-pub(super) fn fixture() -> (UiSession, State<AppState>, TerminalStore) {
+pub(super) fn fixture() -> (UiSession, AppContext, TerminalStore) {
     let exposed = Arc::new(Mutex::new(None));
     let out = exposed.clone();
     let rect = UiRect::new(0.0, 0.0, 800.0, 600.0);
     let view: AppView = Arc::new(move |cx| {
-        let state = cx.state_with(|| {
+        let state = AppContext::detached(cx.state_with(|| {
             let mut app = AppState::new();
             app.terminal_chrome.show_terminal = true;
             app.terminal.ui.terminal_focused = true;
             app.layout.application_layout =
                 Some(ApplicationLayout::initial(rect.into(), 100.0, 100.0, 200.0));
             app
-        });
+        }));
         let tabs =
             crate::app::terminal_binding::test_store(cx, Some(state.clone()), TerminalTabs::new);
         let snapshot = tabs.get();
@@ -41,7 +42,7 @@ pub(super) fn fixture() -> (UiSession, State<AppState>, TerminalStore) {
 fn application() -> Arc<lgui::ApplicationHandle> {
     Arc::new(lgui::ApplicationHandle::new(|task| task(), || {}))
 }
-fn invariant(state: &State<AppState>, tabs: &TerminalStore) {
+fn invariant(state: &AppContext, tabs: &TerminalStore) {
     let app = state.get();
     let model = tabs.get();
     let layout = app.layout.application_layout.as_ref().unwrap();

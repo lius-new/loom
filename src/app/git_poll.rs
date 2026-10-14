@@ -1,14 +1,15 @@
 //! Source Control status polling: what the poller should scan, which scan
 //! results may land, and the history load that follows the active HEAD.
+use crate::app::context::AppContext;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use lgui::prelude::State;
 
+use crate::app::state::AppState;
 use crate::features::git::{GitResult, GitStoreSnapshot, PollTarget};
 use crate::infrastructure::git::{PollControl, PollingHandle};
-use crate::state::AppState;
 
 pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(2_000);
 
@@ -78,7 +79,7 @@ pub(crate) fn start(
 
 /// Deliver a scan on the UI thread, retiring whatever it replaces.
 pub(crate) fn deliver(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     notification: GitScanNotification,
 ) {
@@ -100,7 +101,7 @@ pub(crate) fn deliver(
         });
         diffs_changed
     });
-    crate::background_ui::retire(retired);
+    crate::infrastructure::ui_dispatch::retire(retired);
 }
 
 /// Apply a scan unless the workspace roots or poll target changed since it
@@ -114,14 +115,14 @@ pub(crate) fn apply_scan(
     result: GitResult<GitStoreSnapshot>,
 ) -> (bool, bool) {
     if app.explorer.model.roots() != roots || poll_target(app) != *target {
-        crate::background_ui::retire(result);
+        crate::infrastructure::ui_dispatch::retire(result);
         return (false, false);
     }
     if result
         .as_ref()
         .is_ok_and(|next| next.generation < current.generation)
     {
-        crate::background_ui::retire(result);
+        crate::infrastructure::ui_dispatch::retire(result);
         return (false, false);
     }
     let diffs_changed = if let Ok(next) = &result
@@ -131,7 +132,7 @@ pub(crate) fn apply_scan(
             .workspace
             .apply_prepared_git_diffs(&next.presentation.diffs, app.git.ui.split_diff);
         let changed = !retired.is_empty();
-        crate::background_ui::retire(retired);
+        crate::infrastructure::ui_dispatch::retire(retired);
         changed
     } else {
         false

@@ -65,11 +65,11 @@ mod tests {
     use lgui::core::{KeyModifiers, KeyState, KeyboardEvent, LogicalKey, NamedKey};
 
     use super::*;
-    use crate::input::action::Action;
-    use crate::input::dispatcher::dispatch_key;
-    use crate::input::keymap_file::default_keymap;
-    use crate::input::keystroke::Keystroke;
-    use crate::state::{CloseContinuation, CloseRequest};
+    use crate::app::state::{CloseContinuation, CloseRequest};
+    use crate::features::keymap::action::Action;
+    use crate::features::keymap::dispatcher::dispatch_key;
+    use crate::features::keymap::keymap_file::default_keymap;
+    use crate::features::keymap::keystroke::Keystroke;
 
     fn secondary() -> KeyModifiers {
         if cfg!(target_os = "macos") {
@@ -388,11 +388,11 @@ mod tests {
 #[cfg(test)]
 mod vim_tests {
     use super::*;
+    use crate::features::keymap::action::Action;
     use crate::features::keymap::bindings::BindingSource;
-    use crate::input::action::Action;
-    use crate::input::dispatcher::dispatch_key;
-    use crate::input::keymap_file;
-    use crate::input::keystroke::Keystroke;
+    use crate::features::keymap::dispatcher::dispatch_key;
+    use crate::features::keymap::keymap_file;
+    use crate::features::keymap::keystroke::Keystroke;
 
     fn vim_app() -> AppState {
         let mut app = AppState::new();
@@ -440,9 +440,11 @@ mod vim_tests {
 
         let mut editor = app.workspace.active_editor_mut().unwrap();
         let mut host = NoHost;
-        app.editor
-            .vim
-            .handle_key(&mut editor, crate::vim::Key::Char('i'), &mut host);
+        app.editor.vim.handle_key(
+            &mut editor,
+            loom_editor_core::vim::Key::Char('i'),
+            &mut host,
+        );
         drop(editor);
         let insert = context_stack(&app);
         let first = dispatch_key(&keymap, Vec::new(), ks("j"), &insert);
@@ -461,7 +463,7 @@ mod vim_tests {
 
     struct NoHost;
 
-    impl crate::vim::Clipboard for NoHost {
+    impl loom_editor_core::vim::Clipboard for NoHost {
         fn read(&mut self) -> Result<Option<String>, String> {
             Ok(None)
         }
@@ -470,13 +472,13 @@ mod vim_tests {
         }
     }
 
-    impl crate::vim::Host for NoHost {
+    impl loom_editor_core::vim::Host for NoHost {
         fn page_lines(&self) -> usize {
             10
         }
         fn visible_lines(&self) -> std::ops::Range<usize> {
             0..10
         }
-        fn request(&mut self, _: crate::vim::Request) {}
+        fn request(&mut self, _: loom_editor_core::vim::Request) {}
     }
 }

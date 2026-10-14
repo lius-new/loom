@@ -1,4 +1,5 @@
 //! Target-bound editor tab menu operations and projection.
+use crate::app::context::AppContext;
 use crate::app::state::AppState;
 use crate::app::workspace_commands::{self as workspace_actions, TabCloseScope};
 use crate::domain::identity::{FileId, PaneId};
@@ -7,7 +8,7 @@ use crate::features::explorer::{ExplorerContextTarget, ExplorerTargetKind};
 use crate::ui::chrome::menu_binding::{Binding, Frame};
 use crate::ui::tab_context_menu::{self, Action, ENTRIES, Entry};
 use lgui::core::UiEventContext;
-use lgui::prelude::{Element, State, UiRect};
+use lgui::prelude::{Element, UiRect};
 use lgui::services::ServicesContextExt;
 fn close_scope(action: Action) -> Option<TabCloseScope> {
     match action {
@@ -51,7 +52,7 @@ fn action_enabled(app: &AppState, pane: PaneId, target: FileId, action: Action) 
     }
 }
 pub fn execute(
-    state: &State<AppState>,
+    state: &AppContext,
     pane: PaneId,
     target: FileId,
     action: Action,
@@ -127,7 +128,7 @@ pub fn execute(
         _ => {}
     }
 }
-pub fn binding(state: &State<AppState>) -> Binding {
+pub fn binding(state: &AppContext) -> Binding {
     let reader = state.clone();
     let hovering = state.clone();
     let dismissing = state.clone();
@@ -189,7 +190,7 @@ pub fn binding(state: &State<AppState>) -> Binding {
         move |pane, target, action, cx| execute(&actions, pane, target, action, cx),
     )
 }
-pub fn render(rect: UiRect, state: State<AppState>) -> Element {
+pub fn render(rect: UiRect, state: AppContext) -> Element {
     tab_context_menu::render(rect, binding(&state))
 }
 #[cfg(test)]

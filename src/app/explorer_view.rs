@@ -2,6 +2,7 @@
 //! state, supplies per-frame inputs, and runs the view's semantic commands.
 //! Cross-feature effects (editor drags, terminals, clipboard, drawer chrome)
 //! stay here so the view never sees the root state.
+use crate::app::context::AppContext;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -11,11 +12,11 @@ use lgui::core::UiFocusHandle;
 use lgui::prelude::{Element, State, UiRect};
 use lgui::services::ServicesContextExt;
 
+use crate::app::state::{FileDragSource, FileDragState};
 #[cfg(test)]
 use crate::app::terminal_binding::TerminalTabs;
 use crate::features::explorer::{ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::features::git::{GitStoreSnapshot, PathDecoration};
-use crate::state::{AppState, FileDragSource, FileDragState};
 use crate::ui::components::state_access::StateAccess;
 use crate::ui::drawer::{self, DrawerMode};
 use crate::ui::explorer::commands::{
@@ -31,19 +32,19 @@ pub(crate) struct Services {
     pub terminal_tabs: crate::app::terminal_binding::TerminalStore,
 }
 
-fn projection(state: &State<AppState>) -> StateAccess<ExplorerPanelState> {
-    StateAccess::project(state.clone(), |app| &app.explorer, |app| &mut app.explorer)
+fn projection(state: &AppContext) -> StateAccess<ExplorerPanelState> {
+    StateAccess::project(state.model(), |app| &app.explorer, |app| &mut app.explorer)
 }
 
-fn commands(state: &State<AppState>, services: &Services) -> Commands {
+fn commands(state: &AppContext, services: &Services) -> Commands {
     let state = state.clone();
     let services = services.clone();
     Commands::new(move |command| run(&state, &services, command))
 }
 
 /// The Explorer/Search drawer header, shared with the Search view.
-pub(crate) fn drawer_header(rect: UiRect, state: &State<AppState>) -> Element {
-    use crate::input::action::Action;
+pub(crate) fn drawer_header(rect: UiRect, state: &AppContext) -> Element {
+    use crate::features::keymap::action::Action;
     let mode = state.get().drawer.mode;
     let select_state = state.clone();
     let collapse_state = state.clone();
@@ -89,7 +90,7 @@ fn decoration(git: &GitStoreSnapshot, path: &Path) -> Decoration {
 
 pub(crate) fn render(
     rect: UiRect,
-    state: &State<AppState>,
+    state: &AppContext,
     git_store: &State<GitStoreSnapshot>,
     services: &Services,
     input: EditInput,
@@ -125,7 +126,7 @@ pub(crate) fn render(
 pub(crate) fn render_menu(
     viewport: UiRect,
     position: (f32, f32),
-    state: &State<AppState>,
+    state: &AppContext,
     services: &Services,
 ) -> Element {
     let app = state.get();
@@ -138,7 +139,7 @@ pub(crate) fn render_menu(
     )
 }
 
-fn run(state: &State<AppState>, services: &Services, command: Command) {
+fn run(state: &AppContext, services: &Services, command: Command) {
     use super::explorer;
     match command {
         Command::ToggleDirectory(key) => {
@@ -162,13 +163,14 @@ fn run(state: &State<AppState>, services: &Services, command: Command) {
             });
         }),
         Command::OpenPinned(path) => {
+            let loader = state.services().and_then(|r| r.file_loader());
             state.update(move |app| match app.workspace.file_id_for_path(&path) {
                 Some(id) => {
                     app.workspace.set_active(id);
                     app.workspace.promote_active_preview();
                 }
                 None => {
-                    explorer::open_tree_file(app, path, 2);
+                    explorer::open_tree_file(app, path, 2, loader.as_ref());
                 }
             });
             services.editor_focus.focus();
@@ -200,7 +202,7 @@ fn run(state: &State<AppState>, services: &Services, command: Command) {
 }
 
 fn run_menu(
-    state: &State<AppState>,
+    state: &AppContext,
     services: &Services,
     action: MenuAction,
     target: Option<ExplorerContextTarget>,
@@ -257,6 +259,7 @@ fn run_menu(
 
 #[cfg(test)]
 mod tests {
+    use crate::app::state::AppState;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
@@ -267,11 +270,11 @@ mod tests {
     use lgui::session::UiSession;
 
     use super::*;
-    use crate::state::TabContextMenuState;
-    use crate::workspace_actions::close_test_directory;
+    use crate::app::state::TabContextMenuState;
+    use crate::app::workspace_commands::close_test_directory;
 
     struct Harness {
-        state: State<AppState>,
+        state: AppContext,
         services: Services,
         session: UiSession,
         view: AppView,
@@ -287,7 +290,8 @@ mod tests {
         let output = exposed.clone();
         let context = ApplicationContext::empty(Default::default());
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| initial.lock().unwrap().take().unwrap());
+            let state =
+                AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()));
             let git = cx.state(GitStoreSnapshot::default());
             let tabs = crate::app::terminal_binding::test_store(
                 cx,

@@ -1,6 +1,7 @@
 //! Application settings commands, font coordination and view composition.
+use crate::app::context::AppContext;
 use crate::app::state::AppState;
-use crate::input::action::Action;
+use crate::features::keymap::action::Action;
 use crate::ui::components::{input::InputState, state_access::StateAccess};
 #[cfg(test)]
 use crate::ui::fonts;
@@ -9,7 +10,7 @@ use crate::ui::fonts::FontSettings;
 use crate::ui::settings::FontField;
 use crate::ui::settings::{self, FontTarget, Setting};
 use crate::ui::settings_binding::{Binding, Command, Frame};
-use lgui::prelude::{Element, State, UiRect};
+use lgui::prelude::{Element, UiRect};
 pub fn frame(app: &AppState) -> Frame {
     Frame {
         prefs: app.settings(),
@@ -18,12 +19,12 @@ pub fn frame(app: &AppState) -> Frame {
         terminal_ui: app.terminal.ui.clone(),
     }
 }
-pub fn binding(state: &State<AppState>) -> Binding {
+pub fn binding(state: &AppContext) -> Binding {
     let reader = state.clone();
     let writer = state.clone();
     Binding::new(
         StateAccess::project(
-            state.clone(),
+            state.model(),
             |app| &app.settings_ui,
             |app| &mut app.settings_ui,
         ),
@@ -32,12 +33,12 @@ pub fn binding(state: &State<AppState>) -> Binding {
         move |command| run(&writer, command),
     )
 }
-pub fn render(rect: UiRect, state: State<AppState>) -> Element {
+pub fn render(rect: UiRect, state: AppContext) -> Element {
     settings::render(rect, binding(&state))
 }
-pub fn run(state: &State<AppState>, command: Command) {
+pub fn run(state: &AppContext, command: Command) {
     if matches!(command, Command::OpenUserFile) {
-        crate::key_actions::open_user_settings(state);
+        crate::app::key_actions::open_user_settings(state);
         return;
     }
     state.update(|app| match command {

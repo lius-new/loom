@@ -172,7 +172,7 @@ pub enum UserKeymap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::context::KeyContext;
+    use crate::features::keymap::context::KeyContext;
 
     #[test]
     fn default_keymap_loads_without_errors() {

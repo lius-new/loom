@@ -1,11 +1,11 @@
 //! Terminal commands: identity, model/layout ordering and runtime dispatch.
+use crate::app::context::AppContext;
+use crate::app::state::AppState;
 use crate::app::terminal_binding::TerminalStore;
 use crate::features::terminal::actions::{MenuAction, close_targets};
 use crate::features::terminal::{SessionId, ShellKind};
 use crate::infrastructure::terminal::runtime::TerminalHandle;
-use crate::state::AppState;
 use lgui::core::UiFocusHandle;
-use lgui::prelude::State;
 use lgui::services::{Clipboard, ClipboardError};
 use std::path::PathBuf;
 
@@ -52,7 +52,7 @@ fn assert_ownership(app: &AppState, tabs: &crate::app::terminal_binding::Termina
         );
     }
 }
-fn sync_layout(state: &State<AppState>, tabs: &TerminalStore) {
+fn sync_layout(state: &AppContext, tabs: &TerminalStore) {
     let current = tabs.get();
     state.update(|app| {
         if let Some(layout) = &mut app.layout.application_layout {
@@ -62,7 +62,7 @@ fn sync_layout(state: &State<AppState>, tabs: &TerminalStore) {
     });
 }
 pub(crate) fn new(
-    state: &State<AppState>,
+    state: &AppContext,
     tabs: &TerminalStore,
     shell: ShellKind,
     cwd: Option<PathBuf>,
@@ -78,7 +78,7 @@ pub(crate) fn new(
     id
 }
 pub(crate) fn new_from_target(
-    state: &State<AppState>,
+    state: &AppContext,
     tabs: &TerminalStore,
     id: SessionId,
     shell: Option<ShellKind>,
@@ -97,7 +97,7 @@ pub(crate) fn new_from_target(
         cwd,
     ))
 }
-pub(crate) fn select(state: &State<AppState>, tabs: &TerminalStore, id: SessionId) -> bool {
+pub(crate) fn select(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> bool {
     if target(tabs, id).is_none() {
         return false;
     }
@@ -105,11 +105,7 @@ pub(crate) fn select(state: &State<AppState>, tabs: &TerminalStore, id: SessionI
     sync_layout(state, tabs);
     true
 }
-pub(crate) fn split(
-    state: &State<AppState>,
-    tabs: &TerminalStore,
-    id: SessionId,
-) -> Option<SessionId> {
+pub(crate) fn split(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> Option<SessionId> {
     target(tabs, id)?;
     let mut created = None;
     tabs.update(|tabs| created = tabs.split(id));
@@ -125,7 +121,7 @@ pub(crate) fn split(
 }
 /// Model edit, then layout prune, then process disposal. State locks never nest.
 pub(crate) fn close(
-    state: &State<AppState>,
+    state: &AppContext,
     tabs: &TerminalStore,
     id: SessionId,
     action: MenuAction,
@@ -157,7 +153,7 @@ pub(crate) fn close(
     true
 }
 pub(crate) fn menu_action(
-    state: &State<AppState>,
+    state: &AppContext,
     tabs: &TerminalStore,
     id: SessionId,
     action: MenuAction,
@@ -174,7 +170,7 @@ pub(crate) fn menu_action(
     }
 }
 pub(crate) fn purpose(
-    state: &State<AppState>,
+    state: &AppContext,
     tabs: &TerminalStore,
     id: SessionId,
     purpose: Option<&str>,
@@ -192,7 +188,7 @@ pub(crate) fn resize_pair(tabs: &TerminalStore, left: SessionId, right: SessionI
 /// Toggle only the default terminal region. Detached sessions retain their
 /// visibility and focus when that region is hidden.
 pub fn toggle_panel(
-    state: &State<AppState>,
+    state: &AppContext,
     terminal_tabs: &crate::app::terminal_binding::TerminalStore,
     editor_focus: &UiFocusHandle,
     terminal_focus: &UiFocusHandle,
@@ -315,7 +311,7 @@ fn paste_clipboard(
     Ok(())
 }
 
-pub fn report_clipboard_error(state: &State<AppState>, result: Result<(), ClipboardError>) {
+pub fn report_clipboard_error(state: &AppContext, result: Result<(), ClipboardError>) {
     if let Err(error) = result {
         state.update(|app| app.show_error(format!("Clipboard: {error}")));
     }
@@ -365,7 +361,7 @@ pub(crate) fn wheel(
     }
 }
 
-pub(crate) fn shell_menu(state: &State<AppState>, tabs: &TerminalStore, id: SessionId) -> bool {
+pub(crate) fn shell_menu(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> bool {
     if !select(state, tabs, id) {
         return false;
     }

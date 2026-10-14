@@ -1,7 +1,8 @@
+use crate::app::context::AppContext;
+use crate::app::state::AppState;
 use crate::app::terminal_binding::{TerminalTabs, fixtures::Sessions as OwnedTabs};
 use crate::app::terminal_runtime::TerminalDisplay;
 use crate::features::terminal::{ShellKind, TerminalSnapshot};
-use crate::state::AppState;
 fn make_tabs(n: usize) -> OwnedTabs {
     let mut tabs = OwnedTabs::new();
     for _ in 1..n {
@@ -26,12 +27,12 @@ fn frame_projection(tabs: &OwnedTabs) -> crate::ui::terminal::bindings::View {
 }
 fn make_view(n: usize) -> AppView {
     Arc::new(move |cx| {
-        let state = cx.state_with(|| {
+        let state = AppContext::detached(cx.state_with(|| {
             let mut app = AppState::new();
             app.terminal_chrome.show_terminal = true;
             app.terminal.ui.terminal_focused = true;
             app
-        });
+        }));
         let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
             let mut tabs = TerminalTabs::new();
             for _ in 1..n {

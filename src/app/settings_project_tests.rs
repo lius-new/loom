@@ -19,7 +19,7 @@ fn workspace_folders_apply_their_own_project_settings() {
     )
     .unwrap();
 
-    let mut app = crate::state::AppState::new();
+    let mut app = crate::app::state::AppState::new();
     app.explorer
         .model
         .restore(vec![with.clone(), without.clone()], Vec::new());
@@ -29,7 +29,7 @@ fn workspace_folders_apply_their_own_project_settings() {
         app.preferences.values().project_settings[0].1.errors.len(),
         1
     );
-    assert!(app.toast.is_some(), "the ignored theme is reported");
+    assert!(app.chrome.toast.is_some(), "the ignored theme is reported");
 
     let inside = app.settings_at(Some(&with.join("src")));
     assert_eq!(inside.default_shell, ShellKind::Cmd);

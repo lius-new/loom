@@ -35,8 +35,10 @@ impl Workspace {
         let retired = self.core.take_retired();
         for item in retired {
             match item {
-                domain::Retired::Document(value) => crate::background_ui::retire(value),
-                domain::Retired::Update(value) => crate::background_ui::retire(value),
+                domain::Retired::Document(value) => {
+                    crate::infrastructure::ui_dispatch::retire(value)
+                }
+                domain::Retired::Update(value) => crate::infrastructure::ui_dispatch::retire(value),
             }
         }
         result

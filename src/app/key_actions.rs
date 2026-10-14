@@ -5,6 +5,7 @@
 //! a binding wins before the focused element sees the key. Keys no binding
 //! claims continue to the focused element (editor text input, terminal bytes,
 //! text fields) unchanged.
+use crate::app::context::AppContext;
 
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
@@ -18,25 +19,25 @@ use lgui::services::ServicesContextExt;
 use crate::app::close_dialog as close_confirmation;
 use crate::app::editor_vim as vim_input;
 use crate::app::keymap_context::{self as context_stack, EDITOR, TERMINAL, VIM};
+use crate::app::state::AppState;
 use crate::app::terminal::{self, ClipboardShortcut};
+use crate::app::workspace_commands as workspace_actions;
 use crate::features::git::GitStoreSnapshot;
+use crate::features::keymap::action::Action;
 use crate::features::keymap::bindings as keymap;
+use crate::features::keymap::context::KeyContext;
+use crate::features::keymap::dispatcher::{self, Replay};
+use crate::features::keymap::keystroke::Keystroke;
 use crate::infrastructure::config_watcher::{self as config_watcher, ConfigWatcher};
 use crate::infrastructure::keymap_filesystem::{self as keymap_file, UserKeymap};
 use crate::infrastructure::settings_filesystem::{self as settings_persistence, UserSettings};
 use crate::infrastructure::terminal::runtime::TerminalHandle;
-use crate::input::action::Action;
-use crate::input::context::KeyContext;
-use crate::input::dispatcher::{self, Replay};
-use crate::input::keystroke::Keystroke;
-use crate::state::AppState;
 use crate::ui::editor::view as editor_view;
-use crate::workspace_actions;
 
 /// Everything actions need to act on, captured once per frame.
 #[derive(Clone)]
 pub struct KeyEnv {
-    pub state: State<AppState>,
+    pub state: AppContext,
     pub git_store: State<GitStoreSnapshot>,
     pub application: ApplicationContext,
     pub editor_focus: UiFocusHandle,
@@ -179,7 +180,7 @@ pub fn start_pending_timer(env: KeyEnv, seq: u64) -> impl FnOnce() {
     }
 }
 
-fn set_pending(state: &State<AppState>, pending: Vec<Keystroke>) {
+fn set_pending(state: &AppContext, pending: Vec<Keystroke>) {
     state.try_update(move |app| {
         if app.keymap.pending() == pending {
             return false;
@@ -386,7 +387,7 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
 }
 
 /// Read from the state without cloning all of it.
-fn read<R: Default>(state: &State<AppState>, f: impl FnOnce(&AppState) -> R) -> R {
+fn read<R: Default>(state: &AppContext, f: impl FnOnce(&AppState) -> R) -> R {
     let mut out = R::default();
     state.try_update(|app| {
         out = f(app);
@@ -402,10 +403,13 @@ fn open_keymap_file(env: &KeyEnv) {
 }
 
 /// Open `keymap.json` in a tab, creating it from the template first.
-pub fn open_user_keymap(state: &State<AppState>) -> bool {
+pub fn open_user_keymap(state: &AppContext) -> bool {
     match keymap_file::ensure_user_file() {
         Ok(path) => {
-            state.update(move |app| crate::app::explorer::open_launch_paths(app, vec![path]));
+            let loader = state.services().and_then(|r| r.file_loader());
+            state.update(move |app| {
+                crate::app::explorer::open_launch_paths(app, vec![path], loader.as_ref())
+            });
             true
         }
         Err(error) => {
@@ -419,7 +423,7 @@ pub fn open_user_keymap(state: &State<AppState>) -> bool {
 
 /// Load `keymap.json` over the defaults and install the result. Problems are
 /// reported in a toast; a file that does not parse keeps the previous keymap.
-pub fn reload_user_keymap(state: &State<AppState>) {
+pub fn reload_user_keymap(state: &AppContext) {
     let user = match keymap_file::load_user() {
         UserKeymap::Missing => Vec::new(),
         UserKeymap::Loaded(outcome) => {
@@ -443,7 +447,7 @@ pub fn reload_user_keymap(state: &State<AppState>) {
 }
 
 /// Reloads the user keymap whenever `keymap.json` changes on disk.
-pub fn watch_user_keymap(state: State<AppState>) -> Option<ConfigWatcher> {
+pub fn watch_user_keymap(state: AppContext) -> Option<ConfigWatcher> {
     config_watcher::watch(keymap_file::FILE_NAME, move || reload_user_keymap(&state))
 }
 
@@ -456,10 +460,13 @@ fn open_settings_file(env: &KeyEnv) {
 }
 
 /// Open `settings.json` in a tab, creating it from the template first.
-pub fn open_user_settings(state: &State<AppState>) -> bool {
+pub fn open_user_settings(state: &AppContext) -> bool {
     match settings_persistence::ensure_user_file() {
         Ok(path) => {
-            state.update(move |app| crate::app::explorer::open_launch_paths(app, vec![path]));
+            let loader = state.services().and_then(|r| r.file_loader());
+            state.update(move |app| {
+                crate::app::explorer::open_launch_paths(app, vec![path], loader.as_ref())
+            });
             true
         }
         Err(error) => {
@@ -488,14 +495,17 @@ pub fn project_settings_root(app: &AppState) -> Option<std::path::PathBuf> {
 }
 
 /// Open the current project's `.loom/settings.json`, creating it first.
-pub fn open_project_settings(state: &State<AppState>) -> bool {
+pub fn open_project_settings(state: &AppContext) -> bool {
     let Some(root) = project_settings_root(&state.get()) else {
         state.update(|app| app.show_error("Open a folder to add project settings."));
         return false;
     };
     match crate::infrastructure::project_settings::ensure(&root) {
         Ok(path) => {
-            state.update(move |app| crate::app::explorer::open_launch_paths(app, vec![path]));
+            let loader = state.services().and_then(|r| r.file_loader());
+            state.update(move |app| {
+                crate::app::explorer::open_launch_paths(app, vec![path], loader.as_ref())
+            });
             true
         }
         Err(error) => {
@@ -509,7 +519,7 @@ pub fn open_project_settings(state: &State<AppState>) -> bool {
 
 /// Apply `settings.json` to the running app. Ignored values are reported in
 /// a toast; a file that does not parse keeps the current settings.
-pub fn reload_user_settings(state: &State<AppState>) {
+pub fn reload_user_settings(state: &AppContext) {
     let outcome = match settings_persistence::read() {
         UserSettings::Missing => settings_persistence::LoadOutcome::default(),
         UserSettings::Loaded(outcome) => outcome,
@@ -533,7 +543,7 @@ pub fn reload_user_settings(state: &State<AppState>) {
 
 /// Reloads settings whenever `settings.json` changes, except for the app's
 /// own writes from the Settings page.
-pub fn watch_user_settings(state: State<AppState>) -> Option<ConfigWatcher> {
+pub fn watch_user_settings(state: AppContext) -> Option<ConfigWatcher> {
     config_watcher::watch(settings_persistence::FILE_NAME, move || {
         let own_write = settings_persistence::current_file_is_own_write();
         if !own_write {

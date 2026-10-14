@@ -1,11 +1,12 @@
 //! Diff input coordination; geometry and painting stay in UI.
+use crate::app::context::AppContext;
 use crate::app::state::AppState;
 use crate::domain::identity::PaneId;
 use crate::ui::chrome::diff_binding::{Binding, Command, EditorFrame, Snapshot};
 use crate::ui::diff_editor::{TOOLBAR_H, code_left, row_h, scroll_metrics};
 use lgui::core::UiFocusHandle;
-use lgui::prelude::{Element, State, UiRect};
-pub fn binding(state: &State<AppState>) -> Binding {
+use lgui::prelude::{Element, UiRect};
+pub fn binding(state: &AppContext) -> Binding {
     let reader = state.clone();
     let writer = state.clone();
     Binding::new(
@@ -29,7 +30,7 @@ pub fn binding(state: &State<AppState>) -> Binding {
         move |c| run(&writer, c),
     )
 }
-pub fn run(state: &State<AppState>, c: Command) -> bool {
+pub fn run(state: &AppContext, c: Command) -> bool {
     if let Command::Open(path) = c {
         return match crate::infrastructure::document_filesystem::read_diff_file(&path) {
             Ok(contents) => {
@@ -86,7 +87,7 @@ pub fn run(state: &State<AppState>, c: Command) -> bool {
 pub fn render(
     pane: PaneId,
     rect: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     git: crate::ui::git::commands::Binding,
     focus: UiFocusHandle,
     scrollbars: crate::ui::editor_binding::Binding,
@@ -166,11 +167,12 @@ mod tests {
         diff_editor::{current_change_number, render_inline, render_split, split_middle},
         theme,
     };
+    use lgui::prelude::State;
     use std::path::PathBuf;
     fn render(
         pane: PaneId,
         rect: UiRect,
-        state: State<AppState>,
+        state: AppContext,
         store: State<GitStoreSnapshot>,
         focus: UiFocusHandle,
     ) -> Element {
@@ -242,16 +244,16 @@ mod tests {
         use lgui::session::UiSession;
         use std::sync::{Arc, Mutex};
         for split in [false, true] {
-            let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+            let exposed = Arc::new(Mutex::new(None::<AppContext>));
             let output = exposed.clone();
             let viewport = UiRect::new(0.0, 0.0, 900.0, 600.0);
             let view: AppView = Arc::new(move |cx| {
-                let state = cx.state_with(|| {
+                let state = AppContext::detached(cx.state_with(|| {
                     let mut app = AppState::new();
                     app.git.ui.split_diff = split;
                     app.workspace.open_diff(sample_overview(0));
                     app
-                });
+                }));
                 *output.lock().unwrap() = Some(state.clone());
                 let store = cx.state_with(GitStoreSnapshot::default);
                 let id = cx.use_stable_id();
@@ -302,7 +304,7 @@ mod tests {
                 use lgui::renderer::{FrameInfo, FrameReason};
                 context
                     .resources()
-                    .provide(IconRegistration(Arc::new(crate::svg_icons())));
+                    .provide(IconRegistration(Arc::new(crate::app::svg_icons())));
                 let scale = UiScale::new(2.0);
                 let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(12 * 1024 * 1024);
                 let frame = FrameInfo::new(
@@ -405,12 +407,12 @@ mod tests {
         );
         let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.git.ui.split_diff = false;
                 app.workspace.open_diff(document.clone());
                 app
-            });
+            }));
             let store = cx.state_with(GitStoreSnapshot::default);
             let id = cx.use_stable_id();
             render(
@@ -526,11 +528,11 @@ mod tests {
         use lgui::session::UiSession;
         use std::sync::{Arc, Mutex};
 
-        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.git.ui.split_diff = split;
                 app.workspace.open_diff(DiffDocument::added(
@@ -540,7 +542,7 @@ mod tests {
                     &format!("{}\n", "x".repeat(200)).repeat(100),
                 ));
                 app
-            });
+            }));
             *output.lock().unwrap() = Some(state.clone());
             let id = cx.use_stable_id();
             let focus = cx.focus_handle(id);

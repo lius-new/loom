@@ -1,12 +1,13 @@
 //! File preparation stays off the event loop. Only a ready document is installed.
+use crate::app::context::AppContext;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::app::state::{AppState, TabDrop};
+use crate::app::workspace::{OpenMode, PreparedTextFile};
 use crate::model::document::FileId;
 use crate::model::pane_layout::PaneId;
-use crate::model::workspace::{OpenMode, PreparedTextFile};
-use crate::state::{AppState, TabDrop};
-use lgui::{ApplicationHandle, prelude::State};
+use lgui::ApplicationHandle;
 
 pub const INDICATOR_DELAY: Duration = Duration::from_millis(300);
 
@@ -37,14 +38,14 @@ impl crate::infrastructure::file_loader::Request for PendingFile {
     }
 }
 impl FileLoader {
-    pub fn new(state: State<AppState>, application: ApplicationHandle) -> Self {
+    pub fn new(state: AppContext, application: ApplicationHandle) -> Self {
         Self::with_prepare(state, application, |request| {
             let text = crate::app::workspace_commands::read_text_file(&request.path)?;
             Ok(PreparedTextFile::new(request.path.clone(), text))
         })
     }
     fn with_prepare(
-        state: State<AppState>,
+        state: AppContext,
         application: ApplicationHandle,
         prepare: impl Fn(&PendingFile) -> Result<PreparedTextFile, String> + Send + 'static,
     ) -> Self {
@@ -74,14 +75,23 @@ impl FileLoader {
         );
         Self { worker }
     }
+    pub(crate) fn invalidate(&self) {
+        self.worker.invalidate();
+    }
     pub fn shutdown(&self) {
         self.worker.shutdown();
     }
 }
 
 /// Returns false only before the application has installed its worker.
-pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<TabDrop>) -> bool {
-    let Some(loader) = app.runtime().and_then(|runtime| runtime.file_loader()) else {
+pub fn request(
+    app: &mut AppState,
+    path: PathBuf,
+    mode: OpenMode,
+    drop: Option<TabDrop>,
+    loader: Option<&FileLoader>,
+) -> bool {
+    let Some(loader) = loader else {
         return false;
     };
     let origin_pane = app.workspace.active_pane();
@@ -125,9 +135,6 @@ pub fn request(app: &mut AppState, path: PathBuf, mode: OpenMode, drop: Option<T
 
 pub fn cancel(app: &mut AppState) {
     app.editor.pending_file = None;
-    if let Some(loader) = app.runtime().and_then(|runtime| runtime.file_loader()) {
-        loader.worker.invalidate();
-    }
 }
 
 fn show_indicator(app: &mut AppState, generation: u64, now: Instant) -> bool {
@@ -154,7 +161,7 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
         .filter(|p| p.generation == generation)
         .cloned()
     else {
-        crate::background_ui::retire(prepared);
+        crate::infrastructure::ui_dispatch::retire(prepared);
         return false;
     };
     let valid = app.explorer.model.roots() == pending.folders
@@ -165,7 +172,7 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
             .is_some_and(|p| p.active() == pending.active);
     cancel(app);
     if !valid {
-        crate::background_ui::retire(prepared);
+        crate::infrastructure::ui_dispatch::retire(prepared);
         return true;
     }
     match prepared {
@@ -177,7 +184,7 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
             }) = pending.drop
             {
                 let Some(new) = app.workspace.split_empty(pane, direction) else {
-                    crate::background_ui::retire(prepared);
+                    crate::infrastructure::ui_dispatch::retire(prepared);
                     return true;
                 };
                 new
@@ -203,9 +210,9 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
                     );
                 }
             }
-            app.toast = None;
-            app.welcome_hover = None;
-            app.workspace_home_hover = None;
+            app.chrome.toast = None;
+            app.chrome.welcome_hover = None;
+            app.chrome.workspace_home_hover = None;
             app.editor.drag = None;
             app.editor.ime = None;
         }
@@ -226,7 +233,7 @@ mod tests {
     use std::sync::{Arc, Mutex, mpsc};
 
     struct Harness {
-        state: State<AppState>,
+        state: AppContext,
         tasks: UiTasks,
         runtime: Arc<crate::app::runtime::AppRuntime>,
         _session: UiSession,
@@ -239,12 +246,12 @@ mod tests {
             let output = exposed.clone();
             let rect = UiRect::new(0.0, 0.0, 600.0, 400.0);
             let view: AppView = Arc::new(move |cx| {
-                let state = cx.state_with(|| {
+                let state = AppContext::detached(cx.state_with(|| {
                     let mut app = AppState::new();
                     app.workspace
                         .open_path("current.txt".into(), "Keep this screen".into());
                     app
-                });
+                }));
                 *output.lock().unwrap() = Some(state);
                 panel(rect, VisualStyle::default())
             });
@@ -254,7 +261,7 @@ mod tests {
             let tasks = UiTasks::default();
             let application = tasks.application();
             let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
-            state.update(|app| app.attach_runtime(&runtime));
+            let state = state.with_runtime(&runtime);
             let loader = FileLoader::with_prepare(state.clone(), application, prepare);
             runtime.install_file_loader(loader);
             Self {
@@ -266,7 +273,12 @@ mod tests {
         }
         fn open(&self, path: &str) {
             self.state.update(|app| {
-                assert!(crate::app::explorer::open_tree_file(app, path.into(), 1));
+                assert!(crate::app::explorer::open_tree_file(
+                    app,
+                    path.into(),
+                    1,
+                    self.runtime.file_loader().as_ref()
+                ));
             });
         }
         fn pump_until(&self, predicate: impl Fn(&AppState) -> bool) {
@@ -320,7 +332,12 @@ mod tests {
         assert_eq!(h.state.get().workspace.active(), before);
         // Double-click promotion does not restart the timer or disk operation.
         h.state.update(|app| {
-            crate::app::explorer::open_tree_file(app, "slow.json".into(), 2);
+            crate::app::explorer::open_tree_file(
+                app,
+                "slow.json".into(),
+                2,
+                h.runtime.file_loader().as_ref(),
+            );
         });
         release.send(()).unwrap();
         h.pump_until(|app| app.editor.pending_file.is_none());
@@ -394,7 +411,7 @@ mod tests {
             h.state.get().workspace.active_path(),
             Some(std::path::Path::new("current.txt"))
         );
-        assert!(h.state.get().toast.is_none());
+        assert!(h.state.get().chrome.toast.is_none());
     }
 
     #[test]
@@ -420,7 +437,14 @@ mod tests {
                 app.workspace.active_editor().unwrap().text(),
                 "Keep this screen"
             );
-            assert!(app.toast.as_ref().unwrap().message.contains("missing.json"));
+            assert!(
+                app.chrome
+                    .toast
+                    .as_ref()
+                    .unwrap()
+                    .message
+                    .contains("missing.json")
+            );
         });
     }
 
@@ -432,22 +456,22 @@ mod tests {
             Ok(PreparedTextFile::new(request.path.clone(), "ready".into()))
         });
         h.open("single-click.json");
-        let expected = crate::workspace_persistence::EditorLayout {
-            root: crate::workspace_persistence::SavedPaneNode::Pane {
+        let expected = crate::app::workspace_session::EditorLayout {
+            root: crate::app::workspace_session::SavedPaneNode::Pane {
                 items: vec!["current.txt".into(), "single-click.json".into()],
                 active: Some("single-click.json".into()),
             },
             active_pane: 0,
         };
         assert_eq!(
-            crate::workspace_actions::saved_app_editor_layout(&h.state.get()),
+            crate::app::workspace_commands::saved_app_editor_layout(&h.state.get()),
             Some(expected.clone())
         );
         release.send(()).unwrap();
         h.pump_until(|app| app.editor.pending_file.is_none());
         // No session/render effect has run since the background result was installed.
         assert_eq!(
-            crate::workspace_actions::saved_app_editor_layout(&h.state.get()),
+            crate::app::workspace_commands::saved_app_editor_layout(&h.state.get()),
             Some(expected)
         );
         assert!(
@@ -496,7 +520,7 @@ mod tests {
         let view: AppView = Arc::new(move |cx| {
             let mut root = group(rect);
             for row in 0..3 {
-                let state = cx.state_with(|| {
+                let state = AppContext::detached(cx.state_with(|| {
                     let mut app = AppState::new();
                     app.drawer.visible = true;
                     for _ in 0..row {
@@ -526,7 +550,7 @@ mod tests {
                             .open_path("seed.database.json".into(), String::new());
                     }
                     app
-                });
+                }));
                 let id = UiId::owned(format!("preview-focus-{row}"));
                 let focus = cx.focus_handle(id);
                 let pane = state.get().workspace.active_pane();
@@ -544,7 +568,7 @@ mod tests {
         let context = ApplicationContext::empty(Default::default());
         context
             .resources()
-            .provide(IconRegistration(Arc::new(crate::svg_icons())));
+            .provide(IconRegistration(Arc::new(crate::app::svg_icons())));
         let mut surface = SkiaSoftwareSurface::new(1024 * 1024);
         let scale = UiScale::new(2.0);
         let frame = FrameInfo::new(

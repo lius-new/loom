@@ -11,11 +11,11 @@ pub struct TerminalPanelState {
 
 use std::path::{Path, PathBuf};
 
+use crate::app::workspace::{AppPage, Workspace};
+use crate::features::keymap::action::Action;
 use crate::features::terminal::ShellKind;
-use crate::input::action::Action;
 use crate::model::document::FileId;
 use crate::model::pane_layout::{Direction, PaneId};
-use crate::model::workspace::{AppPage, Workspace};
 use crate::ui::theme::ThemeId;
 
 pub use crate::ui::drawer::DrawerMode;
@@ -51,51 +51,12 @@ pub enum MainSurface {
     Keymap,
 }
 
-/// Visibility and width of the left-hand Source Control drawer.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SidebarChrome {
-    pub visible: bool,
-    pub width: f32,
-    /// True while the drawer resize handle is being dragged.
-    pub resizing: bool,
-}
-
-impl Default for SidebarChrome {
-    fn default() -> Self {
-        Self {
-            visible: false,
-            width: crate::ui::theme::SIDEBAR_W,
-            resizing: false,
-        }
-    }
-}
-
-/// Visibility, page and width of the right-hand drawer.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DrawerChrome {
-    pub visible: bool,
-    pub mode: DrawerMode,
-    pub width: f32,
-    /// True while the drawer resize handle is being dragged.
-    pub resizing: bool,
-}
-
-impl Default for DrawerChrome {
-    fn default() -> Self {
-        Self {
-            visible: true,
-            mode: DrawerMode::Files,
-            width: crate::ui::theme::SIDEBAR_W,
-            resizing: false,
-        }
-    }
-}
+pub use chrome::{DrawerChrome, SidebarChrome};
 
 #[derive(Clone)]
 pub struct AppState {
+    pub chrome: chrome::ChromeState,
     pub preferences: crate::features::settings::model::Model,
-    // R1 legacy command bridge: snapshots never own runtime services.
-    runtime: std::sync::Weak<crate::app::runtime::AppRuntime>,
     pub editor: editor::EditorState,
     pub layout: layout::ApplicationLayoutState,
     pub terminal_chrome: chrome::TerminalChrome,
@@ -112,14 +73,6 @@ pub struct AppState {
     pub search: crate::ui::search::state::SearchPanelState,
     /// Font family fields on the Settings page; committed on Enter or blur.
     pub settings_ui: crate::ui::settings_binding::SettingsUiState,
-    /// Notification above the status bar; cleared by its timer or close button.
-    pub toast: Option<Toast>,
-    /// Source of `Toast::id`, so a replacement restarts the dismiss timer.
-    pub toast_seq: u64,
-    /// Welcome-page row currently under the pointer.
-    pub welcome_hover: Option<usize>,
-    /// Workspace Home action currently under the pointer.
-    pub workspace_home_hover: Option<usize>,
     /// Keystrokes of a key sequence waiting for its next key.
     pub keymap: crate::features::keymap::model::Model,
     /// Filter typed into the Keymap page.
@@ -127,21 +80,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Temporary access for registered legacy commands; new views use projections.
-    pub(crate) fn runtime(&self) -> Option<std::sync::Arc<crate::app::runtime::AppRuntime>> {
-        self.runtime.upgrade()
-    }
-
-    pub(crate) fn attach_runtime(
-        &mut self,
-        runtime: &std::sync::Arc<crate::app::runtime::AppRuntime>,
-    ) {
-        self.runtime = std::sync::Arc::downgrade(runtime);
-    }
-
     pub fn new() -> Self {
         Self {
-            runtime: Default::default(),
+            chrome: Default::default(),
             preferences: crate::features::settings::model::Model::new(
                 crate::features::settings::model::Values {
                     theme: ThemeId::default(),
@@ -168,10 +109,6 @@ impl AppState {
 
             settings_ui: Default::default(),
 
-            toast: None,
-            toast_seq: 0,
-            welcome_hover: None,
-            workspace_home_hover: None,
             keymap: Default::default(),
             keymap_ui: Default::default(),
         }
@@ -180,7 +117,7 @@ impl AppState {
     /// Build the application state and restore the last file-tree session.
     pub fn restored() -> Self {
         let mut app = Self::new();
-        let session = crate::workspace_persistence::load();
+        let session = crate::app::workspace_session::load();
         app.terminal_chrome.show_terminal =
             session.show_terminal && !session.terminal_tabs.is_empty();
         if let Some(height) = session.terminal_height.filter(|height| height.is_finite()) {
@@ -193,8 +130,12 @@ impl AppState {
         app.apply_settings(crate::infrastructure::settings_filesystem::load());
         app.refresh_shells();
         crate::app::explorer::hydrate_workspace_folders(&mut app);
-        crate::workspace_actions::hydrate_editor_layout(&mut app, session.editor_layout);
-        crate::app::explorer::open_launch_paths(&mut app, crate::launch::take_paths());
+        crate::app::workspace_commands::hydrate_editor_layout(&mut app, session.editor_layout);
+        crate::app::explorer::open_launch_paths(
+            &mut app,
+            crate::infrastructure::launch::take_paths(),
+            None,
+        );
         app
     }
 
@@ -236,7 +177,7 @@ impl AppState {
         self.git.ui.tree_view = settings.git_tree_view;
         self.set_editor_font(settings.editor_font);
         self.set_terminal_font(settings.terminal_font);
-        let vim: crate::vim::Options = settings.vim.into();
+        let vim: loom_editor_core::vim::Options = settings.vim.into();
         if vim.enabled != self.editor.vim.options.enabled {
             crate::app::editor_vim::set_enabled(self, vim.enabled);
         }
@@ -530,7 +471,7 @@ impl AppState {
             Action::ClosePane => {
                 if self.editor.close_request.is_none() {
                     let pane = self.workspace.active_pane();
-                    crate::workspace_actions::request_close_pane_in(self, pane);
+                    crate::app::workspace_commands::request_close_pane_in(self, pane);
                 }
             }
             Action::CloseActiveItem => {
@@ -539,7 +480,7 @@ impl AppState {
                     && let Some(id) = self.workspace.active()
                 {
                     let pane = self.workspace.active_pane();
-                    crate::workspace_actions::request_close_tab_in(self, pane, id);
+                    crate::app::workspace_commands::request_close_tab_in(self, pane, id);
                 }
             }
             _ => {}
@@ -615,9 +556,9 @@ impl AppState {
     }
 
     fn push_toast(&mut self, kind: ToastKind, message: String) {
-        self.toast_seq += 1;
-        self.toast = Some(Toast {
-            id: self.toast_seq,
+        self.chrome.toast_seq += 1;
+        self.chrome.toast = Some(Toast {
+            id: self.chrome.toast_seq,
             kind,
             message,
         });
@@ -626,9 +567,13 @@ impl AppState {
     /// Clears the toast only if it is still `id`, so a stale timer cannot
     /// dismiss a newer message. Returns whether anything changed.
     pub fn dismiss_toast(&mut self, id: u64) -> bool {
-        let matches = self.toast.as_ref().is_some_and(|toast| toast.id == id);
+        let matches = self
+            .chrome
+            .toast
+            .as_ref()
+            .is_some_and(|toast| toast.id == id);
         if matches {
-            self.toast = None;
+            self.chrome.toast = None;
         }
         matches
     }
@@ -699,15 +644,15 @@ mod tests {
     fn stale_toast_timer_does_not_dismiss_a_newer_toast() {
         let mut app = AppState::new();
         app.show_success("Copied path.");
-        let first = app.toast.as_ref().unwrap().id;
+        let first = app.chrome.toast.as_ref().unwrap().id;
         app.show_error("Could not save.");
 
         assert!(!app.dismiss_toast(first));
-        assert_eq!(app.toast.as_ref().unwrap().kind, ToastKind::Error);
+        assert_eq!(app.chrome.toast.as_ref().unwrap().kind, ToastKind::Error);
 
-        let second = app.toast.as_ref().unwrap().id;
+        let second = app.chrome.toast.as_ref().unwrap().id;
         assert!(app.dismiss_toast(second));
-        assert!(app.toast.is_none());
+        assert!(app.chrome.toast.is_none());
     }
 
     #[test]

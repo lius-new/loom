@@ -1,5 +1,6 @@
 //! Source Control commands. Each reads the snapshot and root state, runs Git
 //! off the UI thread, and applies the result in one root-state update.
+use crate::app::context::AppContext;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -7,6 +8,7 @@ use std::thread;
 
 use lgui::prelude::State;
 
+use crate::app::state::{AppState, TabDrop};
 use crate::features::git::actions::{
     BlockAction, BranchListing, Checkout, StashMode, SyncPlan, sync_plan,
 };
@@ -18,20 +20,15 @@ use crate::features::git::{
     RepositorySnapshot, RepositoryState,
 };
 use crate::infrastructure::git::{CliGitBackend, GitService};
-use crate::state::{AppState, TabDrop};
 use crate::ui::git::confirm::{GitConfirm, GitConfirmAction};
 use crate::ui::git::stash_switch::StashSwitchRequest;
 
-pub fn open_diff(
-    state: &State<AppState>,
-    request: crate::features::git::DiffRequest,
-    untracked: bool,
-) {
+pub fn open_diff(state: &AppContext, request: crate::features::git::DiffRequest, untracked: bool) {
     open_diff_with_focus(state, request, untracked, None, None);
 }
 
 pub(crate) fn open_diff_at(
-    state: &State<AppState>,
+    state: &AppContext,
     request: crate::features::git::DiffRequest,
     untracked: bool,
     drop: TabDrop,
@@ -39,7 +36,7 @@ pub(crate) fn open_diff_at(
     open_diff_with_focus(state, request, untracked, None, Some(drop))
 }
 
-pub fn open_changes(state: &State<AppState>, file: crate::features::git::DiffRequest) {
+pub fn open_changes(state: &AppContext, file: crate::features::git::DiffRequest) {
     let mut revealed = false;
     state.update(|app| {
         if let Some(id) = app.workspace.diff_id_for(
@@ -67,14 +64,14 @@ pub fn open_changes(state: &State<AppState>, file: crate::features::git::DiffReq
 }
 
 fn open_diff_with_focus(
-    state: &State<AppState>,
+    state: &AppContext,
     request: crate::features::git::DiffRequest,
     untracked: bool,
     focus: Option<crate::features::git::DiffRequest>,
     drop: Option<TabDrop>,
 ) -> bool {
     let app = state.get();
-    let Some(application) = app.runtime().and_then(|runtime| runtime.application()) else {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return false;
     };
     let roots = app.explorer.model.roots().to_vec();
@@ -151,7 +148,7 @@ fn open_diff_with_focus(
                         Err(error) => app.show_error(error.user_message()),
                     }
                 });
-                crate::background_ui::retire(result);
+                crate::infrastructure::ui_dispatch::retire(result);
             });
         })
         .is_ok();
@@ -194,7 +191,7 @@ fn apply_diff_drop(app: &mut AppState, document: Arc<DiffDocument>, drop: TabDro
         let target = if position < index { index - 1 } else { index };
         app.workspace.move_tab(pane, id, target);
     }
-    app.toast = None;
+    app.chrome.toast = None;
     true
 }
 
@@ -211,7 +208,7 @@ fn sections(store: &State<GitStoreSnapshot>, repository: &RepositorySnapshot) ->
 }
 
 /// Whether any of `paths` (relative to `root`) has unsaved editor changes.
-fn unsaved(state: &State<AppState>, root: &Path, paths: &[PathBuf]) -> bool {
+fn unsaved(state: &AppContext, root: &Path, paths: &[PathBuf]) -> bool {
     let dirty = state.get().workspace.dirty_paths();
     paths
         .iter()
@@ -233,7 +230,7 @@ fn file_name(path: &Path) -> String {
 }
 
 pub fn stage_paths(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     paths: Vec<PathBuf>,
 ) -> bool {
@@ -255,7 +252,7 @@ pub fn stage_paths(
 }
 
 pub fn unstage_paths(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     paths: Vec<PathBuf>,
 ) -> bool {
@@ -279,7 +276,7 @@ pub fn unstage_paths(
 /// Ask before discarding: worktree changes to `tracked` files are lost and
 /// `untracked` files go to the system trash.
 pub fn request_discard(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     tracked: Vec<PathBuf>,
     untracked: Vec<PathBuf>,
@@ -336,7 +333,7 @@ pub fn request_discard(
 /// Discard confirmed changes: restore `tracked` files from the index and
 /// move `untracked` files to the trash.
 pub fn discard_paths(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
     tracked: Vec<PathBuf>,
@@ -382,7 +379,7 @@ pub fn discard_paths(
 
 /// Commit the staged changes. With nothing staged, offer to stage every
 /// tracked change first; amending needs no staged changes.
-pub fn commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub fn commit(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
     let app = state.get();
     let message = app.git.ui.commit_input.text().trim().to_owned();
     let amend = app.git.ui.commit_amend;
@@ -430,7 +427,7 @@ pub fn commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool 
 }
 
 /// Stage every tracked change, then commit.
-pub fn commit_all(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub fn commit_all(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
     let message = state.get().git.ui.commit_input.text().trim().to_owned();
     let Some(repository) = active_repository(store) else {
         return false;
@@ -441,7 +438,7 @@ pub fn commit_all(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> b
 
 /// Stage `stage`, then commit with the drawer's options.
 fn commit_paths(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     repository: RepositorySnapshot,
     message: String,
@@ -474,7 +471,7 @@ fn commit_paths(
 /// The active repository, unless an open editor buffer under it has unsaved
 /// changes that an operation rewriting the worktree could conflict with.
 fn repository_without_unsaved(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     doing: &str,
 ) -> Option<RepositorySnapshot> {
@@ -492,7 +489,7 @@ fn repository_without_unsaved(
 }
 
 /// Continue the merge, rebase, cherry-pick or revert in progress.
-pub fn continue_operation(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub fn continue_operation(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
     let Some(repository) = repository_without_unsaved(state, store, "continuing") else {
         return false;
     };
@@ -510,7 +507,7 @@ pub fn continue_operation(state: &State<AppState>, store: &State<GitStoreSnapsho
 }
 
 /// Ask before aborting the operation in progress, which discards its work.
-pub fn request_abort(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub fn request_abort(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
     let Some(repository) = repository_without_unsaved(state, store, "aborting") else {
         return false;
     };
@@ -561,7 +558,7 @@ pub fn request_abort(state: &State<AppState>, store: &State<GitStoreSnapshot>) -
 
 /// Abort a confirmed operation in progress.
 pub fn abort_operation(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
     operation: RepositoryState,
@@ -583,7 +580,7 @@ pub fn abort_operation(
 
 /// Resolve a conflicted file with one side's version and stage it.
 pub fn resolve_conflict(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     path: PathBuf,
     side: ConflictSide,
@@ -615,7 +612,7 @@ pub fn resolve_conflict(
 }
 
 /// Stash every change, untracked files included.
-pub fn stash_all(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub fn stash_all(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
     let Some(repository) = repository_without_unsaved(state, store, "stashing") else {
         return false;
     };
@@ -649,7 +646,7 @@ fn stash_index(backend: &CliGitBackend, root: &Path, oid: &str) -> GitResult<usi
 
 /// Apply the stash `oid`, removing it when `pop`.
 pub fn apply_stash(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     oid: String,
     pop: bool,
@@ -683,7 +680,7 @@ pub fn apply_stash(
 
 /// Ask before dropping the stash `oid`.
 pub fn request_drop_stash(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     oid: String,
 ) -> bool {
@@ -713,7 +710,7 @@ pub fn request_drop_stash(
 
 /// Drop a confirmed stash.
 pub fn drop_stash(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
     oid: String,
@@ -739,7 +736,7 @@ pub fn drop_stash(
 /// Apply `action` to `block` of `path`'s `target` diff. The change is cut
 /// from a fresh zero-context diff, so it applies exactly as Git sees it now.
 pub fn apply_block(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
     path: PathBuf,
@@ -829,12 +826,7 @@ fn apply_block_with(
 }
 
 /// Ask before discarding one change block.
-pub fn request_discard_block(
-    state: &State<AppState>,
-    root: PathBuf,
-    path: PathBuf,
-    block: ChangeBlock,
-) {
+pub fn request_discard_block(state: &AppContext, root: PathBuf, path: PathBuf, block: ChangeBlock) {
     let lines = block.new_lines.max(block.old_lines);
     let message = format!(
         "The change to {} line{} in {} will be lost. This cannot be undone.",
@@ -863,12 +855,8 @@ pub const HISTORY_LIMIT: usize = 50;
 
 /// Load the newest commits of `root`'s HEAD, which is at `head`, into the
 /// Source Control history. Read-only, so it runs beside any operation.
-pub fn load_history(state: &State<AppState>, root: PathBuf, head: Option<String>) {
-    let Some(application) = state
-        .get()
-        .runtime()
-        .and_then(|runtime| runtime.application())
-    else {
+pub fn load_history(state: &AppContext, root: PathBuf, head: Option<String>) {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return;
     };
     let worker_state = state.clone();
@@ -900,11 +888,8 @@ pub fn load_history(state: &State<AppState>, root: PathBuf, head: Option<String>
 
 /// Expand commit `oid` in the history, loading the files it changed.
 /// Expanding it again collapses it.
-pub fn toggle_commit(state: &State<AppState>, root: PathBuf, oid: String) {
-    let application = state
-        .get()
-        .runtime()
-        .and_then(|runtime| runtime.application());
+pub fn toggle_commit(state: &AppContext, root: PathBuf, oid: String) {
+    let application = state.services().and_then(|runtime| runtime.application());
     let toggled = oid.clone();
     let mut expanded = false;
     state.update(|app| expanded = app.git.model.toggle_commit(toggled));
@@ -925,12 +910,8 @@ pub fn toggle_commit(state: &State<AppState>, root: PathBuf, oid: String) {
 }
 
 /// Open `path`'s diff in commit `oid`.
-pub fn open_commit_diff(state: &State<AppState>, root: PathBuf, oid: String, path: PathBuf) {
-    let Some(application) = state
-        .get()
-        .runtime()
-        .and_then(|runtime| runtime.application())
-    else {
+pub fn open_commit_diff(state: &AppContext, root: PathBuf, oid: String, path: PathBuf) {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return;
     };
     let worker_state = state.clone();
@@ -949,18 +930,13 @@ pub fn open_commit_diff(state: &State<AppState>, root: PathBuf, oid: String, pat
                     }
                     Err(error) => app.show_error(error.user_message()),
                 });
-                crate::background_ui::retire(result);
+                crate::infrastructure::ui_dispatch::retire(result);
             });
         });
 }
 
 /// Open every file of commit `oid` in one tab, scrolled to `focus` if given.
-pub fn open_commit_changes(
-    state: &State<AppState>,
-    root: PathBuf,
-    oid: String,
-    focus: Option<PathBuf>,
-) {
+pub fn open_commit_changes(state: &AppContext, root: PathBuf, oid: String, focus: Option<PathBuf>) {
     let focus = focus.map(|path| crate::features::git::DiffRequest {
         repository_root: root.clone(),
         path,
@@ -985,7 +961,7 @@ pub fn open_commit_changes(
         return;
     }
     let app = state.get();
-    let Some(application) = app.runtime().and_then(|runtime| runtime.application()) else {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return;
     };
     drop(app);
@@ -1021,7 +997,7 @@ pub fn open_commit_changes(
                         Err(error) => app.show_error(error.user_message()),
                     }
                 });
-                crate::background_ui::retire(result);
+                crate::infrastructure::ui_dispatch::retire(result);
             });
         })
         .is_ok();
@@ -1038,17 +1014,8 @@ const COMMIT_CARD_DELAY: std::time::Duration = std::time::Duration::from_millis(
 
 /// Show commit `oid`'s hover card beside `anchor`, its row on screen, once
 /// the pointer has rested there.
-pub fn hover_commit(
-    state: &State<AppState>,
-    root: PathBuf,
-    oid: String,
-    anchor: lgui::prelude::UiRect,
-) {
-    let Some(application) = state
-        .get()
-        .runtime()
-        .and_then(|runtime| runtime.application())
-    else {
+pub fn hover_commit(state: &AppContext, root: PathBuf, oid: String, anchor: lgui::prelude::UiRect) {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return;
     };
     let hovered = crate::ui::git::panel::GitHover::Commit(oid.clone());
@@ -1088,7 +1055,7 @@ pub fn hover_commit(
 /// Create a commit that undoes commit `oid`. Conflicts leave a revert in
 /// progress for Source Control to continue or abort.
 pub fn revert_commit(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
     oid: String,
@@ -1120,7 +1087,7 @@ pub fn revert_commit(
 
 /// Make the repository at `root` active in Source Control until the
 /// active file changes.
-pub fn select_repository(state: &State<AppState>, store: &State<GitStoreSnapshot>, root: PathBuf) {
+pub fn select_repository(state: &AppContext, store: &State<GitStoreSnapshot>, root: PathBuf) {
     let pinned = root.clone();
     state.update(move |app| {
         let active_path = app.workspace.active_path().map(Path::to_path_buf);
@@ -1131,11 +1098,7 @@ pub fn select_repository(state: &State<AppState>, store: &State<GitStoreSnapshot
 }
 
 /// Open means add the worktree and select its repository in our single window.
-pub fn open_worktree(
-    state: &State<AppState>,
-    store: &State<GitStoreSnapshot>,
-    path: PathBuf,
-) -> bool {
+pub fn open_worktree(state: &AppContext, store: &State<GitStoreSnapshot>, path: PathBuf) -> bool {
     if !path.is_dir() {
         state.update(|app| {
             app.show_error(format!(
@@ -1149,15 +1112,14 @@ pub fn open_worktree(
     state.update(|app| crate::app::explorer::add_folder(app, path.clone()));
     select_repository(state, store, path);
     state
-        .get()
-        .runtime()
+        .services()
         .map(|runtime| runtime.git_poll_control())
         .unwrap_or_default()
         .request_refresh();
     true
 }
 
-pub fn add_worktree_folder(state: &State<AppState>, path: PathBuf) {
+pub fn add_worktree_folder(state: &AppContext, path: PathBuf) {
     if !path.is_dir() {
         state.update(|app| {
             app.show_error(format!(
@@ -1169,8 +1131,7 @@ pub fn add_worktree_folder(state: &State<AppState>, path: PathBuf) {
     }
     state.update(|app| crate::app::explorer::add_folder(app, path));
     state
-        .get()
-        .runtime()
+        .services()
         .map(|runtime| runtime.git_poll_control())
         .unwrap_or_default()
         .request_refresh();
@@ -1208,7 +1169,7 @@ fn create_worktree_message(path: &Path, checkout: &Checkout) -> String {
     )
 }
 
-pub fn request_create_worktree(state: &State<AppState>, repository: PathBuf, checkout: Checkout) {
+pub fn request_create_worktree(state: &AppContext, repository: PathBuf, checkout: Checkout) {
     let path = default_worktree_path(&repository, &checkout);
     state.update(move |app| {
         app.git.ui.branch_picker = None;
@@ -1227,7 +1188,7 @@ pub fn request_create_worktree(state: &State<AppState>, repository: PathBuf, che
     });
 }
 
-pub fn choose_worktree_location(state: &State<AppState>) {
+pub fn choose_worktree_location(state: &AppContext) {
     use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
     let Some(confirm) = state.get().git.ui.confirm else {
         return;
@@ -1278,7 +1239,7 @@ fn create_worktree_with(
 }
 
 pub fn create_worktree(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
     path: PathBuf,
@@ -1350,7 +1311,7 @@ fn worktree_removal_confirmation(
 }
 
 pub fn request_remove_worktree(
-    state: &State<AppState>,
+    state: &AppContext,
     repository: PathBuf,
     path: PathBuf,
     force: bool,
@@ -1401,7 +1362,7 @@ fn remove_worktree_with(
 }
 
 pub fn remove_worktree(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
     path: PathBuf,
@@ -1451,7 +1412,7 @@ pub fn remove_worktree(
 
 /// Undo the last commit, keeping its changes staged, and offer its message
 /// for the next commit.
-pub fn undo_last_commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub fn undo_last_commit(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
     let Some(repository) = active_repository(store) else {
         return false;
     };
@@ -1476,7 +1437,7 @@ pub fn undo_last_commit(state: &State<AppState>, store: &State<GitStoreSnapshot>
 }
 
 /// Run the active repository's [`SyncPlan`].
-pub fn sync(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub fn sync(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
     let Some(repository) = active_repository(store) else {
         return false;
     };
@@ -1544,12 +1505,8 @@ fn publish_remote(remotes: &[RemoteInfo]) -> Option<&str> {
 
 /// List `repository`'s branches into the open branch picker opened as
 /// `sequence`. Read-only, so it runs beside any write operation.
-pub fn load_branches(state: &State<AppState>, repository: PathBuf, sequence: u64) {
-    let Some(application) = state
-        .get()
-        .runtime()
-        .and_then(|runtime| runtime.application())
-    else {
+pub fn load_branches(state: &AppContext, repository: PathBuf, sequence: u64) {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return;
     };
     let worker_state = state.clone();
@@ -1586,7 +1543,7 @@ pub fn load_branches(state: &State<AppState>, repository: PathBuf, sequence: u64
 }
 
 /// Fetch every remote, then reload the open branch picker's list.
-pub fn fetch_branches(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub fn fetch_branches(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
     let Some(picker) = state.get().git.ui.branch_picker else {
         return false;
     };
@@ -1712,7 +1669,7 @@ fn overwritten_files(error: &GitError) -> Vec<String> {
 
 /// Check out `checkout` in the repository at `root`.
 pub fn checkout(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
     checkout: Checkout,
@@ -1787,7 +1744,7 @@ fn active_repository(store: &State<GitStoreSnapshot>) -> Option<RepositorySnapsh
 }
 
 fn run(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     repository: RepositorySnapshot,
     kind: OperationKind,
@@ -1801,7 +1758,7 @@ fn run(
 
 /// [`run`], handing the action's result to `on_success` on the UI thread.
 fn run_with<T: Send + 'static>(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     repository: RepositorySnapshot,
     kind: OperationKind,
@@ -1982,18 +1939,18 @@ mod tests {
                 ApplicationHandle::new(move |task| queue.lock().unwrap().push(task), || {});
             let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
             runtime.set_application(application);
-            let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+            let exposed = Arc::new(Mutex::new(None::<AppContext>));
             let output = exposed.clone();
             let roots = vec![root.clone()];
             let viewport = UiRect::new(0.0, 0.0, 600.0, 400.0);
             let view: AppView = Arc::new(move |cx| {
-                let state = cx.state_with(|| {
+                let state = AppContext::detached(cx.state_with(|| {
                     let mut app = AppState::new();
-                    app.attach_runtime(&runtime);
                     app.explorer.model.restore(roots.clone(), Vec::new());
                     app.workspace.open_path("current.txt".into(), "keep".into());
                     app
-                });
+                }))
+                .with_runtime(&runtime);
                 *output.lock().unwrap() = Some(state);
                 panel(viewport, VisualStyle::default())
             });

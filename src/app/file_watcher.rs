@@ -1,10 +1,11 @@
 //! Application disk reconciliation and watcher delivery coordination.
+use crate::app::context::AppContext;
+use crate::app::state::AppState;
+use crate::app::workspace::ReconcileResult;
 use crate::infrastructure::explorer_filesystem::ExplorerFilesystem;
 pub(crate) use crate::infrastructure::file_watcher::{
     FileChangeBatch, FileChangeKind, Lease, start_async_scoped,
 };
-use crate::model::workspace::ReconcileResult;
-use crate::state::AppState;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -49,7 +50,7 @@ type PreparedDirectory = (
 pub(crate) struct PreparedFileBatch {
     roots: Vec<PathBuf>,
     directories: Vec<PreparedDirectory>,
-    disk_updates: Vec<crate::model::workspace::PreparedDiskUpdate>,
+    disk_updates: Vec<crate::app::workspace::PreparedDiskUpdate>,
     defer_tree: bool,
     invalidate_search: bool,
 }
@@ -125,7 +126,7 @@ pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch)
                     } else {
                         app.explorer.model.unload(key)
                     };
-                    crate::background_ui::retire(old);
+                    crate::infrastructure::ui_dispatch::retire(old);
                     changed = true;
                 } else if app.explorer.model.listing(key).is_some() {
                     retry = true;
@@ -133,7 +134,7 @@ pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch)
             }
         }
     }
-    crate::background_ui::retire(batch.directories);
+    crate::infrastructure::ui_dispatch::retire(batch.directories);
     let expected_updates = batch.disk_updates.len();
     let outcomes = app.workspace.apply_disk_updates(batch.disk_updates);
     retry |= outcomes.len() < expected_updates;
@@ -161,7 +162,7 @@ pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch)
 }
 
 pub(crate) fn notify_prepared_impl(
-    state: lgui::prelude::State<AppState>,
+    state: AppContext,
     application: lgui::ApplicationHandle,
     prepared: PreparedFileBatch,
     lease: Option<Lease>,
@@ -184,14 +185,14 @@ pub(crate) fn notify_prepared_impl(
     });
 }
 pub(crate) fn notify_prepared(
-    state: lgui::prelude::State<AppState>,
+    state: AppContext,
     application: lgui::ApplicationHandle,
     prepared: PreparedFileBatch,
 ) {
     notify_prepared_impl(state, application, prepared, None)
 }
 pub(crate) fn notify_prepared_scoped(
-    state: lgui::prelude::State<AppState>,
+    state: AppContext,
     application: lgui::ApplicationHandle,
     prepared: PreparedFileBatch,
     lease: Lease,
@@ -200,7 +201,7 @@ pub(crate) fn notify_prepared_scoped(
 }
 
 pub(crate) fn refresh_async_impl(
-    state: lgui::prelude::State<AppState>,
+    state: AppContext,
     application: lgui::ApplicationHandle,
     lease: Option<Lease>,
 ) {
@@ -214,10 +215,7 @@ pub(crate) fn refresh_async_impl(
             notify_prepared_impl(state, application, prepared, lease);
         });
 }
-pub(crate) fn refresh_async(
-    state: lgui::prelude::State<AppState>,
-    application: lgui::ApplicationHandle,
-) {
+pub(crate) fn refresh_async(state: AppContext, application: lgui::ApplicationHandle) {
     refresh_async_impl(state, application, None)
 }
 
@@ -812,7 +810,7 @@ mod tests {
         let output = exposed.clone();
         let rect = UiRect::new(0.0, 0.0, 10.0, 10.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| initial.clone());
+            let state = AppContext::detached(cx.state_with(|| initial.clone()));
             *output.lock().unwrap() = Some(state);
             panel(rect, VisualStyle::default())
         });

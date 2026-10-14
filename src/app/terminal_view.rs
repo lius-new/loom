@@ -1,4 +1,5 @@
 //! Composes terminal frames and semantic UI commands without exposing resources.
+use crate::app::context::AppContext;
 use crate::app::state::AppState;
 use crate::app::terminal_binding::{TerminalStore, TerminalTabs};
 use crate::app::terminal_runtime::TerminalDisplay;
@@ -10,7 +11,7 @@ use crate::ui::terminal::{
 };
 use lgui::ApplicationHandle;
 use lgui::core::{UiFocusHandle, UiId};
-use lgui::prelude::{Element, State, UiRect};
+use lgui::prelude::{Element, UiRect};
 use std::sync::Arc;
 
 fn session_frame(tab: crate::app::terminal_binding::TerminalTab) -> SessionFrame {
@@ -63,7 +64,7 @@ pub(crate) fn project(tabs: TerminalTabs) -> View {
     View::new(tabs.into_model(), values)
 }
 pub(crate) fn binding(
-    state: &State<AppState>,
+    state: &AppContext,
     tabs: &TerminalStore,
     application: &Arc<ApplicationHandle>,
 ) -> (Binding, Sessions, FrameRequest) {
@@ -73,7 +74,7 @@ pub(crate) fn binding(
     let command_application = application.clone();
     let state_binding = Binding::new(
         crate::ui::components::state_access::StateAccess::project(
-            state.clone(),
+            state.model(),
             |app| &app.terminal.ui,
             |app| &mut app.terminal.ui,
         ),
@@ -151,7 +152,7 @@ fn open_menu(
         });
 }
 pub(crate) fn run(
-    state: &State<AppState>,
+    state: &AppContext,
     tabs: &TerminalStore,
     application: &Arc<ApplicationHandle>,
     command: Command,
@@ -261,7 +262,7 @@ pub(crate) fn run(
 
 pub(crate) fn render(
     rect: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
     terminal_id: UiId,
@@ -291,7 +292,7 @@ pub(crate) fn render(
 }
 pub(crate) fn render_region(
     rect: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     map: super::layout_map::MapStore,
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
@@ -342,7 +343,7 @@ pub(crate) fn render_region(
 }
 pub(crate) fn menu(
     viewport: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     tabs: TerminalStore,
     application: Arc<ApplicationHandle>,
     terminal_focus: UiFocusHandle,
@@ -356,7 +357,7 @@ pub(crate) fn menu(
 pub(crate) fn shell_menu(
     instance: UiRect,
     bounds: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     focus: UiFocusHandle,
     tabs: TerminalStore,
 ) -> Element {
@@ -381,7 +382,7 @@ pub(crate) fn render_terminal_tabs(
     values: &[crate::app::terminal_binding::TerminalTab],
     active: u64,
     tabs: TerminalStore,
-    state: State<AppState>,
+    state: AppContext,
     map: super::layout_map::MapStore,
     terminal_focus: UiFocusHandle,
     editor_focus: UiFocusHandle,
@@ -424,11 +425,11 @@ mod ownership_tests {
         let output = exposed.clone();
         let view: AppView = Arc::new(move |cx| {
             let runtime = captured.upgrade().unwrap();
-            let state = cx.state_with(|| {
-                let mut app = AppState::new();
-                app.attach_runtime(&runtime);
+            let state = AppContext::detached(cx.state_with(|| {
+                let app = AppState::new();
                 app
-            });
+            }))
+            .with_runtime(&runtime);
             let model = cx.state_with(|| {
                 crate::features::terminal::model::TerminalModel::restored(
                     vec![ShellKind::Cmd],

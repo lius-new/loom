@@ -1,9 +1,10 @@
 //! Explorer command transactions across Workspace and the Explorer model.
+use crate::app::context::AppContext;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::workspace_actions::{close_test_directory, dirty_test_file};
+use crate::app::workspace_commands::{close_test_directory, dirty_test_file};
 
 #[test]
 fn text_file_above_four_mib_opens_in_explorer() {
@@ -15,11 +16,11 @@ fn text_file_above_four_mib_opens_in_explorer() {
     assert_eq!(read_text_file(&path).unwrap(), contents);
 
     let mut app = AppState::new();
-    assert!(open_tree_file(&mut app, path.clone(), 2));
+    assert!(open_tree_file(&mut app, path.clone(), 2, None));
     assert_eq!(app.workspace.active_path(), Some(path.as_path()));
     let id = app.workspace.active().unwrap();
     assert_eq!(app.workspace.save_snapshot(id).unwrap().2, contents);
-    assert!(app.toast.is_none());
+    assert!(app.chrome.toast.is_none());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -49,7 +50,7 @@ fn launch_paths_open_the_first_folder_add_others_and_open_files() {
     );
     let active = app.workspace.active().unwrap();
     assert_eq!(app.workspace.meta(active).unwrap().path, file);
-    assert!(app.toast.is_none());
+    assert!(app.chrome.toast.is_none());
     let _ = fs::remove_dir_all(root);
 }
 
@@ -73,7 +74,8 @@ fn unreadable_launch_files_report_one_toast_and_keep_the_workspace() {
     );
     assert!(app.workspace.active_items().is_empty());
     assert!(
-        app.toast
+        app.chrome
+            .toast
             .as_ref()
             .unwrap()
             .message
@@ -172,9 +174,9 @@ fn removing_a_workspace_folder_keeps_disk_documents_and_clears_tree_state() {
 }
 
 fn press_file(app: &mut AppState, path: &str, clicks: u8, drop: Option<TabDrop>) {
-    app.editor.tabs.file_drag = Some(crate::state::FileDragState {
+    app.editor.tabs.file_drag = Some(crate::app::state::FileDragState {
         path: PathBuf::from(path),
-        source: crate::state::FileDragSource::Explorer { clicks },
+        source: crate::app::state::FileDragSource::Explorer { clicks },
         origin: (0.0, 0.0),
         point: (0.0, 0.0),
         active: drop.is_some(),
@@ -342,8 +344,8 @@ fn deleted_file_closes_its_open_editor_tab() {
     assert_eq!(app.workspace.active_path(), None);
 }
 
-/// A live root state, so commands that take `&State<AppState>` can run.
-fn live(app: AppState) -> State<AppState> {
+/// A live root state, so commands that take `&AppContext` can run.
+fn live(app: AppState) -> AppContext {
     use lgui::application::AppView;
     use lgui::core::UiScale;
     use lgui::prelude::{UiRect, VisualStyle, panel};
@@ -354,7 +356,7 @@ fn live(app: AppState) -> State<AppState> {
     let exposed = Arc::new(Mutex::new(None));
     let output = exposed.clone();
     let view: AppView = Arc::new(move |cx| {
-        let state = cx.state_with(|| initial.lock().unwrap().take().unwrap());
+        let state = AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()));
         *output.lock().unwrap() = Some(state);
         panel(UiRect::new(0.0, 0.0, 10.0, 10.0), VisualStyle::default())
     });
@@ -380,7 +382,7 @@ fn deleting_a_folder_with_modified_documents_is_refused() {
 
     assert!(folder.join("main.rs").is_file());
     let app = state.get();
-    assert!(app.toast.is_some());
+    assert!(app.chrome.toast.is_some());
     assert_eq!(app.explorer.model.roots(), std::slice::from_ref(&root));
     let _ = fs::remove_dir_all(root);
 }

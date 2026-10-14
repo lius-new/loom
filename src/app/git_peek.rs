@@ -1,10 +1,9 @@
 //! Loads and applies inline Git hunk previews outside the view.
+use crate::app::context::AppContext;
 use crate::domain::pane_layout::PaneId;
 use crate::features::git::DiffTarget;
 use crate::features::git::diff_document::DiffDocument;
-use crate::state::AppState;
 use crate::ui::git::hunk_peek::{Hunk, HunkPeek, block_lines, hunk_at};
-use lgui::prelude::State;
 use std::path::{Path, PathBuf};
 use std::thread;
 /// Read the unstaged change at `line`, or else the staged one.
@@ -39,7 +38,7 @@ fn load(
 /// Open the peek of the change at `line` in `pane`, or close it when it
 /// already shows that change.
 pub fn toggle(
-    state: &State<AppState>,
+    state: &AppContext,
     pane: PaneId,
     path: PathBuf,
     root: PathBuf,
@@ -64,18 +63,14 @@ pub fn toggle(
 }
 
 pub(crate) fn open_at(
-    state: &State<AppState>,
+    state: &AppContext,
     pane: PaneId,
     path: PathBuf,
     root: PathBuf,
     relative: PathBuf,
     line: usize,
 ) {
-    let Some(application) = state
-        .get()
-        .runtime()
-        .and_then(|runtime| runtime.application())
-    else {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return;
     };
     let peek = HunkPeek {

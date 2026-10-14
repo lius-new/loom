@@ -1,9 +1,10 @@
 //! The miniature itself is the drop surface. Hit tests and fills share rectangles.
+use crate::app::context::AppContext;
+use crate::app::state::AppState;
 #[cfg(test)]
 use crate::app::terminal_binding::TerminalTabs;
 use crate::domain::application_layout::{ApplicationLayout, Content, Placement, Visibility};
 use crate::domain::pane_layout::{Axis, Direction};
-use crate::state::AppState;
 use crate::ui::terminal::layout_binding::{MapScene, MapSignal, TerminalDrag, Zone};
 #[cfg(test)]
 use crate::ui::theme;
@@ -12,7 +13,7 @@ use lgui::core::{CursorIcon, Observable, ObservableListener, Point};
 use lgui::core::{LogicalKey, NamedKey};
 #[cfg(test)]
 use lgui::prelude::VisualStyle;
-use lgui::prelude::{Element, State, UiRect};
+use lgui::prelude::{Element, UiRect};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -104,7 +105,7 @@ impl MapStore {
     }
 }
 /// Borrow the app state without invalidating it.
-fn with_app<R>(state: &State<AppState>, f: impl FnOnce(&mut AppState) -> R) -> R {
+fn with_app<R>(state: &AppContext, f: impl FnOnce(&mut AppState) -> R) -> R {
     let mut out = None;
     state.try_update(|app| {
         out = Some(f(app));
@@ -430,7 +431,7 @@ pub fn drag_cursor(map: &MapStore) -> CursorIcon {
 }
 
 pub(crate) fn binding(
-    state: &State<AppState>,
+    state: &AppContext,
     map: &MapStore,
     tabs: &crate::app::terminal_binding::TerminalStore,
 ) -> crate::ui::terminal::layout_binding::MapBinding {
@@ -567,7 +568,7 @@ pub(crate) fn binding(
 }
 pub(crate) fn attach(
     root: Element,
-    state: State<AppState>,
+    state: AppContext,
     map: MapStore,
     tabs: crate::app::terminal_binding::TerminalStore,
     viewport: UiRect,
@@ -577,7 +578,7 @@ pub(crate) fn attach(
 }
 pub(crate) fn render(
     viewport: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     map: MapStore,
     tabs: crate::app::terminal_binding::TerminalStore,
     focus: lgui::core::UiFocusHandle,
@@ -586,7 +587,7 @@ pub(crate) fn render(
 }
 pub(crate) fn render_divider(
     divider: crate::domain::application_layout::Divider,
-    state: State<AppState>,
+    state: AppContext,
 ) -> Element {
     // Dividers use only sash commands; the session port stays empty.
     let reader = state.clone();
@@ -896,7 +897,7 @@ mod tests {
         use std::sync::{Arc, Mutex};
         let viewport = UiRect::new(0.0, 0.0, 1200.0, 800.0);
         let exposed = Arc::new(Mutex::new(
-            None::<(State<AppState>, crate::app::terminal_binding::TerminalStore)>,
+            None::<(AppContext, crate::app::terminal_binding::TerminalStore)>,
         ));
         let output = exposed.clone();
         let application = Arc::new(lgui::ApplicationHandle::new(|task| task(), || {}));
@@ -909,7 +910,7 @@ mod tests {
                 t.select(1);
                 t
             });
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut a = AppState::new();
                 a.terminal_chrome.show_terminal = true;
                 a.source_control.visible = true;
@@ -920,7 +921,7 @@ mod tests {
                     240.0,
                 ));
                 a
-            });
+            }));
             *output.lock().unwrap() = Some((state.clone(), tabs.clone()));
             let t = tabs.get();
             let ids = t.tabs().iter().map(|t| t.id).collect::<Vec<_>>();

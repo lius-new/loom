@@ -18,27 +18,12 @@
 #![allow(dead_code)] // the data layer & palette expose an intentionally broad API
 
 mod app;
-mod infrastructure;
-use infrastructure::ui_dispatch as background_ui;
-mod features;
-use app::file_loading;
-use app::file_watcher;
-use features::keymap as input;
 mod domain;
-use app::key_actions;
-use infrastructure::launch;
+mod features;
+mod infrastructure;
 mod model;
-use app::state;
-use app::workspace_restore as session_restore;
 mod ui;
-use app::window as window_geometry;
-use app::workspace_commands as workspace_actions;
-use app::workspace_session as workspace_persistence;
-use loom_editor_core::vim;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     app::run()
 }
-
-#[cfg(test)]
-use app::svg_icons;

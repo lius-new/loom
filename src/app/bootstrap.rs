@@ -1,6 +1,8 @@
 use super::shell;
+use crate::app::window as window_geometry;
+use crate::infrastructure::launch;
+use crate::ui;
 use crate::ui::file_icons;
-use crate::{launch, ui, window_geometry};
 #[cfg(not(target_os = "windows"))]
 use image::imageops::FilterType;
 use lgui::icons::SvgIconRegistry;

@@ -1,9 +1,9 @@
 //! Pane divider state and domain resize coordination.
-use crate::app::state::AppState;
+use crate::app::context::AppContext;
 use crate::domain::pane_layout::{Axis, Sash};
 use crate::ui::chrome::sash_binding::{Binding, Command};
-use lgui::prelude::{Element, State};
-pub fn binding(state: &State<AppState>) -> Binding {
+use lgui::prelude::Element;
+pub fn binding(state: &AppContext) -> Binding {
     let reader = state.clone();
     let writer = state.clone();
     Binding::new(
@@ -37,6 +37,6 @@ pub fn binding(state: &State<AppState>) -> Binding {
         },
     )
 }
-pub fn render(sash: Sash, state: State<AppState>) -> Element {
+pub fn render(sash: Sash, state: AppContext) -> Element {
     crate::ui::pane_sash::render(sash, binding(&state))
 }

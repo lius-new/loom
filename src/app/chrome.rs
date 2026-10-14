@@ -1,10 +1,10 @@
 //! Chrome composition: views receive only their relevant frames and commands.
-use crate::app::state::AppState;
+use crate::app::context::AppContext;
 use crate::app::terminal_binding::TerminalStore;
 use crate::ui::chrome::{HomeBinding, HomeCommand, HomeFrame, TitleBinding, TitleFrame};
 use lgui::core::{UiFocusHandle, UiId};
-use lgui::prelude::{Element, State, UiRect};
-pub fn title_binding(state: &State<AppState>) -> TitleBinding {
+use lgui::prelude::{Element, UiRect};
+pub fn title_binding(state: &AppContext) -> TitleBinding {
     let reader = state.clone();
     let writer = state.clone();
     TitleBinding::new(
@@ -17,11 +17,11 @@ pub fn title_binding(state: &State<AppState>) -> TitleBinding {
         },
     )
 }
-pub fn title(rect: UiRect, state: State<AppState>, git: Element) -> Element {
+pub fn title(rect: UiRect, state: AppContext, git: Element) -> Element {
     crate::ui::titlebar::render(rect, title_binding(&state), git)
 }
 pub fn home_binding(
-    state: &State<AppState>,
+    state: &AppContext,
     workspace: bool,
     editor: UiFocusHandle,
     terminal: Option<UiFocusHandle>,
@@ -39,18 +39,18 @@ pub fn home_binding(
                     app.explorer.model.recents().to_vec()
                 },
                 hover: if workspace {
-                    app.workspace_home_hover
+                    app.chrome.workspace_home_hover
                 } else {
-                    app.welcome_hover
+                    app.chrome.welcome_hover
                 },
             }
         },
         move |command| match command {
             HomeCommand::Hover(value) => writer.try_update(|app| {
                 let hover = if workspace {
-                    &mut app.workspace_home_hover
+                    &mut app.chrome.workspace_home_hover
                 } else {
-                    &mut app.welcome_hover
+                    &mut app.chrome.welcome_hover
                 };
                 let changed = *hover != value;
                 *hover = value;
@@ -95,14 +95,14 @@ pub fn home_binding(
             HomeCommand::OpenSourceControl => {
                 writer.update(|app| {
                     app.source_control.visible = true;
-                    app.workspace_home_hover = None;
+                    app.chrome.workspace_home_hover = None;
                 });
                 true
             }
         },
     )
 }
-pub fn welcome(rect: UiRect, state: State<AppState>, id: UiId, editor: UiFocusHandle) -> Element {
+pub fn welcome(rect: UiRect, state: AppContext, id: UiId, editor: UiFocusHandle) -> Element {
     crate::ui::welcome::render(
         rect,
         home_binding(&state, false, editor.clone(), None, None),
@@ -112,7 +112,7 @@ pub fn welcome(rect: UiRect, state: State<AppState>, id: UiId, editor: UiFocusHa
 }
 pub fn workspace_home(
     rect: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     id: UiId,
     editor: UiFocusHandle,
     terminal: UiFocusHandle,
@@ -126,7 +126,7 @@ pub fn workspace_home(
 }
 
 pub fn status_binding(
-    state: &State<AppState>,
+    state: &AppContext,
     editor: UiFocusHandle,
     terminal: UiFocusHandle,
     tabs: TerminalStore,
@@ -173,7 +173,7 @@ pub fn status_binding(
 }
 pub fn status(
     rect: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     editor: UiFocusHandle,
     terminal: UiFocusHandle,
     tabs: TerminalStore,

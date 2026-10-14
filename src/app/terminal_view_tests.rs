@@ -1,17 +1,18 @@
 #[cfg(test)]
 mod tests {
+    use crate::app::context::AppContext;
+    use crate::app::state::AppState;
     use crate::app::terminal_binding::TerminalTabs;
     use crate::app::terminal_runtime::TerminalDisplay;
     use crate::app::terminal_view::{render, render_terminal_tabs, session_rects, shell_menu};
     use crate::features::terminal::{ShellKind, TerminalRun};
-    use crate::state::AppState;
     use crate::ui::terminal::keys::key_bytes;
     use crate::ui::terminal::view::*;
     use crate::ui::{fonts, theme};
     use lgui::ApplicationHandle;
     use lgui::core::{EventPolicy, Point, PointerButton, UiElement, UiId};
     use lgui::core::{KeyState, KeyboardEvent, LogicalKey, NamedKey};
-    use lgui::prelude::{Element, State, UiRect, VisualStyle, group};
+    use lgui::prelude::{Element, UiRect, VisualStyle, group};
     use std::sync::Arc;
 
     #[test]
@@ -24,11 +25,11 @@ mod tests {
         use std::sync::Mutex;
         let viewport = UiRect::new(0.0, 0.0, 400.0, 400.0);
         let exposed = Arc::new(Mutex::new(
-            None::<(State<AppState>, crate::app::terminal_binding::TerminalStore)>,
+            None::<(AppContext, crate::app::terminal_binding::TerminalStore)>,
         ));
         let output = exposed.clone();
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.preferences.values_mut().terminal_profiles = (1..=10)
                     .map(|id| ShellProfile {
@@ -51,7 +52,7 @@ mod tests {
                 app.layout.application_layout = Some(layout);
                 app.terminal.ui.terminal_shell_menu = true;
                 app
-            });
+            }));
             let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
                 tabs.set_profiles(&state.get().preferences.values().terminal_profiles);
@@ -182,13 +183,13 @@ mod tests {
         use std::sync::Mutex;
 
         let exposed = Arc::new(Mutex::new(
-            None::<(State<AppState>, crate::app::terminal_binding::TerminalStore)>,
+            None::<(AppContext, crate::app::terminal_binding::TerminalStore)>,
         ));
         let output = exposed.clone();
         let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
         let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(AppState::new);
+            let state = AppContext::detached(cx.state_with(AppState::new));
             let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
                 tabs.split(1);
@@ -357,7 +358,7 @@ mod tests {
         };
 
         let exposed = Arc::new(Mutex::new(
-            None::<(State<AppState>, crate::app::terminal_binding::TerminalStore)>,
+            None::<(AppContext, crate::app::terminal_binding::TerminalStore)>,
         ));
         let output = exposed.clone();
         let writes = Arc::new(AtomicUsize::new(0));
@@ -365,11 +366,11 @@ mod tests {
         let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
         let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.terminal_chrome.show_terminal = true;
                 app
-            });
+            }));
             let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
                 tabs.add(ShellKind::Cmd);

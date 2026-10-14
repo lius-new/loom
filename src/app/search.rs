@@ -1,11 +1,12 @@
 //! Search application adapter: composes feature state, services and Workspace navigation.
+use crate::app::context::AppContext;
+use crate::app::state::AppState;
 use crate::features::search::model::SearchKey as Key;
 use crate::features::search::{FileMatches, Request, Results};
 use crate::infrastructure::ui_dispatch::LatestNotification;
-use crate::state::AppState;
 use lgui::ApplicationHandle;
 use lgui::core::UiFocusHandle;
-use lgui::prelude::{State, UiRect};
+use lgui::prelude::UiRect;
 #[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -33,11 +34,7 @@ pub fn key(app: &AppState) -> Key {
 }
 
 /// Effect cleanup cancels only its own ticket, never a later search.
-pub fn start(
-    state: State<AppState>,
-    application: ApplicationHandle,
-    expected: Key,
-) -> impl FnOnce() {
+pub fn start(state: AppContext, application: ApplicationHandle, expected: Key) -> impl FnOnce() {
     let cancel = Arc::new(AtomicBool::new(false));
     let mut request = None;
     let mut generation = 0;
@@ -47,7 +44,7 @@ pub fn start(
         }
         let begin = app.search.model.begin(expected.clone());
         generation = begin.generation;
-        if let Some(runtime) = app.runtime() {
+        if let Some(runtime) = state.services() {
             runtime.install_search_cancel(cancel.clone());
         }
         crate::infrastructure::ui_dispatch::retire(begin.retired);
@@ -98,7 +95,7 @@ pub fn start(
     move || ticket.stop()
 }
 
-pub fn reset_filters(state: &State<AppState>) {
+pub fn reset_filters(state: &AppContext) {
     state.update(|app| {
         app.search.ui.include.clear();
         app.search.ui.exclude.clear();
@@ -107,9 +104,9 @@ pub fn reset_filters(state: &State<AppState>) {
     });
 }
 
-pub fn clear(state: &State<AppState>) {
+pub fn clear(state: &AppContext) {
     state.update(|app| {
-        if let Some(runtime) = app.runtime() {
+        if let Some(runtime) = state.services() {
             runtime.cancel_search();
         }
         app.search.ui.query.clear();
@@ -118,20 +115,20 @@ pub fn clear(state: &State<AppState>) {
         app.search.ui.details_open = false;
         app.search.ui.collapsed.clear();
         let previous = app.search.model.clear();
-        crate::background_ui::retire(previous);
+        crate::infrastructure::ui_dispatch::retire(previous);
     });
 }
 
-pub fn refresh(state: &State<AppState>) {
+pub fn refresh(state: &AppContext) {
     state.update(|app| app.search.ui.refresh += 1);
 }
 
-pub fn cancel(state: &State<AppState>) {
+pub fn cancel(state: &AppContext) {
     state.try_update(|app| {
         if !app.search.model.status().running {
             return false;
         }
-        if let Some(runtime) = app.runtime() {
+        if let Some(runtime) = state.services() {
             runtime.cancel_search();
         }
         app.search.model.cancel()
@@ -152,7 +149,7 @@ pub fn toggle_filters(search: &mut crate::ui::search::state::SearchPanelState) {
 }
 
 pub fn navigate_selected(
-    state: &State<AppState>,
+    state: &AppContext,
     application: ApplicationHandle,
     rect: UiRect,
     editor_focus: UiFocusHandle,
@@ -176,7 +173,7 @@ pub fn navigate_selected(
 }
 
 pub fn navigate(
-    state: &State<AppState>,
+    state: &AppContext,
     application: ApplicationHandle,
     rect: UiRect,
     editor_focus: UiFocusHandle,
@@ -279,7 +276,7 @@ pub fn navigate(
 /// Composition stays here; Search receives no editor, Workspace or application handle.
 pub fn render(
     rect: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     application: ApplicationHandle,
     editor_focus: UiFocusHandle,
     editor_rect: UiRect,
@@ -301,7 +298,7 @@ pub fn render(
         ),
         &state,
     );
-    let projected = StateAccess::project(state.clone(), |app| &app.search, |app| &mut app.search);
+    let projected = StateAccess::project(state.model(), |app| &app.search, |app| &mut app.search);
     let commands = Commands::new(move |command| match command {
         Command::Refresh => refresh(&state),
         Command::Cancel => cancel(&state),
@@ -336,9 +333,9 @@ pub fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::keymap::action::Action;
     use crate::features::search;
     use crate::features::search::{Matcher, SearchSpec};
-    use crate::input::action::Action;
     use std::time::Duration;
     #[test]
     fn selection_scroll_uses_file_and_match_heights_with_collapsed_groups() {
@@ -455,7 +452,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.txt"), "needle").unwrap();
         let fixture_root = root.clone();
-        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
         let output = exposed.clone();
         let tasks = Arc::new(Mutex::new(Vec::<Task>::new()));
         let posted = tasks.clone();
@@ -463,7 +460,7 @@ mod tests {
             ApplicationHandle::new(move |task| posted.lock().unwrap().push(task), || {});
         let viewport = UiRect::new(0.0, 0.0, 500.0, 400.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.explorer
                     .model
@@ -471,7 +468,7 @@ mod tests {
                 app.apply(Action::OpenSearch);
                 app.search.ui.query.set_text("needle");
                 app
-            });
+            }));
             *output.lock().unwrap() = Some(state.clone());
             let expected = key(&state.get());
             let application = application.clone();
@@ -547,11 +544,11 @@ mod tests {
         std::fs::write(&path, "old disk\n").unwrap();
         let fixture_root = root.clone();
         let fixture_path = path.clone();
-        let exposed = Arc::new(Mutex::new(None::<(State<AppState>, UiFocusHandle)>));
+        let exposed = Arc::new(Mutex::new(None::<(AppContext, UiFocusHandle)>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 500.0, 400.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.apply(Action::OpenSearch);
                 app.explorer
@@ -567,7 +564,7 @@ mod tests {
                     .unwrap();
                 app.search.ui.query.set_text("old");
                 app
-            });
+            }));
             *output.lock().unwrap() =
                 Some((state, cx.focus_handle(lgui::core::UiId::new("test-editor"))));
             panel(viewport, VisualStyle::default())

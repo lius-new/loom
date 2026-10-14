@@ -1,9 +1,11 @@
 use super::*;
+use crate::app::context::AppContext;
 use crate::domain::identity::PaneId;
 use crate::features::git::{GitStoreSnapshot, LineChange};
 use crate::model::text::TextBuffer;
 use lgui::core::{CursorIcon, KeyState, PointerButton, UiId};
 use lgui::core::{KeyModifiers, KeyboardEvent, LogicalKey};
+use lgui::prelude::State;
 use lgui::prelude::{Element, group};
 use lgui::services::{Clipboard, ClipboardError};
 use std::collections::BTreeMap;
@@ -77,7 +79,8 @@ fn large_file_interaction_baseline() {
         let output = exposed.clone();
         let initial = Arc::new(Mutex::new(Some(app)));
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| initial.lock().unwrap().take().unwrap());
+            let state =
+                AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()));
             let git = cx.state(GitStoreSnapshot::default());
             *output.lock().unwrap() = Some(state.clone());
             let id = UiId::new("large-file-benchmark");
@@ -86,7 +89,7 @@ fn large_file_interaction_baseline() {
         });
         let mut session = UiSession::new();
         session.render_view(&view, rect, UiScale::ONE);
-        let state: State<AppState> = exposed.lock().unwrap().clone().unwrap();
+        let state: AppContext = exposed.lock().unwrap().clone().unwrap();
         let start = std::time::Instant::now();
         for i in 0..100 {
             state.update(|app| {
@@ -210,19 +213,19 @@ fn editor_events_route_drag_selection_shortcuts_and_ime_commit() {
     use lgui::core::{ImeEvent, InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
     use lgui::session::UiSession;
     use std::sync::Arc;
-    let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
     let output = exposed.clone();
     let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
     let app = ApplicationContext::empty(Default::default());
     let view_app = app.clone();
     let view: AppView = Arc::new(move |cx| {
-        let state = cx.state(document("hello world\nsecond"));
+        let state = AppContext::detached(cx.state(document("hello world\nsecond")));
         let git_store = cx.state(GitStoreSnapshot::default());
         *output.lock().unwrap() = Some(state.clone());
         let id = cx.use_stable_id();
         let focus = cx.focus_handle(id.clone());
         // Shortcuts reach the editor through the keymap, as in the app root.
-        let env = crate::key_actions::KeyEnv {
+        let env = crate::app::key_actions::KeyEnv {
             state: state.clone(),
             git_store: git_store.clone(),
             application: view_app.clone(),
@@ -230,7 +233,7 @@ fn editor_events_route_drag_selection_shortcuts_and_ime_commit() {
             editor_rect: viewport,
             terminal: None,
         };
-        crate::key_actions::attach(
+        crate::app::key_actions::attach(
             group(viewport).child(render(
                 PaneId::new(1),
                 viewport,
@@ -346,7 +349,7 @@ fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_cha
     use lgui::session::UiSession;
     use std::sync::Arc;
 
-    let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
     let output = exposed.clone();
     let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
     let application = ApplicationContext::empty(Default::default());
@@ -354,12 +357,12 @@ fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_cha
     let view: AppView = Arc::new(move |cx| {
         let mut initial = document(&format!("hello world\n{}", "line\n".repeat(40)));
         initial.editor.focused = true;
-        let state = cx.state(initial);
+        let state = AppContext::detached(cx.state(initial));
         let git = cx.state(GitStoreSnapshot::default());
         *output.lock().unwrap() = Some(state.clone());
         let id = UiId::new("smooth-editor-test");
         let focus = cx.focus_handle(id.clone());
-        let env = crate::key_actions::KeyEnv {
+        let env = crate::app::key_actions::KeyEnv {
             state: state.clone(),
             git_store: git.clone(),
             application: view_app.clone(),
@@ -367,7 +370,7 @@ fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_cha
             editor_rect: viewport,
             terminal: None,
         };
-        crate::key_actions::attach(
+        crate::app::key_actions::attach(
             group(viewport).child(render(PaneId::new(1), viewport, state, git, id, focus)),
             env,
         )
@@ -394,7 +397,7 @@ fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_cha
     };
     // UiSession has no native text service. Use the editor's existing
     // fallback metrics for the painted target, and check IME geometry separately.
-    let logical = |state: &State<AppState>| {
+    let logical = |state: &AppContext| {
         let app = state.get();
         let buffer = app.workspace.active_editor().unwrap();
         let (line, col) = buffer.line_col();
@@ -581,11 +584,13 @@ fn scrollbar_release_survives_editor_child_reordering() {
     use lgui::session::UiSession;
     use std::sync::Arc;
 
-    let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
     let output = exposed.clone();
     let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
     let view: AppView = Arc::new(move |cx| {
-        let state = cx.state(document(&format!("{}\n", "line".repeat(100)).repeat(100)));
+        let state = AppContext::detached(
+            cx.state(document(&format!("{}\n", "line".repeat(100)).repeat(100))),
+        );
         *output.lock().unwrap() = Some(state.clone());
         let id = cx.use_stable_id();
         let focus = cx.focus_handle(id.clone());
@@ -1006,7 +1011,7 @@ fn pointer_line_accounts_for_vertical_scroll_and_clamps_to_document() {
 fn render(
     pane: crate::domain::identity::PaneId,
     rect: UiRect,
-    state: State<AppState>,
+    state: AppContext,
     git: State<GitStoreSnapshot>,
     id: UiId,
     focus: lgui::core::UiFocusHandle,
@@ -1021,12 +1026,12 @@ fn editor_menu_executes_its_intent_and_keeps_editor_focus() {
     use lgui::core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
     use lgui::session::UiSession;
     use std::sync::Arc;
-    let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
     let output = exposed.clone();
     let viewport = UiRect::new(0.0, 0.0, 500.0, 300.0);
     let app = ApplicationContext::empty(Default::default());
     let view: AppView = Arc::new(move |cx| {
-        let state = cx.state(document("hello"));
+        let state = AppContext::detached(cx.state(document("hello")));
         let git = cx.state(GitStoreSnapshot::default());
         *output.lock().unwrap() = Some(state.clone());
         let id = cx.use_stable_id();

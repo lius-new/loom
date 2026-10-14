@@ -1,33 +1,8 @@
 {
   "schema": 1,
   "scope": "Lexical root-dependency gate including cfg(test); not a Rust type or macro resolver.",
-  "aliases": {
-    "state": "app/state",
-    "input": "features/keymap",
-    "background_ui": "infrastructure/ui_dispatch",
-    "svg_icons": "app/bootstrap (cfg(test) only)",
-    "workspace_actions": "app/workspace_commands (R8 composition seam; old UI callers removed in R8.4/R8.5)",
-    "key_actions": "app/key_actions (R8.4/R8.5 old UI seam)",
-    "file_loading": "app/file_loading (R8.5 caller seam)",
-    "file_watcher": "app/file_watcher (R8.5 caller seam)",
-    "window_geometry": "app/window (R8.4/R8.5 native window command seam)",
-    "launch": "infrastructure/launch (R8.5 bootstrap seam)"
-  },
+  "aliases": {},
   "root_state_adapters": [],
-  "runtime_bridges": [
-    "src/app/editor_vim_integration_tests.rs",
-    "src/app/explorer.rs",
-    "src/app/git.rs",
-    "src/app/git_tasks.rs",
-    "src/app/runtime.rs",
-    "src/app/search.rs",
-    "src/app/file_loading.rs",
-    "src/ui/components/loading_indicator.rs",
-    "src/ui/editor/caret.rs",
-    "src/app/terminal_view_tests.rs",
-    "src/app/git_peek.rs",
-    "src/app/terminal_profile_tests.rs"
-  ],
   "state_ownership": {
     "editor": {
       "owner": "app/state/editor (composition field)",
@@ -49,33 +24,13 @@
       "owner": "app/state/chrome: SidebarChrome (Source Control drawer visibility/width/resizing; R6.3 owner corrected from features/git)",
       "remove_in": "composition"
     },
-    "runtime": {
-      "owner": "app/runtime weak legacy access (no ownership)",
-      "remove_in": "R8"
-    },
     "search": {
       "owner": "app composition: features/search private model + ui/search interaction state",
       "remove_in": "R2 migrated; root composition retained"
     },
-    "toast": {
-      "owner": "app/state/chrome",
-      "remove_in": "R8"
-    },
-    "toast_seq": {
-      "owner": "app/state/chrome",
-      "remove_in": "R8"
-    },
-    "welcome_hover": {
-      "owner": "app/state/chrome",
-      "remove_in": "R8"
-    },
     "workspace": {
       "owner": "app/workspace composition of domain/workspace (one atomic update)",
       "remove_in": "composition"
-    },
-    "workspace_home_hover": {
-      "owner": "app/state/chrome",
-      "remove_in": "R8"
     },
     "terminal": {
       "owner": "app/state: TerminalPanelState (feature availability + UI interaction)",
@@ -104,24 +59,13 @@
     "keymap_ui": {
       "owner": "ui/keymap_binding KeymapUiState",
       "remove_in": "composition"
-    }
-  },
-  "exceptions": {
-    "src/model/workspace.rs": {
-      "dependencies": [
-        "crate::app"
-      ],
-      "remove_in": "R8",
-      "reason": "R4 的兼容导出指向 app/workspace 组合容器；纯域规则已迁入 domain/workspace。旧 UI 按各自登记阶段迁移，新增代码使用实际边界。"
     },
-    "src/ui/components/text.rs": {
-      "dependencies": [
-        "unicode_width"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
+    "chrome": {
+      "owner": "app/state/chrome: ChromeState",
+      "remove_in": "composition"
     }
   },
+  "exceptions": {},
   "phase2": {
     "search_has_no_exceptions": true,
     "retired_entry_files_retained": true
@@ -819,5 +763,32 @@
       "owner": "ui/chrome/tab_state UiState",
       "migrated_in": "R8.4"
     }
+  },
+  "framework_runtime_access": [
+    "src/app/editor_vim_integration_tests.rs",
+    "src/app/search.rs",
+    "src/ui/components/loading_indicator.rs",
+    "src/ui/editor/caret.rs",
+    "src/app/terminal_view_tests.rs",
+    "src/app/terminal_profile_tests.rs"
+  ],
+  "chrome_ownership": {
+    "ChromeState": [
+      "toast",
+      "toast_seq",
+      "welcome_hover",
+      "workspace_home_hover"
+    ],
+    "SidebarChrome": [
+      "visible",
+      "width",
+      "resizing"
+    ],
+    "DrawerChrome": [
+      "visible",
+      "mode",
+      "width",
+      "resizing"
+    ]
   }
 }

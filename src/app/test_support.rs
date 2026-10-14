@@ -64,6 +64,27 @@ impl ManualClock {
     }
 }
 
+pub(crate) fn live(initial: crate::app::state::AppState) -> crate::app::context::AppContext {
+    use lgui::{
+        application::AppView,
+        core::UiScale,
+        prelude::{UiRect, VisualStyle, panel},
+        session::UiSession,
+    };
+    let initial = Arc::new(Mutex::new(Some(initial)));
+    let output = Arc::new(Mutex::new(None));
+    let exposed = output.clone();
+    let view: AppView = Arc::new(move |cx| {
+        let state = crate::app::context::AppContext::detached(
+            cx.state_with(|| initial.lock().unwrap().take().unwrap()),
+        );
+        *exposed.lock().unwrap() = Some(state);
+        panel(UiRect::new(0.0, 0.0, 10.0, 10.0), VisualStyle::default())
+    });
+    UiSession::new().render_view(&view, UiRect::new(0.0, 0.0, 10.0, 10.0), UiScale::ONE);
+    let state = output.lock().unwrap().take().unwrap();
+    state
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,7 +99,7 @@ mod tests {
         let old = {
             let mut state = state.lock().unwrap();
             state.show_toast("first");
-            state.toast.clone().unwrap()
+            state.chrome.toast.clone().unwrap()
         };
         let output = state.clone();
         app.post(move || {
@@ -88,7 +109,14 @@ mod tests {
         let output = state.clone();
         app.post(move || {
             assert_eq!(
-                output.lock().unwrap().toast.as_ref().unwrap().message,
+                output
+                    .lock()
+                    .unwrap()
+                    .chrome
+                    .toast
+                    .as_ref()
+                    .unwrap()
+                    .message,
                 "replacement"
             );
         });
@@ -101,7 +129,7 @@ mod tests {
         assert!(queue.run(ids[0]));
         assert!(!queue.run(ids[0]));
         assert_eq!(
-            state.lock().unwrap().toast.as_ref().unwrap().message,
+            state.lock().unwrap().chrome.toast.as_ref().unwrap().message,
             "replacement"
         );
     }

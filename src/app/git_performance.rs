@@ -1,6 +1,7 @@
 //! Reproducible synthetic large-repository preparation and panel frame benchmark.
+use crate::app::context::AppContext;
+use crate::app::state::AppState;
 use crate::features::git::*;
-use crate::state::AppState;
 use lgui::application::{AppView, ApplicationContext};
 use lgui::core::{UiId, UiScale};
 use lgui::prelude::UiRect;
@@ -74,7 +75,7 @@ fn large_repository_prepare_and_panel_frame() {
     }
     let viewport = UiRect::new(0.0, 0.0, 340.0, 900.0);
     let view: AppView = Arc::new(move |cx| {
-        let state = cx.state_with(AppState::new);
+        let state = AppContext::detached(cx.state_with(AppState::new));
         let fixture = prepared.clone();
         let store = cx.state_with(move || fixture);
         crate::ui::git::panel::render(
@@ -89,7 +90,9 @@ fn large_repository_prepare_and_panel_frame() {
     let context = ApplicationContext::empty(Default::default());
     context
         .resources()
-        .provide(lgui::icons::IconRegistration(Arc::new(crate::svg_icons())));
+        .provide(lgui::icons::IconRegistration(Arc::new(
+            crate::app::svg_icons(),
+        )));
     let _fonts = lgui::backend::install_text_environment(
         &context,
         lgui::render_skia::skia_text_system_handle(),

@@ -1,6 +1,7 @@
 //! Background execution of Source Control write operations. One operation
 //! runs at a time: it is marked in the snapshot, runs off the UI thread, and
 //! its completion is applied on the UI thread before the poller rescans.
+use crate::app::context::AppContext;
 
 use std::sync::Arc;
 use std::thread;
@@ -8,11 +9,11 @@ use std::thread;
 use lgui::ApplicationHandle;
 use lgui::prelude::State;
 
+use crate::app::state::AppState;
+use crate::app::workspace::ReconcileResult;
 use crate::features::git::snapshot::operation;
 use crate::features::git::{GitResult, GitStoreSnapshot, OperationKind};
 use crate::infrastructure::git::PollControl;
-use crate::model::workspace::ReconcileResult;
-use crate::state::AppState;
 
 pub(crate) type Task = Box<dyn FnOnce() + Send>;
 
@@ -38,7 +39,7 @@ impl GitExecutor for ThreadExecutor {
 
 #[derive(Clone)]
 pub(crate) struct GitTasks {
-    state: State<AppState>,
+    state: AppContext,
     store: State<GitStoreSnapshot>,
     executor: Arc<dyn GitExecutor>,
     poll: PollControl,
@@ -48,12 +49,8 @@ pub(crate) struct GitTasks {
 
 impl GitTasks {
     /// Tasks for the running application; `None` before it has started.
-    pub(crate) fn for_state(
-        state: &State<AppState>,
-        store: &State<GitStoreSnapshot>,
-    ) -> Option<Self> {
-        let app = state.get();
-        let runtime = app.runtime()?;
+    pub(crate) fn for_state(state: &AppContext, store: &State<GitStoreSnapshot>) -> Option<Self> {
+        let runtime = state.services()?;
         let application = runtime.application()?;
         Some(Self {
             state: state.clone(),
@@ -66,7 +63,7 @@ impl GitTasks {
 
     #[cfg(test)]
     pub(crate) fn with_executor(
-        state: &State<AppState>,
+        state: &AppContext,
         store: &State<GitStoreSnapshot>,
         executor: Arc<dyn GitExecutor>,
     ) -> Self {
@@ -124,7 +121,7 @@ impl GitTasks {
         &self,
         kind: OperationKind,
         result: GitResult<T>,
-        disk_updates: Vec<crate::model::workspace::PreparedDiskUpdate>,
+        disk_updates: Vec<crate::app::workspace::PreparedDiskUpdate>,
         on_success: impl FnOnce(&mut AppState, T),
     ) {
         match result {
@@ -141,7 +138,7 @@ impl GitTasks {
                     if outcomes.len() < expected_updates
                         && let Some(application) = application
                     {
-                        crate::file_watcher::refresh_async(state, application);
+                        crate::app::file_watcher::refresh_async(state, application);
                     }
                     let conflicts = outcomes
                         .iter()
@@ -216,11 +213,11 @@ mod tests {
         }
     }
 
-    fn live() -> (State<AppState>, State<GitStoreSnapshot>, UiSession) {
+    fn live() -> (AppContext, State<GitStoreSnapshot>, UiSession) {
         let exposed = Arc::new(Mutex::new(None));
         let output = exposed.clone();
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(AppState::new);
+            let state = AppContext::detached(cx.state_with(AppState::new));
             let store = cx.state(GitStoreSnapshot::default());
             *output.lock().unwrap() = Some((state, store));
             panel(UiRect::new(0.0, 0.0, 10.0, 10.0), Default::default())
@@ -233,12 +230,7 @@ mod tests {
 
     fn tasks(
         executor: &Arc<ManualExecutor>,
-    ) -> (
-        GitTasks,
-        State<AppState>,
-        State<GitStoreSnapshot>,
-        UiSession,
-    ) {
+    ) -> (GitTasks, AppContext, State<GitStoreSnapshot>, UiSession) {
         let (state, store, session) = live();
         let tasks = GitTasks::with_executor(&state, &store, executor.clone());
         (tasks, state, store, session)
@@ -281,7 +273,14 @@ mod tests {
         let app = state.get();
         assert!(store.get().operation.is_none());
         assert!(app.git.ui.commit_input.text().is_empty());
-        assert!(app.toast.as_ref().unwrap().message.contains("value 7"));
+        assert!(
+            app.chrome
+                .toast
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("value 7")
+        );
     }
 
     #[test]
@@ -303,7 +302,7 @@ mod tests {
         assert!(snapshot.operation.is_none());
         assert!(snapshot.last_error.is_some());
         assert_eq!(state.get().git.ui.commit_input.text(), "keep me");
-        assert!(state.get().toast.is_some());
+        assert!(state.get().chrome.toast.is_some());
     }
 
     #[test]

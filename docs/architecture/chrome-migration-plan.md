@@ -40,3 +40,7 @@
 ## R8.4 执行记录
 
 2026-10-14：chrome 全部经值帧/语义命令；tabs 和 diff 协调归 app。715 通过、15 ignored，旧应用入口无缺失；56 自测、架构、fmt、严格 Clippy、release 与隔离启动通过，根 UI 适配器降至 0、遗留例外 2。详见 [验收](results/2026-10-14-r8-4/report.md)。继续 R8.5。
+
+## R8.5 执行记录
+
+2026-10-14：模型移除弱 runtime，服务由显式 AppContext 注入；chrome owner 与旧根别名清理完成。715 通过、15 ignored；59 自测、静态门禁、release、隔离启动与 4 原生 ConPTY 回归通过。根字段 15、例外 0、根 UI 适配器 0。详见 [验收](results/2026-10-14-r8-5/report.md)。继续 R8.6。

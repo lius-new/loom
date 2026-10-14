@@ -1,12 +1,13 @@
 //! Dirty-close command/persistence coordination and modal composition.
-use crate::app::state::{AppState, CloseContinuation};
+use crate::app::context::AppContext;
+use crate::app::state::CloseContinuation;
 use crate::app::workspace_commands as workspace_actions;
 use crate::features::keymap::action::Action;
 use crate::ui::chrome::{CloseBinding, CloseCommand, CloseOutcome};
 use lgui::core::{UiFocusHandle, UiId};
-use lgui::prelude::{Element, State, UiRect};
+use lgui::prelude::{Element, UiRect};
 use lgui::window::WindowManager;
-pub fn message(state: &State<AppState>) -> Option<String> {
+pub fn message(state: &AppContext) -> Option<String> {
     let snapshot = state.get();
     let request = snapshot.editor.close_request.as_ref()?;
     let dirty_targets = snapshot
@@ -29,7 +30,7 @@ pub fn message(state: &State<AppState>) -> Option<String> {
 
     Some(message)
 }
-pub fn run(state: &State<AppState>, command: CloseCommand) -> CloseOutcome {
+pub fn run(state: &AppContext, command: CloseCommand) -> CloseOutcome {
     let continuation = match command {
         CloseCommand::Save => workspace_actions::save_close_request(state),
         CloseCommand::Discard => workspace_actions::discard_close_request(state),
@@ -45,7 +46,7 @@ pub fn run(state: &State<AppState>, command: CloseCommand) -> CloseOutcome {
             && state.get().editor.close_request.is_none(),
     }
 }
-pub fn binding(state: &State<AppState>) -> CloseBinding {
+pub fn binding(state: &AppContext) -> CloseBinding {
     let reader = state.clone();
     let writer = state.clone();
     CloseBinding::new(
@@ -53,13 +54,13 @@ pub fn binding(state: &State<AppState>) -> CloseBinding {
         move |command| run(&writer, command),
     )
 }
-pub fn render(rect: UiRect, state: State<AppState>, id: UiId, focus: UiFocusHandle) -> Element {
+pub fn render(rect: UiRect, state: AppContext, id: UiId, focus: UiFocusHandle) -> Element {
     crate::ui::close_confirmation::render(rect, binding(&state), id, focus)
 }
 /// Perform a `dialog::` action from the keymap: Confirm saves, Secondary
 /// discards ("Don't Save") and Cancel keeps the files open.
 pub fn perform(
-    state: &State<AppState>,
+    state: &AppContext,
     editor_focus: &UiFocusHandle,
     windows: &WindowManager,
     action: Action,

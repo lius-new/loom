@@ -1,10 +1,9 @@
 //! Repository clone orchestration and destination selection.
+use crate::app::context::AppContext;
 use crate::features::git::clone_url::repository_directory_name;
-use crate::state::AppState;
 use lgui::dialogs::{FileDialogOptions, system_file_dialogs};
-use lgui::prelude::State;
 use std::thread;
-pub fn clone_repository(state: &State<AppState>) -> bool {
+pub fn clone_repository(state: &AppContext) -> bool {
     let url = state.get().git.ui.clone_url.trim().to_owned();
     if url.is_empty() {
         state.update(|app| {
@@ -53,7 +52,7 @@ pub fn clone_repository(state: &State<AppState>) -> bool {
                 app.git.model.finish_clone();
                 match result {
                     Ok(()) => {
-                        app.toast = None;
+                        app.chrome.toast = None;
                         crate::app::explorer::load_folder(app, target);
                         app.git.ui.clone_visible = false;
                         app.git.ui.clone_url.clear();

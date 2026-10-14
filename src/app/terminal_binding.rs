@@ -1,5 +1,7 @@
 //! Application model store and weak runtime projection; UI consumes plain frames.
 //! State contains only TerminalModel; projections and operation handles are weak.
+#[cfg(test)]
+use crate::app::context::AppContext;
 use crate::features::terminal::model::{TerminalMetadata, TerminalModel};
 use crate::features::terminal::{SessionId, ShellKind};
 use crate::infrastructure::terminal::runtime::{TerminalHandle, TerminalRuntime};
@@ -260,7 +262,7 @@ impl TerminalTabs {
 #[cfg(test)]
 pub(crate) fn test_store(
     cx: &mut lgui::prelude::RenderCx<'_, '_>,
-    state: Option<State<crate::app::state::AppState>>,
+    state: Option<AppContext>,
     initial: impl FnOnce() -> TerminalTabs,
 ) -> TerminalStore {
     let runtime = cx.state_with(|| Arc::new(TerminalRuntime::default())).get();

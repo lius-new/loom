@@ -1,4 +1,5 @@
 //! Compose the pane scene and application intents; the viewport never sees root state.
+use crate::app::context::AppContext;
 use lgui::prelude::{State, UiRect};
 
 use super::{editor, state::AppState};
@@ -10,7 +11,7 @@ pub(crate) fn menu(
     viewport: UiRect,
     editor_rect: UiRect,
     pos: (f32, f32),
-    state: State<AppState>,
+    state: AppContext,
     focus: lgui::core::UiFocusHandle,
 ) -> lgui::prelude::Element {
     use crate::ui::editor::menu::{self, Event, Item};
@@ -28,8 +29,8 @@ pub(crate) fn menu(
     .map(|(label, command)| Item {
         label,
         command,
-        shortcut: crate::input::action::Action::for_editor_command(command)
-            .and_then(|action| crate::key_actions::editor_shortcut_label(&app, action))
+        shortcut: crate::features::keymap::action::Action::for_editor_command(command)
+            .and_then(|action| crate::app::key_actions::editor_shortcut_label(&app, action))
             .unwrap_or_default(),
         enabled: app
             .workspace
@@ -39,7 +40,10 @@ pub(crate) fn menu(
                 Command::Redo => buffer.can_redo(),
                 Command::Copy | Command::Cut => {
                     buffer.selection().is_some()
-                        || matches!(app.editor.vim.mode(), crate::vim::Mode::Visual(_))
+                        || matches!(
+                            app.editor.vim.mode(),
+                            loom_editor_core::vim::Mode::Visual(_)
+                        )
                 }
                 _ => true,
             }),
@@ -166,7 +170,7 @@ pub(crate) fn snapshot(
         cursor_shape: if vim_view {
             state.vim.cursor_shape()
         } else {
-            crate::vim::CursorShape::Bar
+            loom_editor_core::vim::CursorShape::Bar
         },
         selections,
         search_matches,
@@ -194,7 +198,7 @@ pub(crate) fn snapshot(
 }
 
 pub(crate) fn binding(
-    state: State<AppState>,
+    state: AppContext,
     git: State<GitStoreSnapshot>,
     pane: PaneId,
     rect: UiRect,

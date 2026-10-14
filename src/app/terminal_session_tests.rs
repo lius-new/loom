@@ -340,7 +340,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn real_shell_directories_follow_cd_and_survive_session_restoration() {
-        use crate::workspace_persistence::{WorkspaceSession, write_json};
+        use crate::app::workspace_session::{WorkspaceSession, write_json};
         use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
         let root = env::temp_dir().join(format!(

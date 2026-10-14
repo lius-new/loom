@@ -1,4 +1,5 @@
 //! Persistent file-tree session and recent-workspace history.
+use crate::app::context::AppContext;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -131,7 +132,6 @@ use super::state::AppState;
 use super::workspace::Workspace;
 use crate::domain::identity::FileId;
 use crate::domain::workspace_session::{self as editor_session, PendingTab};
-use lgui::prelude::State;
 
 pub(crate) fn saved_editor_layout(workspace: &Workspace) -> Option<EditorLayout> {
     saved_layout_with_pending(workspace, None)
@@ -141,7 +141,7 @@ pub(crate) fn saved_app_editor_layout(app: &AppState) -> Option<EditorLayout> {
     saved_layout_with_pending(&app.workspace, app.editor.pending_file.as_ref())
 }
 
-pub(crate) fn save_editor_session(state: &State<AppState>) -> bool {
+pub(crate) fn save_editor_session(state: &AppContext) -> bool {
     let layout = saved_app_editor_layout(&state.get());
     let result = save_editor_layout(layout.as_ref());
     if let Err(error) = result {
@@ -211,7 +211,7 @@ fn restore_editor_layout_with(
 }
 fn saved_layout_with_pending(
     workspace: &Workspace,
-    pending: Option<&crate::file_loading::PendingFile>,
+    pending: Option<&crate::app::file_loading::PendingFile>,
 ) -> Option<EditorLayout> {
     let pending = pending.map(|value| PendingTab {
         pane: value.pane,

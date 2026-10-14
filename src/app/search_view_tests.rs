@@ -1,12 +1,12 @@
 use super::*;
+use crate::app::context::AppContext;
 use crate::app::search::render;
-use crate::state::AppState;
+use crate::app::state::AppState;
 use lgui::ApplicationHandle;
 use lgui::application::{AppView, ApplicationContext};
 use lgui::core::{
     InputEvent, PhysicalRect, Point, PointerButton, PointerData, UiScale, dispatch_runtime_output,
 };
-use lgui::prelude::State;
 use lgui::render_skia::SkiaSoftwareSurface;
 use lgui::renderer::{FrameInfo, FrameReason};
 use lgui::session::UiSession;
@@ -166,20 +166,24 @@ fn search_panel_renders_bounded_rows_and_switches_drawer_at_normal_and_small_siz
     let context = ApplicationContext::empty(Default::default());
     context
         .resources()
-        .provide(lgui::icons::IconRegistration(Arc::new(crate::svg_icons())));
+        .provide(lgui::icons::IconRegistration(Arc::new(
+            crate::app::svg_icons(),
+        )));
     let _fonts = lgui::backend::install_text_environment(
         &context,
         lgui::render_skia::skia_text_system_handle(),
     );
     for (width, height) in [(220.0, 600.0), (340.0, 600.0), (80.0, 80.0)] {
         let viewport = UiRect::new(0.0, 0.0, width, height);
-        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
         let output = exposed.clone();
         let application = ApplicationHandle::new(|task| task(), || {});
+        let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
+        let view_runtime = runtime.clone();
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
-                app.apply(crate::input::action::Action::OpenSearch);
+                app.apply(crate::features::keymap::action::Action::OpenSearch);
                 app.explorer.model.restore(vec!["demo".into()], Vec::new());
                 app.search.ui.query.set_text("needle");
                 app.search.ui.filters_open = true;
@@ -203,7 +207,8 @@ fn search_panel_renders_bounded_rows_and_switches_drawer_at_normal_and_small_siz
                     ..Results::default()
                 });
                 app
-            });
+            }));
+            let state = state.with_runtime(&view_runtime);
             *output.lock().unwrap() = Some(state.clone());
             let ids = [
                 UiId::new("search-test-query"),
@@ -333,7 +338,9 @@ fn search_panel_renders_bounded_rows_and_switches_drawer_at_normal_and_small_siz
             let context = ApplicationContext::empty(Default::default());
             context
                 .resources()
-                .provide(lgui::icons::IconRegistration(Arc::new(crate::svg_icons())));
+                .provide(lgui::icons::IconRegistration(Arc::new(
+                    crate::app::svg_icons(),
+                )));
             assert!(
                 exposed
                     .lock()
@@ -433,10 +440,8 @@ fn search_panel_renders_bounded_rows_and_switches_drawer_at_normal_and_small_siz
 
             // Clearing invalidates queued worker results immediately.
             let token = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
             runtime.install_search_cancel(token.clone());
             state.update(|app| {
-                app.attach_runtime(&runtime);
                 app.search.model.fixture_status().running = true;
             });
             let generation = state.get().search.model.status().generation;

@@ -14,19 +14,19 @@ use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
 use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, component, group};
 use lgui::window::WindowFocusChanged;
 
+use crate::app::key_actions::{self, KeyEnv, TerminalEnv};
+use crate::app::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
 use crate::app::terminal_effects;
+use crate::app::window as window_geometry;
+use crate::app::workspace_session as workspace_persistence;
 use crate::app::{layout_map, terminal_view as terminal};
 use crate::domain::application_layout::{ApplicationLayout, Content};
 use crate::features::git::GitStoreSnapshot;
 use crate::infrastructure::settings_filesystem as settings_persistence;
-use crate::key_actions::{self, KeyEnv, TerminalEnv};
-use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
 use crate::ui::editor::view as editor_view;
 use crate::ui::terminal::menu as terminal_tab_context_menu;
 use crate::ui::theme;
 use crate::ui::{tabs, toast};
-use crate::window_geometry;
-use crate::workspace_persistence;
 
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // Pure caret composition frames keep the app's layout, text and hooks cached.
@@ -37,11 +37,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let runtime = cx
         .state_with(|| std::sync::Arc::new(super::runtime::AppRuntime::default()))
         .get();
-    let state = cx.state_with(|| {
-        let mut state = AppState::restored();
-        state.attach_runtime(&runtime);
-        state
-    });
+    let state = crate::app::context::AppContext::detached(cx.state_with(AppState::restored))
+        .with_runtime(&runtime);
     let git_store = cx.state_with(GitStoreSnapshot::default);
     // Never updated through `State`, so map changes never re-render the app.
     let layout_map_store = cx.state_with(layout_map::MapStore::default).get();
@@ -62,12 +59,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let loading_application = application.as_ref().clone();
     let loading_runtime = runtime.clone();
     cx.use_effect((), move || {
-        let restore = crate::session_restore::SessionRestore::new(
+        let restore = crate::app::workspace_restore::SessionRestore::new(
             loading_state.clone(),
             loading_application.clone(),
         );
         let loader =
-            crate::file_loading::FileLoader::new(loading_state.clone(), loading_application);
+            crate::app::file_loading::FileLoader::new(loading_state.clone(), loading_application);
         loading_runtime.install_file_loader(loader);
         move || {
             restore.shutdown();
@@ -95,7 +92,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let notification_application = application.as_ref().clone();
     let scan_notifications = cx
         .state_with(move || {
-            crate::background_ui::LatestNotification::new(
+            crate::infrastructure::ui_dispatch::LatestNotification::new(
                 notification_application,
                 move |notification: super::git_poll::GitScanNotification| {
                     super::git_poll::deliver(
@@ -166,7 +163,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                         | split_drag
                 });
             } else {
-                crate::file_watcher::refresh_async(
+                crate::app::file_watcher::refresh_async(
                     window_focus_state.clone(),
                     window_focus_application.clone(),
                 );
@@ -189,7 +186,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             .flat_map(|id| workspace.tabs_of(id))
             .collect::<Vec<_>>();
         if dirty_targets.is_empty() {
-            if crate::workspace_actions::save_editor_session(&close_state) {
+            if crate::app::workspace_commands::save_editor_session(&close_state) {
                 window_manager.close("loom");
             }
         } else {
@@ -252,7 +249,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         &s.preferences.values().editor_font,
         &s.preferences.values().terminal_font,
     );
-    let editor_layout = crate::workspace_actions::saved_app_editor_layout(&s);
+    let editor_layout = crate::app::workspace_commands::saved_app_editor_layout(&s);
     let git_roots = s.explorer.model.roots().to_vec();
     let git_target = super::git_poll::poll_target(&s);
     // Keep the history of the active repository's HEAD while it is shown.
@@ -275,10 +272,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             let error_roots = file_watch_roots.clone();
             let error_state = file_watch_state.clone();
             let error_application = file_watch_application.clone();
-            match crate::file_watcher::start_async_scoped(file_watch_roots, move |batch, lease| {
-                let prepared = crate::file_watcher::prepare_batch(&batch_state.get(), &batch);
+            match crate::app::file_watcher::start_async_scoped(file_watch_roots, move |batch, lease| {
+                let prepared = crate::app::file_watcher::prepare_batch(&batch_state.get(), &batch);
                 let state = batch_state.clone();
-                crate::file_watcher::notify_prepared_scoped(state, file_watch_application.clone(), prepared, lease);
+                crate::app::file_watcher::notify_prepared_scoped(state, file_watch_application.clone(), prepared, lease);
             }, move |error, lease| {
                 let state = error_state.clone();
                 let roots = error_roots.clone();
@@ -591,7 +588,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             mounted_create_focus.focus();
         } else {
             if pending_tree_state.get().explorer.model.pending_refresh() {
-                crate::file_watcher::refresh_async(
+                crate::app::file_watcher::refresh_async(
                     pending_tree_state.clone(),
                     pending_tree_application,
                 );
@@ -601,7 +598,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     // Each toast id gets its own timer; a newer toast restarts it, and
     // `dismiss_toast` ignores a timer that outlived its toast.
-    let toast_timer = s.toast.as_ref().map(|toast| (toast.id, toast.kind));
+    let toast_timer = s.chrome.toast.as_ref().map(|toast| (toast.id, toast.kind));
     let toast_state = state.clone();
     cx.use_effect(toast_timer, move || {
         let (stop_sender, stop_receiver) = mpsc::channel::<()>();
@@ -760,7 +757,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             st_editor_hover.try_update(move |app| {
                 let mut changed = app.editor.editor_hovered != hovered
                     || (hovered.is_none()
-                        && (app.welcome_hover.is_some() || app.workspace_home_hover.is_some()));
+                        && (app.chrome.welcome_hover.is_some()
+                            || app.chrome.workspace_home_hover.is_some()));
                 app.editor.editor_hovered = hovered;
                 // A pane's gutter only sees moves inside it; drop its hover
                 // once the pointer leaves the pane.
@@ -773,8 +771,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     changed = true;
                 }
                 if hovered.is_none() {
-                    app.welcome_hover = None;
-                    app.workspace_home_hover = None;
+                    app.chrome.welcome_hover = None;
+                    app.chrome.workspace_home_hover = None;
                 }
                 changed
             });

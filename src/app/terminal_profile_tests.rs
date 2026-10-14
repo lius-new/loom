@@ -1,11 +1,12 @@
 #[cfg(test)]
 mod tests {
+    use crate::app::context::AppContext;
+    use crate::app::state::AppState;
     use crate::app::terminal_profiles::*;
     use crate::features::terminal::{ShellKind, profiles::ShellProfile};
-    use crate::state::AppState;
     use crate::ui::terminal::settings::render;
     use crate::ui::theme;
-    use lgui::prelude::{State, UiRect, VisualStyle, panel};
+    use lgui::prelude::{UiRect, VisualStyle, panel};
 
     #[test]
     fn profile_editor_renders_at_normal_and_minimized_sizes() {
@@ -18,7 +19,7 @@ mod tests {
         for (width, height) in [(720.0, 650.0), (80.0, 80.0)] {
             let viewport = UiRect::new(0.0, 0.0, width, height);
             let view: AppView = Arc::new(move |cx| {
-                let state = cx.state_with(|| {
+                let state = AppContext::detached(cx.state_with(|| {
                     let mut app = AppState::new();
                     let profile = ShellProfile {
                         id: 99,
@@ -30,7 +31,7 @@ mod tests {
                     app.refresh_shells();
                     edit(&mut app, Some(99));
                     app
-                });
+                }));
                 panel(viewport, VisualStyle::filled(theme::c().bg)).child(render(
                     UiRect::new(
                         12.0,
@@ -153,16 +154,16 @@ mod tests {
         };
         use lgui::session::UiSession;
         use std::sync::{Arc, Mutex};
-        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 720.0, 600.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.preferences.values_mut().shell_options.clear();
                 edit(&mut app, None);
                 app
-            });
+            }));
             *output.lock().unwrap() = Some(state.clone());
             render(
                 UiRect::new(

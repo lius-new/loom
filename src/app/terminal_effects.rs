@@ -1,4 +1,5 @@
 //! Terminal effect installation, generation-aware observation and persistence.
+use crate::app::context::AppContext;
 use crate::app::runtime::AppRuntime;
 use crate::app::state::AppState;
 use crate::app::terminal_binding::{TerminalStore, TerminalTabs};
@@ -46,7 +47,7 @@ pub(crate) fn restored(session: crate::app::workspace_session::WorkspaceSession)
 pub(crate) fn bind(
     model: State<TerminalModel>,
     runtime: &Arc<AppRuntime>,
-    state: &State<AppState>,
+    state: &AppContext,
 ) -> TerminalStore {
     let source = state.clone();
     runtime
@@ -57,7 +58,7 @@ pub(crate) fn bind(
 pub(crate) fn install_owner(
     cx: &mut RenderCx<'_, '_>,
     runtime: &Arc<AppRuntime>,
-    state: &State<AppState>,
+    state: &AppContext,
     tabs: &TerminalStore,
 ) {
     let mounts = runtime.terminal_mounts().clone();
@@ -231,7 +232,7 @@ fn start_programs_with_clock(
     let applied_lease = lease.clone();
     let mut poller = Poller::new(&tabs.get(), clock());
     let notifications =
-        crate::background_ui::LatestNotification::new(application, move |updates| {
+        crate::infrastructure::ui_dispatch::LatestNotification::new(application, move |updates| {
             apply(&tabs, &applied_lease, updates)
         });
     let (sender, receiver) = mpsc::channel();
@@ -321,7 +322,7 @@ pub(crate) fn start_visible(
 }
 pub(crate) fn save(tabs: &TerminalStore, visible: bool, height: f32) {
     let tabs = tabs.get();
-    let _ = crate::workspace_persistence::save_terminal_state(
+    let _ = crate::app::workspace_session::save_terminal_state(
         &tabs.shells(),
         &tabs.saved_groups(),
         &tabs.widths(),
@@ -632,7 +633,7 @@ mod adapter_tests {
         let output = exposed.clone();
         let view: AppView = Arc::new(move |cx| {
             let runtime = cx.state_with(|| Arc::new(AppRuntime::default())).get();
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.preferences
                     .values_mut()
@@ -644,7 +645,7 @@ mod adapter_tests {
                         args: vec!["--literal".into()],
                     });
                 app
-            });
+            }));
             let model =
                 cx.state_with(|| TerminalModel::restored(vec![ShellKind::Custom(42)], None));
             let tabs = bind(model, &runtime, &state);

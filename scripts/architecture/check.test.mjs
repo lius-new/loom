@@ -339,3 +339,17 @@ test('chrome views reject root runtime native access and ancestor escapes',()=>{
  for(const file of ['src/ui/tabs.rs','src/ui/diff_editor.rs','src/ui/welcome.rs','src/ui/titlebar.rs','src/ui/statusbar.rs','src/ui/tab_context_menu.rs','src/ui/close_confirmation.rs','src/ui/pane_sash.rs','src/ui/chrome/binding.rs'])for(const source of ['struct Frame { hidden: Wrapper<AppState> }','use crate::app::workspace;','use crate::model::workspace;','std::fs::read(path);','use super::super::state;','include!("application.rs");'])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('Chrome views')),file+source);
 });
 test('tab UI state must retain explicit field ownership',()=>{assert.ok(violations({'src/ui/chrome/tab_state.rs':'struct UiState { surprise: bool }'},policy()).some(e=>e.includes('TabUiState.surprise')));});
+
+test('value snapshots and UI ports cannot regain runtime access through wrappers',()=>{
+ for(const source of ['struct AppState { hidden: Wrapper<Weak<AppRuntime>> }','struct AppState {} impl AppState { fn attach_runtime(){} }','struct AppState { commands: AppContext }'])assert.ok(violations({'src/app/state.rs':source},policy()).some(e=>e.includes('capability-free')));
+ assert.ok(violations({'src/ui/chrome/port.rs':'struct Frame { command: Wrapper<AppContext> }'},policy()).some(e=>e.includes('command contexts')));
+ for(const source of ['struct AppContext { model: State<AppState>, runtime: Arc<AppRuntime> }','struct AppContext { model: State<AppState>, runtime: Weak<AppRuntime>, extra: Service }'])assert.ok(violations({'src/app/context.rs':source},policy()).some(e=>e.includes('weak runtime')));
+});
+test('removed R8 aliases and workspace compatibility modules cannot return',()=>{
+ for(const source of ['use app::state as state;','mod input;','use app::workspace_commands as workspace_actions;'])assert.ok(violations({'src/main.rs':source},policy()).some(e=>e.includes('removed R8 root aliases')));
+ assert.ok(violations({'src/model/workspace.rs':'pub use crate::app::workspace::*;'},policy()).some(e=>e.includes('removed R8 workspace')));
+});
+test('chrome field owners cannot silently disappear or grow',()=>{
+ const p=policy();p.chrome_ownership={ChromeState:['toast']};
+ for(const sources of [{},{'src/app/state/chrome.rs':'struct ChromeState {}'},{'src/app/state/chrome.rs':'struct ChromeState {toast:Toast,service:Service}'}])assert.ok(violations(sources,p).some(e=>e.includes('chrome owner')));
+});

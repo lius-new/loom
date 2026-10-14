@@ -91,3 +91,5 @@ pub(crate) mod tab_menu;
 pub(crate) mod tabs;
 
 pub mod diff_view;
+
+pub(crate) mod context;

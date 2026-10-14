@@ -14,3 +14,52 @@ impl Default for TerminalChrome {
         }
     }
 }
+
+use super::DrawerMode;
+/// Visibility and width of the left-hand Source Control drawer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SidebarChrome {
+    pub visible: bool,
+    pub width: f32,
+    /// True while the drawer resize handle is being dragged.
+    pub resizing: bool,
+}
+
+impl Default for SidebarChrome {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            width: crate::ui::theme::SIDEBAR_W,
+            resizing: false,
+        }
+    }
+}
+
+/// Visibility, page and width of the right-hand drawer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawerChrome {
+    pub visible: bool,
+    pub mode: DrawerMode,
+    pub width: f32,
+    /// True while the drawer resize handle is being dragged.
+    pub resizing: bool,
+}
+
+impl Default for DrawerChrome {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            mode: DrawerMode::Files,
+            width: crate::ui::theme::SIDEBAR_W,
+            resizing: false,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct ChromeState {
+    pub toast: Option<crate::domain::notification::Toast>,
+    pub toast_seq: u64,
+    pub welcome_hover: Option<usize>,
+    pub workspace_home_hover: Option<usize>,
+}

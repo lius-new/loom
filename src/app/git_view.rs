@@ -1,18 +1,19 @@
 //! Composes Source Control projections, frame inputs and cross-feature commands.
+use crate::app::context::AppContext;
+use crate::app::state::{FileDragSource, FileDragState};
 use crate::features::git::actions::StashMode;
 use crate::features::git::{DiffRequest, GitStoreSnapshot};
-use crate::input::action::Action;
-use crate::state::{AppState, FileDragSource, FileDragState};
+use crate::features::keymap::action::Action;
 use crate::ui::components::state_access::StateAccess;
 use crate::ui::git::commands::{Binding, Command, Frame};
 use lgui::prelude::State;
 
-pub(crate) fn binding(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> Binding {
+pub(crate) fn binding(state: &AppContext, store: &State<GitStoreSnapshot>) -> Binding {
     let reader = state.clone();
     let dispatch_state = state.clone();
     let store = store.clone();
     Binding::new(
-        StateAccess::project(state.clone(), |app| &app.git, |app| &mut app.git),
+        StateAccess::project(state.model(), |app| &app.git, |app| &mut app.git),
         move || {
             let app = reader.get();
             Frame {
@@ -31,11 +32,7 @@ pub(crate) fn binding(state: &State<AppState>, store: &State<GitStoreSnapshot>) 
     )
 }
 
-pub(crate) fn run(
-    state: &State<AppState>,
-    store: &State<GitStoreSnapshot>,
-    command: Command,
-) -> bool {
+pub(crate) fn run(state: &AppContext, store: &State<GitStoreSnapshot>, command: Command) -> bool {
     match command {
         Command::ClosePeek => {
             state.update(|app| app.editor.editor_hunk_peek = None);
@@ -207,7 +204,14 @@ pub(crate) fn run(
         }
         Command::OpenFile { path } => {
             let mut focus = false;
-            state.update(|app| focus = super::explorer::open_tree_file(app, path, 2));
+            state.update(|app| {
+                focus = super::explorer::open_tree_file(
+                    app,
+                    path,
+                    2,
+                    state.services().and_then(|r| r.file_loader()).as_ref(),
+                )
+            });
             focus
         }
         Command::CopyPath {
@@ -232,7 +236,7 @@ pub(crate) fn run(
     }
 }
 pub(crate) fn perform_confirm(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     action: Action,
 ) -> bool {
@@ -244,7 +248,7 @@ pub(crate) fn perform_confirm(
     true
 }
 pub(crate) fn perform_stash_switch(
-    state: &State<AppState>,
+    state: &AppContext,
     store: &State<GitStoreSnapshot>,
     action: Action,
 ) -> bool {
@@ -257,7 +261,7 @@ pub(crate) fn perform_stash_switch(
     crate::ui::git::stash_switch::resolve(&binding(state, store), mode);
     true
 }
-pub(crate) fn perform_clone(state: &State<AppState>, action: Action) -> bool {
+pub(crate) fn perform_clone(state: &AppContext, action: Action) -> bool {
     match action {
         Action::DialogConfirm => {
             super::git_clone::clone_repository(state);
@@ -274,29 +278,30 @@ pub(crate) fn perform_clone(state: &State<AppState>, action: Action) -> bool {
     true
 }
 
-pub(crate) fn confirm_branch(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool {
+pub(crate) fn confirm_branch(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
     crate::ui::git::branch_picker::confirm(&binding(state, store), &store.clone().into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::AppState;
     use lgui::application::AppView;
     use lgui::core::UiScale;
     use lgui::prelude::{UiRect, panel};
     use lgui::session::UiSession;
     use std::sync::{Arc, Mutex};
 
-    fn live() -> (State<AppState>, State<GitStoreSnapshot>, UiSession) {
+    fn live() -> (AppContext, State<GitStoreSnapshot>, UiSession) {
         let exposed = Arc::new(Mutex::new(None));
         let output = exposed.clone();
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.workspace
                     .open_path("keep.rs".into(), "unsaved 中文".into());
                 app
-            });
+            }));
             let store = cx.state(GitStoreSnapshot::default());
             *output.lock().unwrap() = Some((state, store));
             panel(UiRect::new(0.0, 0.0, 10.0, 10.0), Default::default())

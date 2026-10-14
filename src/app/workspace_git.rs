@@ -33,7 +33,7 @@ impl Workspace {
                     view.scroll_y = 0.0;
                 }
             }
-            crate::background_ui::retire(document.diff.replace(diff));
+            crate::infrastructure::ui_dispatch::retire(document.diff.replace(diff));
             self.reveal(id);
             return id;
         }
@@ -62,7 +62,7 @@ impl Workspace {
                     view.scroll_y = 0.0;
                 }
             }
-            crate::background_ui::retire(document.diff.replace(diff));
+            crate::infrastructure::ui_dispatch::retire(document.diff.replace(diff));
             self.reveal(id);
             return id;
         }
@@ -92,7 +92,7 @@ impl Workspace {
         }) {
             document.meta.name = diff.title();
             document.meta.path = diff.absolute_path();
-            crate::background_ui::retire(document.diff.replace(diff));
+            crate::infrastructure::ui_dispatch::retire(document.diff.replace(diff));
             self.reveal(id);
             return id;
         }
@@ -123,7 +123,7 @@ impl Workspace {
             let document = self.core.documents.get_mut(&id).unwrap();
             document.meta.name = diff.title();
             document.meta.path = diff.absolute_path();
-            crate::background_ui::retire(document.diff.replace(diff));
+            crate::infrastructure::ui_dispatch::retire(document.diff.replace(diff));
             self.set_active(id);
             Some(id)
         } else {

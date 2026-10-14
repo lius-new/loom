@@ -1,17 +1,18 @@
 //! Connects the Vim layer to the editor: the active view, keys and text,
 //! pointer selections, the clipboard and the application operations Vim
 //! asks for.
+use crate::app::context::AppContext;
 
 use std::ops::Range;
 
-use lgui::prelude::{State, UiRect};
+use lgui::prelude::UiRect;
 use lgui::services::Clipboard as SystemClipboard;
 
 use super::editor::reveal_cursor;
-use crate::state::AppState;
+use crate::app::state::AppState;
 use crate::ui::editor::view::page_lines;
 use crate::ui::fonts;
-use crate::vim::{self, Key, Request, ScrollPosition};
+use loom_editor_core::vim::{self, Key, Request, ScrollPosition};
 
 /// The application as Vim's host for one key or command.
 struct AppHost<'a> {
@@ -135,7 +136,7 @@ fn with_vim<R>(
 
 /// Offer a key the keymap did not claim to Vim. Returns whether Vim used it.
 pub fn handle_key(
-    state: &State<AppState>,
+    state: &AppContext,
     key: Key,
     rect: UiRect,
     clipboard: &dyn SystemClipboard,
@@ -178,7 +179,7 @@ pub fn handle_key(
 /// Send the keys of a `vim::Keys` mapping to Vim. Returns false when Vim does
 /// not drive the editor, so other bindings for the keystroke can run.
 pub fn feed_keys(
-    state: &State<AppState>,
+    state: &AppContext,
     keys: &str,
     rect: UiRect,
     clipboard: &dyn SystemClipboard,
@@ -311,15 +312,15 @@ fn scroll_cursor(app: &mut AppState, rect: UiRect, position: ScrollPosition) {
 }
 
 /// Carry out what Vim asked of the application.
-fn perform(state: &State<AppState>, requests: Vec<Request>) {
+fn perform(state: &AppContext, requests: Vec<Request>) {
     for request in requests {
         match request {
             Request::Save => {
-                crate::workspace_actions::save_active_document(state);
+                crate::app::workspace_commands::save_active_document(state);
             }
             Request::Quit { force } => quit(state, force),
             Request::SaveAndQuit => {
-                if crate::workspace_actions::save_active_document(state) {
+                if crate::app::workspace_commands::save_active_document(state) {
                     quit(state, false);
                 }
             }
@@ -330,7 +331,7 @@ fn perform(state: &State<AppState>, requests: Vec<Request>) {
 
 /// `:q` closes the active tab. Unsaved changes stop it unless forced or the
 /// document is still open in another tab.
-fn quit(state: &State<AppState>, force: bool) {
+fn quit(state: &AppContext, force: bool) {
     state.update(move |app| {
         let pane = app.workspace.active_pane();
         let Some(document) = app.workspace.active() else {

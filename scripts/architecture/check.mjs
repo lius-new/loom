@@ -109,7 +109,7 @@ export function allowed(file, dependency) {
   if(file.startsWith('src/infrastructure/git/'))return ['infrastructure','features','domain','serde','std::fs','std::process','std::thread'].includes(root);
   if(file==='src/infrastructure/workspace_filesystem.rs')return ['infrastructure','domain','std::fs'].includes(root);
   if(file==='src/infrastructure/session_filesystem.rs')return ['infrastructure','domain','serde','serde_json','std::fs','std::process'].includes(root);
-  if(file==='src/ui/editor/view.rs'&&root==='unicode_width')return true;
+  if(['src/ui/editor/view.rs','src/ui/components/text.rs'].includes(file)&&root==='unicode_width')return true;
   if(file==='src/ui/explorer/context_menu.rs'&&root==='unicode_width')return true;
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
   if(own==='features')return ['features','domain','input'].includes(root);
@@ -146,6 +146,12 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
+    if(layer(file)==='ui'&&ts.includes('AppContext'))problems.push(file+': UI cannot receive application command contexts');
+    if(file==='src/app/state.rs'&&ts.some(t=>['attach_runtime','runtime','AppRuntime','AppContext','Weak'].includes(t)))problems.push(file+': AppState must remain capability-free');
+    if(file==='src/app/context.rs') {const fields=structFields(source,'AppContext');if(JSON.stringify(fields)!==JSON.stringify(['model','runtime'])||!ts.join(' ').match(/runtime : Weak < AppRuntime >/))problems.push(file+': command context must carry only model and weak runtime');}
+    if(file==='src/main.rs'&&ts.some((t,i)=>['state','input','background_ui','workspace_actions','workspace_persistence','session_restore','key_actions','file_loading','file_watcher','window_geometry','launch','svg_icons','vim'].includes(t)&&((ts[i-1]==='as')||(ts[i-1]==='mod'))))problems.push(file+': removed R8 root aliases');
+    if(file==='src/model/workspace.rs')problems.push(file+': removed R8 workspace compatibility path');
+
     if(file.startsWith('src/ui/chrome/')||['welcome','workspace_home','titlebar','statusbar','tabs','tab_context_menu','close_confirmation','pane_sash','diff_editor'].some(n=>file==='src/ui/'+n+'.rs')) {
       if(policy.exceptions[file]||terminalStandardServices(ts)||ts.some(t=>['AppState','AppRuntime','ApplicationHandle','TerminalHandle','TerminalController','FileLoader'].includes(t))||deps.some(d=>['std::fs','std::process','std::thread'].includes(d))||deps.some(d=>d.startsWith('crate::app')||d.startsWith('crate::model')||d==='crate::state')||ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super')||/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>t==='include'&&ts[i+1]==='!'))problems.push(file+': Chrome views must use value frames and semantic ports');
     }
@@ -273,18 +279,19 @@ export function violations(sources, policy) {
       if(ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(`${file}: domain cannot include adapter sources`);
     }
     if(layer(file)==='ui'&&ts.includes('AppState')&&!policy.root_state_adapters.includes(file))problems.push(`${file}: new root-state adapter`);
-    if(/\.\s*runtime\s*\(/.test(ts.join(' '))&&!policy.runtime_bridges.includes(file))problems.push(`${file}: unregistered runtime bridge`);
+    if(/\.\s*runtime\s*\(/.test(ts.join(' '))&&!(policy.framework_runtime_access??policy.runtime_bridges??[]).includes(file))problems.push(`${file}: unregistered runtime bridge`);
   }
   for(const file of policy.root_state_adapters)if(!sources[file]||!tokens(sources[file]).includes('AppState'))problems.push(`${file}: obsolete root-state adapter entry`);
-  for(const file of policy.runtime_bridges)if(!sources[file]||!/\.\s*runtime\s*\(/.test(tokens(sources[file]).join(' ')))problems.push(`${file}: obsolete runtime bridge entry`);
+  for(const file of (policy.framework_runtime_access??policy.runtime_bridges??[]))if(!sources[file]||!/\.\s*runtime\s*\(/.test(tokens(sources[file]).join(' ')))problems.push(`${file}: obsolete runtime bridge entry`);
   for(const file of Object.keys(policy.exceptions))if(!sources[file])problems.push(`${file}: obsolete exception entry`);
+  for(const [name,known]of Object.entries(policy.chrome_ownership??{})) {const source=sources['src/app/state/chrome.rs'];if(!source||!tokens(source).includes(name)){problems.push(name+': chrome owner declaration missing');continue;}const actual=structFields(source,name);for(const f of actual)if(!known.includes(f))problems.push(name+'.'+f+': unregistered chrome owner');for(const f of known)if(!actual.includes(f))problems.push(name+'.'+f+': stale chrome owner');}
   const state=sources['src/app/state.rs'];
   if(state) {
     const actual=stateFields(state),registered=Object.keys(policy.state_ownership).sort();
     for(const field of actual)if(!registered.includes(field))problems.push(`AppState.${field}: no registered owner`);
     for(const field of registered)if(!actual.includes(field))problems.push(`AppState.${field}: obsolete ownership entry`);
     const body=state.slice(state.indexOf('pub struct AppState'),state.indexOf('\nimpl AppState'));
-    if(/\b(?:FileLoader|ApplicationHandle|PollControl)\b/.test(tokens(body).join(' ')))problems.push('AppState embeds a runtime service');
+    if(/\b(?:FileLoader|ApplicationHandle|PollControl|AppContext|AppRuntime|TerminalRuntime|Weak)\b/.test(tokens(body).join(' ')))problems.push('AppState embeds a runtime service');
   }
   const search=sources['src/ui/search/state.rs']??sources['src/search_actions.rs'];
   if(search) {

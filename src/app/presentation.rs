@@ -1,15 +1,14 @@
 //! Narrow reads and command callbacks for migrated chrome.
-use lgui::prelude::State;
+use crate::app::context::AppContext;
 
-use super::state::AppState;
 use crate::domain::notification::Toast;
 
-pub(super) fn toast(state: &State<AppState>) -> Option<Toast> {
+pub(super) fn toast(state: &AppContext) -> Option<Toast> {
     // lgui State currently clones on get; the view receives only this projection.
-    state.get().toast
+    state.get().chrome.toast
 }
 
-pub(super) fn dismiss_toast(state: State<AppState>) -> impl Fn(u64) + Send + Sync + 'static {
+pub(super) fn dismiss_toast(state: AppContext) -> impl Fn(u64) + Send + Sync + 'static {
     move |id| {
         state.try_update(|app| app.dismiss_toast(id));
     }
@@ -18,6 +17,7 @@ pub(super) fn dismiss_toast(state: State<AppState>) -> impl Fn(u64) + Send + Syn
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::AppState;
     use lgui::application::{AppView, ApplicationContext};
     use lgui::core::{
         InputEvent, Point, PointerButton, PointerData, UiScale, dispatch_runtime_output,
@@ -28,15 +28,15 @@ mod tests {
 
     #[test]
     fn toast_click_dismisses_only_the_message_that_was_rendered() {
-        let exposed = Arc::new(Mutex::new(None::<State<AppState>>));
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 600.0, 400.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = cx.state_with(|| {
+            let state = AppContext::detached(cx.state_with(|| {
                 let mut state = AppState::new();
                 state.show_toast("ready");
                 state
-            });
+            }));
             *output.lock().unwrap() = Some(state.clone());
             panel(viewport, VisualStyle::default()).child(crate::ui::toast::render(
                 viewport,

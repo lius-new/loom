@@ -1,5 +1,6 @@
 //! Session tabs exist from the first frame; their file contents are prepared
 //! serially off the event loop and installed without changing user selection.
+use crate::app::context::AppContext;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -10,7 +11,7 @@ use std::sync::{
 use super::state::AppState;
 use super::workspace::PreparedTextFile;
 use crate::domain::identity::FileId;
-use lgui::{ApplicationHandle, prelude::State};
+use lgui::ApplicationHandle;
 
 pub struct SessionRestore {
     alive: Arc<AtomicBool>,
@@ -19,15 +20,15 @@ pub struct SessionRestore {
 }
 
 impl SessionRestore {
-    pub fn new(state: State<AppState>, application: ApplicationHandle) -> Self {
+    pub fn new(state: AppContext, application: ApplicationHandle) -> Self {
         Self::with_prepare(state, application, |path| {
-            crate::workspace_actions::read_text_file(path)
+            crate::app::workspace_commands::read_text_file(path)
                 .map(|text| PreparedTextFile::new(path.to_path_buf(), text))
         })
     }
 
     fn with_prepare(
-        state: State<AppState>,
+        state: AppContext,
         application: ApplicationHandle,
         mut prepare: impl FnMut(&Path) -> Result<PreparedTextFile, String> + Send + 'static,
     ) -> Self {
@@ -69,13 +70,13 @@ impl SessionRestore {
                                     .filter(|_| app.workspace.is_loading(id))
                                     .map(|m| m.path.clone());
                                 if let Some(current) = current_path.filter(|p| *p != path) {
-                                    crate::background_ui::retire(prepared);
+                                    crate::infrastructure::ui_dispatch::retire(prepared);
                                     let _ = retry.send(Some((id, current)));
                                     return;
                                 }
                                 state.try_update(|app| finish(app, id, path, prepared));
                             } else {
-                                crate::background_ui::retire(prepared);
+                                crate::infrastructure::ui_dispatch::retire(prepared);
                             }
                         });
                     }
@@ -86,7 +87,7 @@ impl SessionRestore {
                 .name("loom-session-restore-delay".into())
                 .spawn(move || {
                     if matches!(
-                        delay.recv_timeout(crate::file_loading::INDICATOR_DELAY),
+                        delay.recv_timeout(crate::app::file_loading::INDICATOR_DELAY),
                         Err(mpsc::RecvTimeoutError::Timeout)
                     ) {
                         application.post(move || {
@@ -136,8 +137,8 @@ fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::MainSurface;
-    use crate::workspace_persistence::{EditorLayout, SavedPaneNode};
+    use crate::app::state::MainSurface;
+    use crate::app::workspace_session::{EditorLayout, SavedPaneNode};
     use lgui::{
         application::AppView,
         core::{UiId, UiScale},
@@ -149,7 +150,7 @@ mod tests {
 
     type Task = Box<dyn FnOnce() + Send>;
     struct Harness {
-        state: State<AppState>,
+        state: AppContext,
         tasks: Arc<Mutex<Vec<Task>>>,
         view: AppView,
         session: UiSession,
@@ -169,11 +170,11 @@ mod tests {
             let output = exposed.clone();
             let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
             let view: AppView = Arc::new(move |cx| {
-                let state = cx.state_with(|| {
+                let state = AppContext::detached(cx.state_with(|| {
                     let mut app = AppState::new();
-                    crate::workspace_actions::hydrate_editor_layout(&mut app, Some(layout()));
+                    crate::app::workspace_commands::hydrate_editor_layout(&mut app, Some(layout()));
                     app
-                });
+                }));
                 *output.lock().unwrap() = Some(state.clone());
                 let focus = cx.focus_handle(UiId::new("restore-surface"));
                 let pane = state.get().workspace.active_pane();
@@ -220,7 +221,7 @@ mod tests {
     fn first_frame_and_interaction_do_not_wait_for_large_file_preparation() {
         let mut h = Harness::new();
         assert_eq!(
-            crate::workspace_actions::saved_app_editor_layout(&h.state.get()),
+            crate::app::workspace_commands::saved_app_editor_layout(&h.state.get()),
             Some(layout())
         );
         assert_eq!(h.state.get().main_surface(), MainSurface::Empty);
@@ -288,7 +289,7 @@ mod tests {
     #[test]
     fn closing_restoring_tab_prevents_resurrection_and_updates_session() {
         let mut app = AppState::new();
-        crate::workspace_actions::hydrate_editor_layout(&mut app, Some(layout()));
+        crate::app::workspace_commands::hydrate_editor_layout(&mut app, Some(layout()));
         let id = app.workspace.active().unwrap();
         let path = PathBuf::from("large.json");
         app.workspace.close(id);
@@ -299,7 +300,7 @@ mod tests {
             path.clone(),
             Ok(PreparedTextFile::new(path.clone(), "late".into()))
         ));
-        let saved = crate::workspace_actions::saved_app_editor_layout(&app).unwrap();
+        let saved = crate::app::workspace_commands::saved_app_editor_layout(&app).unwrap();
         let SavedPaneNode::Pane { items, .. } = saved.root else {
             panic!()
         };
@@ -327,13 +328,13 @@ mod tests {
     fn moved_shared_tab_is_filled_in_place_without_changing_focus() {
         use crate::model::pane_layout::Direction;
         let mut app = AppState::new();
-        crate::workspace_actions::hydrate_editor_layout(&mut app, Some(layout()));
+        crate::app::workspace_commands::hydrate_editor_layout(&mut app, Some(layout()));
         let id = app.workspace.active().unwrap();
         let left = app.workspace.active_pane();
         let right = app.workspace.split_empty(left, Direction::Right).unwrap();
         assert!(app.workspace.copy_item(left, id, right, 0));
         let other = app.workspace.open_path("other.txt".into(), "other".into());
-        let before = crate::workspace_actions::saved_app_editor_layout(&app);
+        let before = crate::app::workspace_commands::saved_app_editor_layout(&app);
         assert!(finish(
             &mut app,
             id,
@@ -345,7 +346,7 @@ mod tests {
         ));
         assert_eq!(app.workspace.active(), Some(other));
         assert_eq!(
-            crate::workspace_actions::saved_app_editor_layout(&app),
+            crate::app::workspace_commands::saved_app_editor_layout(&app),
             before
         );
         assert_eq!(app.workspace.editor(left).unwrap().text(), "restored");
@@ -356,7 +357,7 @@ mod tests {
     #[test]
     fn failed_restore_skips_unreadable_tab_and_preserves_remaining_order() {
         let mut app = AppState::new();
-        crate::workspace_actions::hydrate_editor_layout(&mut app, Some(layout()));
+        crate::app::workspace_commands::hydrate_editor_layout(&mut app, Some(layout()));
         let id = app.workspace.active().unwrap();
         assert!(finish(
             &mut app,
@@ -364,7 +365,7 @@ mod tests {
             "large.json".into(),
             Err("Could not read large.json".into())
         ));
-        assert!(app.toast.is_some());
+        assert!(app.chrome.toast.is_some());
         assert!(
             app.workspace
                 .file_id_for_path(Path::new("large.json"))
@@ -422,7 +423,7 @@ mod tests {
             app.workspace.file_id_for_path(Path::new("renamed.json")),
             Some(id)
         );
-        assert!(app.toast.is_none());
+        assert!(app.chrome.toast.is_none());
         restore.shutdown();
     }
 
@@ -441,7 +442,7 @@ mod tests {
         h.pump_until(|_| true);
         assert_eq!(h.state.get().workspace.loading_files().len(), 3);
         assert_eq!(
-            crate::workspace_actions::saved_app_editor_layout(&h.state.get()),
+            crate::app::workspace_commands::saved_app_editor_layout(&h.state.get()),
             Some(layout())
         );
     }

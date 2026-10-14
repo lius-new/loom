@@ -8,4 +8,3 @@
 pub mod document;
 pub mod pane_layout;
 pub mod text;
-pub mod workspace;

@@ -46,29 +46,15 @@ pub struct EditorState {
     pub editor_vertical_scrollbar_drag_offset: f32,
     /// True while the editor's vertical overlay scrollbar is being dragged.
     pub editor_vertical_scrollbar_dragging: bool,
-    /// Pending click or active drag of an Explorer or Source Control file.
 
     /// Focus of the shared welcome/home/editor surface, retained across swaps.
     pub focused: bool,
-    pub pending_file: Option<crate::file_loading::PendingFile>,
+    pub pending_file: Option<crate::app::file_loading::PendingFile>,
     /// The pane divider being dragged.
     pub sash_drag: Option<crate::model::pane_layout::Sash>,
-    /// Context menu opened for one editor tab.
-
-    /// Pending or active left-button tab reorder gesture.
-
-    /// Open tab currently under the pointer.
-
-    /// Horizontal scroll offset of each pane's tab strip, in logical pixels.
-
-    /// Pointer x offset from the tab scrollbar thumb's left edge.
-
-    /// The pane whose tab scrollbar thumb is being dragged.
-
-    /// The pane whose tab strip contains the pointer.
 
     /// Vim editing behaviour, when enabled in Settings.
-    pub vim: crate::vim::Vim,
+    pub vim: loom_editor_core::vim::Vim,
 
     pub modifiers: KeyModifiers,
     pub drag: Option<DragSelection>,

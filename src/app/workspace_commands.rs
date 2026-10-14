@@ -1,4 +1,5 @@
 //! Shared workspace commands used by the welcome screen and editor chrome.
+use crate::app::context::AppContext;
 
 #[cfg(test)]
 use std::fs;
@@ -9,8 +10,8 @@ use std::path::PathBuf;
 
 #[cfg(test)]
 use crate::infrastructure::document_filesystem::MAX_EDITABLE_FILE_BYTES;
-use lgui::prelude::State;
 
+use crate::app::state::{AppState, CloseContinuation, CloseRequest};
 #[cfg(test)]
 use crate::app::workspace_session::hydrate_editor_layout_with;
 #[cfg(test)]
@@ -22,7 +23,6 @@ use crate::domain::identity::PaneId;
 #[cfg(test)]
 use crate::domain::workspace_session::{EditorLayout, SavedAxis, SavedChild, SavedPaneNode};
 use crate::model::document::FileId;
-use crate::state::{AppState, CloseContinuation, CloseRequest};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabCloseScope {
@@ -33,14 +33,14 @@ pub enum TabCloseScope {
     All,
 }
 
-pub fn save_active_document(state: &State<AppState>) -> bool {
+pub fn save_active_document(state: &AppContext) -> bool {
     let Some(id) = state.get().workspace.active() else {
         return false;
     };
     save_document(state, id)
 }
 
-pub fn save_document(state: &State<AppState>, id: FileId) -> bool {
+pub fn save_document(state: &AppContext, id: FileId) -> bool {
     let Some((id, path, contents)) = state.get().workspace.save_snapshot(id) else {
         return false;
     };
@@ -65,7 +65,7 @@ pub fn save_document(state: &State<AppState>, id: FileId) -> bool {
     }
 }
 
-pub fn request_close_tab(state: &State<AppState>, pane: PaneId, id: FileId) {
+pub fn request_close_tab(state: &AppContext, pane: PaneId, id: FileId) {
     state.update(move |app| request_close_tab_in(app, pane, id));
 }
 
@@ -112,12 +112,7 @@ pub fn tab_close_targets(
     ids.into_iter().map(|id| (pane, id)).collect()
 }
 
-pub fn request_close_tabs(
-    state: &State<AppState>,
-    pane: PaneId,
-    target: FileId,
-    scope: TabCloseScope,
-) {
+pub fn request_close_tabs(state: &AppContext, pane: PaneId, target: FileId, scope: TabCloseScope) {
     let targets = tab_close_targets(&state.get(), pane, target, scope);
     state.update(move |app| request_close_tabs_in(app, targets));
 }
@@ -155,7 +150,7 @@ fn request_close_tabs_in(app: &mut AppState, targets: Vec<(PaneId, FileId)>) {
     }
 }
 
-pub fn cancel_close_request(state: &State<AppState>) {
+pub fn cancel_close_request(state: &AppContext) {
     state.update(cancel_close_request_in);
 }
 
@@ -163,7 +158,7 @@ fn cancel_close_request_in(app: &mut AppState) {
     app.editor.close_request = None;
 }
 
-pub fn discard_close_request(state: &State<AppState>) -> Option<CloseContinuation> {
+pub fn discard_close_request(state: &AppContext) -> Option<CloseContinuation> {
     let continuation = state.get().editor.close_request.as_ref()?.continuation;
     state.update(|app| {
         let _ = discard_close_request_in(app);
@@ -181,7 +176,7 @@ fn discard_close_request_in(app: &mut AppState) -> Option<CloseContinuation> {
     Some(request.continuation)
 }
 
-pub fn save_close_request(state: &State<AppState>) -> Option<CloseContinuation> {
+pub fn save_close_request(state: &AppContext) -> Option<CloseContinuation> {
     let mut next = state.get();
     match save_close_request_in(&mut next) {
         Ok(continuation) => {
@@ -253,7 +248,7 @@ pub(crate) fn close_test_directory(name: &str) -> PathBuf {
     root
 }
 
-pub fn choose_file(state: &State<AppState>) -> bool {
+pub fn choose_file(state: &AppContext) -> bool {
     let Some(path) = crate::infrastructure::file_dialogs::pick_file(
         state.get().explorer.model.roots().first().cloned(),
     ) else {
@@ -262,9 +257,14 @@ pub fn choose_file(state: &State<AppState>) -> bool {
 
     let mut opened = false;
     state.update(|app| {
-        opened = crate::app::explorer::open_tree_file(app, path, 2);
-        app.welcome_hover = None;
-        app.workspace_home_hover = None;
+        opened = crate::app::explorer::open_tree_file(
+            app,
+            path,
+            2,
+            state.services().and_then(|r| r.file_loader()).as_ref(),
+        );
+        app.chrome.welcome_hover = None;
+        app.chrome.workspace_home_hover = None;
     });
     opened
 }
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn keyboard_close_uses_the_guarded_request_for_the_active_tab() {
-        use crate::input::action::Action;
+        use crate::features::keymap::action::Action;
 
         let mut app = AppState::new();
         let clean = app

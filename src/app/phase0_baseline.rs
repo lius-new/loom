@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::app::workspace_session::{SavedPaneNode, WorkspaceSession};
+use crate::features::keymap::action::Action;
 use crate::features::keymap::bindings::BindingSource;
 use crate::features::terminal::ShellKind;
 use crate::infrastructure::settings_filesystem::{self as settings_persistence, Scope};
-use crate::input::action::Action;
-use crate::workspace_persistence::{SavedPaneNode, WorkspaceSession};
 
 #[test]
 fn phase0_legacy_session_defaults_fixture() {
@@ -92,7 +92,7 @@ fn phase0_settings_jsonc_fixture_preserves_valid_values_and_scope() {
 
 #[test]
 fn phase0_keymap_jsonc_fixture_preserves_actions_and_partial_errors() {
-    let loaded = crate::input::keymap_file::parse(
+    let loaded = crate::features::keymap::keymap_file::parse(
         include_str!("../../docs/baseline/fixtures/keymap.jsonc"),
         BindingSource::User,
     )
@@ -183,18 +183,18 @@ fn ascii_text(bytes: usize) -> String {
 #[test]
 #[ignore = "opt-in stage 0 cached file read and index preparation baseline"]
 fn phase0_perf_file_preparation() {
-    use crate::model::workspace::PreparedTextFile;
+    use crate::app::workspace::PreparedTextFile;
     let scratch = Scratch::new("files");
     for mib in [1, 10, 64] {
         let bytes = mib * 1024 * 1024;
         let path = scratch.0.join(format!("{mib}m.txt"));
         std::fs::write(&path, ascii_text(bytes)).unwrap();
         // Warm the OS file cache; creation and warmup are outside the measurement.
-        let warm = crate::workspace_actions::read_text_file(&path).unwrap();
+        let warm = crate::app::workspace_commands::read_text_file(&path).unwrap();
         assert_eq!(warm.len(), bytes);
         drop(warm);
         let started = Instant::now();
-        let text = crate::workspace_actions::read_text_file(&path).unwrap();
+        let text = crate::app::workspace_commands::read_text_file(&path).unwrap();
         let read = started.elapsed();
         assert_eq!(text.len(), bytes);
         emit(&format!("ascii-{mib}m"), "file_read_cached", read, bytes, 1);
