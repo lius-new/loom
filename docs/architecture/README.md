@@ -1,5 +1,7 @@
 # 阶段 1：接线、状态归属和运行时边界
 
+> R8 已完成本机自动验收，见 [设置/keymap/chrome 迁移](chrome-migration.md) 与 [最终验收](results/2026-10-14-r8-chrome/report.md)。
+
 > 最新状态见 [整体进度](progress.md)、[编辑器迁移说明](editor-migration.md)、[工作区域迁移](workspace-migration.md)、[Explorer 迁移](explorer-migration.md) 和 [Git 迁移](git-migration.md)。下文保留阶段 1 的历史截止记录。
 
 阶段 1 建立可逐片迁移的边界。Workspace 仍在原有一次 State 更新中完成跨文档、跨 pane 事务，尚未拆开工作区，也未进入阶段 2 的搜索模块迁移。
