@@ -7,7 +7,13 @@ use crate::ui::components::input::InputState;
 use crate::ui::terminal::state::ProfileEditor;
 use std::path::PathBuf;
 pub fn edit(app: &mut AppState, id: Option<u64>) {
-    let profile = id.and_then(|id| app.terminal_profiles.iter().find(|p| p.id == id));
+    let profile = id.and_then(|id| {
+        app.preferences
+            .values()
+            .terminal_profiles
+            .iter()
+            .find(|p| p.id == id)
+    });
     app.terminal.ui.shell_editor = Some(ProfileEditor {
         open: true,
         id,
@@ -53,7 +59,9 @@ pub fn save_editor(app: &mut AppState) -> bool {
                 .unwrap_or_default()
                 .as_nanos() as u64;
             clock.max(
-                app.terminal_profiles
+                app.preferences
+                    .values()
+                    .terminal_profiles
                     .iter()
                     .map(|p| p.id)
                     .max()
@@ -71,13 +79,15 @@ pub fn save_editor(app: &mut AppState) -> bool {
     match validate() {
         Ok(profile) => {
             if let Some(old) = app
+                .preferences
+                .values_mut()
                 .terminal_profiles
                 .iter_mut()
                 .find(|p| p.id == profile.id)
             {
                 *old = profile;
             } else {
-                app.terminal_profiles.push(profile);
+                app.preferences.values_mut().terminal_profiles.push(profile);
             }
             close_editor(app);
             app.refresh_shells();
@@ -91,10 +101,13 @@ pub fn save_editor(app: &mut AppState) -> bool {
 }
 
 pub fn remove(app: &mut AppState, id: u64) {
-    app.terminal_profiles.retain(|p| p.id != id);
+    app.preferences
+        .values_mut()
+        .terminal_profiles
+        .retain(|p| p.id != id);
     // A deleted profile cannot be repaired, unlike an unavailable one.
-    if app.default_shell == ShellKind::Custom(id) {
-        app.default_shell = ShellKind::default();
+    if app.preferences.values().default_shell == ShellKind::Custom(id) {
+        app.preferences.values_mut().default_shell = ShellKind::default();
     }
     if app
         .terminal
@@ -118,7 +131,12 @@ pub(crate) fn close_editor(app: &mut AppState) {
 /// choose, when they choose one.
 pub(crate) fn project_shell(app: &AppState) -> Option<(String, String)> {
     let root = crate::key_actions::project_settings_root(app)?;
-    let (_, project) = app.project_settings.iter().find(|(r, _)| *r == root)?;
+    let (_, project) = app
+        .preferences
+        .values()
+        .project_settings
+        .iter()
+        .find(|(r, _)| *r == root)?;
     project.overrides.get("default_shell")?;
     let shell = app.settings_at(Some(&root)).default_shell;
     let folder = root.file_name().map_or_else(
@@ -130,8 +148,11 @@ pub(crate) fn project_shell(app: &AppState) -> Option<(String, String)> {
 /// Re-discovers shells. The saved default is never rewritten here, so a
 /// repaired profile becomes the default again once it is available.
 pub(crate) fn refresh_shells(app: &mut AppState) {
-    app.shell_options = crate::infrastructure::terminal::profiles::options(&app.terminal_profiles);
-    let fallback = Some(app.effective_shell()).filter(|kind| *kind != app.default_shell);
+    app.preferences.values_mut().shell_options = crate::infrastructure::terminal::profiles::options(
+        &app.preferences.values().terminal_profiles,
+    );
+    let fallback =
+        Some(app.effective_shell()).filter(|kind| *kind != app.preferences.values().default_shell);
     if fallback != app.terminal.availability.fallback()
         && let Some(fallback) = fallback
     {
@@ -145,9 +166,9 @@ pub(crate) fn refresh_shells(app: &mut AppState) {
 
 pub(crate) fn settings_frame(app: &AppState) -> crate::ui::terminal::settings_binding::Frame {
     crate::ui::terminal::settings_binding::Frame {
-        default_shell: app.default_shell,
+        default_shell: app.preferences.values().default_shell,
         effective_shell: app.effective_shell(),
-        shell_options: app.shell_options.clone(),
+        shell_options: app.preferences.values().shell_options.clone(),
         project_shell: project_shell(app),
     }
 }
@@ -174,11 +195,13 @@ pub(crate) fn binding(
                 Command::Close => close_editor(app),
                 Command::Select(kind) => {
                     if app
+                        .preferences
+                        .values()
                         .shell_options
                         .iter()
                         .any(|o| o.kind == kind && o.available())
                     {
-                        app.default_shell = kind;
+                        app.preferences.values_mut().default_shell = kind;
                     }
                 }
                 Command::Focus => app.terminal.ui.terminal_focused = false,

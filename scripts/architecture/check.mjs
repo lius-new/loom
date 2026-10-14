@@ -91,6 +91,8 @@ export function allowed(file, dependency) {
   if(root==='loom_editor_core')return true;
   if(own==='app'||file==='src/main.rs')return true;
   if(own==='domain')return root==='domain'||(file==='src/domain/workspace_session.rs'&&['serde','serde_json'].includes(root));
+  if(file.startsWith('src/features/keymap/'))return ['features','domain','serde_json','input','Movement'].includes(root);
+  if(file==='src/infrastructure/keymap_filesystem.rs')return ['infrastructure','features','std::fs'].includes(root);
   if(file.startsWith('src/features/settings/'))return ['features','domain','serde','serde_json'].includes(root);
   if(['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs'].includes(file))return ['infrastructure','features','domain','std::fs'].includes(root);
   if(file==='src/infrastructure/config_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
@@ -141,6 +143,17 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
+    if(file.startsWith('src/features/keymap/')) {
+      if(policy.exceptions[file]||terminalStandardServices(ts)||ts.some(t=>['AppState','AppRuntime','Workspace','State','ApplicationHandle','KeyboardEvent','LogicalKey','NamedKey','KeyState','KeyModifiers','InputState','UiRect','TerminalHandle','TerminalController','TerminalRuntime','FileLoader','Child'].includes(t)))problems.push(file+': Keymap rules must be root GUI/native independent and have no exceptions');
+      if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super')||/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_bytes'].includes(t)&&ts[i+1]==='!')||(ts.some((t,i)=>t==='include_str'&&ts[i+1]==='!')&&(file!=='src/features/keymap/keymap_file.rs'||!source.includes('include_str!("../../../assets/keymaps/default.json")'))))problems.push(file+': Keymap rules cannot include or escape to adapter sources');
+    }
+    for(const [f,name,register,privateFields] of [['src/features/settings/model.rs','Model','settings_model_ownership',true],['src/features/settings/model.rs','Values','settings_values_ownership',false],['src/features/keymap/model.rs','Model','keymap_model_ownership',true]])if(file===f) {
+      const fields=structFields(source,name),known=Object.keys(policy[register]??{});for(const field of fields)if(!known.includes(field))problems.push(name+'.'+field+': unregistered R8 model field');for(const field of known)if(!fields.includes(field))problems.push(name+'.'+field+': stale R8 model registration');
+      if(privateFields) {const body=source.slice(source.indexOf('struct '+name)).split('}')[0];if(/\bpub\b/.test(body.slice(body.indexOf('{'))))problems.push(file+': R8 model storage must be private');}
+    }
+    if(['src/ui/settings.rs','src/ui/settings_binding.rs','src/ui/keymap_page.rs','src/ui/keymap_binding.rs'].includes(file)) {
+      if(policy.exceptions[file]||terminalStandardServices(ts)||ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','TerminalController','TerminalHandle','TerminalRuntime','RunningProcess','Registry'].includes(t))||deps.some(d=>['crate::app','crate::state','crate::infrastructure','crate::key_actions','crate::workspace_actions','crate::model'].includes(d)))problems.push(file+': R8 settings/keymap views require narrow frames and commands without native resources');
+    }
     const settingsRules=file.startsWith('src/features/settings/');
     const settingsNative=['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs','src/infrastructure/config_watcher.rs'].includes(file);
     if(settingsRules||settingsNative) {

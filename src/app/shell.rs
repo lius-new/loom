@@ -25,8 +25,8 @@ use crate::ui::editor::view as editor_view;
 use crate::ui::terminal::menu as terminal_tab_context_menu;
 use crate::ui::theme;
 use crate::ui::{
-    close_confirmation, diff_editor, keymap_page, pane_sash, settings, statusbar, tab_context_menu,
-    tabs, titlebar, toast, welcome, workspace_home,
+    close_confirmation, diff_editor, pane_sash, statusbar, tab_context_menu, tabs, titlebar, toast,
+    welcome, workspace_home,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -158,8 +158,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 window_focus_map.cancel();
                 window_focus_state.try_update(|app| {
                     // A key sequence does not survive leaving the window.
-                    let had_pending = !app.pending_keystrokes.is_empty();
-                    app.pending_keystrokes.clear();
+                    let had_pending = !app.keymap.pending().is_empty();
+                    app.keymap.clear_pending();
                     let split_drag = app.editor.diff_split.drag.take().is_some()
                         | app.terminal.ui.terminal_split_drag.take().is_some()
                         | app.layout.application_sash_drag.take().is_some();
@@ -250,8 +250,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let s = state.get();
     layout_map::refresh(&s, &layout_map_store, content_area, session_ids.clone());
-    theme::set(s.theme);
-    crate::ui::fonts::set(&s.editor_font, &s.terminal_font);
+    theme::set(s.preferences.values().theme);
+    crate::ui::fonts::set(
+        &s.preferences.values().editor_font,
+        &s.preferences.values().terminal_font,
+    );
     let editor_layout = crate::workspace_actions::saved_app_editor_layout(&s);
     let git_roots = s.explorer.model.roots().to_vec();
     let git_target = super::git_poll::poll_target(&s);
@@ -632,7 +635,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     };
     // A key sequence waiting for its next keystroke times out after a pause;
     // each new keystroke bumps the sequence number and restarts the timer.
-    let pending_timer = (!s.pending_keystrokes.is_empty()).then_some(s.pending_keystrokes_seq);
+    let pending_timer = (!s.keymap.pending().is_empty()).then_some(s.keymap.pending_seq());
     let pending_env = key_env.clone();
     cx.use_effect(pending_timer, move || {
         let stop = pending_timer.map(|seq| key_actions::start_pending_timer(pending_env, seq));
@@ -660,7 +663,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let watcher = key_actions::watch_user_settings(settings_state);
         move || drop(watcher)
     });
-    let blink_focused = s.terminal.ui.terminal_focused && s.terminal_cursor_blink;
+    let blink_focused =
+        s.terminal.ui.terminal_focused && s.preferences.values().terminal_cursor_blink;
     let blink_state = terminal_cursor_blink.clone();
     cx.use_effect(
         (terminal_visible, blink_focused, active_visible_terminal),
@@ -911,8 +915,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             UiId::owned(format!("pane-surface-{}", pane.get()))
         };
         root = root.child(match s.pane_surface(pane) {
-            MainSurface::Settings => settings::render(body, state.clone()),
-            MainSurface::Keymap => keymap_page::render(
+            MainSurface::Settings => super::settings::render(body, state.clone()),
+            MainSurface::Keymap => super::keymap_view::render(
                 body,
                 state.clone(),
                 keymap_search_id.clone(),

@@ -51,7 +51,7 @@ pub(crate) fn bind(
     let source = state.clone();
     runtime
         .terminals()
-        .set_profile_source(move || source.get().terminal_profiles.clone());
+        .set_profile_source(move || source.get().preferences.values().terminal_profiles.clone());
     TerminalStore::new(model, runtime.terminals())
 }
 pub(crate) fn install_owner(
@@ -72,7 +72,7 @@ pub(crate) fn install_owner(
             }
         }
     });
-    let profiles = state.get().terminal_profiles;
+    let profiles = state.get().preferences.values().terminal_profiles.clone();
     let owner = Arc::downgrade(runtime.terminals());
     let tabs = tabs.clone();
     cx.use_effect(profiles, move || {
@@ -634,12 +634,15 @@ mod adapter_tests {
             let runtime = cx.state_with(|| Arc::new(AppRuntime::default())).get();
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
-                app.terminal_profiles.push(ShellProfile {
-                    id: 42,
-                    name: "first projection".into(),
-                    program: "custom.exe".into(),
-                    args: vec!["--literal".into()],
-                });
+                app.preferences
+                    .values_mut()
+                    .terminal_profiles
+                    .push(ShellProfile {
+                        id: 42,
+                        name: "first projection".into(),
+                        program: "custom.exe".into(),
+                        args: vec!["--literal".into()],
+                    });
                 app
             });
             let model =

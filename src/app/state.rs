@@ -13,11 +13,9 @@ use std::path::{Path, PathBuf};
 
 use crate::features::terminal::ShellKind;
 use crate::input::action::Action;
-use crate::input::keystroke::Keystroke;
 use crate::model::document::FileId;
 use crate::model::pane_layout::{Direction, PaneId};
 use crate::model::workspace::{AppPage, Workspace};
-use crate::ui::components::input::InputState;
 use crate::ui::theme::ThemeId;
 
 pub use crate::ui::drawer::DrawerMode;
@@ -151,6 +149,7 @@ impl Default for DrawerChrome {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub preferences: crate::features::settings::model::Model,
     // R1 legacy command bridge: snapshots never own runtime services.
     runtime: std::sync::Weak<crate::app::runtime::AppRuntime>,
     pub editor: editor::EditorState,
@@ -167,24 +166,8 @@ pub struct AppState {
     pub git: crate::ui::git::state::GitPanelState,
     pub workspace: Workspace,
     pub search: crate::ui::search::state::SearchPanelState,
-    /// Active color theme, applied at the start of every frame.
-    pub theme: ThemeId,
-    /// Shell used for terminals that are not opened from the shell selector.
-    pub default_shell: ShellKind,
-    pub terminal_profiles: Vec<crate::features::terminal::profiles::ShellProfile>,
-    pub shell_options: Vec<crate::features::terminal::profiles::ShellOption>,
-    pub terminal_cursor_blink: bool,
-    pub smooth_caret: bool,
-    pub editor_font: crate::ui::fonts::FontSettings,
-    pub terminal_font: crate::ui::fonts::FontSettings,
     /// Font family fields on the Settings page; committed on Enter or blur.
-    pub editor_font_input: crate::ui::components::input::InputState,
-    pub terminal_font_input: crate::ui::components::input::InputState,
-    /// Each workspace folder's `.loom/settings.json`, when it has one.
-    pub project_settings: Vec<(
-        PathBuf,
-        crate::infrastructure::project_settings::ProjectSettings,
-    )>,
+    pub settings_ui: crate::ui::settings_binding::SettingsUiState,
     /// Notification above the status bar; cleared by its timer or close button.
     pub toast: Option<Toast>,
     /// Source of `Toast::id`, so a replacement restarts the dismiss timer.
@@ -194,13 +177,9 @@ pub struct AppState {
     /// Workspace Home action currently under the pointer.
     pub workspace_home_hover: Option<usize>,
     /// Keystrokes of a key sequence waiting for its next key.
-    pub pending_keystrokes: Vec<Keystroke>,
-    /// Bumped whenever `pending_keystrokes` changes, restarting its timeout.
-    pub pending_keystrokes_seq: u64,
-    /// Bumped whenever the active keymap is replaced, so shortcut labels re-render.
-    pub keymap_version: u64,
+    pub keymap: crate::features::keymap::model::Model,
     /// Filter typed into the Keymap page.
-    pub keymap_search: InputState,
+    pub keymap_ui: crate::ui::keymap_binding::KeymapUiState,
 }
 
 impl AppState {
@@ -219,6 +198,19 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             runtime: Default::default(),
+            preferences: crate::features::settings::model::Model::new(
+                crate::features::settings::model::Values {
+                    theme: ThemeId::default(),
+                    default_shell: ShellKind::default(),
+                    terminal_profiles: Vec::new(),
+                    shell_options: crate::infrastructure::terminal::profiles::options(&[]),
+                    terminal_cursor_blink: true,
+                    smooth_caret: true,
+                    editor_font: crate::ui::fonts::FontSettings::EDITOR,
+                    terminal_font: crate::ui::fonts::FontSettings::TERMINAL,
+                    project_settings: Vec::new(),
+                },
+            ),
             drawer: DrawerChrome::default(),
             explorer: Default::default(),
             source_control: SidebarChrome::default(),
@@ -229,25 +221,15 @@ impl AppState {
             terminal: Default::default(),
             workspace: Workspace::new(),
             search: Default::default(),
-            theme: ThemeId::default(),
-            default_shell: ShellKind::default(),
-            terminal_profiles: Vec::new(),
-            shell_options: crate::infrastructure::terminal::profiles::options(&[]),
-            terminal_cursor_blink: true,
-            smooth_caret: true,
-            editor_font: crate::ui::fonts::FontSettings::EDITOR,
-            terminal_font: crate::ui::fonts::FontSettings::TERMINAL,
-            editor_font_input: Default::default(),
-            terminal_font_input: Default::default(),
-            project_settings: Vec::new(),
+
+            settings_ui: Default::default(),
+
             toast: None,
             toast_seq: 0,
             welcome_hover: None,
             workspace_home_hover: None,
-            pending_keystrokes: Vec::new(),
-            pending_keystrokes_seq: 0,
-            keymap_version: 0,
-            keymap_search: InputState::default(),
+            keymap: Default::default(),
+            keymap_ui: Default::default(),
         }
     }
 
@@ -275,17 +257,17 @@ impl AppState {
     /// The preferences stored in `settings.json`.
     pub fn settings(&self) -> crate::infrastructure::settings_filesystem::Settings {
         crate::infrastructure::settings_filesystem::Settings {
-            theme: self.theme,
-            default_shell: self.default_shell,
-            terminal_profiles: self.terminal_profiles.clone(),
-            terminal_cursor_blink: self.terminal_cursor_blink,
-            smooth_caret: self.smooth_caret,
+            theme: self.preferences.values().theme,
+            default_shell: self.preferences.values().default_shell,
+            terminal_profiles: self.preferences.values().terminal_profiles.clone(),
+            terminal_cursor_blink: self.preferences.values().terminal_cursor_blink,
+            smooth_caret: self.preferences.values().smooth_caret,
             git_inline_blame: self.git.ui.inline_blame,
             git_split_diff: self.git.ui.split_diff,
             git_tree_view: self.git.ui.tree_view,
             vim: self.editor.vim.options.into(),
-            editor_font: self.editor_font.clone(),
-            terminal_font: self.terminal_font.clone(),
+            editor_font: self.preferences.values().editor_font.clone(),
+            terminal_font: self.preferences.values().terminal_font.clone(),
         }
     }
 
@@ -298,13 +280,13 @@ impl AppState {
         if settings == self.settings() {
             return false;
         }
-        let shells_changed = settings.default_shell != self.default_shell
-            || settings.terminal_profiles != self.terminal_profiles;
-        self.theme = settings.theme;
-        self.default_shell = settings.default_shell;
-        self.terminal_profiles = settings.terminal_profiles;
-        self.terminal_cursor_blink = settings.terminal_cursor_blink;
-        self.smooth_caret = settings.smooth_caret;
+        let shells_changed = settings.default_shell != self.preferences.values().default_shell
+            || settings.terminal_profiles != self.preferences.values().terminal_profiles;
+        self.preferences.values_mut().theme = settings.theme;
+        self.preferences.values_mut().default_shell = settings.default_shell;
+        self.preferences.values_mut().terminal_profiles = settings.terminal_profiles;
+        self.preferences.values_mut().terminal_cursor_blink = settings.terminal_cursor_blink;
+        self.preferences.values_mut().smooth_caret = settings.smooth_caret;
         self.git.ui.inline_blame = settings.git_inline_blame;
         self.git.ui.split_diff = settings.git_split_diff;
         self.git.ui.tree_view = settings.git_tree_view;
@@ -325,26 +307,33 @@ impl AppState {
     pub fn set_editor_font(&mut self, font: crate::ui::fonts::FontSettings) {
         use crate::features::git::diff_document::row_height_for;
         let font = font.clamped();
-        if font.family != self.editor_font.family {
-            self.editor_font_input.set_text(font.family.clone());
+        if font.family != self.preferences.values().editor_font.family {
+            self.settings_ui
+                .editor_font_input
+                .set_text(font.family.clone());
         }
-        if font == self.editor_font {
+        if font == self.preferences.values().editor_font {
             return;
         }
-        let (old_size, new_size) = (f32::from(self.editor_font.size), f32::from(font.size));
+        let (old_size, new_size) = (
+            f32::from(self.preferences.values().editor_font.size),
+            f32::from(font.size),
+        );
         self.workspace.rescale_code_scroll(
-            font.line_px() / self.editor_font.line_px(),
+            font.line_px() / self.preferences.values().editor_font.line_px(),
             row_height_for(new_size) / row_height_for(old_size),
         );
-        self.editor_font = font;
+        self.preferences.values_mut().editor_font = font;
     }
 
     pub fn set_terminal_font(&mut self, font: crate::ui::fonts::FontSettings) {
         let font = font.clamped();
-        if font.family != self.terminal_font.family {
-            self.terminal_font_input.set_text(font.family.clone());
+        if font.family != self.preferences.values().terminal_font.family {
+            self.settings_ui
+                .terminal_font_input
+                .set_text(font.family.clone());
         }
-        self.terminal_font = font;
+        self.preferences.values_mut().terminal_font = font;
     }
 
     pub fn refresh_shells(&mut self) {
@@ -355,18 +344,21 @@ impl AppState {
     /// otherwise the first available option.
     pub fn effective_shell(&self) -> ShellKind {
         crate::features::terminal::profiles::effective_default(
-            self.default_shell,
-            &self.shell_options,
+            self.preferences.values().default_shell,
+            &self.preferences.values().shell_options,
         )
-        .unwrap_or(self.default_shell)
+        .unwrap_or(self.preferences.values().default_shell)
     }
 
     /// `effective_shell` for a terminal starting in `cwd`, honoring the
     /// project settings of the workspace folder that holds it.
     pub fn effective_shell_at(&self, cwd: Option<&Path>) -> ShellKind {
         let preferred = self.settings_at(cwd).default_shell;
-        crate::features::terminal::profiles::effective_default(preferred, &self.shell_options)
-            .unwrap_or(preferred)
+        crate::features::terminal::profiles::effective_default(
+            preferred,
+            &self.preferences.values().shell_options,
+        )
+        .unwrap_or(preferred)
     }
 
     /// The workspace folder holding `path`; the innermost when folders nest.
@@ -388,7 +380,13 @@ impl AppState {
         let settings = self.settings();
         let project = path
             .and_then(|path| self.workspace_folder_of(path))
-            .and_then(|root| self.project_settings.iter().find(|(r, _)| r == root));
+            .and_then(|root| {
+                self.preferences
+                    .values()
+                    .project_settings
+                    .iter()
+                    .find(|(r, _)| r == root)
+            });
         match project {
             Some((_, project)) => {
                 crate::infrastructure::settings_filesystem::overlay(&settings, &project.overrides)
@@ -416,6 +414,8 @@ impl AppState {
         let mut messages = Vec::new();
         for (root, project) in &fresh {
             let known = self
+                .preferences
+                .values()
                 .project_settings
                 .iter()
                 .any(|(r, p)| r == root && p == project);
@@ -430,14 +430,16 @@ impl AppState {
                 ));
             }
         }
-        self.project_settings = fresh;
+        self.preferences.values_mut().project_settings = fresh;
         for message in messages {
             self.show_error(message);
         }
     }
 
     pub fn shell_name(&self, kind: ShellKind) -> String {
-        self.shell_options
+        self.preferences
+            .values()
+            .shell_options
             .iter()
             .find(|s| s.kind == kind)
             .map(|s| s.name.clone())
@@ -534,13 +536,17 @@ impl AppState {
             }
             Action::IncreaseFontSize | Action::DecreaseFontSize | Action::ResetFontSize => {
                 let size = match action {
-                    Action::IncreaseFontSize => self.editor_font.size.saturating_add(1),
-                    Action::DecreaseFontSize => self.editor_font.size.saturating_sub(1),
+                    Action::IncreaseFontSize => {
+                        self.preferences.values().editor_font.size.saturating_add(1)
+                    }
+                    Action::DecreaseFontSize => {
+                        self.preferences.values().editor_font.size.saturating_sub(1)
+                    }
                     _ => crate::ui::fonts::FontSettings::EDITOR.size,
                 };
                 self.set_editor_font(crate::ui::fonts::FontSettings {
                     size,
-                    ..self.editor_font.clone()
+                    ..self.preferences.values().editor_font.clone()
                 });
             }
             Action::SplitRight => self.split_focused(Direction::Right),

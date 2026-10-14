@@ -4,19 +4,15 @@
 //! sections: `{ "context": "Editor", "bindings": { "ctrl-s": "editor::Save" } }`.
 //! A bad binding is reported and skipped; the rest of the file still loads.
 
-use std::fs;
-use std::io;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::Value;
 
 use super::action::Action;
+use super::bindings::{Binding, BindingSource, Keymap};
 use super::context::ContextPredicate;
-use super::keymap::{Binding, BindingSource, Keymap};
 use super::keystroke::Keystroke;
 use crate::features::settings::jsonc::strip as strip_jsonc;
-use crate::workspace_persistence::config_path;
 
 const DEFAULT_KEYMAP: &str = include_str!("../../../assets/keymaps/default.json");
 pub const FILE_NAME: &str = "keymap.json";
@@ -166,46 +162,11 @@ pub fn build(user: Vec<Binding>) -> Keymap {
     keymap
 }
 
-pub fn user_path() -> Option<PathBuf> {
-    config_path(FILE_NAME)
-}
-
 /// The result of reading the user's keymap file.
 pub enum UserKeymap {
     Missing,
     Loaded(LoadOutcome),
     Invalid(String),
-}
-
-pub fn load_user() -> UserKeymap {
-    let Some(path) = user_path() else {
-        return UserKeymap::Missing;
-    };
-    match fs::read_to_string(&path) {
-        Ok(content) => match parse(&content, BindingSource::User) {
-            Ok(outcome) => UserKeymap::Loaded(outcome),
-            Err(error) => UserKeymap::Invalid(error),
-        },
-        Err(error) if error.kind() == io::ErrorKind::NotFound => UserKeymap::Missing,
-        Err(error) => UserKeymap::Invalid(error.to_string()),
-    }
-}
-
-/// Create the user keymap from the template if it does not exist yet.
-pub fn ensure_user_file() -> io::Result<PathBuf> {
-    let path = user_path().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "could not determine the user configuration directory",
-        )
-    })?;
-    if !path.exists() {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&path, USER_TEMPLATE)?;
-    }
-    Ok(path)
 }
 
 #[cfg(test)]

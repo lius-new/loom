@@ -8,7 +8,11 @@
 
 use std::fmt;
 
-use lgui::core::{KeyState, KeyboardEvent, LogicalKey, NamedKey};
+#[derive(Clone, Copy)]
+pub enum KeyInput<'a> {
+    Named(&'a str),
+    Character(&'a str),
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Modifiers {
@@ -100,6 +104,40 @@ fn canonical_key_name(name: &str) -> Option<&'static str> {
 }
 
 impl Keystroke {
+    /// Normalize pure named/character key facts; releases are filtered by the UI adapter.
+    pub fn from_key(input: KeyInput<'_>, mut modifiers: Modifiers) -> Option<Self> {
+        let mut key_char = None;
+        let key = match input {
+            KeyInput::Named(named) => canonical_key_name(named)?.to_owned(),
+            KeyInput::Character(value) => {
+                let mut chars = value.chars();
+                let character = chars.next()?;
+                if chars.next().is_some() {
+                    return None;
+                }
+                if character == ' ' {
+                    "space".to_owned()
+                } else if character.is_alphabetic()
+                    && character.is_uppercase() != character.is_lowercase()
+                {
+                    character.to_lowercase().collect()
+                } else {
+                    // The character already reflects Shift (`!` rather than `shift-1`).
+                    modifiers.shift = false;
+                    if modifiers.ctrl && modifiers.alt && !character.is_ascii_alphanumeric() {
+                        key_char = Some(character.to_string());
+                    }
+                    character.to_string()
+                }
+            }
+        };
+        Some(Self {
+            modifiers,
+            key,
+            key_char,
+        })
+    }
+
     /// Parse one keystroke such as `secondary-shift-g`, `ctrl--` or `f5`.
     pub fn parse(source: &str) -> Result<Self, KeystrokeError> {
         let mut modifiers = Modifiers::default();
@@ -167,50 +205,6 @@ impl Keystroke {
             return Err(KeystrokeError("empty keystroke".to_owned()));
         }
         Ok(sequence)
-    }
-
-    /// Normalize a key-down event. Returns `None` for key releases, lone
-    /// modifier keys and keys that can not be bound.
-    pub fn from_event(event: &KeyboardEvent) -> Option<Self> {
-        if event.state != KeyState::Down {
-            return None;
-        }
-        let mut modifiers = Modifiers {
-            ctrl: event.modifiers.ctrl(),
-            alt: event.modifiers.alt(),
-            shift: event.modifiers.shift(),
-            platform: event.modifiers.meta(),
-        };
-        let mut key_char = None;
-        let key = match &event.key {
-            LogicalKey::Named(named) => named_key(named)?.to_owned(),
-            LogicalKey::Character(value) => {
-                let mut chars = value.chars();
-                let character = chars.next()?;
-                if chars.next().is_some() {
-                    return None;
-                }
-                if character == ' ' {
-                    "space".to_owned()
-                } else if character.is_alphabetic()
-                    && character.is_uppercase() != character.is_lowercase()
-                {
-                    character.to_lowercase().collect()
-                } else {
-                    // The character already reflects Shift (`!` rather than `shift-1`).
-                    modifiers.shift = false;
-                    if modifiers.ctrl && modifiers.alt && !character.is_ascii_alphanumeric() {
-                        key_char = Some(character.to_string());
-                    }
-                    character.to_string()
-                }
-            }
-        };
-        Some(Self {
-            modifiers,
-            key,
-            key_char,
-        })
     }
 
     /// Whether this typed keystroke satisfies `target`, a keystroke from the keymap.
@@ -320,56 +314,9 @@ fn key_label(key: &str) -> String {
     key.to_uppercase()
 }
 
-fn named_key(named: &NamedKey) -> Option<&'static str> {
-    Some(match named {
-        NamedKey::Escape => "escape",
-        NamedKey::Enter => "enter",
-        NamedKey::Tab => "tab",
-        NamedKey::Backspace => "backspace",
-        NamedKey::Delete => "delete",
-        NamedKey::Insert => "insert",
-        NamedKey::ArrowLeft => "left",
-        NamedKey::ArrowRight => "right",
-        NamedKey::ArrowUp => "up",
-        NamedKey::ArrowDown => "down",
-        NamedKey::Home => "home",
-        NamedKey::End => "end",
-        NamedKey::PageUp => "pageup",
-        NamedKey::PageDown => "pagedown",
-        NamedKey::ContextMenu => "menu",
-        NamedKey::F1 => "f1",
-        NamedKey::F2 => "f2",
-        NamedKey::F3 => "f3",
-        NamedKey::F4 => "f4",
-        NamedKey::F5 => "f5",
-        NamedKey::F6 => "f6",
-        NamedKey::F7 => "f7",
-        NamedKey::F8 => "f8",
-        NamedKey::F9 => "f9",
-        NamedKey::F10 => "f10",
-        NamedKey::F11 => "f11",
-        NamedKey::F12 => "f12",
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lgui::core::KeyModifiers;
-
-    fn event(key: LogicalKey, modifiers: KeyModifiers) -> KeyboardEvent {
-        KeyboardEvent {
-            state: KeyState::Down,
-            key,
-            modifiers,
-            ..Default::default()
-        }
-    }
-
-    fn character(value: &str, modifiers: KeyModifiers) -> KeyboardEvent {
-        event(LogicalKey::Character(value.into()), modifiers)
-    }
 
     fn mods(ctrl: bool, alt: bool, shift: bool, platform: bool) -> Modifiers {
         Modifiers {
@@ -431,56 +378,6 @@ mod tests {
     }
 
     #[test]
-    fn events_normalize_letter_case_and_keep_shift() {
-        let typed =
-            Keystroke::from_event(&character("G", KeyModifiers::CONTROL | KeyModifiers::SHIFT))
-                .unwrap();
-        assert_eq!(typed, Keystroke::parse("ctrl-shift-g").unwrap());
-        let typed = Keystroke::from_event(&character("b", KeyModifiers::CONTROL)).unwrap();
-        assert!(typed.should_match(&Keystroke::parse("ctrl-b").unwrap()));
-    }
-
-    #[test]
-    fn shifted_punctuation_drops_the_shift_modifier() {
-        let typed = Keystroke::from_event(&character("(", KeyModifiers::SHIFT)).unwrap();
-        assert_eq!(typed, Keystroke::parse("(").unwrap());
-    }
-
-    #[test]
-    fn named_keys_keep_shift() {
-        let typed = Keystroke::from_event(&event(
-            LogicalKey::Named(NamedKey::Tab),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        ))
-        .unwrap();
-        assert_eq!(typed, Keystroke::parse("ctrl-shift-tab").unwrap());
-    }
-
-    #[test]
-    fn lone_modifiers_and_releases_are_ignored() {
-        assert!(
-            Keystroke::from_event(&event(
-                LogicalKey::Named(NamedKey::Shift),
-                KeyModifiers::SHIFT
-            ))
-            .is_none()
-        );
-        let mut release = character("a", KeyModifiers::CONTROL);
-        release.state = KeyState::Up;
-        assert!(Keystroke::from_event(&release).is_none());
-    }
-
-    #[test]
-    fn altgr_characters_match_their_bare_binding() {
-        let typed =
-            Keystroke::from_event(&character("@", KeyModifiers::CONTROL | KeyModifiers::ALT))
-                .unwrap();
-        assert!(typed.should_match(&Keystroke::parse("@").unwrap()));
-        assert!(typed.should_match(&Keystroke::parse("ctrl-alt-@").unwrap()));
-        assert!(!typed.should_match(&Keystroke::parse("ctrl-@").unwrap()));
-    }
-
-    #[test]
     fn printable_keystrokes_replay_as_text() {
         assert_eq!(
             Keystroke::parse("shift-j").unwrap().text().as_deref(),
@@ -509,5 +406,29 @@ mod tests {
                 "Ctrl+K Ctrl+S"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+    #[test]
+    fn pure_facts_preserve_wide_characters_and_reject_multi_character_commits() {
+        let typed = Keystroke::from_key(
+            KeyInput::Character("中"),
+            Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(typed.key, "中");
+        assert!(!typed.modifiers.shift);
+        assert_eq!(typed.text().as_deref(), Some("中"));
+        assert!(Keystroke::from_key(KeyInput::Character("中文"), Modifiers::default()).is_none());
+        assert!(
+            Keystroke::from_key(KeyInput::Named("unknown-native-key"), Modifiers::default())
+                .is_none()
+        );
     }
 }

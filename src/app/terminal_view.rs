@@ -86,7 +86,7 @@ pub(crate) fn binding(
                     terminal_h: app.terminal_chrome.terminal_h,
                 },
                 modifiers: app.editor.modifiers,
-                shell_options: app.shell_options,
+                shell_options: app.preferences.values().shell_options.clone(),
             }
         },
         move |command| run(&command_state, &command_tabs, &command_application, command),

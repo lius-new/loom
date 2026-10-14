@@ -8,8 +8,8 @@
 use std::time::Duration;
 
 use super::action::Action;
+use super::bindings::Keymap;
 use super::context::KeyContext;
-use super::keymap::Keymap;
 use super::keystroke::Keystroke;
 
 /// How long a pending sequence waits for its next keystroke.
@@ -125,7 +125,7 @@ fn replay_prefix(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::keymap::Binding;
+    use crate::features::keymap::bindings::Binding;
 
     fn ks(source: &str) -> Keystroke {
         Keystroke::parse(source).unwrap()

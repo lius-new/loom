@@ -1,6 +1,6 @@
 # 整体重构进度
 
-2026-10-14：R7.1–R7.7 已完成本机自动验收（[说明](terminal-migration.md)、[方案](terminal-migration-plan.md)、[最终验收](results/2026-10-14-r7-terminal/report.md)）；阶段 8 已开始，R8.1 已完成本机自动验收（[方案](chrome-migration-plan.md)）。实际 Rust 1.98.0，固定 1.97.1、原生人工/跨平台/远端 CI/真实安装仍待验。
+2026-10-14：R7.1–R7.7 已完成本机自动验收（[说明](terminal-migration.md)、[方案](terminal-migration-plan.md)、[最终验收](results/2026-10-14-r7-terminal/report.md)）；阶段 8 已开始，R8.1–R8.2 已完成本机自动验收（[方案](chrome-migration-plan.md)）。实际 Rust 1.98.0，固定 1.97.1、原生人工/跨平台/远端 CI/真实安装仍待验。
 
 2026-10-13：阶段 0–5 本机自动验收已完成；阶段 6 Git 迁移（R6.1–R6.7）已完成本机自动验收（[说明](git-migration.md)、[方案](git-migration-plan.md)、[验收](results/2026-10-13-r6-git/report.md)）；阶段 7–8 尚未开始。
 
@@ -44,7 +44,7 @@
   - [x] R7.7 门禁与完整收尾（本机自动验收）
 - [ ] 阶段 8：设置、快捷键与 chrome 收尾
   - [x] R8.1 纯规则、配置适配与 UI 资源（本机自动验收）
-  - [ ] R8.2 设置/keymap 状态与命令
+  - [x] R8.2 设置/keymap 状态与命令（本机自动验收）
   - [ ] R8.3 文件与会话服务
   - [ ] R8.4 chrome 窄视图
   - [ ] R8.5 状态归属、别名和运行时桥接
@@ -75,3 +75,7 @@ R7.6：四旧 UI 路径删除，新视图只接收帧、投影和命令。app �
 ## R8.1 执行记录
 
 2026-10-14：设置/字体/主题 ID/JSONC 纯规则、配置文件/watcher 平台适配与 UI 绘制资源拆分。711 通过、15 ignored，629 个旧应用入口无缺失，51 项源码测试迁移；51 自测、架构、fmt、Clippy、release 和隔离启动通过。245 Rust 文件，遗留例外 31→23；根字段/根 UI 接口仍归后续检查点。详见 [验收](results/2026-10-14-r8-1/report.md)。继续 R8.2，R8 整体未完成。
+
+## R8.2 执行记录
+
+2026-10-14：设置/keymap 私有纯模型、UI 输入投影和值帧/命令、键上下文事实和 GUI 解码分离；keymap 文件 I/O 及配置 own-write 读取归基础设施。713 通过、15 ignored，629 个旧应用入口无缺失，新增 2 项；53 自测、门禁、fmt、严格 Clippy、release 和隔离启动通过。254 Rust 文件、19 根字段、15 例外、10 根 UI 适配器。详见 [验收](results/2026-10-14-r8-2/report.md)。继续 R8.3，R8 整体未完成。

@@ -5,15 +5,15 @@
 //! reloads as soon as it is saved.
 
 use lgui::core::{CursorIcon, EventPolicy, UiFocusHandle, UiId, WheelUnit, clip};
-use lgui::prelude::{Element, State, TextAlign, UiRect, VisualStyle, group, panel, text};
+use lgui::prelude::{Element, TextAlign, UiRect, VisualStyle, group, panel, text};
 
-use crate::input::action::{ACTIONS, Action};
-use crate::input::keymap::{self, Keymap};
-use crate::input::keymap_file;
-use crate::state::AppState;
-use crate::ui::components::input::{self, InputBinding, InputOptions, InputState, InputStyle};
+use crate::features::keymap::action::{ACTIONS, Action};
+use crate::features::keymap::bindings::Keymap;
+use crate::ui::components::input::{self, AccessInputOptions, InputBinding, InputStyle};
+use crate::ui::keymap_binding::{Binding, Command};
 use crate::ui::tabs::{TEXT_MARGIN, measure};
 use crate::ui::theme;
+use std::sync::Arc;
 
 const MAX_PAGE_W: f32 = 880.0;
 const PAGE_PAD_X: f32 = 32.0;
@@ -95,18 +95,18 @@ fn content_height(rows: usize) -> f32 {
 
 pub fn render(
     rect: UiRect,
-    state: State<AppState>,
+    state: Binding,
     search_id: UiId,
     search_focus: UiFocusHandle,
 ) -> Element {
-    let app = state.get();
-    let query = app.keymap_search.text().to_owned();
-    let rows = shortcut_rows(&keymap::current())
+    let app = state.frame();
+    let query = state.ui.get().search.text().to_owned();
+    let rows = shortcut_rows(&app.keymap)
         .into_iter()
         .filter(|row| row.matches(&query))
         .collect::<Vec<_>>();
     let max_scroll = (content_height(rows.len()) - rect.height()).max(0.0);
-    let scroll_y = app.workspace.active_scroll().1.clamp(0.0, max_scroll);
+    let scroll_y = app.scroll.1.clamp(0.0, max_scroll);
 
     let page_w = (rect.width() - PAGE_PAD_X * 2.0).clamp(0.0, MAX_PAGE_W);
     let page_left = rect.left + (rect.width() - page_w) / 2.0;
@@ -121,10 +121,9 @@ pub fn render(
                 WheelUnit::Lines => delta.y * SCROLL_STEP * 3.0,
                 WheelUnit::Pixels => delta.y,
             };
-            wheel_state.update(move |app| {
-                let (x, y) = app.workspace.active_scroll();
-                app.workspace
-                    .set_active_scroll(x, (y - step).clamp(0.0, max_scroll));
+            wheel_state.run(Command::Scroll {
+                delta: step,
+                max: max_scroll,
             });
             cx.stop_propagation();
         });
@@ -141,16 +140,7 @@ pub fn render(
         "Keymap",
         theme::mono_bold(theme::c().text_bright, 18.0),
     ));
-    let location = keymap_file::user_path()
-        .map(|path| {
-            format!(
-                "Customize bindings in {}; saved changes apply immediately.",
-                path.display()
-            )
-        })
-        .unwrap_or_else(|| {
-            "Customize bindings in keymap.json; saved changes apply immediately.".to_owned()
-        });
+    let location = app.location;
     content = content.child(text(
         UiRect::new(page_left, top + 28.0, page_right, top + 48.0),
         location,
@@ -192,7 +182,7 @@ pub fn render(
             .event_policy(EventPolicy::INTERACTIVE)
             .cursor(CursorIcon::Pointer)
             .on_click(move || {
-                crate::key_actions::open_user_keymap(&open_state);
+                open_state.run(Command::OpenUserFile);
             })
             .child(text(button, button_label, button_text)),
     );
@@ -288,13 +278,14 @@ fn table(area: UiRect, rows: &[ShortcutRow], query: &str) -> Element {
     table
 }
 
-fn search_input(rect: UiRect, state: State<AppState>, focus: UiFocusHandle, id: UiId) -> Element {
-    input::render(
+fn search_input(rect: UiRect, state: Binding, focus: UiFocusHandle, id: UiId) -> Element {
+    let cancel = state.clone();
+    input::render_access(
         rect,
         id,
         focus,
-        InputBinding::new(state, search_state, search_state_mut),
-        InputOptions {
+        InputBinding::new_access(state.ui, |ui| &ui.search, |ui| &mut ui.search),
+        AccessInputOptions {
             label: "Filter key bindings",
             placeholder: "Filter by action, keystroke or context",
             style: InputStyle {
@@ -304,29 +295,17 @@ fn search_input(rect: UiRect, state: State<AppState>, focus: UiFocusHandle, id: 
                 selection: theme::c().accent,
             },
             on_submit: None,
-            on_cancel: Some(clear_search),
+            on_cancel: Some(Arc::new(move || cancel.run(Command::ClearSearch))),
             on_blur: None,
         },
     )
 }
 
-fn search_state(app: &AppState) -> &InputState {
-    &app.keymap_search
-}
-
-fn search_state_mut(app: &mut AppState) -> &mut InputState {
-    &mut app.keymap_search
-}
-
-fn clear_search(state: &State<AppState>) {
-    state.update(|app| app.keymap_search.clear());
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::keymap::BindingSource;
-    use crate::input::keymap_file::{build, default_keymap, parse};
+    use crate::features::keymap::bindings::BindingSource;
+    use crate::features::keymap::keymap_file::{build, default_keymap, parse};
 
     #[test]
     fn rows_list_every_action_and_reflect_overrides() {

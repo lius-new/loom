@@ -25,7 +25,7 @@ mod file_loading;
 mod file_watcher;
 use features::keymap as input;
 mod domain;
-mod key_actions;
+use app::key_actions;
 mod launch;
 mod model;
 use app::state;

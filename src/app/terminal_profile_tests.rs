@@ -26,7 +26,7 @@ mod tests {
                         program: std::env::current_exe().unwrap(),
                         args: vec!["--login".into()],
                     };
-                    app.terminal_profiles.push(profile);
+                    app.preferences.values_mut().terminal_profiles.push(profile);
                     app.refresh_shells();
                     edit(&mut app, Some(99));
                     app
@@ -93,10 +93,10 @@ mod tests {
             .set_text(std::env::current_exe().unwrap().display().to_string());
         editor.args.set_text(r#"--login "argument with spaces" """#);
         assert!(save_editor(&mut app));
-        let original = app.terminal_profiles[0].clone();
+        let original = app.preferences.values().terminal_profiles[0].clone();
         assert_eq!(original.args, vec!["--login", "argument with spaces", ""]);
         let id = original.id;
-        app.default_shell = ShellKind::Custom(id);
+        app.preferences.values_mut().default_shell = ShellKind::Custom(id);
         edit(&mut app, Some(id));
         app.terminal
             .ui
@@ -106,18 +106,26 @@ mod tests {
             .name
             .set_text("Renamed shell");
         assert!(save_editor(&mut app));
-        assert_eq!(app.terminal_profiles.len(), 1);
-        assert_eq!(app.terminal_profiles[0].id, id);
-        assert_eq!(app.default_shell, ShellKind::Custom(id));
-        app.terminal_profiles[0].program = "/missing-loom-shell".into();
+        assert_eq!(app.preferences.values().terminal_profiles.len(), 1);
+        assert_eq!(app.preferences.values().terminal_profiles[0].id, id);
+        assert_eq!(
+            app.preferences.values().default_shell,
+            ShellKind::Custom(id)
+        );
+        app.preferences.values_mut().terminal_profiles[0].program = "/missing-loom-shell".into();
         app.refresh_shells();
         assert!(
-            app.shell_options
+            app.preferences
+                .values()
+                .shell_options
                 .iter()
                 .any(|p| p.kind == ShellKind::Custom(id) && !p.available())
         );
         // The saved choice survives while another shell stands in for it.
-        assert_eq!(app.default_shell, ShellKind::Custom(id));
+        assert_eq!(
+            app.preferences.values().default_shell,
+            ShellKind::Custom(id)
+        );
         assert_ne!(app.effective_shell(), ShellKind::Custom(id));
         assert!(app.terminal.availability.fallback().is_some());
         edit(&mut app, Some(id));
@@ -132,8 +140,8 @@ mod tests {
         assert_eq!(app.effective_shell(), ShellKind::Custom(id));
         assert_eq!(app.terminal.availability.fallback(), None);
         remove(&mut app, id);
-        assert_eq!(app.default_shell, ShellKind::default());
-        assert!(app.terminal_profiles.is_empty());
+        assert_eq!(app.preferences.values().default_shell, ShellKind::default());
+        assert!(app.preferences.values().terminal_profiles.is_empty());
         assert!(!app.terminal.ui.shell_editor.as_ref().unwrap().open);
     }
 
@@ -151,7 +159,7 @@ mod tests {
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
-                app.shell_options.clear();
+                app.preferences.values_mut().shell_options.clear();
                 edit(&mut app, None);
                 app
             });
@@ -251,9 +259,9 @@ mod tests {
         });
         session.render_view(&view, viewport, UiScale::ONE);
         click(&mut session, &context, &view, viewport, "Save");
-        assert_eq!(state.get().terminal_profiles.len(), 1);
-        let id = state.get().terminal_profiles[0].id;
-        state.update(|app| app.default_shell = ShellKind::Custom(id));
+        assert_eq!(state.get().preferences.values().terminal_profiles.len(), 1);
+        let id = state.get().preferences.values().terminal_profiles[0].id;
+        state.update(|app| app.preferences.values_mut().default_shell = ShellKind::Custom(id));
         session.render_view(&view, viewport, UiScale::ONE);
         // Editing replaces the row with its form; the form's title confirms it.
         click(&mut session, &context, &view, viewport, "Edit");
@@ -266,7 +274,17 @@ mod tests {
         );
         click(&mut session, &context, &view, viewport, "Cancel");
         click(&mut session, &context, &view, viewport, "Remove");
-        assert!(state.get().terminal_profiles.is_empty());
-        assert_ne!(state.get().default_shell, ShellKind::Custom(id));
+        assert!(
+            state
+                .get()
+                .preferences
+                .values()
+                .terminal_profiles
+                .is_empty()
+        );
+        assert_ne!(
+            state.get().preferences.values().default_shell,
+            ShellKind::Custom(id)
+        );
     }
 }

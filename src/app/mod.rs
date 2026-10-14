@@ -67,3 +67,10 @@ mod terminal_performance;
 mod settings_project_tests;
 
 pub(crate) mod workspace_commands;
+
+pub(crate) mod settings;
+
+pub(crate) mod key_actions;
+pub(crate) mod keymap_context;
+
+pub(crate) mod keymap_view;

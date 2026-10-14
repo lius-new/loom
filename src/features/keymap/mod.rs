@@ -9,6 +9,7 @@ pub mod bindings;
 pub mod context;
 pub mod context_stack;
 pub mod dispatcher;
-pub use bindings as keymap; // R8 compatibility for crate::input::keymap callers.
 pub mod keymap_file;
 pub mod keystroke;
+
+pub mod model;

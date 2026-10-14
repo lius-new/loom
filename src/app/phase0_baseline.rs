@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::features::keymap::bindings::BindingSource;
 use crate::features::terminal::ShellKind;
 use crate::infrastructure::settings_filesystem::{self as settings_persistence, Scope};
 use crate::input::action::Action;
-use crate::input::keymap::BindingSource;
 use crate::workspace_persistence::{SavedPaneNode, WorkspaceSession};
 
 #[test]

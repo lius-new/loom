@@ -102,3 +102,9 @@ pub(crate) mod language;
 pub mod file_icons;
 pub mod fonts;
 pub mod theme;
+
+pub(crate) mod settings_binding;
+
+pub(crate) mod keymap_events;
+
+pub(crate) mod keymap_binding;

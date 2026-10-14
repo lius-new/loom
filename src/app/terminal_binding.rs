@@ -265,7 +265,8 @@ pub(crate) fn test_store(
 ) -> TerminalStore {
     let runtime = cx.state_with(|| Arc::new(TerminalRuntime::default())).get();
     if let Some(state) = state {
-        runtime.set_profile_source(move || state.get().terminal_profiles.clone());
+        runtime
+            .set_profile_source(move || state.get().preferences.values().terminal_profiles.clone());
     }
     let model = cx.state_with(|| initial().model);
     TerminalStore::new(model, &runtime)

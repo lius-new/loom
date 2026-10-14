@@ -12,3 +12,5 @@ pub(crate) mod terminal;
 pub mod config_watcher;
 pub mod project_settings;
 pub mod settings_filesystem;
+
+pub mod keymap_filesystem;

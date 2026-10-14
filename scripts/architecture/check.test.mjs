@@ -323,3 +323,10 @@ test('settings native adapters and removed root paths cannot retain application 
   for(const file of ['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs','src/infrastructure/config_watcher.rs'])assert.ok(violations({[file]:'use crate::app::state::AppState;'},policy()).length>0,file);
   for(const file of ['src/theme.rs','src/fonts.rs','src/file_icons.rs','src/jsonc.rs','src/settings_persistence.rs','src/project_settings.rs','src/config_watcher.rs','src/workspace_actions.rs'])assert.ok(violations({[file]:'fn retained() {}'},policy()).some(e=>e.includes('removed R8.1')),file);
 });
+
+test('keymap pure rules reject hidden GUI state native I/O and ancestor includes',()=>{
+  for(const source of ['use lgui::KeyboardEvent;','type Alias=Wrapper<AppState>;','use std::{fs as native};','std::env::current_dir();','use super::super::state;','include!("adapter.rs");'])assert.ok(violations({'src/features/keymap/fake.rs':source},policy()).length>0,source);
+});
+test('settings and keymap views cannot recover root or native capabilities',()=>{
+  for(const file of ['src/ui/settings.rs','src/ui/settings_binding.rs','src/ui/keymap_page.rs','src/ui/keymap_binding.rs'])for(const source of ['use crate::app::state::AppState;','struct Frame { hidden: Arc<TerminalHandle> }','std::env::current_dir();'])assert.ok(violations({[file]:source},policy()).length>0,file+source);
+});

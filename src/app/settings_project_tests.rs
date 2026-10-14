@@ -24,18 +24,28 @@ fn workspace_folders_apply_their_own_project_settings() {
         .model
         .restore(vec![with.clone(), without.clone()], Vec::new());
     app.refresh_project_settings();
-    assert_eq!(app.project_settings.len(), 1);
-    assert_eq!(app.project_settings[0].1.errors.len(), 1);
+    assert_eq!(app.preferences.values().project_settings.len(), 1);
+    assert_eq!(
+        app.preferences.values().project_settings[0].1.errors.len(),
+        1
+    );
     assert!(app.toast.is_some(), "the ignored theme is reported");
 
     let inside = app.settings_at(Some(&with.join("src")));
     assert_eq!(inside.default_shell, ShellKind::Cmd);
-    assert_eq!(inside.theme, app.theme, "personal settings stay the user's");
+    assert_eq!(
+        inside.theme,
+        app.preferences.values().theme,
+        "personal settings stay the user's"
+    );
     assert_eq!(
         app.settings_at(Some(&without)).default_shell,
-        app.default_shell
+        app.preferences.values().default_shell
     );
-    assert_eq!(app.settings_at(None).default_shell, app.default_shell);
+    assert_eq!(
+        app.settings_at(None).default_shell,
+        app.preferences.values().default_shell
+    );
 
     fs::remove_dir_all(&base).unwrap();
 }

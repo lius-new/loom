@@ -30,7 +30,7 @@ mod tests {
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
-                app.terminal_profiles = (1..=10)
+                app.preferences.values_mut().terminal_profiles = (1..=10)
                     .map(|id| ShellProfile {
                         id,
                         name: format!("Custom {id}"),
@@ -38,12 +38,14 @@ mod tests {
                         args: vec![format!("--profile={id}")],
                     })
                     .collect();
-                app.shell_options = app
+                app.preferences.values_mut().shell_options = app
+                    .preferences
+                    .values_mut()
                     .terminal_profiles
                     .iter()
                     .map(crate::infrastructure::terminal::profiles::custom)
                     .collect();
-                app.shell_options[0].program = None;
+                app.preferences.values_mut().shell_options[0].program = None;
                 let mut layout = ApplicationLayout::initial(viewport.into(), 40.0, 40.0, 200.0);
                 layout.attach(1);
                 app.layout.application_layout = Some(layout);
@@ -52,7 +54,7 @@ mod tests {
             });
             let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
-                tabs.set_profiles(&state.get().terminal_profiles);
+                tabs.set_profiles(&state.get().preferences.values().terminal_profiles);
                 tabs
             });
             *output.lock().unwrap() = Some((state.clone(), tabs.clone()));

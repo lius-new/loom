@@ -16,17 +16,17 @@ use lgui::prelude::{Element, State, UiRect};
 use lgui::services::ServicesContextExt;
 
 use crate::app::editor_vim as vim_input;
+use crate::app::keymap_context::{self as context_stack, EDITOR, TERMINAL, VIM};
 use crate::app::terminal::{self, ClipboardShortcut};
 use crate::features::git::GitStoreSnapshot;
+use crate::features::keymap::bindings as keymap;
 use crate::infrastructure::config_watcher::{self as config_watcher, ConfigWatcher};
+use crate::infrastructure::keymap_filesystem::{self as keymap_file, UserKeymap};
 use crate::infrastructure::settings_filesystem::{self as settings_persistence, UserSettings};
 use crate::infrastructure::terminal::runtime::TerminalHandle;
 use crate::input::action::Action;
 use crate::input::context::KeyContext;
-use crate::input::context_stack::{self, EDITOR, TERMINAL, VIM};
 use crate::input::dispatcher::{self, Replay};
-use crate::input::keymap;
-use crate::input::keymap_file::{self, UserKeymap};
 use crate::input::keystroke::Keystroke;
 use crate::state::AppState;
 use crate::ui::close_confirmation;
@@ -69,7 +69,7 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
     if event.is_composing {
         return false;
     }
-    let Some(keystroke) = Keystroke::from_event(event) else {
+    let Some(keystroke) = crate::ui::keymap_events::from_event(event) else {
         return false;
     };
     let mut composing = false;
@@ -80,9 +80,9 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
             || !app.explorer.ui.create_input.preedit.is_empty()
             || !app.git.ui.commit_input.preedit.is_empty()
             || !app.git.ui.branch_picker_input.preedit.is_empty()
-            || !app.keymap_search.preedit.is_empty()
+            || !app.keymap_ui.search.preedit.is_empty()
             || app.search.composing();
-        pending = app.pending_keystrokes.clone();
+        pending = app.keymap.pending().to_vec();
         stack = context_stack::context_stack(app);
         false
     });
@@ -137,11 +137,11 @@ pub fn flush_pending(env: &KeyEnv, seq: u64) {
     let mut pending = Vec::new();
     let mut stack = Vec::new();
     env.state.try_update(|app| {
-        if app.pending_keystrokes_seq != seq || app.pending_keystrokes.is_empty() {
+        if app.keymap.pending_seq() != seq || app.keymap.pending().is_empty() {
             return false;
         }
-        pending = std::mem::take(&mut app.pending_keystrokes);
-        app.pending_keystrokes_seq += 1;
+        pending = app.keymap.take_pending();
+        app.keymap.bump_pending();
         stack = context_stack::context_stack(app);
         true
     });
@@ -181,11 +181,11 @@ pub fn start_pending_timer(env: KeyEnv, seq: u64) -> impl FnOnce() {
 
 fn set_pending(state: &State<AppState>, pending: Vec<Keystroke>) {
     state.try_update(move |app| {
-        if app.pending_keystrokes == pending {
+        if app.keymap.pending() == pending {
             return false;
         }
-        app.pending_keystrokes = pending;
-        app.pending_keystrokes_seq += 1;
+        app.keymap.set_pending(pending);
+        app.keymap.bump_pending();
         true
     });
 }
@@ -439,7 +439,7 @@ pub fn reload_user_keymap(state: &State<AppState>) {
         }
     };
     keymap::install(keymap_file::build(user));
-    state.update(|app| app.keymap_version += 1);
+    state.update(|app| app.keymap.reloaded());
 }
 
 /// Reloads the user keymap whenever `keymap.json` changes on disk.
@@ -535,9 +535,7 @@ pub fn reload_user_settings(state: &State<AppState>) {
 /// own writes from the Settings page.
 pub fn watch_user_settings(state: State<AppState>) -> Option<ConfigWatcher> {
     config_watcher::watch(settings_persistence::FILE_NAME, move || {
-        let own_write = crate::workspace_persistence::config_path(settings_persistence::FILE_NAME)
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .is_some_and(|text| settings_persistence::is_own_write(&text));
+        let own_write = settings_persistence::current_file_is_own_write();
         if !own_write {
             reload_user_settings(&state);
         }

@@ -170,7 +170,7 @@ pub(crate) fn snapshot(
         },
         selections,
         search_matches,
-        smooth_caret: app.smooth_caret,
+        smooth_caret: app.preferences.values().smooth_caret,
         dragging: state.drag.is_some(),
         caret_dragging: state.caret_dragging,
         preedit: state

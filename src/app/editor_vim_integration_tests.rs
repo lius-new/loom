@@ -442,7 +442,8 @@ fn smooth_caret_animates_every_vim_shape_without_sliding_on_mode_switches() {
     ui.keys("<Esc>");
     ui.settle();
 
-    ui.state.update(|app| app.smooth_caret = false);
+    ui.state
+        .update(|app| app.preferences.values_mut().smooth_caret = false);
     ui.keys("j");
     assert_eq!(ui.caret().1, (0.0, 0.0), "disabled motion snaps");
 }

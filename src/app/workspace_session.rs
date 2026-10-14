@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use crate::features::terminal::ShellKind;
 
 use crate::infrastructure::session_filesystem as filesystem;
+pub(crate) use filesystem::session_path;
 #[cfg(test)]
 pub(crate) use filesystem::write_json;
-pub(crate) use filesystem::{config_path, session_path};
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WindowGeometry {

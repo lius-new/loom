@@ -87,11 +87,11 @@ pub fn render(
     // settings are shown (no Ln/Col position, no language badge).
     let mut items: Vec<(String, TextStyle)> = Vec::new();
     // A key sequence waiting for its next keystroke, e.g. `Ctrl+K …`.
-    if !s.pending_keystrokes.is_empty() {
+    if !s.keymap.pending().is_empty() {
         items.push((
             format!(
                 "{} …",
-                crate::input::keystroke::Keystroke::sequence_label(&s.pending_keystrokes)
+                crate::input::keystroke::Keystroke::sequence_label(s.keymap.pending())
             ),
             theme::mono_bold(theme::c().accent, theme::SMALL),
         ));

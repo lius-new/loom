@@ -4,3 +4,5 @@ pub mod jsonc;
 pub mod project;
 pub mod rules;
 pub mod theme_id;
+
+pub mod model;

@@ -106,3 +106,10 @@ fn settings_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
+
+/// Ignore only the exact contents written by this process; the UI never reads native files.
+pub fn current_file_is_own_write() -> bool {
+    config_path(FILE_NAME)
+        .and_then(|path| fs::read_to_string(path).ok())
+        .is_some_and(|text| is_own_write(&text))
+}

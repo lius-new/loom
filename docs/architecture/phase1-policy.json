@@ -6,15 +6,14 @@
     "input": "features/keymap",
     "background_ui": "infrastructure/ui_dispatch",
     "svg_icons": "app/bootstrap (cfg(test) only)",
-    "workspace_actions": "app/workspace_commands (R8 composition seam; old UI callers removed in R8.4/R8.5)"
+    "workspace_actions": "app/workspace_commands (R8 composition seam; old UI callers removed in R8.4/R8.5)",
+    "key_actions": "app/key_actions (R8.4/R8.5 old UI seam)"
   },
   "root_state_adapters": [
     "src/ui/close_confirmation.rs",
     "src/ui/diff_editor.rs",
-    "src/ui/keymap_page.rs",
     "src/ui/mod.rs",
     "src/ui/pane_sash.rs",
-    "src/ui/settings.rs",
     "src/ui/statusbar.rs",
     "src/ui/tab_context_menu.rs",
     "src/ui/tabs.rs",
@@ -37,10 +36,6 @@
     "src/app/terminal_profile_tests.rs"
   ],
   "state_ownership": {
-    "default_shell": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
     "editor": {
       "owner": "app/state/editor (composition field)",
       "remove_in": "composition"
@@ -61,34 +56,6 @@
       "owner": "app/state/chrome: SidebarChrome (Source Control drawer visibility/width/resizing; R6.3 owner corrected from features/git)",
       "remove_in": "composition"
     },
-    "editor_font": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
-    "editor_font_input": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
-    "keymap_search": {
-      "owner": "features/keymap/private model",
-      "remove_in": "R8"
-    },
-    "keymap_version": {
-      "owner": "features/keymap/private model",
-      "remove_in": "R8"
-    },
-    "pending_keystrokes": {
-      "owner": "features/keymap/private model",
-      "remove_in": "R8"
-    },
-    "pending_keystrokes_seq": {
-      "owner": "features/keymap/private model",
-      "remove_in": "R8"
-    },
-    "project_settings": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
     "runtime": {
       "owner": "app/runtime weak legacy access (no ownership)",
       "remove_in": "R8"
@@ -96,34 +63,6 @@
     "search": {
       "owner": "app composition: features/search private model + ui/search interaction state",
       "remove_in": "R2 migrated; root composition retained"
-    },
-    "shell_options": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
-    "smooth_caret": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
-    "terminal_cursor_blink": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
-    "terminal_font": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
-    "terminal_font_input": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
-    "terminal_profiles": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
-    },
-    "theme": {
-      "owner": "features/settings/private model",
-      "remove_in": "R8"
     },
     "toast": {
       "owner": "app/state/chrome",
@@ -156,51 +95,25 @@
     "terminal_chrome": {
       "owner": "app/state/chrome: TerminalChrome",
       "remove_in": "composition"
+    },
+    "settings_ui": {
+      "owner": "ui/settings_binding: SettingsUiState",
+      "remove_in": "composition"
+    },
+    "preferences": {
+      "owner": "features/settings/model: private Model and pure Values",
+      "remove_in": "composition"
+    },
+    "keymap": {
+      "owner": "features/keymap/model private sequence/version model",
+      "remove_in": "composition"
+    },
+    "keymap_ui": {
+      "owner": "ui/keymap_binding KeymapUiState",
+      "remove_in": "composition"
     }
   },
   "exceptions": {
-    "src/features/keymap/action.rs": {
-      "dependencies": [
-        "Movement",
-        "serde_json"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/features/keymap/context_stack.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::state",
-        "crate::ui",
-        "crate::vim",
-        "lgui"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 把原 Vim 调用转到应用命令入口。"
-    },
-    "src/features/keymap/keymap_file.rs": {
-      "dependencies": [
-        "crate::workspace_persistence",
-        "serde_json",
-        "std::fs"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/features/keymap/keystroke.rs": {
-      "dependencies": [
-        "lgui"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/features/keymap/mod.rs": {
-      "dependencies": [
-        "bindings"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/file_loading.rs": {
       "dependencies": [
         "crate::app",
@@ -233,23 +146,6 @@
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R5.2 树刷新改由 Explorer 模型执行，准备阶段只克隆 Explorer 模型。 R5 收尾：Explorer 部分只经模型 API 与 DirEntry 类型；剩余 notify 服务、搜索失效与磁盘对账协调随 R8 拆为 infrastructure 服务与 app 协调。"
-    },
-    "src/key_actions.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::features",
-        "crate::input",
-        "crate::state",
-        "crate::ui",
-        "crate::workspace_actions",
-        "crate::workspace_persistence",
-        "lgui",
-        "std::fs",
-        "std::thread",
-        "crate::infrastructure"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R2 搜索调用转交应用适配器或基础设施端口，目标明确登记。 R6.1 Git 类型、解析、diff、快照与 DiffDocument 迁入 features/git，改引用 crate::features。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。"
     },
     "src/model/workspace.rs": {
       "dependencies": [
@@ -286,15 +182,6 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 的新增应用依赖仅在旧 UI 集成测试中构造窄 scrollbar binding。 R6.1 只用 Git 类型，改由 features/git 提供。 R6.4 Git 命令迁入 app/git，暂以 crate::app 直接调用；R6.6 改为语义命令后移除。 R6 Git 操作改为语义命令；只读文档布局与窗格/分栏交互仍为 R8 适配。"
     },
-    "src/ui/keymap_page.rs": {
-      "dependencies": [
-        "crate::input",
-        "crate::key_actions",
-        "crate::state"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/ui/mod.rs": {
       "dependencies": [
         "crate::state"
@@ -309,16 +196,6 @@
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/ui/settings.rs": {
-      "dependencies": [
-        "crate::app",
-        "crate::input",
-        "crate::key_actions",
-        "crate::state"
-      ],
-      "remove_in": "R8",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R3 把原 Vim 调用转到应用命令入口。"
     },
     "src/ui/statusbar.rs": {
       "dependencies": [
@@ -1024,6 +901,64 @@
     "features/terminal/availability.fallback": {
       "owner": "features/terminal/availability",
       "migrated_in": "R7.4"
+    }
+  },
+  "settings_model_ownership": {
+    "values": {
+      "owner": "features/settings/model",
+      "migrated_in": "R8.2"
+    }
+  },
+  "settings_values_ownership": {
+    "theme": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    },
+    "default_shell": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    },
+    "terminal_profiles": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    },
+    "shell_options": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    },
+    "terminal_cursor_blink": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    },
+    "smooth_caret": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    },
+    "editor_font": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    },
+    "terminal_font": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    },
+    "project_settings": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    }
+  },
+  "keymap_model_ownership": {
+    "pending": {
+      "owner": "features/keymap/model",
+      "migrated_in": "R8.2"
+    },
+    "pending_seq": {
+      "owner": "features/keymap/model",
+      "migrated_in": "R8.2"
+    },
+    "version": {
+      "owner": "features/keymap/model",
+      "migrated_in": "R8.2"
     }
   }
 }

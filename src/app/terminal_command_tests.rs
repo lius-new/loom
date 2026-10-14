@@ -300,8 +300,8 @@ fn profile_binding_preserves_literal_arguments_project_default_and_closed_draft_
     let root = std::path::PathBuf::from("project-shell");
     state.update(|app| {
         app.explorer.model.restore(vec![root.clone()], vec![]);
-        app.default_shell = ShellKind::Cmd;
-        app.project_settings.push((
+        app.preferences.values_mut().default_shell = ShellKind::Cmd;
+        app.preferences.values_mut().project_settings.push((
             root.clone(),
             crate::infrastructure::project_settings::ProjectSettings {
                 overrides: [("default_shell".into(), serde_json::json!("bash"))]
@@ -327,7 +327,7 @@ fn profile_binding_preserves_literal_arguments_project_default_and_closed_draft_
     );
     port.run(Command::Save);
     let snapshot = state.get();
-    let saved = &snapshot.terminal_profiles[0];
+    let saved = &snapshot.preferences.values().terminal_profiles[0];
     assert_eq!(
         saved.args,
         ["$HOME", "%PATH%", "$(echo never-expanded)", "~", ""]
@@ -342,7 +342,10 @@ fn profile_binding_preserves_literal_arguments_project_default_and_closed_draft_
         "Literal profile"
     );
     port.run(Command::Select(ShellKind::Custom(id)));
-    assert_eq!(state.get().default_shell, ShellKind::Custom(id));
+    assert_eq!(
+        state.get().preferences.values().default_shell,
+        ShellKind::Custom(id)
+    );
     assert_eq!(
         state.get().settings_at(Some(&root)).default_shell,
         ShellKind::Bash
@@ -353,7 +356,10 @@ fn profile_binding_preserves_literal_arguments_project_default_and_closed_draft_
     );
     port.run(Command::Remove(id));
     port.run(Command::Select(ShellKind::Custom(id)));
-    assert_eq!(state.get().default_shell, ShellKind::default());
+    assert_eq!(
+        state.get().preferences.values().default_shell,
+        ShellKind::default()
+    );
     assert_eq!(
         state.get().settings_at(Some(&root)).default_shell,
         ShellKind::Bash

@@ -527,7 +527,7 @@ fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_cha
     );
     send(&mut session, InputEvent::Ime(ImeEvent::Commit("你".into())));
     assert!(state.get().editor.ime.is_none());
-    state.update(|app| app.smooth_caret = false);
+    state.update(|app| app.preferences.values_mut().smooth_caret = false);
     session.render_view(&view, viewport, UiScale::ONE);
     assert_eq!(
         caret(&session).left,
@@ -535,7 +535,7 @@ fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_cha
         "turning off motion snaps an active animation"
     );
     state.update(|app| {
-        app.smooth_caret = true;
+        app.preferences.values_mut().smooth_caret = true;
         app.workspace.active_editor_mut().unwrap().set_cursor(0);
     });
     session.render_view(&view, viewport, UiScale::ONE);
