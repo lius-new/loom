@@ -15,6 +15,7 @@ use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, component, group};
 use lgui::window::WindowFocusChanged;
 
 use crate::app::terminal_effects;
+use crate::app::{layout_map, terminal_view as terminal};
 use crate::domain::application_layout::{ApplicationLayout, Content};
 use crate::features::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
@@ -22,10 +23,10 @@ use crate::settings_persistence;
 use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
 use crate::theme;
 use crate::ui::editor::view as editor_view;
+use crate::ui::terminal::menu as terminal_tab_context_menu;
 use crate::ui::{
-    close_confirmation, diff_editor, keymap_page, layout_map, pane_sash, settings, statusbar,
-    tab_context_menu, tabs, terminal, terminal_tab_context_menu, titlebar, toast, welcome,
-    workspace_home,
+    close_confirmation, diff_editor, keymap_page, pane_sash, settings, statusbar, tab_context_menu,
+    tabs, titlebar, toast, welcome, workspace_home,
 };
 use crate::window_geometry;
 use crate::workspace_persistence;
@@ -1075,7 +1076,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         root = root.child(tab_context_menu::render(vp, state.clone()));
     }
     if s.terminal.ui.terminal_tab_context_menu.is_some() {
-        root = root.child(terminal_tab_context_menu::render(
+        root = root.child(crate::app::terminal_view::menu(
             vp,
             state.clone(),
             terminal_tabs.clone(),

@@ -280,7 +280,9 @@ pub(crate) fn visible_starts(
             }
             let (ids, active) = layout.terminal_view(*region).unwrap();
             let sessions = tabs.region_view(&ids, active).active_group();
-            let rects = crate::ui::terminal::session_rects((*rect).into(), &sessions);
+            let frames =
+                crate::app::terminal_view::project(tabs.region_view(&ids, active)).active_group();
+            let rects = crate::ui::terminal::view::session_rects((*rect).into(), &frames);
             sessions
                 .into_iter()
                 .zip(rects)
@@ -289,7 +291,7 @@ pub(crate) fn visible_starts(
                         session.id,
                         session.controller.clone(),
                         session.working_directory().or_else(|| cwd.clone()),
-                        crate::ui::terminal::pty_size_for_body(rect),
+                        crate::ui::terminal::view::pty_size_for_body(rect),
                     )
                 })
                 .collect()

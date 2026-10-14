@@ -11,15 +11,12 @@
     "src/ui/close_confirmation.rs",
     "src/ui/diff_editor.rs",
     "src/ui/keymap_page.rs",
-    "src/ui/layout_map.rs",
     "src/ui/mod.rs",
     "src/ui/pane_sash.rs",
     "src/ui/settings.rs",
     "src/ui/statusbar.rs",
     "src/ui/tab_context_menu.rs",
     "src/ui/tabs.rs",
-    "src/ui/terminal.rs",
-    "src/ui/terminal_tab_context_menu.rs",
     "src/ui/titlebar.rs",
     "src/ui/welcome.rs",
     "src/ui/workspace_home.rs"
@@ -34,7 +31,7 @@
     "src/file_loading.rs",
     "src/ui/components/loading_indicator.rs",
     "src/ui/editor/caret.rs",
-    "src/ui/terminal.rs",
+    "src/app/terminal_view_tests.rs",
     "src/app/git_peek.rs",
     "src/app/terminal_profile_tests.rs"
   ],
@@ -369,15 +366,6 @@
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/ui/layout_map.rs": {
-      "dependencies": [
-        "crate::model",
-        "crate::state",
-        "crate::app"
-      ],
-      "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.2 原跨层测试通过 app 的主题快照适配读取控制器；布局视图收拢仍属 R7.6。 R7 方案明确该文件收尾在 R7.6，将原 R8 登记更正为 R7。"
-    },
     "src/ui/mod.rs": {
       "dependencies": [
         "crate::state"
@@ -436,23 +424,6 @@
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5.5 reveal 与复制路径调用 app/explorer；标签菜单属于编辑器 chrome，随 R8 收窄。"
-    },
-    "src/ui/terminal.rs": {
-      "dependencies": [
-        "crate::state",
-        "crate::app",
-        "crate::infrastructure"
-      ],
-      "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
-    "src/ui/terminal_tab_context_menu.rs": {
-      "dependencies": [
-        "crate::state",
-        "crate::app"
-      ],
-      "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
     "src/ui/titlebar.rs": {
       "dependencies": [

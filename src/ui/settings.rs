@@ -195,7 +195,7 @@ impl Setting {
         match self {
             Self::Theme => THEME_ROW_H,
             Self::EditorFontFamily | Self::TerminalFontFamily => FAMILY_ROW_H,
-            Self::DefaultShell => crate::ui::terminal_settings::height(
+            Self::DefaultShell => crate::ui::terminal::settings::height(
                 &crate::app::terminal_profiles::settings_frame(app),
                 &app.terminal.ui,
             ),
@@ -500,7 +500,7 @@ fn keymap_link_row(row: UiRect, state: State<AppState>) -> Element {
 
 fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppState>) -> Element {
     if setting == Setting::DefaultShell {
-        return crate::ui::terminal_settings::render(
+        return crate::ui::terminal::settings::render(
             row,
             crate::app::terminal_profiles::binding(&state),
         );

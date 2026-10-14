@@ -252,7 +252,7 @@ test('terminal application commands cannot migrate back into legacy view callbac
     for(const method of ['add_at','select','split','close','set_purpose','resize_pair','write','paste','terminate','begin_selection','extend_selection','wheel']) {
       assert.ok(violations({[file]:`fn callback() { controller.${method}(target); }`},policy()).some(e=>e.includes('through app commands')));
     }
-    assert.deepEqual(violations({[file]:'fn callback() { commands::select(&state, &tabs, id); }'},policy()),[]);
+    assert.ok(violations({[file]:'fn callback() { commands::select(&state, &tabs, id); }'},policy()).some(e=>e.includes('removed R7.6')));
   }
 });
 
@@ -300,4 +300,12 @@ test('terminal effects cannot return to the composition shell or lose notificati
   for(const type of ['SustainedProgram','ProgramProbe','ensure_started','save_terminal_state','DirectoryReports'])assert.ok(violations({'src/app/shell.rs':`fn effect() { ${type}(); }`},policy()).some(e=>e.includes('terminal effect behavior')));
   for(const source of ['pub struct Observation { id: u64 }','pub struct Observation { generation: u64 }'])assert.ok(violations({'src/app/terminal_effects.rs':source},policy()).some(e=>e.includes('must carry')));
   assert.deepEqual(violations({'src/app/terminal_effects.rs':'pub struct Observation { id: u64, generation: u64 }'},policy()),[]);
+});
+
+test('all terminal views reject root model infrastructure aliases and source inclusion',()=>{
+  for(const file of ['src/ui/terminal/view.rs','src/ui/terminal/layout.rs','src/ui/terminal/menu.rs','src/ui/terminal/settings.rs','src/ui/terminal/bindings.rs']) {
+    for(const source of ['use crate::app::state::AppState;','use crate::infrastructure::terminal::runtime::TerminalHandle;','use crate::model::workspace::Workspace;','use super::super::Root;','include!("../../app/state.rs");','#[path="../../app/state.rs"] mod hidden;'])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('Terminal projection view')));
+    assert.deepEqual(violations({[file]:'use crate::features::terminal::SessionId; fn callback() { binding.run(Command::Select(id)); }'},policy()),[]);
+  }
+  for(const file of ['src/ui/terminal.rs','src/ui/layout_map.rs','src/ui/terminal_settings.rs','src/ui/terminal_tab_context_menu.rs'])assert.ok(violations({[file]:'fn render() {}'},policy()).some(e=>e.includes('removed R7.6')));
 });

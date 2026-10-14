@@ -1,17 +1,18 @@
 //! The miniature itself is the drop surface. Hit tests and fills share rectangles.
 #[cfg(test)]
 use crate::app::terminal_binding::TerminalTabs;
-use crate::domain::application_layout::{
-    ApplicationLayout, Content, DropPlan, Placement, RegionId, Visibility,
-};
-use crate::model::pane_layout::{Axis, Direction};
+use crate::domain::application_layout::{ApplicationLayout, Content, Placement, Visibility};
+use crate::domain::pane_layout::{Axis, Direction};
 use crate::state::AppState;
+#[cfg(test)]
 use crate::theme;
-use lgui::core::{
-    CursorIcon, LogicalKey, NamedKey, Observable, ObservableListener, Point, UiEventKind,
-    UiEventPayload,
-};
-use lgui::prelude::{Element, State, Stroke, UiRect, VisualStyle, component, panel};
+use crate::ui::terminal::layout_binding::{MapScene, MapSignal, TerminalDrag, Zone};
+use lgui::core::{CursorIcon, Observable, ObservableListener, Point};
+#[cfg(test)]
+use lgui::core::{LogicalKey, NamedKey};
+#[cfg(test)]
+use lgui::prelude::VisualStyle;
+use lgui::prelude::{Element, State, UiRect};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -26,35 +27,6 @@ const EDGE_BAND: f32 = 22.0;
 /// Cell corner radius; also used by the centre-drop highlight.
 const CELL_RADIUS: f32 = 6.0;
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Zone {
-    pub rect: UiRect,
-    pub placement: Placement,
-    /// A cell's body, as opposed to its edge, divider or window bands.
-    pub center: bool,
-    pub plan: Option<DropPlan>,
-}
-#[derive(Clone, Debug, PartialEq)]
-pub struct MapScene {
-    pub version: u64,
-    pub viewport: UiRect,
-    pub visibility: Visibility,
-    pub sessions: Vec<u64>,
-    pub cells: Vec<(RegionId, Content, UiRect)>,
-    pub zones: Vec<Zone>,
-}
-#[derive(Clone, Debug, PartialEq)]
-pub struct TerminalDrag {
-    pub session: u64,
-    pub origin: Point,
-    pub point: Point,
-    pub active: bool,
-    pub scene: Option<MapScene>,
-    pub hover: Option<usize>,
-    /// Validate the framework's hover state on the release frame. Its cancel
-    /// event is also delivered as PointerUp, but clears all hovered nodes.
-    pub release: Option<Point>,
-}
 /// The miniature's drag state, kept outside `AppState`. Changing it re-renders
 /// only its subscribers (the overlay and the tab cursors), never the app.
 #[derive(Clone, Default)]
@@ -66,12 +38,7 @@ struct MapInner {
     listeners: Mutex<Vec<(u64, ObservableListener)>>,
     next_listener: AtomicU64,
 }
-/// What subscribers observe: a change counter and the cursor it implies.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MapSignal {
-    pub revision: u64,
-    pub cursor: CursorIcon,
-}
+
 impl MapStore {
     pub fn with<R>(&self, f: impl FnOnce(Option<&TerminalDrag>) -> R) -> R {
         f(self.0.drag.lock().expect("map store poisoned").as_ref())
@@ -461,306 +428,218 @@ pub fn drag_cursor(map: &MapStore) -> CursorIcon {
         None => CursorIcon::Pointer,
     })
 }
-/// Apply a finished drag's effect on the terminal tabs and focus.
-fn settle(
-    result: (bool, Option<u64>),
+
+pub(crate) fn binding(
+    state: &State<AppState>,
+    map: &MapStore,
     tabs: &crate::app::terminal_binding::TerminalStore,
-    focus: &lgui::core::UiFocusHandle,
-) {
-    if let Some(id) = result.1 {
-        tabs.update(|tabs| {
-            if result.0 {
-                tabs.detach_group(id);
-            }
-            tabs.select(id);
-        });
-        focus.focus();
-    }
-}
-pub fn attach(
-    mut root: Element,
-    state: State<AppState>,
-    map: MapStore,
-    tabs: crate::app::terminal_binding::TerminalStore,
-    viewport: UiRect,
-    focus: lgui::core::UiFocusHandle,
-) -> Element {
-    let cancel = map.clone();
-    root = root.on_event_capture(UiEventKind::KeyDown, move |cx, payload| {
-        if let UiEventPayload::Keyboard { event } = payload
-            && event.key == LogicalKey::Named(NamedKey::Escape)
-            && cancel.cancel()
-        {
-            cx.prevent_default();
-            cx.stop_propagation();
-        }
-    });
-    let stale = map.clone();
-    root = root.on_event_capture(UiEventKind::PointerDown, move |_, _| {
-        stale.cancel();
-    });
-    for kind in [UiEventKind::PointerMove, UiEventKind::PointerDrag] {
-        let state = state.clone();
-        let map = map.clone();
-        let tabs = tabs.clone();
-        root =
-            root.on_event_capture(kind, move |cx, payload| {
-                if let UiEventPayload::PointerMove { pointer }
-                | UiEventPayload::PointerDrag { pointer } = payload
-                    && map.is_dragging()
-                {
-                    let sessions = tabs.get().tabs().iter().map(|t| t.id).collect();
-                    with_app(&state, |app| {
-                        update_pointer(app, &map, pointer.point, viewport, sessions)
+) -> crate::ui::terminal::layout_binding::MapBinding {
+    use crate::ui::terminal::layout_binding::{MapBinding, MapCommand, MapOutcome};
+    let inspect = map.clone();
+    let observed = map.clone();
+    let operated = map.clone();
+    let target = state.clone();
+    let sessions = tabs.clone();
+    let sash = state.clone();
+    MapBinding::new(
+        move |read| inspect.with(read),
+        move || observed.observable(),
+        move |command| {
+            let ids = sessions
+                .get()
+                .tabs()
+                .iter()
+                .map(|t| t.id)
+                .collect::<Vec<_>>();
+            let result = match command {
+                MapCommand::Cancel => {
+                    return MapOutcome {
+                        consumed: operated.cancel(),
+                        focus: false,
+                    };
+                }
+                MapCommand::Begin { session, point } => {
+                    if sessions.get().tabs().iter().any(|tab| tab.id == session) {
+                        target.update(|app| {
+                            if app.layout.application_layout.is_some() {
+                                begin(app, &operated, session, point);
+                            }
+                        });
+                    }
+                    return MapOutcome::default();
+                }
+                MapCommand::Pointer { point, viewport } => {
+                    with_app(&target, |app| {
+                        update_pointer(app, &operated, point, viewport, ids.clone());
                     });
-                    if map.is_active() {
-                        cx.stop_propagation();
+                    return MapOutcome {
+                        consumed: operated.is_active(),
+                        focus: false,
+                    };
+                }
+                MapCommand::Release { point, viewport } => {
+                    if operated.is_active() {
+                        operated.update(|drag| {
+                            if let Some(drag) = drag {
+                                drag.release = Some(point);
+                            }
+                            true
+                        });
+                        (true, None)
+                    } else {
+                        with_app(&target, |app| {
+                            finish(app, &operated, point, viewport, &ids.clone())
+                        })
                     }
                 }
-            });
-    }
-    root.on_event_capture(UiEventKind::PointerUp, move |cx, payload| {
-        if let UiEventPayload::PointerUp { pointer } = payload
-            && map.is_dragging()
-        {
-            let result = if map.is_active() {
-                // The overlay settles it next frame, once hover reflects
-                // whether this was a real release or a cancellation.
-                map.update(|d| {
-                    if let Some(d) = d {
-                        d.release = Some(pointer.point);
+                MapCommand::Finish {
+                    point,
+                    viewport,
+                    hovered,
+                } => {
+                    if !hovered {
+                        return MapOutcome {
+                            consumed: operated.cancel(),
+                            focus: false,
+                        };
                     }
-                    true
-                });
-                (true, None)
-            } else {
-                let sessions = tabs.get().tabs().iter().map(|t| t.id).collect::<Vec<_>>();
-                with_app(&state, |app| {
-                    finish(app, &map, pointer.point, viewport, &sessions)
-                })
+                    let mut result = (true, None);
+                    target.try_update(|app| {
+                        result = finish(app, &operated, point, viewport, &ids.clone());
+                        result.1.is_some()
+                    });
+                    result
+                }
+                MapCommand::DividerStart(divider) => {
+                    target.update(|app| app.layout.application_sash_drag = Some(divider));
+                    return MapOutcome::default();
+                }
+                MapCommand::DividerDrag(point) => {
+                    target.try_update(|app| {
+                        let Some(drag) = &app.layout.application_sash_drag else {
+                            return false;
+                        };
+                        let visible = visibility(app);
+                        let Some(layout) = &mut app.layout.application_layout else {
+                            return false;
+                        };
+                        layout.resize(
+                            drag,
+                            match drag.axis {
+                                Axis::Horizontal => point.x,
+                                Axis::Vertical => point.y,
+                            },
+                            visible,
+                        )
+                    });
+                    return MapOutcome::default();
+                }
+                MapCommand::DividerEnd => {
+                    target.update(|app| app.layout.application_sash_drag = None);
+                    return MapOutcome::default();
+                }
             };
-            settle(result, &tabs, &focus);
-            if result.0 {
-                cx.prevent_default();
-                cx.stop_propagation();
+            if let Some(id) = result.1 {
+                sessions.update(|tabs| {
+                    if result.0 {
+                        tabs.detach_group(id);
+                    }
+                    tabs.select(id);
+                });
             }
-        }
-    })
+            MapOutcome {
+                consumed: result.0,
+                focus: result.1.is_some(),
+            }
+        },
+        move |divider| {
+            sash.get()
+                .layout
+                .application_sash_drag
+                .as_ref()
+                .is_some_and(|d| {
+                    d.split == divider.split
+                        && d.before == divider.before
+                        && d.after == divider.after
+                })
+        },
+    )
 }
-/// The overlay is its own component: map changes re-render only it.
-pub fn render(
+pub(crate) fn attach(
+    root: Element,
+    state: State<AppState>,
+    map: MapStore,
+    tabs: crate::app::terminal_binding::TerminalStore,
+    viewport: UiRect,
+    focus: lgui::core::UiFocusHandle,
+) -> Element {
+    crate::ui::terminal::layout::attach(root, binding(&state, &map, &tabs), viewport, focus)
+}
+pub(crate) fn render(
     viewport: UiRect,
     state: State<AppState>,
     map: MapStore,
     tabs: crate::app::terminal_binding::TerminalStore,
     focus: lgui::core::UiFocusHandle,
 ) -> Element {
-    component(viewport, move |cx, viewport| {
-        cx.use_observable(map.observable(), |s: &MapSignal| s.revision);
-        render_overlay(*viewport, state, map, tabs, focus)
-    })
-    .key("terminal-layout-map-component")
+    crate::ui::terminal::layout::render(viewport, binding(&state, &map, &tabs), focus)
 }
-fn render_overlay(
-    viewport: UiRect,
-    state: State<AppState>,
-    map: MapStore,
-    tabs: crate::app::terminal_binding::TerminalStore,
-    focus: lgui::core::UiFocusHandle,
-) -> Element {
-    use lgui::core::{EventPolicy, UiElement, UiId};
-    let release_map = map.clone();
-    let mut overlay = Element::new(move |cx| {
-        let release = release_map.with(|d| {
-            let drag = d?;
-            let point = drag.release?;
-            let hovered = drag.scene.as_ref().is_some_and(|scene| {
-                (0..scene.zones.len()).any(|i| {
-                    cx.context
-                        .interaction_flags(&UiId::owned(format!("terminal-map-zone-{i}")))
-                        .hovered
-                })
-            });
-            Some((point, hovered))
-        });
-        if let Some((point, hovered)) = release {
-            if hovered {
-                let sessions = tabs.get().tabs().iter().map(|t| t.id).collect::<Vec<_>>();
-                let mut result = (true, None);
-                state.try_update(|app| {
-                    result = finish(app, &release_map, point, viewport, &sessions);
-                    result.1.is_some()
-                });
-                settle(result, &tabs, &focus);
-            } else {
-                release_map.cancel();
-            }
-        }
-        // This container only owns the preview; its children own all drop targets.
-        // An idle full-size hit rectangle masks every underlying hover cursor.
-        UiElement::panel(cx.id, viewport, VisualStyle::default())
-            .hit_rect(UiRect::new(0.0, 0.0, 0.0, 0.0))
-            .children(cx.children)
-    })
-    .key("terminal-layout-map");
-    let Some(drag) = map.snapshot() else {
-        return overlay;
-    };
-    let Some(scene) = &drag.scene else {
-        return overlay;
-    };
-    // Invisible during the pending click. This lets the very first movement
-    // into the map establish hover before the release/cancel distinction.
-    for (i, zone) in scene.zones.iter().enumerate() {
-        let rect = zone.rect;
-        overlay = overlay.child(
-            Element::new(move |cx| {
-                UiElement::panel(
-                    UiId::owned(format!("terminal-map-zone-{i}")),
-                    rect,
-                    VisualStyle::default(),
-                )
-                .children(cx.children)
-            })
-            .key(format!("map-hit-{i}"))
-            .event_policy(EventPolicy {
-                hover: true,
-                press: false,
-                focus: false,
-            })
-            .on_pointer_move(|_, _| {}),
-        );
-    }
-    if !drag.active {
-        return overlay;
-    }
-    let c = theme::c();
-    // Only the miniature responds while dragging; the real window is left
-    // untouched until release.
-    let zone = drag.hover.map(|i| &scene.zones[i]);
-    let moving = |content: &Content| matches!(content, Content::Terminal { tabs, .. } if tabs.contains(&drag.session));
-    for (_, content, rect) in &scene.cells {
-        let fill = match content {
-            Content::Editor => c.surface,
-            Content::Git | Content::Files => c.sidebar,
-            Content::Terminal { .. } => c.bg,
-        };
-        let border = if moving(content) { c.accent } else { c.border };
-        overlay = overlay.child(theme::bordered(
-            inset(*rect, 1.0),
-            fill,
-            border,
-            CELL_RADIUS,
-            1.0,
-        ));
-    }
-    // Window-edge bands have no cell to suggest them; mark each with a rail.
-    for zone in &scene.zones {
-        if let Placement::Outer(dir) = zone.placement {
-            let r = zone.rect;
-            let (mx, my) = ((r.left + r.right) / 2.0, (r.top + r.bottom) / 2.0);
-            let rail = match dir {
-                Direction::Left | Direction::Right => {
-                    UiRect::new(mx - 1.5, r.top + 8.0, mx + 1.5, r.bottom - 8.0)
-                }
-                Direction::Up | Direction::Down => {
-                    UiRect::new(r.left + 8.0, my - 1.5, r.right - 8.0, my + 1.5)
-                }
-            };
-            overlay = overlay.child(panel(
-                rail,
-                VisualStyle::filled(c.text_faint).alpha(110).radius(1.5),
-            ));
-        }
-    }
-    if let Some(zone) = zone {
-        let color = if zone.plan.is_some() {
-            c.accent
-        } else {
-            c.warning
-        };
-        // A body drop outlines the cell; bands are narrow enough to fill solidly.
-        let style = if zone.center {
-            VisualStyle::filled(color)
-                .alpha(40)
-                .stroked(Stroke::new(color, 2.0, 230))
-                .radius(CELL_RADIUS - 2.0)
-        } else {
-            VisualStyle::filled(color).alpha(200).radius(3.0)
-        };
-        overlay = overlay.child(panel(zone.rect, style));
-    }
-    overlay
-}
-
-fn inset(r: UiRect, by: f32) -> UiRect {
-    UiRect::new(r.left + by, r.top + by, r.right - by, r.bottom - by)
-}
-
-pub fn render_divider(
+pub(crate) fn render_divider(
     divider: crate::domain::application_layout::Divider,
     state: State<AppState>,
 ) -> Element {
-    use lgui::core::PointerButton;
-    let p = divider.position;
-    let (line, hit, cursor) = match divider.axis {
-        Axis::Horizontal => (
-            UiRect::new(p - 0.5, divider.parent.top, p + 0.5, divider.parent.bottom),
-            UiRect::new(p - 4.0, divider.parent.top, p + 4.0, divider.parent.bottom),
-            CursorIcon::ResizeHorizontal,
-        ),
-        Axis::Vertical => (
-            UiRect::new(divider.parent.left, p - 0.5, divider.parent.right, p + 0.5),
-            UiRect::new(divider.parent.left, p - 4.0, divider.parent.right, p + 4.0),
-            CursorIcon::ResizeVertical,
-        ),
-    };
-    let active = state
-        .get()
-        .layout
-        .application_sash_drag
-        .as_ref()
-        .is_some_and(|d| {
-            d.split == divider.split && d.before == divider.before && d.after == divider.after
-        });
-    let key = format!(
-        "application-sash-{}-{}-{}",
-        divider.split, divider.before, divider.after
-    );
-    let down = state.clone();
-    let moving = state.clone();
-    let up = state;
-    crate::ui::components::resize_handle::render(key, hit, line, cursor, active)
-        .on_pointer_down_with_button(move |cx, _, button| {
-            if button == PointerButton::Left {
-                down.update(|app| app.layout.application_sash_drag = Some(divider.clone()));
-                cx.stop_propagation();
+    // Dividers use only sash commands; the session port stays empty.
+    let reader = state.clone();
+    let writer = state.clone();
+    let map = crate::ui::terminal::layout_binding::MapBinding::new(
+        |read| read(None),
+        || MapStore::default().observable(),
+        move |command| {
+            use crate::ui::terminal::layout_binding::MapCommand;
+            match command {
+                MapCommand::DividerStart(divider) => {
+                    writer.update(|app| app.layout.application_sash_drag = Some(divider))
+                }
+                MapCommand::DividerDrag(point) => {
+                    writer.try_update(|app| {
+                        let Some(drag) = &app.layout.application_sash_drag else {
+                            return false;
+                        };
+                        let visible = visibility(app);
+                        let Some(layout) = &mut app.layout.application_layout else {
+                            return false;
+                        };
+                        layout.resize(
+                            drag,
+                            match drag.axis {
+                                Axis::Horizontal => point.x,
+                                Axis::Vertical => point.y,
+                            },
+                            visible,
+                        )
+                    });
+                }
+                MapCommand::DividerEnd => {
+                    writer.update(|app| app.layout.application_sash_drag = None)
+                }
+                _ => {}
             }
-        })
-        .on_pointer_drag(move |cx, pointer| {
-            moving.try_update(|app| {
-                let Some(drag) = &app.layout.application_sash_drag else {
-                    return false;
-                };
-                let visible = visibility(app);
-                let Some(layout) = &mut app.layout.application_layout else {
-                    return false;
-                };
-                layout.resize(
-                    drag,
-                    match drag.axis {
-                        Axis::Horizontal => pointer.point.x,
-                        Axis::Vertical => pointer.point.y,
-                    },
-                    visible,
-                )
-            });
-            cx.stop_propagation();
-        })
-        .on_pointer_up(move |cx, _| {
-            up.update(|app| app.layout.application_sash_drag = None);
-            cx.stop_propagation();
-        })
+            crate::ui::terminal::layout_binding::MapOutcome::default()
+        },
+        move |divider| {
+            reader
+                .get()
+                .layout
+                .application_sash_drag
+                .as_ref()
+                .is_some_and(|d| {
+                    d.split == divider.split
+                        && d.before == divider.before
+                        && d.after == divider.after
+                })
+        },
+    );
+    crate::ui::terminal::layout::render_divider(divider, map)
 }
 
 #[cfg(test)]
@@ -1076,7 +955,7 @@ mod tests {
             );
             for (region, content, r) in snapshot.regions {
                 if matches!(content, Content::Terminal { .. }) {
-                    root = root.child(crate::ui::terminal::render_region(
+                    root = root.child(crate::app::terminal_view::render_region(
                         r.into(),
                         state.clone(),
                         view_map.clone(),

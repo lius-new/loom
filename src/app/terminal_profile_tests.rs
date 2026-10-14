@@ -4,7 +4,7 @@ mod tests {
     use crate::features::terminal::{ShellKind, profiles::ShellProfile};
     use crate::state::AppState;
     use crate::theme;
-    use crate::ui::terminal_settings::render;
+    use crate::ui::terminal::settings::render;
     use lgui::prelude::{State, UiRect, VisualStyle, panel};
 
     #[test]
@@ -36,7 +36,7 @@ mod tests {
                         12.0,
                         0.0,
                         (width - 12.0).max(12.0),
-                        crate::ui::terminal_settings::height(
+                        crate::ui::terminal::settings::height(
                             &settings_frame(&state.get()),
                             &state.get().terminal.ui,
                         ),
@@ -161,7 +161,7 @@ mod tests {
                     12.0,
                     0.0,
                     708.0,
-                    crate::ui::terminal_settings::height(
+                    crate::ui::terminal::settings::height(
                         &settings_frame(&state.get()),
                         &state.get().terminal.ui,
                     ),

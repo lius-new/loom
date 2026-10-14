@@ -3,17 +3,15 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use lgui::ApplicationHandle;
 use lgui::core::{
     CursorIcon, EventPolicy, LogicalKey, NamedKey, SemanticRole, Semantics, UiElement,
 };
-use lgui::prelude::{
-    Color, Element, RenderCx, ShadowStyle, State, UiRect, VisualStyle, panel, text,
-};
+use lgui::prelude::{Color, Element, RenderCx, ShadowStyle, UiRect, VisualStyle, panel, text};
 
-use crate::app::terminal_binding::TerminalTabs;
+use super::bindings as commands;
+use super::bindings::{Binding, FrameRequest, Sessions, View as TerminalTabs};
+use super::state::TerminalTabMenuKind;
 use crate::features::terminal::TERMINAL_PURPOSES as PURPOSES;
-use crate::state::{AppState, TerminalTabMenuKind};
 use crate::theme;
 
 use crate::features::terminal::actions::{
@@ -60,14 +58,14 @@ pub fn restore_focus_on_dismiss(
 
 pub fn render(
     viewport: UiRect,
-    state: State<AppState>,
-    tabs: crate::app::terminal_binding::TerminalStore,
-    application: Arc<ApplicationHandle>,
+    state: Binding,
+    tabs: Sessions,
+    application: FrameRequest,
     terminal_focus: lgui::core::UiFocusHandle,
     editor_focus: lgui::core::UiFocusHandle,
 ) -> Element {
     let snapshot = state.get();
-    let Some(menu) = snapshot.terminal.ui.terminal_tab_context_menu else {
+    let Some(menu) = snapshot.ui.terminal_tab_context_menu else {
         return panel(viewport, VisualStyle::default());
     };
     let tab_snapshot = tabs.get();
@@ -105,14 +103,16 @@ pub fn render(
     .focus_scope()
     .on_pointer_down_with_button(move |cx, pointer, _| {
         if !card.contains(pointer.point) {
-            dismiss.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
+            dismiss
+                .ui
+                .update(|app| app.terminal_tab_context_menu = None);
         }
         cx.stop_propagation();
     })
     .on_input(|cx, _| cx.stop_propagation())
     .on_key_down(move |cx, event| {
         if event.key == LogicalKey::Named(NamedKey::Escape) {
-            escape.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
+            escape.ui.update(|app| app.terminal_tab_context_menu = None);
         }
         cx.prevent_default();
         cx.stop_propagation();
@@ -166,7 +166,7 @@ pub fn render(
                 if !enabled {
                     return;
                 }
-                if !crate::app::terminal::menu_action(
+                if !commands::menu_action(
                     &action_state,
                     &action_tabs,
                     target,
@@ -202,9 +202,9 @@ pub fn render(
 
 fn render_purpose(
     viewport: UiRect,
-    state: State<AppState>,
-    tabs: crate::app::terminal_binding::TerminalStore,
-    menu: crate::state::TerminalTabContextMenuState,
+    state: Binding,
+    tabs: Sessions,
+    menu: super::state::TerminalTabContextMenuState,
     current: Option<String>,
 ) -> Element {
     let target = menu.target;
@@ -231,14 +231,16 @@ fn render_purpose(
     .focus_scope()
     .on_pointer_down_with_button(move |cx, pointer, _| {
         if !card.contains(pointer.point) {
-            dismiss.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
+            dismiss
+                .ui
+                .update(|app| app.terminal_tab_context_menu = None);
         }
         cx.stop_propagation();
     })
     .on_input(|cx, _| cx.stop_propagation())
     .on_key_down(move |cx, event| {
         if event.key == LogicalKey::Named(NamedKey::Escape) {
-            escape.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
+            escape.ui.update(|app| app.terminal_tab_context_menu = None);
         }
         cx.prevent_default();
         cx.stop_propagation();
@@ -257,7 +259,7 @@ fn render_purpose(
         let choose_state = state.clone();
         surface = surface.child(
             purpose_row(row, purpose, current.as_deref() == Some(purpose)).on_click(move || {
-                crate::app::terminal::purpose(&choose_state, &choose_tabs, target, Some(purpose));
+                commands::purpose(&choose_state, &choose_tabs, target, Some(purpose));
             }),
         );
         y += ITEM_H;
@@ -272,7 +274,7 @@ fn render_purpose(
     let row = UiRect::new(card.left + 1.0, y, card.right - 1.0, y + ITEM_H);
     surface = surface.child(
         purpose_row(row, "Automatic name", current.is_none()).on_click(move || {
-            crate::app::terminal::purpose(&clear_state, &clear_tabs, target, None);
+            commands::purpose(&clear_state, &clear_tabs, target, None);
         }),
     );
     overlay.child(surface)

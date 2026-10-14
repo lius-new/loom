@@ -194,9 +194,12 @@ export function violations(sources, policy) {
       if(policy.exceptions[file])problems.push(file+': Terminal rules cannot have migration exceptions');
       if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Terminal rules cannot include adapter sources');
     }
+    if(['src/ui/terminal.rs','src/ui/terminal_settings.rs','src/ui/terminal_tab_context_menu.rs','src/ui/layout_map.rs'].includes(file))problems.push(file+': removed R7.6 terminal view path must not be restored');
     if(file==='src/ui/terminal_settings.rs'||file.startsWith('src/ui/terminal/')) {
-        if(ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','TerminalController','TerminalHandle','TerminalRuntime'].includes(t))||deps.some(d=>['crate::app','crate::state','crate::infrastructure','crate::key_actions'].includes(d)))problems.push(file+': Terminal projection view must use narrow state and commands');
+        if(ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','TerminalController','TerminalHandle','TerminalRuntime'].includes(t))||deps.some(d=>['crate::app','crate::state','crate::infrastructure','crate::key_actions','crate::model','crate::workspace_actions'].includes(d)))problems.push(file+': Terminal projection view must use narrow state and commands');
         if(policy.exceptions[file])problems.push(file+': Terminal projection view cannot have migration exceptions');
+        if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Terminal projection view cannot include root sources');
+        if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super'))problems.push(file+': Terminal projection view cannot escape through ancestor paths');
     }
     if(['src/ui/terminal.rs','src/ui/terminal_tab_context_menu.rs'].includes(file)) {
         const production=source.split(/#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*mod\s+tests\b/)[0];

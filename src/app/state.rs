@@ -91,8 +91,6 @@ pub struct TabContextMenuState {
     pub hovered: Option<usize>,
 }
 
-pub use crate::ui::terminal::state::{TerminalTabContextMenuState, TerminalTabMenuKind};
-
 pub(crate) use crate::domain::notification::{Toast, ToastKind};
 
 /// Top-level content shown in the editor region.
