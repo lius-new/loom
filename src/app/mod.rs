@@ -42,3 +42,7 @@ pub(crate) mod workspace_restore;
 pub(crate) mod workspace_session;
 
 pub(crate) mod terminal_runtime;
+
+pub(crate) mod terminal_binding;
+#[cfg(test)]
+mod terminal_session_tests;

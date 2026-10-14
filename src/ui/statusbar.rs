@@ -16,7 +16,6 @@ use lgui::prelude::{Element, State, TextStyle, UiRect, VisualStyle, panel, text}
 
 use crate::input::action::Action;
 use crate::state::AppState;
-use crate::terminal_session::TerminalTabs;
 use crate::theme;
 
 /// Padding between the bar's right edge and the last item.
@@ -39,7 +38,7 @@ pub fn render(
     state: State<AppState>,
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
-    terminal_tabs: State<TerminalTabs>,
+    terminal_tabs: crate::app::terminal_binding::TerminalStore,
 ) -> Element {
     let s = state.get();
 

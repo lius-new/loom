@@ -54,7 +54,11 @@ impl Ui {
                 app
             });
             let git_store = cx.state(GitStoreSnapshot::default());
-            let terminals = cx.state(crate::terminal_session::TerminalTabs::new());
+            let terminals = crate::app::terminal_binding::test_store(
+                cx,
+                Some(state.clone()),
+                crate::app::terminal_binding::TerminalTabs::new,
+            );
             *output.lock().unwrap() = Some(state.clone());
             let id = cx.use_stable_id();
             let focus = cx.focus_handle(id.clone());

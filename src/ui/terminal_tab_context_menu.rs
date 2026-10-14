@@ -11,9 +11,9 @@ use lgui::prelude::{
     Color, Element, RenderCx, ShadowStyle, State, UiRect, VisualStyle, panel, text,
 };
 
+use crate::app::terminal_binding::TerminalTabs;
 use crate::features::terminal::TERMINAL_PURPOSES as PURPOSES;
 use crate::state::{AppState, TerminalTabMenuKind};
-use crate::terminal_session::TerminalTabs;
 use crate::theme;
 
 const MENU_W: f32 = 224.0;
@@ -84,7 +84,7 @@ fn close_targets(tabs: &TerminalTabs, target: u64, action: Action) -> Vec<u64> {
 pub fn render(
     viewport: UiRect,
     state: State<AppState>,
-    tabs: State<TerminalTabs>,
+    tabs: crate::app::terminal_binding::TerminalStore,
     application: Arc<ApplicationHandle>,
     terminal_focus: lgui::core::UiFocusHandle,
     editor_focus: lgui::core::UiFocusHandle,
@@ -94,7 +94,11 @@ pub fn render(
         return panel(viewport, VisualStyle::default());
     };
     let tab_snapshot = tabs.get();
-    let Some(target_tab) = tab_snapshot.tabs().iter().find(|tab| tab.id == menu.target) else {
+    let Some(target_tab) = tab_snapshot
+        .tabs()
+        .into_iter()
+        .find(|tab| tab.id == menu.target)
+    else {
         return panel(viewport, VisualStyle::default());
     };
     if menu.kind != TerminalTabMenuKind::Actions {
@@ -225,6 +229,12 @@ pub fn render(
                             }
                         }
                     });
+                    let surviving = action_tabs.get();
+                    action_state.update(|app| {
+                        if let Some(layout) = &mut app.application_layout {
+                            surviving.sync_layout(layout);
+                        }
+                    });
                     for controller in controllers {
                         controller.terminate(&action_application);
                     }
@@ -262,7 +272,7 @@ pub fn render(
 fn render_purpose(
     viewport: UiRect,
     state: State<AppState>,
-    tabs: State<TerminalTabs>,
+    tabs: crate::app::terminal_binding::TerminalStore,
     menu: crate::state::TerminalTabContextMenuState,
     current: Option<String>,
 ) -> Element {

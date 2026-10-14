@@ -11,7 +11,6 @@ use lgui::core::{
 use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 
 use crate::state::AppState;
-use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::tabs::{TEXT_MARGIN, ellipsize, measure};
 use crate::ui::terminal;
@@ -62,7 +61,7 @@ struct WorkspaceHomeActions {
     state: State<AppState>,
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
-    terminal_tabs: State<TerminalTabs>,
+    terminal_tabs: crate::app::terminal_binding::TerminalStore,
 }
 
 pub fn render(
@@ -71,7 +70,7 @@ pub fn render(
     surface_id: UiId,
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
-    terminal_tabs: State<TerminalTabs>,
+    terminal_tabs: crate::app::terminal_binding::TerminalStore,
 ) -> Element {
     let snapshot = state.get();
     let actions = WorkspaceHomeActions {

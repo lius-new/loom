@@ -10,7 +10,7 @@ use crate::infrastructure::terminal::pty::{
 };
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread;
 #[cfg(windows)]
@@ -23,6 +23,8 @@ pub struct TerminalController {
 }
 
 struct TerminalInner {
+    lifecycle: Mutex<()>,
+    disposed: AtomicBool,
     parser: Mutex<vt100::Parser>,
     process: Mutex<Option<RunningProcess>>,
     shell: Mutex<ShellKind>,
@@ -43,6 +45,8 @@ impl TerminalController {
     pub fn with_shell(shell: ShellKind) -> Self {
         Self {
             inner: Arc::new(TerminalInner {
+                lifecycle: Mutex::new(()),
+                disposed: AtomicBool::new(false),
                 parser: Mutex::new(vt100::Parser::new(24, 80, SCROLLBACK_ROWS)),
                 process: Mutex::new(None),
                 shell: Mutex::new(shell),
@@ -146,6 +150,10 @@ impl TerminalController {
         application: impl Into<FrameNotifier>,
     ) {
         let application = application.into();
+        let lifecycle = lock(&self.inner.lifecycle);
+        if self.inner.disposed.load(Ordering::Acquire) {
+            return;
+        }
         let generation = self.inner.generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.kill_current();
         *lock(&self.inner.shell) = shell;
@@ -197,6 +205,7 @@ impl TerminalController {
                 let child = spawned.child;
                 *lock(&self.inner.process) = Some(spawned.process);
                 *lock(&self.inner.status) = TerminalStatus::Running;
+                drop(lifecycle);
                 application.request_frame();
 
                 let reader_inner = Arc::downgrade(&self.inner);
@@ -245,17 +254,26 @@ impl TerminalController {
             }
             Err(error) => {
                 *lock(&self.inner.status) = TerminalStatus::Failed(error);
+                drop(lifecycle);
                 application.request_frame();
             }
         }
     }
 
-    pub fn terminate(&self, application: impl Into<FrameNotifier>) {
-        let application = application.into();
+    pub(super) fn dispose(&self) {
+        let _lifecycle = lock(&self.inner.lifecycle);
+        self.inner.disposed.store(true, Ordering::Release);
+        self.shutdown();
+    }
+
+    pub fn shutdown(&self) {
         self.inner.generation.fetch_add(1, Ordering::AcqRel);
         self.kill_current();
         *lock(&self.inner.status) = TerminalStatus::Stopped;
-        application.request_frame();
+    }
+    pub fn terminate(&self, application: impl Into<FrameNotifier>) {
+        self.shutdown();
+        application.into().request_frame();
     }
 
     pub fn write(&self, bytes: &[u8]) {
@@ -501,6 +519,18 @@ impl TerminalController {
             .unwrap()
             .console
             .is_some()
+    }
+    #[cfg(windows)]
+    pub(crate) fn test_process_alive(&self) -> bool {
+        lock(&self.inner.process)
+            .as_ref()
+            .is_some_and(|process| process.process.is_alive())
+    }
+    #[cfg(windows)]
+    pub(crate) fn test_observer_pid(&self) -> Option<u32> {
+        lock(&self.inner.process)
+            .as_ref()
+            .and_then(|p| p.console.as_ref().map(|c| c.test_pid()))
     }
     #[cfg(windows)]
     pub(crate) fn test_pid(&self) -> u32 {

@@ -1,391 +1,20 @@
-//! Legacy terminal tab/model composition, retained until R7.3.
-#[cfg(test)]
-use crate::features::terminal::TerminalSize;
-use crate::features::terminal::{SessionId, ShellKind, TERMINAL_PURPOSES};
-use crate::infrastructure::terminal::session::TerminalController;
-use std::path::PathBuf;
-
-#[derive(Clone)]
-pub struct TerminalTab {
-    pub id: SessionId,
-    /// Sessions with the same group share a tab and render side by side.
-    pub group_id: u64,
-    pub width_weight: f32,
-    pub controller: TerminalController,
-    pub cwd: Option<PathBuf>,
-    pub purpose: Option<String>,
-    pub running_program: Option<String>,
-}
-
-impl TerminalTab {
-    pub fn working_directory(&self) -> Option<PathBuf> {
-        self.controller
-            .working_directory()
-            .or_else(|| self.cwd.clone())
-    }
-
-    pub fn label(&self) -> String {
-        let shell = self.controller.short_label();
-        match self.purpose.as_ref().or(self.running_program.as_ref()) {
-            Some(name) => format!("{shell} · {name}"),
-            None => shell.to_owned(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct TerminalTabs {
-    tabs: Vec<TerminalTab>,
-    active_id: Option<u64>,
-    next_id: u64,
-    profiles: Vec<crate::features::terminal::profiles::ShellProfile>,
-}
-
-impl TerminalTabs {
-    pub fn new() -> Self {
-        let mut tabs = Self::empty();
-        tabs.add(ShellKind::default());
-        tabs
-    }
-
-    pub fn restored(shells: Vec<ShellKind>, active_index: Option<usize>) -> Self {
-        Self::restored_with_groups(shells, active_index, &[])
-    }
-
-    pub fn restored_with_groups(
-        shells: Vec<ShellKind>,
-        active_index: Option<usize>,
-        groups: &[usize],
-    ) -> Self {
-        let mut tabs = Self::empty();
-        for (index, shell) in shells.into_iter().enumerate() {
-            let id = tabs.add(shell);
-            if index > 0
-                && groups.get(index).is_some()
-                && groups.get(index) == groups.get(index - 1)
-            {
-                let group = tabs.tabs[index - 1].group_id;
-                tabs.tabs.last_mut().unwrap().group_id = group;
-            }
-            debug_assert_eq!(tabs.active_id, Some(id));
-        }
-        if let Some(active_id) = active_index
-            .and_then(|index| tabs.tabs.get(index))
-            .map(|tab| tab.id)
-        {
-            tabs.active_id = Some(active_id);
-        }
-        tabs
-    }
-
-    fn empty() -> Self {
-        Self {
-            tabs: Vec::new(),
-            active_id: None,
-            next_id: 1,
-            profiles: Vec::new(),
-        }
-    }
-
-    pub fn tabs(&self) -> &[TerminalTab] {
-        &self.tabs
-    }
-
-    pub fn active_id(&self) -> Option<u64> {
-        self.active_id
-    }
-
-    pub fn active(&self) -> Option<&TerminalTab> {
-        let active_id = self.active_id?;
-        self.tabs.iter().find(|tab| tab.id == active_id)
-    }
-
-    pub fn active_group(&self) -> Vec<TerminalTab> {
-        let Some(active) = self.active() else {
-            return Vec::new();
-        };
-        self.tabs
-            .iter()
-            .filter(|tab| tab.group_id == active.group_id)
-            .cloned()
-            .collect()
-    }
-
-    /// A tabbed region shares controller Arcs. Legacy split groups must not make
-    /// its tabs render as simultaneous terminal bodies.
-    pub fn region_view(&self, ids: &[u64], active: Option<u64>) -> Self {
-        let tabs = ids
-            .iter()
-            .filter_map(|id| self.tabs.iter().find(|tab| tab.id == *id))
-            .map(|tab| {
-                let mut tab = tab.clone();
-                tab.group_id = tab.id;
-                tab
-            })
-            .collect::<Vec<_>>();
-        let active_id = self
-            .active_id
-            .filter(|id| ids.contains(id))
-            .or(active.filter(|id| ids.contains(id)))
-            .or_else(|| tabs.first().map(|t| t.id));
-        Self {
-            tabs,
-            active_id,
-            next_id: self.next_id,
-            profiles: self.profiles.clone(),
-        }
-    }
-
-    /// Moving a session out of a legacy side-by-side group does not restart it.
-    pub fn detach_group(&mut self, id: u64) {
-        if let Some(group) = self
-            .tabs
-            .iter()
-            .find(|tab| tab.id == id)
-            .map(|tab| tab.group_id)
-            && let Some(other) = self
-                .tabs
-                .iter()
-                .find(|tab| tab.id != id && tab.group_id == group)
-                .map(|tab| tab.id)
-        {
-            for tab in &mut self.tabs {
-                if tab.group_id == group && tab.id != id {
-                    tab.group_id = other;
-                }
-            }
-        }
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
-            tab.group_id = tab.id;
-            tab.width_weight = 1.0;
-        }
-    }
-
-    pub fn saved_groups(&self) -> Vec<usize> {
-        let mut group = 0;
-        self.tabs
-            .iter()
-            .enumerate()
-            .map(|(index, tab)| {
-                if index > 0 && self.tabs[index - 1].group_id != tab.group_id {
-                    group += 1;
-                }
-                group
-            })
-            .collect()
-    }
-
-    pub fn widths(&self) -> Vec<f32> {
-        self.tabs.iter().map(|tab| tab.width_weight).collect()
-    }
-
-    pub fn purposes(&self) -> Vec<Option<String>> {
-        self.tabs.iter().map(|tab| tab.purpose.clone()).collect()
-    }
-
-    pub fn directories(&self) -> Vec<Option<PathBuf>> {
-        self.tabs
-            .iter()
-            .map(TerminalTab::working_directory)
-            .collect()
-    }
-
-    pub fn restore_directories(&mut self, directories: &[Option<PathBuf>]) {
-        for (tab, cwd) in self.tabs.iter_mut().zip(directories) {
-            tab.cwd = cwd.clone();
-        }
-    }
-
-    pub fn set_profiles(&mut self, profiles: &[crate::features::terminal::profiles::ShellProfile]) {
-        self.profiles = profiles.to_vec();
-        for tab in &self.tabs {
-            tab.controller.set_profile(
-                profiles
-                    .iter()
-                    .find(|profile| tab.controller.shell() == ShellKind::Custom(profile.id))
-                    .cloned(),
-            );
-        }
-    }
-
-    fn controller_for(&self, shell: ShellKind) -> TerminalController {
-        let controller = TerminalController::with_shell(shell);
-        controller.set_profile(
-            self.profiles
-                .iter()
-                .find(|p| shell == ShellKind::Custom(p.id))
-                .cloned(),
-        );
-        controller
-    }
-
-    pub fn update_directories(&mut self, directories: &[(u64, Option<PathBuf>)]) {
-        for (id, cwd) in directories {
-            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == *id) {
-                tab.cwd = cwd.clone();
-            }
-        }
-    }
-
-    pub fn restore_purposes(&mut self, purposes: &[Option<String>]) {
-        for (tab, purpose) in self.tabs.iter_mut().zip(purposes) {
-            tab.purpose = normalized_purpose(purpose.as_deref());
-        }
-    }
-
-    pub fn set_purpose(&mut self, id: u64, purpose: Option<&str>) {
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
-            tab.purpose = normalized_purpose(purpose);
-        }
-    }
-
-    pub fn update_programs(&mut self, programs: &[(u64, Option<String>)]) {
-        for (id, program) in programs {
-            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == *id) {
-                tab.running_program = program.clone();
-            }
-        }
-    }
-
-    pub fn restore_widths(&mut self, widths: &[f32]) {
-        for (tab, width) in self.tabs.iter_mut().zip(widths) {
-            if width.is_finite() && *width > 0.0 {
-                tab.width_weight = width.clamp(0.001, 1000.0);
-            }
-        }
-    }
-
-    pub fn split(&mut self, target: u64) -> Option<u64> {
-        let index = self.tabs.iter().position(|tab| tab.id == target)?;
-        let group_id = self.tabs[index].group_id;
-        let shell = self.tabs[index].controller.shell();
-        let cwd = self.tabs[index].working_directory();
-        let width_weight = self.tabs[index].width_weight * 0.5;
-        self.tabs[index].width_weight = width_weight;
-        let id = self.next_id;
-        self.next_id = self.next_id.saturating_add(1);
-        self.tabs.insert(
-            index + 1,
-            TerminalTab {
-                id,
-                group_id,
-                width_weight,
-                controller: self.controller_for(shell),
-                cwd,
-                purpose: None,
-                running_program: None,
-            },
-        );
-        self.active_id = Some(id);
-        Some(id)
-    }
-
-    pub fn shells(&self) -> Vec<ShellKind> {
-        self.tabs.iter().map(|tab| tab.controller.shell()).collect()
-    }
-
-    pub fn active_index(&self) -> Option<usize> {
-        let active_id = self.active_id?;
-        self.tabs.iter().position(|tab| tab.id == active_id)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.tabs.is_empty()
-    }
-
-    pub fn add(&mut self, shell: ShellKind) -> u64 {
-        self.add_at(shell, None)
-    }
-
-    pub fn add_at(&mut self, shell: ShellKind, cwd: Option<PathBuf>) -> u64 {
-        let id = self.next_id;
-        self.next_id = self.next_id.saturating_add(1);
-        self.tabs.push(TerminalTab {
-            id,
-            group_id: id,
-            width_weight: 1.0,
-            controller: self.controller_for(shell),
-            cwd,
-            purpose: None,
-            running_program: None,
-        });
-        self.active_id = Some(id);
-        id
-    }
-
-    pub fn select(&mut self, id: u64) {
-        if self.tabs.iter().any(|tab| tab.id == id) {
-            self.active_id = Some(id);
-        }
-    }
-
-    pub fn resize_pair(&mut self, left: u64, right: u64, fraction: f32) {
-        let Some(index) = self.tabs.iter().position(|tab| tab.id == left) else {
-            return;
-        };
-        let Some(next) = self.tabs.get(index + 1) else {
-            return;
-        };
-        if next.id != right || next.group_id != self.tabs[index].group_id {
-            return;
-        }
-        let total = self.tabs[index].width_weight + next.width_weight;
-        let fraction = fraction.clamp(0.001, 0.999);
-        self.tabs[index].width_weight = total * fraction;
-        self.tabs[index + 1].width_weight = total * (1.0 - fraction);
-    }
-
-    pub fn close(&mut self, id: u64) -> Option<TerminalController> {
-        let index = self.tabs.iter().position(|tab| tab.id == id)?;
-        let removed = self.tabs.remove(index);
-        if self.active_id == Some(id) {
-            self.active_id = self
-                .tabs
-                .iter()
-                .skip(index)
-                .find(|tab| tab.group_id == removed.group_id)
-                .or_else(|| {
-                    self.tabs
-                        .iter()
-                        .rev()
-                        .find(|tab| tab.group_id == removed.group_id)
-                })
-                .or_else(|| self.tabs.get(index).or_else(|| self.tabs.last()))
-                .map(|tab| tab.id);
-        }
-        Some(removed.controller)
-    }
-}
-
-fn normalized_purpose(purpose: Option<&str>) -> Option<String> {
-    let purpose = purpose.map(str::trim).filter(|value| !value.is_empty())?;
-    // Older saved custom purposes use the general preset under the new policy.
-    Some(
-        if TERMINAL_PURPOSES.contains(&purpose) {
-            purpose
-        } else {
-            "Other"
-        }
-        .to_owned(),
-    )
-}
-
-impl Default for TerminalTabs {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
+//! Preserved native and cross-layer terminal regressions, composed by app.
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::app::terminal_binding::TerminalTab;
+    use crate::app::terminal_binding::fixtures::Sessions as TerminalTabs;
     use crate::app::terminal_runtime::TerminalDisplay;
+    use crate::features::terminal::ShellKind;
+    #[cfg(windows)]
+    use crate::features::terminal::TerminalSize;
     #[cfg(windows)]
     use crate::features::terminal::TerminalStatus;
     #[cfg(windows)]
     use crate::infrastructure::terminal::pty::shell_friendly_path;
+    use crate::infrastructure::terminal::session::TerminalController;
     use lgui::ApplicationHandle;
     use std::env;
+    use std::path::PathBuf;
     use std::sync::Arc;
     #[cfg(windows)]
     use std::thread;
@@ -443,10 +72,15 @@ mod tests {
         let mut tabs = TerminalTabs::restored(vec![], None);
         tabs.set_profiles(std::slice::from_ref(&profile));
         let first = tabs.add_at(ShellKind::Custom(profile.id), Some(root.clone()));
-        let controller = tabs.active().unwrap().controller.clone();
+        let controller = tabs.active().unwrap().controller.test_controller().clone();
         let second = tabs.split(first).unwrap();
         assert_eq!(
-            *tabs.active().unwrap().controller.test_profile(),
+            *tabs
+                .active()
+                .unwrap()
+                .controller
+                .test_controller()
+                .test_profile(),
             Some(profile.clone())
         );
         assert_eq!(tabs.active_id(), Some(second));
@@ -505,7 +139,7 @@ mod tests {
                 .unwrap()
                 .contains("Custom shell is unavailable")
         );
-        assert_eq!(tabs.profiles, vec![missing]);
+        assert_eq!(tabs.test_profiles(), vec![missing]);
         controller.terminate(&application);
 
         // Repairing discovery must launch the configured profile again, rather
@@ -532,7 +166,7 @@ mod tests {
         assert_eq!(controller.shell(), ShellKind::Custom(profile.id));
         assert_eq!(controller.short_label(), profile.name);
         assert!(controller.snapshot().notice.is_none());
-        assert_eq!(tabs.profiles, vec![profile]);
+        assert_eq!(tabs.test_profiles(), vec![profile]);
         controller.terminate(&application);
     }
 
@@ -576,7 +210,7 @@ mod tests {
             .to_string()
             .replace('\\', "/")
             .replace('\'', "'\\''");
-        controller.write(format!("LOOM_MOUSE_PROBE=1 '{executable}' --exact terminal_session::tests::native_mouse_probe --ignored --nocapture\r").as_bytes());
+        controller.write(format!("LOOM_MOUSE_PROBE=1 '{executable}' --exact app::terminal_session_tests::tests::native_mouse_probe --ignored --nocapture\r").as_bytes());
         wait_for(&controller, |screen| {
             screen.contents().contains("MOUSE_READY")
                 && screen.mouse_protocol_encoding() == vt100::MouseProtocolEncoding::Sgr
@@ -690,7 +324,7 @@ mod tests {
         assert_eq!(tabs.directories(), dirs);
         let ids = tabs.tabs().iter().map(|t| t.id).collect::<Vec<_>>();
         let changed = env::temp_dir().join("changed-live-directory");
-        *tabs.tabs()[1].controller.test_cwd() = Some(changed.clone());
+        *tabs.tabs()[1].controller.test_controller().test_cwd() = Some(changed.clone());
         assert_eq!(
             tabs.region_view(&[ids[2], ids[1]], Some(ids[1]))
                 .directories(),
@@ -764,7 +398,7 @@ mod tests {
             }
             let mut tabs = TerminalTabs::restored(vec![], None);
             let first = tabs.add_at(shell, Some(initial.clone()));
-            let controller = tabs.active().unwrap().controller.clone();
+            let controller = tabs.active().unwrap().controller.test_controller().clone();
             controller.restart(shell, Some(&initial), size, application.clone());
             let command = match shell {
                 ShellKind::PowerShell => format!(
@@ -809,13 +443,17 @@ mod tests {
             assert_eq!(restored.active_id(), Some(second));
             for tab in restored.tabs() {
                 let cwd = tab.working_directory().unwrap();
-                tab.controller
-                    .restart(shell, Some(&cwd), size, application.clone());
+                tab.controller.test_controller().restart(
+                    shell,
+                    Some(&cwd),
+                    size,
+                    application.clone(),
+                );
                 // Require a new real prompt report, not just the requested spawn cwd.
-                *tab.controller.test_cwd() = None;
-                tab.controller.write(b"\r");
-                wait_for_directory(&tab.controller, &changed, shell);
-                tab.controller.terminate(&application);
+                *tab.controller.test_controller().test_cwd() = None;
+                tab.controller.test_controller().write(b"\r");
+                wait_for_directory(&tab.controller.test_controller(), &changed, shell);
+                tab.controller.test_controller().terminate(&application);
             }
         }
     }
@@ -881,23 +519,6 @@ mod tests {
         assert_eq!(restored.purposes(), vec![Some("Testing".into())]);
     }
 
-    #[test]
-    fn saved_custom_purposes_migrate_to_other_and_only_presets_are_kept() {
-        let mut tabs = TerminalTabs::restored(vec![ShellKind::Bash; 3], None);
-        tabs.restore_purposes(&[Some("Local testing".into()), Some("Server".into()), None]);
-        assert_eq!(
-            tabs.purposes(),
-            vec![Some("Other".into()), Some("Server".into()), None]
-        );
-        let first = tabs.tabs()[0].id;
-        for &purpose in TERMINAL_PURPOSES {
-            tabs.set_purpose(first, Some(purpose));
-            assert_eq!(tabs.tabs()[0].purpose.as_deref(), Some(purpose));
-        }
-        tabs.set_purpose(first, Some("arbitrary custom name"));
-        assert_eq!(tabs.tabs()[0].purpose.as_deref(), Some("Other"));
-    }
-
     #[cfg(windows)]
     #[test]
     fn shell_cwd_drops_the_verbatim_prefix() {
@@ -920,27 +541,6 @@ mod tests {
     }
 
     #[test]
-    fn terminal_tabs_add_select_and_close_neighboring_sessions() {
-        let mut tabs = TerminalTabs::new();
-        let first = tabs.active_id().expect("initial terminal tab");
-        let second = tabs.add(ShellKind::Bash);
-        assert_eq!(tabs.tabs().len(), 2);
-        assert_eq!(tabs.active_id(), Some(second));
-        assert_eq!(
-            tabs.active().map(|tab| tab.controller.shell()),
-            Some(ShellKind::Bash)
-        );
-
-        tabs.select(first);
-        assert_eq!(tabs.active_id(), Some(first));
-        tabs.close(first);
-        assert_eq!(tabs.active_id(), Some(second));
-        tabs.close(second);
-        assert!(tabs.is_empty());
-        assert_eq!(tabs.active_id(), None);
-    }
-
-    #[test]
     fn splitting_keeps_independent_sessions_in_one_group_and_close_keeps_siblings() {
         let mut tabs = TerminalTabs::new();
         let first = tabs.active_id().unwrap();
@@ -958,7 +558,8 @@ mod tests {
         assert!(
             !tabs.tabs()[0]
                 .controller
-                .test_same_runtime(&tabs.tabs()[1].controller)
+                .test_controller()
+                .test_same_runtime(&tabs.tabs()[1].controller.test_controller())
         );
         tabs.select(first);
         tabs.close(first);
@@ -980,7 +581,7 @@ mod tests {
         let cwd = PathBuf::from("existing-workspace");
         let first = tabs.add_at(ShellKind::Cmd, Some(cwd.clone()));
         let sibling = tabs.split(first).unwrap();
-        let controller = tabs.tabs()[0].controller.clone();
+        let controller = tabs.tabs()[0].controller.test_controller().clone();
         for _ in 0..30 {
             controller.test_parser().process(b"preserved output\r\n");
         }
@@ -1014,10 +615,14 @@ mod tests {
         tabs.select(first);
         let (sessions, active) = layout.terminal_view(destination).unwrap();
         let view = tabs.region_view(&sessions, active);
-        assert!(controller.test_same_runtime(&view.active().unwrap().controller));
+        assert!(controller.test_same_runtime(&view.active().unwrap().controller.test_controller()));
         assert_eq!(view.active().unwrap().cwd, Some(cwd));
         assert_eq!(
-            view.active().unwrap().controller.test_generation(),
+            view.active()
+                .unwrap()
+                .controller
+                .test_controller()
+                .test_generation(),
             generation
         );
         assert_ne!(tabs.tabs()[0].group_id, tabs.tabs()[1].group_id);
@@ -1051,60 +656,6 @@ mod tests {
             ordered.tabs().iter().map(|t| t.id).collect::<Vec<_>>(),
             vec![sibling, first]
         );
-    }
-
-    #[test]
-    fn grouped_terminal_layout_round_trips_and_legacy_sessions_stay_separate() {
-        let mut original = TerminalTabs::new();
-        let first = original.active_id().unwrap();
-        let split = original.split(first).unwrap();
-        original.add_at(ShellKind::Bash, Some("workspace".into()));
-        original.select(split);
-        original.resize_pair(first, split, 0.75);
-        let mut restored = TerminalTabs::restored_with_groups(
-            original.shells(),
-            original.active_index(),
-            &original.saved_groups(),
-        );
-        restored.restore_widths(&original.widths());
-        assert_eq!(restored.widths(), original.widths());
-        assert_eq!(restored.saved_groups(), vec![0, 0, 1]);
-        assert_eq!(restored.active_index(), Some(1));
-        assert_eq!(restored.active_group().len(), 2);
-        let legacy = TerminalTabs::restored(original.shells(), original.active_index());
-        assert_eq!(legacy.saved_groups(), vec![0, 1, 2]);
-    }
-
-    #[test]
-    fn terminal_tab_can_request_its_own_working_directory() {
-        let mut tabs = TerminalTabs::restored(Vec::new(), None);
-        let cwd = PathBuf::from("workspace").join("nested");
-
-        tabs.add_at(ShellKind::default(), Some(cwd.clone()));
-
-        assert_eq!(tabs.active().and_then(|tab| tab.cwd.as_ref()), Some(&cwd));
-    }
-
-    #[test]
-    fn terminal_tabs_restore_shell_order_and_active_index() {
-        let tabs = TerminalTabs::restored(
-            vec![ShellKind::Cmd, ShellKind::Bash, ShellKind::PowerShell],
-            Some(1),
-        );
-
-        assert_eq!(
-            tabs.shells(),
-            vec![ShellKind::Cmd, ShellKind::Bash, ShellKind::PowerShell]
-        );
-        assert_eq!(tabs.active_index(), Some(1));
-        assert_eq!(
-            tabs.active().map(|tab| tab.controller.shell()),
-            Some(ShellKind::Bash)
-        );
-
-        let empty = TerminalTabs::restored(Vec::new(), None);
-        assert!(empty.is_empty());
-        assert_eq!(empty.active_index(), None);
     }
 
     #[cfg(target_os = "windows")]

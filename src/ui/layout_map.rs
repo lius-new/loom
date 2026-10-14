@@ -1,10 +1,11 @@
 //! The miniature itself is the drop surface. Hit tests and fills share rectangles.
+#[cfg(test)]
+use crate::app::terminal_binding::TerminalTabs;
 use crate::domain::application_layout::{
     ApplicationLayout, Content, DropPlan, Placement, RegionId, Visibility,
 };
 use crate::model::pane_layout::{Axis, Direction};
 use crate::state::AppState;
-use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use lgui::core::{
     CursorIcon, LogicalKey, NamedKey, Observable, ObservableListener, Point, UiEventKind,
@@ -463,7 +464,7 @@ pub fn drag_cursor(map: &MapStore) -> CursorIcon {
 /// Apply a finished drag's effect on the terminal tabs and focus.
 fn settle(
     result: (bool, Option<u64>),
-    tabs: &State<TerminalTabs>,
+    tabs: &crate::app::terminal_binding::TerminalStore,
     focus: &lgui::core::UiFocusHandle,
 ) {
     if let Some(id) = result.1 {
@@ -480,7 +481,7 @@ pub fn attach(
     mut root: Element,
     state: State<AppState>,
     map: MapStore,
-    tabs: State<TerminalTabs>,
+    tabs: crate::app::terminal_binding::TerminalStore,
     viewport: UiRect,
     focus: lgui::core::UiFocusHandle,
 ) -> Element {
@@ -551,7 +552,7 @@ pub fn render(
     viewport: UiRect,
     state: State<AppState>,
     map: MapStore,
-    tabs: State<TerminalTabs>,
+    tabs: crate::app::terminal_binding::TerminalStore,
     focus: lgui::core::UiFocusHandle,
 ) -> Element {
     component(viewport, move |cx, viewport| {
@@ -564,7 +565,7 @@ fn render_overlay(
     viewport: UiRect,
     state: State<AppState>,
     map: MapStore,
-    tabs: State<TerminalTabs>,
+    tabs: crate::app::terminal_binding::TerminalStore,
     focus: lgui::core::UiFocusHandle,
 ) -> Element {
     use lgui::core::{EventPolicy, UiElement, UiId};
@@ -1007,13 +1008,15 @@ mod tests {
         use lgui::session::UiSession;
         use std::sync::{Arc, Mutex};
         let viewport = UiRect::new(0.0, 0.0, 1200.0, 800.0);
-        let exposed = Arc::new(Mutex::new(None::<(State<AppState>, State<TerminalTabs>)>));
+        let exposed = Arc::new(Mutex::new(
+            None::<(State<AppState>, crate::app::terminal_binding::TerminalStore)>,
+        ));
         let output = exposed.clone();
         let application = Arc::new(lgui::ApplicationHandle::new(|task| task(), || {}));
         let map = MapStore::default();
         let view_map = map.clone();
         let view: AppView = Arc::new(move |cx| {
-            let tabs = cx.state_with(|| {
+            let tabs = crate::app::terminal_binding::test_store(cx, None, || {
                 let mut t = TerminalTabs::new();
                 t.split(1);
                 t.select(1);

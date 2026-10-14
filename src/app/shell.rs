@@ -14,12 +14,12 @@ use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
 use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, component, group};
 use lgui::window::WindowFocusChanged;
 
+use crate::app::terminal_binding::TerminalTabs;
 use crate::domain::application_layout::{ApplicationLayout, Content};
 use crate::features::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
 use crate::settings_persistence;
 use crate::state::{AppState, CloseContinuation, CloseRequest, MainSurface, TabDrop};
-use crate::terminal_session::TerminalTabs;
 use crate::theme;
 use crate::ui::editor::view as editor_view;
 use crate::ui::{
@@ -66,6 +66,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     // Never updated through `State`, so map changes never re-render the app.
     let layout_map_store = cx.state_with(layout_map::MapStore::default).get();
     let git_poll_control = runtime.git_poll_control();
+    let profile_source_state = state.clone();
+    runtime
+        .terminals()
+        .set_profile_source(move || profile_source_state.get().terminal_profiles.clone());
     let terminal_tabs = cx.state_with(|| {
         let session = workspace_persistence::load();
         let mut tabs = TerminalTabs::restored_with_groups(
@@ -76,13 +80,27 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         tabs.restore_widths(&session.terminal_widths);
         tabs.restore_purposes(&session.terminal_purposes);
         tabs.restore_directories(&session.terminal_directories);
-        tabs.set_profiles(&state.get().terminal_profiles);
-        tabs
+
+        tabs.into_model()
     });
+    let terminal_tabs =
+        crate::app::terminal_binding::TerminalStore::new(terminal_tabs, runtime.terminals());
     let profile_tabs = terminal_tabs.clone();
     let terminal_profiles = state.get().terminal_profiles.clone();
+    let profile_runtime = std::sync::Arc::downgrade(runtime.terminals());
+    let terminal_cleanup = std::sync::Arc::downgrade(runtime.terminals());
+    cx.use_effect((), move || {
+        move || {
+            if let Some(service) = terminal_cleanup.upgrade() {
+                service.shutdown();
+            }
+        }
+    });
     cx.use_effect(terminal_profiles.clone(), move || {
-        profile_tabs.update(|tabs| tabs.set_profiles(&terminal_profiles));
+        if let Some(service) = profile_runtime.upgrade() {
+            service.refresh_profiles(&profile_tabs.get().into_model());
+            profile_tabs.notify();
+        }
     });
     let terminal_cursor_blink = cx.state(true);
     let terminal_cursor_visible = terminal_cursor_blink.get();

@@ -14,13 +14,13 @@ use lgui::core::{
 use lgui::prelude::{Color, Element, State, UiRect, VisualStyle, component, group, panel, text};
 use lgui::services::{Clipboard, ClipboardError, ServicesContextExt};
 
+use crate::app::terminal_binding::{TerminalTab, TerminalTabs};
 #[cfg(test)]
 use crate::features::terminal::ShellKind;
 use crate::features::terminal::{TerminalRun, TerminalSize};
 use crate::fonts;
-use crate::infrastructure::terminal::session::TerminalController;
+use crate::infrastructure::terminal::runtime::TerminalHandle;
 use crate::state::AppState;
-use crate::terminal_session::{TerminalTab, TerminalTabs};
 use crate::theme;
 use crate::ui::tabs::{
     GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
@@ -46,7 +46,7 @@ fn terminal_line_h() -> f32 {
 /// visibility and focus when that region is hidden.
 pub fn toggle_panel(
     state: &State<AppState>,
-    terminal_tabs: &State<TerminalTabs>,
+    terminal_tabs: &crate::app::terminal_binding::TerminalStore,
     editor_focus: &UiFocusHandle,
     terminal_focus: &UiFocusHandle,
 ) {
@@ -186,8 +186,8 @@ pub fn render(
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
     terminal_id: UiId,
-    controller: TerminalController,
-    terminal_tabs: State<TerminalTabs>,
+    controller: TerminalHandle,
+    terminal_tabs: crate::app::terminal_binding::TerminalStore,
     application: Arc<ApplicationHandle>,
     cursor_blink_visible: bool,
     max_height: f32,
@@ -218,7 +218,7 @@ pub fn render_region(
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
     terminal_id: UiId,
-    terminal_tabs: State<TerminalTabs>,
+    terminal_tabs: crate::app::terminal_binding::TerminalStore,
     application: Arc<ApplicationHandle>,
     cursor_blink_visible: bool,
     region: crate::domain::application_layout::RegionId,
@@ -268,8 +268,8 @@ fn render_view(
     editor_focus: UiFocusHandle,
     terminal_focus: UiFocusHandle,
     terminal_id: UiId,
-    controller: TerminalController,
-    terminal_tabs: State<TerminalTabs>,
+    controller: TerminalHandle,
+    terminal_tabs: crate::app::terminal_binding::TerminalStore,
     application: Arc<ApplicationHandle>,
     cursor_blink_visible: bool,
     max_height: f32,
@@ -366,7 +366,7 @@ fn render_view(
     let add_shell = snapshot.shell;
     let add_cwd = terminal_tab_snapshot
         .active()
-        .and_then(TerminalTab::working_directory)
+        .and_then(|tab| tab.working_directory())
         .or_else(|| app_state.explorer.model.roots().first().cloned());
     let add_rect = UiRect::new(
         rect.right - 32.0,
@@ -614,10 +614,10 @@ fn render_view(
 fn render_session(
     body: UiRect,
     state: State<AppState>,
-    terminal_tabs: State<TerminalTabs>,
+    terminal_tabs: crate::app::terminal_binding::TerminalStore,
     terminal_focus: UiFocusHandle,
     terminal_id: UiId,
-    controller: TerminalController,
+    controller: TerminalHandle,
     session_id: u64,
     focused: bool,
     application: Arc<ApplicationHandle>,
@@ -741,7 +741,7 @@ fn render_terminal_tabs(
     rect: UiRect,
     tabs: &[TerminalTab],
     active_id: u64,
-    terminal_tabs: State<TerminalTabs>,
+    terminal_tabs: crate::app::terminal_binding::TerminalStore,
     state: State<AppState>,
     map: crate::ui::layout_map::MapStore,
     terminal_focus: UiFocusHandle,
@@ -1008,11 +1008,21 @@ fn render_terminal_tabs(
                 .event_policy(EventPolicy::INTERACTIVE)
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
-                    close_controller.terminate(&close_application);
-                    let closing_last_tab = close_tabs.get().tabs().len() == 1;
+                    let current = close_tabs.get().tabs();
+                    if !current.iter().any(|tab| tab.id == tab_id) {
+                        return;
+                    }
+                    let closing_last_tab = current.len() == 1;
                     close_tabs.update(move |tabs| {
                         tabs.close(tab_id);
                     });
+                    let surviving = close_tabs.get();
+                    close_state.update(|app| {
+                        if let Some(layout) = &mut app.application_layout {
+                            surviving.sync_layout(layout);
+                        }
+                    });
+                    close_controller.terminate(&close_application);
                     if closing_last_tab {
                         close_state.update(|app| {
                             app.show_terminal = false;
@@ -1202,7 +1212,7 @@ pub enum ClipboardShortcut {
 }
 
 pub fn run_clipboard_shortcut(
-    controller: &TerminalController,
+    controller: &TerminalHandle,
     shortcut: ClipboardShortcut,
     clipboard: &dyn Clipboard,
 ) -> Result<(), ClipboardError> {
@@ -1218,12 +1228,12 @@ pub fn run_clipboard_shortcut(
 }
 
 /// Type replayed text from an abandoned key sequence into the shell.
-pub fn write_text(controller: &TerminalController, text: &str) {
+pub fn write_text(controller: &TerminalHandle, text: &str) {
     controller.write(text.as_bytes());
 }
 
 fn copy_selection(
-    controller: &TerminalController,
+    controller: &TerminalHandle,
     clipboard: &dyn Clipboard,
 ) -> Result<bool, ClipboardError> {
     let Some(value) = controller.selected_text() else {
@@ -1236,7 +1246,7 @@ fn copy_selection(
 }
 
 fn paste_clipboard(
-    controller: &TerminalController,
+    controller: &TerminalHandle,
     clipboard: &dyn Clipboard,
 ) -> Result<(), ClipboardError> {
     if let Some(value) = clipboard.read_text()? {
@@ -1260,7 +1270,7 @@ fn shell_menu(
     bounds: UiRect,
     state: State<AppState>,
     focus: UiFocusHandle,
-    terminal_tabs: State<TerminalTabs>,
+    terminal_tabs: crate::app::terminal_binding::TerminalStore,
 ) -> Element {
     let options = state.get().shell_options.clone();
     let space = (bounds.bottom - instance_rect.bottom).max(instance_rect.top - bounds.top);
@@ -1319,7 +1329,7 @@ fn shell_menu(
                     let cwd = row_tabs
                         .get()
                         .active()
-                        .and_then(TerminalTab::working_directory);
+                        .and_then(|tab| tab.working_directory());
                     let mut id = None;
                     row_tabs.update(|tabs| {
                         id = Some(tabs.add_at(shell, cwd));
@@ -1397,7 +1407,9 @@ mod tests {
         use lgui::session::UiSession;
         use std::sync::Mutex;
         let viewport = UiRect::new(0.0, 0.0, 400.0, 400.0);
-        let exposed = Arc::new(Mutex::new(None::<(State<AppState>, State<TerminalTabs>)>));
+        let exposed = Arc::new(Mutex::new(
+            None::<(State<AppState>, crate::app::terminal_binding::TerminalStore)>,
+        ));
         let output = exposed.clone();
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(|| {
@@ -1422,7 +1434,7 @@ mod tests {
                 app.terminal_shell_menu = true;
                 app
             });
-            let tabs = cx.state_with(|| {
+            let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
                 tabs.set_profiles(&state.get().terminal_profiles);
                 tabs
@@ -1550,13 +1562,15 @@ mod tests {
         use lgui::session::UiSession;
         use std::sync::Mutex;
 
-        let exposed = Arc::new(Mutex::new(None::<(State<AppState>, State<TerminalTabs>)>));
+        let exposed = Arc::new(Mutex::new(
+            None::<(State<AppState>, crate::app::terminal_binding::TerminalStore)>,
+        ));
         let output = exposed.clone();
         let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
         let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(AppState::new);
-            let tabs = cx.state_with(|| {
+            let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
                 tabs.split(1);
                 tabs
@@ -1723,7 +1737,9 @@ mod tests {
             atomic::{AtomicUsize, Ordering},
         };
 
-        let exposed = Arc::new(Mutex::new(None::<(State<AppState>, State<TerminalTabs>)>));
+        let exposed = Arc::new(Mutex::new(
+            None::<(State<AppState>, crate::app::terminal_binding::TerminalStore)>,
+        ));
         let output = exposed.clone();
         let writes = Arc::new(AtomicUsize::new(0));
         let received = writes.clone();
@@ -1735,7 +1751,7 @@ mod tests {
                 app.show_terminal = true;
                 app
             });
-            let tabs = cx.state_with(|| {
+            let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
                 tabs.add(ShellKind::Cmd);
                 tabs.add(ShellKind::Bash);
@@ -1784,7 +1800,7 @@ mod tests {
             if let Some(active_id) = snapshot.active_id() {
                 root = root.child(render_terminal_tabs(
                     UiRect::new(0.0, 0.0, 600.0, 34.0),
-                    snapshot.tabs(),
+                    &snapshot.tabs(),
                     active_id,
                     tabs.clone(),
                     state.clone(),

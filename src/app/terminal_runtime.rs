@@ -33,3 +33,14 @@ impl TerminalDisplay for TerminalController {
         self.snapshot_with_palette(&palette)
     }
 }
+
+impl TerminalDisplay for crate::infrastructure::terminal::runtime::TerminalHandle {
+    fn snapshot(&self) -> TerminalSnapshot {
+        let palette = Palette {
+            ansi: crate::theme::c().ansi,
+            foreground: crate::theme::c().text.0,
+            background: crate::theme::c().bg.0,
+        };
+        self.snapshot_with_palette(&palette)
+    }
+}

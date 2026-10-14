@@ -152,7 +152,7 @@ eol = lf
                 }
                 foreach ($smoke in $smokes.GetEnumerator()) {
                     $null = Invoke-CargoCheck $smoke.Key (@('test') + $cargoBase + @(
-                        ('terminal_session::tests::' + $smoke.Value),
+                        ('app::terminal_session_tests::tests::' + $smoke.Value),
                         '--', '--exact', '--ignored', '--nocapture', '--test-threads=1'))
                 }
             }

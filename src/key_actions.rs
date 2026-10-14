@@ -18,7 +18,7 @@ use lgui::services::ServicesContextExt;
 use crate::app::editor_vim as vim_input;
 use crate::config_watcher::{self, ConfigWatcher};
 use crate::features::git::GitStoreSnapshot;
-use crate::infrastructure::terminal::session::TerminalController;
+use crate::infrastructure::terminal::runtime::TerminalHandle;
 use crate::input::action::Action;
 use crate::input::context::KeyContext;
 use crate::input::context_stack::{self, EDITOR, TERMINAL, VIM};
@@ -28,7 +28,6 @@ use crate::input::keymap_file::{self, UserKeymap};
 use crate::input::keystroke::Keystroke;
 use crate::settings_persistence::{self, UserSettings};
 use crate::state::AppState;
-use crate::terminal_session::TerminalTabs;
 use crate::ui::close_confirmation;
 use crate::ui::editor::view as editor_view;
 use crate::ui::terminal::{self, ClipboardShortcut};
@@ -48,9 +47,9 @@ pub struct KeyEnv {
 
 #[derive(Clone)]
 pub struct TerminalEnv {
-    pub tabs: State<TerminalTabs>,
+    pub tabs: crate::app::terminal_binding::TerminalStore,
     pub focus: UiFocusHandle,
-    pub controller: Option<TerminalController>,
+    pub controller: Option<TerminalHandle>,
 }
 
 /// Install the keymap dispatcher on `root`.

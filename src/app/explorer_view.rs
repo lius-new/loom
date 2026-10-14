@@ -11,10 +11,11 @@ use lgui::core::UiFocusHandle;
 use lgui::prelude::{Element, State, UiRect};
 use lgui::services::ServicesContextExt;
 
+#[cfg(test)]
+use crate::app::terminal_binding::TerminalTabs;
 use crate::features::explorer::{ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::features::git::{GitStoreSnapshot, PathDecoration};
 use crate::state::{AppState, FileDragSource, FileDragState};
-use crate::terminal_session::TerminalTabs;
 use crate::ui::components::state_access::StateAccess;
 use crate::ui::drawer::{self, DrawerMode};
 use crate::ui::explorer::commands::{
@@ -27,7 +28,7 @@ use crate::ui::explorer::state::ExplorerPanelState;
 pub(crate) struct Services {
     pub application: ApplicationContext,
     pub editor_focus: UiFocusHandle,
-    pub terminal_tabs: State<TerminalTabs>,
+    pub terminal_tabs: crate::app::terminal_binding::TerminalStore,
 }
 
 fn projection(state: &State<AppState>) -> StateAccess<ExplorerPanelState> {
@@ -288,7 +289,11 @@ mod tests {
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(|| initial.lock().unwrap().take().unwrap());
             let git = cx.state(GitStoreSnapshot::default());
-            let tabs = cx.state_with(TerminalTabs::new);
+            let tabs = crate::app::terminal_binding::test_store(
+                cx,
+                Some(state.clone()),
+                TerminalTabs::new,
+            );
             let id = UiId::new("explorer-edit-input");
             let services = Services {
                 application: context.clone(),

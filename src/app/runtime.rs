@@ -10,6 +10,7 @@ use lgui::ApplicationHandle;
 pub(crate) struct AppRuntime {
     services: Mutex<Services>,
     git_poll: PollControl,
+    terminals: Arc<crate::infrastructure::terminal::runtime::TerminalRuntime>,
 }
 
 #[derive(Default)]
@@ -20,6 +21,12 @@ struct Services {
 }
 
 impl AppRuntime {
+    pub(crate) fn terminals(
+        &self,
+    ) -> &Arc<crate::infrastructure::terminal::runtime::TerminalRuntime> {
+        &self.terminals
+    }
+
     pub(crate) fn file_loader(&self) -> Option<FileLoader> {
         self.services.lock().unwrap().file_loader.clone()
     }
@@ -68,6 +75,7 @@ impl AppRuntime {
 
 impl Drop for AppRuntime {
     fn drop(&mut self) {
+        self.terminals.shutdown();
         let services = self.services.get_mut().unwrap();
         if let Some(cancel) = services.search_cancel.take() {
             cancel.store(true, Ordering::Relaxed);

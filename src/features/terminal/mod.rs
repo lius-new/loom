@@ -10,3 +10,5 @@ pub(crate) use self::types::{
     SessionId, ShellKind, TERMINAL_PURPOSES, TerminalCellStyle, TerminalRun, TerminalSize,
     TerminalSnapshot, TerminalStatus,
 };
+
+pub(crate) mod model;

@@ -53,6 +53,11 @@ pub struct SessionConsole {
 
 #[cfg(windows)]
 impl SessionConsole {
+    #[cfg(test)]
+    pub(crate) fn test_pid(&self) -> u32 {
+        self.child.id()
+    }
+
     pub fn new(root: u32) -> Option<Self> {
         use std::io::{BufRead, BufReader};
         use std::os::windows::process::CommandExt;

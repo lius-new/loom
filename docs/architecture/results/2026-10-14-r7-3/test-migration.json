@@ -1,0 +1,392 @@
+{
+  "schema": 1,
+  "base": "ebf18ff1f2a8d5f99930a45edb810e4d9c9a7297",
+  "before_source_declarations": 675,
+  "after_source_declarations": 682,
+  "moved_source_tests": [
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "custom_profiles_preserve_arguments_split_configuration_and_missing_path_fallback",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "custom_profiles_preserve_arguments_split_configuration_and_missing_path_fallback",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "conpty_delivers_wheels_as_native_mouse_records_and_restores_history",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "conpty_delivers_wheels_as_native_mouse_records_and_restores_history",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "native_mouse_probe",
+        "ignored": true
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "native_mouse_probe",
+        "ignored": true
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "saved_directories_stay_with_independent_tabs_when_siblings_close",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "saved_directories_stay_with_independent_tabs_when_siblings_close",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "real_shell_directories_follow_cd_and_survive_session_restoration",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "real_shell_directories_follow_cd_and_survive_session_restoration",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "tab_names_keep_shell_type_and_prioritize_purpose_then_running_program",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "tab_names_keep_shell_type_and_prioritize_purpose_then_running_program",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "purposes_survive_restoration_moves_and_sibling_closure_without_saving_programs",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "purposes_survive_restoration_moves_and_sibling_closure_without_saving_programs",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "saved_custom_purposes_migrate_to_other_and_only_presets_are_kept",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/model.rs",
+        "name": "saved_custom_purposes_migrate_to_other_and_only_presets_are_kept",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "shell_cwd_drops_the_verbatim_prefix",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "shell_cwd_drops_the_verbatim_prefix",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "terminal_tabs_add_select_and_close_neighboring_sessions",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/model.rs",
+        "name": "terminal_tabs_add_select_and_close_neighboring_sessions",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "splitting_keeps_independent_sessions_in_one_group_and_close_keeps_siblings",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "splitting_keeps_independent_sessions_in_one_group_and_close_keeps_siblings",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "moving_a_group_leader_preserves_controller_cwd_scrollback_and_selection",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "moving_a_group_leader_preserves_controller_cwd_scrollback_and_selection",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "grouped_terminal_layout_round_trips_and_legacy_sessions_stay_separate",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/model.rs",
+        "name": "grouped_terminal_layout_round_trips_and_legacy_sessions_stay_separate",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "terminal_tab_can_request_its_own_working_directory",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/model.rs",
+        "name": "terminal_tab_can_request_its_own_working_directory",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "terminal_tabs_restore_shell_order_and_active_index",
+        "ignored": false
+      },
+      "after": {
+        "file": "src/features/terminal/model.rs",
+        "name": "terminal_tabs_restore_shell_order_and_active_index",
+        "ignored": false
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "launcher_backed_shell_is_idle_then_detects_and_clears_programs",
+        "ignored": true
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "launcher_backed_shell_is_idle_then_detects_and_clears_programs",
+        "ignored": true
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "exited_shell_launchers_do_not_hide_unknown_applications",
+        "ignored": true
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "exited_shell_launchers_do_not_hide_unknown_applications",
+        "ignored": true
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "running_application_is_detected_and_cleared_in_each_real_shell",
+        "ignored": true
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "running_application_is_detected_and_cleared_in_each_real_shell",
+        "ignored": true
+      },
+      "moved": true,
+      "ignored_changed": false
+    },
+    {
+      "before": {
+        "file": "src/terminal_session.rs",
+        "name": "supported_shells_round_trip_through_real_conpty_sessions",
+        "ignored": true
+      },
+      "after": {
+        "file": "src/app/terminal_session_tests.rs",
+        "name": "supported_shells_round_trip_through_real_conpty_sessions",
+        "ignored": true
+      },
+      "moved": true,
+      "ignored_changed": false
+    }
+  ],
+  "added_source_tests": [
+    {
+      "file": "src/app/terminal_binding.rs",
+      "name": "model_region_and_operation_snapshots_do_not_keep_app_runtime_or_sessions_alive",
+      "ignored": false
+    },
+    {
+      "file": "src/app/terminal_binding.rs",
+      "name": "close_removes_model_and_layout_before_release_and_stale_snapshots_cannot_recreate_it",
+      "ignored": false
+    },
+    {
+      "file": "src/app/terminal_binding.rs",
+      "name": "move_reuses_session_and_split_allocates_one_with_latest_directory",
+      "ignored": false
+    },
+    {
+      "file": "src/app/terminal_binding.rs",
+      "name": "real_pty_moves_with_same_pid_and_owner_teardown_kills_it_with_snapshots_retained",
+      "ignored": false
+    },
+    {
+      "file": "src/app/terminal_binding.rs",
+      "name": "startup_notification_can_close_its_own_real_session_without_deadlocking",
+      "ignored": false
+    },
+    {
+      "file": "src/app/terminal_binding.rs",
+      "name": "configuration_source_refreshes_session_profiles_without_a_second_model_copy",
+      "ignored": false
+    },
+    {
+      "file": "src/infrastructure/terminal/registry.rs",
+      "name": "create_move_split_close_and_shutdown_have_exact_resource_counts",
+      "ignored": false
+    }
+  ],
+  "missing_source_tests": [],
+  "changed_ignored": [],
+  "before_application_test_list": 606,
+  "missing_application_executed_tests": [],
+  "before_results": [
+    {
+      "status": "ok",
+      "passed": 592,
+      "failed": 0,
+      "ignored": 14
+    },
+    {
+      "status": "ok",
+      "passed": 65,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 29,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "after_results": [
+    {
+      "status": "ok",
+      "passed": 599,
+      "failed": 0,
+      "ignored": 14
+    },
+    {
+      "status": "ok",
+      "passed": 65,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 29,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "status": "ok",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "counting_note": "Source declarations include platform cfg. Application names come from the frozen before executable and the complete after test log. Independent domain repeats are listed separately from added behaviors."
+}

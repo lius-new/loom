@@ -320,7 +320,6 @@
         "crate::project_settings",
         "crate::settings_persistence",
         "crate::state",
-        "crate::terminal_session",
         "crate::ui",
         "crate::workspace_actions",
         "crate::workspace_persistence",
@@ -365,21 +364,6 @@
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R7.1 纯终端类型/规则已改为引用 features/terminal；本文件剩余设置或系统/运行时接线按原登记阶段继续迁移。"
-    },
-    "src/terminal_session.rs": {
-      "dependencies": [
-        "crate::model",
-        "crate::workspace_persistence",
-        "lgui",
-        "std::fs",
-        "std::process",
-        "std::thread",
-        "crate::features",
-        "crate::app",
-        "crate::infrastructure"
-      ],
-      "remove_in": "R7",
-      "reason": "R7.2：TerminalTabs 的模型/控制器组合和原有跨层回归保留到 R7.3；PTY 和系统适配已迁走，测试使用 cfg(test) 资源检查接口，不拥有另一套状态。"
     },
     "src/theme.rs": {
       "dependencies": [
@@ -430,7 +414,6 @@
       "dependencies": [
         "crate::model",
         "crate::state",
-        "crate::terminal_session",
         "crate::app"
       ],
       "remove_in": "R7",
@@ -467,7 +450,6 @@
         "crate::app",
         "crate::input",
         "crate::state",
-        "crate::terminal_session",
         "crate::vim"
       ],
       "remove_in": "R8",
@@ -499,7 +481,6 @@
     "src/ui/terminal.rs": {
       "dependencies": [
         "crate::state",
-        "crate::terminal_session",
         "crate::app",
         "crate::infrastructure"
       ],
@@ -519,7 +500,7 @@
     "src/ui/terminal_tab_context_menu.rs": {
       "dependencies": [
         "crate::state",
-        "crate::terminal_session"
+        "crate::app"
       ],
       "remove_in": "R7",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
@@ -545,8 +526,8 @@
     "src/ui/workspace_home.rs": {
       "dependencies": [
         "crate::state",
-        "crate::terminal_session",
-        "crate::workspace_actions"
+        "crate::workspace_actions",
+        "crate::app"
       ],
       "remove_in": "R8",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。 R5 收尾：剩余根依赖为主表面悬停/焦点、打开文件与 Source Control 开关等 chrome。"
@@ -1053,7 +1034,7 @@
       "terminal_profiles discovery",
       "terminal_program OS adapters"
     ],
-    "next": "R7.2 completed locally; R7.3 not started",
+    "next": "R7.2 and R7.3 completed locally; R7.4 not started",
     "completed_on": "2026-10-14",
     "retained_runtime_note": "Historical R7.1 checkpoint list; PTY/system adapters migrated in R7.2."
   },
@@ -1062,10 +1043,67 @@
     "infrastructure": "infrastructure/terminal",
     "application_adapter": "app/terminal_runtime",
     "retained": "TerminalTabs/controller ownership and legacy cross-layer tests until R7.3",
-    "next": "R7.3 not started",
+    "next": "R7.3 completed locally; R7.4 not started",
     "completed_on": "2026-10-14",
     "no_migration_exceptions": [
       "infrastructure/terminal"
+    ],
+    "retained_note": "Historical R7.2 ownership description; resource references removed from model/snapshots in R7.3."
+  },
+  "phase7_3": {
+    "status": "completed on current machine with Rust 1.98.0; fixed 1.97.1 and native/cross-platform acceptance pending",
+    "pure_model": "features/terminal/model",
+    "owner": "AppRuntime.terminals -> infrastructure/terminal/runtime",
+    "view_binding": "app/terminal_binding (weak handles until R7.6)",
+    "next": "R7.4 not started",
+    "completed_on": "2026-10-14",
+    "no_migration_exceptions": [
+      "features/terminal/model",
+      "infrastructure/terminal"
     ]
+  },
+  "terminal_model_ownership": {
+    "tabs": {
+      "owner": "features/terminal/model:TerminalModel",
+      "migrated_in": "R7.3"
+    },
+    "active_id": {
+      "owner": "features/terminal/model:TerminalModel",
+      "migrated_in": "R7.3"
+    },
+    "next_id": {
+      "owner": "features/terminal/model:TerminalModel",
+      "migrated_in": "R7.3"
+    }
+  },
+  "terminal_metadata_ownership": {
+    "id": {
+      "owner": "features/terminal/model:TerminalMetadata",
+      "migrated_in": "R7.3"
+    },
+    "group_id": {
+      "owner": "features/terminal/model:TerminalMetadata",
+      "migrated_in": "R7.3"
+    },
+    "width_weight": {
+      "owner": "features/terminal/model:TerminalMetadata",
+      "migrated_in": "R7.3"
+    },
+    "shell": {
+      "owner": "features/terminal/model:TerminalMetadata",
+      "migrated_in": "R7.3"
+    },
+    "cwd": {
+      "owner": "features/terminal/model:TerminalMetadata",
+      "migrated_in": "R7.3"
+    },
+    "purpose": {
+      "owner": "features/terminal/model:TerminalMetadata",
+      "migrated_in": "R7.3"
+    },
+    "running_program": {
+      "owner": "features/terminal/model:TerminalMetadata",
+      "migrated_in": "R7.3"
+    }
   }
 }

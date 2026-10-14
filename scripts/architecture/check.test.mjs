@@ -195,7 +195,7 @@ test('root state cannot re-export Git types again',()=>{
 
 test('terminal rules reject GUI, root state, runtime resources and direct I/O',()=>{
   const file='src/features/terminal/new.rs';
-  for(const source of ['use lgui::core::*;','use crate::state::AppState;','use crate::terminal_session::TerminalController;','use std::{fs,process,thread};','use conpty::Process;','pub struct Runtime { value: Mutex<u32> }','use unknown_external::Thing;','use std::io::{Read, Write};','use std::{io as stream, env};','let dir = std::env::current_dir();'])assert.ok(violations({[file]:source},policy()).length>0);
+  for(const source of ['use lgui::core::*;','use crate::state::AppState;','use crate::terminal_session::TerminalController;','use std::{fs,process,thread};','use conpty::Process;','pub struct Runtime { value: Mutex<u32> }','use unknown_external::Thing;','use super::super::super::app::terminal_binding::TerminalTabs;','use std::io::{Read, Write};','use std::{io as stream, env};','let dir = std::env::current_dir();'])assert.ok(violations({[file]:source},policy()).length>0);
   assert.deepEqual(violations({[file]:'use serde::{Serialize, Deserialize}; use vt100::Screen; use crate::features::terminal::ShellKind;'},policy()),[]);
 });
 test('terminal rules cannot regain exceptions or include runtime sources',()=>{
@@ -214,11 +214,6 @@ test('application layout cannot regain GUI, parent paths, I/O or exceptions',()=
 
 test('removed terminal and layout paths cannot return as compatibility aliases',()=>{
   for(const file of ['src/model/application_layout.rs','src/terminal_mouse.rs'])assert.ok(violations({[file]:'pub use crate::domain::application_layout::*;'},policy()).some(e=>e.includes('removed R7.1 paths')));
-  for(const file of ['src/terminal_session.rs']) {
-    const p=policy();p.exceptions[file]={dependencies:['crate::features'],remove_in:'R7.2',reason:'remaining runtime'};
-    for(const visibility of ['pub','pub(crate)'])assert.ok(violations({[file]:visibility+' use crate::features::terminal::ShellKind;'},p).some(e=>e.includes('legacy re-exports')));
-    assert.deepEqual(violations({[file]:'use crate::features::terminal::ShellKind;'},p),[]);
-  }
 });
 
 test('terminal infrastructure rejects GUI, root/application dependencies and exceptions',()=>{
@@ -229,4 +224,25 @@ test('terminal infrastructure rejects GUI, root/application dependencies and exc
 });
 test('removed terminal system adapters cannot return as aliases',()=>{
  for(const file of ['src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs'])assert.ok(violations({[file]:'pub use crate::infrastructure::terminal::*;'},policy()).some(e=>e.includes('removed R7.2 adapters')));
+});
+
+test('terminal model and metadata fields require private registered ownership',()=>{
+ const file='src/features/terminal/model.rs',p=policy();p.terminal_model_ownership={tabs:{owner:'features/terminal/model:TerminalModel',migrated_in:'R7.3'}};
+ assert.ok(violations({[file]:'pub struct TerminalModel { tabs: Vec<TerminalMetadata>, surprise: u64 }'},p).some(e=>e.includes('surprise: no registered owner')));
+ assert.ok(violations({[file]:'pub struct TerminalModel { pub tabs: Vec<TerminalMetadata> }'},p).some(e=>e.includes('fields must stay private')));
+ assert.ok(violations({[file]:'pub struct TerminalModel {}'},p).some(e=>e.includes('obsolete ownership')));
+ p.terminal_metadata_ownership={id:{owner:'features/terminal/model:TerminalMetadata',migrated_in:'R7.3'}};
+ assert.ok(violations({[file]:'pub struct TerminalMetadata { pub id: u64 }'},p).some(e=>e.includes('fields must stay private')));
+});
+test('terminal model cannot hide runtime resources in nested data or aliases',()=>{
+ const file='src/features/terminal/model.rs';for(const source of ['type Hidden = Arc<Session>; pub struct TerminalModel { value: Hidden }','pub struct TerminalMetadata { nested: Wrapper<Weak<TerminalRuntime>> }','type Old = TerminalHandle;','use crate::infrastructure::terminal::runtime::TerminalRuntime;'])assert.ok(violations({[file]:source},policy()).length>0);
+});
+test('removed terminal model path cannot return or be a reexport',()=>{
+ assert.ok(violations({'src/terminal_session.rs':'pub use crate::app::terminal_binding::*;'},policy()).some(e=>e.includes('removed R7.3')));
+});
+
+test('terminal app snapshots and operation handles cannot become strong owners',()=>{
+ for(const [file,name,fields]of [['src/app/terminal_binding.rs','TerminalTabs','model: TerminalModel, runtime: Arc<TerminalRuntime>'],['src/app/terminal_binding.rs','TerminalTabs','model: TerminalModel, runtime: Arc<TerminalRuntime> /* runtime: Weak<TerminalRuntime> */'],['src/app/terminal_binding.rs','TerminalStore','model: State<OwnedSessions>, runtime: Weak<TerminalRuntime>'],['src/app/terminal_binding.rs','TerminalStore','model: State<TerminalModel>, runtime: Weak<TerminalRuntime>, keepalive: Arc<Session>'],['src/infrastructure/terminal/runtime.rs','TerminalHandle','runtime: Arc<TerminalRuntime>, id: u64, shell: ShellKind'],['src/app/terminal_binding.rs','TerminalTab','id:u64,group_id:u64,width_weight:f32,controller:TerminalController,cwd:Option<PathBuf>,purpose:Option<String>,running_program:Option<String>']])assert.ok(violations({[file]:'struct '+name+' { '+fields+' }'},policy()).length>0);
+ assert.ok(violations({'src/app/new.rs':'use crate::terminal_session::TerminalTabs;'},policy()).some(e=>e.includes('old terminal composition')));
+ assert.ok(violations({'src/main.rs':'mod terminal_session;'},policy()).some(e=>e.includes('old terminal module alias')));
 });

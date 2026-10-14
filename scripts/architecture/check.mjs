@@ -138,6 +138,9 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
+    if(deps.includes('crate::terminal_session'))problems.push(file+': old terminal composition path is removed');
+    if(file==='src/main.rs'&&ts.some((t,i)=>t==='mod'&&ts[i+1]==='terminal_session'))problems.push(file+': old terminal module alias is removed');
+    if(file==='src/terminal_session.rs')problems.push(file+': removed R7.3 model/runtime composition must not be restored');
     if(['src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs'].includes(file))problems.push(file+': removed R7.2 adapters must not be restored');
     if(file.startsWith('src/infrastructure/terminal/')) {
       if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super'&&ts[i+3]==='::'&&ts[i+4]==='super'))problems.push(file+': Terminal infrastructure cannot escape to root through parent paths');
@@ -155,7 +158,32 @@ export function violations(sources, policy) {
       if(ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','KeyboardEvent','Keystroke','UiRect','InputState'].includes(t)))problems.push(`${file}: editing core must not depend on application/platform state`);
       if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(`${file}: editing core cannot include sources outside its crate boundary`);
     }
+    if(file==='src/app/terminal_binding.rs'||file==='src/infrastructure/terminal/runtime.rs') {
+      const contracts=file==='src/app/terminal_binding.rs'?[['TerminalStore',['model','runtime']],['TerminalTabs',['model','runtime']],['TerminalTab',['id','group_id','width_weight','controller','cwd','purpose','running_program']]]:[['TerminalHandle',['runtime','id','shell']]];
+      for(const [name,expected]of contracts){
+        if(!ts.some((t,i)=>t==='struct'&&ts[i+1]===name))continue;
+        const actual=structFields(source,name);if(actual.length!==expected.length||actual.some(f=>!expected.includes(f)))problems.push(name+': unexpected snapshot/handle ownership field');
+        const start=ts.findIndex((t,i)=>t==='struct'&&ts[i+1]===name),open=ts.indexOf('{',start);let end=open+1,depth=1;while(end<ts.length&&depth){if(ts[end]==='{')depth++;if(ts[end]==='}')depth--;end++;}const body=ts.slice(open+1,end-1).join(' ');
+        if(name==='TerminalTab'){if(!/controller\s*:\s*TerminalHandle\b/.test(body)||/\b(?:Arc|Box|TerminalController|TerminalRuntime)\b/.test(body))problems.push(name+': projection must use weak session handles');continue;}
+        if(name==='TerminalStore'&&!/model\s*:\s*State\s*<\s*TerminalModel\s*>/.test(body))problems.push(name+': State must contain the pure terminal model');
+        if(name==='TerminalTabs'&&!/model\s*:\s*TerminalModel\b/.test(body))problems.push(name+': snapshot must contain pure model values');
+        if(!/runtime\s*:\s*Weak\s*<\s*TerminalRuntime\s*>/.test(body))problems.push(name+': runtime access must stay weak');
+      }
+    }
+    if(file==='src/features/terminal/model.rs') {
+      for(const [name,register]of [['TerminalModel','terminal_model_ownership'],['TerminalMetadata','terminal_metadata_ownership']]) {
+        if(!ts.some((t,i)=>t==='struct'&&ts[i+1]===name))continue;
+        const fields=structFields(source,name),registered=Object.keys(policy[register]??{});
+        for(const field of fields)if(!registered.includes(field))problems.push(name+'.'+field+': no registered owner');
+        for(const field of registered)if(!fields.includes(field))problems.push(name+'.'+field+': obsolete ownership entry');
+        const start=ts.findIndex((t,i)=>t==='struct'&&ts[i+1]===name);let depth=0;
+        for(let i=start+2;i<ts.length;i++){if(ts[i]==='{'){depth++;continue;}if(ts[i]==='}'&&--depth===0)break;if(depth===1&&ts[i]==='pub'){problems.push(name+' fields must stay private');break;}}
+        for(const [field,entry]of Object.entries(policy[register]??{}))if(!entry.owner||!entry.migrated_in)problems.push(name+'.'+field+': incomplete ownership entry');
+      }
+      if(ts.some(t=>['Arc','Weak','Box','TerminalHandle','TerminalRuntime','TerminalController','TerminalInner','RunningProcess','Registry'].includes(t)))problems.push(file+': terminal metadata cannot embed or alias runtime ownership');
+    }
     if(file.startsWith('src/features/terminal/')) {
+      if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super'))problems.push(file+': Terminal rules cannot escape through ancestor paths');
       if(terminalStandardServices(ts))problems.push(file+': Terminal rules cannot access standard I/O or environment services');
       if(ts.some(t=>['AppState','AppRuntime','Workspace','State','ApplicationHandle','KeyboardEvent','KeyModifiers','InputState','UiRect','TerminalController','TerminalInner','RunningProcess','FileLoader','AtomicBool','AtomicU64','Mutex','RwLock','Command','Child'].includes(t)))problems.push(file+': Terminal rules must be framework/root/runtime independent');
       if(policy.exceptions[file])problems.push(file+': Terminal rules cannot have migration exceptions');

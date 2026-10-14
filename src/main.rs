@@ -36,7 +36,6 @@ mod project_settings;
 use app::workspace_restore as session_restore;
 mod settings_persistence;
 use app::state;
-mod terminal_session;
 mod theme;
 mod ui;
 use loom_editor_core::vim;

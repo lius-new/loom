@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "base": "ebf18ff1f2a8d5f99930a45edb810e4d9c9a7297",
+  "checks": [
+    {
+      "name": "src/infrastructure/terminal/pty.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/infrastructure/terminal/profiles.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/infrastructure/terminal/integration.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/domain/application_layout.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "Native probe and observer production code unchanged",
+      "equal": true
+    },
+    {
+      "name": "Pure model new algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model restored algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model restored_with_groups algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model empty algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model tabs algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model active_id algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model active algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model active_group algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model region_view algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model detach_group algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model saved_groups algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model widths algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model purposes algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model directories algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model restore_directories algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model update_directories algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model restore_purposes algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model set_purpose algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model update_programs algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model restore_widths algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model split algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model shells algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model active_index algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model is_empty algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model add algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model add_at algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model select algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model resize_pair algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model close algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model normalized_purpose algorithm preserved",
+      "equal": true
+    },
+    {
+      "name": "Pure model default algorithm preserved",
+      "equal": true
+    }
+  ],
+  "comparison": "Rustfmt-normalized source comparison with whitespace ignored, after explicit metadata/controller and type substitutions. Cwd resolution now occurs in app before State mutation. Ownership/lifecycle changes are tested separately, not claimed byte-identical.",
+  "scope": "R7.3 only"
+}
