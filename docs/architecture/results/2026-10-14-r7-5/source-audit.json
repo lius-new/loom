@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "base": "6cb8d0d7cce90f81c9b46a1082a74e101fa3c405",
+  "scope": "R7.5",
+  "checks": [
+    {
+      "file": "src/features/terminal/model.rs",
+      "equal": true
+    },
+    {
+      "file": "src/features/terminal/input.rs",
+      "equal": true
+    },
+    {
+      "file": "src/features/terminal/mouse.rs",
+      "equal": true
+    },
+    {
+      "file": "src/features/terminal/screen.rs",
+      "equal": true
+    },
+    {
+      "file": "src/features/terminal/profiles.rs",
+      "equal": true
+    },
+    {
+      "file": "src/features/terminal/program.rs",
+      "equal": true
+    },
+    {
+      "file": "src/features/terminal/types.rs",
+      "equal": true
+    },
+    {
+      "file": "src/infrastructure/terminal/pty.rs",
+      "equal": true
+    },
+    {
+      "file": "src/infrastructure/terminal/profiles.rs",
+      "equal": true
+    },
+    {
+      "file": "src/infrastructure/terminal/integration.rs",
+      "equal": true
+    },
+    {
+      "file": "src/infrastructure/terminal/program.rs",
+      "equal": true
+    },
+    {
+      "file": "src/domain/application_layout.rs",
+      "equal": true
+    },
+    {
+      "file": "src/app/workspace_session.rs",
+      "equal": true
+    }
+  ]
+}

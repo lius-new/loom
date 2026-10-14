@@ -11,6 +11,7 @@ pub(crate) struct AppRuntime {
     services: Mutex<Services>,
     git_poll: PollControl,
     terminals: Arc<crate::infrastructure::terminal::runtime::TerminalRuntime>,
+    terminal_mounts: Arc<crate::app::terminal_effects::Mounts>,
 }
 
 #[derive(Default)]
@@ -21,6 +22,9 @@ struct Services {
 }
 
 impl AppRuntime {
+    pub(crate) fn terminal_mounts(&self) -> &Arc<crate::app::terminal_effects::Mounts> {
+        &self.terminal_mounts
+    }
     pub(crate) fn terminals(
         &self,
     ) -> &Arc<crate::infrastructure::terminal::runtime::TerminalRuntime> {

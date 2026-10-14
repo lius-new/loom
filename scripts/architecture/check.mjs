@@ -140,6 +140,11 @@ export function violations(sources, policy) {
     const ts=tokens(source);
     if(deps.includes('crate::terminal_session'))problems.push(file+': old terminal composition path is removed');
     if(file==='src/main.rs'&&ts.some((t,i)=>t==='mod'&&ts[i+1]==='terminal_session'))problems.push(file+': old terminal module alias is removed');
+    if(file==='src/app/shell.rs'&&ts.some(t=>['SustainedProgram','ProgramProbe','ensure_started','save_terminal_state','DirectoryReports'].includes(t)))problems.push(file+': terminal effect behavior belongs to app/terminal_effects');
+    if(file==='src/app/terminal_effects.rs'&&ts.some((t,i)=>t==='struct'&&ts[i+1]==='Observation')) {
+      const fields=structFields(source,'Observation');
+      for(const field of ['id','generation'])if(!fields.includes(field))problems.push('Terminal observation must carry '+field);
+    }
     if(file==='src/terminal_session.rs')problems.push(file+': removed R7.3 model/runtime composition must not be restored');
     if(['src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs'].includes(file))problems.push(file+': removed R7.2 adapters must not be restored');
     if(file.startsWith('src/infrastructure/terminal/')) {

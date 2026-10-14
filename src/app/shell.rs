@@ -14,7 +14,7 @@ use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
 use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, component, group};
 use lgui::window::WindowFocusChanged;
 
-use crate::app::terminal_binding::TerminalTabs;
+use crate::app::terminal_effects;
 use crate::domain::application_layout::{ApplicationLayout, Content};
 use crate::features::git::GitStoreSnapshot;
 use crate::key_actions::{self, KeyEnv, TerminalEnv};
@@ -30,27 +30,9 @@ use crate::ui::{
 use crate::window_geometry;
 use crate::workspace_persistence;
 
-type TerminalProgramUpdate = (
-    Vec<(u64, Option<String>)>,
-    Vec<(u64, Option<std::path::PathBuf>)>,
-);
-
 pub fn app(cx: &mut RenderCx<'_, '_>) -> Element {
     // Pure caret composition frames keep the app's layout, text and hooks cached.
     component(cx.viewport(), |cx, _| render_app(cx))
-}
-
-fn save_terminals(tabs: &TerminalTabs, visible: bool, height: f32) {
-    let _ = workspace_persistence::save_terminal_state(
-        &tabs.shells(),
-        &tabs.saved_groups(),
-        &tabs.widths(),
-        &tabs.purposes(),
-        &tabs.directories(),
-        tabs.active_index(),
-        visible,
-        height,
-    );
 }
 
 fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
@@ -66,52 +48,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     // Never updated through `State`, so map changes never re-render the app.
     let layout_map_store = cx.state_with(layout_map::MapStore::default).get();
     let git_poll_control = runtime.git_poll_control();
-    let profile_source_state = state.clone();
-    runtime
-        .terminals()
-        .set_profile_source(move || profile_source_state.get().terminal_profiles.clone());
-    let terminal_tabs = cx.state_with(|| {
-        let session = workspace_persistence::load();
-        let mut tabs = TerminalTabs::restored_with_groups(
-            session.terminal_tabs,
-            session.active_terminal,
-            &session.terminal_groups,
-        );
-        tabs.restore_widths(&session.terminal_widths);
-        tabs.restore_purposes(&session.terminal_purposes);
-        tabs.restore_directories(&session.terminal_directories);
-
-        tabs.into_model()
-    });
-    let terminal_tabs =
-        crate::app::terminal_binding::TerminalStore::new(terminal_tabs, runtime.terminals());
-    let profile_tabs = terminal_tabs.clone();
-    let terminal_profiles = state.get().terminal_profiles.clone();
-    let profile_runtime = std::sync::Arc::downgrade(runtime.terminals());
-    let terminal_cleanup = std::sync::Arc::downgrade(runtime.terminals());
-    cx.use_effect((), move || {
-        move || {
-            if let Some(service) = terminal_cleanup.upgrade() {
-                service.shutdown();
-            }
-        }
-    });
-    cx.use_effect(terminal_profiles.clone(), move || {
-        if let Some(service) = profile_runtime.upgrade() {
-            service.refresh_profiles(&profile_tabs.get().into_model());
-            profile_tabs.notify();
-        }
-    });
+    let terminal_tabs = cx.state_with(|| terminal_effects::restored(workspace_persistence::load()));
+    let terminal_tabs = terminal_effects::bind(terminal_tabs, &runtime, &state);
+    terminal_effects::install_owner(cx, &runtime, &state, &terminal_tabs);
     let terminal_cursor_blink = cx.state(true);
     let terminal_cursor_visible = terminal_cursor_blink.get();
     let terminal_tab_snapshot = terminal_tabs.get();
     let active_terminal_id = terminal_tab_snapshot.active_id();
-    let terminal_shells = terminal_tab_snapshot.shells();
-    let terminal_groups = terminal_tab_snapshot.saved_groups();
-    let terminal_widths = terminal_tab_snapshot.widths();
-    let terminal_purposes = terminal_tab_snapshot.purposes();
-    let terminal_directories = terminal_tab_snapshot.directories();
-    let active_terminal_index = terminal_tab_snapshot.active_index();
     let terminal_controller = terminal_tab_snapshot
         .active()
         .map(|tab| tab.controller.clone());
@@ -133,94 +76,15 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             loading_runtime.clear_file_loader();
         }
     });
-    let program_sessions = terminal_tab_snapshot
-        .tabs()
-        .iter()
-        .map(|tab| {
-            (
-                tab.id,
-                tab.controller.clone(),
-                tab.running_program.clone(),
-                tab.working_directory(),
-            )
-        })
-        .collect::<Vec<_>>();
     let program_tabs = terminal_tabs.clone();
     let program_application = application.as_ref().clone();
     cx.use_effect(
-        program_sessions
+        terminal_tab_snapshot
+            .tabs()
             .iter()
-            .map(|(id, _, _, _)| *id)
+            .map(|tab| tab.id)
             .collect::<Vec<_>>(),
-        move || {
-            let (stop_sender, stop_receiver) = mpsc::channel();
-            let notifications = crate::background_ui::LatestNotification::new(
-                program_application,
-                move |(programs, directories): TerminalProgramUpdate| {
-                    program_tabs.update(|tabs| {
-                        tabs.update_programs(&programs);
-                        tabs.update_directories(&directories);
-                    });
-                },
-            );
-            let worker = thread::Builder::new()
-                .name("loom-terminal-programs".into())
-                .spawn(move || {
-                    let mut trackers = program_sessions
-                        .iter()
-                        .map(|_| crate::features::terminal::program::SustainedProgram::default())
-                        .collect::<Vec<_>>();
-                    let mut previous = program_sessions
-                        .iter()
-                        .map(|(id, _, name, _)| (*id, name.clone()))
-                        .collect::<Vec<_>>();
-                    let mut previous_directories = program_sessions
-                        .iter()
-                        .map(|(id, _, _, cwd)| (*id, cwd.clone()))
-                        .collect::<Vec<_>>();
-                    while let Err(RecvTimeoutError::Timeout) =
-                        stop_receiver.recv_timeout(Duration::from_millis(250))
-                    {
-                        if program_sessions.is_empty() {
-                            continue;
-                        }
-                        let now = std::time::Instant::now();
-                        let probe = crate::infrastructure::terminal::program::ProgramProbe::new();
-                        let programs = program_sessions
-                            .iter()
-                            .zip(&mut trackers)
-                            .map(|((id, controller, _, _), tracker)| {
-                                (
-                                    *id,
-                                    tracker.observe(
-                                        controller
-                                            .program_candidate(&probe, tracker.sustained_pid(now)),
-                                        now,
-                                    ),
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        let directories = program_sessions
-                            .iter()
-                            .map(|(id, controller, _, cwd)| {
-                                (*id, controller.working_directory().or_else(|| cwd.clone()))
-                            })
-                            .collect::<Vec<_>>();
-                        if programs != previous || directories != previous_directories {
-                            notifications.send((programs.clone(), directories.clone()));
-                            previous = programs;
-                            previous_directories = directories;
-                        }
-                    }
-                })
-                .ok();
-            move || {
-                let _ = stop_sender.send(());
-                if let Some(worker) = worker {
-                    let _ = worker.join();
-                }
-            }
-        },
+        move || terminal_effects::start_programs(program_tabs, program_application),
     );
     let dispatch_runtime = runtime.clone();
     let dispatch_handle = application.as_ref().clone();
@@ -315,8 +179,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let close_terminals = terminal_tabs.clone();
     cx.use_event_once::<window_geometry::AppCloseRequested>(move |_| {
         let app = close_state.get();
-        save_terminals(
-            &close_terminals.get(),
+        terminal_effects::save(
+            &close_terminals,
             app.default_terminal_open(),
             app.terminal_chrome.terminal_h,
         );
@@ -465,35 +329,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             crate::app::editor_vim::sync_view(app);
         });
     });
-    let default_terminal_open = s.default_terminal_open();
-    cx.use_effect(
-        (
-            terminal_shells.clone(),
-            terminal_groups.clone(),
-            terminal_widths.clone(),
-            terminal_purposes.clone(),
-            terminal_directories.clone(),
-            s.terminal.ui.terminal_split_drag,
-            active_terminal_index,
-            default_terminal_open,
-            s.terminal_chrome.terminal_h,
-        ),
-        move || {
-            if s.terminal.ui.terminal_split_drag.is_none() {
-                let _ = workspace_persistence::save_terminal_state(
-                    &terminal_shells,
-                    &terminal_groups,
-                    &terminal_widths,
-                    &terminal_purposes,
-                    &terminal_directories,
-                    active_terminal_index,
-                    default_terminal_open,
-                    s.terminal_chrome.terminal_h,
-                );
-            }
-            || {}
-        },
-    );
+    terminal_effects::install_save(cx, &terminal_tabs, &s);
     let show_drawer = s.drawer.visible;
     let search_key = crate::app::search::key(&s);
     let search_state = state.clone();
@@ -661,32 +497,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             .or_else(|| std::env::current_dir().ok())
     };
 
-    let terminal_starts = application_snapshot
-        .regions
-        .iter()
-        .flat_map(|(region, content, rect)| {
-            let Content::Terminal { .. } = content else {
-                return vec![];
-            };
-            let (ids, active) = application_layout.terminal_view(*region).unwrap();
-            let sessions = terminal_tab_snapshot
-                .region_view(&ids, active)
-                .active_group();
-            let rects = terminal::session_rects((*rect).into(), &sessions);
-            sessions
-                .into_iter()
-                .zip(rects)
-                .map(|(session, rect)| {
-                    (
-                        session.id,
-                        session.controller.clone(),
-                        session.working_directory().or_else(|| terminal_cwd.clone()),
-                        terminal::pty_size_for_body(rect),
-                    )
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+    let terminal_starts = terminal_effects::visible_starts(
+        application_layout,
+        &application_snapshot,
+        &terminal_tab_snapshot,
+        &terminal_cwd,
+    );
     let terminal_start_key = terminal_starts
         .iter()
         .map(|(id, _, cwd, size)| (*id, cwd.clone(), *size))
@@ -696,13 +512,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         active_terminal_id.filter(|id| application_layout.terminal_visible(*id, layout_visibility));
     let terminal_visible = active_visible_terminal.is_some();
     cx.use_effect(terminal_start_key, move || {
-        for (_, terminal_start, cwd, size) in terminal_starts {
-            let cwd = crate::infrastructure::terminal::integration::starting_directory(
-                cwd.as_deref(),
-                terminal_cwd.as_deref(),
-            );
-            terminal_start.ensure_started(cwd.as_deref(), size, terminal_start_application.clone());
-        }
+        terminal_effects::start_visible(terminal_starts, terminal_cwd, terminal_start_application)
     });
     let mounted_terminal_focus = terminal_focus.clone();
     terminal_tab_context_menu::restore_focus_on_dismiss(
@@ -853,32 +663,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let blink_state = terminal_cursor_blink.clone();
     cx.use_effect(
         (terminal_visible, blink_focused, active_visible_terminal),
-        move || {
-            blink_state.set(true);
-            let (stop_sender, stop_receiver) = mpsc::channel();
-            let worker = if terminal_visible && blink_focused {
-                let worker_state = blink_state.clone();
-                thread::Builder::new()
-                    .name("loom-terminal-cursor-blink".to_string())
-                    .spawn(move || {
-                        while let Err(RecvTimeoutError::Timeout) =
-                            stop_receiver.recv_timeout(Duration::from_millis(500))
-                        {
-                            worker_state.update(|visible| *visible = !*visible);
-                        }
-                    })
-                    .ok()
-            } else {
-                None
-            };
-
-            move || {
-                let _ = stop_sender.send(());
-                if let Some(worker) = worker {
-                    let _ = worker.join();
-                }
-            }
-        },
+        move || terminal_effects::blink(blink_state, terminal_visible, blink_focused),
     );
 
     // ---- Root (global shortcut listener) ------------------------------

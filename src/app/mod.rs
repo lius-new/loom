@@ -42,6 +42,7 @@ pub(crate) mod workspace_restore;
 pub(crate) mod workspace_session;
 
 pub(crate) mod terminal;
+pub(crate) mod terminal_effects;
 #[cfg(test)]
 mod terminal_profile_tests;
 pub(crate) mod terminal_profiles;

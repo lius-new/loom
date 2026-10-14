@@ -80,6 +80,9 @@ impl TerminalController {
         }
     }
 
+    pub fn generation(&self) -> u64 {
+        self.inner.generation.load(Ordering::Acquire)
+    }
     pub fn shell(&self) -> ShellKind {
         *lock(&self.inner.shell)
     }
@@ -210,7 +213,7 @@ impl TerminalController {
                 *lock(&self.inner.process) = Some(spawned.process);
                 *lock(&self.inner.status) = TerminalStatus::Running;
                 drop(lifecycle);
-                application.request_frame();
+                application.request_frame_for(generation);
 
                 let reader_inner = Arc::downgrade(&self.inner);
                 let reader_application = application.clone();
@@ -224,11 +227,14 @@ impl TerminalController {
                             let count = match reader.read(&mut bytes) {
                                 Ok(count) => count,
                                 Err(error) => {
-                                    if let Some(inner) = current_inner(&reader_inner, generation) {
+                                    if update_current(&reader_inner, generation, |inner| {
                                         *lock(&inner.status) = TerminalStatus::Failed(format!(
                                             "terminal output stream failed: {error}"
                                         ));
-                                        reader_application.request_frame();
+                                    })
+                                    .is_some()
+                                    {
+                                        reader_application.request_frame_for(generation);
                                     }
                                     break;
                                 }
@@ -236,14 +242,18 @@ impl TerminalController {
                             if count == 0 {
                                 break;
                             }
-                            let Some(inner) = current_inner(&reader_inner, generation) else {
+                            let cwd = directories.process(&bytes[..count]);
+                            if update_current(&reader_inner, generation, |inner| {
+                                if let Some(cwd) = cwd {
+                                    *lock(&inner.cwd) = Some(cwd);
+                                }
+                                lock(&inner.parser).process(&bytes[..count]);
+                            })
+                            .is_none()
+                            {
                                 break;
-                            };
-                            if let Some(cwd) = directories.process(&bytes[..count]) {
-                                *lock(&inner.cwd) = Some(cwd);
                             }
-                            lock(&inner.parser).process(&bytes[..count]);
-                            reader_application.request_frame();
+                            reader_application.request_frame_for(generation);
                         }
                     })
                     .expect("terminal output thread should start");
@@ -259,7 +269,7 @@ impl TerminalController {
             Err(error) => {
                 *lock(&self.inner.status) = TerminalStatus::Failed(error);
                 drop(lifecycle);
-                application.request_frame();
+                application.request_frame_for(generation);
             }
         }
     }
@@ -270,13 +280,16 @@ impl TerminalController {
         self.shutdown();
     }
 
-    pub fn shutdown(&self) {
+    fn shutdown(&self) {
         self.inner.generation.fetch_add(1, Ordering::AcqRel);
         self.kill_current();
         *lock(&self.inner.status) = TerminalStatus::Stopped;
     }
     pub fn terminate(&self, application: impl Into<FrameNotifier>) {
-        self.shutdown();
+        {
+            let _lifecycle = lock(&self.inner.lifecycle);
+            self.shutdown();
+        }
         application.into().request_frame();
     }
 
@@ -438,23 +451,27 @@ fn spawn_waiter(inner: Weak<TerminalInner>, generation: u64, application: FrameN
         .name("loom-terminal-wait".to_owned())
         .spawn(move || {
             loop {
-                let Some(inner) = current_inner(&inner, generation) else {
-                    return;
-                };
-                let exit = {
+                let exit = update_current(&inner, generation, |inner| {
                     let process = lock(&inner.process);
-                    let Some(process) = process.as_ref() else {
+                    let process = process.as_ref()?;
+                    let exit = (!process.process.is_alive()).then(|| process.process.wait(Some(0)));
+                    if let Some(exit) = exit {
+                        *lock(&inner.status) = match exit {
+                            Ok(code) => TerminalStatus::Exited(code),
+                            Err(error) => TerminalStatus::Failed(error.to_string()),
+                        };
+                        Some(true)
+                    } else {
+                        Some(false)
+                    }
+                });
+                match exit {
+                    Some(Some(false)) => {}
+                    Some(Some(true)) => {
+                        application.request_frame_for(generation);
                         return;
-                    };
-                    (!process.process.is_alive()).then(|| process.process.wait(Some(0)))
-                };
-                if let Some(exit) = exit {
-                    *lock(&inner.status) = match exit {
-                        Ok(code) => TerminalStatus::Exited(code),
-                        Err(error) => TerminalStatus::Failed(error.to_string()),
-                    };
-                    application.request_frame();
-                    return;
+                    }
+                    _ => return,
                 }
                 thread::sleep(Duration::from_millis(50));
             }
@@ -473,18 +490,36 @@ fn spawn_waiter(
         .name("loom-terminal-wait".to_owned())
         .spawn(move || {
             let status = child.wait();
-            let Some(inner) = current_inner(&inner, generation) else {
-                return;
-            };
-            *lock(&inner.status) = match status {
-                Ok(status) => TerminalStatus::Exited(status.exit_code()),
-                Err(error) => TerminalStatus::Failed(error.to_string()),
-            };
-            application.request_frame();
+            if update_current(&inner, generation, |inner| {
+                *lock(&inner.status) = match status {
+                    Ok(status) => TerminalStatus::Exited(status.exit_code()),
+                    Err(error) => TerminalStatus::Failed(error.to_string()),
+                };
+            })
+            .is_some()
+            {
+                application.request_frame_for(generation);
+            }
         })
         .expect("terminal wait thread should start");
 }
 
+/// Reader, cwd, error and exit events commit only to their own running generation.
+fn update_current<T>(
+    inner: &Weak<TerminalInner>,
+    generation: u64,
+    update: impl FnOnce(&TerminalInner) -> T,
+) -> Option<T> {
+    let inner = inner.upgrade()?;
+    let _lifecycle = lock(&inner.lifecycle);
+    if inner.disposed.load(Ordering::Acquire)
+        || inner.generation.load(Ordering::Acquire) != generation
+    {
+        return None;
+    }
+    Some(update(&inner))
+}
+#[cfg(test)]
 fn current_inner(inner: &Weak<TerminalInner>, generation: u64) -> Option<Arc<TerminalInner>> {
     let inner = inner.upgrade()?;
     (inner.generation.load(Ordering::Acquire) == generation).then_some(inner)
@@ -498,6 +533,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 impl TerminalController {
+    pub(crate) fn test_advance_generation(&self) -> u64 {
+        let _lifecycle = lock(&self.inner.lifecycle);
+        self.inner.generation.fetch_add(1, Ordering::AcqRel) + 1
+    }
     pub(crate) fn test_writes(&self) -> Vec<Vec<u8>> {
         lock(&self.inner.test_writes).clone()
     }
@@ -597,5 +636,51 @@ mod tests {
         assert_eq!(count.load(Ordering::Acquire), 1);
         assert!(current_inner(&weak, 0).is_none());
         assert_eq!(*lock(&controller.inner.status), TerminalStatus::Stopped);
+    }
+}
+
+#[cfg(test)]
+mod generation_tests {
+    use super::*;
+    #[test]
+    fn old_output_cwd_failure_and_exit_cannot_overwrite_restarted_or_closed_session() {
+        let controller = TerminalController::new();
+        let weak = Arc::downgrade(&controller.inner);
+        let old = controller.generation();
+        let new = controller.test_advance_generation();
+        assert!(
+            update_current(&weak, old, |inner| {
+                lock(&inner.parser).process(b"stale output");
+                *lock(&inner.cwd) = Some("stale cwd".into());
+                *lock(&inner.status) = TerminalStatus::Failed("old stream".into());
+            })
+            .is_none()
+        );
+        assert!(
+            update_current(&weak, old, |inner| *lock(&inner.status) =
+                TerminalStatus::Exited(99))
+            .is_none()
+        );
+        assert!(controller.test_parser().screen().contents().is_empty());
+        assert!(controller.working_directory().is_none());
+        assert!(matches!(
+            *lock(&controller.inner.status),
+            TerminalStatus::Idle
+        ));
+        assert!(
+            update_current(&weak, new, |inner| lock(&inner.parser)
+                .process(b"fresh output"))
+            .is_some()
+        );
+        controller.dispose();
+        assert!(
+            update_current(&weak, new, |inner| *lock(&inner.status) =
+                TerminalStatus::Exited(0))
+            .is_none()
+        );
+        assert!(matches!(
+            *lock(&controller.inner.status),
+            TerminalStatus::Stopped
+        ));
     }
 }

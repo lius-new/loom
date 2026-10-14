@@ -13,7 +13,7 @@ use lgui::services::{Clipboard, ClipboardError};
 use lgui::session::UiSession;
 use std::sync::{Arc, Mutex};
 
-fn fixture() -> (UiSession, State<AppState>, TerminalStore) {
+pub(super) fn fixture() -> (UiSession, State<AppState>, TerminalStore) {
     let exposed = Arc::new(Mutex::new(None));
     let out = exposed.clone();
     let rect = UiRect::new(0.0, 0.0, 800.0, 600.0);

@@ -295,3 +295,9 @@ test('registered terminal owners cannot disappear by deleting declarations or so
     }
   }
 });
+
+test('terminal effects cannot return to the composition shell or lose notification identity',()=>{
+  for(const type of ['SustainedProgram','ProgramProbe','ensure_started','save_terminal_state','DirectoryReports'])assert.ok(violations({'src/app/shell.rs':`fn effect() { ${type}(); }`},policy()).some(e=>e.includes('terminal effect behavior')));
+  for(const source of ['pub struct Observation { id: u64 }','pub struct Observation { generation: u64 }'])assert.ok(violations({'src/app/terminal_effects.rs':source},policy()).some(e=>e.includes('must carry')));
+  assert.deepEqual(violations({'src/app/terminal_effects.rs':'pub struct Observation { id: u64, generation: u64 }'},policy()),[]);
+});

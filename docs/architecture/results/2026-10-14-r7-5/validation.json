@@ -1,0 +1,165 @@
+{
+  "schema": 1,
+  "date": "2026-10-14",
+  "base": "6cb8d0d7cce90f81c9b46a1082a74e101fa3c405",
+  "branch": "refactor/r7-terminal",
+  "scope": "R7.5 checkpoint; R7.6 next",
+  "environment": {
+    "rustc": "1.98.0",
+    "cargo": "1.98.0",
+    "pinned_rust": "1.97.1",
+    "pinned_toolchain_tested": false
+  },
+  "workspace": {
+    "passed": 710,
+    "failed": 0,
+    "ignored": 14,
+    "application": 613,
+    "editor": 68,
+    "domain_repeated": 29
+  },
+  "test_mapping": {
+    "before_entries": 619,
+    "missing": 0,
+    "added": 8,
+    "moved": 0
+  },
+  "gate": {
+    "description": "Architecture gate passed: 232 source files; 30 root, 30 editor and 9 workspace owned fields; 34 tracked legacy exception files.",
+    "node_passed": 47,
+    "architecture_passed": 44,
+    "report_passed": 3
+  },
+  "checks": [
+    {
+      "name": "all-targets",
+      "exit_code": 0
+    },
+    {
+      "name": "fmt",
+      "exit_code": 0
+    },
+    {
+      "name": "strict CI Clippy",
+      "exit_code": 0
+    },
+    {
+      "name": "full workspace debug",
+      "exit_code": 0
+    },
+    {
+      "name": "release build",
+      "exit_code": 0
+    },
+    {
+      "name": "four exact native smoke",
+      "exit_code": 0
+    },
+    {
+      "name": "isolated startup",
+      "exit_code": 0
+    }
+  ],
+  "startup": {
+    "exe": "C:\\Users\\yys\\loom\\target\\release\\Loom.exe",
+    "sha256": "70A8152EB167F331F7A0CFE917FF1ED11FAF25270B7C7411790F4E011EA1ED0B",
+    "child_appdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r75-startup-final\\startup-fixture\\appdata",
+    "child_localappdata": "C:\\Users\\yys\\Documents\\Codex\\2026-10-14\\cha-k\\work\\r75-startup-final\\startup-fixture\\localappdata",
+    "window_style": "Hidden",
+    "started_at": "2026-10-14T12:18:29.4890145+08:00",
+    "result": "passed",
+    "forced_cleanup": false,
+    "pid": 10608,
+    "alive_after_4_seconds": true,
+    "root_effect_configuration_files": [
+      "workspace.json"
+    ],
+    "close_requested": true,
+    "exit_code": 0,
+    "clean_exit": true,
+    "saved_synthetic_workspace": true,
+    "finished_at": "2026-10-14T12:18:33.5624369+08:00"
+  },
+  "hashes": {
+    "after_debug": "5f72914b49d778c88821b01c8166451949da68ef5fcf66864fb3a1b85027c448",
+    "release": "70a8152eb167f331f7a0cfe917ff1ed11faf25270b7c7411790f4e011ea1ed0b"
+  },
+  "source_preservation": {
+    "schema": 1,
+    "base": "6cb8d0d7cce90f81c9b46a1082a74e101fa3c405",
+    "scope": "R7.5",
+    "checks": [
+      {
+        "file": "src/features/terminal/model.rs",
+        "equal": true
+      },
+      {
+        "file": "src/features/terminal/input.rs",
+        "equal": true
+      },
+      {
+        "file": "src/features/terminal/mouse.rs",
+        "equal": true
+      },
+      {
+        "file": "src/features/terminal/screen.rs",
+        "equal": true
+      },
+      {
+        "file": "src/features/terminal/profiles.rs",
+        "equal": true
+      },
+      {
+        "file": "src/features/terminal/program.rs",
+        "equal": true
+      },
+      {
+        "file": "src/features/terminal/types.rs",
+        "equal": true
+      },
+      {
+        "file": "src/infrastructure/terminal/pty.rs",
+        "equal": true
+      },
+      {
+        "file": "src/infrastructure/terminal/profiles.rs",
+        "equal": true
+      },
+      {
+        "file": "src/infrastructure/terminal/integration.rs",
+        "equal": true
+      },
+      {
+        "file": "src/infrastructure/terminal/program.rs",
+        "equal": true
+      },
+      {
+        "file": "src/domain/application_layout.rs",
+        "equal": true
+      },
+      {
+        "file": "src/app/workspace_session.rs",
+        "equal": true
+      }
+    ]
+  },
+  "notification_contract": {
+    "ui": "SessionId + generation + per-effect lease, checked at queued delivery",
+    "reader": "generation check and parser/cwd/status update share lifecycle lock",
+    "waiter": "generation check, process inspection and exit status share lifecycle lock",
+    "callbacks": "outside lifecycle locks, routed through generation-aware notifier bound to a weak SessionId handle",
+    "old_cleanup": "cannot shut down replacement mount; own worker cancellation/join only"
+  },
+  "persistence": {
+    "eight_terminal_fields_unchanged": true,
+    "live_cwd_read_at_save": true,
+    "dirty_exit_save_order_preserved": true
+  },
+  "raw_directory": "target/baseline/2026-10-14-r7-5",
+  "before_note": "Frozen R7.4 same-machine full workspace log and source checkpoint reused as the before evidence.",
+  "limitations": [
+    "fixed Rust 1.97.1 unavailable",
+    "native manual visual/IME/focus and Linux/macOS/remote CI/install pending",
+    "R7 final performance A/B and full R7.6/R7.7 remain pending"
+  ]
+}

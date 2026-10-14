@@ -1,4 +1,4 @@
-//! Temporary view/store binding while terminal commands and views await R7.4/R7.6.
+//! Temporary view/store binding while terminal views await R7.6.
 //! State contains only TerminalModel; projections and operation handles are weak.
 use crate::features::terminal::model::{TerminalMetadata, TerminalModel};
 use crate::features::terminal::{SessionId, ShellKind};
