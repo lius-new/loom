@@ -24,6 +24,8 @@ pub struct TerminalController {
 
 struct TerminalInner {
     lifecycle: Mutex<()>,
+    #[cfg(test)]
+    test_writes: Mutex<Vec<Vec<u8>>>,
     disposed: AtomicBool,
     parser: Mutex<vt100::Parser>,
     process: Mutex<Option<RunningProcess>>,
@@ -46,6 +48,8 @@ impl TerminalController {
         Self {
             inner: Arc::new(TerminalInner {
                 lifecycle: Mutex::new(()),
+                #[cfg(test)]
+                test_writes: Mutex::new(Vec::new()),
                 disposed: AtomicBool::new(false),
                 parser: Mutex::new(vt100::Parser::new(24, 80, SCROLLBACK_ROWS)),
                 process: Mutex::new(None),
@@ -277,6 +281,8 @@ impl TerminalController {
     }
 
     pub fn write(&self, bytes: &[u8]) {
+        #[cfg(test)]
+        lock(&self.inner.test_writes).push(bytes.to_vec());
         lock(&self.inner.parser).screen_mut().set_scrollback(0);
         // Typing into the shell ends the selection, as in other terminals.
         *lock(&self.inner.selection) = None;
@@ -492,6 +498,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 impl TerminalController {
+    pub(crate) fn test_writes(&self) -> Vec<Vec<u8>> {
+        lock(&self.inner.test_writes).clone()
+    }
     pub(crate) fn test_parser(&self) -> MutexGuard<'_, vt100::Parser> {
         lock(&self.inner.parser)
     }

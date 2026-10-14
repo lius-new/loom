@@ -1,5 +1,13 @@
 //! Application state — the single reactive root owned by the UI.
+pub(crate) mod chrome;
 pub(crate) mod editor;
+pub(crate) mod layout;
+
+#[derive(Clone, Default)]
+pub struct TerminalPanelState {
+    pub availability: crate::features::terminal::availability::TerminalAvailability,
+    pub ui: crate::ui::terminal::state::TerminalUiState,
+}
 
 use std::path::{Path, PathBuf};
 
@@ -83,18 +91,7 @@ pub struct TabContextMenuState {
     pub hovered: Option<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct TerminalTabContextMenuState {
-    pub position: (f32, f32),
-    pub target: u64,
-    pub kind: TerminalTabMenuKind,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TerminalTabMenuKind {
-    Actions,
-    Purpose,
-}
+pub use crate::ui::terminal::state::{TerminalTabContextMenuState, TerminalTabMenuKind};
 
 pub(crate) use crate::domain::notification::{Toast, ToastKind};
 
@@ -159,6 +156,9 @@ pub struct AppState {
     // R1 legacy command bridge: snapshots never own runtime services.
     runtime: std::sync::Weak<crate::app::runtime::AppRuntime>,
     pub editor: editor::EditorState,
+    pub layout: layout::ApplicationLayoutState,
+    pub terminal_chrome: chrome::TerminalChrome,
+    pub terminal: TerminalPanelState,
     /// Right-hand drawer shared by Explorer and Search.
     pub drawer: DrawerChrome,
     /// Explorer business model and view state.
@@ -169,30 +169,12 @@ pub struct AppState {
     pub git: crate::ui::git::state::GitPanelState,
     pub workspace: Workspace,
     pub search: crate::ui::search::state::SearchPanelState,
-    /// Visibility of the default terminal region, independent of detached regions.
-    pub show_terminal: bool,
-    /// Current terminal panel height in logical pixels.
-    pub terminal_h: f32,
-    /// True while the terminal's top resize handle is being dragged.
-    pub resizing_terminal: bool,
-    pub selecting_terminal: bool,
-    /// Whether keyboard input is currently routed to the terminal surface.
-    pub terminal_focused: bool,
-    /// Whether the terminal shell selector is expanded.
-    pub terminal_shell_menu: bool,
-    pub terminal_shell_scroll: usize,
-    pub terminal_tab_context_menu: Option<TerminalTabContextMenuState>,
-    pub application_layout: Option<crate::domain::application_layout::ApplicationLayout>,
-    pub application_sash_drag: Option<crate::domain::application_layout::Divider>,
-    /// Shell used for terminals that are not opened from the shell selector.
     /// Active color theme, applied at the start of every frame.
     pub theme: ThemeId,
+    /// Shell used for terminals that are not opened from the shell selector.
     pub default_shell: ShellKind,
     pub terminal_profiles: Vec<crate::features::terminal::profiles::ShellProfile>,
     pub shell_options: Vec<crate::features::terminal::profiles::ShellOption>,
-    pub shell_editor: Option<crate::ui::terminal_settings::ProfileEditor>,
-    /// The shell standing in for an unavailable default, if any.
-    pub default_shell_fallback: Option<ShellKind>,
     pub terminal_cursor_blink: bool,
     pub smooth_caret: bool,
     pub editor_font: crate::fonts::FontSettings,
@@ -206,7 +188,6 @@ pub struct AppState {
     pub toast: Option<Toast>,
     /// Source of `Toast::id`, so a replacement restarts the dismiss timer.
     pub toast_seq: u64,
-    pub terminal_split_drag: Option<u64>,
     /// Welcome-page row currently under the pointer.
     pub welcome_hover: Option<usize>,
     /// Workspace Home action currently under the pointer.
@@ -242,24 +223,15 @@ impl AppState {
             source_control: SidebarChrome::default(),
             git: Default::default(),
             editor: Default::default(),
+            layout: Default::default(),
+            terminal_chrome: Default::default(),
+            terminal: Default::default(),
             workspace: Workspace::new(),
             search: Default::default(),
-            show_terminal: false,
-            terminal_h: crate::theme::TERMINAL_H,
-            resizing_terminal: false,
-            selecting_terminal: false,
-            terminal_focused: false,
-            terminal_shell_menu: false,
-            terminal_shell_scroll: 0,
-            terminal_tab_context_menu: None,
-            application_layout: None,
-            application_sash_drag: None,
             theme: ThemeId::default(),
             default_shell: ShellKind::default(),
             terminal_profiles: Vec::new(),
             shell_options: crate::infrastructure::terminal::profiles::options(&[]),
-            shell_editor: None,
-            default_shell_fallback: None,
             terminal_cursor_blink: true,
             smooth_caret: true,
             editor_font: crate::fonts::FontSettings::EDITOR,
@@ -269,7 +241,6 @@ impl AppState {
             project_settings: Vec::new(),
             toast: None,
             toast_seq: 0,
-            terminal_split_drag: None,
             welcome_hover: None,
             workspace_home_hover: None,
             pending_keystrokes: Vec::new(),
@@ -283,9 +254,10 @@ impl AppState {
     pub fn restored() -> Self {
         let mut app = Self::new();
         let session = crate::workspace_persistence::load();
-        app.show_terminal = session.show_terminal && !session.terminal_tabs.is_empty();
+        app.terminal_chrome.show_terminal =
+            session.show_terminal && !session.terminal_tabs.is_empty();
         if let Some(height) = session.terminal_height.filter(|height| height.is_finite()) {
-            app.terminal_h = height;
+            app.terminal_chrome.terminal_h = height;
         }
         app.explorer
             .model
@@ -371,21 +343,8 @@ impl AppState {
         self.terminal_font = font;
     }
 
-    /// Re-discovers shells. The saved default is never rewritten here, so a
-    /// repaired profile becomes the default again once it is available.
     pub fn refresh_shells(&mut self) {
-        self.shell_options =
-            crate::infrastructure::terminal::profiles::options(&self.terminal_profiles);
-        let fallback = Some(self.effective_shell()).filter(|kind| *kind != self.default_shell);
-        if fallback != self.default_shell_fallback
-            && let Some(fallback) = fallback
-        {
-            let name = self.shell_name(fallback);
-            self.show_toast(format!(
-                "The default terminal is unavailable; using {name}."
-            ));
-        }
-        self.default_shell_fallback = fallback;
+        crate::app::terminal_profiles::refresh_shells(self);
     }
 
     /// The shell new terminals launch: the saved default when available,
@@ -480,8 +439,9 @@ impl AppState {
 
     /// Whether the default terminal region currently owns visible sessions.
     pub fn default_terminal_open(&self) -> bool {
-        self.show_terminal
+        self.terminal_chrome.show_terminal
             && self
+                .layout
                 .application_layout
                 .as_ref()
                 .is_none_or(|layout| layout.default_terminal_active().is_some())
@@ -532,8 +492,8 @@ impl AppState {
                 }
             }
             Action::ToggleTerminal => {
-                self.show_terminal = !self.default_terminal_open();
-                self.terminal_tab_context_menu = None;
+                self.terminal_chrome.show_terminal = !self.default_terminal_open();
+                self.terminal.ui.terminal_tab_context_menu = None;
             }
             Action::CloseOverlay => {
                 self.close_menus();
@@ -541,7 +501,7 @@ impl AppState {
                 self.editor.tab_drag = None;
                 self.editor.file_drag = None;
                 self.editor.sash_drag = None;
-                self.application_sash_drag = None;
+                self.layout.application_sash_drag = None;
                 self.editor.tab_scrollbar_dragging = None;
                 if !self.git.model.cloning() {
                     self.git.ui.clone_visible = false;
@@ -635,7 +595,7 @@ impl AppState {
         self.explorer.ui.menu_target = None;
         self.explorer.ui.menu_hover = None;
         self.editor.tab_context_menu = None;
-        self.terminal_tab_context_menu = None;
+        self.terminal.ui.terminal_tab_context_menu = None;
         self.git.ui.branch_picker = None;
         self.git.ui.menu = None;
     }

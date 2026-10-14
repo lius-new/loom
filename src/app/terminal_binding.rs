@@ -80,6 +80,9 @@ impl TerminalTab {
     }
 }
 impl TerminalTabs {
+    pub fn model(&self) -> &TerminalModel {
+        &self.model
+    }
     pub fn into_model(self) -> TerminalModel {
         self.model
     }

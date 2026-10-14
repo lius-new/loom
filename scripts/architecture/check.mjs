@@ -189,6 +189,15 @@ export function violations(sources, policy) {
       if(policy.exceptions[file])problems.push(file+': Terminal rules cannot have migration exceptions');
       if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Terminal rules cannot include adapter sources');
     }
+    if(file==='src/ui/terminal_settings.rs'||file.startsWith('src/ui/terminal/')) {
+        if(ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','TerminalController','TerminalHandle','TerminalRuntime'].includes(t))||deps.some(d=>['crate::app','crate::state','crate::infrastructure','crate::key_actions'].includes(d)))problems.push(file+': Terminal projection view must use narrow state and commands');
+        if(policy.exceptions[file])problems.push(file+': Terminal projection view cannot have migration exceptions');
+    }
+    if(['src/ui/terminal.rs','src/ui/terminal_tab_context_menu.rs'].includes(file)) {
+        const production=source.split(/#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*mod\s+tests\b/)[0];
+        const pt=tokens(production);
+        for(let i=0;i<pt.length-2;i++)if(pt[i]==='.'&&['add','add_at','select','split','close','set_purpose','resize_pair','write','paste','terminate','begin_selection','extend_selection','set_mouse_position','wheel'].includes(pt[i+1])&&pt[i+2]==='(')problems.push(file+': Terminal behavior must execute through app commands: '+pt[i+1]);
+    }
     if(file.startsWith('src/features/search/')&&ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle','InputState','UiRect'].includes(t)))problems.push(file+': Search feature must be framework/root independent');
     if(file.startsWith('src/ui/search/')&&ts.some(t=>['AppState','AppRuntime','Workspace','ApplicationHandle'].includes(t)))problems.push(file+': Search view must use projections and commands');
     if(file.startsWith('src/ui/editor/')||file==='src/ui/editor_binding.rs') {
@@ -256,6 +265,27 @@ export function violations(sources, policy) {
     for(const field of actual)if(!registered.includes(field))problems.push(`${name}.${field}: no registered owner`);
     for(const field of registered)if(!actual.includes(field))problems.push(`${name}.${field}: obsolete ownership entry`);
   }
+  for(const [file,name,owner] of [
+    ['src/app/state/layout.rs','ApplicationLayoutState','app/state/layout'],
+    ['src/app/state/chrome.rs','TerminalChrome','app/state/chrome'],
+    ['src/app/state.rs','TerminalPanelState','app/state:TerminalPanelState'],
+    ['src/ui/terminal/state.rs','TerminalUiState','ui/terminal/state'],
+    ['src/ui/terminal/state.rs','ProfileEditor','ui/terminal/state:ProfileEditor'],
+    ['src/features/terminal/availability.rs','TerminalAvailability','features/terminal/availability'],
+  ]) {
+    const registered=Object.entries(policy.terminal_state_ownership??{}).filter(([,e])=>e.owner===owner).map(([k])=>k.slice(owner.length+1));
+    const declared=sources[file]&&tokens(sources[file]).some((t,i,ts)=>t==='struct'&&ts[i+1]===name);
+    if(!declared) {
+      if(registered.length)problems.push(name+': registered owner declaration is missing');
+      continue;
+    }
+    const actual=structFields(sources[file],name);
+    for(const field of actual)if(!registered.includes(field))problems.push(name+'.'+field+': no registered owner');
+    for(const field of registered)if(!actual.includes(field))problems.push(name+'.'+field+': obsolete ownership entry');
+    const body=file==='src/app/state.rs' ? tokens(sources[file].slice(sources[file].indexOf('pub struct TerminalPanelState'),sources[file].indexOf('pub struct TerminalPanelState')+sources[file].slice(sources[file].indexOf('pub struct TerminalPanelState')).indexOf('}'))).join(' ') : tokens(sources[file]).join(' ');
+    if(/\b(?:TerminalController|TerminalHandle|TerminalRuntime|AppRuntime|FileLoader|PollControl|ApplicationHandle)\b/.test(body))problems.push(name+': terminal state cannot own runtime services');
+  }
+  for(const [field,entry]of Object.entries(policy.terminal_state_ownership??{}))if(!entry.owner||!entry.migrated_in)problems.push('TerminalState.'+field+': incomplete ownership entry');
   const rootState=sources['src/app/state.rs'];
   if(rootState&&/\bpub\s+use\s+crate\s*::\s*features\s*::\s*explorer\b/.test(tokens(rootState).join(' ')))problems.push('Explorer types must not be re-exported from the root state');
   if(rootState&&/\bpub\s+use\s+crate\s*::\s*features\s*::\s*git\b/.test(tokens(rootState).join(' ')))problems.push('Git types must not be re-exported from the root state');

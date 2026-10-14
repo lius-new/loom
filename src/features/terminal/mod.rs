@@ -11,4 +11,6 @@ pub(crate) use self::types::{
     TerminalSnapshot, TerminalStatus,
 };
 
+pub mod actions;
+pub mod availability;
 pub(crate) mod model;

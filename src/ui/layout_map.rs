@@ -149,7 +149,7 @@ pub fn visibility(app: &AppState) -> Visibility {
     Visibility {
         git: app.source_control.visible,
         files: app.drawer.visible,
-        terminal: app.show_terminal,
+        terminal: app.terminal_chrome.show_terminal,
     }
 }
 pub fn begin(app: &mut AppState, map: &MapStore, session: u64, point: Point) {
@@ -165,8 +165,8 @@ pub fn begin(app: &mut AppState, map: &MapStore, session: u64, point: Point) {
         });
         true
     });
-    app.terminal_tab_context_menu = None;
-    app.terminal_shell_menu = false;
+    app.terminal.ui.terminal_tab_context_menu = None;
+    app.terminal.ui.terminal_shell_menu = false;
 }
 fn contains(rect: UiRect, point: Point) -> bool {
     point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom
@@ -360,7 +360,7 @@ impl MapScene {
 }
 pub fn refresh(app: &AppState, map: &MapStore, viewport: UiRect, sessions: Vec<u64>) -> bool {
     let visible = visibility(app);
-    let Some(layout) = &app.application_layout else {
+    let Some(layout) = &app.layout.application_layout else {
         return false;
     };
     map.update(|slot| {
@@ -440,7 +440,7 @@ pub fn finish(
         .filter(|s| s.hit(point).is_some())
         .and_then(|s| drag.hover.and_then(|i| s.zones[i].plan.clone()));
     if let Some(plan) = plan
-        && let Some(layout) = &mut app.application_layout
+        && let Some(layout) = &mut app.layout.application_layout
         && layout.commit(plan, viewport.into(), visible, sessions)
     {
         return (true, Some(drag.session));
@@ -715,9 +715,14 @@ pub fn render_divider(
             CursorIcon::ResizeVertical,
         ),
     };
-    let active = state.get().application_sash_drag.as_ref().is_some_and(|d| {
-        d.split == divider.split && d.before == divider.before && d.after == divider.after
-    });
+    let active = state
+        .get()
+        .layout
+        .application_sash_drag
+        .as_ref()
+        .is_some_and(|d| {
+            d.split == divider.split && d.before == divider.before && d.after == divider.after
+        });
     let key = format!(
         "application-sash-{}-{}-{}",
         divider.split, divider.before, divider.after
@@ -728,17 +733,17 @@ pub fn render_divider(
     crate::ui::components::resize_handle::render(key, hit, line, cursor, active)
         .on_pointer_down_with_button(move |cx, _, button| {
             if button == PointerButton::Left {
-                down.update(|app| app.application_sash_drag = Some(divider.clone()));
+                down.update(|app| app.layout.application_sash_drag = Some(divider.clone()));
                 cx.stop_propagation();
             }
         })
         .on_pointer_drag(move |cx, pointer| {
             moving.try_update(|app| {
-                let Some(drag) = &app.application_sash_drag else {
+                let Some(drag) = &app.layout.application_sash_drag else {
                     return false;
                 };
                 let visible = visibility(app);
-                let Some(layout) = &mut app.application_layout else {
+                let Some(layout) = &mut app.layout.application_layout else {
                     return false;
                 };
                 layout.resize(
@@ -753,7 +758,7 @@ pub fn render_divider(
             cx.stop_propagation();
         })
         .on_pointer_up(move |cx, _| {
-            up.update(|app| app.application_sash_drag = None);
+            up.update(|app| app.layout.application_sash_drag = None);
             cx.stop_propagation();
         })
 }
@@ -768,7 +773,7 @@ mod tests {
     fn setup() -> (AppState, MapStore, UiRect) {
         let r = UiRect::new(0.0, 0.0, 1200.0, 800.0);
         let mut app = AppState::new();
-        app.show_terminal = true;
+        app.terminal_chrome.show_terminal = true;
         app.source_control.visible = true;
         let mut layout = ApplicationLayout::initial(r.into(), 220.0, 220.0, 240.0);
         layout.sync(&[(1, 1), (2, 2)], Some(1));
@@ -783,7 +788,7 @@ mod tests {
             )
             .unwrap();
         layout = plan.layout;
-        app.application_layout = Some(layout);
+        app.layout.application_layout = Some(layout);
         let map = MapStore::default();
         begin(&mut app, &map, 1, Point::new(10.0, 600.0));
         update_pointer(&app, &map, center(r), r, vec![1, 2]);
@@ -853,7 +858,7 @@ mod tests {
     #[test]
     fn release_commits_cached_preview_even_when_release_point_moves_to_other_zone() {
         let (mut app, map, r) = setup();
-        let original = app.application_layout.clone();
+        let original = app.layout.application_layout.clone();
         let target = scene_of(&map)
             .zones
             .iter()
@@ -861,7 +866,7 @@ mod tests {
             .unwrap()
             .clone();
         update_pointer(&app, &map, center(target.rect), r, vec![1, 2]);
-        assert_eq!(app.application_layout, original);
+        assert_eq!(app.layout.application_layout, original);
         let elsewhere = scene_of(&map)
             .zones
             .iter()
@@ -872,13 +877,16 @@ mod tests {
             finish(&mut app, &map, center(elsewhere), r, &[1, 2]),
             (true, Some(1))
         );
-        assert_eq!(app.application_layout, Some(target.plan.unwrap().layout));
+        assert_eq!(
+            app.layout.application_layout,
+            Some(target.plan.unwrap().layout)
+        );
     }
     #[test]
     fn outside_invalid_and_stale_release_cancel_without_mutation() {
         for mode in 0..3 {
             let (mut app, map, r) = setup();
-            let original = app.application_layout.clone();
+            let original = app.layout.application_layout.clone();
             let scene = scene_of(&map);
             let zone = scene
                 .zones
@@ -901,7 +909,7 @@ mod tests {
                 _ => (point, vec![1, 2]),
             };
             assert_eq!(finish(&mut app, &map, point, r, &ids), (true, None));
-            assert_eq!(app.application_layout, original);
+            assert_eq!(app.layout.application_layout, original);
             assert!(!map.is_dragging());
         }
     }
@@ -927,7 +935,7 @@ mod tests {
     #[test]
     fn t_junction_uses_smaller_split_scope() {
         let (mut app, map, r) = setup();
-        let layout = app.application_layout.as_ref().unwrap();
+        let layout = app.layout.application_layout.as_ref().unwrap();
         let plan = layout
             .plan(
                 1,
@@ -937,7 +945,7 @@ mod tests {
                 vec![1, 2],
             )
             .unwrap();
-        app.application_layout = Some(plan.layout);
+        app.layout.application_layout = Some(plan.layout);
         begin(&mut app, &map, 2, Point::new(30.0, 600.0));
         update_pointer(&app, &map, center(r), r, vec![1, 2]);
         let scene = scene_of(&map);
@@ -957,7 +965,7 @@ mod tests {
         let (_, _, r) = setup();
         let map = MapStore::default();
         let mut app = AppState::new();
-        app.show_terminal = true;
+        app.terminal_chrome.show_terminal = true;
         let mut layout = ApplicationLayout::initial(r.into(), 220.0, 220.0, 240.0);
         layout.sync(&[(1, 1), (2, 1)], Some(1));
         assert_eq!(
@@ -979,7 +987,7 @@ mod tests {
             )
             .unwrap();
         layout = plan.layout;
-        app.application_layout = Some(layout);
+        app.layout.application_layout = Some(layout);
         begin(&mut app, &map, 1, Point::new(30.0, 575.0));
         update_pointer(&app, &map, center(r), r, vec![1, 2]);
         let scene = scene_of(&map);
@@ -1024,9 +1032,9 @@ mod tests {
             });
             let state = cx.state_with(|| {
                 let mut a = AppState::new();
-                a.show_terminal = true;
+                a.terminal_chrome.show_terminal = true;
                 a.source_control.visible = true;
-                a.application_layout = Some(ApplicationLayout::initial(
+                a.layout.application_layout = Some(ApplicationLayout::initial(
                     viewport.into(),
                     220.0,
                     220.0,
@@ -1038,7 +1046,7 @@ mod tests {
             let t = tabs.get();
             let ids = t.tabs().iter().map(|t| t.id).collect::<Vec<_>>();
             state.update(|app| {
-                app.application_layout.as_mut().unwrap().sync(
+                app.layout.application_layout.as_mut().unwrap().sync(
                     &t.tabs()
                         .iter()
                         .map(|t| (t.id, t.group_id))
@@ -1049,6 +1057,7 @@ mod tests {
             });
             let app = state.get();
             let snapshot = app
+                .layout
                 .application_layout
                 .as_ref()
                 .unwrap()
@@ -1140,6 +1149,7 @@ mod tests {
         // The idle preview must not mask real dividers or terminal cursors.
         let app = state.get();
         let snapshot = app
+            .layout
             .application_layout
             .as_ref()
             .unwrap()
@@ -1173,7 +1183,7 @@ mod tests {
                 session.tree().node(&line_id).unwrap().style.fill,
                 Some(theme::c().border)
             );
-            assert!(state.get().application_sash_drag.is_none());
+            assert!(state.get().layout.application_sash_drag.is_none());
             assert!(!map.is_dragging());
             send(
                 &mut session,
@@ -1232,7 +1242,10 @@ mod tests {
             .plan
             .unwrap();
         send(&mut session, up(target_point));
-        assert_eq!(state.get().application_layout.unwrap(), expected.layout);
+        assert_eq!(
+            state.get().layout.application_layout.unwrap(),
+            expected.layout
+        );
         assert_eq!(tabs.get().tabs().len(), 2);
         for c in &controllers {
             c.begin_selection(0, 0);
@@ -1261,7 +1274,7 @@ mod tests {
             InputEvent::TextInput("while default is hidden".into()),
         );
         assert!(controllers[0].snapshot().selection.is_empty());
-        let original = state.get().application_layout.clone();
+        let original = state.get().layout.application_layout.clone();
         send(&mut session, down(Point::new(35.0, 16.0)));
         send(
             &mut session,
@@ -1277,7 +1290,7 @@ mod tests {
             }),
         );
         assert!(!map.is_dragging());
-        assert_eq!(state.get().application_layout, original);
+        assert_eq!(state.get().layout.application_layout, original);
         send(&mut session, up(Point::new(600.0, 400.0)));
         send(&mut session, down(toggle));
         send(&mut session, up(toggle));
@@ -1287,20 +1300,24 @@ mod tests {
         send(&mut session, down(Point::new(35.0, 16.0)));
         send(&mut session, up(Point::new(35.0, 16.0)));
         // Start from its new header; leaving the window cancels the captured press.
-        let topology = state.get().application_layout.unwrap().root;
+        let topology = state.get().layout.application_layout.unwrap().root;
         let sash_down = Point::new(600.0, 400.0);
         let sash_up = Point::new(520.0, 400.0);
         send(&mut session, down(sash_down));
-        assert!(state.get().application_sash_drag.is_some());
+        assert!(state.get().layout.application_sash_drag.is_some());
         send(
             &mut session,
             InputEvent::PointerMove(PointerData::mouse(sash_up)),
         );
         send(&mut session, up(sash_up));
         let resized = state.get();
-        assert!(resized.application_sash_drag.is_none());
-        assert_eq!(resized.application_layout.as_ref().unwrap().root, topology);
+        assert!(resized.layout.application_sash_drag.is_none());
+        assert_eq!(
+            resized.layout.application_layout.as_ref().unwrap().root,
+            topology
+        );
         let snapshot = resized
+            .layout
             .application_layout
             .as_ref()
             .unwrap()
@@ -1318,13 +1335,13 @@ mod tests {
             &mut session,
             InputEvent::PointerMove(PointerData::mouse(Point::new(600.0, 400.0))),
         );
-        let before = state.get().application_layout.clone();
+        let before = state.get().layout.application_layout.clone();
         send(
             &mut session,
             InputEvent::PointerLeave(PointerData::mouse(Point::new(-1.0, 400.0))),
         );
         assert!(!map.is_dragging());
-        assert_eq!(state.get().application_layout, before);
+        assert_eq!(state.get().layout.application_layout, before);
         // Cancellation at a valid miniature point must also cancel: lgui
         // translates TouchPhase::Cancelled to PointerUp with that last point.
         send(&mut session, down(moved));
@@ -1353,7 +1370,7 @@ mod tests {
             },
         );
         assert!(!map.is_dragging());
-        assert_eq!(state.get().application_layout, before);
+        assert_eq!(state.get().layout.application_layout, before);
         send(&mut session, down(moved));
         send(
             &mut session,
@@ -1368,7 +1385,7 @@ mod tests {
             }),
         );
         assert!(!map.is_dragging());
-        assert_eq!(state.get().application_layout, before);
+        assert_eq!(state.get().layout.application_layout, before);
         send(&mut session, up(Point::new(600.0, 400.0)));
         // Place beside the second terminal through that terminal's own cell.
         send(&mut session, down(moved));
@@ -1391,6 +1408,7 @@ mod tests {
         assert_eq!(
             state
                 .get()
+                .layout
                 .application_layout
                 .as_ref()
                 .unwrap()
@@ -1400,6 +1418,7 @@ mod tests {
         assert_eq!(
             state
                 .get()
+                .layout
                 .application_layout
                 .as_ref()
                 .unwrap()
@@ -1412,7 +1431,7 @@ mod tests {
         assert_eq!(tabs.get().tabs().len(), 2);
         // The + button of a moved item still creates in the default strip.
         let app = state.get();
-        let layout = app.application_layout.as_ref().unwrap();
+        let layout = app.layout.application_layout.as_ref().unwrap();
         let snapshot = layout.snapshot(viewport.into(), visibility(&app));
         let moved_rect = snapshot.regions.iter().find(|r| r.0 == 7).unwrap().2;
         let plus = Point::new(moved_rect.right - 19.0, moved_rect.top + 17.0);
@@ -1420,7 +1439,7 @@ mod tests {
         send(&mut session, up(plus));
         assert_eq!(tabs.get().tabs().len(), 3);
         let app = state.get();
-        let layout = app.application_layout.as_ref().unwrap();
+        let layout = app.layout.application_layout.as_ref().unwrap();
         let snapshot = layout.snapshot(viewport.into(), visibility(&app));
         let new_id = layout.terminal_region(3).unwrap();
         let new_rect = snapshot.regions.iter().find(|r| r.0 == new_id).unwrap().2;
@@ -1459,6 +1478,7 @@ mod tests {
         assert_eq!(
             state
                 .get()
+                .layout
                 .application_layout
                 .as_ref()
                 .unwrap()
@@ -1480,7 +1500,7 @@ mod tests {
         send(&mut session, up(toggle));
         state.update(|app| {
             let v = visibility(app);
-            let layout = app.application_layout.as_mut().unwrap();
+            let layout = app.layout.application_layout.as_mut().unwrap();
             for id in [1, 2, 3] {
                 let plan = layout
                     .plan(
@@ -1496,7 +1516,7 @@ mod tests {
         });
         session.render_view(&view, viewport, UiScale::ONE);
         assert!(!state.get().default_terminal_open());
-        let detached = state.get().application_layout.unwrap();
+        let detached = state.get().layout.application_layout.unwrap();
         let ownership = [1, 2, 3].map(|id| detached.terminal_region(id).unwrap());
         send(&mut session, down(toggle));
         send(&mut session, up(toggle));
@@ -1504,7 +1524,7 @@ mod tests {
         assert_eq!(tabs.get().tabs().len(), 4);
         assert_eq!(tabs.get().active_id(), Some(4));
         let app = state.get();
-        let layout = app.application_layout.as_ref().unwrap();
+        let layout = app.layout.application_layout.as_ref().unwrap();
         assert_eq!(layout.default_terminal_active(), Some(4));
         assert_eq!(
             [1, 2, 3].map(|id| layout.terminal_region(id).unwrap()),
@@ -1513,7 +1533,7 @@ mod tests {
         send(&mut session, down(toggle));
         send(&mut session, up(toggle));
         let app = state.get();
-        let layout = app.application_layout.as_ref().unwrap();
+        let layout = app.layout.application_layout.as_ref().unwrap();
         for id in [1, 2, 3] {
             assert!(layout.terminal_visible(id, visibility(&app)));
         }

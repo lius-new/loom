@@ -102,6 +102,9 @@ impl TerminalHandle {
     fn with<T>(&self, f: impl FnOnce(&TerminalController) -> T) -> Option<T> {
         self.runtime.upgrade()?.with(self.id, f)
     }
+    pub fn id(&self) -> SessionId {
+        self.id
+    }
     pub fn shell(&self) -> ShellKind {
         self.shell
     }

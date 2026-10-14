@@ -100,7 +100,7 @@ pub(crate) fn render(
     let frame = Frame {
         active_path: app.workspace.active_path(),
         resizing: app.drawer.resizing,
-        resizable: app.application_layout.is_none(),
+        resizable: app.layout.application_layout.is_none(),
         decorate: &decorate,
     };
     let header = drawer_header(
@@ -233,8 +233,8 @@ fn run_menu(
                     tabs.add_at(shell, Some(cwd));
                 });
                 state.update(|app| {
-                    app.show_terminal = true;
-                    app.terminal_shell_menu = false;
+                    app.terminal_chrome.show_terminal = true;
+                    app.terminal.ui.terminal_shell_menu = false;
                 });
             }
         }

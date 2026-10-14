@@ -17,8 +17,8 @@ pub(crate) fn binding(state: &State<AppState>, store: &State<GitStoreSnapshot>) 
             let app = reader.get();
             Frame {
                 resizing: app.source_control.resizing,
-                resizable: app.application_layout.is_none(),
-                terminal_focused: app.terminal_focused,
+                resizable: app.layout.application_layout.is_none(),
+                terminal_focused: app.terminal.ui.terminal_focused,
                 active_diff: app.workspace.active_diff().map(|d| DiffRequest {
                     repository_root: d.repository_root.clone(),
                     path: d.path.clone(),

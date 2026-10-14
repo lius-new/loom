@@ -19,7 +19,6 @@
     "src/ui/tab_context_menu.rs",
     "src/ui/tabs.rs",
     "src/ui/terminal.rs",
-    "src/ui/terminal_settings.rs",
     "src/ui/terminal_tab_context_menu.rs",
     "src/ui/titlebar.rs",
     "src/ui/welcome.rs",
@@ -36,25 +35,13 @@
     "src/ui/components/loading_indicator.rs",
     "src/ui/editor/caret.rs",
     "src/ui/terminal.rs",
-    "src/ui/terminal_settings.rs",
-    "src/app/git_peek.rs"
+    "src/app/git_peek.rs",
+    "src/app/terminal_profile_tests.rs"
   ],
   "state_ownership": {
-    "application_layout": {
-      "owner": "app/state/layout",
-      "remove_in": "R7"
-    },
-    "application_sash_drag": {
-      "owner": "app/state/layout",
-      "remove_in": "R7"
-    },
     "default_shell": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
-    },
-    "default_shell_fallback": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
     },
     "editor": {
       "owner": "app/state/editor (composition field)",
@@ -104,10 +91,6 @@
       "owner": "features/settings/private model",
       "remove_in": "R8"
     },
-    "resizing_terminal": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
-    },
     "runtime": {
       "owner": "app/runtime weak legacy access (no ownership)",
       "remove_in": "R8"
@@ -116,21 +99,9 @@
       "owner": "app composition: features/search private model + ui/search interaction state",
       "remove_in": "R2 migrated; root composition retained"
     },
-    "selecting_terminal": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
-    },
-    "shell_editor": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
-    },
     "shell_options": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
-    },
-    "show_terminal": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
     },
     "smooth_caret": {
       "owner": "features/settings/private model",
@@ -140,10 +111,6 @@
       "owner": "features/settings/private model",
       "remove_in": "R8"
     },
-    "terminal_focused": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
-    },
     "terminal_font": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
@@ -152,29 +119,9 @@
       "owner": "features/settings/private model",
       "remove_in": "R8"
     },
-    "terminal_h": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
-    },
     "terminal_profiles": {
       "owner": "features/settings/private model",
       "remove_in": "R8"
-    },
-    "terminal_shell_menu": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
-    },
-    "terminal_shell_scroll": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
-    },
-    "terminal_split_drag": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
-    },
-    "terminal_tab_context_menu": {
-      "owner": "features/terminal/private model",
-      "remove_in": "R7"
     },
     "theme": {
       "owner": "features/settings/private model",
@@ -199,6 +146,18 @@
     "workspace_home_hover": {
       "owner": "app/state/chrome",
       "remove_in": "R8"
+    },
+    "terminal": {
+      "owner": "app/state: TerminalPanelState (feature availability + UI interaction)",
+      "remove_in": "composition"
+    },
+    "layout": {
+      "owner": "app/state/layout: ApplicationLayoutState",
+      "remove_in": "composition"
+    },
+    "terminal_chrome": {
+      "owner": "app/state/chrome: TerminalChrome",
+      "remove_in": "composition"
     }
   },
   "exceptions": {
@@ -487,16 +446,6 @@
       "remove_in": "R7",
       "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
     },
-    "src/ui/terminal_settings.rs": {
-      "dependencies": [
-        "crate::key_actions",
-        "crate::state",
-        "image",
-        "crate::infrastructure"
-      ],
-      "remove_in": "R7",
-      "reason": "现有实现和 cfg(test) 的接线保留；按登记阶段迁移，不允许新增文件复用此例外。"
-    },
     "src/ui/terminal_tab_context_menu.rs": {
       "dependencies": [
         "crate::state",
@@ -663,10 +612,6 @@
       "migrated_in": "R3"
     },
     "last_tab_click": {
-      "owner": "app/state/editor",
-      "migrated_in": "R3"
-    },
-    "last_terminal_tab_click": {
       "owner": "app/state/editor",
       "migrated_in": "R3"
     },
@@ -1104,6 +1049,96 @@
     "running_program": {
       "owner": "features/terminal/model:TerminalMetadata",
       "migrated_in": "R7.3"
+    }
+  },
+  "terminal_state_ownership": {
+    "app/state/layout.application_layout": {
+      "owner": "app/state/layout",
+      "migrated_in": "R7.4"
+    },
+    "app/state/layout.application_sash_drag": {
+      "owner": "app/state/layout",
+      "migrated_in": "R7.4"
+    },
+    "app/state/chrome.show_terminal": {
+      "owner": "app/state/chrome",
+      "migrated_in": "R7.4"
+    },
+    "app/state/chrome.terminal_h": {
+      "owner": "app/state/chrome",
+      "migrated_in": "R7.4"
+    },
+    "app/state/chrome.resizing_terminal": {
+      "owner": "app/state/chrome",
+      "migrated_in": "R7.4"
+    },
+    "app/state:TerminalPanelState.availability": {
+      "owner": "app/state:TerminalPanelState",
+      "migrated_in": "R7.4"
+    },
+    "app/state:TerminalPanelState.ui": {
+      "owner": "app/state:TerminalPanelState",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state.selecting_terminal": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state.terminal_focused": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state.terminal_shell_menu": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state.terminal_shell_scroll": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state.terminal_tab_context_menu": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state.shell_editor": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state.terminal_split_drag": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state.last_terminal_tab_click": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state:ProfileEditor.open": {
+      "owner": "ui/terminal/state:ProfileEditor",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state:ProfileEditor.id": {
+      "owner": "ui/terminal/state:ProfileEditor",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state:ProfileEditor.name": {
+      "owner": "ui/terminal/state:ProfileEditor",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state:ProfileEditor.program": {
+      "owner": "ui/terminal/state:ProfileEditor",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state:ProfileEditor.args": {
+      "owner": "ui/terminal/state:ProfileEditor",
+      "migrated_in": "R7.4"
+    },
+    "ui/terminal/state:ProfileEditor.error": {
+      "owner": "ui/terminal/state:ProfileEditor",
+      "migrated_in": "R7.4"
+    },
+    "features/terminal/availability.fallback": {
+      "owner": "features/terminal/availability",
+      "migrated_in": "R7.4"
     }
   }
 }

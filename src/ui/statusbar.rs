@@ -71,7 +71,7 @@ pub fn render(
             focus: false,
         })
         .on_click(move || {
-            super::terminal::toggle_panel(
+            crate::app::terminal::toggle_panel(
                 &st,
                 &terminal_sessions,
                 &editor_target,

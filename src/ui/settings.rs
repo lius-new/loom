@@ -195,7 +195,10 @@ impl Setting {
         match self {
             Self::Theme => THEME_ROW_H,
             Self::EditorFontFamily | Self::TerminalFontFamily => FAMILY_ROW_H,
-            Self::DefaultShell => crate::ui::terminal_settings::height(app),
+            Self::DefaultShell => crate::ui::terminal_settings::height(
+                &crate::app::terminal_profiles::settings_frame(app),
+                &app.terminal.ui,
+            ),
             _ => ROW_H,
         }
     }
@@ -497,7 +500,10 @@ fn keymap_link_row(row: UiRect, state: State<AppState>) -> Element {
 
 fn setting_row(row: UiRect, setting: Setting, app: &AppState, state: State<AppState>) -> Element {
     if setting == Setting::DefaultShell {
-        return crate::ui::terminal_settings::render(row, app, state);
+        return crate::ui::terminal_settings::render(
+            row,
+            crate::app::terminal_profiles::binding(&state),
+        );
     }
     let control_w = match setting.font() {
         Some((_, FontField::Family)) => FAMILY_INPUT_W,
@@ -651,7 +657,9 @@ fn family_input(frame: UiRect, target: FontTarget, state: State<AppState>) -> El
                         on_blur: Some(commit),
                     },
                 )
-                .on_focus(move |_| focus_state.update(|app| app.terminal_focused = false))
+                .on_focus(move |_| {
+                    focus_state.update(|app| app.terminal.ui.terminal_focused = false)
+                })
             },
         )
         .key(match target {

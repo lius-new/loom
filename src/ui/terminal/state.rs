@@ -1,0 +1,58 @@
+//! Terminal interaction and draft state; no session or process ownership.
+use crate::ui::components::input::InputState;
+use std::time::Instant;
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalTabContextMenuState {
+    pub position: (f32, f32),
+    pub target: crate::features::terminal::SessionId,
+    pub kind: TerminalTabMenuKind,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalTabMenuKind {
+    Actions,
+    Purpose,
+}
+#[derive(Clone)]
+pub struct ProfileEditor {
+    pub open: bool,
+    pub id: Option<u64>,
+    pub name: InputState,
+    pub program: InputState,
+    pub args: InputState,
+    pub error: Option<String>,
+}
+#[derive(Clone, Default)]
+pub struct TerminalUiState {
+    pub selecting_terminal: bool,
+    pub terminal_focused: bool,
+    pub terminal_shell_menu: bool,
+    pub terminal_shell_scroll: usize,
+    pub terminal_tab_context_menu: Option<TerminalTabContextMenuState>,
+    pub shell_editor: Option<ProfileEditor>,
+    pub terminal_split_drag: Option<u64>,
+    pub last_terminal_tab_click: Option<(Instant, u64, f32, f32, u8)>,
+}
+impl TerminalUiState {
+    pub fn terminal_tab_click_count(&mut self, terminal: u64, x: f32, y: f32) -> u8 {
+        next_click_count(&mut self.last_terminal_tab_click, terminal, x, y)
+    }
+}
+fn next_click_count<K: PartialEq>(
+    previous: &mut Option<(Instant, K, f32, f32, u8)>,
+    key: K,
+    x: f32,
+    y: f32,
+) -> u8 {
+    let now = Instant::now();
+    let count = previous
+        .as_ref()
+        .filter(|(time, previous_key, previous_x, previous_y, _)| {
+            previous_key == &key
+                && now.duration_since(*time).as_millis() < 500
+                && (x - *previous_x).abs() < 5.0
+                && (y - *previous_y).abs() < 5.0
+        })
+        .map_or(1, |(_, _, _, _, count)| count % 3 + 1);
+    *previous = Some((now, key, x, y, count));
+    count
+}

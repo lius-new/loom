@@ -41,8 +41,15 @@ mod workspace_git;
 pub(crate) mod workspace_restore;
 pub(crate) mod workspace_session;
 
+pub(crate) mod terminal;
+#[cfg(test)]
+mod terminal_profile_tests;
+pub(crate) mod terminal_profiles;
 pub(crate) mod terminal_runtime;
 
 pub(crate) mod terminal_binding;
 #[cfg(test)]
 mod terminal_session_tests;
+
+#[cfg(test)]
+mod terminal_command_tests;

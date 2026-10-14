@@ -246,3 +246,52 @@ test('terminal app snapshots and operation handles cannot become strong owners',
  assert.ok(violations({'src/app/new.rs':'use crate::terminal_session::TerminalTabs;'},policy()).some(e=>e.includes('old terminal composition')));
  assert.ok(violations({'src/main.rs':'mod terminal_session;'},policy()).some(e=>e.includes('old terminal module alias')));
 });
+
+test('terminal application commands cannot migrate back into legacy view callbacks',()=>{
+  for(const file of ['src/ui/terminal.rs','src/ui/terminal_tab_context_menu.rs']) {
+    for(const method of ['add_at','select','split','close','set_purpose','resize_pair','write','paste','terminate','begin_selection','extend_selection','wheel']) {
+      assert.ok(violations({[file]:`fn callback() { controller.${method}(target); }`},policy()).some(e=>e.includes('through app commands')));
+    }
+    assert.deepEqual(violations({[file]:'fn callback() { commands::select(&state, &tabs, id); }'},policy()),[]);
+  }
+});
+
+test('terminal settings and nested projection views cannot regain root or runtime dependencies',()=>{
+  for(const file of ['src/ui/terminal_settings.rs','src/ui/terminal/settings_binding.rs','src/ui/terminal/state.rs']) {
+    for(const source of ['use crate::app::state::AppState;', 'use crate::infrastructure::terminal::runtime::TerminalHandle;', 'use crate::key_actions;', 'pub struct View { owner: AppRuntime }']) {
+      assert.ok(violations({[file]:source},policy()).some(e=>e.includes('Terminal projection view')));
+    }
+    const p=policy();p.exceptions[file]={dependencies:['crate::state'],reason:'bad',remove_in:'R8'};
+    assert.ok(violations({[file]:'use crate::state::AppState;'},p).some(e=>e.includes('cannot have migration exceptions')));
+  }
+});
+
+test('terminal layout chrome availability and draft fields remain registered by their owners',()=>{
+  for(const [file,name,owner] of [
+    ['src/app/state/layout.rs','ApplicationLayoutState','app/state/layout'],
+    ['src/app/state/chrome.rs','TerminalChrome','app/state/chrome'],
+    ['src/ui/terminal/state.rs','TerminalUiState','ui/terminal/state'],
+    ['src/ui/terminal/state.rs','ProfileEditor','ui/terminal/state:ProfileEditor'],
+    ['src/features/terminal/availability.rs','TerminalAvailability','features/terminal/availability'],
+  ]) {
+    assert.ok(violations({[file]:`pub struct ${name} { field: bool }`},policy()).some(e=>e.includes(`${name}.field: no registered owner`)));
+    const p=policy();p.terminal_state_ownership={[owner+'.gone']:{owner,migrated_in:'R7.4'}};
+    assert.ok(violations({[file]:`pub struct ${name} {}`},p).some(e=>e.includes(`${name}.gone: obsolete ownership entry`)));
+    assert.ok(violations({[file]:`pub struct ${name} { controller: TerminalController }`},p).some(e=>e.includes('cannot own runtime services')));
+  }
+});
+
+test('registered terminal owners cannot disappear by deleting declarations or source files',()=>{
+  for(const [file,name,owner] of [
+    ['src/app/state/layout.rs','ApplicationLayoutState','app/state/layout'],
+    ['src/app/state/chrome.rs','TerminalChrome','app/state/chrome'],
+    ['src/ui/terminal/state.rs','TerminalUiState','ui/terminal/state'],
+    ['src/ui/terminal/state.rs','ProfileEditor','ui/terminal/state:ProfileEditor'],
+    ['src/features/terminal/availability.rs','TerminalAvailability','features/terminal/availability'],
+  ]) {
+    const p=policy();p.terminal_state_ownership={[owner+'.field']:{owner,migrated_in:'R7.4'}};
+    for(const sources of [{}, {[file]:'// declaration removed'}]) {
+      assert.ok(violations(sources,p).some(e=>e.includes(name+': registered owner declaration is missing')));
+    }
+  }
+});

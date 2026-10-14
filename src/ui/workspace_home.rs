@@ -13,7 +13,6 @@ use lgui::prelude::{Element, State, UiRect, VisualStyle, panel, text};
 use crate::state::AppState;
 use crate::theme;
 use crate::ui::tabs::{TEXT_MARGIN, ellipsize, measure};
-use crate::ui::terminal;
 use crate::workspace_actions;
 
 const MAX_PAGE_W: f32 = 620.0;
@@ -196,7 +195,7 @@ fn action_row(
                     actions.editor_focus.focus();
                 }
             }
-            WorkspaceAction::ToggleTerminal => terminal::toggle_panel(
+            WorkspaceAction::ToggleTerminal => crate::app::terminal::toggle_panel(
                 &actions.state,
                 &actions.terminal_tabs,
                 &actions.editor_focus,

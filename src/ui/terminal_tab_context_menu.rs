@@ -16,20 +16,17 @@ use crate::features::terminal::TERMINAL_PURPOSES as PURPOSES;
 use crate::state::{AppState, TerminalTabMenuKind};
 use crate::theme;
 
+use crate::features::terminal::actions::{
+    MenuAction as Action, close_targets as model_close_targets,
+};
+fn close_targets(tabs: &TerminalTabs, target: u64, action: Action) -> Vec<u64> {
+    model_close_targets(tabs.model(), target, action)
+}
+
 const MENU_W: f32 = 224.0;
 const PAD: f32 = 4.0;
 const ITEM_H: f32 = 22.0;
 const SEP_H: f32 = 5.0;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Action {
-    New,
-    Split,
-    Close,
-    Others,
-    Right,
-    All,
-}
 
 const ITEMS: &[(&str, Action)] = &[
     ("New Terminal", Action::New),
@@ -61,26 +58,6 @@ pub fn restore_focus_on_dismiss(
     });
 }
 
-fn close_targets(tabs: &TerminalTabs, target: u64, action: Action) -> Vec<u64> {
-    let Some(index) = tabs.tabs().iter().position(|tab| tab.id == target) else {
-        return Vec::new();
-    };
-    tabs.tabs()
-        .iter()
-        .enumerate()
-        .filter_map(|(i, tab)| {
-            match action {
-                Action::New | Action::Split => false,
-                Action::Close => tab.id == target,
-                Action::Others => tab.group_id != tabs.tabs()[index].group_id,
-                Action::Right => i > index && tab.group_id != tabs.tabs()[index].group_id,
-                Action::All => true,
-            }
-            .then_some(tab.id)
-        })
-        .collect()
-}
-
 pub fn render(
     viewport: UiRect,
     state: State<AppState>,
@@ -90,7 +67,7 @@ pub fn render(
     editor_focus: lgui::core::UiFocusHandle,
 ) -> Element {
     let snapshot = state.get();
-    let Some(menu) = snapshot.terminal_tab_context_menu else {
+    let Some(menu) = snapshot.terminal.ui.terminal_tab_context_menu else {
         return panel(viewport, VisualStyle::default());
     };
     let tab_snapshot = tabs.get();
@@ -104,10 +81,6 @@ pub fn render(
     if menu.kind != TerminalTabMenuKind::Actions {
         return render_purpose(viewport, state, tabs, menu, target_tab.purpose.clone());
     }
-    let shell = target_tab.controller.shell();
-    let cwd = target_tab
-        .working_directory()
-        .or_else(|| snapshot.explorer.model.roots().first().cloned());
     let target = menu.target;
     let height = PAD * 2.0 + ITEM_H * ITEMS.len() as f32 + SEP_H;
     let width = MENU_W.min(viewport.width().max(0.0));
@@ -132,14 +105,14 @@ pub fn render(
     .focus_scope()
     .on_pointer_down_with_button(move |cx, pointer, _| {
         if !card.contains(pointer.point) {
-            dismiss.update(|app| app.terminal_tab_context_menu = None);
+            dismiss.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
         }
         cx.stop_propagation();
     })
     .on_input(|cx, _| cx.stop_propagation())
     .on_key_down(move |cx, event| {
         if event.key == LogicalKey::Named(NamedKey::Escape) {
-            escape.update(|app| app.terminal_tab_context_menu = None);
+            escape.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
         }
         cx.prevent_default();
         cx.stop_propagation();
@@ -168,7 +141,6 @@ pub fn render(
         let action_application = application.clone();
         let action_terminal_focus = terminal_focus.clone();
         let action_editor_focus = editor_focus.clone();
-        let cwd = cwd.clone();
         surface = surface.child(
             Element::new(move |cx| {
                 let hovered = cx.context.interaction_flags(&cx.id).hovered;
@@ -194,57 +166,16 @@ pub fn render(
                 if !enabled {
                     return;
                 }
-                action_state.update(|app| app.terminal_tab_context_menu = None);
-                // Resolve the target again: a terminal may have closed while the menu was open.
-                if !action_tabs.get().tabs().iter().any(|tab| tab.id == target) {
+                if !crate::app::terminal::menu_action(
+                    &action_state,
+                    &action_tabs,
+                    target,
+                    action,
+                    &action_application,
+                ) {
                     return;
                 }
-                if action == Action::New {
-                    let cwd = cwd.clone();
-                    action_tabs.update(|tabs| {
-                        let id = tabs.add_at(shell, cwd);
-                        action_state.update(|app| {
-                            if let Some(layout) = &mut app.application_layout {
-                                layout.attach(id);
-                            }
-                        });
-                    });
-                } else if action == Action::Split {
-                    action_tabs.update(|tabs| {
-                        if let Some(id) = tabs.split(target) {
-                            action_state.update(|app| {
-                                if let Some(layout) = &mut app.application_layout {
-                                    layout.attach(id);
-                                }
-                            });
-                        }
-                    });
-                } else {
-                    let targets = close_targets(&action_tabs.get(), target, action);
-                    let mut controllers = Vec::new();
-                    action_tabs.update(|tabs| {
-                        for id in targets {
-                            if let Some(controller) = tabs.close(id) {
-                                controllers.push(controller);
-                            }
-                        }
-                    });
-                    let surviving = action_tabs.get();
-                    action_state.update(|app| {
-                        if let Some(layout) = &mut app.application_layout {
-                            surviving.sync_layout(layout);
-                        }
-                    });
-                    for controller in controllers {
-                        controller.terminate(&action_application);
-                    }
-                }
                 if action_tabs.get().is_empty() {
-                    action_state.update(|app| {
-                        app.show_terminal = false;
-                        app.terminal_shell_menu = false;
-                        app.terminal_focused = false;
-                    });
                     action_editor_focus.focus();
                 } else {
                     action_terminal_focus.focus();
@@ -300,14 +231,14 @@ fn render_purpose(
     .focus_scope()
     .on_pointer_down_with_button(move |cx, pointer, _| {
         if !card.contains(pointer.point) {
-            dismiss.update(|app| app.terminal_tab_context_menu = None);
+            dismiss.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
         }
         cx.stop_propagation();
     })
     .on_input(|cx, _| cx.stop_propagation())
     .on_key_down(move |cx, event| {
         if event.key == LogicalKey::Named(NamedKey::Escape) {
-            escape.update(|app| app.terminal_tab_context_menu = None);
+            escape.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
         }
         cx.prevent_default();
         cx.stop_propagation();
@@ -326,8 +257,7 @@ fn render_purpose(
         let choose_state = state.clone();
         surface = surface.child(
             purpose_row(row, purpose, current.as_deref() == Some(purpose)).on_click(move || {
-                choose_tabs.update(|tabs| tabs.set_purpose(target, Some(purpose)));
-                choose_state.update(|app| app.terminal_tab_context_menu = None);
+                crate::app::terminal::purpose(&choose_state, &choose_tabs, target, Some(purpose));
             }),
         );
         y += ITEM_H;
@@ -342,8 +272,7 @@ fn render_purpose(
     let row = UiRect::new(card.left + 1.0, y, card.right - 1.0, y + ITEM_H);
     surface = surface.child(
         purpose_row(row, "Automatic name", current.is_none()).on_click(move || {
-            clear_tabs.update(|tabs| tabs.set_purpose(target, None));
-            clear_state.update(|app| app.terminal_tab_context_menu = None);
+            crate::app::terminal::purpose(&clear_state, &clear_tabs, target, None);
         }),
     );
     overlay.child(surface)
@@ -376,37 +305,4 @@ fn purpose_row(row: UiRect, label: &str, selected: bool) -> Element {
         },
         theme::mono(theme::c().text, theme::SMALL),
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::features::terminal::ShellKind;
-
-    #[test]
-    fn actions_target_the_clicked_terminal_and_preserve_unclosed_sessions() {
-        let mut tabs = TerminalTabs::new();
-        let first = tabs.active_id().unwrap();
-        let middle = tabs.add(ShellKind::Cmd);
-        let last = tabs.add(ShellKind::Bash);
-        assert_eq!(tabs.active_id(), Some(last));
-        assert_eq!(close_targets(&tabs, middle, Action::Close), vec![middle]);
-        assert_eq!(
-            close_targets(&tabs, middle, Action::Others),
-            vec![first, last]
-        );
-        assert_eq!(close_targets(&tabs, middle, Action::Right), vec![last]);
-        assert!(close_targets(&tabs, last, Action::Right).is_empty());
-        assert!(close_targets(&tabs, 999, Action::All).is_empty());
-        for id in close_targets(&tabs, middle, Action::Others) {
-            tabs.close(id);
-        }
-        assert_eq!(tabs.active_id(), Some(middle));
-        assert!(close_targets(&tabs, middle, Action::Others).is_empty());
-        let sibling = tabs.split(middle).unwrap();
-        let other = tabs.add(ShellKind::Bash);
-        assert_eq!(close_targets(&tabs, middle, Action::Others), vec![other]);
-        assert_eq!(close_targets(&tabs, middle, Action::Right), vec![other]);
-        assert_eq!(close_targets(&tabs, sibling, Action::Close), vec![sibling]);
-    }
 }

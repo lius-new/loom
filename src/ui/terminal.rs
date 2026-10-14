@@ -1,8 +1,11 @@
 //! Bottom terminal panel backed by a real platform PTY.
 
 mod keys;
+pub(crate) mod settings_binding;
+pub(crate) mod state;
 use self::keys::key_bytes;
 
+use crate::app::terminal as commands;
 use crate::app::terminal_runtime::TerminalDisplay;
 use std::sync::Arc;
 
@@ -12,7 +15,7 @@ use lgui::core::{
     UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::prelude::{Color, Element, State, UiRect, VisualStyle, component, group, panel, text};
-use lgui::services::{Clipboard, ClipboardError, ServicesContextExt};
+use lgui::services::ServicesContextExt;
 
 use crate::app::terminal_binding::{TerminalTab, TerminalTabs};
 #[cfg(test)]
@@ -40,70 +43,6 @@ fn terminal_cell_width() -> f32 {
 
 fn terminal_line_h() -> f32 {
     fonts::terminal().line_h
-}
-
-/// Toggle only the default terminal region. Detached sessions retain their
-/// visibility and focus when that region is hidden.
-pub fn toggle_panel(
-    state: &State<AppState>,
-    terminal_tabs: &crate::app::terminal_binding::TerminalStore,
-    editor_focus: &UiFocusHandle,
-    terminal_focus: &UiFocusHandle,
-) {
-    let app = state.get();
-    let opening = !app.default_terminal_open();
-    let default_session = app
-        .application_layout
-        .as_ref()
-        .and_then(|layout| layout.default_terminal_active())
-        .or_else(|| {
-            app.application_layout
-                .is_none()
-                .then(|| terminal_tabs.get().active_id())
-                .flatten()
-        });
-    let mut selected = default_session;
-    if opening && selected.is_none() {
-        let cwd = app.explorer.model.roots().first().cloned();
-        let shell = app.effective_shell_at(cwd.as_deref());
-        terminal_tabs.update(|tabs| {
-            selected = Some(tabs.add_at(shell, cwd));
-        });
-    }
-    if opening && let Some(id) = selected {
-        terminal_tabs.update(|tabs| tabs.select(id));
-    }
-    let active = terminal_tabs.get().active_id();
-    let mut active_visible = false;
-    state.update(|app| {
-        if opening
-            && let Some(id) = selected
-            && let Some(layout) = &mut app.application_layout
-        {
-            layout.attach(id);
-        }
-        app.show_terminal = opening;
-        let visible = crate::ui::layout_map::visibility(app);
-        active_visible = active.is_some_and(|id| {
-            app.application_layout
-                .as_ref()
-                .map_or(opening, |layout| layout.terminal_visible(id, visible))
-        });
-        let hidden_menu = app.terminal_tab_context_menu.as_ref().is_some_and(|menu| {
-            app.application_layout
-                .as_ref()
-                .is_some_and(|layout| !layout.terminal_visible(menu.target, visible))
-        });
-        if opening || !active_visible || hidden_menu {
-            app.terminal_tab_context_menu = None;
-            app.terminal_shell_menu = false;
-        }
-    });
-    if opening {
-        terminal_focus.focus();
-    } else if !active_visible {
-        editor_focus.focus();
-    }
 }
 
 fn icon(id: &'static str, key: &'static str, rect: UiRect, color: Color) -> Element {
@@ -225,6 +164,7 @@ pub fn render_region(
 ) -> Element {
     let app = state.get();
     let (sessions, active) = app
+        .layout
         .application_layout
         .as_ref()
         .unwrap()
@@ -276,10 +216,10 @@ fn render_view(
     region_view: Option<(u64, TerminalTabs, bool)>,
 ) -> Element {
     let app_state = state.get();
-    let resizing = app_state.resizing_terminal;
+    let resizing = app_state.terminal_chrome.resizing_terminal;
     let primary = region_view.as_ref().is_none_or(|v| v.2);
-    let terminal_focused = app_state.terminal_focused && primary;
-    let shell_menu_open = app_state.terminal_shell_menu && primary;
+    let terminal_focused = app_state.terminal.ui.terminal_focused && primary;
+    let shell_menu_open = app_state.terminal.ui.terminal_shell_menu && primary;
     let snapshot = controller.snapshot();
     let terminal_tab_snapshot = region_view
         .as_ref()
@@ -317,22 +257,22 @@ fn render_view(
             .children(cx.children)
     })
     .event_policy(EventPolicy::INTERACTIVE);
-    let input_controller = controller.clone();
+    let input_tabs = terminal_tabs.clone();
     let input_application = application.clone();
     terminal = terminal.on_input(move |cx, input| {
         if !input.is_empty() {
-            input_controller.write(input.as_bytes());
+            commands::write(&input_tabs, active_tab_id, input.as_bytes());
             input_application.request_frame();
             cx.stop_propagation();
         }
     });
 
-    let key_controller = controller.clone();
+    let key_tabs = terminal_tabs.clone();
     let key_application = application.clone();
     let application_cursor = snapshot.application_cursor;
     terminal = terminal.on_key_down(move |cx, event| {
         if let Some(bytes) = key_bytes(event, application_cursor) {
-            key_controller.write(&bytes);
+            commands::write(&key_tabs, active_tab_id, &bytes);
             key_application.request_frame();
             cx.prevent_default();
             cx.stop_propagation();
@@ -342,13 +282,13 @@ fn render_view(
     let focus_state = state.clone();
     terminal = terminal.on_focus(move |_cx| {
         focus_state.update(|app| {
-            app.terminal_focused = true;
+            app.terminal.ui.terminal_focused = true;
             app.editor.focused = false;
         });
     });
     let blur_state = state.clone();
     terminal = terminal.on_blur(move |_cx| {
-        blur_state.update(|app| app.terminal_focused = false);
+        blur_state.update(|app| app.terminal.ui.terminal_focused = false);
     });
 
     // The resize handle owns the outer divider; drawing it here too creates
@@ -363,11 +303,6 @@ fn render_view(
     let add_tabs = terminal_tabs.clone();
     let add_state = state.clone();
     let add_focus = terminal_focus.clone();
-    let add_shell = snapshot.shell;
-    let add_cwd = terminal_tab_snapshot
-        .active()
-        .and_then(|tab| tab.working_directory())
-        .or_else(|| app_state.explorer.model.roots().first().cloned());
     let add_rect = UiRect::new(
         rect.right - 32.0,
         header.top + 5.0,
@@ -385,17 +320,9 @@ fn render_view(
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
-            let cwd = add_cwd.clone();
-            let mut id = None;
-            add_tabs.update(|tabs| {
-                id = Some(tabs.add_at(add_shell, cwd));
-            });
-            if let Some(id) = id {
-                add_state.update(|app| {
-                    if let Some(layout) = &mut app.application_layout {
-                        layout.attach(id);
-                    }
-                });
+            if commands::new_from_target(&add_state, &add_tabs, active_tab_id, None, true).is_none()
+            {
+                return;
             }
             add_focus.focus();
         })
@@ -462,14 +389,9 @@ fn render_view(
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
-            menu_tabs.update(|tabs| tabs.select(active_tab_id));
-            menu_state.update(|app| {
-                app.terminal_shell_menu = !app.terminal_shell_menu;
-                if app.terminal_shell_menu {
-                    app.terminal_shell_scroll = 0;
-                    app.refresh_shells();
-                }
-            });
+            if !commands::shell_menu(&menu_state, &menu_tabs, active_tab_id) {
+                return;
+            }
             menu_focus.focus();
         })
         .child(icon(
@@ -541,10 +463,11 @@ fn render_view(
             format!("terminal-split-{left_id}-{right_id}"),
             body_rects[index].right + 0.5,
             (body.top, body.bottom),
-            app_state.terminal_split_drag == Some(left_id),
-            move || down.update(|app| app.terminal_split_drag = Some(left_id)),
+            app_state.terminal.ui.terminal_split_drag == Some(left_id),
+            move || down.update(|app| app.terminal.ui.terminal_split_drag = Some(left_id)),
             move |x| {
-                if moving.get().terminal_split_drag != Some(left_id) || remaining <= 0.0 {
+                if moving.get().terminal.ui.terminal_split_drag != Some(left_id) || remaining <= 0.0
+                {
                     return;
                 }
                 let position = crate::ui::pane_sash::split_position(pair_left, pair_right, x);
@@ -552,10 +475,10 @@ fn render_view(
                 if pair_extra > 0.0 {
                     let fraction =
                         ((position - pair_left - minimum) / pair_extra).clamp(0.001, 0.999);
-                    tabs.update(|tabs| tabs.resize_pair(left_id, right_id, fraction));
+                    commands::resize_pair(&tabs, left_id, right_id, fraction);
                 }
             },
-            move || up.update(|app| app.terminal_split_drag = None),
+            move || up.update(|app| app.terminal.ui.terminal_split_drag = None),
         ));
     }
 
@@ -592,18 +515,19 @@ fn render_view(
         )
         .on_pointer_down_with_button(move |_cx, _pointer, button| {
             if button == PointerButton::Left {
-                resize_down.update(|app| app.resizing_terminal = true);
+                resize_down.update(|app| app.terminal_chrome.resizing_terminal = true);
             }
         })
         .on_pointer_drag(move |_cx, pointer| {
             resize_drag.update(move |app| {
-                if app.resizing_terminal {
-                    app.terminal_h = resized_height(panel_bottom, pointer.point.y, max_height);
+                if app.terminal_chrome.resizing_terminal {
+                    app.terminal_chrome.terminal_h =
+                        resized_height(panel_bottom, pointer.point.y, max_height);
                 }
             });
         })
         .on_pointer_up(move |_cx, _pointer| {
-            resize_up.update(|app| app.resizing_terminal = false);
+            resize_up.update(|app| app.terminal_chrome.resizing_terminal = false);
         }),
     );
 
@@ -652,20 +576,21 @@ fn render_session(
 
     let focus_on_click = terminal_focus.clone();
     let click_tabs = terminal_tabs.clone();
+    let click_state = state.clone();
     terminal = terminal.on_click(move || {
-        click_tabs.update(move |tabs| tabs.select(session_id));
+        commands::select(&click_state, &click_tabs, session_id);
         focus_on_click.focus();
     });
 
     let (screen_rows, screen_cols) = (snapshot.rows, snapshot.cols);
     // lgui wheel payloads contain the delta only. Retain the latest pointer
     // cell in the session controller across redraws for application reports.
-    let mouse_controller = controller.clone();
+    let mouse_tabs = terminal_tabs.clone();
     terminal = terminal.on_pointer_move(move |_cx, pointer| {
         let (row, col) = mouse_cell_at(content, pointer.point, screen_rows, screen_cols);
-        mouse_controller.set_mouse_position(row, col);
+        commands::mouse_position(&mouse_tabs, session_id, row, col);
     });
-    let select_controller = controller.clone();
+    let select_input_tabs = terminal_tabs.clone();
     let select_tabs = terminal_tabs.clone();
     let select_focus = terminal_focus.clone();
     let select_state = state.clone();
@@ -674,46 +599,49 @@ fn render_session(
         if !content.contains(pointer.point) {
             return;
         }
-        select_tabs.update(move |tabs| tabs.select(session_id));
+        if !commands::select(&select_state, &select_tabs, session_id) {
+            return;
+        }
         select_focus.focus();
         let (row, col) = cell_at(content, pointer.point, screen_rows, screen_cols);
         match button {
             PointerButton::Left => {
-                select_controller.begin_selection(row, col);
-                select_state.update(|app| app.selecting_terminal = true);
+                commands::begin_selection(&select_input_tabs, session_id, row, col);
+                select_state.update(|app| app.terminal.ui.selecting_terminal = true);
             }
             // Right click copies a selection, or pastes when there is none.
             PointerButton::Right => {
                 let clipboard = cx.application().clipboard();
-                let result = match copy_selection(&select_controller, clipboard.as_ref()) {
-                    Ok(true) => Ok(()),
-                    Ok(false) => paste_clipboard(&select_controller, clipboard.as_ref()),
-                    Err(error) => Err(error),
-                };
-                report_clipboard_error(&select_state, result);
+                let result = commands::clipboard(
+                    &select_input_tabs,
+                    session_id,
+                    commands::ClipboardShortcut::CopyOrPaste,
+                    clipboard.as_ref(),
+                );
+                commands::report_clipboard_error(&select_state, result);
             }
             _ => return,
         }
         select_application.request_frame();
     });
 
-    let drag_controller = controller.clone();
+    let drag_tabs = terminal_tabs.clone();
     let drag_state = state.clone();
     let drag_application = application.clone();
     terminal = terminal.on_pointer_drag(move |cx, pointer| {
-        if drag_state.get().selecting_terminal {
+        if drag_state.get().terminal.ui.selecting_terminal {
             let (row, col) = cell_at(content, pointer.point, screen_rows, screen_cols);
-            drag_controller.extend_selection(row, col);
+            commands::extend_selection(&drag_tabs, session_id, row, col);
             drag_application.request_frame();
             cx.stop_propagation();
         }
     });
     let select_up_state = state.clone();
     terminal = terminal.on_pointer_up(move |_cx, _pointer| {
-        select_up_state.try_update(|app| std::mem::take(&mut app.selecting_terminal));
+        select_up_state.try_update(|app| std::mem::take(&mut app.terminal.ui.selecting_terminal));
     });
 
-    let wheel_controller = controller.clone();
+    let wheel_tabs = terminal_tabs.clone();
     let wheel_application = application.clone();
     let wheel_state = state.clone();
     terminal = terminal.on_wheel(move |cx, delta| {
@@ -722,7 +650,12 @@ fn render_session(
             WheelUnit::Pixels => delta.y / (terminal_line_h() * 3.0),
         };
         if lines.is_finite() && lines != 0.0 {
-            wheel_controller.wheel(lines, keys::modifiers(wheel_state.get().editor.modifiers));
+            commands::wheel(
+                &wheel_tabs,
+                session_id,
+                lines,
+                keys::modifiers(wheel_state.get().editor.modifiers),
+            );
             wheel_application.request_frame();
             cx.stop_propagation();
         }
@@ -898,8 +831,8 @@ fn render_terminal_tabs(
                         app.explorer.ui.menu = None;
                         app.explorer.ui.menu_target = None;
                         app.editor.tab_context_menu = None;
-                        app.terminal_shell_menu = false;
-                        app.terminal_tab_context_menu =
+                        app.terminal.ui.terminal_shell_menu = false;
+                        app.terminal.ui.terminal_tab_context_menu =
                             Some(crate::state::TerminalTabContextMenuState {
                                 position: (pointer.point.x, pointer.point.y),
                                 target: tab_id,
@@ -951,10 +884,12 @@ fn render_terminal_tabs(
                 .on_pointer_down_with_button(move |cx, pointer, button| {
                     if button == PointerButton::Left {
                         *press_point.lock().unwrap() = Some(pointer.point);
-                        select_tabs.update(move |tabs| tabs.select(tab_id));
+                        if !commands::select(&press_state, &select_tabs, tab_id) {
+                            return;
+                        }
                         select_focus.focus();
                         press_state.update(|app| {
-                            if app.application_layout.is_some() {
+                            if app.layout.application_layout.is_some() {
                                 crate::ui::layout_map::begin(
                                     app,
                                     &select_map,
@@ -972,18 +907,19 @@ fn render_terminal_tabs(
                     };
                     click_state.update(|app| {
                         if app
-                            .editor
+                            .terminal
+                            .ui
                             .terminal_tab_click_count(tab_id, point.x, point.y)
                             == 2
                         {
-                            app.editor.last_terminal_tab_click = None;
+                            app.terminal.ui.last_terminal_tab_click = None;
                             click_map.cancel();
                             app.editor.menu = None;
                             app.explorer.ui.menu = None;
                             app.explorer.ui.menu_target = None;
                             app.editor.tab_context_menu = None;
-                            app.terminal_shell_menu = false;
-                            app.terminal_tab_context_menu =
+                            app.terminal.ui.terminal_shell_menu = false;
+                            app.terminal.ui.terminal_tab_context_menu =
                                 Some(crate::state::TerminalTabContextMenuState {
                                     position: (tab_rect.left, tab_rect.bottom),
                                     target: tab_id,
@@ -996,7 +932,6 @@ fn render_terminal_tabs(
             .key(format!("terminal-tab-select-component-{tab_id}")),
         );
 
-        let close_controller = tab.controller.clone();
         let close_tabs = terminal_tabs.clone();
         let close_state = state.clone();
         let close_terminal_focus = terminal_focus.clone();
@@ -1008,27 +943,17 @@ fn render_terminal_tabs(
                 .event_policy(EventPolicy::INTERACTIVE)
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
-                    let current = close_tabs.get().tabs();
-                    if !current.iter().any(|tab| tab.id == tab_id) {
+                    if !commands::close(
+                        &close_state,
+                        &close_tabs,
+                        tab_id,
+                        crate::features::terminal::actions::MenuAction::Close,
+                        &close_application,
+                    ) {
                         return;
                     }
-                    let closing_last_tab = current.len() == 1;
-                    close_tabs.update(move |tabs| {
-                        tabs.close(tab_id);
-                    });
-                    let surviving = close_tabs.get();
-                    close_state.update(|app| {
-                        if let Some(layout) = &mut app.application_layout {
-                            surviving.sync_layout(layout);
-                        }
-                    });
-                    close_controller.terminate(&close_application);
+                    let closing_last_tab = close_tabs.get().is_empty();
                     if closing_last_tab {
-                        close_state.update(|app| {
-                            app.show_terminal = false;
-                            app.terminal_shell_menu = false;
-                            app.terminal_focused = false;
-                        });
                         close_editor_focus.focus();
                     } else {
                         close_terminal_focus.focus();
@@ -1202,65 +1127,6 @@ fn mouse_cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u
     (row as u16, col as u16)
 }
 
-/// The terminal's clipboard actions (`terminal::Copy` and friends).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClipboardShortcut {
-    Copy,
-    /// Copy when text is selected and otherwise interrupt, matching Windows Terminal.
-    CopyOrInterrupt,
-    Paste,
-}
-
-pub fn run_clipboard_shortcut(
-    controller: &TerminalHandle,
-    shortcut: ClipboardShortcut,
-    clipboard: &dyn Clipboard,
-) -> Result<(), ClipboardError> {
-    match shortcut {
-        ClipboardShortcut::Copy => copy_selection(controller, clipboard).map(|_| ()),
-        ClipboardShortcut::CopyOrInterrupt => copy_selection(controller, clipboard).map(|copied| {
-            if !copied {
-                controller.write(b"\x03");
-            }
-        }),
-        ClipboardShortcut::Paste => paste_clipboard(controller, clipboard),
-    }
-}
-
-/// Type replayed text from an abandoned key sequence into the shell.
-pub fn write_text(controller: &TerminalHandle, text: &str) {
-    controller.write(text.as_bytes());
-}
-
-fn copy_selection(
-    controller: &TerminalHandle,
-    clipboard: &dyn Clipboard,
-) -> Result<bool, ClipboardError> {
-    let Some(value) = controller.selected_text() else {
-        return Ok(false);
-    };
-    // A failed copy keeps the selection so the user can retry.
-    clipboard.write_text(&value)?;
-    controller.clear_selection();
-    Ok(true)
-}
-
-fn paste_clipboard(
-    controller: &TerminalHandle,
-    clipboard: &dyn Clipboard,
-) -> Result<(), ClipboardError> {
-    if let Some(value) = clipboard.read_text()? {
-        controller.paste(&value);
-    }
-    Ok(())
-}
-
-pub fn report_clipboard_error(state: &State<AppState>, result: Result<(), ClipboardError>) {
-    if let Err(error) = result {
-        state.update(|app| app.show_error(format!("Clipboard: {error}")));
-    }
-}
-
 fn cursor_is_drawn(pty_visible: bool, focused: bool, blink_visible: bool) -> bool {
     pty_visible && (!focused || blink_visible)
 }
@@ -1273,12 +1139,15 @@ fn shell_menu(
     terminal_tabs: crate::app::terminal_binding::TerminalStore,
 ) -> Element {
     let options = state.get().shell_options.clone();
+    let menu_target = terminal_tabs.get().active_id();
     let space = (bounds.bottom - instance_rect.bottom).max(instance_rect.top - bounds.top);
     let visible = (((space - 12.0) / SHELL_MENU_ROW_H).floor() as usize)
         .clamp(1, 7)
         .min(options.len().max(1));
     let offset = state
         .get()
+        .terminal
+        .ui
         .terminal_shell_scroll
         .min(options.len().saturating_sub(visible));
     let height = 8.0 + SHELL_MENU_ROW_H * options.len().min(visible).max(1) as f32;
@@ -1299,7 +1168,7 @@ fn shell_menu(
         .on_wheel(move |cx, delta| {
             let step = delta.y.abs().ceil().max(1.0) as usize;
             scroll_state.update(|app| {
-                app.terminal_shell_scroll = if delta.y > 0.0 {
+                app.terminal.ui.terminal_shell_scroll = if delta.y > 0.0 {
                     offset.saturating_sub(step)
                 } else {
                     offset.saturating_add(step).min(max_offset)
@@ -1326,22 +1195,15 @@ fn shell_menu(
                 .event_policy(EventPolicy::INTERACTIVE)
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
-                    let cwd = row_tabs
-                        .get()
-                        .active()
-                        .and_then(|tab| tab.working_directory());
-                    let mut id = None;
-                    row_tabs.update(|tabs| {
-                        id = Some(tabs.add_at(shell, cwd));
-                    });
-                    row_state.update(|app| {
-                        app.terminal_shell_menu = false;
-                        if let Some(id) = id
-                            && let Some(layout) = &mut app.application_layout
-                        {
-                            layout.attach(id);
-                        }
-                    });
+                    let Some(target) = menu_target else {
+                        return;
+                    };
+                    if commands::new_from_target(&row_state, &row_tabs, target, Some(shell), false)
+                        .is_none()
+                    {
+                        return;
+                    }
+                    row_state.update(|app| app.terminal.ui.terminal_shell_menu = false);
                     row_focus.focus();
                 });
         }
@@ -1430,8 +1292,8 @@ mod tests {
                 app.shell_options[0].program = None;
                 let mut layout = ApplicationLayout::initial(viewport.into(), 40.0, 40.0, 200.0);
                 layout.attach(1);
-                app.application_layout = Some(layout);
-                app.terminal_shell_menu = true;
+                app.layout.application_layout = Some(layout);
+                app.terminal.ui.terminal_shell_menu = true;
                 app
             });
             let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
@@ -1498,7 +1360,7 @@ mod tests {
         }
         click_label(&mut session, &context, &view, viewport, "Custom 1");
         assert_eq!(tabs.get().tabs().len(), 1);
-        state.update(|app| app.terminal_shell_scroll = 9);
+        state.update(|app| app.terminal.ui.terminal_shell_scroll = 9);
         session.render_view(&view, viewport, UiScale::ONE);
         click_label(&mut session, &context, &view, viewport, "Custom 10");
         let tab = tabs.get().active().unwrap().clone();
@@ -1507,13 +1369,14 @@ mod tests {
         assert_eq!(
             state
                 .get()
+                .layout
                 .application_layout
                 .as_ref()
                 .unwrap()
                 .default_terminal_active(),
             Some(tab.id)
         );
-        assert!(!state.get().terminal_shell_menu);
+        assert!(!state.get().terminal.ui.terminal_shell_menu);
     }
 
     #[test]
@@ -1651,7 +1514,7 @@ mod tests {
             pointer: divider,
             button: PointerButton::Left,
         });
-        assert_eq!(state.get().terminal_split_drag, Some(1));
+        assert_eq!(state.get().terminal.ui.terminal_split_drag, Some(1));
         let moved = PointerData::mouse(Point::new(350.0, 80.0));
         send(InputEvent::PointerMove(moved));
         assert_eq!(tabs.get().active_id(), Some(2));
@@ -1665,7 +1528,7 @@ mod tests {
             pointer: moved,
             button: PointerButton::Left,
         });
-        assert_eq!(state.get().terminal_split_drag, None);
+        assert_eq!(state.get().terminal.ui.terminal_split_drag, None);
         let weights = tabs
             .get()
             .active_group()
@@ -1695,7 +1558,7 @@ mod tests {
             pointer: end,
             button: PointerButton::Left,
         });
-        assert!(!state.get().selecting_terminal);
+        assert!(!state.get().terminal.ui.selecting_terminal);
         let snapshot = tabs.get();
         let left = snapshot.tabs()[0].controller.clone();
         let right = snapshot.tabs()[1].controller.clone();
@@ -1748,7 +1611,7 @@ mod tests {
         let view: AppView = Arc::new(move |cx| {
             let state = cx.state_with(|| {
                 let mut app = AppState::new();
-                app.show_terminal = true;
+                app.terminal_chrome.show_terminal = true;
                 app
             });
             let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
@@ -1764,8 +1627,8 @@ mod tests {
             let editor_focus = cx.focus_handle(editor_id.clone());
             crate::ui::terminal_tab_context_menu::restore_focus_on_dismiss(
                 cx,
-                state.get().terminal_tab_context_menu.is_some(),
-                state.get().show_terminal,
+                state.get().terminal.ui.terminal_tab_context_menu.is_some(),
+                state.get().terminal_chrome.show_terminal,
                 terminal_focus.clone(),
                 editor_focus.clone(),
             );
@@ -1794,7 +1657,7 @@ mod tests {
             .event_policy(EventPolicy::INTERACTIVE);
             let snapshot = tabs.get();
             let mut root = group(viewport).child(editor);
-            if state.get().show_terminal {
+            if state.get().terminal_chrome.show_terminal {
                 root = root.child(terminal);
             }
             if let Some(active_id) = snapshot.active_id() {
@@ -1810,7 +1673,7 @@ mod tests {
                     application.clone(),
                 ));
             }
-            if state.get().terminal_tab_context_menu.is_some() {
+            if state.get().terminal.ui.terminal_tab_context_menu.is_some() {
                 root = root.child(crate::ui::terminal_tab_context_menu::render(
                     viewport,
                     state,
@@ -1848,7 +1711,16 @@ mod tests {
             pointer: point,
             button: PointerButton::Right,
         });
-        assert_eq!(state.get().terminal_tab_context_menu.unwrap().target, 1);
+        assert_eq!(
+            state
+                .get()
+                .terminal
+                .ui
+                .terminal_tab_context_menu
+                .unwrap()
+                .target,
+            1
+        );
         assert_eq!(tabs.get().active_id(), Some(3));
         send(InputEvent::TextInput("must not reach shell".into()));
         assert_eq!(writes.load(Ordering::Acquire), 0);
@@ -1856,7 +1728,7 @@ mod tests {
             LogicalKey::Named(NamedKey::Escape),
             Default::default(),
         )));
-        assert!(state.get().terminal_tab_context_menu.is_none());
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
         send(InputEvent::TextInput("shell input restored".into()));
         assert_eq!(writes.load(Ordering::Acquire), 1);
 
@@ -1877,7 +1749,7 @@ mod tests {
             pointer: others,
             button: PointerButton::Left,
         });
-        assert!(state.get().terminal_tab_context_menu.is_none());
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
         assert_eq!(tabs.get().tabs().len(), 1);
         assert_eq!(tabs.get().active_id(), Some(1));
         send(InputEvent::PointerDown {
@@ -1897,7 +1769,7 @@ mod tests {
             pointer: outside,
             button: PointerButton::Left,
         });
-        assert!(state.get().terminal_tab_context_menu.is_none());
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
         send(InputEvent::TextInput(
             "outside dismissal restores input".into(),
         ));
@@ -1913,7 +1785,7 @@ mod tests {
             pointer: label,
             button: PointerButton::Left,
         });
-        assert!(state.get().terminal_tab_context_menu.is_none());
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
         send(InputEvent::PointerDown {
             pointer: label,
             button: PointerButton::Left,
@@ -1922,7 +1794,7 @@ mod tests {
             pointer: label,
             button: PointerButton::Left,
         });
-        let purpose_menu = state.get().terminal_tab_context_menu.unwrap();
+        let purpose_menu = state.get().terminal.ui.terminal_tab_context_menu.unwrap();
         assert_eq!(
             purpose_menu.kind,
             crate::state::TerminalTabMenuKind::Purpose
@@ -1939,7 +1811,7 @@ mod tests {
             button: PointerButton::Left,
         });
         assert_eq!(tabs.get().tabs()[0].label(), "pwsh · Testing");
-        assert!(state.get().terminal_tab_context_menu.is_none());
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
         send(InputEvent::TextInput(
             "typing resumes after purpose selection".into(),
         ));
@@ -1947,11 +1819,12 @@ mod tests {
 
         // The general preset replaces free-form purpose entry.
         state.update(|app| {
-            app.terminal_tab_context_menu = Some(crate::state::TerminalTabContextMenuState {
-                position: (20.0, 40.0),
-                target: 1,
-                kind: crate::state::TerminalTabMenuKind::Purpose,
-            })
+            app.terminal.ui.terminal_tab_context_menu =
+                Some(crate::state::TerminalTabContextMenuState {
+                    position: (20.0, 40.0),
+                    target: 1,
+                    kind: crate::state::TerminalTabMenuKind::Purpose,
+                })
         });
         send(InputEvent::PointerMove(lgui::core::PointerData::mouse(
             Point::new(40.0, 165.0),
@@ -1969,16 +1842,17 @@ mod tests {
             pointer: other,
             button: PointerButton::Left,
         });
-        assert!(state.get().terminal_tab_context_menu.is_none());
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
         assert_eq!(tabs.get().tabs()[0].label(), "pwsh · Other");
 
         tabs.update(|tabs| tabs.update_programs(&[(1, Some("node".into()))]));
         state.update(|app| {
-            app.terminal_tab_context_menu = Some(crate::state::TerminalTabContextMenuState {
-                position: (20.0, 40.0),
-                target: 1,
-                kind: crate::state::TerminalTabMenuKind::Purpose,
-            })
+            app.terminal.ui.terminal_tab_context_menu =
+                Some(crate::state::TerminalTabContextMenuState {
+                    position: (20.0, 40.0),
+                    target: 1,
+                    kind: crate::state::TerminalTabMenuKind::Purpose,
+                })
         });
         let automatic = lgui::core::PointerData::mouse(Point::new(40.0, 191.0));
         send(InputEvent::PointerMove(automatic));
@@ -2056,8 +1930,8 @@ mod tests {
             button: PointerButton::Left,
         });
         assert!(tabs.get().is_empty());
-        assert!(!state.get().show_terminal);
-        assert!(state.get().terminal_tab_context_menu.is_none());
+        assert!(!state.get().terminal_chrome.show_terminal);
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
     }
 
     #[test]

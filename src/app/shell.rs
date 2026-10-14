@@ -296,8 +296,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     let had_pending = !app.pending_keystrokes.is_empty();
                     app.pending_keystrokes.clear();
                     let split_drag = app.editor.diff_split.drag.take().is_some()
-                        | app.terminal_split_drag.take().is_some()
-                        | app.application_sash_drag.take().is_some();
+                        | app.terminal.ui.terminal_split_drag.take().is_some()
+                        | app.layout.application_sash_drag.take().is_some();
                     crate::app::editor::finish_scrollbar_drag(app)
                         | tabs::cancel_pointer_interaction(app)
                         | had_pending
@@ -318,7 +318,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         save_terminals(
             &close_terminals.get(),
             app.default_terminal_open(),
-            app.terminal_h,
+            app.terminal_chrome.terminal_h,
         );
         let workspace = app.workspace;
         let dirty_targets = workspace
@@ -337,7 +337,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     continuation: CloseContinuation::ExitApplication,
                 });
                 app.editor.tab_context_menu = None;
-                app.terminal_tab_context_menu = None;
+                app.terminal.ui.terminal_tab_context_menu = None;
                 app.git.ui.clone_visible = false;
                 app.git.ui.branch_picker = None;
                 app.git.ui.stash_switch = None;
@@ -370,13 +370,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         .map(|t| (t.id, t.group_id))
         .collect::<Vec<_>>();
     state.try_update(|app| {
-        let before = app.application_layout.clone();
-        let layout = app.application_layout.get_or_insert_with(|| {
+        let before = app.layout.application_layout.clone();
+        let layout = app.layout.application_layout.get_or_insert_with(|| {
             ApplicationLayout::initial(
                 content_area.into(),
                 app.source_control.width,
                 app.drawer.width,
-                app.terminal_h,
+                app.terminal_chrome.terminal_h,
             )
         });
         layout.sync(&session_groups, active_terminal_id);
@@ -473,13 +473,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             terminal_widths.clone(),
             terminal_purposes.clone(),
             terminal_directories.clone(),
-            s.terminal_split_drag,
+            s.terminal.ui.terminal_split_drag,
             active_terminal_index,
             default_terminal_open,
-            s.terminal_h,
+            s.terminal_chrome.terminal_h,
         ),
         move || {
-            if s.terminal_split_drag.is_none() {
+            if s.terminal.ui.terminal_split_drag.is_none() {
                 let _ = workspace_persistence::save_terminal_state(
                     &terminal_shells,
                     &terminal_groups,
@@ -488,7 +488,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     &terminal_directories,
                     active_terminal_index,
                     default_terminal_open,
-                    s.terminal_h,
+                    s.terminal_chrome.terminal_h,
                 );
             }
             || {}
@@ -534,7 +534,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Region layout ------------------------------------------------
     let titlebar_rect = UiRect::new(0.0, 0.0, w, theme::TITLEBAR_H);
     let statusbar_rect = UiRect::new(0.0, h - theme::STATUS_H, w, h);
-    let application_layout = s.application_layout.as_ref().unwrap();
+    let application_layout = s.layout.application_layout.as_ref().unwrap();
     let layout_visibility = layout_map::visibility(&s);
     let application_snapshot = application_layout.snapshot(content_area.into(), layout_visibility);
     let source_control_left = s.source_control.visible;
@@ -707,7 +707,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let mounted_terminal_focus = terminal_focus.clone();
     terminal_tab_context_menu::restore_focus_on_dismiss(
         cx,
-        s.terminal_tab_context_menu.is_some(),
+        s.terminal.ui.terminal_tab_context_menu.is_some(),
         terminal_visible,
         terminal_focus.clone(),
         editor_focus.clone(),
@@ -849,7 +849,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let watcher = key_actions::watch_user_settings(settings_state);
         move || drop(watcher)
     });
-    let blink_focused = s.terminal_focused && s.terminal_cursor_blink;
+    let blink_focused = s.terminal.ui.terminal_focused && s.terminal_cursor_blink;
     let blink_state = terminal_cursor_blink.clone();
     cx.use_effect(
         (terminal_visible, blink_focused, active_visible_terminal),
@@ -1004,7 +1004,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 let overlay = app.editor.menu.is_some()
                     || app.explorer.ui.menu.is_some()
                     || app.editor.tab_context_menu.is_some()
-                    || app.terminal_tab_context_menu.is_some()
+                    || app.terminal.ui.terminal_tab_context_menu.is_some()
                     || app.git.ui.branch_picker.is_some()
                     || app.git.ui.stash_switch.is_some()
                     || app.git.ui.menu.is_some()
@@ -1245,7 +1245,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     if s.explorer.ui.menu.is_none()
         && s.editor.tab_context_menu.is_none()
-        && s.terminal_tab_context_menu.is_none()
+        && s.terminal.ui.terminal_tab_context_menu.is_none()
         && s.git.ui.branch_picker.is_none()
         && s.git.ui.stash_switch.is_none()
         && s.git.ui.menu.is_none()
@@ -1289,7 +1289,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     if s.editor.tab_context_menu.is_some() {
         root = root.child(tab_context_menu::render(vp, state.clone()));
     }
-    if s.terminal_tab_context_menu.is_some() {
+    if s.terminal.ui.terminal_tab_context_menu.is_some() {
         root = root.child(terminal_tab_context_menu::render(
             vp,
             state.clone(),

@@ -1,6 +1,6 @@
 # Loom R7 终端迁移方案
 
-2026 年 10 月 14 日，基础提交 `b414223822337bd61b840950cd94826921e10a72`，起草时分支 `main`。R6 已完成；执行分支为 `refactor/r7-terminal`，R7.1–R7.3 已完成当前机器自动验收，R7.4–R7.7 尚未开始。
+2026 年 10 月 14 日，基础提交 `b414223822337bd61b840950cd94826921e10a72`，起草时分支 `main`。R6 已完成；执行分支为 `refactor/r7-terminal`，R7.1–R7.4 已完成当前机器自动验收，R7.5–R7.7 尚未开始。
 
 R7 将终端的纯规则、PTY 与系统适配、会话所有权、应用命令、effect 和视图分开。核心约束是移动终端时保留同一 PTY，快照不能保活进程，默认终端区域与分离区域保持各自的可见性，并兼容现有设置和会话。按七个检查点推进，每步保留可编译、可测试的实现。
 
@@ -291,3 +291,7 @@ R7 自动收尾要求：各步工程门禁通过；所有旧执行测试完成�
 ## R7.3 执行记录
 
 2026-10-14：TerminalModel/TerminalMetadata 迁入纯 feature，10 项字段私有登记；独立 State 只持纯模型。AppRuntime 持有按 SessionId 管理的运行时资源；app 临时绑定和句柄均为 Weak。移动只改元数据/布局，split 新增资源，实时 cwd 在状态锁外取得；先断开模型/布局引用再释放注册资源。关闭身份不能重建，重复 close/shutdown 幂等，dispose 与启动协调且通知可重入关闭。Profile 通过当前配置 getter 注入，模型不保存副本。旧 terminal_session 删除；5 项纯测试与 14 项原生/跨层测试保留原名迁移，精确 native smoke 与辅助入口同步到 app::terminal_session_tests::tests。完整回归 696 通过、14 忽略，606 项旧应用入口无缺失，新增行为 7 项。真实布局提交保持 PID/generation，持有快照时通过 Windows 句柄确认 shell/observer 实际退出。42 项自测、架构门禁、fmt、严格 Clippy、release、四项原生 smoke、隔离启动及 36 项算法对照通过。实际 Rust 1.98.0；固定 1.97.1、原生人工/跨平台及完整性能 A/B 保留待验。详见 [验收](results/2026-10-14-r7-3/report.md)。停在 R7.3，R7.4 未开始。
+
+## R7.4 执行记录
+
+2026-10-14：13 项根字段与 editor 终端双击状态迁入明确所有者；新建/选择/split/关闭/用途/toggle、输入/剪贴板/profile 操作迁入 app，按 SessionId 和菜单目标执行前重查；close_targets 纯规则迁入 feature。模型、布局、清理顺序协调，完成 UI 回合检查归属，不称跨 store 原子事务。设置卡片改为窄投影/命令，六项配置字段保持 R8，草稿保留到 blur 完成。新增 6 行为测试，702 项通过、14 忽略，613 旧应用入口无缺失；46 自测、架构、fmt、Clippy、release、四项原生 smoke、隔离启动和 21 源码对照通过。根/editor/workspace 30/30/9，22 项终端归属，34 遗留例外，15 根 UI 适配器。详见 [验收](results/2026-10-14-r7-4/report.md)。R7.5 未开始，原有 shell effect 仅更新字段路径；固定 1.97.1、原生人工/跨平台及整体性能 A/B 保留待验。

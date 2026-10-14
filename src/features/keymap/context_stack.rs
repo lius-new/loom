@@ -127,7 +127,7 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
         || (app.keymap_search.focused && app.main_surface() == MainSurface::Keymap)
     {
         stack.push(KeyContext::new(INPUT));
-    } else if app.terminal_focused {
+    } else if app.terminal.ui.terminal_focused {
         stack.push(KeyContext::new(TERMINAL));
     } else if app.editor.focused && app.main_surface() == MainSurface::Editor {
         stack.push(editor_context(app));
@@ -138,7 +138,7 @@ pub fn context_stack(app: &AppState) -> Vec<KeyContext> {
     if app.editor.menu.is_some()
         || app.explorer.ui.menu.is_some()
         || app.editor.tab_context_menu.is_some()
-        || app.terminal_tab_context_menu.is_some()
+        || app.terminal.ui.terminal_tab_context_menu.is_some()
         || app.git.ui.menu.is_some()
     {
         stack.push(KeyContext::new(MENU));
@@ -222,7 +222,7 @@ mod tests {
 
         let mut terminal = editor_app();
         terminal.editor.focused = false;
-        terminal.terminal_focused = true;
+        terminal.terminal.ui.terminal_focused = true;
         terminal.editor.menu = Some((0.0, 0.0));
         let primaries = context_stack(&terminal)
             .iter()
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn terminal_keeps_shell_keys_and_clipboard_conventions() {
         let mut app = AppState::new();
-        app.terminal_focused = true;
+        app.terminal.ui.terminal_focused = true;
         let ctrl = KeyModifiers::CONTROL;
         assert_eq!(
             action(&app, character("c", ctrl)),

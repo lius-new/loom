@@ -327,7 +327,7 @@ pub fn request_discard(
                 tracked,
                 untracked,
             },
-            restore_terminal: app.terminal_focused,
+            restore_terminal: app.terminal.ui.terminal_focused,
         });
     });
     true
@@ -421,7 +421,7 @@ pub fn commit(state: &State<AppState>, store: &State<GitStoreSnapshot>) -> bool 
                 confirm_label: "Stage and Commit",
                 destructive: false,
                 action: GitConfirmAction::StageAllAndCommit,
-                restore_terminal: app.terminal_focused,
+                restore_terminal: app.terminal.ui.terminal_focused,
             });
         });
         return false;
@@ -553,7 +553,7 @@ pub fn request_abort(state: &State<AppState>, store: &State<GitStoreSnapshot>) -
                 repository: root,
                 operation,
             },
-            restore_terminal: app.terminal_focused,
+            restore_terminal: app.terminal.ui.terminal_focused,
         });
     });
     true
@@ -705,7 +705,7 @@ pub fn request_drop_stash(
                 repository: root,
                 oid,
             },
-            restore_terminal: app.terminal_focused,
+            restore_terminal: app.terminal.ui.terminal_focused,
         });
     });
     true
@@ -853,7 +853,7 @@ pub fn request_discard_block(
                 path,
                 block,
             },
-            restore_terminal: app.terminal_focused,
+            restore_terminal: app.terminal.ui.terminal_focused,
         });
     });
 }
@@ -1222,7 +1222,7 @@ pub fn request_create_worktree(state: &State<AppState>, repository: PathBuf, che
                 path,
                 checkout,
             },
-            restore_terminal: app.terminal_focused,
+            restore_terminal: app.terminal.ui.terminal_focused,
         });
     });
 }
@@ -1360,7 +1360,7 @@ pub fn request_remove_worktree(
             repository,
             path,
             force,
-            app.terminal_focused,
+            app.terminal.ui.terminal_focused,
         ));
     });
 }
@@ -1442,7 +1442,7 @@ pub fn remove_worktree(
                     source,
                     target,
                     true,
-                    app.terminal_focused,
+                    app.terminal.ui.terminal_focused,
                 ));
             }
         },
@@ -1775,7 +1775,7 @@ pub fn checkout(
                     repository: repository_root,
                     checkout: blocked_checkout,
                     files,
-                    restore_terminal: app.terminal_focused,
+                    restore_terminal: app.terminal.ui.terminal_focused,
                 });
             }
         },

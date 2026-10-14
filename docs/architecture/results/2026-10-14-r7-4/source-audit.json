@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "base": "e71a163ddd5f9d0b2e64a207f44860e4f576c0dd",
+  "scope": "R7.4 only",
+  "checks": [
+    {
+      "name": "src/features/terminal/model.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/features/terminal/input.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/features/terminal/mouse.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/features/terminal/screen.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/features/terminal/profiles.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/infrastructure/terminal/pty.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/infrastructure/terminal/profiles.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/infrastructure/terminal/integration.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/infrastructure/terminal/program.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "src/domain/application_layout.rs unchanged",
+      "equal": true
+    },
+    {
+      "name": "Profile edit algorithm",
+      "equal": true
+    },
+    {
+      "name": "Profile save_editor algorithm",
+      "equal": true
+    },
+    {
+      "name": "Profile remove algorithm",
+      "equal": true
+    },
+    {
+      "name": "Profile close_editor algorithm",
+      "equal": true
+    },
+    {
+      "name": "Project shell note",
+      "equal": true
+    },
+    {
+      "name": "Clipboard copy_selection algorithm",
+      "equal": true
+    },
+    {
+      "name": "Clipboard paste_clipboard algorithm",
+      "equal": true
+    },
+    {
+      "name": "Clipboard report_clipboard_error algorithm",
+      "equal": true
+    },
+    {
+      "name": "Terminal double-click rule",
+      "equal": true
+    },
+    {
+      "name": "Menu close-target rule",
+      "equal": true
+    },
+    {
+      "name": "R7.5 effects unchanged apart from owner access paths",
+      "equal": true
+    }
+  ],
+  "comparison": "Rustfmt-normalized source with explicit state-owner paths, visibility and metadata-getter substitutions. New command ordering and stale-target checks are validated by behavior tests, not claimed identical."
+}

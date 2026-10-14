@@ -16,6 +16,7 @@ use lgui::prelude::{Element, State, UiRect};
 use lgui::services::ServicesContextExt;
 
 use crate::app::editor_vim as vim_input;
+use crate::app::terminal::{self, ClipboardShortcut};
 use crate::config_watcher::{self, ConfigWatcher};
 use crate::features::git::GitStoreSnapshot;
 use crate::infrastructure::terminal::runtime::TerminalHandle;
@@ -30,7 +31,6 @@ use crate::settings_persistence::{self, UserSettings};
 use crate::state::AppState;
 use crate::ui::close_confirmation;
 use crate::ui::editor::view as editor_view;
-use crate::ui::terminal::{self, ClipboardShortcut};
 use crate::workspace_actions;
 
 /// Everything actions need to act on, captured once per frame.
@@ -215,7 +215,9 @@ fn run_replay(env: &KeyEnv, stack: &[KeyContext], replay: Replay) {
                 .as_ref()
                 .and_then(|terminal| terminal.controller.as_ref())
             {
-                terminal::write_text(controller, &text);
+                if let Some(terminal) = &env.terminal {
+                    terminal::write(&terminal.tabs, controller.id(), text.as_bytes());
+                }
             }
         }
         _ => {}
@@ -272,7 +274,7 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
         }
         Action::ToggleTerminal => {
             match &env.terminal {
-                Some(terminal) => terminal::toggle_panel(
+                Some(terminal) => crate::app::terminal::toggle_panel(
                     &env.state,
                     &terminal.tabs,
                     &env.editor_focus,
@@ -323,7 +325,12 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
                 _ => ClipboardShortcut::Paste,
             };
             let clipboard = env.application.clipboard();
-            let result = terminal::run_clipboard_shortcut(controller, shortcut, clipboard.as_ref());
+            let result = terminal::clipboard(
+                &env.terminal.as_ref().unwrap().tabs,
+                controller.id(),
+                shortcut,
+                clipboard.as_ref(),
+            );
             terminal::report_clipboard_error(&env.state, result);
             if let Some(handle) = env.application.try_resource::<ApplicationHandle>() {
                 handle.request_frame();
