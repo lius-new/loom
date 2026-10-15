@@ -14,10 +14,8 @@ use crate::infrastructure::settings_filesystem::{self as settings_persistence, S
 
 #[test]
 fn phase0_legacy_session_defaults_fixture() {
-    let session: WorkspaceSession = serde_json::from_str(include_str!(
-        "../../docs/baseline/fixtures/session-minimal.json"
-    ))
-    .unwrap();
+    let session: WorkspaceSession =
+        serde_json::from_str(include_str!("../../tests/fixtures/session-minimal.json")).unwrap();
     assert_eq!(session.open_folders, [PathBuf::from("workspace")]);
     assert!(session.editor_layout.is_none());
     assert!(session.terminal_groups.is_empty());
@@ -30,10 +28,8 @@ fn phase0_legacy_session_defaults_fixture() {
 
 #[test]
 fn phase0_split_session_fixture_preserves_order_and_terminal_metadata() {
-    let session: WorkspaceSession = serde_json::from_str(include_str!(
-        "../../docs/baseline/fixtures/session-split.json"
-    ))
-    .unwrap();
+    let session: WorkspaceSession =
+        serde_json::from_str(include_str!("../../tests/fixtures/session-split.json")).unwrap();
     let layout = session.editor_layout.as_ref().unwrap();
     assert_eq!(layout.active_pane, 1);
     let SavedPaneNode::Split { children, .. } = &layout.root else {
@@ -68,7 +64,7 @@ fn phase0_split_session_fixture_preserves_order_and_terminal_metadata() {
 
 #[test]
 fn phase0_settings_jsonc_fixture_preserves_valid_values_and_scope() {
-    let source = include_str!("../../docs/baseline/fixtures/settings.jsonc");
+    let source = include_str!("../../tests/fixtures/settings.jsonc");
     let loaded = settings_persistence::parse(source).unwrap();
     assert_eq!(loaded.settings.editor_font.size, 16);
     assert_eq!(loaded.settings.editor_font.family, "Fixture Mono");
@@ -93,7 +89,7 @@ fn phase0_settings_jsonc_fixture_preserves_valid_values_and_scope() {
 #[test]
 fn phase0_keymap_jsonc_fixture_preserves_actions_and_partial_errors() {
     let loaded = crate::features::keymap::keymap_file::parse(
-        include_str!("../../docs/baseline/fixtures/keymap.jsonc"),
+        include_str!("../../tests/fixtures/keymap.jsonc"),
         BindingSource::User,
     )
     .unwrap();

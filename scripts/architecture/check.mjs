@@ -369,7 +369,7 @@ export function readSources(root) {
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
-  const policy=JSON.parse(fs.readFileSync(path.join(root,'docs/architecture/phase1-policy.json'),'utf8'));
+  const policy=JSON.parse(fs.readFileSync(new URL('./policy.json',import.meta.url),'utf8'));
   const sources=readSources(root),errors=violations(sources,policy);
   const verificationManifest=path.join(root,'crates/workspace-tests/Cargo.toml');
   if(fs.existsSync(verificationManifest))errors.push(...verificationManifestErrors(fs.readFileSync(verificationManifest,'utf8')));

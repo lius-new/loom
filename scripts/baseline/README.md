@@ -1,4 +1,4 @@
-# 阶段零复跑脚本
+# 回归检查与性能基线脚本
 
 在 Windows PowerShell 7 中从项目根运行：
 
@@ -18,7 +18,7 @@
 
 默认生成 target/baseline/时间戳目录，也可通过 -OutputDirectory 指定一个新的目录。已有日志目录会被拒绝，以免混入不同源码版本的结果。使用记录中相同的 Rust、Clippy、Git、Node 和机器条件，才可与当前性能基线直接比较。
 
-脚本先执行阶段 1 架构门禁及其负例自测（需要 Node），再执行格式、Clippy、默认环境 debug/release 完整测试与正式 release 应用构建，再使用进程级独立 Git 配置复测；不修改用户/系统 Git 配置。继续执行四项 Windows native smoke，以及三项现有、三项阶段零新增和一项终端生产路径性能测试。性能使用 release，每组样本零为预热，随后五次正式样本。任何检查失败时继续收集结果并最终退出非零，不能视为全绿。
+脚本先执行架构门禁及其负例自测（需要 Node，规则位于 scripts/architecture/policy.json），再执行格式、Clippy、默认环境 debug/release 完整测试与正式 release 应用构建，再使用进程级独立 Git 配置复测；不修改用户/系统 Git 配置。继续执行四项 Windows native smoke，以及三项现有、三项阶段零新增和一项终端生产路径性能测试。性能使用 release，每组样本零为预热，随后五次正式样本。任何检查失败时继续收集结果并最终退出非零，不能视为全绿。
 
 - -PerformanceSet All 为默认；Legacy、Additional、None 分别选择原有性能、新增性能或只执行检查。
 - -SkipChecks 只采集指定的性能组。
@@ -34,6 +34,6 @@
 node scripts/baseline/report.mjs 'C:\path\baseline'
 ~~~
 
-完整报告见 docs/baseline/README.md，行为矩阵见 docs/baseline/behavior-matrix.md。初始结果位于 docs/baseline/results/2026-10-13；检查修复后的结果位于 docs/baseline/results/2026-10-13-fixed。原始日志保存在输出材料中，不复制进源码结果目录。
+报告、原始日志与性能数据保存在本次输出目录中，默认位于 target/baseline。旧格式兼容性测试夹具位于 tests/fixtures，由 src/app/phase0_baseline.rs 直接读取；这些夹具使用合成数据，应保留旧格式以验证读取兼容性。
 
-R7 增加精确入口 app::terminal_performance::terminal_production_benchmark，属于 All/Additional：固定 ANSI/中文输入、24×80 屏幕、1280×720 UiSession、scale 1，测量 1/8/32 会话的生产屏幕快照、纯模型快照、帧投影和 UI 帧构建，共 12 项。report.mjs 识别 R7_TERMINAL_PERF；节点数、迭代数和窗口条件保留在 measurements.json 原始记录。原有 31 项名称和测量体不变。UI session 不代表原生窗口输入延迟/帧率；terminal_screen_snapshot_100 历史指标仍只测 screen.contents()。最终迁移 A/B 使用独立冻结二进制、每版 1 轮预热 + 10 轮正式交错样本，见 docs/architecture/results/2026-10-14-r7-terminal。
+终端性能入口 app::terminal_performance::terminal_production_benchmark 属于 All/Additional：固定 ANSI/中文输入、24×80 屏幕、1280×720 UiSession、scale 1，测量 1/8/32 会话的生产屏幕快照、纯模型快照、帧投影和 UI 帧构建，共 12 项。report.mjs 识别 R7_TERMINAL_PERF；节点数、迭代数和窗口条件保留在 measurements.json 原始记录。原有 31 项名称和测量体不变。UI session 不代表原生窗口输入延迟/帧率；terminal_screen_snapshot_100 历史指标仍只测 screen.contents()。
