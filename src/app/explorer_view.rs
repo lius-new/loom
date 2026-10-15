@@ -496,4 +496,92 @@ mod tests {
         assert!(!h.state.get().explorer.model.is_expanded(&src));
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn multiple_project_roots_remain_stacked_and_clickable_after_scrolling() {
+        use crate::features::explorer::DirEntry;
+        use lgui::core::{
+            InputEvent, Point, PointerButton, PointerData, WheelDelta, dispatch_runtime_output,
+        };
+
+        let roots = ["project-a", "project-b", "project-c"].map(PathBuf::from);
+        let mut app = AppState::new();
+        app.explorer.model.restore(roots.to_vec(), Vec::new());
+        for root in &roots {
+            let key = root.to_string_lossy().into_owned();
+            app.explorer.model.set_expanded(&key, true);
+            app.explorer.model.insert_listing(
+                key,
+                (0..60)
+                    .map(|index| DirEntry {
+                        name: format!("file-{index}.rs"),
+                        path: root.join(format!("file-{index}.rs")),
+                        is_dir: false,
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+            );
+        }
+        let mut h = harness(app);
+        let send = |h: &mut Harness, input| {
+            let events = h.session.handle_input(input);
+            dispatch_runtime_output(
+                events,
+                &h.services.application,
+                &lgui::window::WindowId::new("stacked-projects-test"),
+                |action| h.session.handle_default_action(action),
+                |_| {},
+            );
+            h.render();
+        };
+        let wheel = |y| InputEvent::Wheel {
+            point: Point::new(650.0, 400.0),
+            delta: WheelDelta::pixels(0.0, y),
+        };
+        send(&mut h, wheel(-2500.0));
+        assert!(h.state.get().explorer.ui.scroll > 2400.0);
+        for (index, root) in roots.iter().enumerate() {
+            let id = UiId::owned(format!("tree-sticky-{}", root.display()));
+            let icon = h.session.tree().node(&id).expect("Pinned project root");
+            assert_eq!(
+                icon.layout_rect.top,
+                crate::ui::theme::TABS_H + index as f32 * 20.0 + 2.0
+            );
+        }
+        send(&mut h, wheel(2500.0));
+        assert_eq!(h.state.get().explorer.ui.scroll, 0.0);
+        assert!(
+            h.session
+                .tree()
+                .node(&UiId::new("tree-sticky-project-c"))
+                .is_none()
+        );
+        send(&mut h, wheel(-2500.0));
+        for root in &roots {
+            let key = root.to_string_lossy();
+            let icon = h
+                .session
+                .tree()
+                .node(&UiId::owned(format!("tree-sticky-{key}")))
+                .expect("Earlier projects stay accessible")
+                .layout_rect;
+            let point = Point::new(icon.left + 8.0, icon.top + 8.0);
+            send(
+                &mut h,
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            );
+            send(
+                &mut h,
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            );
+            assert!(!h.state.get().explorer.model.is_expanded(&key));
+            assert!(h.state.get().editor.tabs.file_drag.is_none());
+        }
+    }
 }

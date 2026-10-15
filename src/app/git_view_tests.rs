@@ -100,6 +100,7 @@ mod panel_virtualization_tests {
         let view: AppView = Arc::new(move |cx| {
             let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
+                app.git.ui.hovered = true;
                 app.git.model.set_history(GitHistory {
                     repository: "loom".into(),
                     head: None,
@@ -142,8 +143,19 @@ mod panel_virtualization_tests {
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
         let (state, store) = exposed.lock().unwrap().clone().unwrap();
+        let assert_scrollbar_edge = |session: &UiSession, y: f32| {
+            // Check the complete drawer, including the body's horizontal layout.
+            let hit = session
+                .tree()
+                .hit_test(Point::new(viewport.right - 9.0, y))
+                .expect("Scrollbar near the drawer's right edge");
+            let thumb = session.tree().node(&hit.id).unwrap().layout_rect;
+            assert_eq!(thumb.right, viewport.right - 2.0);
+            assert_eq!(thumb.width(), 8.0);
+        };
+        assert_scrollbar_edge(&session, TOPLINE_H + 12.0);
         let find = |session: &UiSession, name: &str| {
-            session
+            let node = session
                 .tree()
                 .nodes()
                 .iter()
@@ -153,8 +165,8 @@ mod panel_virtualization_tests {
                         .and_then(|semantics| semantics.name.as_deref())
                         == Some(name)
                 })
-                .unwrap_or_else(|| panic!("Missing section {name}"))
-                .hit_rect
+                .unwrap_or_else(|| panic!("Missing section {name}"));
+            session.tree().hit_for_id(&node.id).unwrap().rect
         };
         let footer_top = viewport.bottom;
         let worktrees = find(&session, "WORKTREES");
@@ -212,6 +224,29 @@ mod panel_virtualization_tests {
                 |_| {},
             );
         };
+        let collapse_sticky = |session: &mut UiSession, name: &str, filter: u8, top: f32| {
+            let header = find(session, name);
+            assert_eq!(header.top, top);
+            let point = Point::new(header.left + 40.0, header.top + SECTION_H / 2.0);
+            send(session, InputEvent::PointerMove(PointerData::mouse(point)));
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert_eq!(state.get().git.ui.hover, Some(GitHover::Section(filter)));
+            for input in [
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            ] {
+                send(session, input);
+            }
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert!(state.get().git.ui.collapsed_sections.contains(&filter));
+            assert!(state.get().editor.tabs.file_drag.is_none());
+        };
         send(
             &mut session,
             InputEvent::Wheel {
@@ -221,6 +256,7 @@ mod panel_virtualization_tests {
         );
         session.render_view(&view, viewport, UiScale::ONE);
         assert!(state.get().git.ui.scroll > 0.0);
+        assert_eq!(find(&session, "UNSTAGED").top, TOPLINE_H);
         assert_eq!(state.get().git.ui.details_scroll, 0.0);
         assert_eq!(find(&session, "WORKTREES"), worktrees);
         assert_eq!(find(&session, "COMMITS"), commits);
@@ -242,6 +278,8 @@ mod panel_virtualization_tests {
         session.render_view(&view, viewport, UiScale::ONE);
         assert!(!state.get().git.ui.collapsed_sections.contains(&HISTORY));
         let expanded = find(&session, "COMMITS");
+        let details_top = find(&session, "WORKTREES").top;
+        assert_scrollbar_edge(&session, find(&session, "WORKTREES").top + 12.0);
         assert!(expanded.top >= TOPLINE_H + (footer_top - TOPLINE_H) * 0.55);
         send(
             &mut session,
@@ -253,6 +291,112 @@ mod panel_virtualization_tests {
         session.render_view(&view, viewport, UiScale::ONE);
         assert!(state.get().git.ui.details_scroll > 0.0);
         assert_eq!(state.get().git.ui.scroll, changes_scroll);
+        assert_eq!(find(&session, "WORKTREES").top, details_top);
+        assert_eq!(find(&session, "STASHES").top, details_top + SECTION_H);
+        assert_eq!(find(&session, "COMMITS").top, details_top + SECTION_H * 2.0);
+        save_drawer_preview(&session, &context, viewport, "git-drawer-sticky-commits");
+        collapse_sticky(
+            &mut session,
+            "COMMITS",
+            HISTORY,
+            details_top + SECTION_H * 2.0,
+        );
+        assert_eq!(state.get().git.ui.details_scroll, 0.0);
+        collapse_sticky(&mut session, "UNSTAGED", UNSTAGED, TOPLINE_H);
+
+        // Multiple change sections keep separate stacked slots while scrolling.
+        store.update(|snapshot| {
+            let prepared = Arc::make_mut(&mut snapshot.presentation)
+                .repositories
+                .get_mut(&id)
+                .unwrap();
+            prepared.sections[STAGED as usize] = prepared.sections[UNSTAGED as usize][..3].to_vec();
+        });
+        let transition_scroll = 8.0 + SECTION_H + ROW_H * 3.0 + 10.0 - SECTION_H / 2.0;
+        state.update(|app| {
+            app.git.ui.collapsed_sections.remove(&UNSTAGED);
+            app.git.ui.scroll = transition_scroll;
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        let incoming = find(&session, "UNSTAGED");
+        assert_eq!(incoming.top, TOPLINE_H + SECTION_H);
+        assert_eq!(find(&session, "STAGED").top, TOPLINE_H);
+        assert_eq!(find(&session, "STAGED").bottom, incoming.top);
+        state.update(|app| app.git.ui.scroll += SECTION_H);
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(find(&session, "STAGED").top, TOPLINE_H);
+        assert_eq!(find(&session, "UNSTAGED").top, TOPLINE_H + SECTION_H);
+        save_drawer_preview(&session, &context, viewport, "git-drawer-stacked-changes");
+        collapse_sticky(&mut session, "STAGED", STAGED, TOPLINE_H);
+        assert_eq!(find(&session, "UNSTAGED").top, TOPLINE_H + SECTION_H);
+        store.update(|snapshot| {
+            Arc::make_mut(&mut snapshot.presentation)
+                .repositories
+                .get_mut(&id)
+                .unwrap()
+                .sections[STAGED as usize]
+                .clear();
+        });
+
+        // Worktrees use the same pinning and collapse interaction as commits.
+        let original_worktrees = store.get().repositories[&id].worktrees.clone();
+        store.update(|snapshot| {
+            let repository = Arc::make_mut(&mut snapshot.repositories)
+                .get_mut(&id)
+                .unwrap();
+            repository.worktrees = Arc::new(
+                (0..40)
+                    .map(|index| WorktreeInfo {
+                        path: format!("loom-worktree-{index}").into(),
+                        ..original_worktrees[1].clone()
+                    })
+                    .collect(),
+            );
+        });
+        state.update(|app| {
+            app.git.ui.collapsed_sections.remove(&WORKTREES);
+            app.git.ui.details_scroll = 0.0;
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        let worktrees_top = find(&session, "WORKTREES").top;
+        send(
+            &mut session,
+            InputEvent::Wheel {
+                point: Point::new(100.0, worktrees_top + SECTION_H + ROW_H),
+                delta: WheelDelta::lines(0.0, -3.0),
+            },
+        );
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(state.get().git.ui.details_scroll > 0.0);
+        save_drawer_preview(&session, &context, viewport, "git-drawer-sticky-worktrees");
+        state.update(|app| {
+            app.git.ui.collapsed_sections.remove(&STASHES);
+            app.git.ui.collapsed_sections.remove(&HISTORY);
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        send(
+            &mut session,
+            InputEvent::Wheel {
+                point: Point::new(100.0, worktrees_top + SECTION_H * 4.0),
+                delta: WheelDelta::pixels(0.0, -1800.0),
+            },
+        );
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(find(&session, "WORKTREES").top, worktrees_top);
+        assert_eq!(find(&session, "STASHES").top, worktrees_top + SECTION_H);
+        assert_eq!(
+            find(&session, "COMMITS").top,
+            worktrees_top + SECTION_H * 2.0
+        );
+        save_drawer_preview(&session, &context, viewport, "git-drawer-stacked-details");
+        collapse_sticky(&mut session, "WORKTREES", WORKTREES, worktrees_top);
+        assert_eq!(state.get().git.ui.details_scroll, 0.0);
+        store.update(|snapshot| {
+            Arc::make_mut(&mut snapshot.repositories)
+                .get_mut(&id)
+                .unwrap()
+                .worktrees = original_worktrees.clone();
+        });
 
         // Visual fixtures use a short list to expose the empty space between
         // the primary changes and the sections pinned at the bottom.
@@ -263,6 +407,7 @@ mod panel_virtualization_tests {
         state.update(|app| {
             app.git.ui.scroll = 0.0;
             app.git.ui.details_scroll = 0.0;
+            app.git.ui.collapsed_sections.insert(STASHES);
             app.git.ui.collapsed_sections.insert(HISTORY);
         });
         session.render_view(&view, viewport, UiScale::ONE);
@@ -546,7 +691,8 @@ mod panel_virtualization_tests {
             let mut session = UiSession::new();
             session.render_view(&view, viewport, UiScale::ONE);
             let state = exposed.lock().unwrap().clone().unwrap();
-            let point = Point::new(viewport.right - 14.0, 12.0);
+            // Grab the thumb near the right edge without entering the resize strip.
+            let point = Point::new(viewport.right - 10.0, 12.0);
             assert_eq!(session.tree().cursor_at(point), None);
             assert_eq!(
                 session

@@ -152,6 +152,47 @@ pub(crate) fn scroll_region(
     viewport
 }
 
+struct SectionHeader {
+    rect: UiRect,
+    filter: u8,
+    title: &'static str,
+    count: usize,
+    collapsed: bool,
+    buttons: Vec<RowButton>,
+}
+
+/// Paint headers above their rows, keeping each scrolled section in its own
+/// stacked slot. Hover targets use the same content-space rectangles.
+fn append_section_headers(
+    viewport: UiRect,
+    scroll: f32,
+    headers: Vec<SectionHeader>,
+    content: &mut Vec<Element>,
+    hover_targets: &mut Vec<(UiRect, GitHover)>,
+    state: &Binding,
+) {
+    let mut targets = Vec::with_capacity(headers.len() + hover_targets.len());
+    for (index, header) in headers.into_iter().enumerate() {
+        let top = header
+            .rect
+            .top
+            .max(viewport.top + scroll + index as f32 * SECTION_H);
+        let rect = UiRect::new(header.rect.left, top, header.rect.right, top + SECTION_H);
+        targets.push((rect, GitHover::Section(header.filter)));
+        content.push(section_header(
+            rect,
+            header.filter,
+            header.title,
+            header.count,
+            header.collapsed,
+            header.buttons,
+            state.clone(),
+        ));
+    }
+    targets.append(hover_targets);
+    *hover_targets = targets;
+}
+
 pub fn render(
     rect: UiRect,
     state: Binding,
@@ -324,7 +365,7 @@ pub fn render(
     let body_rect = UiRect::new(
         rect.left,
         banner_bottom.min(rect.bottom),
-        (rect.right - 8.0).max(rect.left),
+        rect.right,
         rect.bottom,
     );
     let mut content = Vec::new();
@@ -381,6 +422,7 @@ pub fn render(
     let mut y = content_rect.top + 8.0;
     // Rows the pointer can hover, in content coordinates (before scrolling).
     let mut hover_targets = Vec::new();
+    let mut headers = Vec::new();
     for (title, filter, files, rows) in &change_sections {
         let (title, filter) = (*title, *filter);
         if files.is_empty() {
@@ -388,21 +430,19 @@ pub fn render(
         }
         let collapsed = app.ui.collapsed_sections.contains(&filter);
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
-        hover_targets.push((section_rect, GitHover::Section(filter)));
         let buttons = if app.ui.hover == Some(GitHover::Section(filter)) {
             group_buttons(filter, files.to_vec(), "section", &state, &store)
         } else {
             Vec::new()
         };
-        content.push(section_header(
-            section_rect,
+        headers.push(SectionHeader {
+            rect: section_rect,
             filter,
             title,
-            files.len(),
+            count: files.len(),
             collapsed,
             buttons,
-            state.clone(),
-        ));
+        });
         y += SECTION_H;
         if collapsed {
             y += 10.0;
@@ -472,6 +512,14 @@ pub fn render(
         y += 10.0;
     }
     let changes_bottom = y;
+    append_section_headers(
+        content_rect,
+        scroll,
+        std::mem::take(&mut headers),
+        &mut content,
+        &mut hover_targets,
+        &state,
+    );
     let changes_content = std::mem::take(&mut content);
     let changes_hover = std::mem::take(&mut hover_targets);
     let changes_rect = content_rect;
@@ -483,16 +531,14 @@ pub fn render(
     if repository.worktrees.len() > 1 {
         let collapsed = app.ui.collapsed_sections.contains(&WORKTREES);
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
-        hover_targets.push((section_rect, GitHover::Section(WORKTREES)));
-        content.push(section_header(
-            section_rect,
-            WORKTREES,
-            "WORKTREES",
-            repository.worktrees.len(),
+        headers.push(SectionHeader {
+            rect: section_rect,
+            filter: WORKTREES,
+            title: "WORKTREES",
+            count: repository.worktrees.len(),
             collapsed,
-            Vec::new(),
-            state.clone(),
-        ));
+            buttons: Vec::new(),
+        });
         y += SECTION_H;
         if !collapsed {
             let rows_top = y;
@@ -526,16 +572,14 @@ pub fn render(
     if !repository.stashes.is_empty() {
         let collapsed = app.ui.collapsed_sections.contains(&STASHES);
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
-        hover_targets.push((section_rect, GitHover::Section(STASHES)));
-        content.push(section_header(
-            section_rect,
-            STASHES,
-            "STASHES",
-            repository.stashes.len(),
+        headers.push(SectionHeader {
+            rect: section_rect,
+            filter: STASHES,
+            title: "STASHES",
+            count: repository.stashes.len(),
             collapsed,
-            Vec::new(),
-            state.clone(),
-        ));
+            buttons: Vec::new(),
+        });
         y += SECTION_H;
         if !collapsed {
             let rows_top = y;
@@ -566,19 +610,17 @@ pub fn render(
     {
         let collapsed = app.ui.collapsed_sections.contains(&HISTORY);
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
-        hover_targets.push((section_rect, GitHover::Section(HISTORY)));
         let count = history
             .and_then(|history| history.commits.as_ref().ok())
             .map_or(0, Vec::len);
-        content.push(section_header(
-            section_rect,
-            HISTORY,
-            "COMMITS",
+        headers.push(SectionHeader {
+            rect: section_rect,
+            filter: HISTORY,
+            title: "COMMITS",
             count,
             collapsed,
-            Vec::new(),
-            state.clone(),
-        ));
+            buttons: Vec::new(),
+        });
         y += SECTION_H;
         if !collapsed {
             let rows_top = y;
@@ -620,6 +662,14 @@ pub fn render(
         }
     }
     let details_bottom = y;
+    append_section_headers(
+        details_rect,
+        scroll,
+        headers,
+        &mut content,
+        &mut hover_targets,
+        &state,
+    );
     let hover_regions = [
         (changes_rect, changes_scroll, changes_hover),
         (details_rect, scroll, hover_targets),
@@ -803,9 +853,9 @@ pub(crate) fn git_vertical_scrollbar(
     let viewport_h = rect.height();
     let max_scroll = (content_bottom - rect.bottom).max(0.0);
     let track = UiRect::new(
-        rect.right - 8.0 - scrollbar::SIZE,
+        rect.right - scrollbar::SIZE,
         rect.top + 8.0,
-        rect.right - 8.0,
+        rect.right,
         rect.bottom - 8.0,
     );
     if track.height() <= 0.0 {
@@ -1668,7 +1718,7 @@ pub(crate) fn section_header(
         WORKTREES => "git-section-worktrees-chevron",
         _ => "git-section-history-chevron",
     };
-    let section = panel(rect, VisualStyle::default())
+    let section = panel(rect, VisualStyle::filled(theme::c().sidebar))
         .key(format!("git-section-{filter}"))
         .semantics({
             let mut semantics = Semantics::new(SemanticRole::Button).name(title);

@@ -149,8 +149,8 @@ pub fn render(
         let mut tree_els = Vec::new();
 
         // Collect every root and its descendants into one scrollable list.
-        // Each root starts a fresh sticky ancestry so adjacent workspaces push
-        // one another out at the top edge instead of nesting visually.
+        // Each root starts a fresh ancestry; sticky roots stack while nested
+        // directories follow the currently visible project's path.
         for (root_path, key, root_name) in roots {
             let is_expanded = s.model.is_expanded(&key);
             let root = StickyDirectory {
@@ -944,45 +944,56 @@ fn row_content_right(left: f32, depth: usize, name: &str) -> f32 {
     left + INDENT + depth as f32 * INDENT + TREE_LABEL_OFFSET + label_width + 12.0
 }
 
-/// Resolves the directory ancestry pinned above the scrolling content.
-///
-/// A row becomes active when it reaches the slot immediately below its
-/// ancestors. The first later row outside a directory's subtree then pushes
-/// that directory upward until the replacement takes over the same slot.
+/// Keep scrolled project roots in stacked slots, followed by the current
+/// project's directory ancestry. Sibling directories still replace one another.
 fn sticky_rows(rows: &[TreeRowMeta], viewport_top: f32, scroll: f32) -> Vec<StickyRow> {
     if scroll <= 0.0 {
         return Vec::new();
     }
 
+    let mut pinned = Vec::new();
     let mut active_path = Vec::new();
     for row in rows {
-        let slot_top = viewport_top + row.depth as f32 * ROW_H;
+        if row.depth == 0 {
+            let slot_top = viewport_top + pinned.len() as f32 * ROW_H;
+            if row.y - scroll > slot_top {
+                break;
+            }
+            if let Some(directory) = row.sticky_path.first() {
+                pinned.push(StickyRow {
+                    directory: directory.clone(),
+                    top: slot_top,
+                });
+                active_path = row.sticky_path.clone();
+            }
+            continue;
+        }
+        let slot_top = viewport_top + (pinned.len().saturating_sub(1) + row.depth) as f32 * ROW_H;
         if row.y - scroll <= slot_top {
             active_path = row.sticky_path.clone();
         }
     }
 
-    active_path
-        .into_iter()
-        .map(|directory| {
-            let slot_top = viewport_top + directory.depth as f32 * ROW_H;
-            let boundary_top = rows
-                .iter()
-                .find(|row| {
-                    row.y > directory.source_y
-                        && !row
-                            .sticky_path
-                            .iter()
-                            .any(|ancestor| ancestor.key == directory.key)
-                })
-                .map(|row| row.y - scroll - ROW_H)
-                .unwrap_or(slot_top);
-            StickyRow {
-                directory,
-                top: slot_top.min(boundary_top),
-            }
-        })
-        .collect()
+    let previous_roots = pinned.len().saturating_sub(1);
+    pinned.extend(active_path.into_iter().skip(1).map(|directory| {
+        let slot_top = viewport_top + (previous_roots + directory.depth) as f32 * ROW_H;
+        let boundary_top = rows
+            .iter()
+            .find(|row| {
+                row.y > directory.source_y
+                    && !row
+                        .sticky_path
+                        .iter()
+                        .any(|ancestor| ancestor.key == directory.key)
+            })
+            .map(|row| row.y - scroll - ROW_H)
+            .unwrap_or(slot_top);
+        StickyRow {
+            directory,
+            top: slot_top.min(boundary_top),
+        }
+    }));
+    pinned
 }
 
 /// Fixed vertical scrollbar for the file tree. Only the draggable thumb is
@@ -1179,6 +1190,52 @@ mod tests {
 
         assert!(sticky_rows(&rows, 0.0, 7.0).is_empty());
         assert_eq!(sticky_rows(&rows, 0.0, 8.0).len(), 1);
+    }
+
+    #[test]
+    fn project_roots_stack_above_the_current_projects_directory_path() {
+        let first = directory("first", 0, 8.0);
+        let src = directory("first/src", 1, 28.0);
+        let second = directory("second", 0, 88.0);
+        let lib = directory("second/lib", 1, 108.0);
+        let third = directory("third", 0, 168.0);
+        let rows = vec![
+            row(8.0, 0, std::slice::from_ref(&first)),
+            row(28.0, 1, &[first.clone(), src.clone()]),
+            row(48.0, 2, &[first.clone(), src.clone()]),
+            row(68.0, 2, &[first.clone(), src.clone()]),
+            row(88.0, 0, std::slice::from_ref(&second)),
+            row(108.0, 1, &[second.clone(), lib.clone()]),
+            row(128.0, 2, &[second.clone(), lib.clone()]),
+            row(148.0, 2, &[second.clone(), lib.clone()]),
+            row(168.0, 0, std::slice::from_ref(&third)),
+        ];
+        let signature = |scroll| {
+            sticky_rows(&rows, 0.0, scroll)
+                .into_iter()
+                .map(|sticky| (sticky.directory.key, sticky.top))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            signature(88.0),
+            vec![
+                ("first".into(), 0.0),
+                ("second".into(), 20.0),
+                ("second/lib".into(), 40.0)
+            ]
+        );
+        assert_eq!(
+            signature(128.0),
+            vec![
+                ("first".into(), 0.0),
+                ("second".into(), 20.0),
+                ("third".into(), 40.0)
+            ]
+        );
+        assert_eq!(
+            signature(20.0),
+            vec![("first".into(), 0.0), ("first/src".into(), 20.0)]
+        );
     }
 
     #[test]
