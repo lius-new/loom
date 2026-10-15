@@ -17,11 +17,15 @@ pub fn frame(app: &AppState) -> Frame {
         scroll: app.workspace.active_scroll(),
         profile: crate::app::terminal_profiles::settings_frame(app),
         terminal_ui: app.terminal.ui.clone(),
+        about: app
+            .update
+            .about(&crate::features::update::Version::current()),
     }
 }
 pub fn binding(state: &AppContext) -> Binding {
     let reader = state.clone();
     let writer = state.clone();
+    let updater = state.clone();
     Binding::new(
         StateAccess::project(
             state.model(),
@@ -31,6 +35,7 @@ pub fn binding(state: &AppContext) -> Binding {
         crate::app::terminal_profiles::binding(state),
         move || frame(&reader.get()),
         move |command| run(&writer, command),
+        move || crate::app::update::activate(&updater),
     )
 }
 pub fn render(rect: UiRect, state: AppContext) -> Element {
@@ -86,6 +91,7 @@ impl Setting {
                 crate::app::editor_vim::set_enabled(app, enabled);
             }
             Self::VimSystemClipboard => app.editor.vim.options.system_clipboard ^= true,
+            Self::CheckForUpdates => app.preferences.values_mut().check_for_updates ^= true,
         }
     }
 }

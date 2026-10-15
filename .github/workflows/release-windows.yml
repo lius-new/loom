@@ -73,11 +73,19 @@ jobs:
       - name: Build installer
         run: node scripts/package/package.mjs bundle --expect-version ${{ steps.version.outputs.version }}
 
+      # Loom checks releases/latest/download/update-windows-x86_64.json.
+      - name: Write update manifest
+        env:
+          LOOM_UPDATE_SIGNING_KEY: ${{ secrets.LOOM_UPDATE_SIGNING_KEY }}
+        run: node scripts/package/package.mjs manifest --expect-version ${{ steps.version.outputs.version }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: Loom-${{ steps.version.outputs.version }}-windows-x86_64
-          path: .packaging/dist/Loom-${{ steps.version.outputs.version }}-windows-x86_64-*
+          path: |
+            .packaging/dist/Loom-${{ steps.version.outputs.version }}-windows-x86_64-*
+            .packaging/dist/update-windows-x86_64.json
           if-no-files-found: error
 
   publish:

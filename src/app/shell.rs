@@ -734,6 +734,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let watcher = key_actions::watch_user_settings(settings_state);
         move || drop(watcher)
     });
+    // Restarts the daily checks when the setting changes.
+    let check_for_updates = s.preferences.values().check_for_updates;
+    let update_state = state.clone();
+    cx.use_effect(check_for_updates, move || {
+        super::update::start(update_state, check_for_updates)
+    });
     let blink_focused =
         s.terminal.ui.terminal_focused && s.preferences.values().terminal_cursor_blink;
     let blink_state = terminal_cursor_blink.clone();

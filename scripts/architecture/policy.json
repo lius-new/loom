@@ -63,6 +63,10 @@
     "chrome": {
       "owner": "app/state/chrome: ChromeState",
       "remove_in": "composition"
+    },
+    "update": {
+      "owner": "app composition: features/update model; checks and downloads run in app/update",
+      "remove_in": "composition"
     }
   },
   "exceptions": {},
@@ -760,6 +764,10 @@
     "project_settings": {
       "owner": "features/settings/model: Values DTO",
       "migrated_in": "R8.2"
+    },
+    "check_for_updates": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "updates"
     }
   },
   "keymap_model_ownership": {

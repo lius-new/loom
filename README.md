@@ -103,6 +103,7 @@ Skia is downloaded as a prebuilt archive during the first build. See
 - [Terminal](docs/terminal.md)
 - [Git](docs/git.md)
 - [Settings and key bindings](docs/settings.md)
+- [Updates](docs/updates.md)
 - [Building Loom](docs/building.md)
 
 ## Contributing

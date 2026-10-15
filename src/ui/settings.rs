@@ -3,11 +3,12 @@
 //! Controls dispatch semantic commands; app-level effects persist the
 //! values, so there is no separate apply/save step.
 
-use lgui::core::{CursorIcon, EventPolicy, TextStyle, WheelUnit, clip};
+use lgui::core::{CursorIcon, EventPolicy, TextStyle, UiEventContext, WheelUnit, clip};
 use lgui::prelude::{
     Color, Element, TextAlign, UiRect, VisualStyle, component, group, panel, text,
 };
 
+use crate::features::update::About;
 use crate::ui::components::input::{
     self, AccessInputOptions, InputBinding, InputState, InputStyle,
 };
@@ -75,9 +76,10 @@ pub(crate) enum Setting {
     TreeView,
     VimMode,
     VimSystemClipboard,
+    CheckForUpdates,
 }
 
-const SECTIONS: [(&str, &[Setting]); 4] = [
+const SECTIONS: [(&str, &[Setting]); 5] = [
     ("APPEARANCE", &[Setting::Theme, Setting::UiScale]),
     (
         "EDITOR",
@@ -104,6 +106,7 @@ const SECTIONS: [(&str, &[Setting]); 4] = [
         "SOURCE CONTROL",
         &[Setting::InlineBlame, Setting::SplitDiff, Setting::TreeView],
     ),
+    ("UPDATES", &[Setting::CheckForUpdates]),
 ];
 
 impl Setting {
@@ -122,6 +125,7 @@ impl Setting {
             Self::TreeView => "Tree view",
             Self::VimMode => "Vim mode",
             Self::VimSystemClipboard => "Vim: use the system clipboard",
+            Self::CheckForUpdates => "Check for updates",
         }
     }
 
@@ -151,6 +155,9 @@ impl Setting {
             Self::VimSystemClipboard => {
                 "Yank, delete and put without a register name through the clipboard."
             }
+            Self::CheckForUpdates => {
+                "Look for a new release at startup and daily, and offer it in the title bar."
+            }
         }
     }
 
@@ -171,6 +178,7 @@ impl Setting {
             Self::TreeView => Some(app.prefs.git_tree_view),
             Self::VimMode => Some(app.prefs.vim.enabled),
             Self::VimSystemClipboard => Some(app.prefs.vim.system_clipboard),
+            Self::CheckForUpdates => Some(app.prefs.check_for_updates),
         }
     }
 
@@ -281,12 +289,12 @@ fn content_height(app: &Frame) -> f32 {
         .flat_map(|(_, settings)| settings.iter())
         .map(|setting| setting.height(app))
         .sum();
-    // The trailing KEYBOARD section holds a single link row.
+    // The trailing KEYBOARD and ABOUT sections hold one row each.
     PAGE_PAD_TOP
         + HEADER_H
-        + (SECTIONS.len() + 1) as f32 * (SECTION_TITLE_H + SECTION_GAP)
+        + (SECTIONS.len() + 2) as f32 * (SECTION_TITLE_H + SECTION_GAP)
         + rows
-        + ROW_H
+        + 2.0 * ROW_H
 }
 
 pub fn render(rect: UiRect, state: Binding) -> Element {
@@ -352,6 +360,15 @@ pub fn render(rect: UiRect, state: Binding) -> Element {
     top += SECTION_TITLE_H;
     content = content.child(keymap_link_row(
         UiRect::new(page_left, top, page_right, top + ROW_H),
+        state.clone(),
+    ));
+    top += ROW_H + SECTION_GAP;
+
+    content = content.child(section_title(page_left, page_right, top, "ABOUT"));
+    top += SECTION_TITLE_H;
+    content = content.child(version_row(
+        UiRect::new(page_left, top, page_right, top + ROW_H),
+        app.about.clone(),
         state.clone(),
     ));
 
@@ -435,6 +452,59 @@ fn keymap_link_row(row: UiRect, state: Binding) -> Element {
             UiRect::new(row.left, row.bottom - 1.0, row.right, row.bottom),
             VisualStyle::filled(theme::c().active_line),
         ))
+}
+
+/// The running version and update status, with "Check now" or the same
+/// update action as the title bar button on the right.
+fn version_row(row: UiRect, about: About, state: Binding) -> Element {
+    let action = about.action;
+    let action_w = action.as_ref().map_or(0.0, |action| {
+        measure(&action.label, theme::UI_SIZE, 400) + TEXT_MARGIN
+    });
+    let text_right = (row.right - action_w - CONTROL_GAP).max(row.left);
+    let mut element = panel(row, VisualStyle::default())
+        .child(text(
+            UiRect::new(row.left, row.top + 11.0, text_right, row.top + 29.0),
+            "Version",
+            theme::sans(theme::c().text, theme::UI_SIZE),
+        ))
+        .child(text(
+            UiRect::new(row.left, row.top + 30.0, text_right, row.top + 48.0),
+            about.detail,
+            theme::sans(theme::c().text_dim, theme::SMALL + 1.0),
+        ))
+        .child(panel(
+            UiRect::new(row.left, row.bottom - 1.0, row.right, row.bottom),
+            VisualStyle::filled(theme::c().active_line),
+        ));
+    if let Some(action) = action {
+        let link = UiRect::new(
+            row.right - action_w,
+            row.top + 11.0,
+            row.right,
+            row.top + 29.0,
+        );
+        let color = if action.actionable {
+            theme::c().accent
+        } else {
+            theme::c().text_dim
+        };
+        let mut style = theme::sans(color, theme::UI_SIZE);
+        style.align = TextAlign::Right;
+        let mut button = panel(link, VisualStyle::default()).key("settings-update-action");
+        if action.actionable {
+            button = button
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move |cx: &mut UiEventContext| {
+                    if state.activate_update() {
+                        let _ = cx.window().request_close();
+                    }
+                });
+        }
+        element = element.child(button.child(text(link, action.label, style)));
+    }
+    element
 }
 
 fn setting_row(row: UiRect, setting: Setting, app: &Frame, state: Binding) -> Element {

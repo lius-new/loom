@@ -77,6 +77,8 @@ pub struct AppState {
     pub keymap: crate::features::keymap::model::Model,
     /// Filter typed into the Keymap page.
     pub keymap_ui: crate::ui::keymap_binding::KeymapUiState,
+    /// Release checks and the title bar update button.
+    pub update: crate::features::update::Model,
 }
 
 impl AppState {
@@ -92,6 +94,7 @@ impl AppState {
                     shell_options: crate::infrastructure::terminal::profiles::options(&[]),
                     terminal_cursor_blink: true,
                     smooth_caret: true,
+                    check_for_updates: true,
                     editor_font: crate::ui::fonts::FontSettings::EDITOR,
                     terminal_font: crate::ui::fonts::FontSettings::TERMINAL,
                     project_settings: Vec::new(),
@@ -112,6 +115,7 @@ impl AppState {
 
             keymap: Default::default(),
             keymap_ui: Default::default(),
+            update: Default::default(),
         }
     }
 
@@ -150,6 +154,7 @@ impl AppState {
             terminal_profiles: self.preferences.values().terminal_profiles.clone(),
             terminal_cursor_blink: self.preferences.values().terminal_cursor_blink,
             smooth_caret: self.preferences.values().smooth_caret,
+            check_for_updates: self.preferences.values().check_for_updates,
             git_inline_blame: self.git.ui.inline_blame,
             git_split_diff: self.git.ui.split_diff,
             git_tree_view: self.git.ui.tree_view,
@@ -177,6 +182,7 @@ impl AppState {
         self.preferences.values_mut().terminal_profiles = settings.terminal_profiles;
         self.preferences.values_mut().terminal_cursor_blink = settings.terminal_cursor_blink;
         self.preferences.values_mut().smooth_caret = settings.smooth_caret;
+        self.preferences.values_mut().check_for_updates = settings.check_for_updates;
         self.git.ui.inline_blame = settings.git_inline_blame;
         self.git.ui.split_diff = settings.git_split_diff;
         self.git.ui.tree_view = settings.git_tree_view;

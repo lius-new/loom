@@ -37,6 +37,9 @@ pub struct Settings {
     pub git_tree_view: bool,
     #[serde(default)]
     pub vim: VimSettings,
+    /// Look for new Loom releases in packaged builds.
+    #[serde(default = "default_true")]
+    pub check_for_updates: bool,
     #[serde(default)]
     pub editor_font: FontSettings,
     #[serde(default = "default_terminal_font")]
@@ -89,6 +92,7 @@ impl Default for Settings {
             git_split_diff: false,
             git_tree_view: false,
             vim: VimSettings::default(),
+            check_for_updates: true,
             editor_font: FontSettings::EDITOR,
             terminal_font: FontSettings::TERMINAL,
         }
@@ -336,6 +340,7 @@ mod tests {
                 smart_case: true,
                 ..VimSettings::default()
             },
+            check_for_updates: false,
             editor_font: FontSettings {
                 family: "Fira Code".into(),
                 size: 14,

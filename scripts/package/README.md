@@ -14,10 +14,12 @@ node scripts/package/package.mjs all --platform linux   # explicit
 | `compile` | `cargo build --release --locked` (macOS: both architectures, merged with `lipo`) |
 | `package` | Stage the application folder, check it, write the portable archive (Windows zip with the managed Git runtime, Linux tar.gz, macOS signed Loom.app in a zip) |
 | `bundle` | Build the installers from the staged folder (Windows setup, Linux .deb and AppImage, macOS .dmg) and write `SHA256SUMS` |
+| `manifest` | Write the signed update manifest `update-<platform>.json` (see [Update manifests](#update-manifests)); `all` skips it when no signing key is set |
 
 Every step can run on its own; each checks that the previous one has run.
 `--expect-version x.y.z` fails early when `Cargo.toml` has a different version
-(release workflows pass the tag).
+(release workflows pass the tag). `compile` builds with `LOOM_UPDATES=1`,
+which turns on update checks; a plain `cargo build` has them off.
 
 ## Layout
 
@@ -37,6 +39,27 @@ Rust targets to the toolchain. Inno Setup is installed with its own portable mod
   dist/        final artifacts
 ```
 
+## Update manifests
+
+Loom checks `releases/latest/download/update-<platform>.json`
+([Updates](../../docs/updates.md)). The `manifest` step writes it from the
+packages in `dist/`: version, release page, and the URL, SHA-256 and size of
+each package, signed with Ed25519.
+
+The private key is read from `LOOM_UPDATE_SIGNING_KEY` (PEM text, the
+repository secret the release workflows pass) or from the file named by
+`LOOM_UPDATE_SIGNING_KEY_FILE`. To create a new key pair:
+
+```bash
+node scripts/package/package.mjs keygen
+```
+
+It writes `.packaging/update-signing-key.pem` and prints the public key.
+Paste the public key into `PUBLIC_KEY` in `src/infrastructure/update.rs`,
+store the PEM as the `LOOM_UPDATE_SIGNING_KEY` secret, keep an offline backup
+and delete the file. A build trusts only the key it was built with: after a
+key change, users of older builds have to update once by hand.
+
 ## Windows
 
 The installer is built with Inno Setup and modelled on Zed's Windows installer
@@ -51,7 +74,8 @@ Loom.
   Loom" for folders (folder, folder background, drive), and `loom` on the
   user's PATH (`bin\loom.cmd`). Unchecking a task on upgrade removes what it
   created earlier. Silent install: `/VERYSILENT`; custom folder: `/DIR=<path>`;
-  skip tasks: `/MERGETASKS="!desktopicon,!addtopath"`. Uninstalling removes the
+  skip tasks: `/MERGETASKS="!desktopicon,!addtopath"`. With `/VERYSILENT`,
+  `/relaunch=1` starts Loom when Setup finishes; in-app updates use it. Uninstalling removes the
   installed files, shortcuts, menu entries and PATH entry, never user data.
 - `Loom-<version>-windows-x86_64-portable.zip`: the same application folder.
 - Both carry MinGit under `runtime/git` with `MANIFEST.json`, `VERSION`,

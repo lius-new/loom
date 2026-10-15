@@ -9,3 +9,4 @@ pub(crate) mod terminal;
 
 pub mod settings;
 pub(crate) mod syntax;
+pub(crate) mod update;

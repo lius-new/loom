@@ -1,14 +1,16 @@
-//! Custom frameless title bar: repository controls on the left, native
-//! window controls on the far right.
+//! Custom frameless title bar: repository controls on the left; the update
+//! button, Settings and the native window controls on the right.
 //!
 //! The bar is marked as a native window drag region; interactive children
 //! (the buttons) are excluded automatically by hit testing.
 
 use lgui::core::{
     AnimProperty, AnimationBinding, Color, CursorIcon, EventPolicy, IconStyle, PhysicalRect,
-    UiElement, UiEventContext, UiId, UiScale,
+    SemanticRole, Semantics, UiElement, UiEventContext, UiId, UiScale,
 };
-use lgui::prelude::{Element, UiRect, VisualStyle, panel};
+use lgui::prelude::{Element, TextAlign, UiRect, VisualStyle, panel};
+
+use crate::features::update::Badge;
 
 use crate::ui::chrome::TitleBinding;
 use crate::ui::theme;
@@ -95,8 +97,52 @@ fn window_icon_rect(button: UiRect, scale: UiScale) -> UiRect {
     scale.logical_rect(PhysicalRect::new(left, top, left + size, top + size))
 }
 
+/// The update button left of Settings: accent-filled while it offers an
+/// action, muted while a download runs.
+fn update_button(right: f32, bar: UiRect, badge: Badge, state: TitleBinding) -> Element {
+    let size = theme::SMALL + 1.0;
+    let width = crate::ui::tabs::measure(&badge.label, size, 600) + 20.0;
+    let middle = (bar.top + bar.bottom) / 2.0;
+    let rect = UiRect::new(right - width, middle - 11.0, right, middle + 11.0);
+    let actionable = badge.actionable;
+    let label = badge.label.clone();
+    let element = Element::new(move |cx| {
+        let c = theme::c();
+        let hovered = actionable && cx.context.interaction_flags(&cx.id).hovered;
+        let (fill, color) = match (actionable, hovered) {
+            (true, false) => (c.accent, c.on_accent),
+            (true, true) => (c.accent_hover, c.on_accent),
+            (false, _) => (c.active_line, c.text_soft),
+        };
+        let mut style = theme::sans_semibold(color, size);
+        style.align = TextAlign::Center;
+        UiElement::panel(cx.id, rect, VisualStyle::filled(fill).radius(11.0)).child(
+            UiElement::text(
+                UiId::new("titlebar.update.label"),
+                rect,
+                label.clone(),
+                style,
+            ),
+        )
+    })
+    .key("titlebar.update.button")
+    .semantics(Semantics::new(SemanticRole::Button).name(badge.label));
+    if !actionable {
+        return element;
+    }
+    element
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .on_click(move |ctx: &mut UiEventContext| {
+            if state.activate_update() {
+                let _ = ctx.window().request_close();
+            }
+        })
+}
+
 pub fn render(rect: UiRect, state: TitleBinding, git_controls: Element) -> Element {
-    let maximized = state.frame().maximized;
+    let frame = state.frame();
+    let maximized = frame.maximized;
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar)).window_drag_region();
 
     // ---- Left: repository, branch and sync ----------------------------
@@ -109,7 +155,15 @@ pub fn render(rect: UiRect, state: TitleBinding, git_controls: Element) -> Eleme
 
     // Settings, just left of the window controls.
     let settings_r = UiRect::new(right - 148.0, rect.top, right - 116.0, rect.bottom);
-    let settings_open = state.frame().settings_open;
+    let settings_open = frame.settings_open;
+    if let Some(badge) = frame.update {
+        bar = bar.child(update_button(
+            settings_r.left - 6.0,
+            rect,
+            badge,
+            state.clone(),
+        ));
+    }
     bar = bar.child(
         caption_button(
             "titlebar.settings.button",

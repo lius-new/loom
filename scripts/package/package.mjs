@@ -9,6 +9,10 @@
 //   package  Stage the application folder and write the portable archive
 //   bundle   Build the installers (Windows setup, Linux .deb and AppImage,
 //            macOS .dmg)
+//   manifest Write the signed update manifest (see manifest.mjs); `all`
+//            skips it when no signing key is set
+//
+// `keygen` creates a new update signing key pair.
 //
 // Options:
 //   --platform <name>         windows, macos or linux (default: the current OS)
@@ -22,9 +26,10 @@ import path from 'node:path';
 import * as linux from './linux/index.mjs';
 import * as macos from './macos/index.mjs';
 import * as windows from './windows/index.mjs';
+import { keygen, writeManifest } from './manifest.mjs';
 import { DIST_DIR, PackagingError, ROOT, cargoPackageField, fail } from './lib/util.mjs';
 
-const STEPS = ['setup', 'compile', 'package', 'bundle'];
+const STEPS = ['setup', 'compile', 'package', 'bundle', 'manifest'];
 
 const PLATFORMS = {
   windows: {
@@ -48,7 +53,7 @@ const PLATFORMS = {
 };
 
 function usage() {
-  console.log(`Usage: node scripts/package/package.mjs <${[...STEPS, 'all'].join('|')}> [options]
+  console.log(`Usage: node scripts/package/package.mjs <${[...STEPS, 'all', 'keygen'].join('|')}> [options]
 
 Options:
   --platform <name>         windows, macos or linux (default: the current OS)
@@ -91,7 +96,7 @@ function parseArguments(argv) {
     usage();
     process.exit(1);
   }
-  if (options.step !== 'all' && !STEPS.includes(options.step)) {
+  if (!['all', 'keygen'].includes(options.step) && !STEPS.includes(options.step)) {
     fail(`Unknown step: ${options.step}`);
   }
   return options;
@@ -108,6 +113,10 @@ async function main() {
   }
 
   const options = parseArguments(process.argv.slice(2));
+  if (options.step === 'keygen') {
+    keygen();
+    return;
+  }
   const platform = PLATFORMS[options.platform];
   if (!platform) {
     fail(`Unknown platform: ${options.platform ?? process.platform}`);
@@ -118,11 +127,17 @@ async function main() {
     fail(`Requested version ${options.expectVersion} does not match Cargo.toml version ${version}`);
   }
 
+  // Packaged builds check for updates; plain `cargo build` builds do not.
+  process.env.LOOM_UPDATES = '1';
   const steps = options.step === 'all' ? STEPS : [options.step];
   for (const name of steps) {
-    await platform[name]({ version });
+    if (name === 'manifest') {
+      writeManifest({ platform: options.platform, version, required: options.step === 'manifest' });
+    } else {
+      await platform[name]({ version });
+    }
   }
-  if (steps.includes('package') || steps.includes('bundle')) {
+  if (steps.some((name) => ['package', 'bundle', 'manifest'].includes(name))) {
     console.log(`\nArtifacts: ${path.relative(ROOT, DIST_DIR)}`);
   }
 }

@@ -37,24 +37,28 @@ impl HomeBinding {
         (self.run)(c)
     }
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct TitleFrame {
     pub settings_open: bool,
     pub maximized: bool,
+    pub update: Option<crate::features::update::Badge>,
 }
 #[derive(Clone)]
 pub struct TitleBinding {
     read: Arc<dyn Fn() -> TitleFrame + Send + Sync>,
     open: Arc<dyn Fn() + Send + Sync>,
+    update: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 impl TitleBinding {
     pub fn new(
         read: impl Fn() -> TitleFrame + Send + Sync + 'static,
         open: impl Fn() + Send + Sync + 'static,
+        update: impl Fn() -> bool + Send + Sync + 'static,
     ) -> Self {
         Self {
             read: Arc::new(read),
             open: Arc::new(open),
+            update: Arc::new(update),
         }
     }
     pub fn frame(&self) -> TitleFrame {
@@ -62,6 +66,11 @@ impl TitleBinding {
     }
     pub fn open_settings(&self) {
         (self.open)();
+    }
+    /// Run the update button's action; true asks to close the window so the
+    /// installer can run.
+    pub fn activate_update(&self) -> bool {
+        (self.update)()
     }
 }
 

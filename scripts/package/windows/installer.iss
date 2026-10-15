@@ -108,10 +108,17 @@ Root: HKCU; Subkey: "Software\Classes\Drive\shell\{#AppName}\command"; ValueType
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; Loom's in-app update runs Setup with /VERYSILENT /relaunch=1 after it quits.
+Filename: "{app}\{#AppExeName}"; Flags: nowait; Check: RelaunchRequested
 
 [Code]
 const
   EnvironmentKey = 'Environment';
+
+function RelaunchRequested: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;
 
 function BinDir: String;
 begin

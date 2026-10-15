@@ -7,14 +7,20 @@ use lgui::prelude::{Element, UiRect};
 pub fn title_binding(state: &AppContext) -> TitleBinding {
     let reader = state.clone();
     let writer = state.clone();
+    let updater = state.clone();
     TitleBinding::new(
-        move || TitleFrame {
-            settings_open: reader.get().workspace.active_is_settings(),
-            maximized: crate::app::window::is_maximized(),
+        move || {
+            let app = reader.get();
+            TitleFrame {
+                settings_open: app.workspace.active_is_settings(),
+                maximized: crate::app::window::is_maximized(),
+                update: app.update.badge(),
+            }
         },
         move || {
             writer.update(|app| app.apply(crate::features::keymap::action::Action::OpenSettings))
         },
+        move || crate::app::update::activate(&updater),
     )
 }
 pub fn title(rect: UiRect, state: AppContext, git: Element) -> Element {

@@ -124,11 +124,19 @@ jobs:
           test "$(readlink "$mount/Applications")" = /Applications
           hdiutil detach "$mount"
 
+      # Loom checks releases/latest/download/update-macos-universal.json.
+      - name: Write update manifest
+        env:
+          LOOM_UPDATE_SIGNING_KEY: ${{ secrets.LOOM_UPDATE_SIGNING_KEY }}
+        run: node scripts/package/package.mjs manifest --expect-version ${{ steps.version.outputs.version }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: Loom-${{ steps.version.outputs.version }}-macos-universal
-          path: .packaging/dist/Loom-${{ steps.version.outputs.version }}-macos-universal*
+          path: |
+            .packaging/dist/Loom-${{ steps.version.outputs.version }}-macos-universal*
+            .packaging/dist/update-macos-universal.json
           if-no-files-found: error
 
       - name: Remove signing keychain

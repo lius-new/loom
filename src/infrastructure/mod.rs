@@ -25,4 +25,5 @@ pub mod file_drop;
 pub(crate) mod syntax_worker;
 
 pub mod launch;
+pub(crate) mod update;
 pub mod window_geometry;

@@ -15,6 +15,7 @@ pub struct Frame {
     pub scroll: (f32, f32),
     pub profile: crate::ui::terminal::settings_binding::Frame,
     pub terminal_ui: crate::ui::terminal::state::TerminalUiState,
+    pub about: crate::features::update::About,
 }
 pub enum Command {
     Toggle(Setting),
@@ -36,6 +37,7 @@ pub struct Binding {
     pub profile: crate::ui::terminal::settings_binding::Binding,
     read: Arc<dyn Fn() -> Frame + Send + Sync>,
     run: Arc<dyn Fn(Command) + Send + Sync>,
+    update: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 impl Binding {
     pub fn new(
@@ -43,12 +45,14 @@ impl Binding {
         profile: crate::ui::terminal::settings_binding::Binding,
         read: impl Fn() -> Frame + Send + Sync + 'static,
         run: impl Fn(Command) + Send + Sync + 'static,
+        update: impl Fn() -> bool + Send + Sync + 'static,
     ) -> Self {
         Self {
             ui,
             profile,
             read: Arc::new(read),
             run: Arc::new(run),
+            update: Arc::new(update),
         }
     }
     pub fn frame(&self) -> Frame {
@@ -56,5 +60,10 @@ impl Binding {
     }
     pub fn run(&self, c: Command) {
         (self.run)(c);
+    }
+    /// Run the Version row's update action; true asks to close the window
+    /// so the installer can run.
+    pub fn activate_update(&self) -> bool {
+        (self.update)()
     }
 }
