@@ -25,7 +25,7 @@ use crate::ui::tabs::{
 };
 use crate::ui::theme;
 
-const HEADER_H: f32 = 34.0;
+const HEADER_H: f32 = theme::TABS_H;
 const BODY_PAD_X: f32 = 12.0;
 const BODY_PAD_Y: f32 = 6.0;
 const RESIZE_HIT_H: f32 = 8.0;
@@ -201,15 +201,8 @@ pub(crate) fn render_view(
         blur_state.ui.update(|app| app.terminal_focused = false);
     });
 
-    // The resize handle owns the outer divider; drawing it here too creates
-    // a second edge when the application divider is aligned to physical pixels.
-    // Keep only the separator between the tab strip and terminal content.
-    terminal = terminal.child(panel(
-        UiRect::new(rect.left, header.bottom - 1.0, rect.right, header.bottom),
-        VisualStyle::filled(theme::c().border),
-    ));
+    terminal = terminal.child(panel(header, VisualStyle::filled(theme::c().sidebar)));
 
-    let tool_right = rect.right - 38.0;
     let selected_shell = app_state.ui.terminal_shell_selection.and_then(|kind| {
         app_state
             .shell_options
@@ -220,14 +213,14 @@ pub(crate) fn render_view(
     let add_tabs = terminal_tabs.clone();
     let add_state = state.clone();
     let add_focus = terminal_focus.clone();
+    let add_size = (header.height() - 6.0).max(0.0);
     let add_rect = UiRect::new(
-        rect.right - 32.0,
-        header.top + 5.0,
+        rect.right - 6.0 - add_size,
+        header.top + 3.0,
         rect.right - 6.0,
-        header.bottom - 5.0,
+        header.bottom - 3.0,
     );
-    let add_center_x = (add_rect.left + add_rect.right) * 0.5;
-    let add_center_y = (add_rect.top + add_rect.bottom) * 0.5;
+    let tool_right = add_rect.left - 6.0;
     terminal = terminal.child(
         panel(
             add_rect,
@@ -246,12 +239,7 @@ pub(crate) fn render_view(
         .child(icon(
             "terminal.new.icon",
             "plus",
-            theme::icon_rect(UiRect::new(
-                add_center_x,
-                add_center_y,
-                add_center_x,
-                add_center_y,
-            )),
+            theme::icon_rect(add_rect),
             theme::c().text_soft,
         )),
     );
@@ -273,9 +261,9 @@ pub(crate) fn render_view(
         .min(max_instance_width);
     let instance_rect = UiRect::new(
         tool_right - instance_width,
-        header.top + 5.0,
+        header.top + 3.0,
         tool_right,
-        header.bottom - 5.0,
+        header.bottom - 3.0,
     );
 
     let tab_strip_left = rect.left;
@@ -285,7 +273,7 @@ pub(crate) fn render_view(
         (instance_rect.left - 8.0).max(tab_strip_left),
         header.bottom,
     );
-    terminal = terminal.child(render_terminal_tabs(
+    let tab_strip_element = render_terminal_tabs(
         tab_strip,
         &tab_items,
         active_tab_id,
@@ -295,7 +283,7 @@ pub(crate) fn render_view(
         terminal_focus.clone(),
         editor_focus.clone(),
         application.clone(),
-    ));
+    );
 
     let menu_state = state.clone();
     let menu_focus = terminal_focus.clone();
@@ -318,9 +306,9 @@ pub(crate) fn render_view(
             "terminal",
             theme::icon_rect(UiRect::new(
                 instance_rect.left + 7.0,
-                instance_rect.top + 5.0,
+                instance_rect.top,
                 instance_rect.left + 19.0,
-                instance_rect.top + 17.0,
+                instance_rect.bottom,
             )),
             theme::c().text_muted,
         ))
@@ -339,9 +327,9 @@ pub(crate) fn render_view(
             "chevron-down",
             theme::icon_rect(UiRect::new(
                 instance_rect.right - 17.0,
-                instance_rect.top + 5.0,
+                instance_rect.top,
                 instance_rect.right - 5.0,
-                instance_rect.top + 17.0,
+                instance_rect.bottom,
             )),
             theme::c().text_dim,
         )),
@@ -363,6 +351,11 @@ pub(crate) fn render_view(
             cursor_blink_visible,
         ));
     }
+
+    // Keep the tab backgrounds and underline above the session surfaces.
+    terminal = terminal
+        .child(crate::ui::components::divider::bottom(header))
+        .child(tab_strip_element);
 
     // Add handles after all session surfaces so they win hit testing.
     for index in 0..sessions.len().saturating_sub(1) {
@@ -602,7 +595,7 @@ pub(crate) fn render_terminal_tabs(
     editor_focus: UiFocusHandle,
     application: FrameRequest,
 ) -> Element {
-    let mut strip = group(rect);
+    let mut strip = panel(rect, VisualStyle::filled(theme::c().sidebar));
     if tabs.is_empty() || rect.width() <= 0.0 {
         return strip;
     }
@@ -639,38 +632,7 @@ pub(crate) fn render_terminal_tabs(
             }
         })
         .collect::<Vec<_>>();
-    let mut group_left = rect.left + TABS_PAD;
-    let mut group_start = 0;
-    while group_start < tabs.len() {
-        let group_id = tabs[group_start].group_id;
-        let group_end = tabs[group_start..]
-            .iter()
-            .position(|tab| tab.group_id != group_id)
-            .map_or(tabs.len(), |offset| group_start + offset);
-        let width: f32 = widths[group_start..group_end].iter().sum();
-        let bounds = UiRect::new(
-            group_left,
-            rect.top + PILL_INSET,
-            group_left + width,
-            rect.bottom - PILL_INSET,
-        );
-        let active_group = tabs[group_start..group_end]
-            .iter()
-            .any(|tab| tab.id == active_id);
-        strip = strip.child(theme::bordered(
-            bounds,
-            if active_group {
-                theme::c().bg
-            } else {
-                theme::c().sidebar
-            },
-            theme::c().border,
-            2.0,
-            1.0,
-        ));
-        group_left += width + TAB_GAP;
-        group_start = group_end;
-    }
+    let mut active_rect = None;
     let mut left = rect.left + TABS_PAD;
     for (index, tab) in tabs.iter().enumerate() {
         let name = &labels[index];
@@ -707,55 +669,70 @@ pub(crate) fn render_terminal_tabs(
             name_left + name_slot_width,
             tab_rect.bottom,
         );
-        let visual = group(tab_rect)
-            .child(panel(
-                UiRect::new(
-                    tab_rect.left + 3.0,
-                    tab_rect.top + 3.0,
-                    tab_rect.right - 3.0,
-                    tab_rect.bottom - 3.0,
-                ),
+        if active {
+            active_rect = Some(tab_rect);
+        }
+        let visual = panel(
+            tab_rect,
+            if active {
+                VisualStyle::filled(theme::c().active_tab).alpha(51)
+            } else {
+                VisualStyle::default()
+            },
+        )
+        .child(text(
+            label_rect,
+            display_name,
+            theme::mono(
                 if active {
-                    VisualStyle::filled(theme::c().active_line).radius(2.0)
+                    theme::c().text_bright
                 } else {
-                    VisualStyle::default()
+                    theme::c().text_muted
                 },
-            ))
-            .child(text(
-                label_rect,
-                display_name,
-                theme::mono(
-                    if active {
-                        theme::c().text_bright
-                    } else {
-                        theme::c().text_muted
-                    },
-                    theme::UI_SIZE,
-                ),
-            ));
+                theme::UI_SIZE,
+            ),
+        ));
         let select_tabs = terminal_tabs.clone();
         let select_focus = terminal_focus.clone();
         let press_state = state.clone();
         let select_map = map.clone();
         let menu_state = state.clone();
         let tab_id = tab.id;
-        let mut tab_element = group(tab_rect)
-            .key(format!("terminal-tab-{tab_id}"))
-            .on_event_capture(lgui::core::UiEventKind::PointerDown, move |cx, payload| {
-                if let lgui::core::UiEventPayload::PointerDown {
-                    pointer,
-                    button: PointerButton::Right,
-                } = payload
-                {
-                    menu_state.run(Command::OpenMenu {
-                        target: tab_id,
-                        position: (pointer.point.x, pointer.point.y),
-                        kind: super::state::TerminalTabMenuKind::Actions,
-                    });
-                    cx.stop_propagation();
-                }
-            })
-            .child(visual);
+        let close_id = UiId::owned(format!("terminal-tab-close-{tab_id}"));
+        let close_node_id = close_id.clone();
+        let select_node_id = UiId::owned(format!("terminal-tab-select-{tab_id}"));
+        let mut tab_element = Element::new(move |cx| {
+            let show_close = active
+                || cx.context.interaction_flags(&cx.id).hovered
+                || cx.context.interaction_flags(&select_node_id).hovered
+                || cx.context.interaction_flags(&close_node_id).hovered;
+            UiElement::group(cx.id, tab_rect).children(
+                cx.children
+                    .into_iter()
+                    .filter(|child| show_close || child.node().id != close_node_id),
+            )
+        })
+        .key(format!("terminal-tab-{tab_id}"))
+        .event_policy(EventPolicy {
+            hover: true,
+            press: false,
+            focus: false,
+        })
+        .on_event_capture(lgui::core::UiEventKind::PointerDown, move |cx, payload| {
+            if let lgui::core::UiEventPayload::PointerDown {
+                pointer,
+                button: PointerButton::Right,
+            } = payload
+            {
+                menu_state.run(Command::OpenMenu {
+                    target: tab_id,
+                    position: (pointer.point.x, pointer.point.y),
+                    kind: super::state::TerminalTabMenuKind::Actions,
+                });
+                cx.stop_propagation();
+            }
+        })
+        .child(visual);
         let select_rect = UiRect::new(
             tab_rect.left,
             tab_rect.top,
@@ -833,57 +810,57 @@ pub(crate) fn render_terminal_tabs(
         let close_editor_focus = editor_focus.clone();
         let close_application = application.clone();
         tab_element = tab_element.child(
-            panel(close_rect, VisualStyle::default())
-                .key(format!("terminal-tab-close-{tab_id}"))
-                .event_policy(EventPolicy::INTERACTIVE)
-                .cursor(CursorIcon::Pointer)
-                .on_click(move || {
-                    if !commands::close(
-                        &close_state,
-                        &close_tabs,
-                        tab_id,
-                        crate::features::terminal::actions::MenuAction::Close,
-                        &close_application,
-                    ) {
-                        return;
-                    }
-                    let closing_last_tab = close_tabs.get().is_empty();
-                    if closing_last_tab {
-                        close_editor_focus.focus();
-                    } else {
-                        close_terminal_focus.focus();
-                    }
-                })
-                .child(text(
-                    UiRect::new(
-                        close_left,
-                        tab_rect.top,
-                        close_left + close_width + TEXT_MARGIN,
-                        tab_rect.bottom,
-                    ),
-                    "✕",
-                    theme::mono(theme::c().text_dim, theme::SMALL),
-                )),
+            Element::new(move |cx| {
+                UiElement::panel(close_id, close_rect, VisualStyle::default()).children(cx.children)
+            })
+            .key(format!("terminal-tab-close-{tab_id}"))
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                if !commands::close(
+                    &close_state,
+                    &close_tabs,
+                    tab_id,
+                    crate::features::terminal::actions::MenuAction::Close,
+                    &close_application,
+                ) {
+                    return;
+                }
+                let closing_last_tab = close_tabs.get().is_empty();
+                if closing_last_tab {
+                    close_editor_focus.focus();
+                } else {
+                    close_terminal_focus.focus();
+                }
+            })
+            .child(text(
+                UiRect::new(
+                    close_left,
+                    tab_rect.top,
+                    close_left + close_width + TEXT_MARGIN,
+                    tab_rect.bottom,
+                ),
+                "✕",
+                theme::mono(theme::c().text_dim, theme::SMALL),
+            )),
         );
 
         strip = strip.child(tab_element);
-        let same_group = tabs
-            .get(index + 1)
-            .is_some_and(|next| next.group_id == tab.group_id);
-        if same_group {
-            strip = strip.child(panel(
-                UiRect::new(
-                    tab_rect.right - 0.5,
-                    tab_rect.top + 4.0,
-                    tab_rect.right + 0.5,
-                    tab_rect.bottom - 4.0,
-                ),
-                VisualStyle::filled(theme::c().border),
-            ));
-        }
-        left += tab_width + if same_group { 0.0 } else { TAB_GAP };
+        left += tab_width + TAB_GAP;
     }
 
+    strip = strip.child(crate::ui::components::divider::bottom(rect));
+    if let Some(active) = active_rect {
+        strip = strip.child(panel(
+            UiRect::new(
+                active.left,
+                (active.bottom - 2.0).max(active.top),
+                active.right,
+                active.bottom,
+            ),
+            VisualStyle::filled(theme::c().accent),
+        ));
+    }
     clip(rect, 0.0, 0.0).child(strip)
 }
 

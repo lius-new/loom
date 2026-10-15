@@ -400,6 +400,42 @@ mod tests {
             3 // Two tab labels and the shell selector in the terminal header.
         );
         let context = ApplicationContext::empty(Default::default());
+        // Closing controls follow the editor tabs: active or hovered only.
+        {
+            let snapshot = tabs.get();
+            let active = snapshot.active_id().unwrap();
+            let inactive = snapshot
+                .tabs()
+                .iter()
+                .find(|tab| tab.id != active)
+                .unwrap()
+                .id;
+            let active_close = UiId::owned(format!("terminal-tab-close-{active}"));
+            let inactive_close = UiId::owned(format!("terminal-tab-close-{inactive}"));
+            let active_bounds = session.tree().node(&active_close).unwrap().hit_rect;
+            assert!(session.tree().node(&inactive_close).is_none());
+
+            session.handle_input(InputEvent::PointerMove(lgui::core::PointerData::mouse(
+                Point::new(30.0, 10.0),
+            )));
+            session.render_view(&view, viewport, UiScale::ONE);
+            let close_bounds = session.tree().node(&inactive_close).unwrap().hit_rect;
+            session.handle_input(InputEvent::PointerMove(lgui::core::PointerData::mouse(
+                Point::new((close_bounds.left + close_bounds.right) / 2.0, 10.0),
+            )));
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert!(session.tree().node(&inactive_close).is_some());
+
+            session.handle_input(InputEvent::PointerMove(lgui::core::PointerData::mouse(
+                Point::new(400.0, 240.0),
+            )));
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert!(session.tree().node(&inactive_close).is_none());
+            assert_eq!(
+                session.tree().node(&active_close).unwrap().hit_rect,
+                active_bounds
+            );
+        }
         let mut send = |input| {
             let events = session.handle_input(input);
             dispatch_runtime_output(
