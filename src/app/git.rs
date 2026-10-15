@@ -678,6 +678,143 @@ pub fn apply_stash(
     )
 }
 
+pub fn request_create_tag(
+    state: &AppContext,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+) -> bool {
+    let snapshot = store.get();
+    let Some(repository) = snapshot
+        .repository_for_path(root)
+        .filter(|repository| repository.worktree_root == root)
+    else {
+        return false;
+    };
+    if snapshot.operation.is_some() {
+        return false;
+    }
+    let Some(target) = repository.head_oid.clone() else {
+        state.update(|app| app.show_toast("Create a commit before adding a tag."));
+        return false;
+    };
+    let repository = repository.worktree_root.clone();
+    state.update(|app| {
+        app.git.ui.menu = None;
+        app.git.ui.tag_input = Default::default();
+        app.git.ui.confirm = Some(GitConfirm {
+            title: "Create Tag".into(),
+            message: format!(
+                "Create a local tag at commit {}.",
+                target.chars().take(8).collect::<String>()
+            ),
+            confirm_label: "Create",
+            destructive: false,
+            action: GitConfirmAction::CreateTag { repository, target },
+            restore_terminal: app.terminal.ui.terminal_focused,
+        });
+    });
+    true
+}
+
+pub fn create_tag(
+    state: &AppContext,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    name: String,
+    target: String,
+) -> bool {
+    let Some(repository) = store
+        .get()
+        .repository_for_path(root)
+        .filter(|repository| repository.worktree_root == root)
+        .cloned()
+    else {
+        return false;
+    };
+    let updated_root = repository.worktree_root.clone();
+    let updated_name = name.clone();
+    let updated_target = target.clone();
+    run_with(
+        state,
+        store,
+        repository,
+        OperationKind::Other,
+        "Creating tag…",
+        move |service, root| {
+            service.write(root, |backend| {
+                backend.create_tag(root, &name, Some(&target))
+            })
+        },
+        move |app, ()| {
+            app.git
+                .model
+                .update_history_tag(&updated_root, &updated_name, Some(&updated_target));
+        },
+    )
+}
+
+pub fn request_delete_tag(
+    state: &AppContext,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    name: String,
+) -> bool {
+    let snapshot = store.get();
+    let Some(repository) = snapshot
+        .repository_for_path(root)
+        .filter(|repository| repository.worktree_root == root)
+    else {
+        return false;
+    };
+    if snapshot.operation.is_some() || !repository.tags.iter().any(|tag| tag.name == name) {
+        return false;
+    }
+    let repository = repository.worktree_root.clone();
+    state.update(|app| {
+        app.git.ui.menu = None;
+        app.git.ui.confirm = Some(GitConfirm {
+            title: "Delete Tag?".into(),
+            message: format!("Delete the local tag \"{name}\"?"),
+            confirm_label: "Delete",
+            destructive: true,
+            action: GitConfirmAction::DeleteTag { repository, name },
+            restore_terminal: app.terminal.ui.terminal_focused,
+        });
+    });
+    true
+}
+
+pub fn delete_tag(
+    state: &AppContext,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    name: String,
+) -> bool {
+    let Some(repository) = store
+        .get()
+        .repository_for_path(root)
+        .filter(|repository| repository.worktree_root == root)
+        .cloned()
+    else {
+        return false;
+    };
+    let updated_root = repository.worktree_root.clone();
+    let updated_name = name.clone();
+    run_with(
+        state,
+        store,
+        repository,
+        OperationKind::Other,
+        "Deleting tag…",
+        move |service, root| service.write(root, |backend| backend.delete_tag(root, &name)),
+        move |app, ()| {
+            app.git
+                .model
+                .update_history_tag(&updated_root, &updated_name, None);
+        },
+    )
+}
+
 /// Ask before dropping the stash `oid`.
 pub fn request_drop_stash(
     state: &AppContext,
@@ -1103,6 +1240,78 @@ pub fn hover_commit(state: &AppContext, root: PathBuf, oid: String, anchor: lgui
                 });
             });
         });
+}
+
+/// Load tag metadata after the same dwell delay used by history commits.
+pub fn hover_tag(
+    state: &AppContext,
+    store: &State<GitStoreSnapshot>,
+    root: PathBuf,
+    name: String,
+    anchor: lgui::prelude::UiRect,
+) {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
+        return;
+    };
+    let snapshot = store.get();
+    let Some(tag) = snapshot
+        .active()
+        .filter(|repository| repository.worktree_root == root)
+        .and_then(|repository| repository.tags.iter().find(|tag| tag.name == name))
+        .cloned()
+    else {
+        return;
+    };
+    let sequence = state.get().git.ui.hover_sequence;
+    let worker_state = state.clone();
+    let store = store.clone();
+    let _ = thread::Builder::new()
+        .name("loom-git-tag-card".into())
+        .spawn(move || {
+            thread::sleep(COMMIT_CARD_DELAY);
+            if !tag_hover_current(&worker_state.get(), &store.get(), &root, &tag, sequence) {
+                return;
+            }
+            let details = crate::infrastructure::git::service()
+                .and_then(|service| service.backend().tag_details(&root, &name))
+                .map_err(|error| error.user_message());
+            application.post(move || {
+                worker_state.try_update(|app| {
+                    if !tag_hover_current(app, &store.get(), &root, &tag, sequence) {
+                        return false;
+                    }
+                    app.git.ui.tag_card = Some(crate::ui::git::panel::TagCard {
+                        repository: root,
+                        tag,
+                        anchor,
+                        details,
+                    });
+                    true
+                });
+            });
+        });
+}
+
+fn tag_hover_current(
+    app: &AppState,
+    store: &GitStoreSnapshot,
+    root: &Path,
+    tag: &crate::features::git::TagInfo,
+    sequence: u64,
+) -> bool {
+    app.git.ui.hover_sequence == sequence
+        && app.git.ui.hover.as_ref()
+            == Some(&crate::ui::git::panel::GitHover::Tag(tag.name.clone()))
+        && !app
+            .git
+            .ui
+            .collapsed_sections
+            .contains(&crate::ui::git::panel::TAGS)
+        && app.git.ui.menu.is_none()
+        && app.git.ui.confirm.is_none()
+        && store.active().is_some_and(|repository| {
+            repository.worktree_root == root && repository.tags.contains(tag)
+        })
 }
 
 /// Create a commit that undoes commit `oid`. Conflicts leave a revert in
@@ -2302,6 +2511,43 @@ mod tests {
             features: RepositoryFeatures::default(),
             generation: 0,
         }
+    }
+
+    #[test]
+    fn tag_hover_rejects_stale_rows_repositories_and_closed_sections() {
+        use crate::ui::git::panel::{GitHover, TAGS};
+        let mut repository = repository(HeadState::Branch("main".into()), false, 0, 0);
+        let root = repository.worktree_root.clone();
+        let tag = crate::features::git::TagInfo {
+            name: "v1.0".into(),
+            commit: Some("abc".into()),
+        };
+        repository.tags = Arc::new(vec![tag.clone()]);
+        let mut store = GitStoreSnapshot {
+            active_repository: Some(repository.id),
+            repositories: Arc::new([(repository.id, repository)].into_iter().collect()),
+            ..Default::default()
+        };
+        let mut app = AppState::new();
+        app.git.ui.hover = Some(GitHover::Tag(tag.name.clone()));
+        app.git.ui.collapsed_sections.remove(&TAGS);
+        assert!(tag_hover_current(&app, &store, &root, &tag, 0));
+        app.git.ui.clear_hover_cards();
+        assert!(!tag_hover_current(&app, &store, &root, &tag, 0));
+        assert!(tag_hover_current(&app, &store, &root, &tag, 1));
+        app.git.ui.collapsed_sections.insert(TAGS);
+        assert!(!tag_hover_current(&app, &store, &root, &tag, 1));
+        app.git.ui.collapsed_sections.remove(&TAGS);
+        assert!(!tag_hover_current(
+            &app,
+            &store,
+            Path::new("other"),
+            &tag,
+            1
+        ));
+        store.active_repository = None;
+        store.repositories = Arc::default();
+        assert!(!tag_hover_current(&app, &store, &root, &tag, 1));
     }
 
     #[test]

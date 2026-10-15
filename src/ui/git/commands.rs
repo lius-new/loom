@@ -56,7 +56,28 @@ pub enum Command {
         oid: String,
         anchor: lgui::prelude::UiRect,
     },
+    HoverTag {
+        root: PathBuf,
+        name: String,
+        anchor: lgui::prelude::UiRect,
+    },
     Commit,
+    RequestCreateTag {
+        root: PathBuf,
+    },
+    CreateTag {
+        root: PathBuf,
+        name: String,
+        target: String,
+    },
+    RequestDeleteTag {
+        root: PathBuf,
+        name: String,
+    },
+    DeleteTag {
+        root: PathBuf,
+        name: String,
+    },
     LoadMoreHistory {
         root: PathBuf,
     },

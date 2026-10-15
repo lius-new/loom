@@ -858,7 +858,436 @@ mod panel_virtualization_tests {
     }
 
     #[test]
-    fn tag_click_opens_its_commit_and_non_commit_tags_remain_labels() {
+    fn tag_hover_card_shows_metadata_and_stays_inside_the_viewport() {
+        use crate::ui::git::{
+            commands::{Binding, Command, Frame},
+            state::GitPanelState,
+            tag_card,
+        };
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+        let viewport = UiRect::new(0.0, 0.0, 900.0, 600.0);
+        let drawer = UiRect::new(600.0, 0.0, 900.0, 600.0);
+        let tag = TagInfo {
+            name: "releases/v2.0".into(),
+            commit: Some("abc0123456789".into()),
+        };
+        let repository = RepositorySnapshot {
+            id: RepositoryId(1),
+            worktree_root: "repo".into(),
+            git_dir: "repo/.git".into(),
+            common_dir: "repo/.git".into(),
+            head: HeadState::Branch("main".into()),
+            head_oid: Some("abc0123456789".into()),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            files: Default::default(),
+            ignored: Default::default(),
+            repository_state: RepositoryState::Normal,
+            operation_step: None,
+            stashes: Default::default(),
+            worktrees: Default::default(),
+            tags: Arc::new(vec![tag.clone()]),
+            features: Default::default(),
+            generation: 0,
+        };
+        let details = TagDetails {
+            target: "abc0123456789".into(),
+            target_kind: "commit".into(),
+            annotation: Some(TagAnnotation {
+                tagger: "Release Author".into(),
+                email: "release@example.com".into(),
+                date: "2026-10-15 13:00".into(),
+                message: "Release editor improvements\n包含标签面板和提交轨道。".into(),
+            }),
+            commit: Some(CommitDetails {
+                author: "Commit Author".into(),
+                author_email: "dev@example.com".into(),
+                date: "2026-10-15 12:00".into(),
+                message: "Improve Git drawer".into(),
+                files_changed: 3,
+                insertions: 21,
+                deletions: 4,
+            }),
+        };
+        let exposed = Arc::new(Mutex::new(None::<State<GitPanelState>>));
+        let output = exposed.clone();
+        let source_tag = tag.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let viewport = cx.viewport();
+            let state = cx.state_with(|| {
+                let mut app = GitPanelState::default();
+                app.ui.collapsed_sections.remove(&TAGS);
+                app
+            });
+            *output.lock().unwrap() = Some(state.clone());
+            let store = cx.state_with(|| GitStoreSnapshot {
+                active_repository: Some(repository.id),
+                repositories: Arc::new([(repository.id, repository.clone())].into_iter().collect()),
+                ..Default::default()
+            });
+            let target = state.clone();
+            let tag = source_tag.clone();
+            let details = details.clone();
+            let binding = Binding::new(state.clone().into(), Frame::default, move |command| {
+                if let Command::HoverTag { root, name, anchor } = command {
+                    assert_eq!(root, PathBuf::from("repo"));
+                    assert_eq!(name, tag.name);
+                    target.update(|app| {
+                        app.ui.tag_card = Some(TagCard {
+                            repository: root,
+                            tag: tag.clone(),
+                            anchor,
+                            details: Ok(details.clone()),
+                        })
+                    });
+                }
+                true
+            });
+            let mut root = panel(viewport, VisualStyle::filled(theme::c().bg)).child(render(
+                drawer,
+                binding,
+                store.clone().into(),
+                cx.focus_handle(UiId::new("tag-hover-editor")),
+                cx.focus_handle(UiId::new("tag-hover-commit")),
+                UiId::new("tag-hover-commit"),
+            ));
+            if let Some(card) = tag_card::render(viewport, &state.get(), &repository) {
+                root = root.child(card);
+            }
+            root
+        });
+        let context = ApplicationContext::empty(Default::default());
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        context
+            .resources()
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                crate::app::svg_icons(),
+            )));
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        assert!(state.get().ui.tag_card.is_none());
+        let row = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| {
+                node.semantics.as_ref().and_then(|s| s.name.as_deref())
+                    == Some("Tag: releases/v2.0")
+            })
+            .unwrap();
+        let rect = session.tree().hit_for_id(&row.id).unwrap().rect;
+        dispatch_runtime_output(
+            session.handle_input(InputEvent::PointerMove(PointerData::mouse(Point::new(
+                rect.left + 40.0,
+                rect.top + ROW_H / 2.0,
+            )))),
+            &context,
+            &lgui::window::WindowId::new("tag-hover-test"),
+            |action| session.handle_default_action(action),
+            |_| {},
+        );
+        session.render_view(&view, viewport, UiScale::ONE);
+        for expected in [
+            "releases/v2.0",
+            "Annotated tag",
+            "Release Author",
+            "Commit Author",
+            "Improve Git drawer",
+        ] {
+            assert!(
+                session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .any(|node| node.text.as_deref() == Some(expected)),
+                "Missing {expected}"
+            );
+        }
+        let card_bounds = |session: &UiSession| {
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| {
+                    node.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some("Tag details")
+                })
+                .unwrap()
+                .layout_rect
+        };
+        let bounds = card_bounds(&session);
+        assert!(
+            bounds.left >= viewport.left
+                && bounds.right <= viewport.right
+                && bounds.top >= viewport.top
+                && bounds.bottom <= viewport.bottom
+        );
+        save_drawer_preview(&session, &context, viewport, "git-tag-hover-annotated");
+        state.update(|app| {
+            let details = app.ui.tag_card.as_mut().unwrap().details.as_mut().unwrap();
+            details.annotation = None;
+            details.commit.as_mut().unwrap().message =
+                "A long commit message with many lines.\n".repeat(60);
+        });
+        session.render_view(&view, UiRect::new(0.0, 0.0, 900.0, 280.0), UiScale::ONE);
+        assert!(card_bounds(&session).bottom <= 280.0);
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|node| node.text.as_deref() == Some("Lightweight tag"))
+        );
+        state.update(|app| ScrollRegion::Details.set_scroll(app, 10.0));
+        assert!(state.get().ui.tag_card.is_none());
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(!session.tree().nodes().iter().any(|node| {
+            node.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some("Tag details")
+        }));
+    }
+
+    #[test]
+    fn tag_context_menus_create_and_delete_through_the_dialogs() {
+        use crate::ui::components::state_access::StateAccess;
+        use crate::ui::git::{
+            commands::{Binding, Command, Frame},
+            confirm, menu,
+        };
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+        let viewport = UiRect::new(0.0, 0.0, 640.0, 480.0);
+        let requests = Arc::new(Mutex::new(Vec::<(String, PathBuf, String)>::new()));
+        let captured = requests.clone();
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
+        let output = exposed.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(|| {
+                let mut app = AppState::new();
+                app.git.ui.collapsed_sections.remove(&TAGS);
+                app
+            }));
+            let store = cx.state_with(|| {
+                let repository = RepositorySnapshot {
+                    id: RepositoryId(1),
+                    worktree_root: "repo".into(),
+                    git_dir: "repo/.git".into(),
+                    common_dir: "repo/.git".into(),
+                    head: HeadState::Branch("main".into()),
+                    head_oid: Some("abc00000".into()),
+                    upstream: None,
+                    ahead: 0,
+                    behind: 0,
+                    files: Default::default(),
+                    ignored: Default::default(),
+                    repository_state: RepositoryState::Normal,
+                    operation_step: None,
+                    stashes: Default::default(),
+                    worktrees: Default::default(),
+                    tags: Arc::new(vec![TagInfo {
+                        name: "v1.0".into(),
+                        commit: Some("abc00000".into()),
+                    }]),
+                    features: Default::default(),
+                    generation: 0,
+                };
+                GitStoreSnapshot {
+                    repositories: Arc::new([(repository.id, repository)].into_iter().collect()),
+                    active_repository: Some(RepositoryId(1)),
+                    ..Default::default()
+                }
+            });
+            *output.lock().unwrap() = Some(state.clone());
+            let dispatch_state = state.clone();
+            let dispatch_store = store.clone();
+            let captured = captured.clone();
+            let binding = Binding::new(
+                StateAccess::project(state.model(), |app| &app.git, |app| &mut app.git),
+                Frame::default,
+                move |command| match command {
+                    Command::CreateTag { root, name, target } => {
+                        assert_eq!(target, "abc00000");
+                        captured.lock().unwrap().push(("create".into(), root, name));
+                        true
+                    }
+                    Command::DeleteTag { root, name } => {
+                        captured.lock().unwrap().push(("delete".into(), root, name));
+                        true
+                    }
+                    Command::OpenCommitChanges { .. } => {
+                        panic!("Right-click must not open commit changes")
+                    }
+                    command => crate::app::git_view::run(&dispatch_state, &dispatch_store, command),
+                },
+            );
+            let focus = cx.focus_handle(UiId::new("tag-menu-editor"));
+            let input_focus = cx.focus_handle(UiId::new(confirm::TAG_INPUT_ID));
+            let create_open = state.get().git.ui.confirm.as_ref().is_some_and(|confirm| {
+                matches!(confirm.action, GitConfirmAction::CreateTag { .. })
+            });
+            let mounted = input_focus.clone();
+            cx.use_effect(create_open, move || {
+                if create_open {
+                    mounted.focus();
+                }
+            });
+            let mut root = render(
+                viewport,
+                binding.clone(),
+                store.clone().into(),
+                focus.clone(),
+                cx.focus_handle(UiId::new("tag-menu-commit")),
+                UiId::new("tag-menu-commit"),
+            );
+            if let Some(menu) = state.get().git.ui.menu {
+                root = root.child(menu::render(
+                    viewport,
+                    &menu,
+                    binding.clone(),
+                    store.clone().into(),
+                    focus,
+                ));
+            }
+            if let Some(confirm) = state.get().git.ui.confirm {
+                root = root.child(confirm::render(
+                    viewport,
+                    &confirm,
+                    binding,
+                    store.clone().into(),
+                    UiId::new("tag-menu-dialog"),
+                    input_focus,
+                ));
+            }
+            root
+        });
+        let context = ApplicationContext::empty(Default::default());
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        context
+            .resources()
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                crate::app::svg_icons(),
+            )));
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        let rect = |session: &UiSession, name: &str| {
+            let node = session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| {
+                    node.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name)
+                        || node.text.as_deref() == Some(name)
+                })
+                .unwrap_or_else(|| panic!("Missing {name}"));
+            session.tree().hit_for_id(&node.id).unwrap().rect
+        };
+        let send = |session: &mut UiSession, input| {
+            dispatch_runtime_output(
+                session.handle_input(input),
+                &context,
+                &lgui::window::WindowId::new("tag-menu-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        let click = |session: &mut UiSession, name: &str, button| {
+            let rect = rect(session, name);
+            let point =
+                PointerData::mouse(Point::new(rect.left + 12.0, (rect.top + rect.bottom) / 2.0));
+            send(
+                session,
+                InputEvent::PointerDown {
+                    pointer: point.clone(),
+                    button,
+                },
+            );
+            send(
+                session,
+                InputEvent::PointerUp {
+                    pointer: point,
+                    button,
+                },
+            );
+        };
+        click(&mut session, "TAGS", PointerButton::Right);
+        assert!(!state.get().git.ui.collapsed_sections.contains(&TAGS));
+        assert!(matches!(
+            state.get().git.ui.menu.unwrap().target,
+            GitMenuTarget::Tags { name: None, .. }
+        ));
+        click(&mut session, "Create Tag…", PointerButton::Left);
+        assert!(
+            matches!(
+                state.get().git.ui.confirm.map(|confirm| confirm.action),
+                Some(GitConfirmAction::CreateTag { .. })
+            ),
+            "Create menu must open its dialog"
+        );
+        session.runtime().run_effects();
+        let updates = session.apply_pending_updates();
+        let handlers = updates
+            .focus_events
+            .iter()
+            .flat_map(|event| session.tree().handler_events(event))
+            .collect::<Vec<_>>();
+        for event in handlers {
+            dispatch_event_handlers(
+                &event,
+                &context,
+                &lgui::window::WindowId::new("tag-menu-test"),
+            );
+        }
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(
+            state.get().git.ui.tag_input.focused,
+            "Focused node: {:?}",
+            session.runtime().interaction_state().focused
+        );
+        // Invalid names keep the form open and never issue a write request.
+        send(&mut session, InputEvent::TextInput("bad name".into()));
+        click(&mut session, "Create", PointerButton::Left);
+        assert!(state.get().git.ui.confirm.is_some());
+        assert!(requests.lock().unwrap().is_empty());
+        state.update(|app| app.git.ui.tag_input.set_text("releases/v2.0"));
+        session.render_view(&view, viewport, UiScale::ONE);
+        save_drawer_preview(&session, &context, viewport, "git-tag-create-dialog");
+        click(&mut session, "Create", PointerButton::Left);
+        assert!(state.get().git.ui.confirm.is_none());
+        assert_eq!(
+            *requests.lock().unwrap(),
+            vec![("create".into(), "repo".into(), "releases/v2.0".into())]
+        );
+        click(&mut session, "Tag: v1.0", PointerButton::Right);
+        assert!(
+            matches!(state.get().git.ui.menu.unwrap().target, GitMenuTarget::Tags { name: Some(name), .. } if name == "v1.0")
+        );
+        save_drawer_preview(&session, &context, viewport, "git-tag-context-menu");
+        click(&mut session, "Delete Tag…", PointerButton::Left);
+        click(&mut session, "Cancel", PointerButton::Left);
+        assert_eq!(requests.lock().unwrap().len(), 1);
+        click(&mut session, "Tag: v1.0", PointerButton::Right);
+        click(&mut session, "Delete Tag…", PointerButton::Left);
+        save_drawer_preview(&session, &context, viewport, "git-tag-delete-dialog");
+        click(&mut session, "Delete", PointerButton::Left);
+        assert_eq!(
+            requests.lock().unwrap().last().unwrap(),
+            &("delete".into(), "repo".into(), "v1.0".into())
+        );
+    }
+
+    #[test]
+    fn tag_left_click_does_not_open_commit_changes() {
         use crate::ui::git::commands::{Binding, Command, Frame};
         use crate::ui::git::state::GitPanelState;
         use lgui::application::{AppView, ApplicationContext};
@@ -877,7 +1306,6 @@ mod panel_virtualization_tests {
                 }
                 true
             });
-            let focus = cx.focus_handle(UiId::new("tag-test-editor"));
             let mut rows = panel(viewport, VisualStyle::default());
             for (index, tag) in [
                 TagInfo {
@@ -903,7 +1331,6 @@ mod panel_virtualization_tests {
                     false,
                     std::path::Path::new("repo"),
                     &binding,
-                    &focus,
                 ));
             }
             rows
@@ -920,7 +1347,7 @@ mod panel_virtualization_tests {
                 })
             })
             .unwrap();
-        assert_eq!(tag.semantics.as_ref().unwrap().role, SemanticRole::Button);
+        assert_eq!(tag.semantics.as_ref().unwrap().role, SemanticRole::Label);
         let tree_tag = session
             .tree()
             .nodes()
@@ -957,10 +1384,7 @@ mod panel_virtualization_tests {
                 );
             }
         }
-        assert_eq!(
-            *requests.lock().unwrap(),
-            vec![(PathBuf::from("repo"), "resolved-commit".into(), None)]
-        );
+        assert!(requests.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1885,6 +2309,7 @@ mod confirm_tests {
                         crate::app::git_view::binding(&state, &store),
                         store.clone().into(),
                         dialog_id,
+                        cx.focus_handle(UiId::new(crate::ui::git::confirm::TAG_INPUT_ID)),
                     ))
                 } else {
                     root

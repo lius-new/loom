@@ -8,7 +8,7 @@ use crate::ui::components::input::InputState;
 use crate::ui::git::branch_picker::BranchPicker;
 use crate::ui::git::confirm::GitConfirm;
 use crate::ui::git::menu::GitMenu;
-use crate::ui::git::panel::{CommitCard, GitHover};
+use crate::ui::git::panel::{CommitCard, GitHover, TagCard};
 use crate::ui::git::stash_switch::StashSwitchRequest;
 
 #[derive(Clone)]
@@ -37,8 +37,11 @@ pub struct GitUiState {
     pub inline_blame: bool,
     pub menu: Option<GitMenu>,
     pub confirm: Option<GitConfirm>,
+    pub tag_input: InputState,
     /// The hovered history commit's card.
     pub commit_card: Option<CommitCard>,
+    pub tag_card: Option<TagCard>,
+    pub hover_sequence: u64,
     pub branch_picker: Option<BranchPicker>,
     /// The picker's filter, kept outside `branch_picker` so the input's
     /// focus and IME state survive listing reloads.
@@ -78,7 +81,10 @@ impl Default for GitUiState {
             inline_blame: false,
             menu: None,
             confirm: None,
+            tag_input: InputState::default(),
             commit_card: None,
+            tag_card: None,
+            hover_sequence: 0,
             branch_picker: None,
             branch_picker_input: InputState::default(),
             stash_switch: None,
@@ -94,6 +100,14 @@ impl GitUiState {
     pub fn reset_scroll(&mut self) {
         self.scroll = 0.0;
         self.details_scroll = 0.0;
+        self.hover = None;
+        self.clear_hover_cards();
+    }
+
+    pub fn clear_hover_cards(&mut self) {
+        self.commit_card = None;
+        self.tag_card = None;
+        self.hover_sequence = self.hover_sequence.wrapping_add(1);
     }
 }
 

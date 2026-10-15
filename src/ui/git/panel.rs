@@ -95,7 +95,7 @@ impl ScrollRegion {
             Self::Changes => app.ui.scroll = value,
             Self::Details => app.ui.details_scroll = value,
         }
-        app.ui.commit_card = None;
+        app.ui.clear_hover_cards();
     }
 
     pub(crate) fn drag(self, app: &GitPanelState) -> (bool, f32) {
@@ -188,6 +188,7 @@ fn append_section_headers(
     content: &mut Vec<Element>,
     hover_targets: &mut Vec<(UiRect, GitHover)>,
     state: &Binding,
+    repository: &std::path::Path,
 ) {
     let mut targets = Vec::with_capacity(headers.len() + hover_targets.len());
     for (index, header) in headers.into_iter().enumerate() {
@@ -197,14 +198,20 @@ fn append_section_headers(
             .max(viewport.top + scroll + index as f32 * SECTION_H);
         let rect = UiRect::new(header.rect.left, top, header.rect.right, top + SECTION_H);
         targets.push((rect, GitHover::Section(header.filter)));
-        content.push(section_header(
+        let filter = header.filter;
+        let element = section_header(
             rect,
             header.filter,
             header.title,
             header.collapsed,
             header.buttons,
             state.clone(),
-        ));
+        );
+        content.push(if filter == TAGS {
+            tag_context_menu(element, repository, None, state)
+        } else {
+            element
+        });
     }
     targets.append(hover_targets);
     *hover_targets = targets;
@@ -536,6 +543,7 @@ pub fn render(
         &mut content,
         &mut hover_targets,
         &state,
+        &repository.worktree_root,
     );
     let changes_content = std::mem::take(&mut content);
     let changes_hover = std::mem::take(&mut hover_targets);
@@ -655,7 +663,6 @@ pub fn render(
                         hovered,
                         &repository.worktree_root,
                         &state,
-                        &editor_focus,
                     ));
                 } else {
                     content.push(
@@ -726,6 +733,7 @@ pub fn render(
         &mut content,
         &mut hover_targets,
         &state,
+        &repository.worktree_root,
     );
     let hover_regions = [
         (changes_rect, changes_scroll, changes_hover),
@@ -760,19 +768,29 @@ pub fn render(
                 let changed = app.ui.hover != next;
                 if changed {
                     entered = true;
-                    app.ui.commit_card = None;
+                    app.ui.clear_hover_cards();
                 }
                 app.ui.hover = next;
                 changed
             });
-            if entered && let Some((anchor, GitHover::Commit(oid))) = target {
-                {
-                    hover_state.dispatch(Command::HoverCommit {
-                        root: hover_root.clone(),
-                        oid: oid.clone(),
-                        anchor,
-                    });
-                };
+            if entered && let Some((anchor, hover)) = target {
+                match hover {
+                    GitHover::Commit(oid) => {
+                        hover_state.dispatch(Command::HoverCommit {
+                            root: hover_root.clone(),
+                            oid: oid.clone(),
+                            anchor,
+                        });
+                    }
+                    GitHover::Tag(name) => {
+                        hover_state.dispatch(Command::HoverTag {
+                            root: hover_root.clone(),
+                            name: name.clone(),
+                            anchor,
+                        });
+                    }
+                    _ => {}
+                }
             }
         }
     });
@@ -1152,10 +1170,23 @@ pub struct CommitCard {
     pub details: Result<crate::features::git::CommitDetails, String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TagCard {
+    pub repository: PathBuf,
+    pub tag: TagInfo,
+    pub anchor: UiRect,
+    pub details: Result<crate::features::git::TagDetails, String>,
+}
+
 pub(crate) const CARD_W: f32 = 420.0;
 pub(crate) const CARD_PAD: f32 = 12.0;
 pub(crate) const CARD_LINE_H: f32 = 18.0;
 pub(crate) const CARD_MAX_MESSAGE_LINES: usize = 16;
+
+pub(crate) enum CardLine {
+    Text(Vec<(String, lgui::prelude::Color)>, bool),
+    Separator,
+}
 
 /// The hovered history commit's card, to the right of Source Control.
 pub fn render_commit_card(viewport: UiRect, app: &GitPanelState) -> Option<Element> {
@@ -1170,28 +1201,52 @@ pub fn render_commit_card(viewport: UiRect, app: &GitPanelState) -> Option<Eleme
         .and_then(|commits| commits.iter().find(|commit| commit.oid == card.oid));
     let width = CARD_W.min(viewport.width() - 16.0).max(160.0);
     let inner = width - CARD_PAD * 2.0;
-    let separator = 11.0;
 
-    // Each line is (text pieces with colors, bold).
-    enum Line {
-        Text(Vec<(String, lgui::prelude::Color)>, bool),
-        Separator,
-    }
     let mut lines = Vec::new();
-    match &card.details {
+    append_commit_card_lines(&mut lines, &card.details, inner);
+    lines.push(CardLine::Separator);
+    let mut footer = vec![(
+        crate::features::git::diff_document::short_oid(&card.oid).to_owned(),
+        theme::c().text_soft,
+    )];
+    if let Some(summary) = summary.filter(|summary| !summary.decorations.is_empty()) {
+        footer.push((
+            format!(
+                "  {}",
+                summary
+                    .decorations
+                    .iter()
+                    .map(|value| super::history_badges::display_name(value))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            theme::c().text_dim,
+        ));
+    }
+    lines.push(CardLine::Text(footer, false));
+
+    Some(render_hover_card(viewport, card.anchor, lines))
+}
+
+pub(crate) fn append_commit_card_lines(
+    lines: &mut Vec<CardLine>,
+    details: &Result<crate::features::git::CommitDetails, String>,
+    inner: f32,
+) {
+    match details {
         Ok(details) => {
-            lines.push(Line::Text(
+            lines.push(CardLine::Text(
                 vec![(details.author.clone(), theme::c().text_bright)],
                 true,
             ));
-            lines.push(Line::Text(
+            lines.push(CardLine::Text(
                 vec![(
                     format!("{}  ·  {}", details.author_email, details.date),
                     theme::c().text_dim,
                 )],
                 false,
             ));
-            lines.push(Line::Separator);
+            lines.push(CardLine::Separator);
             let mut message = wrap_text(&details.message.replace('\t', "    "), inner);
             if message.len() > CARD_MAX_MESSAGE_LINES {
                 message.truncate(CARD_MAX_MESSAGE_LINES);
@@ -1200,10 +1255,10 @@ pub fn render_commit_card(viewport: UiRect, app: &GitPanelState) -> Option<Eleme
             lines.extend(
                 message
                     .into_iter()
-                    .map(|line| Line::Text(vec![(line, theme::c().text)], false)),
+                    .map(|line| CardLine::Text(vec![(line, theme::c().text)], false)),
             );
             if details.files_changed > 0 {
-                lines.push(Line::Separator);
+                lines.push(CardLine::Separator);
                 let plural = |count: usize, word: &str| {
                     format!("{count} {word}{}", if count == 1 { "" } else { "s" })
                 };
@@ -1225,49 +1280,74 @@ pub fn render_commit_card(viewport: UiRect, app: &GitPanelState) -> Option<Eleme
                         theme::c().git.deleted,
                     ));
                 }
-                lines.push(Line::Text(stats, false));
+                lines.push(CardLine::Text(stats, false));
             }
         }
         Err(error) => lines.extend(
             wrap_text(error, inner)
                 .into_iter()
-                .map(|line| Line::Text(vec![(line, theme::c().error_text)], false)),
+                .map(|line| CardLine::Text(vec![(line, theme::c().error_text)], false)),
         ),
     }
-    lines.push(Line::Separator);
-    let mut footer = vec![(
-        crate::features::git::diff_document::short_oid(&card.oid).to_owned(),
-        theme::c().text_soft,
-    )];
-    if let Some(summary) = summary.filter(|summary| !summary.decorations.is_empty()) {
-        footer.push((
-            format!(
-                "  {}",
-                summary
-                    .decorations
-                    .iter()
-                    .map(|value| super::history_badges::display_name(value))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            theme::c().text_dim,
-        ));
-    }
-    lines.push(Line::Text(footer, false));
+}
 
+pub(crate) fn render_hover_card(
+    viewport: UiRect,
+    anchor: UiRect,
+    mut lines: Vec<CardLine>,
+) -> Element {
+    let width = CARD_W.min(viewport.width() - 16.0).max(160.0);
+    let separator = 11.0;
+    let available = (viewport.height() - 16.0 - CARD_PAD * 2.0).max(0.0);
+    let mut used = 0.0;
+    let keep = lines
+        .iter()
+        .take_while(|line| {
+            used += if matches!(line, CardLine::Separator) {
+                separator
+            } else {
+                CARD_LINE_H
+            };
+            used <= available
+        })
+        .count();
+    if keep < lines.len() {
+        lines.truncate(keep);
+        while !lines.is_empty() {
+            let height: f32 = lines
+                .iter()
+                .map(|line| {
+                    if matches!(line, CardLine::Separator) {
+                        separator
+                    } else {
+                        CARD_LINE_H
+                    }
+                })
+                .sum();
+            if height + CARD_LINE_H <= available {
+                break;
+            }
+            lines.pop();
+        }
+        if available >= CARD_LINE_H {
+            lines.push(CardLine::Text(
+                vec![("…".into(), theme::c().text_dim)],
+                false,
+            ));
+        }
+    }
     let height = CARD_PAD * 2.0
         + lines
             .iter()
             .map(|line| match line {
-                Line::Text(..) => CARD_LINE_H,
-                Line::Separator => separator,
+                CardLine::Text(..) => CARD_LINE_H,
+                CardLine::Separator => separator,
             })
             .sum::<f32>();
-    let left = (card.anchor.right + 6.0)
+    let left = (anchor.right + 6.0)
         .min(viewport.right - width - 8.0)
         .max(viewport.left + 8.0);
-    let top = card
-        .anchor
+    let top = anchor
         .top
         .min(viewport.bottom - height - 8.0)
         .max(viewport.top + 8.0);
@@ -1282,7 +1362,7 @@ pub fn render_commit_card(viewport: UiRect, app: &GitPanelState) -> Option<Eleme
     let mut y = rect.top + CARD_PAD;
     for line in lines {
         match line {
-            Line::Separator => {
+            CardLine::Separator => {
                 let line_y = y + (separator - 1.0) / 2.0;
                 surface = surface.child(panel(
                     UiRect::new(
@@ -1295,7 +1375,7 @@ pub fn render_commit_card(viewport: UiRect, app: &GitPanelState) -> Option<Eleme
                 ));
                 y += separator;
             }
-            Line::Text(pieces, bold) => {
+            CardLine::Text(pieces, bold) => {
                 let mut x = rect.left + CARD_PAD;
                 for (piece, color) in pieces {
                     let piece_w = crate::ui::tabs::measure(
@@ -1324,7 +1404,7 @@ pub fn render_commit_card(viewport: UiRect, app: &GitPanelState) -> Option<Eleme
             }
         }
     }
-    Some(surface)
+    surface
 }
 
 /// Break `text` into lines no wider than `width`: at spaces where possible,
@@ -1759,19 +1839,18 @@ pub(crate) fn history_row(
     }
 }
 
-/// Tags open their target commit without changing the checked-out revision.
+/// Tag rows expose hover details and context actions.
 pub(crate) fn tag_row(
     rect: UiRect,
     tag: &TagInfo,
     hovered: bool,
     repository: &std::path::Path,
     state: &Binding,
-    editor_focus: &UiFocusHandle,
 ) -> Element {
     let label_rect = UiRect::new(rect.left + 30.0, rect.top, rect.right - 12.0, rect.bottom);
     let label =
         crate::ui::tabs::ellipsize(&tag.name, label_rect.width().max(0.0), theme::SMALL, 400);
-    let mut row = panel(
+    let row = panel(
         rect,
         if hovered {
             VisualStyle::filled(theme::c().surface)
@@ -1780,14 +1859,7 @@ pub(crate) fn tag_row(
         },
     )
     .key(format!("git-tag-{}", tag.name))
-    .semantics(
-        Semantics::new(if tag.commit.is_some() {
-            SemanticRole::Button
-        } else {
-            SemanticRole::Label
-        })
-        .name(format!("Tag: {}", tag.name)),
-    )
+    .semantics(Semantics::new(SemanticRole::Label).name(format!("Tag: {}", tag.name)))
     .child(crate::ui::drawer::drawer_icon(
         UiId::owned(format!("git-tag-icon-{}", tag.name)),
         "git-ref-tag",
@@ -1811,24 +1883,35 @@ pub(crate) fn tag_row(
             theme::SMALL,
         ),
     )));
-    if let Some(oid) = &tag.commit {
-        let state = state.clone();
-        let focus = editor_focus.clone();
-        let root = repository.to_path_buf();
-        let oid = oid.clone();
-        row = row
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                state.dispatch(Command::OpenCommitChanges {
-                    root: root.clone(),
-                    oid: oid.clone(),
-                    focus: None,
+    tag_context_menu(row, repository, Some(tag.name.clone()), state)
+}
+
+fn tag_context_menu(
+    element: Element,
+    repository: &std::path::Path,
+    name: Option<String>,
+    state: &Binding,
+) -> Element {
+    let state = state.clone();
+    let repository = repository.to_path_buf();
+    element
+        .event_policy(EventPolicy::INTERACTIVE)
+        .on_pointer_down_with_button(move |cx, pointer, button| {
+            if button == PointerButton::Right {
+                state.update(|app| {
+                    app.ui.clear_hover_cards();
+                    app.ui.menu = Some(GitMenu {
+                        pos: (pointer.point.x, pointer.point.y),
+                        target: GitMenuTarget::Tags {
+                            repository: repository.clone(),
+                            name: name.clone(),
+                        },
+                        hover: None,
+                    });
                 });
-                focus.focus();
-            });
-    }
-    row
+                cx.stop_propagation();
+            }
+        })
 }
 
 /// A collapsible section title with right-hand buttons.
@@ -1861,12 +1944,15 @@ pub(crate) fn section_header(
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
             state.update(move |app| {
+                if filter == TAGS && app.ui.menu.is_some() {
+                    return;
+                }
                 if !app.ui.collapsed_sections.insert(filter) {
                     app.ui.collapsed_sections.remove(&filter);
                 }
                 if filter >= STASHES {
                     app.ui.details_scroll = 0.0;
-                    app.ui.commit_card = None;
+                    app.ui.clear_hover_cards();
                 }
             });
         })

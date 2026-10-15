@@ -511,6 +511,22 @@ pub struct TagInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagAnnotation {
+    pub tagger: String,
+    pub email: String,
+    pub date: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagDetails {
+    pub target: String,
+    pub target_kind: String,
+    pub annotation: Option<TagAnnotation>,
+    pub commit: Option<CommitDetails>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorktreeInfo {
     pub path: PathBuf,
     pub oid: String,

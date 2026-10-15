@@ -174,6 +174,30 @@ impl GitModel {
         self.history_commit.as_ref()
     }
 
+    /// Keep tag badges current without discarding loaded pages or expanded files.
+    pub fn update_history_tag(&mut self, repository: &Path, name: &str, target: Option<&str>) {
+        let Some(history) = self
+            .history
+            .as_mut()
+            .filter(|history| history.repository == repository)
+        else {
+            return;
+        };
+        let Ok(commits) = &mut history.commits else {
+            return;
+        };
+        let reference = format!("tag: refs/tags/{name}");
+        let short_reference = format!("tag: {name}");
+        for commit in commits {
+            commit
+                .decorations
+                .retain(|value| value != &reference && value != &short_reference);
+            if target == Some(commit.oid.as_str()) {
+                commit.decorations.push(reference.clone());
+            }
+        }
+    }
+
     /// Expand `oid` with its files still loading, or collapse it when it is
     /// already expanded. Returns whether it is expanded now.
     pub fn toggle_commit(&mut self, oid: String) -> bool {
@@ -321,6 +345,31 @@ mod tests {
                 decorations: Vec::new(),
             })
             .collect()
+    }
+
+    #[test]
+    fn tag_updates_preserve_loaded_history_and_only_touch_the_target_repository() {
+        let mut model = GitModel::default();
+        let first = model
+            .begin_history("repo".into(), Some("head".into()))
+            .unwrap();
+        model.finish_history_page(&first, Ok(commits(0, 51)));
+        model.toggle_commit("commit-2".into());
+        model.update_history_tag(Path::new("repo"), "v1.0", Some("commit-2"));
+        model.update_history_tag(Path::new("other"), "v1.0", None);
+        assert_eq!(
+            model.history().unwrap().commits.as_ref().unwrap()[2].decorations,
+            ["tag: refs/tags/v1.0"]
+        );
+        model.update_history_tag(Path::new("repo"), "v1.0", None);
+        assert!(
+            model.history().unwrap().commits.as_ref().unwrap()[2]
+                .decorations
+                .is_empty()
+        );
+        assert_eq!(model.history().unwrap().commits.as_ref().unwrap().len(), 50);
+        assert!(model.history_can_load_more());
+        assert_eq!(model.history_commit().unwrap().oid, "commit-2");
     }
 
     #[test]

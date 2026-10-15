@@ -132,6 +132,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let stash_switch_focus = cx.focus_handle(stash_switch_id.clone());
     let git_confirm_id = cx.use_stable_id();
     let git_confirm_focus = cx.focus_handle(git_confirm_id.clone());
+    let git_tag_input_focus = cx.focus_handle(UiId::new(git_confirm::TAG_INPUT_ID));
     let close_dialog_id = cx.use_stable_id();
     let close_dialog_focus = cx.focus_handle(close_dialog_id.clone());
     let keymap_search_id = cx.use_stable_id();
@@ -622,7 +623,16 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             .confirm
             .as_ref()
             .map(|confirm| confirm.restore_terminal),
-        git_confirm_focus.clone(),
+        if s.git.ui.confirm.as_ref().is_some_and(|confirm| {
+            matches!(
+                confirm.action,
+                git_confirm::GitConfirmAction::CreateTag { .. }
+            )
+        }) {
+            git_tag_input_focus.clone()
+        } else {
+            git_confirm_focus.clone()
+        },
         terminal_focus.clone(),
         editor_focus.clone(),
     );
@@ -795,6 +805,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 // tracks moves inside itself.
                 if !hovered && app.git.ui.hover.is_some() {
                     app.git.ui.hover = None;
+                    app.git.ui.clear_hover_cards();
                     changed = true;
                 }
                 changed
@@ -1129,7 +1140,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         && s.git.ui.stash_switch.is_none()
         && !show_clone_dialog
         && s.editor.close_request.is_none()
-        && let Some(card) = git_panel::render_commit_card(vp, &s.git)
+        && let Some(card) = git_panel::render_commit_card(vp, &s.git).or_else(|| {
+            git_store
+                .get()
+                .active()
+                .and_then(|repository| crate::ui::git::tag_card::render(vp, &s.git, repository))
+        })
     {
         root = root.child(card);
     }
@@ -1204,6 +1220,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             super::git_view::binding(&state, &git_store),
             git_store.clone().into(),
             git_confirm_id.clone(),
+            git_tag_input_focus.clone(),
         ));
     }
     if show_clone_dialog {

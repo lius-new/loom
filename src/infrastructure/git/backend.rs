@@ -468,6 +468,56 @@ impl CliGitBackend {
             .collect()
     }
 
+    pub fn tag_details(&self, repository: &Path, name: &str) -> GitResult<TagDetails> {
+        validate_ref(name)?;
+        let reference = format!("refs/tags/{name}");
+        let output = self.runner.run(GitCommand::new().cwd(repository).args([
+            "for-each-ref", "--count=1",
+            "--format=%(refname)%00%(objecttype)%00%(objectname)%00%(*objecttype)%00%(*objectname)%00%(taggername)%00%(taggeremail:trim)%00%(taggerdate:format-local:%Y-%m-%d %H:%M)%00%(contents)",
+            &reference,
+        ]).read_only())?.stdout_text()?;
+        let fields = output.splitn(9, '\0').collect::<Vec<_>>();
+        if fields.len() != 9 || fields[0] != reference {
+            return Err(GitError::new(
+                GitErrorKind::Other,
+                "The tag is no longer available.",
+            ));
+        }
+        let annotated = fields[1] == "tag";
+        let (target_kind, target) = if annotated {
+            (fields[3], fields[4])
+        } else {
+            (fields[1], fields[2])
+        };
+        let commit = if target_kind == "commit" {
+            Some(self.commit_details(repository, target)?)
+        } else {
+            None
+        };
+        Ok(TagDetails {
+            target: target.to_owned(),
+            target_kind: target_kind.to_owned(),
+            annotation: annotated.then(|| TagAnnotation {
+                tagger: fields[5].to_owned(),
+                email: fields[6].to_owned(),
+                date: fields[7].to_owned(),
+                message: fields[8].trim_end().to_owned(),
+            }),
+            commit,
+        })
+    }
+
+    fn validate_tag_name(&self, repository: &Path, name: &str) -> GitResult<()> {
+        validate_ref(name)?;
+        self.runner.run(
+            GitCommand::new()
+                .cwd(repository)
+                .args(["check-ref-format", &format!("refs/tags/{name}")])
+                .read_only(),
+        )?;
+        Ok(())
+    }
+
     pub fn switch(&self, repository: &Path, branch: &str) -> GitResult<()> {
         validate_ref(branch)?;
         self.runner.run(
@@ -536,8 +586,13 @@ impl CliGitBackend {
     }
 
     pub fn create_tag(&self, repository: &Path, tag: &str, target: Option<&str>) -> GitResult<()> {
-        validate_ref(tag)?;
-        let mut args = vec![OsString::from("tag"), OsString::from("--"), tag.into()];
+        self.validate_tag_name(repository, tag)?;
+        let mut args = vec![
+            OsString::from("tag"),
+            OsString::from("--no-sign"),
+            OsString::from("--"),
+            tag.into(),
+        ];
         if let Some(target) = target {
             validate_ref(target)?;
             args.push(target.into());
@@ -548,7 +603,7 @@ impl CliGitBackend {
     }
 
     pub fn delete_tag(&self, repository: &Path, tag: &str) -> GitResult<()> {
-        validate_ref(tag)?;
+        self.validate_tag_name(repository, tag)?;
         self.runner.run(
             GitCommand::new()
                 .cwd(repository)
@@ -1769,7 +1824,20 @@ pub(crate) mod tests {
         };
         git(&["commit", "--allow-empty", "-m", "initial"]);
         let initial = git(&["rev-parse", "HEAD"]).trim().to_owned();
-        git(&["tag", "v1.0"]);
+        git(&["config", "tag.gpgSign", "true"]);
+        backend.create_tag(&root, "v1.0", Some(&initial)).unwrap();
+        git(&["config", "tag.gpgSign", "false"]);
+        assert!(backend.create_tag(&root, "v1.0", Some(&initial)).is_err());
+        for invalid in [
+            "",
+            "-oops",
+            "bad name",
+            "releases/.hidden",
+            "releases/old.lock/x",
+        ] {
+            assert!(backend.create_tag(&root, invalid, Some(&initial)).is_err());
+        }
+        git(&["branch", "v1.0"]);
         git(&["tag", "-a", "releases/v2.0", "-m", "Release two"]);
         git(&["switch", "--orphan", "other"]);
         git(&["commit", "--allow-empty", "-m", "other root"]);
@@ -1792,7 +1860,36 @@ pub(crate) mod tests {
             assert_eq!(tag.commit.as_ref(), commit);
         }
         assert_eq!(before.tags.len(), 4);
-        git(&["tag", "-d", "v1.0"]);
+        let lightweight = backend.tag_details(&root, "v1.0").unwrap();
+        assert_eq!(lightweight.target, initial);
+        assert!(lightweight.annotation.is_none());
+        assert_eq!(lightweight.commit.unwrap().message, "initial");
+        let annotated = backend.tag_details(&root, "releases/v2.0").unwrap();
+        assert_eq!(annotated.target, initial);
+        let annotation = annotated.annotation.unwrap();
+        assert_eq!(annotation.tagger, "Loom Test");
+        assert!(!annotation.date.is_empty());
+        assert_eq!(annotation.message, "Release two");
+        assert_eq!(
+            backend
+                .tag_details(&root, "other-root")
+                .unwrap()
+                .commit
+                .unwrap()
+                .message,
+            "other root"
+        );
+        let tree = backend.tag_details(&root, "tree").unwrap();
+        assert_eq!(tree.target_kind, "tree");
+        assert!(tree.commit.is_none());
+        assert!(
+            backend.tag_details(&root, "releases").is_err(),
+            "A tag prefix must not display another tag's metadata"
+        );
+        backend.delete_tag(&root, "v1.0").unwrap();
+        assert!(backend.tag_details(&root, "v1.0").is_err());
+        assert!(backend.delete_tag(&root, "missing").is_err());
+        assert_eq!(git(&["rev-parse", "refs/heads/v1.0"]).trim(), initial);
         let after = scan();
         assert_eq!(after.tags.len(), 3);
         assert!(

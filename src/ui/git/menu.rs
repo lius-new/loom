@@ -33,6 +33,11 @@ pub enum GitMenuTarget {
         repository: PathBuf,
         oid: String,
     },
+    Tags {
+        repository: PathBuf,
+        /// `None` for the section header, including an empty tag list.
+        name: Option<String>,
+    },
     /// The workspace's repositories, to choose the active one.
     Repositories,
 }
@@ -65,6 +70,8 @@ pub(crate) enum MenuAction {
     SelectRepository(usize),
     OpenCommitChanges,
     RevertCommit,
+    CreateTag,
+    DeleteTag,
 }
 
 pub(crate) enum Entry {
@@ -144,6 +151,14 @@ pub(crate) fn entries(
             Entry::Separator,
             item("Revert Commit", MenuAction::RevertCommit),
         ],
+        GitMenuTarget::Tags { name, .. } => {
+            let mut entries = vec![item("Create Tag…", MenuAction::CreateTag)];
+            if name.is_some() {
+                entries.push(Entry::Separator);
+                entries.push(item("Delete Tag…", MenuAction::DeleteTag));
+            }
+            entries
+        }
         GitMenuTarget::Repositories => {
             let active = git.active().map(|repository| repository.id);
             git.repositories
@@ -244,7 +259,28 @@ pub(crate) fn perform(
             | MenuAction::StashAll
             | MenuAction::SelectRepository(_)
             | MenuAction::OpenCommitChanges
-            | MenuAction::RevertCommit => {}
+            | MenuAction::RevertCommit
+            | MenuAction::CreateTag
+            | MenuAction::DeleteTag => {}
+        }
+        return;
+    }
+    if let GitMenuTarget::Tags { repository, name } = target {
+        match action {
+            MenuAction::CreateTag => {
+                state.dispatch(Command::RequestCreateTag {
+                    root: repository.clone(),
+                });
+            }
+            MenuAction::DeleteTag => {
+                if let Some(name) = name {
+                    state.dispatch(Command::RequestDeleteTag {
+                        root: repository.clone(),
+                        name: name.clone(),
+                    });
+                }
+            }
+            _ => {}
         }
         return;
     }

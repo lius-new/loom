@@ -65,7 +65,19 @@ pub(crate) fn run(state: &AppContext, store: &State<GitStoreSnapshot>, command: 
             super::git::hover_commit(state, root, oid, anchor);
             true
         }
+        Command::HoverTag { root, name, anchor } => {
+            super::git::hover_tag(state, store, root, name, anchor);
+            true
+        }
         Command::Commit => super::git::commit(state, store),
+        Command::RequestCreateTag { root } => super::git::request_create_tag(state, store, &root),
+        Command::CreateTag { root, name, target } => {
+            super::git::create_tag(state, store, &root, name, target)
+        }
+        Command::RequestDeleteTag { root, name } => {
+            super::git::request_delete_tag(state, store, &root, name)
+        }
+        Command::DeleteTag { root, name } => super::git::delete_tag(state, store, &root, name),
         Command::LoadMoreHistory { root } => {
             if store.get().active().is_some_and(|repository| {
                 repository.worktree_root == root

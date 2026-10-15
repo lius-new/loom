@@ -83,6 +83,7 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
             || !app.explorer.ui.create_input.preedit.is_empty()
             || !app.git.ui.commit_input.preedit.is_empty()
             || !app.git.ui.branch_picker_input.preedit.is_empty()
+            || !app.git.ui.tag_input.preedit.is_empty()
             || !app.keymap_ui.search.preedit.is_empty()
             || app.search.composing();
         pending = app.keymap.pending().to_vec();

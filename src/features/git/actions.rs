@@ -7,6 +7,57 @@ use std::sync::Arc;
 
 use super::{BranchInfo, GitResult, HeadState, RepositorySnapshot, WorktreeInfo};
 
+/// Validate the user-facing tag name before submitting it to Git.
+pub fn valid_tag_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && !name.ends_with('.')
+        && !name.contains("..")
+        && !name.contains("@{")
+        && name
+            .split('/')
+            .all(|part| !part.is_empty() && !part.starts_with('.') && !part.ends_with(".lock"))
+        && !name.chars().any(|c| {
+            c.is_control()
+                || c.is_whitespace()
+                || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        })
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::valid_tag_name;
+    #[test]
+    fn tag_names_accept_release_paths_and_reject_invalid_ref_components() {
+        for name in ["v1.0.0", "releases/2026.10", "标签/发布"] {
+            assert!(valid_tag_name(name), "{name}");
+        }
+        for name in [
+            "",
+            "-delete",
+            "bad name",
+            "bad\nname",
+            "one..two",
+            "one@{two",
+            "/v1",
+            "v1/",
+            "one//two",
+            "one/.two",
+            "one.lock/two",
+            "v1.",
+            "v1~",
+            "v1^",
+            "v1:",
+            "v1?",
+            "v1*",
+            "v1[",
+            "v1\\",
+        ] {
+            assert!(!valid_tag_name(name), "{name}");
+        }
+    }
+}
+
 /// What choosing a branch picker row does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Checkout {

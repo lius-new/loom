@@ -4,7 +4,9 @@
 
 use std::path::PathBuf;
 
-use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId};
+use lgui::core::{
+    CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId,
+};
 use lgui::prelude::{Element, TextAlign, TextStyle, UiRect, VisualStyle, panel, text};
 
 use crate::features::git::actions::Checkout;
@@ -16,9 +18,19 @@ use crate::ui::theme;
 pub(crate) const CARD_W: f32 = 480.0;
 pub(crate) const CARD_H: f32 = 156.0;
 pub(crate) const WORKTREE_CARD_H: f32 = 258.0;
+pub(crate) const TAG_CARD_H: f32 = 210.0;
+pub(crate) const TAG_INPUT_ID: &str = "git-tag-name";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitConfirmAction {
+    CreateTag {
+        repository: PathBuf,
+        target: String,
+    },
+    DeleteTag {
+        repository: PathBuf,
+        name: String,
+    },
     CreateWorktree {
         repository: PathBuf,
         path: PathBuf,
@@ -67,11 +79,36 @@ pub(crate) fn resolve(state: &Binding, confirmed: bool) {
     let Some(confirm) = state.get().ui.confirm else {
         return;
     };
-    state.update(|app| app.ui.confirm = None);
+    if confirmed && matches!(confirm.action, GitConfirmAction::CreateTag { .. }) {
+        let app = state.get();
+        if !app.ui.tag_input.preedit.is_empty()
+            || !crate::features::git::actions::valid_tag_name(app.ui.tag_input.text().trim())
+        {
+            return;
+        }
+    }
+    let name = state.get().ui.tag_input.text().trim().to_owned();
+    state.update(|app| {
+        app.ui.confirm = None;
+        app.ui.tag_input = Default::default();
+    });
     if !confirmed {
         return;
     }
     match confirm.action {
+        GitConfirmAction::CreateTag { repository, target } => {
+            state.dispatch(Command::CreateTag {
+                root: repository,
+                name,
+                target,
+            });
+        }
+        GitConfirmAction::DeleteTag { repository, name } => {
+            state.dispatch(Command::DeleteTag {
+                root: repository,
+                name,
+            });
+        }
         GitConfirmAction::CreateWorktree {
             repository,
             path,
@@ -150,12 +187,16 @@ pub fn render(
     state: Binding,
     store: Snapshot,
     dialog_id: UiId,
+    tag_input_focus: UiFocusHandle,
 ) -> Element {
     let worktree = match &confirm.action {
         GitConfirmAction::CreateWorktree { path, checkout, .. } => Some((path, checkout)),
         _ => None,
     };
-    let card_h = if worktree.is_some() {
+    let create_tag = matches!(confirm.action, GitConfirmAction::CreateTag { .. });
+    let card_h = if create_tag {
+        TAG_CARD_H
+    } else if worktree.is_some() {
         WORKTREE_CARD_H
     } else {
         CARD_H
@@ -197,7 +238,14 @@ pub fn render(
         confirm.title.clone(),
         theme::sans_semibold(theme::c().text_bright, 15.0),
     ));
-    if let Some((path, checkout)) = worktree {
+    if create_tag {
+        root = root.child(tag_form(
+            card,
+            &confirm.message,
+            state.clone(),
+            tag_input_focus,
+        ));
+    } else if let Some((path, checkout)) = worktree {
         root = root.child(worktree_form(
             card,
             path,
@@ -246,18 +294,118 @@ pub fn render(
     } else {
         (theme::c().accent, theme::c().on_accent)
     };
+    let enabled = store.get().operation.is_none()
+        && (!create_tag
+            || crate::features::git::actions::valid_tag_name(
+                state.get().ui.tag_input.text().trim(),
+            ));
+    let fill = if enabled { fill } else { theme::c().surface };
+    let label = if enabled {
+        label
+    } else {
+        theme::c().text_ghost
+    };
     root.child(
         panel(confirm_rect, VisualStyle::filled(fill).radius(4.0))
             .event_policy(EventPolicy::INTERACTIVE)
             .semantics(Semantics::new(SemanticRole::Button).name(confirm.confirm_label))
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || resolve(&state, true))
+            .cursor(if enabled {
+                CursorIcon::Pointer
+            } else {
+                CursorIcon::NotAllowed
+            })
+            .on_click(move || {
+                if enabled {
+                    resolve(&state, true);
+                }
+            })
             .child(text(
                 confirm_rect,
                 confirm.confirm_label,
                 centered(theme::sans_semibold(label, theme::UI_SIZE)),
             )),
     )
+}
+
+fn tag_form(card: UiRect, message: &str, state: Binding, focus: UiFocusHandle) -> Element {
+    use crate::ui::components::input::{self, AccessInputOptions, InputBinding, InputStyle};
+    use std::sync::Arc;
+    let field = UiRect::new(
+        card.left + 22.0,
+        card.top + 80.0,
+        card.right - 22.0,
+        card.top + 112.0,
+    );
+    let submit = state.clone();
+    let cancel = state.clone();
+    let name = state.get().ui.tag_input.text().trim().to_owned();
+    let invalid = !name.is_empty() && !crate::features::git::actions::valid_tag_name(&name);
+    panel(card, VisualStyle::default())
+        .child(text(
+            UiRect::new(field.left, card.top + 48.0, field.right, card.top + 70.0),
+            message.to_owned(),
+            theme::sans(theme::c().text_muted, theme::UI_SIZE),
+        ))
+        .child(theme::bordered(
+            field,
+            theme::c().bg,
+            if invalid {
+                theme::c().error
+            } else {
+                theme::c().accent
+            },
+            4.0,
+            1.0,
+        ))
+        .child(input::render_access(
+            UiRect::new(
+                field.left + 1.0,
+                field.top + 1.0,
+                field.right - 1.0,
+                field.bottom - 1.0,
+            ),
+            UiId::new(TAG_INPUT_ID),
+            focus,
+            InputBinding::new_access(
+                state.panel.clone(),
+                |app| &app.ui.tag_input,
+                |app| &mut app.ui.tag_input,
+            ),
+            AccessInputOptions {
+                label: "Tag name",
+                placeholder: "e.g. v1.0.0",
+                style: InputStyle {
+                    text: theme::mono(theme::c().text, theme::UI_SIZE),
+                    placeholder: theme::mono(theme::c().text_faint, theme::UI_SIZE),
+                    caret: theme::c().text,
+                    selection: theme::c().selection,
+                },
+                on_submit: Some(Arc::new(move || resolve(&submit, true))),
+                on_cancel: Some(Arc::new(move || resolve(&cancel, false))),
+                on_blur: None,
+            },
+        ))
+        .child(text(
+            UiRect::new(
+                field.left,
+                field.bottom + 4.0,
+                field.right,
+                field.bottom + 24.0,
+            ),
+            if invalid {
+                "Enter a valid Git tag name."
+            } else {
+                "Tag names must be unique in this repository."
+            },
+            theme::sans(
+                if invalid {
+                    theme::c().error
+                } else {
+                    theme::c().text_dim
+                },
+                theme::SMALL,
+            ),
+        ))
 }
 
 pub(crate) fn worktree_form(
