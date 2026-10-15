@@ -107,7 +107,16 @@ mod panel_virtualization_tests {
                     commits: Ok((0..40)
                         .map(|index| CommitSummary {
                             oid: format!("abc{index:05}"),
-                            parents: Vec::new(),
+                            parents: match index {
+                                0 => vec!["abc00001".into(), "abc00002".into()],
+                                1 => vec!["abc00003".into()],
+                                2 => vec!["abc00004".into()],
+                                3 | 4 => vec!["abc00005".into()],
+                                6 => vec!["abc00007".into(), "abc00008".into()],
+                                7 | 8 => vec!["abc00009".into()],
+                                39 => Vec::new(),
+                                _ => vec![format!("abc{:05}", index + 1)],
+                            },
                             author: "lius-new".into(),
                             author_email: "dev@example.com".into(),
                             timestamp: 0,
@@ -123,8 +132,8 @@ mod panel_virtualization_tests {
                                     "refs/heads/feature/editor-incremental-highlighting".into(),
                                 ],
                                 8 => vec![
-                                    "HEAD -> refs/heads/main".into(),
-                                    "refs/remotes/origin/main".into(),
+                                    "refs/heads/feature/ui".into(),
+                                    "refs/remotes/origin/feature/ui".into(),
                                 ],
                                 _ => Vec::new(),
                             },
@@ -476,8 +485,35 @@ mod panel_virtualization_tests {
             "abc00000"
         );
         state.update(|app| {
-            app.git.model.collapse_commit();
+            app.git.model.set_commit_files(
+                "abc00000",
+                Ok(vec![
+                    (ChangeKind::Modified, "src/editor.rs".into()),
+                    (ChangeKind::Added, "src/graph.rs".into()),
+                ]),
+            )
         });
+        session.render_view(&view, viewport, UiScale::ONE);
+        save_drawer_preview(&session, &context, viewport, "git-drawer-graph-expanded");
+        let node_id = UiId::owned("git-history-node-abc00000");
+        let node_rect = session.tree().hit_for_id(&node_id).unwrap().rect;
+        let point = Point::new(
+            (node_rect.left + node_rect.right) / 2.0,
+            (node_rect.top + node_rect.bottom) / 2.0,
+        );
+        for input in [
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+            InputEvent::PointerUp {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+        ] {
+            send(&mut session, input);
+        }
+        assert!(state.get().git.model.history_commit().is_none());
         state.update(|app| {
             app.git.ui.collapsed_sections.insert(HISTORY);
             app.git.ui.collapsed_sections.remove(&WORKTREES);

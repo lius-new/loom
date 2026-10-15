@@ -5,6 +5,7 @@ pub mod clone;
 pub mod commands;
 pub mod confirm;
 pub(crate) mod history_badges;
+pub(crate) mod history_graph;
 pub mod hunk_peek;
 pub mod menu;
 pub mod panel;

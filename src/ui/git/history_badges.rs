@@ -109,7 +109,7 @@ struct Badge<'a> {
 
 fn layout<'a>(row: UiRect, decorations: &'a [String]) -> (Vec<Badge<'a>>, f32) {
     let right = row.right - 12.0;
-    let available = (right - row.left - 30.0).max(0.0);
+    let available = (right - row.left).max(0.0);
     // Preserve room for the subject even with several refs or very long names.
     let budget = (available * 0.55).min((available - 46.0).max(0.0));
     let mut references = decorations
@@ -218,13 +218,13 @@ mod tests {
         for width in [80.0, 160.0, 288.0, 400.0] {
             let row = UiRect::new(50.0, 20.0, 50.0 + width, 40.0);
             let (badges, subject_right) = layout(row, &decorations);
-            assert!(subject_right >= row.left + 30.0);
+            assert!(subject_right >= row.left);
             if width == 80.0 {
                 assert!(badges.is_empty());
                 continue;
             }
             assert_eq!(badges[0].reference.kind, Kind::Current);
-            assert!(subject_right - row.left - 30.0 >= 40.0);
+            assert!(subject_right - row.left >= 40.0);
             assert!(badges[0].label.ends_with('…'));
             assert!(subject_right + SUBJECT_GAP <= badges[0].rect.left + 0.001);
             for badge in &badges {

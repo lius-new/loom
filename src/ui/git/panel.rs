@@ -640,6 +640,7 @@ pub fn render(
                 content_rect.bottom + scroll,
                 history_rows.len(),
             );
+            let graph = super::history_graph::Graph::new(&history_rows);
             y += history_rows.len() as f32 * ROW_H;
             for index in visible {
                 let row_y = rows_top + index as f32 * ROW_H;
@@ -660,6 +661,7 @@ pub fn render(
                     row_rect,
                     row,
                     hovered,
+                    graph.render(index, row_rect, row, hovered),
                     &repository.worktree_root,
                     &state,
                     &editor_focus,
@@ -1549,21 +1551,30 @@ pub(crate) fn history_row(
     rect: UiRect,
     row: &HistoryRow,
     hovered: bool,
+    graph: super::history_graph::RenderedRow,
     repository: &std::path::Path,
     state: &Binding,
     editor_focus: &UiFocusHandle,
 ) -> Element {
+    let content = UiRect::new(
+        rect.left + graph.width + 6.0,
+        rect.top,
+        rect.right,
+        rect.bottom,
+    );
     let background = if hovered {
         VisualStyle::filled(theme::c().surface)
     } else {
         VisualStyle::default()
     };
     match row {
-        HistoryRow::Message(message) => panel(rect, VisualStyle::default()).child(text(
-            UiRect::new(rect.left + 30.0, rect.top, rect.right - 12.0, rect.bottom),
-            message.clone(),
-            theme::mono(theme::c().text_ghost, theme::SMALL),
-        )),
+        HistoryRow::Message(message) => panel(rect, VisualStyle::default())
+            .child(graph.element)
+            .child(text(
+                UiRect::new(content.left, rect.top, rect.right - 12.0, rect.bottom),
+                message.clone(),
+                theme::mono(theme::c().text_ghost, theme::SMALL),
+            )),
         HistoryRow::Commit(commit, open) => {
             let toggle_state = state.clone();
             let root = repository.to_path_buf();
@@ -1572,17 +1583,22 @@ pub(crate) fn history_row(
             let menu_root = repository.to_path_buf();
             let menu_oid = commit.oid.clone();
             let (badges, subject_right) =
-                super::history_badges::render(rect, &commit.oid, &commit.decorations);
+                super::history_badges::render(content, &commit.oid, &commit.decorations);
             let subject = crate::ui::tabs::ellipsize(
                 &commit.subject,
-                (subject_right - rect.left - 30.0).max(0.0),
+                (subject_right - content.left).max(0.0),
                 theme::SMALL,
                 400,
             );
             let mut row = panel(rect, background)
                 .key(format!("git-commit-{}", commit.oid))
                 .event_policy(EventPolicy::INTERACTIVE)
-                .semantics(Semantics::new(SemanticRole::Button).name(commit.subject.clone()))
+                .semantics({
+                    let mut semantics =
+                        Semantics::new(SemanticRole::Button).name(commit.subject.clone());
+                    semantics.state.expanded = Some(*open);
+                    semantics
+                })
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
                     // A right-click that opened this row's menu is not a click.
@@ -1615,29 +1631,15 @@ pub(crate) fn history_row(
                         });
                     }
                 })
-                .child(crate::ui::drawer::drawer_icon(
-                    lgui::core::UiId::owned(format!("git-commit-row-chevron-{}", commit.oid)),
-                    if *open {
-                        "chevron-down"
-                    } else {
-                        "chevron-right"
-                    },
-                    UiRect::new(
-                        rect.left + 11.0,
-                        rect.top + (rect.height() - 12.0) / 2.0,
-                        rect.left + 23.0,
-                        rect.top + (rect.height() + 12.0) / 2.0,
-                    ),
-                    theme::c().text_ghost,
-                ))
+                .child(graph.element)
                 .child(
                     clip(
-                        UiRect::new(rect.left + 30.0, rect.top, subject_right, rect.bottom),
+                        UiRect::new(content.left, rect.top, subject_right, rect.bottom),
                         0.0,
                         0.0,
                     )
                     .child(text(
-                        UiRect::new(rect.left + 30.0, rect.top, rect.left + 2000.0, rect.bottom),
+                        UiRect::new(content.left, rect.top, rect.left + 2000.0, rect.bottom),
                         subject,
                         theme::mono(
                             if hovered {
@@ -1667,6 +1669,7 @@ pub(crate) fn history_row(
             };
             panel(rect, background)
                 .key(format!("git-commit-{oid}-{}", path.display()))
+                .child(graph.element)
                 .event_policy(EventPolicy::INTERACTIVE)
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
@@ -1680,12 +1683,22 @@ pub(crate) fn history_row(
                     open_focus.focus();
                 })
                 .child(text(
-                    UiRect::new(rect.left + 30.0, rect.top, rect.left + 42.0, rect.bottom),
+                    UiRect::new(
+                        content.left + 12.0,
+                        rect.top,
+                        content.left + 24.0,
+                        rect.bottom,
+                    ),
                     kind.indicator(),
                     theme::mono_bold(color, theme::SMALL),
                 ))
                 .child(path_label(
-                    UiRect::new(rect.left + 44.0, rect.top, rect.right - 12.0, rect.bottom),
+                    UiRect::new(
+                        content.left + 26.0,
+                        rect.top,
+                        rect.right - 12.0,
+                        rect.bottom,
+                    ),
                     path,
                     true,
                     hovered,
