@@ -69,6 +69,7 @@ pub(crate) enum MenuAction {
     SelectRepository(usize),
     OpenCommitChanges,
     RevertCommit,
+    CreateTag,
     DeleteTag,
 }
 
@@ -146,6 +147,7 @@ pub(crate) fn entries(
         ],
         GitMenuTarget::HistoryCommit { .. } => vec![
             item("Open Commit Changes", MenuAction::OpenCommitChanges),
+            item("New Tag…", MenuAction::CreateTag),
             Entry::Separator,
             item("Revert Commit", MenuAction::RevertCommit),
         ],
@@ -251,6 +253,7 @@ pub(crate) fn perform(
             | MenuAction::SelectRepository(_)
             | MenuAction::OpenCommitChanges
             | MenuAction::RevertCommit
+            | MenuAction::CreateTag
             | MenuAction::DeleteTag => {}
         }
         return;
@@ -269,6 +272,13 @@ pub(crate) fn perform(
     }
     if let GitMenuTarget::HistoryCommit { repository, oid } = target {
         match action {
+            MenuAction::CreateTag => {
+                state.dispatch(Command::RequestCreateTag {
+                    root: repository.clone(),
+                    branch: None,
+                    target: oid.clone(),
+                });
+            }
             MenuAction::OpenCommitChanges => {
                 {
                     state.dispatch(Command::OpenCommitChanges {

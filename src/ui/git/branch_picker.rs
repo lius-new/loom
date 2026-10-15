@@ -924,7 +924,7 @@ pub(crate) fn item_row(
             move || {
                 state.dispatch(Command::RequestCreateTag {
                     root: repository.clone(),
-                    branch: branch.name.clone(),
+                    branch: Some(branch.name.clone()),
                     target: branch.oid.clone(),
                 });
             },

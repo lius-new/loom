@@ -64,7 +64,7 @@ pub enum Command {
     Commit,
     RequestCreateTag {
         root: PathBuf,
-        branch: String,
+        branch: Option<String>,
         target: String,
     },
     CreateTag {

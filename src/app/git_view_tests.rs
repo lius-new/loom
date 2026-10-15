@@ -1053,7 +1053,7 @@ mod panel_virtualization_tests {
     }
 
     #[test]
-    fn branch_action_creates_tag_and_tag_menu_deletes_through_the_dialogs() {
+    fn branch_and_commit_actions_create_tags_and_tag_menu_deletes_through_the_dialogs() {
         use crate::ui::components::state_access::StateAccess;
         use crate::ui::git::{
             commands::{Binding, Command, Frame},
@@ -1071,6 +1071,19 @@ mod panel_virtualization_tests {
             let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.git.ui.collapsed_sections.remove(&TAGS);
+                app.git.model.set_history(GitHistory {
+                    repository: "repo".into(),
+                    head: Some("abc00000".into()),
+                    commits: Ok(vec![CommitSummary {
+                        oid: "fed00000".into(),
+                        parents: Vec::new(),
+                        author: "Author".into(),
+                        author_email: "author@example.com".into(),
+                        timestamp: 0,
+                        subject: "Earlier change".into(),
+                        decorations: Vec::new(),
+                    }]),
+                });
                 app
             }));
             let store = cx.state_with(|| {
@@ -1113,8 +1126,13 @@ mod panel_virtualization_tests {
                 move |command| match command {
                     Command::CreateTag { root, name, target } => {
                         assert_eq!(
-                            target, "def00000",
-                            "Use the selected branch tip instead of HEAD"
+                            target,
+                            if name == "releases/previous" {
+                                "fed00000"
+                            } else {
+                                "def00000"
+                            },
+                            "Use the selected source commit instead of HEAD"
                         );
                         captured.lock().unwrap().push(("create".into(), root, name));
                         true
@@ -1288,21 +1306,24 @@ mod panel_virtualization_tests {
                 .iter()
                 .any(|node| node.text.as_deref() == Some("feature/release (def00000)"))
         );
-        session.runtime().run_effects();
-        let updates = session.apply_pending_updates();
-        let handlers = updates
-            .focus_events
-            .iter()
-            .flat_map(|event| session.tree().handler_events(event))
-            .collect::<Vec<_>>();
-        for event in handlers {
-            dispatch_event_handlers(
-                &event,
-                &context,
-                &lgui::window::WindowId::new("tag-menu-test"),
-            );
-        }
-        session.render_view(&view, viewport, UiScale::ONE);
+        let focus_input = |session: &mut UiSession| {
+            session.runtime().run_effects();
+            let updates = session.apply_pending_updates();
+            let handlers = updates
+                .focus_events
+                .iter()
+                .flat_map(|event| session.tree().handler_events(event))
+                .collect::<Vec<_>>();
+            for event in handlers {
+                dispatch_event_handlers(
+                    &event,
+                    &context,
+                    &lgui::window::WindowId::new("tag-menu-test"),
+                );
+            }
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        focus_input(&mut session);
         assert!(
             state.get().git.ui.tag_input.focused,
             "Focused node: {:?}",
@@ -1322,6 +1343,46 @@ mod panel_virtualization_tests {
             *requests.lock().unwrap(),
             vec![("create".into(), "repo".into(), "releases/v2.0".into())]
         );
+        state.update(|app| {
+            app.git.ui.collapsed_sections.remove(&HISTORY);
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        click(&mut session, "Earlier change", PointerButton::Right);
+        assert!(
+            matches!(state.get().git.ui.menu.unwrap().target, GitMenuTarget::HistoryCommit { oid, .. } if oid == "fed00000")
+        );
+        save_drawer_preview(&session, &context, viewport, "git-commit-new-tag-menu");
+        click(&mut session, "New Tag…", PointerButton::Left);
+        assert!(
+            matches!(state.get().git.ui.confirm.unwrap().action, GitConfirmAction::CreateTag { branch: None, target, .. } if target == "fed00000")
+        );
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|node| node.text.as_deref() == Some("Commit"))
+        );
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|node| node.text.as_deref() == Some("fed00000"))
+        );
+        focus_input(&mut session);
+        send(
+            &mut session,
+            InputEvent::TextInput("releases/previous".into()),
+        );
+        save_drawer_preview(&session, &context, viewport, "git-commit-new-tag-dialog");
+        click(&mut session, "Create", PointerButton::Left);
+        assert!(state.get().git.ui.confirm.is_none());
+        assert_eq!(
+            requests.lock().unwrap().last().unwrap(),
+            &("create".into(), "repo".into(), "releases/previous".into())
+        );
+        assert_eq!(requests.lock().unwrap().len(), 2);
         click(&mut session, "Tag: v1.0", PointerButton::Right);
         assert!(
             matches!(state.get().git.ui.menu.unwrap().target, GitMenuTarget::Tags { name, .. } if name == "v1.0")
@@ -1336,7 +1397,7 @@ mod panel_virtualization_tests {
         save_drawer_preview(&session, &context, viewport, "git-tag-context-menu");
         click(&mut session, "Delete Tag…", PointerButton::Left);
         click(&mut session, "Cancel", PointerButton::Left);
-        assert_eq!(requests.lock().unwrap().len(), 1);
+        assert_eq!(requests.lock().unwrap().len(), 2);
         click(&mut session, "Tag: v1.0", PointerButton::Right);
         click(&mut session, "Delete Tag…", PointerButton::Left);
         save_drawer_preview(&session, &context, viewport, "git-tag-delete-dialog");
@@ -2534,14 +2595,14 @@ mod menu_tests {
     }
 
     #[test]
-    fn history_commit_menu_offers_open_and_revert() {
+    fn history_commit_menu_offers_open_tag_creation_and_revert() {
         let target = GitMenuTarget::HistoryCommit {
             repository: PathBuf::from("repo"),
             oid: "abc".into(),
         };
         assert_eq!(
             labels(&target, &AppState::new()),
-            ["Open Commit Changes", "Revert Commit"]
+            ["Open Commit Changes", "New Tag…", "Revert Commit"]
         );
     }
 

@@ -25,7 +25,7 @@ pub(crate) const TAG_INPUT_ID: &str = "git-tag-name";
 pub enum GitConfirmAction {
     CreateTag {
         repository: PathBuf,
-        branch: String,
+        branch: Option<String>,
         target: String,
     },
     DeleteTag {
@@ -245,7 +245,7 @@ pub fn render(
         root = root.child(tag_form(
             card,
             &confirm.message,
-            branch,
+            branch.as_deref(),
             target,
             state.clone(),
             tag_input_focus,
@@ -335,7 +335,7 @@ pub fn render(
 fn tag_form(
     card: UiRect,
     message: &str,
-    branch: &str,
+    branch: Option<&str>,
     target: &str,
     state: Binding,
     focus: UiFocusHandle,
@@ -365,7 +365,7 @@ fn tag_form(
                 field.left + 64.0,
                 card.top + 108.0,
             ),
-            "Branch",
+            if branch.is_some() { "Branch" } else { "Commit" },
             theme::sans(theme::c().text_muted, theme::UI_SIZE),
         ))
         .child(text(
@@ -376,10 +376,15 @@ fn tag_form(
                 card.top + 108.0,
             ),
             crate::ui::tabs::ellipsize(
-                &format!(
-                    "{} ({})",
-                    branch,
-                    crate::features::git::diff_document::short_oid(target)
+                &branch.map_or_else(
+                    || target.to_owned(),
+                    |branch| {
+                        format!(
+                            "{} ({})",
+                            branch,
+                            crate::features::git::diff_document::short_oid(target)
+                        )
+                    },
                 ),
                 (field.width() - 74.0).max(0.0),
                 theme::UI_SIZE,

@@ -682,7 +682,7 @@ pub fn request_create_tag(
     state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
-    branch: String,
+    branch: Option<String>,
     target: String,
 ) -> bool {
     let snapshot = store.get();
@@ -706,7 +706,12 @@ pub fn request_create_tag(
         app.git.ui.tag_input = Default::default();
         app.git.ui.confirm = Some(GitConfirm {
             title: "New Tag".into(),
-            message: "Create a local tag at the selected branch's current commit.".into(),
+            message: if branch.is_some() {
+                "Create a local tag at the selected branch's current commit."
+            } else {
+                "Create a local tag at the selected commit."
+            }
+            .into(),
             confirm_label: "Create",
             destructive: false,
             action: GitConfirmAction::CreateTag {
