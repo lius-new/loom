@@ -29,6 +29,21 @@ pub fn drawer_icon(
     precompiled(UiElement::icon(id.into(), rect, key).icon_style(IconStyle::new(color)))
 }
 
+/// Header icon button: filled while selected, otherwise transparent until
+/// hovered or pressed.
+fn hover_button(rect: UiRect, key: impl Into<String>, selected: bool) -> Element {
+    Element::new(move |cx| {
+        let flags = cx.context.interaction_flags(&cx.id);
+        let style = if selected || flags.hovered || flags.pressed {
+            VisualStyle::filled(theme::c().surface).radius(3.0)
+        } else {
+            VisualStyle::default()
+        };
+        UiElement::panel(cx.id, rect, style).children(cx.children)
+    })
+    .key(key.into())
+}
+
 /// Header with the Explorer/Search page buttons and the collapse button.
 pub fn header(
     rect: UiRect,
@@ -51,34 +66,25 @@ pub fn header(
         );
         let active = mode == target;
         let select = select.clone();
-        let button = Element::new(move |cx| {
-            let flags = cx.context.interaction_flags(&cx.id);
-            let style = if mode != DrawerMode::Search && (flags.hovered || flags.pressed) {
-                VisualStyle::filled(theme::c().surface).radius(3.0)
-            } else {
-                VisualStyle::default()
-            };
-            UiElement::panel(cx.id, hit, style).children(cx.children)
-        })
-        .key(format!("drawer-mode-{index}"))
-        .event_policy(EventPolicy {
-            hover: true,
-            press: true,
-            focus: false,
-        })
-        .semantics(Semantics::new(SemanticRole::Button).name(label))
-        .cursor(CursorIcon::Pointer)
-        .on_click(move || select(target))
-        .child(drawer_icon(
-            UiId::owned(format!("drawer-mode-icon-{index}")),
-            icon,
-            theme::icon_rect(hit),
-            if active {
-                theme::c().accent
-            } else {
-                theme::c().text_dim
-            },
-        ));
+        let button = hover_button(hit, format!("drawer-mode-{index}"), active)
+            .event_policy(EventPolicy {
+                hover: true,
+                press: true,
+                focus: false,
+            })
+            .semantics(Semantics::new(SemanticRole::Button).name(label))
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || select(target))
+            .child(drawer_icon(
+                UiId::owned(format!("drawer-mode-icon-{index}")),
+                icon,
+                theme::icon_rect(hit),
+                if active {
+                    theme::c().accent
+                } else {
+                    theme::c().text_dim
+                },
+            ));
         header = header.child(button);
     }
 
@@ -86,7 +92,7 @@ pub fn header(
         rect.right - 32.0,
         rect.top + 2.0,
         rect.right - 4.0,
-        rect.bottom,
+        (rect.bottom - 2.0).max(rect.top + 2.0),
     );
     let collapse_icon = theme::icon_rect(UiRect::new(
         collapse_hit.left + 7.0,
@@ -95,8 +101,9 @@ pub fn header(
         rect.bottom,
     ));
     header = header.child(
-        panel(collapse_hit, VisualStyle::default().radius(3.0))
+        hover_button(collapse_hit, "sidebar.collapse", false)
             .event_policy(EventPolicy::INTERACTIVE)
+            .semantics(Semantics::new(SemanticRole::Button).name("Collapse sidebar"))
             .cursor(CursorIcon::Pointer)
             .on_click(move || collapse())
             .child(drawer_icon(
@@ -108,4 +115,78 @@ pub fn header(
     );
 
     header.child(crate::ui::components::divider::bottom(rect))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lgui::application::ApplicationContext;
+    use lgui::core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
+    use lgui::session::UiSession;
+
+    #[test]
+    fn header_buttons_fill_when_selected_or_hovered() {
+        let viewport = UiRect::new(0.0, 0.0, 400.0, 200.0);
+        let context = ApplicationContext::empty(Default::default());
+        for mode in [DrawerMode::Files, DrawerMode::Search] {
+            let view: lgui::application::AppView = Arc::new(move |_| {
+                header(
+                    UiRect::new(0.0, 0.0, 300.0, theme::TABS_H),
+                    mode,
+                    Arc::new(|_| {}),
+                    Arc::new(|| {}),
+                )
+            });
+            let mut session = UiSession::new();
+            session.render_view(&view, viewport, UiScale::ONE);
+            for (name, selected) in [
+                ("Explorer", mode == DrawerMode::Files),
+                ("Search", mode == DrawerMode::Search),
+                ("Collapse sidebar", false),
+            ] {
+                let find = |session: &UiSession| {
+                    session
+                        .tree()
+                        .nodes()
+                        .iter()
+                        .find(|node| {
+                            node.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name)
+                        })
+                        .cloned()
+                        .unwrap()
+                };
+                // Repeat to catch hover that only works the first few times.
+                for _ in 0..3 {
+                    for (point, hovered) in [
+                        {
+                            let hit = find(&session).hit_rect;
+                            (
+                                Point::new(
+                                    (hit.left + hit.right) / 2.0,
+                                    (hit.top + hit.bottom) / 2.0,
+                                ),
+                                true,
+                            )
+                        },
+                        (Point::new(350.0, 150.0), false),
+                    ] {
+                        dispatch_runtime_output(
+                            session
+                                .handle_input(InputEvent::PointerMove(PointerData::mouse(point))),
+                            &context,
+                            &lgui::window::WindowId::new("drawer-test"),
+                            |action| session.handle_default_action(action),
+                            |_| {},
+                        );
+                        session.render_view(&view, viewport, UiScale::ONE);
+                        assert_eq!(
+                            find(&session).style.fill.is_some(),
+                            hovered || selected,
+                            "{name} in {mode:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
