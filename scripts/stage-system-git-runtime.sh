@@ -22,4 +22,4 @@ for candidate in "${template_candidates[@]}"; do
 done
 
 version="$(git --version | awk '{print $3}')"
-scripts/package-git-runtime.sh "$staging" "$package_root" "$version" "system-package:$RUNNER_OS"
+bash scripts/package-git-runtime.sh "$staging" "$package_root" "$version" "system-package:$RUNNER_OS"
