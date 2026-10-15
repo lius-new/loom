@@ -5,17 +5,31 @@ startup and then once a day. When one is available, a badge with a download
 icon and the new version (**⭳ x.y.z**) appears in the title bar, left of
 Settings:
 
-| Install | Clicking the badge |
-| --- | --- |
-| Windows installer (`…-setup.exe`) | Downloads and verifies the new installer; the badge shows the percentage with a progress line, then **Restart to update** |
-| Windows portable, macOS, Linux | Opens the release page to download it |
+| Install | Clicking the badge downloads | Then **Restart to update** |
+| --- | --- | --- |
+| Windows installer (`…-setup.exe`) | the new setup | runs it silently; it keeps the install folder and the options chosen at install time and closes any other Loom windows |
+| macOS `Loom.app` (from the .dmg or .zip) | the new `.zip` | replaces `Loom.app` where it is |
+| Linux AppImage | the new AppImage | replaces the AppImage file |
+| Linux `.tar.gz` (run in place or through `install.sh`) | the new `.tar.gz` | replaces the install folder, for example `~/.local/lib/loom` |
+| Windows portable, Linux `.deb`, read-only installs | nothing | — the badge opens the release page instead |
+
+While the download runs, the badge shows the percentage with a progress line.
+Each download is checked against the size and SHA-256 in the manifest before
+it is used.
 
 **Restart to update** closes Loom the usual way: unsaved files are offered
-for saving first, and the session is restored afterwards. The installer then
-runs silently, keeping the install folder and the options chosen at install
-time, closes any other Loom windows and starts Loom again. Running terminal
-programs end with the restart. If the restart is cancelled, the installer runs
-the next time Loom quits.
+for saving first, and the session is restored afterwards. Loom is then
+replaced and started again. Running terminal programs end with the restart.
+If the restart is cancelled, the update is applied the next time Loom quits.
+
+On macOS and Linux, a small `sh` script waits for Loom to exit, unpacks or
+copies the new version next to the old one and swaps them with a rename, so
+a failed update leaves the old version in place. Its output goes to
+`apply.log` in the `loom-update` folder of the temporary directory. Loom
+updates in place only when it can write next to its install: a `Loom.app`
+opened straight from Downloads (macOS runs it from a hidden read-only copy
+until it is moved to Applications), or a folder owned by another user, gets
+the release page instead. The `.deb` is left to the package manager.
 
 Turn checks off with Settings → Updates → **Check for updates**, or
 `"check_for_updates": false` in `settings.json`. Builds made with
@@ -40,8 +54,8 @@ release that is not a pre-release) and:
    release key are trusted;
 2. checks that it names this platform and a version newer than the running
    one;
-3. downloads the installer and checks its size and SHA-256 against the
-   manifest before it is ever run.
+3. downloads the package for this kind of install and checks its size and
+   SHA-256 against the manifest before it is ever used.
 
 Requests honor `HTTPS_PROXY`/`HTTP_PROXY` and use HTTPS only. Check failures
 are silent; the next check tries again. A failed download shows an error and
@@ -68,8 +82,8 @@ LOOM_UPDATE_FEED=http://127.0.0.1:8765 cargo run
 
 The manifest must still be signed with the release key, and its package URLs
 must use HTTPS. A debug build counts as a Windows installer install only when
-an `unins000.exe` file sits next to `Loom.exe`. To check that a published
-feed verifies:
+an `unins000.exe` file sits next to `Loom.exe`; on Linux it counts as a
+`.tar.gz` install of `target/debug`. To check that a published feed verifies:
 
 ```bash
 cargo test live_feed -- --ignored --nocapture

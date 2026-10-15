@@ -1,5 +1,7 @@
 //! Update adapters: install detection, the signed manifest over HTTPS, the
-//! verified installer download and running it after Loom quits.
+//! verified download and applying it after Loom quits: the Windows installer
+//! runs silently; on macOS and Linux a detached `sh` script swaps in the new
+//! app bundle, AppImage or folder and starts Loom again.
 //!
 //! Packaged builds (`LOOM_UPDATES=1` at compile time, set by
 //! `scripts/package`) check `releases/latest/download/update-<platform>.json`.
@@ -7,6 +9,7 @@
 use crate::features::update::{Asset, InstallKind, Platform, Release, parse_release};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -45,24 +48,66 @@ fn feed() -> Option<String> {
 pub fn install_kind() -> Option<InstallKind> {
     feed()?;
     platform()?;
+    detect().map(|(kind, _)| kind)
+}
+
+/// The install kind and what an update replaces: the install folder, the app
+/// bundle or the AppImage file.
+fn detect() -> Option<(InstallKind, PathBuf)> {
     let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
+    let dir = exe.parent()?.to_path_buf();
+    let replaceable = |kind, parent: Option<&Path>| {
+        if parent.is_some_and(writable) {
+            kind
+        } else {
+            InstallKind::Manual
+        }
+    };
     Some(if cfg!(windows) {
         // Inno Setup leaves its uninstaller next to the installed files.
         if dir.join("unins000.exe").is_file() {
-            InstallKind::WindowsSetup
+            (InstallKind::WindowsSetup, dir)
         } else {
-            InstallKind::WindowsPortable
+            (InstallKind::WindowsPortable, dir)
         }
     } else if cfg!(target_os = "macos") {
-        InstallKind::MacApp
-    } else if std::env::var_os("APPIMAGE").is_some() {
-        InstallKind::LinuxAppImage
+        // Loom.app/Contents/MacOS/Loom
+        let app = exe.ancestors().nth(3)?.to_path_buf();
+        // An app opened from Downloads runs from a read-only, randomized
+        // path until it is moved to Applications.
+        let bundle = app.extension().is_some_and(|ext| ext == "app")
+            && !app.to_string_lossy().contains("/AppTranslocation/");
+        let kind = if bundle {
+            replaceable(InstallKind::MacApp, app.parent())
+        } else {
+            InstallKind::Manual
+        };
+        (kind, app)
+    } else if let Some(image) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
+        (
+            replaceable(InstallKind::LinuxAppImage, image.parent()),
+            image,
+        )
     } else if exe.starts_with("/opt/loom") {
-        InstallKind::LinuxDeb
+        (InstallKind::LinuxDeb, dir)
     } else {
-        InstallKind::LinuxTarball
+        (replaceable(InstallKind::LinuxTarball, dir.parent()), dir)
     })
+}
+
+/// Whether files can be created in `dir`; the swap happens next to the
+/// install so it is a rename on one file system.
+fn writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".loom-write-check-{}", std::process::id()));
+    let created = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .is_ok();
+    if created {
+        let _ = std::fs::remove_file(&probe);
+    }
+    created
 }
 
 /// A test feed served from this machine may use plain HTTP.
@@ -178,26 +223,135 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Run `installer` once Loom quits (see `run_pending_installer`).
+/// Apply the downloaded `installer` once Loom quits (see
+/// `run_pending_installer`).
 pub fn install_on_exit(installer: PathBuf) {
     *PENDING_INSTALLER.lock().unwrap() = Some(installer);
 }
 
-/// Start the installer recorded by `install_on_exit`, after the window has
-/// closed. The installer closes any other Loom instance, replaces the
-/// files and starts Loom again (`/relaunch=1`, see `installer.iss`).
+/// Waits for Loom (`$1`, its process id) to exit so its files are free.
+const WAIT: &str = r#"set -eu
+pid=$1
+shift
+while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+"#;
+
+/// `$1`: the downloaded zip of Loom.app; `$2`: the installed Loom.app. The
+/// new bundle is unpacked next to the old one so the swap is a rename, and
+/// the old one comes back if the new one cannot be moved in.
+const MAC_APP: &str = r#"archive=$1
+app=$2
+stage=$(mktemp -d "$(dirname "$app")/.loom-update.XXXXXX")
+trap 'rm -rf "$stage"' EXIT
+ditto -x -k "$archive" "$stage"
+test -x "$stage/Loom.app/Contents/MacOS/Loom"
+mv "$app" "$stage/previous.app"
+if ! mv "$stage/Loom.app" "$app"; then
+  mv "$stage/previous.app" "$app"
+  exit 1
+fi
+rm -f "$archive"
+open "$app"
+"#;
+
+/// `$1`: the downloaded AppImage; `$2`: the AppImage Loom runs from.
+const APP_IMAGE: &str = r#"image=$1
+target=$2
+next="$target.loom-update"
+cp "$image" "$next"
+chmod 755 "$next"
+mv -f "$next" "$target"
+rm -f "$image"
+nohup "$target" >/dev/null 2>&1 &
+"#;
+
+/// `$1`: the downloaded tar.gz, which holds one `Loom-<version>-…` folder;
+/// `$2`: the install folder.
+const TARBALL: &str = r#"archive=$1
+dir=$2
+stage=$(mktemp -d "$(dirname "$dir")/.loom-update.XXXXXX")
+trap 'rm -rf "$stage"' EXIT
+tar -xzf "$archive" -C "$stage"
+set -- "$stage"/Loom-*/
+new=${1%/}
+test -x "$new/Loom"
+mv "$dir" "$stage/previous"
+if ! mv "$new" "$dir"; then
+  mv "$stage/previous" "$dir"
+  exit 1
+fi
+rm -f "$archive"
+nohup "$dir/Loom" >/dev/null 2>&1 &
+"#;
+
+/// The program and arguments that apply `installer` to the install at
+/// `target` once process `pid` has exited.
+fn apply_command(
+    kind: InstallKind,
+    installer: &Path,
+    target: &Path,
+    pid: u32,
+) -> Option<(PathBuf, Vec<OsString>)> {
+    let script = match kind {
+        InstallKind::WindowsSetup => {
+            // Setup closes any other Loom instance, replaces the files and
+            // starts Loom again (`/relaunch=1`, see `installer.iss`).
+            let args = [
+                "/VERYSILENT",
+                "/SUPPRESSMSGBOXES",
+                "/NORESTART",
+                "/relaunch=1",
+            ];
+            return Some((installer.to_path_buf(), args.map(OsString::from).to_vec()));
+        }
+        InstallKind::MacApp => MAC_APP,
+        InstallKind::LinuxAppImage => APP_IMAGE,
+        InstallKind::LinuxTarball => TARBALL,
+        InstallKind::WindowsPortable | InstallKind::LinuxDeb | InstallKind::Manual => {
+            return None;
+        }
+    };
+    let args = vec![
+        OsString::from("-c"),
+        OsString::from(format!("{WAIT}{script}")),
+        // `$0`, used in error messages.
+        OsString::from("loom-update"),
+        OsString::from(pid.to_string()),
+        installer.as_os_str().to_owned(),
+        target.as_os_str().to_owned(),
+    ];
+    Some((PathBuf::from("/bin/sh"), args))
+}
+
+/// Start applying the update recorded by `install_on_exit`, after the
+/// window has closed. On macOS and Linux the script's output goes to
+/// `apply.log` next to the download.
 pub fn run_pending_installer() {
     let Some(installer) = PENDING_INSTALLER.lock().unwrap().take() else {
         return;
     };
-    let _ = std::process::Command::new(installer)
-        .args([
-            "/VERYSILENT",
-            "/SUPPRESSMSGBOXES",
-            "/NORESTART",
-            "/relaunch=1",
-        ])
-        .spawn();
+    let Some((kind, target)) = detect() else {
+        return;
+    };
+    let Some((program, args)) = apply_command(kind, &installer, &target, std::process::id()) else {
+        return;
+    };
+    let mut command = std::process::Command::new(program);
+    command.args(args).stdin(std::process::Stdio::null());
+    if kind != InstallKind::WindowsSetup {
+        if let Ok(log) = std::fs::File::create(installer.with_file_name("apply.log")) {
+            if let Ok(copy) = log.try_clone() {
+                command.stdout(copy);
+            }
+            command.stderr(log);
+        }
+        // Hold no handle on a folder being replaced, and keep running after
+        // Loom exits.
+        command.current_dir("/");
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    }
+    let _ = command.spawn();
 }
 
 /// Open a release page in the default browser.
@@ -254,6 +408,151 @@ mod tests {
     const TEST_PUBLIC: &str = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=";
     const TEST_SIGNATURE_OF_EMPTY: &str =
         "5VZDAMNgrHKQhuLMgG6CioSHfx645dl02HPgZSJJAVVfuIIVkKM7rMYeOXAc+bRr0lv18FlbviRlUUFDjnoQCw==";
+
+    #[test]
+    fn each_install_kind_applies_its_own_way() {
+        let (program, args) = apply_command(
+            InstallKind::WindowsSetup,
+            Path::new("setup.exe"),
+            Path::new("C:/Loom"),
+            7,
+        )
+        .unwrap();
+        assert_eq!(program, PathBuf::from("setup.exe"));
+        assert!(args.contains(&OsString::from("/relaunch=1")));
+
+        for (kind, script) in [
+            (InstallKind::MacApp, MAC_APP),
+            (InstallKind::LinuxAppImage, APP_IMAGE),
+            (InstallKind::LinuxTarball, TARBALL),
+        ] {
+            let (program, args) =
+                apply_command(kind, Path::new("/tmp/new"), Path::new("/opt/x"), 7).unwrap();
+            assert_eq!(program, PathBuf::from("/bin/sh"));
+            assert_eq!(args[1], OsString::from(format!("{WAIT}{script}")));
+            assert_eq!(&args[3..], ["7", "/tmp/new", "/opt/x"].map(OsString::from));
+        }
+
+        for kind in [
+            InstallKind::WindowsPortable,
+            InstallKind::LinuxDeb,
+            InstallKind::Manual,
+        ] {
+            assert!(apply_command(kind, Path::new("a"), Path::new("b"), 7).is_none());
+        }
+    }
+
+    /// A fresh, empty folder for one test.
+    #[cfg(unix)]
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("loom-update-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A stand-in for Loom that records that it was started.
+    #[cfg(unix)]
+    fn fake_loom(path: &Path, version: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(
+            path,
+            format!("#!/bin/sh\n# {version}\ntouch \"$0.launched\"\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// Run the apply step for an already exited process and wait for the
+    /// relaunched stand-in.
+    #[cfg(unix)]
+    fn apply(kind: InstallKind, installer: &Path, target: &Path, launched: &Path) {
+        let mut exited = std::process::Command::new("true").spawn().unwrap();
+        exited.wait().unwrap();
+        let (program, args) = apply_command(kind, installer, target, exited.id()).unwrap();
+        let output = std::process::Command::new(program)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        for _ in 0..100 {
+            if launched.exists() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("{} was not started", launched.display());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn apply_scripts_are_valid_shell() {
+        for script in [MAC_APP, APP_IMAGE, TARBALL] {
+            let status = std::process::Command::new("/bin/sh")
+                .args(["-n", "-c", &format!("{WAIT}{script}")])
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn tarball_update_replaces_the_folder_and_restarts() {
+        let root = scratch("tarball");
+        let install = root.join("lib").join("loom");
+        std::fs::create_dir_all(&install).unwrap();
+        fake_loom(&install.join("Loom"), "old");
+        std::fs::write(install.join("removed-file"), "").unwrap();
+
+        let package = root.join("package").join("Loom-9.9.9-linux-x86_64");
+        std::fs::create_dir_all(&package).unwrap();
+        fake_loom(&package.join("Loom"), "new");
+        let archive = root.join("Loom.tar.gz");
+        let tar = std::process::Command::new("tar")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(root.join("package"))
+            .arg("Loom-9.9.9-linux-x86_64")
+            .status()
+            .unwrap();
+        assert!(tar.success());
+
+        apply(
+            InstallKind::LinuxTarball,
+            &archive,
+            &install,
+            &install.join("Loom.launched"),
+        );
+        let loom = std::fs::read_to_string(install.join("Loom")).unwrap();
+        assert!(loom.contains("# new"));
+        assert!(!install.join("removed-file").exists());
+        assert!(!archive.exists());
+        let leftovers = std::fs::read_dir(root.join("lib")).unwrap().count();
+        assert_eq!(leftovers, 1, "the staging folder is removed");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn appimage_update_replaces_the_file_and_restarts() {
+        let root = scratch("appimage");
+        let target = root.join("Loom.AppImage");
+        fake_loom(&target, "old");
+        let download = root.join("download.AppImage");
+        std::fs::write(&download, "#!/bin/sh\n# new\ntouch \"$0.launched\"\n").unwrap();
+
+        apply(
+            InstallKind::LinuxAppImage,
+            &download,
+            &target,
+            &root.join("Loom.AppImage.launched"),
+        );
+        assert!(std::fs::read_to_string(&target).unwrap().contains("# new"));
+        assert!(!download.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn envelope(payload: &[u8], signature: &str) -> Vec<u8> {
         format!(

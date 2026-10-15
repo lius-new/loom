@@ -39,6 +39,9 @@ pub enum InstallKind {
     LinuxDeb,
     LinuxAppImage,
     LinuxTarball,
+    /// An install Loom cannot replace itself: in a read-only folder, or a
+    /// macOS app run from a translocated path. Updates open the release page.
+    Manual,
 }
 
 impl InstallKind {
@@ -47,7 +50,10 @@ impl InstallKind {
     pub fn installer_asset(self) -> Option<&'static str> {
         match self {
             Self::WindowsSetup => Some("setup"),
-            _ => None,
+            Self::MacApp => Some("zip"),
+            Self::LinuxAppImage => Some("appimage"),
+            Self::LinuxTarball => Some("tarball"),
+            Self::WindowsPortable | Self::LinuxDeb | Self::Manual => None,
         }
     }
 }
@@ -162,9 +168,16 @@ mod tests {
     }
 
     #[test]
-    fn only_setup_installs_update_in_place() {
+    fn package_managed_and_manual_installs_open_the_release_page() {
         assert_eq!(InstallKind::WindowsSetup.installer_asset(), Some("setup"));
+        assert_eq!(InstallKind::MacApp.installer_asset(), Some("zip"));
+        assert_eq!(
+            InstallKind::LinuxAppImage.installer_asset(),
+            Some("appimage")
+        );
+        assert_eq!(InstallKind::LinuxTarball.installer_asset(), Some("tarball"));
         assert_eq!(InstallKind::WindowsPortable.installer_asset(), None);
         assert_eq!(InstallKind::LinuxDeb.installer_asset(), None);
+        assert_eq!(InstallKind::Manual.installer_asset(), None);
     }
 }
