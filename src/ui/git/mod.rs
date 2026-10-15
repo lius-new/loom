@@ -4,6 +4,7 @@ pub mod branch_picker;
 pub mod clone;
 pub mod commands;
 pub mod confirm;
+pub(crate) mod history_badges;
 pub mod hunk_peek;
 pub mod menu;
 pub mod panel;

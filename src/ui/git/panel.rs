@@ -156,7 +156,6 @@ struct SectionHeader {
     rect: UiRect,
     filter: u8,
     title: &'static str,
-    count: usize,
     collapsed: bool,
     buttons: Vec<RowButton>,
 }
@@ -183,7 +182,6 @@ fn append_section_headers(
             rect,
             header.filter,
             header.title,
-            header.count,
             header.collapsed,
             header.buttons,
             state.clone(),
@@ -439,7 +437,6 @@ pub fn render(
             rect: section_rect,
             filter,
             title,
-            count: files.len(),
             collapsed,
             buttons,
         });
@@ -535,7 +532,6 @@ pub fn render(
             rect: section_rect,
             filter: WORKTREES,
             title: "WORKTREES",
-            count: repository.worktrees.len(),
             collapsed,
             buttons: Vec::new(),
         });
@@ -576,7 +572,6 @@ pub fn render(
             rect: section_rect,
             filter: STASHES,
             title: "STASHES",
-            count: repository.stashes.len(),
             collapsed,
             buttons: Vec::new(),
         });
@@ -610,14 +605,10 @@ pub fn render(
     {
         let collapsed = app.ui.collapsed_sections.contains(&HISTORY);
         let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
-        let count = history
-            .and_then(|history| history.commits.as_ref().ok())
-            .map_or(0, Vec::len);
         headers.push(SectionHeader {
             rect: section_rect,
             filter: HISTORY,
             title: "COMMITS",
-            count,
             collapsed,
             buttons: Vec::new(),
         });
@@ -631,9 +622,6 @@ pub fn render(
                 history_rows.len(),
             );
             y += history_rows.len() as f32 * ROW_H;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_secs() as i64);
             for index in visible {
                 let row_y = rows_top + index as f32 * ROW_H;
                 let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
@@ -653,7 +641,6 @@ pub fn render(
                     row_rect,
                     row,
                     hovered,
-                    now,
                     &repository.worktree_root,
                     &state,
                     &editor_focus,
@@ -1180,7 +1167,15 @@ pub fn render_commit_card(viewport: UiRect, app: &GitPanelState) -> Option<Eleme
     )];
     if let Some(summary) = summary.filter(|summary| !summary.decorations.is_empty()) {
         footer.push((
-            format!("  {}", summary.decorations.join(", ")),
+            format!(
+                "  {}",
+                summary
+                    .decorations
+                    .iter()
+                    .map(|value| super::history_badges::display_name(value))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             theme::c().text_dim,
         ));
     }
@@ -1530,25 +1525,10 @@ pub(crate) fn history_rows(
     rows
 }
 
-/// `timestamp` (Unix seconds) as a short age relative to `now`.
-pub(crate) fn relative_time(now: i64, timestamp: i64) -> String {
-    let seconds = (now - timestamp).max(0);
-    match seconds {
-        0..60 => "now".into(),
-        60..3_600 => format!("{}m", seconds / 60),
-        3_600..86_400 => format!("{}h", seconds / 3_600),
-        86_400..604_800 => format!("{}d", seconds / 86_400),
-        604_800..2_592_000 => format!("{}w", seconds / 604_800),
-        2_592_000..31_536_000 => format!("{}mo", seconds / 2_592_000),
-        _ => format!("{}y", seconds / 31_536_000),
-    }
-}
-
 pub(crate) fn history_row(
     rect: UiRect,
     row: &HistoryRow,
     hovered: bool,
-    now: i64,
     repository: &std::path::Path,
     state: &Binding,
     editor_focus: &UiFocusHandle,
@@ -1571,9 +1551,15 @@ pub(crate) fn history_row(
             let menu_state = state.clone();
             let menu_root = repository.to_path_buf();
             let menu_oid = commit.oid.clone();
-            let age = relative_time(now, commit.timestamp);
-            let age_w = crate::ui::tabs::measure(&age, 9.0, 400) + 6.0;
-            panel(rect, background)
+            let (badges, subject_right) =
+                super::history_badges::render(rect, &commit.oid, &commit.decorations);
+            let subject = crate::ui::tabs::ellipsize(
+                &commit.subject,
+                (subject_right - rect.left - 30.0).max(0.0),
+                theme::SMALL,
+                400,
+            );
+            let mut row = panel(rect, background)
                 .key(format!("git-commit-{}", commit.oid))
                 .event_policy(EventPolicy::INTERACTIVE)
                 .semantics(Semantics::new(SemanticRole::Button).name(commit.subject.clone()))
@@ -1626,18 +1612,13 @@ pub(crate) fn history_row(
                 ))
                 .child(
                     clip(
-                        UiRect::new(
-                            rect.left + 30.0,
-                            rect.top,
-                            rect.right - 14.0 - age_w,
-                            rect.bottom,
-                        ),
+                        UiRect::new(rect.left + 30.0, rect.top, subject_right, rect.bottom),
                         0.0,
                         0.0,
                     )
                     .child(text(
                         UiRect::new(rect.left + 30.0, rect.top, rect.left + 2000.0, rect.bottom),
-                        commit.subject.clone(),
+                        subject,
                         theme::mono(
                             if hovered {
                                 theme::c().text
@@ -1647,17 +1628,11 @@ pub(crate) fn history_row(
                             theme::SMALL,
                         ),
                     )),
-                )
-                .child(text(
-                    UiRect::new(
-                        rect.right - 12.0 - age_w,
-                        rect.top,
-                        rect.right - 12.0,
-                        rect.bottom,
-                    ),
-                    age,
-                    theme::mono_right(theme::c().text_ghost, 9.0),
-                ))
+                );
+            for badge in badges {
+                row = row.child(badge);
+            }
+            row
         }
         HistoryRow::File { oid, kind, path } => {
             let open_state = state.clone();
@@ -1699,12 +1674,11 @@ pub(crate) fn history_row(
     }
 }
 
-/// A collapsible section title with its count, and `buttons` on its right.
+/// A collapsible section title with right-hand buttons.
 pub(crate) fn section_header(
     rect: UiRect,
     filter: u8,
     title: &'static str,
-    count: usize,
     collapsed: bool,
     buttons: Vec<RowButton>,
     state: Binding,
@@ -1754,19 +1728,14 @@ pub(crate) fn section_header(
             theme::c().text_ghost,
         ))
         .child(text(
-            UiRect::new(rect.left + 25.0, rect.top, rect.right - 38.0, rect.bottom),
+            UiRect::new(rect.left + 25.0, rect.top, rect.right - 12.0, rect.bottom),
             title,
             theme::mono(theme::c().text_ghost, theme::SMALL),
-        ))
-        .child(text(
-            UiRect::new(rect.right - 38.0, rect.top, rect.right - 12.0, rect.bottom),
-            count.to_string(),
-            theme::mono_right(theme::c().text_ghost, theme::SMALL),
         ));
     if buttons.is_empty() {
         section
     } else {
-        row_buttons(section, rect, rect.right - 40.0, buttons)
+        row_buttons(section, rect, rect.right - 12.0, buttons)
     }
 }
 
@@ -2333,24 +2302,12 @@ pub(crate) fn file_row(
             _ => (kind.indicator(), theme::c().text_dim),
         }
     };
-    let stat = if staged {
-        file_state.index_stat.as_ref()
-    } else {
-        file_state.worktree_stat.as_ref()
-    };
-    let diff_summary = stat.map_or_else(String::new, |stat| {
-        if stat.binary {
-            "binary".to_owned()
-        } else {
-            format!("+{} -{}", stat.additions, stat.deletions)
-        }
-    });
     let actions = file_actions(section);
-    // Hovering swaps the diff summary for the row's action buttons.
+    // Reserve room for action buttons only while the row is hovered.
     let trailing_w = if hovered {
         BUTTON_W * actions.len() as f32 + 12.0
     } else {
-        52.0
+        12.0
     };
     let indent = if nested { 14.0 } else { 0.0 };
     let name_left = rect.left + 30.0 + indent;
@@ -2425,11 +2382,7 @@ pub(crate) fn file_row(
         active || hovered,
     ));
     if !hovered {
-        return row.child(text(
-            UiRect::new(rect.right - 46.0, rect.top, rect.right - 12.0, rect.bottom),
-            diff_summary,
-            theme::mono_right(theme::c().text_ghost, 9.0),
-        ));
+        return row;
     }
     let buttons = actions
         .iter()

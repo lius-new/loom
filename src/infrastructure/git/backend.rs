@@ -544,7 +544,7 @@ impl CliGitBackend {
             OsString::from("--date-order"),
             OsString::from(format!("--skip={skip}")),
             OsString::from(format!("--max-count={}", limit.clamp(1, 500))),
-            OsString::from("--decorate=short"),
+            OsString::from("--decorate=full"),
             OsString::from("--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%D"),
         ];
         if let Some(revision) = revision {
@@ -1597,10 +1597,31 @@ pub(crate) mod tests {
                 .unwrap()
                 .contains("+two")
         );
-        assert_eq!(
-            backend.history(&root, None, None, 0, 20).unwrap()[0].subject,
-            "initial"
-        );
+        for args in [
+            &["branch", "feature/ui"][..],
+            &["tag", "v1.0"][..],
+            &["update-ref", "refs/remotes/upstream/main", "HEAD"][..],
+        ] {
+            backend
+                .runner()
+                .run(GitCommand::new().cwd(&root).args(args.iter().copied()))
+                .unwrap();
+        }
+        let history = backend.history(&root, None, None, 0, 20).unwrap();
+        assert_eq!(history[0].subject, "initial");
+        for reference in [
+            "HEAD -> refs/heads/main",
+            "refs/heads/feature/ui",
+            "refs/remotes/upstream/main",
+            "tag: refs/tags/v1.0",
+        ] {
+            assert!(
+                history[0]
+                    .decorations
+                    .iter()
+                    .any(|value| value == reference)
+            );
+        }
         assert!(
             backend
                 .branches(&root)

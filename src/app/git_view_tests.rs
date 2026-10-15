@@ -112,7 +112,22 @@ mod panel_virtualization_tests {
                             author_email: "dev@example.com".into(),
                             timestamp: 0,
                             subject: format!("Improve editor behavior {index}"),
-                            decorations: Vec::new(),
+                            decorations: match index {
+                                0 => vec!["HEAD -> refs/heads/main".into()],
+                                2 => vec![
+                                    "refs/remotes/origin/main".into(),
+                                    "refs/remotes/origin/HEAD".into(),
+                                ],
+                                4 => vec!["tag: refs/tags/v1.0.0".into()],
+                                6 => vec![
+                                    "refs/heads/feature/editor-incremental-highlighting".into(),
+                                ],
+                                8 => vec![
+                                    "HEAD -> refs/heads/main".into(),
+                                    "refs/remotes/origin/main".into(),
+                                ],
+                                _ => Vec::new(),
+                            },
                         })
                         .collect()),
                 });
@@ -439,6 +454,30 @@ mod panel_virtualization_tests {
         });
         session.render_view(&view, viewport, UiScale::ONE);
         save_drawer_preview(&session, &context, viewport, "git-drawer-commits");
+        let badge = find(&session, "Current branch: main");
+        let badge_point = Point::new(
+            badge.left + badge.width() / 2.0,
+            badge.top + badge.height() / 2.0,
+        );
+        for input in [
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(badge_point),
+                button: PointerButton::Left,
+            },
+            InputEvent::PointerUp {
+                pointer: PointerData::mouse(badge_point),
+                button: PointerButton::Left,
+            },
+        ] {
+            send(&mut session, input);
+        }
+        assert_eq!(
+            state.get().git.model.history_commit().unwrap().oid,
+            "abc00000"
+        );
+        state.update(|app| {
+            app.git.model.collapse_commit();
+        });
         state.update(|app| {
             app.git.ui.collapsed_sections.insert(HISTORY);
             app.git.ui.collapsed_sections.remove(&WORKTREES);
@@ -963,17 +1002,6 @@ mod panel_action_tests {
             split_path(std::path::Path::new("README.md")),
             ("README.md".to_owned(), None)
         );
-    }
-
-    #[test]
-    fn ages_are_short_and_never_negative() {
-        let now = 1_000_000_000;
-        assert_eq!(relative_time(now, now + 30), "now");
-        assert_eq!(relative_time(now, now - 90), "1m");
-        assert_eq!(relative_time(now, now - 7_200), "2h");
-        assert_eq!(relative_time(now, now - 3 * 86_400), "3d");
-        assert_eq!(relative_time(now, now - 14 * 86_400), "2w");
-        assert_eq!(relative_time(now, now - 400 * 86_400), "1y");
     }
 
     #[test]
