@@ -96,6 +96,8 @@ pub(crate) fn svg_icons() -> SvgIconRegistry {
             // No Codicon equivalent yet.
             .with_icon("git-branch", icondata::LuGitBranch)
             .with_icon("command", icondata::LuCommand)
+            .with_icon("update-available", icondata::VsArrowCircleDown)
+            .with_icon("update-restart", icondata::VsDebugRestart)
             // Filled caption silhouettes avoid fragile subpixel SVG strokes.
             .with_icon(
                 "window-minimize",

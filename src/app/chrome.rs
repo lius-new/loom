@@ -14,7 +14,7 @@ pub fn title_binding(state: &AppContext) -> TitleBinding {
             TitleFrame {
                 settings_open: app.workspace.active_is_settings(),
                 maximized: crate::app::window::is_maximized(),
-                update: app.update.badge(),
+                update: app.update.indicator(),
             }
         },
         move || {

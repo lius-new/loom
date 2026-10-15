@@ -41,7 +41,7 @@ impl HomeBinding {
 pub struct TitleFrame {
     pub settings_open: bool,
     pub maximized: bool,
-    pub update: Option<crate::features::update::Badge>,
+    pub update: Option<crate::features::update::Indicator>,
 }
 #[derive(Clone)]
 pub struct TitleBinding {

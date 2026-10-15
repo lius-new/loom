@@ -38,6 +38,26 @@ pub struct Badge {
     pub actionable: bool,
 }
 
+/// The title bar update control.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Indicator {
+    pub stage: Stage,
+    /// Short text beside the icon.
+    pub text: String,
+    /// Full description, for accessibility.
+    pub label: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    /// A newer release can be downloaded or opened; clickable.
+    Available,
+    /// The installer is downloading; the value is the percent received.
+    Downloading(u8),
+    /// The installer is ready; clicking restarts Loom into it.
+    Ready,
+}
+
 /// The Version row on the Settings page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct About {
@@ -157,6 +177,25 @@ impl Model {
         Some(Badge { label, actionable })
     }
 
+    pub fn indicator(&self) -> Option<Indicator> {
+        let badge = self.badge()?;
+        let (stage, text) = match &self.phase {
+            Phase::Idle | Phase::Checking => return None,
+            Phase::Available(release) => (Stage::Available, release.version.to_string()),
+            Phase::Downloading { release, received } => {
+                let total = self.installer(release).map_or(0, |asset| asset.size);
+                let percent = (*received * 100).checked_div(total).unwrap_or(0).min(100);
+                (Stage::Downloading(percent as u8), format!("{percent}%"))
+            }
+            Phase::Ready { .. } => (Stage::Ready, "Restart to update".to_owned()),
+        };
+        Some(Indicator {
+            stage,
+            text,
+            label: badge.label,
+        })
+    }
+
     /// Advance the phase for a click on the badge or the Settings action
     /// and say what to do.
     pub fn click(&mut self) -> Option<Intent> {
@@ -264,15 +303,27 @@ mod tests {
     fn setup_installs_download_then_restart() {
         let mut model = checked(InstallKind::WindowsSetup, "0.2.0");
         assert_eq!(model.badge().unwrap().label, "Update to 0.2.0");
+        let indicator = model.indicator().unwrap();
+        assert_eq!(
+            (indicator.stage, indicator.text.as_str()),
+            (Stage::Available, "0.2.0")
+        );
+        assert_eq!(indicator.label, "Update to 0.2.0");
         assert!(matches!(model.click(), Some(Intent::Download(asset)) if asset.size == 200));
         assert!(model.download_progress(50));
         assert!(!model.download_progress(50));
         assert_eq!(model.badge().unwrap().label, "Downloading update 25%");
+        let indicator = model.indicator().unwrap();
+        assert_eq!(
+            (indicator.stage, indicator.text.as_str()),
+            (Stage::Downloading(25), "25%")
+        );
         assert!(!model.badge().unwrap().actionable);
         assert_eq!(model.click(), None);
 
         model.finish_download(Ok("setup.exe".into())).unwrap();
         assert_eq!(model.badge().unwrap().label, "Restart to update");
+        assert_eq!(model.indicator().unwrap().stage, Stage::Ready);
         assert_eq!(model.click(), Some(Intent::Install("setup.exe".into())));
         assert_eq!(model.badge().unwrap().label, "Restart to update");
     }

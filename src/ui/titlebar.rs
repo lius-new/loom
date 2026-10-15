@@ -8,9 +8,10 @@ use lgui::core::{
     AnimProperty, AnimationBinding, Color, CursorIcon, EventPolicy, IconStyle, PhysicalRect,
     SemanticRole, Semantics, UiElement, UiEventContext, UiId, UiScale,
 };
-use lgui::prelude::{Element, TextAlign, UiRect, VisualStyle, panel};
+use lgui::prelude::{Element, UiRect, VisualStyle, panel};
 
-use crate::features::update::Badge;
+use crate::features::update::{Indicator, Stage};
+use crate::ui::git::badge::{BADGE_H, BADGE_ICON, BADGE_PAD, ICON_GAP, TEXT_MARGIN, measure};
 
 use crate::ui::chrome::TitleBinding;
 use crate::ui::theme;
@@ -97,36 +98,78 @@ fn window_icon_rect(button: UiRect, scale: UiScale) -> UiRect {
     scale.logical_rect(PhysicalRect::new(left, top, left + size, top + size))
 }
 
-/// The update button left of Settings: accent-filled while it offers an
-/// action, muted while a download runs.
-fn update_button(right: f32, bar: UiRect, badge: Badge, state: TitleBinding) -> Element {
-    let size = theme::SMALL + 1.0;
-    let width = crate::ui::tabs::measure(&badge.label, size, 600) + 20.0;
-    let middle = (bar.top + bar.bottom) / 2.0;
-    let rect = UiRect::new(right - width, middle - 11.0, right, middle + 11.0);
-    let actionable = badge.actionable;
-    let label = badge.label.clone();
+/// The update control left of Settings, styled like the repository badge:
+/// an icon and short text in the accent color, a hover fill when it can be
+/// clicked, and a thin progress line while the installer downloads.
+fn update_button(right: f32, bar: UiRect, indicator: Indicator, state: TitleBinding) -> Element {
+    let style = |color| theme::mono(color, theme::SMALL);
+    let text_w = measure(&indicator.text, &style(theme::c().accent));
+    let width = BADGE_PAD * 2.0 + BADGE_ICON + ICON_GAP + text_w + TEXT_MARGIN;
+    let top = bar.top + (bar.height() - BADGE_H) / 2.0;
+    let rect = UiRect::new(right - width, top, right, top + BADGE_H);
+    let stage = indicator.stage;
+    let actionable = !matches!(stage, Stage::Downloading(_));
+    let label = indicator.text;
     let element = Element::new(move |cx| {
         let c = theme::c();
         let hovered = actionable && cx.context.interaction_flags(&cx.id).hovered;
-        let (fill, color) = match (actionable, hovered) {
-            (true, false) => (c.accent, c.on_accent),
-            (true, true) => (c.accent_hover, c.on_accent),
-            (false, _) => (c.active_line, c.text_soft),
+        let (icon_key, icon_color, text_color) = match stage {
+            Stage::Available => ("update-available", c.accent, c.accent),
+            Stage::Downloading(_) => ("update-available", c.text_muted, c.text_dim),
+            Stage::Ready => ("update-restart", c.accent, c.accent),
         };
-        let mut style = theme::sans_semibold(color, size);
-        style.align = TextAlign::Center;
-        UiElement::panel(cx.id, rect, VisualStyle::filled(fill).radius(11.0)).child(
-            UiElement::text(
+        let fill = if hovered {
+            VisualStyle::filled(c.active_line).radius(4.0)
+        } else {
+            VisualStyle::default().radius(4.0)
+        };
+        let icon_left = rect.left + BADGE_PAD;
+        let icon_top = rect.top + (BADGE_H - BADGE_ICON) / 2.0;
+        let text_left = icon_left + BADGE_ICON + ICON_GAP;
+        let mut badge = UiElement::panel(cx.id, rect, fill)
+            .child(
+                UiElement::icon(
+                    UiId::new("titlebar.update.icon"),
+                    UiRect::new(
+                        icon_left,
+                        icon_top,
+                        icon_left + BADGE_ICON,
+                        icon_top + BADGE_ICON,
+                    ),
+                    icon_key,
+                )
+                .icon_style(IconStyle::new(icon_color)),
+            )
+            .child(UiElement::text(
                 UiId::new("titlebar.update.label"),
-                rect,
+                UiRect::new(text_left, rect.top, rect.right - BADGE_PAD, rect.bottom),
                 label.clone(),
-                style,
-            ),
-        )
+                style(text_color),
+            ));
+        if let Stage::Downloading(percent) = stage {
+            let track = UiRect::new(
+                rect.left + BADGE_PAD,
+                rect.bottom - 3.0,
+                rect.right - BADGE_PAD,
+                rect.bottom - 1.0,
+            );
+            let done = track.left + track.width() * f32::from(percent) / 100.0;
+            badge = badge
+                .child(UiElement::panel(
+                    UiId::new("titlebar.update.track"),
+                    track,
+                    VisualStyle::filled(c.border).radius(1.0),
+                ))
+                .child(UiElement::panel(
+                    UiId::new("titlebar.update.progress"),
+                    UiRect::new(track.left, track.top, done, track.bottom),
+                    VisualStyle::filled(c.accent).radius(1.0),
+                ));
+        }
+        badge
     })
     .key("titlebar.update.button")
-    .semantics(Semantics::new(SemanticRole::Button).name(badge.label));
+    .semantics(Semantics::new(SemanticRole::Button).name(indicator.label));
     if !actionable {
         return element;
     }
@@ -156,11 +199,11 @@ pub fn render(rect: UiRect, state: TitleBinding, git_controls: Element) -> Eleme
     // Settings, just left of the window controls.
     let settings_r = UiRect::new(right - 148.0, rect.top, right - 116.0, rect.bottom);
     let settings_open = frame.settings_open;
-    if let Some(badge) = frame.update {
+    if let Some(indicator) = frame.update {
         bar = bar.child(update_button(
             settings_r.left - 6.0,
             rect,
-            badge,
+            indicator,
             state.clone(),
         ));
     }

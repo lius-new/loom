@@ -1,13 +1,14 @@
 # Updates
 
 Packaged builds of Loom check for a new release about ten seconds after
-startup and then once a day. When one is available, a button appears in the
-title bar, left of Settings:
+startup and then once a day. When one is available, a badge with a download
+icon and the new version (**⭳ x.y.z**) appears in the title bar, left of
+Settings:
 
-| Install | Button | Clicking it |
-| --- | --- | --- |
-| Windows installer (`…-setup.exe`) | **Update to x.y.z** | Downloads and verifies the new installer, then shows **Restart to update** |
-| Windows portable, macOS, Linux | **Loom x.y.z available** | Opens the release page to download it |
+| Install | Clicking the badge |
+| --- | --- |
+| Windows installer (`…-setup.exe`) | Downloads and verifies the new installer; the badge shows the percentage with a progress line, then **Restart to update** |
+| Windows portable, macOS, Linux | Opens the release page to download it |
 
 **Restart to update** closes Loom the usual way: unsaved files are offered
 for saving first, and the session is restored afterwards. The installer then

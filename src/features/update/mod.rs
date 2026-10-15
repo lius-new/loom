@@ -4,7 +4,7 @@
 mod model;
 mod version;
 
-pub use self::model::{About, Badge, Intent, Model};
+pub use self::model::{About, Indicator, Intent, Model, Stage};
 pub use self::version::Version;
 
 use serde::Deserialize;
