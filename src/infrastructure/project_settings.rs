@@ -26,3 +26,23 @@ pub fn ensure(root: &Path) -> io::Result<PathBuf> {
     }
     Ok(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_with_a_byte_order_mark_is_read() {
+        let root = std::env::temp_dir().join("loom-project-settings-bom-test");
+        fs::create_dir_all(root.join(DIR_NAME)).unwrap();
+        fs::write(path(&root), "\u{feff}{ \"default_shell\": \"bash\" }\n").unwrap();
+        let settings = read(&root);
+        fs::remove_dir_all(&root).unwrap();
+        let settings = settings.unwrap().unwrap();
+        assert!(settings.errors.is_empty(), "{:?}", settings.errors);
+        assert_eq!(
+            settings.overrides.get("default_shell"),
+            Some(&"bash".into())
+        );
+    }
+}

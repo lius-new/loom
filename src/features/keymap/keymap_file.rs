@@ -216,6 +216,15 @@ mod tests {
     }
 
     #[test]
+    fn a_byte_order_mark_is_ignored() {
+        let source =
+            "\u{feff}[{ \"context\": \"Editor\", \"bindings\": { \"ctrl-q\": \"editor::Undo\" } }]";
+        let outcome = parse(source, BindingSource::User).unwrap();
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(outcome.bindings.len(), 1);
+    }
+
+    #[test]
     fn user_template_is_valid_and_empty() {
         let outcome = parse(USER_TEMPLATE, BindingSource::User).unwrap();
         assert!(outcome.bindings.is_empty() && outcome.errors.is_empty());

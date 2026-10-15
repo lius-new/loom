@@ -8,9 +8,15 @@ use std::ops::Range;
 
 use serde_json::Value;
 
-/// Remove `//` and `/* */` comments and trailing commas, keeping line
-/// numbers intact so JSON errors still point at the right line.
+/// A byte order mark. Windows tools such as PowerShell's
+/// `Set-Content -Encoding utf8` start UTF-8 files with one.
+const BOM: char = '\u{feff}';
+
+/// Remove a leading byte order mark, `//` and `/* */` comments and trailing
+/// commas, keeping line numbers intact so JSON errors still point at the
+/// right line.
 pub fn strip(source: &str) -> String {
+    let source = source.strip_prefix(BOM).unwrap_or(source);
     let chars = source.chars().collect::<Vec<_>>();
     let mut out = String::with_capacity(source.len());
     let mut index = 0;
@@ -81,7 +87,11 @@ pub fn strip(source: &str) -> String {
 /// Set the member at `path` (object keys from the root) to `value`, or
 /// remove it for `None`. Missing parent objects are created. Returns `None`
 /// when the root is not an object; the text must otherwise be valid JSONC.
+/// A leading byte order mark is kept.
 pub fn set(text: &str, path: &[&str], value: Option<&Value>) -> Option<String> {
+    if let Some(body) = text.strip_prefix(BOM) {
+        return set(body, path, value).map(|body| format!("{BOM}{body}"));
+    }
     let mut text = text.to_owned();
     if strip(&text).trim().is_empty() {
         if value.is_none() {
@@ -433,6 +443,20 @@ mod tests {
         assert!(edited.starts_with("// notes\n{"));
         assert_eq!(parse(&edited), json!({"a": 1}));
         assert_eq!(set("[]", &["a"], Some(&json!(1))), None);
+    }
+
+    #[test]
+    fn a_byte_order_mark_is_ignored_when_parsing_and_kept_when_editing() {
+        let text = "\u{feff}{\n  // c\n  \"a\": 1\n}\n";
+        assert_eq!(parse(text), json!({"a": 1}));
+        let edited = set(text, &["b"], Some(&json!(2))).unwrap();
+        assert_eq!(edited, "\u{feff}{\n  // c\n  \"a\": 1,\n  \"b\": 2\n}\n");
+        assert_eq!(
+            set("\u{feff}", &["a"], Some(&json!(1))).unwrap(),
+            "\u{feff}{\n  \"a\": 1\n}\n"
+        );
+        // Only a leading mark is special; one inside a string is content.
+        assert_eq!(parse("{\"a\": \"\u{feff}\"}"), json!({"a": "\u{feff}"}));
     }
 
     #[test]

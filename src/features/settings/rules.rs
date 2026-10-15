@@ -488,6 +488,21 @@ mod file_tests {
     }
 
     #[test]
+    fn a_byte_order_mark_is_read_and_kept_by_patches() {
+        let text = "\u{feff}{ \"smooth_caret\": false }\n";
+        let outcome = parse(text).unwrap();
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert!(!outcome.settings.smooth_caret);
+
+        let mut new = outcome.settings.clone();
+        new.git_tree_view = true;
+        let patched = patch(text, &outcome.settings, &new).unwrap();
+        assert!(patched.starts_with("\u{feff}{"), "{patched:?}");
+        assert_eq!(patched.matches('\u{feff}').count(), 1);
+        assert_eq!(parse(&patched).unwrap().settings, new);
+    }
+
+    #[test]
     fn template_parses_to_the_defaults_and_accepts_patches() {
         let template = template();
         assert_eq!(parse(&template).unwrap().settings, Settings::default());
