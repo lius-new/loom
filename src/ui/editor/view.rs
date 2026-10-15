@@ -1077,8 +1077,8 @@ pub(crate) fn layout_line_at_column(
             let bytes = line.len()
                 + layout.source_to_display.len()
                     * (std::mem::size_of::<usize>() + 2 * std::mem::size_of::<UiRect>())
-                + layout.layout.clusters().len() * std::mem::size_of::<lgui::text::TextCluster>()
-                + layout.layout.lines().len() * std::mem::size_of::<lgui::text::TextLineMetrics>()
+                + std::mem::size_of_val(layout.layout.clusters())
+                + std::mem::size_of_val(layout.layout.lines())
                 + std::mem::size_of::<LayoutEntry>();
             cache.entries.entry(key).or_default().insert(
                 line.to_owned(),

@@ -148,7 +148,7 @@ fn partial_windows_preserve_string_comment_and_unicode_token_context() {
                 FileId::new(1),
                 Source::new(&buffer),
                 Language::JavaScript,
-                &[window.clone()],
+                std::slice::from_ref(&window),
                 &AtomicBool::new(false),
             )
             .unwrap();

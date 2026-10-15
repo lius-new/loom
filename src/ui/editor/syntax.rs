@@ -59,6 +59,19 @@ pub(crate) fn highlight_window(
     result
 }
 
+fn color_for(kind: TokenKind) -> Color {
+    match kind {
+        TokenKind::Kw => theme::c().syntax.keyword,
+        TokenKind::Fn => theme::c().syntax.function,
+        TokenKind::Type => theme::c().syntax.type_name,
+        TokenKind::Str => theme::c().syntax.string,
+        TokenKind::Comment => theme::c().syntax.comment,
+        TokenKind::Num => theme::c().syntax.number,
+        TokenKind::Prop => theme::c().syntax.property,
+        TokenKind::Plain => theme::c().text,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,17 +112,5 @@ mod tests {
                 |(text, color)| text.contains("comment") && *color == theme::c().syntax.comment
             )
         );
-    }
-}
-fn color_for(kind: TokenKind) -> Color {
-    match kind {
-        TokenKind::Kw => theme::c().syntax.keyword,
-        TokenKind::Fn => theme::c().syntax.function,
-        TokenKind::Type => theme::c().syntax.type_name,
-        TokenKind::Str => theme::c().syntax.string,
-        TokenKind::Comment => theme::c().syntax.comment,
-        TokenKind::Num => theme::c().syntax.number,
-        TokenKind::Prop => theme::c().syntax.property,
-        TokenKind::Plain => theme::c().text,
     }
 }

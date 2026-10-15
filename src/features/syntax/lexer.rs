@@ -69,8 +69,8 @@ impl Iterator for Tokens<'_> {
         let kind = if rest.starts_with("//") {
             self.offset = self.source.len();
             TokenKind::Comment
-        } else if rest.starts_with("/*") {
-            self.offset = rest[2..]
+        } else if let Some(comment) = rest.strip_prefix("/*") {
+            self.offset = comment
                 .find("*/")
                 .map_or(self.source.len(), |end| start + end + 4);
             TokenKind::Comment

@@ -628,7 +628,7 @@ mod tests {
                 .active()
                 .unwrap()
                 .label(),
-            "pwsh · Testing"
+            format!("{} · Testing", ShellKind::default().short_label())
         );
         restored.close(first);
         assert_eq!(restored.purposes(), vec![Some("Testing".into())]);

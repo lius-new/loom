@@ -1242,7 +1242,7 @@ mod panel_virtualization_tests {
             send(
                 session,
                 InputEvent::PointerDown {
-                    pointer: point.clone(),
+                    pointer: point,
                     button,
                 },
             );
@@ -1496,11 +1496,11 @@ mod panel_virtualization_tests {
                 PointerData::mouse(Point::new(rect.left + 12.0, (rect.top + rect.bottom) / 2.0));
             for input in [
                 InputEvent::PointerDown {
-                    pointer: pointer.clone(),
+                    pointer,
                     button: PointerButton::Left,
                 },
                 InputEvent::PointerUp {
-                    pointer: pointer.clone(),
+                    pointer,
                     button: PointerButton::Left,
                 },
             ] {
@@ -1626,11 +1626,11 @@ mod panel_virtualization_tests {
             let point = PointerData::mouse(Point::new(40.0, y));
             for input in [
                 InputEvent::PointerDown {
-                    pointer: point.clone(),
+                    pointer: point,
                     button: PointerButton::Left,
                 },
                 InputEvent::PointerUp {
-                    pointer: point.clone(),
+                    pointer: point,
                     button: PointerButton::Left,
                 },
             ] {
@@ -1761,7 +1761,7 @@ mod panel_virtualization_tests {
                     },
                 );
                 let bottom = PointerData::mouse(Point::new(viewport.right - 6.0, 175.0));
-                send(&mut session, InputEvent::PointerMove(bottom.clone()));
+                send(&mut session, InputEvent::PointerMove(bottom));
                 send(
                     &mut session,
                     InputEvent::PointerUp {

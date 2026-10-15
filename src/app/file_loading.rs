@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn external_drop_loads_every_file_in_order_and_keeps_tabs_permanent() {
         let h = Harness::new(|request| {
-            if request.path == PathBuf::from("bad.bin") {
+            if request.path == std::path::Path::new("bad.bin") {
                 return Err("Unsupported encoding".into());
             }
             Ok(PreparedTextFile::new(request.path.clone(), "loaded".into()))
@@ -431,7 +431,7 @@ mod tests {
     fn superseding_external_drop_cancels_its_remaining_files() {
         let (release, gate) = mpsc::channel();
         let h = Harness::new(move |request| {
-            if request.path == PathBuf::from("first.txt") {
+            if request.path == std::path::Path::new("first.txt") {
                 gate.recv_timeout(Duration::from_secs(5)).unwrap();
             }
             Ok(PreparedTextFile::new(request.path.clone(), "loaded".into()))

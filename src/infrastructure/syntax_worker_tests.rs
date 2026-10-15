@@ -155,12 +155,14 @@ fn wait(receive: &mpsc::Receiver<(FileId, usize, u64)>) -> (FileId, usize, u64) 
         .recv_timeout(Duration::from_secs(5))
         .expect("background completion")
 }
-fn gated() -> (
+type GatedWorker = (
     Worker,
     mpsc::Receiver<()>,
     mpsc::Sender<()>,
     mpsc::Receiver<(FileId, usize, u64)>,
-) {
+);
+
+fn gated() -> GatedWorker {
     let (entered, entering) = mpsc::channel();
     let (release, gate) = mpsc::channel();
     let (send, receive) = mpsc::channel();

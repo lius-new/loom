@@ -130,19 +130,19 @@ pub(crate) struct PeekPlacement {
     pub scroll_y: f32,
     pub metrics: Metrics,
 }
+type HighlightProvider = dyn Fn(
+        &ViewDocument,
+        Vec<crate::features::syntax::Window>,
+    ) -> Vec<crate::features::syntax::WindowTokens>
+    + Send
+    + Sync;
+
 #[derive(Clone)]
 pub(crate) struct Binding {
     read: Arc<dyn Fn() -> ViewState + Send + Sync>,
     dispatch: Arc<dyn Fn(Event) + Send + Sync>,
     overlay: Arc<dyn Fn(PeekPlacement) -> Option<Element> + Send + Sync>,
-    highlights: Arc<
-        dyn Fn(
-                &ViewDocument,
-                Vec<crate::features::syntax::Window>,
-            ) -> Vec<crate::features::syntax::WindowTokens>
-            + Send
-            + Sync,
-    >,
+    highlights: Arc<HighlightProvider>,
 }
 impl Binding {
     pub fn new(

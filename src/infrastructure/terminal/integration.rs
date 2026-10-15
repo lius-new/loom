@@ -346,6 +346,10 @@ mod tests {
             ));
             let moved = root.join("中文 moved folder");
             std::fs::create_dir_all(&moved).unwrap();
+            // macOS temporary directories can be reached through /var aliases,
+            // while the shell reports their physical /private/var path.
+            let root = root.canonicalize().unwrap();
+            let moved = root.join("中文 moved folder");
             let args = if program.ends_with("bash") {
                 vec!["-i".into()]
             } else {
@@ -374,6 +378,8 @@ mod tests {
             let mut reader = pair.master.try_clone_reader().unwrap();
             let mut writer = pair.master.take_writer().unwrap();
             let (tx, rx) = std::sync::mpsc::channel();
+            let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let captured = output.clone();
             let reading = std::thread::spawn(move || {
                 let mut reports = DirectoryReports::default();
                 let mut bytes = [0; 4096];
@@ -381,6 +387,10 @@ mod tests {
                     if count == 0 {
                         break;
                     }
+                    let mut captured = captured.lock().unwrap();
+                    let remaining = (16 * 1024_usize).saturating_sub(captured.len());
+                    captured.extend_from_slice(&bytes[..count.min(remaining)]);
+                    drop(captured);
                     if let Some(path) = reports.process(&bytes[..count]) {
                         let _ = tx.send(path);
                     }
@@ -396,8 +406,22 @@ mod tests {
             drop(pair.master);
             let _ = reading.join();
             std::fs::remove_dir_all(&root).unwrap();
-            assert_eq!(initial.unwrap(), root, "{program} initial directory");
-            assert_eq!(changed.unwrap(), moved, "{program} changed directory");
+            let output = output.lock().unwrap();
+            let output = String::from_utf8_lossy(&output);
+            assert_eq!(
+                initial.unwrap_or_else(|error| {
+                    panic!("{program} initial directory: {error}; output: {output:?}")
+                }),
+                root,
+                "{program} initial directory"
+            );
+            assert_eq!(
+                changed.unwrap_or_else(|error| {
+                    panic!("{program} changed directory: {error}; output: {output:?}")
+                }),
+                moved,
+                "{program} changed directory"
+            );
         }
     }
 

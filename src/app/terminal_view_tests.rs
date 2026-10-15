@@ -754,7 +754,10 @@ mod tests {
             pointer: testing,
             button: PointerButton::Left,
         });
-        assert_eq!(tabs.get().tabs()[0].label(), "pwsh · Testing");
+        assert_eq!(
+            tabs.get().tabs()[0].label(),
+            format!("{} · Testing", ShellKind::default().short_label())
+        );
         assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
         send(InputEvent::TextInput(
             "typing resumes after purpose selection".into(),

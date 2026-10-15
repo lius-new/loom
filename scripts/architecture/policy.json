@@ -315,6 +315,21 @@
       "migrated_in": "R6.3",
       "from": "git_history"
     },
+    "history_sequence": {
+      "owner": "features/git/model",
+      "migrated_in": "Git history pagination",
+      "reason": "Reject stale history page results after the repository or revision changes"
+    },
+    "history_pending": {
+      "owner": "features/git/model",
+      "migrated_in": "Git history pagination",
+      "reason": "Track the current history page request and prevent duplicate loads"
+    },
+    "history_has_more": {
+      "owner": "features/git/model",
+      "migrated_in": "Git history pagination",
+      "reason": "Track whether the current history has another page"
+    },
     "history_commit": {
       "owner": "features/git/model",
       "migrated_in": "R6.3",
@@ -354,6 +369,21 @@
       "owner": "ui/git/state",
       "migrated_in": "R6.3",
       "from": "git_hover"
+    },
+    "hover_sequence": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git hover cards",
+      "reason": "Invalidate delayed hover cards when the pointer target changes"
+    },
+    "tag_card": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git tag actions",
+      "reason": "Present the hovered tag's details and actions"
+    },
+    "tag_input": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git tag creation",
+      "reason": "Keep tag creation form text, focus and IME state"
     },
     "scroll": {
       "owner": "ui/git/state",
@@ -786,6 +816,7 @@
   },
   "framework_runtime_access": [
     "src/app/editor_vim_integration_tests.rs",
+    "src/app/git_view_tests.rs",
     "src/app/search.rs",
     "src/ui/components/loading_indicator.rs",
     "src/ui/editor/caret.rs",

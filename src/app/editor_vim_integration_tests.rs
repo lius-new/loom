@@ -148,7 +148,9 @@ impl Ui {
     /// text unless a handler prevented the key's default action.
     fn press(&mut self, key: LogicalKey, modifiers: KeyModifiers) {
         let text = match &key {
-            LogicalKey::Character(text) if !modifiers.ctrl() => Some(text.to_string()),
+            LogicalKey::Character(text) if !modifiers.ctrl() && !modifiers.meta() => {
+                Some(text.to_string())
+            }
             _ => None,
         };
         let prevented = self.send(InputEvent::Keyboard(KeyboardEvent {
@@ -194,6 +196,15 @@ impl Ui {
             };
             self.press(logical, modifiers);
         }
+    }
+
+    fn undo(&mut self) {
+        let modifiers = if cfg!(target_os = "macos") {
+            KeyModifiers::META
+        } else {
+            KeyModifiers::CONTROL
+        };
+        self.press(LogicalKey::Character("z".into()), modifiers);
     }
 
     fn text(&self) -> String {
@@ -349,8 +360,8 @@ fn application_shortcuts_and_vim_keys_share_the_keyboard() {
     );
     ui.keys("d");
     assert_eq!(ui.text(), "ne\nwo");
-    // Ctrl+Z is still the application's undo.
-    ui.press(LogicalKey::Character("z".into()), KeyModifiers::CONTROL);
+    // The platform's undo shortcut still reaches the application.
+    ui.undo();
     assert_eq!(ui.text(), "one\ntwo");
     assert_eq!(ui.mode(), Mode::Normal);
 }
@@ -367,9 +378,9 @@ fn turning_vim_off_restores_default_editing() {
     ui.keys("jk");
     assert_eq!(ui.text(), "text!jk");
     ui.keys("<Esc>");
-    // Default editing: Ctrl+Z undoes the typing, and the insert session's
+    // Default editing: the undo shortcut undoes typing, and the insert session's
     // undo step was closed when Vim turned off.
-    ui.press(LogicalKey::Character("z".into()), KeyModifiers::CONTROL);
+    ui.undo();
     assert_eq!(ui.text(), "text!");
 }
 

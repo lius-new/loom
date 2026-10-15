@@ -47,6 +47,19 @@ fn scan(root: &Path, spec: SearchSpec, buffers: Vec<BufferSnapshot>) -> Results 
     result
 }
 #[test]
+fn removed_paths_keep_their_normalized_parent_identity() {
+    let temp = Temp::new();
+    std::fs::create_dir(temp.0.join("nested")).unwrap();
+    let root = temp.0.join("nested/..");
+    let file = root.join("a.rs");
+    std::fs::write(&file, "needle").unwrap();
+    let normalized = normalized_path(&file);
+    std::fs::remove_file(&file).unwrap();
+    assert_eq!(normalized_path(&file), normalized);
+    assert!(paths_affect_search(&spec("needle"), &[root], &[file]));
+}
+
+#[test]
 fn watcher_scope_uses_search_filters_and_ignore_rules() {
     let temp = Temp::new();
     let root = &temp.0;

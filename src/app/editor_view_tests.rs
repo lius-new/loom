@@ -543,6 +543,11 @@ fn editor_events_route_drag_selection_shortcuts_and_ime_commit() {
             ..Default::default()
         })
     };
+    let shortcut = if cfg!(target_os = "macos") {
+        KeyModifiers::META
+    } else {
+        KeyModifiers::CONTROL
+    };
     assert!(send(key(
         LogicalKey::Named(lgui::core::NamedKey::Tab),
         KeyModifiers::empty()
@@ -551,10 +556,7 @@ fn editor_events_route_drag_selection_shortcuts_and_ime_commit() {
         state.get().workspace.active_editor().unwrap().text(),
         "  hello world\nsecond"
     );
-    send(key(
-        LogicalKey::Character("z".into()),
-        KeyModifiers::CONTROL,
-    ));
+    send(key(LogicalKey::Character("z".into()), shortcut));
     assert_eq!(
         state
             .get()
@@ -578,10 +580,7 @@ fn editor_events_route_drag_selection_shortcuts_and_ime_commit() {
         "你好 world\nsecond"
     );
     assert!(state.get().editor.ime.is_none());
-    send(key(
-        LogicalKey::Character("z".into()),
-        KeyModifiers::CONTROL,
-    ));
+    send(key(LogicalKey::Character("z".into()), shortcut));
     assert_eq!(
         state
             .get()

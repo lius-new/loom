@@ -46,7 +46,19 @@ pub fn run(
 }
 
 pub fn normalized_path(path: &Path) -> PathBuf {
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // Deletion notifications still use the original path spelling. Resolve
+    // their surviving parent too, so aliases such as /var and /private/var
+    // keep matching the same workspace after the file disappears.
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| {
+        path.ancestors()
+            .skip(1)
+            .find_map(|parent| {
+                std::fs::canonicalize(parent)
+                    .ok()
+                    .map(|resolved| resolved.join(path.strip_prefix(parent).unwrap()))
+            })
+            .unwrap_or_else(|| path.to_path_buf())
+    });
     #[cfg(windows)]
     {
         let value = path.to_string_lossy();
