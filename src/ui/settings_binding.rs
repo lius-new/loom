@@ -19,6 +19,8 @@ pub struct Frame {
 pub enum Command {
     Toggle(Setting),
     Theme(ThemeId),
+    UiScaleStep(bool),
+    UiScaleReset,
     FontPreset(FontTarget, String),
     FontStep(FontTarget, FontField, bool),
     FontCommit(FontTarget),

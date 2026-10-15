@@ -376,6 +376,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         || {}
     });
     let settings = s.settings();
+    let scale_windows = application_context.windows();
+    cx.use_effect(settings.ui_scale, move || {
+        scale_windows.set_scale_preference(window_geometry::scale_preference(settings.ui_scale));
+        || {}
+    });
     cx.use_effect(settings.clone(), move || {
         let _ = settings_persistence::save(&settings);
         || {}

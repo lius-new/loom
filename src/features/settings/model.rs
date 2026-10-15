@@ -6,6 +6,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct Values {
     pub theme: ThemeId,
+    pub ui_scale: Option<u16>,
     pub default_shell: ShellKind,
     pub terminal_profiles: Vec<crate::features::terminal::profiles::ShellProfile>,
     pub shell_options: Vec<crate::features::terminal::profiles::ShellOption>,

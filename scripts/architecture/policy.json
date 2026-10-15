@@ -695,6 +695,10 @@
       "owner": "features/settings/model: Values DTO",
       "migrated_in": "R8.2"
     },
+    "ui_scale": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "R8.2"
+    },
     "default_shell": {
       "owner": "features/settings/model: Values DTO",
       "migrated_in": "R8.2"

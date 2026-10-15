@@ -12,6 +12,7 @@ use lgui::{WinitApplication, WinitWindowIcon, WinitWindowOptions};
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     launch::init(std::env::args_os().skip(1));
     let native_window_options = native_window_options()?;
+    let ui_scale = crate::infrastructure::settings_filesystem::load().ui_scale;
     let window_options = window_geometry::restore_options(
         WindowOptions::new("loom")
             .title("Loom")
@@ -23,6 +24,8 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
             .on_close_requested(window_geometry::handle_close_requested)
             .with_platform_options(native_window_options),
     );
+    let window_options =
+        window_options.scale_preference(window_geometry::scale_preference(ui_scale));
 
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
         .svg_icons(svg_icons())

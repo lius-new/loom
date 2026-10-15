@@ -2,6 +2,14 @@
 use crate::infrastructure::window_geometry as native;
 use lgui::{WindowOptions, core::UiEventContext};
 pub use native::{is_maximized, observe_viewport, remember_native_window};
+
+pub fn scale_preference(percent: Option<u16>) -> lgui::platform::dpi::ScalePreference {
+    use lgui::platform::dpi::ScalePreference;
+    match crate::features::settings::scale::clamped(percent) {
+        Some(percent) => ScalePreference::Multiplier(f32::from(percent) / 100.0),
+        None => ScalePreference::Auto,
+    }
+}
 #[derive(Clone, Copy, Debug)]
 pub struct AppCloseRequested;
 

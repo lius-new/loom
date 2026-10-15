@@ -25,6 +25,7 @@
       "secondary-,": "workspace::OpenSettings",
       "secondary-k secondary-s": "workspace::OpenKeymap",
       "secondary-=": "workspace::IncreaseFontSize",
+      "secondary-+": "workspace::IncreaseFontSize",
       "secondary--": "workspace::DecreaseFontSize",
       "secondary-0": "workspace::ResetFontSize",
       "escape": "workspace::CloseOverlay",

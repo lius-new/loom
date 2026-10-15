@@ -60,6 +60,7 @@ const FONT_PRESETS: [&str; 5] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Setting {
     Theme,
+    UiScale,
     EditorFontFamily,
     EditorFontSize,
     EditorLineHeight,
@@ -77,7 +78,7 @@ pub(crate) enum Setting {
 }
 
 const SECTIONS: [(&str, &[Setting]); 4] = [
-    ("APPEARANCE", &[Setting::Theme]),
+    ("APPEARANCE", &[Setting::Theme, Setting::UiScale]),
     (
         "EDITOR",
         &[
@@ -109,6 +110,7 @@ impl Setting {
     fn label(self) -> &'static str {
         match self {
             Self::Theme => "Color theme",
+            Self::UiScale => "Interface scale",
             Self::EditorFontFamily | Self::TerminalFontFamily => "Font family",
             Self::EditorFontSize | Self::TerminalFontSize => "Font size",
             Self::EditorLineHeight | Self::TerminalLineHeight => "Line height",
@@ -126,6 +128,7 @@ impl Setting {
     fn description(self) -> &'static str {
         match self {
             Self::Theme => "Colors used across the editor, panels and terminal.",
+            Self::UiScale => "Scale the entire app, including tabs, panels and menus.",
             Self::EditorFontFamily => {
                 "Font for code, diffs and change previews. Leave empty for the default."
             }
@@ -154,7 +157,7 @@ impl Setting {
     /// Current value of an on/off setting; `None` for choice settings.
     pub(crate) fn enabled(self, app: &Frame) -> Option<bool> {
         match self {
-            Self::Theme | Self::DefaultShell => None,
+            Self::Theme | Self::UiScale | Self::DefaultShell => None,
             Self::EditorFontFamily
             | Self::EditorFontSize
             | Self::EditorLineHeight
@@ -443,6 +446,7 @@ fn setting_row(row: UiRect, setting: Setting, app: &Frame, state: Binding) -> El
         Some(_) => STEPPER_W,
         // The theme cards sit below the label, so the text spans the row.
         None if setting == Setting::Theme => 0.0,
+        None if setting == Setting::UiScale => STEPPER_W + 62.0,
         None => SWITCH_W,
     };
     let control_left = row.right - control_w;
@@ -486,6 +490,14 @@ fn setting_row(row: UiRect, setting: Setting, app: &Frame, state: Binding) -> El
             element = element.child(theme_picker(
                 UiRect::new(row.left, cards_top, row.right, cards_top + THEME_CARD_H),
                 app.prefs.theme,
+                state,
+            ));
+        }
+        None if setting == Setting::UiScale => {
+            let top = row.top + (ROW_H - STEPPER_H) / 2.0;
+            element = element.child(scale_picker(
+                UiRect::new(control_left, top, row.right, top + STEPPER_H),
+                app.prefs.ui_scale,
                 state,
             ));
         }
@@ -637,6 +649,85 @@ fn font_presets(rect: UiRect, target: FontTarget, current: &str, state: Binding)
         left += width + PRESET_GAP;
     }
     row
+}
+
+fn scale_picker(rect: UiRect, percent: Option<u16>, state: Binding) -> Element {
+    use crate::features::settings::scale;
+    let percent = scale::clamped(percent);
+    let value = percent.map_or_else(|| "Auto".to_owned(), |value| format!("{value}%"));
+    let stepper = UiRect::new(rect.left, rect.top, rect.left + STEPPER_W, rect.bottom);
+    let mut value_style = theme::mono(theme::c().text, theme::UI_SIZE);
+    value_style.align = TextAlign::Center;
+    let mut element = theme::bordered(stepper, theme::c().surface, theme::c().border, 4.0, 1.0)
+        .child(text(
+            UiRect::new(
+                stepper.left + STEP_BUTTON_W,
+                rect.top,
+                stepper.right - STEP_BUTTON_W,
+                rect.bottom,
+            ),
+            value,
+            value_style,
+        ));
+    for up in [false, true] {
+        let enabled = percent.is_none_or(|value| {
+            if up {
+                value < scale::MAX
+            } else {
+                value > scale::MIN
+            }
+        });
+        let left = if up {
+            stepper.right - STEP_BUTTON_W
+        } else {
+            stepper.left
+        };
+        let button = UiRect::new(left, rect.top, left + STEP_BUTTON_W, rect.bottom);
+        let mut style = theme::mono(
+            if enabled {
+                theme::c().text
+            } else {
+                theme::c().text_ghost
+            },
+            theme::UI_SIZE + 2.0,
+        );
+        style.align = TextAlign::Center;
+        let mut control = panel(button, VisualStyle::default())
+            .key(if up {
+                "settings-ui-scale-up"
+            } else {
+                "settings-ui-scale-down"
+            })
+            .child(text(button, if up { "+" } else { "\u{2212}" }, style));
+        if enabled {
+            let state = state.clone();
+            control = control
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || state.run(Command::UiScaleStep(up)));
+        }
+        element = element.child(control);
+    }
+    let reset = UiRect::new(stepper.right + 8.0, rect.top, rect.right, rect.bottom);
+    let mut style = theme::sans(
+        if percent.is_some() {
+            theme::c().accent
+        } else {
+            theme::c().text_ghost
+        },
+        theme::UI_SIZE,
+    );
+    style.align = TextAlign::Center;
+    let mut reset = panel(reset, VisualStyle::default())
+        .key("settings-ui-scale-reset")
+        .child(text(reset, "Reset", style));
+    if percent.is_some() {
+        reset = reset
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || state.run(Command::UiScaleReset));
+    }
+    element.child(reset)
 }
 
 /// `[−] value [+]` for a numeric font setting.

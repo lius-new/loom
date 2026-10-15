@@ -86,6 +86,7 @@ impl AppState {
             preferences: crate::features::settings::model::Model::new(
                 crate::features::settings::model::Values {
                     theme: ThemeId::default(),
+                    ui_scale: None,
                     default_shell: ShellKind::default(),
                     terminal_profiles: Vec::new(),
                     shell_options: crate::infrastructure::terminal::profiles::options(&[]),
@@ -144,6 +145,7 @@ impl AppState {
     pub fn settings(&self) -> crate::infrastructure::settings_filesystem::Settings {
         crate::infrastructure::settings_filesystem::Settings {
             theme: self.preferences.values().theme,
+            ui_scale: self.preferences.values().ui_scale,
             default_shell: self.preferences.values().default_shell,
             terminal_profiles: self.preferences.values().terminal_profiles.clone(),
             terminal_cursor_blink: self.preferences.values().terminal_cursor_blink,
@@ -169,6 +171,8 @@ impl AppState {
         let shells_changed = settings.default_shell != self.preferences.values().default_shell
             || settings.terminal_profiles != self.preferences.values().terminal_profiles;
         self.preferences.values_mut().theme = settings.theme;
+        self.preferences.values_mut().ui_scale =
+            crate::features::settings::scale::clamped(settings.ui_scale);
         self.preferences.values_mut().default_shell = settings.default_shell;
         self.preferences.values_mut().terminal_profiles = settings.terminal_profiles;
         self.preferences.values_mut().terminal_cursor_blink = settings.terminal_cursor_blink;
@@ -421,19 +425,28 @@ impl AppState {
                 self.workspace.open_keymap();
             }
             Action::IncreaseFontSize | Action::DecreaseFontSize | Action::ResetFontSize => {
-                let size = match action {
-                    Action::IncreaseFontSize => {
-                        self.preferences.values().editor_font.size.saturating_add(1)
-                    }
-                    Action::DecreaseFontSize => {
-                        self.preferences.values().editor_font.size.saturating_sub(1)
-                    }
-                    _ => crate::ui::fonts::FontSettings::EDITOR.size,
+                let terminal = self.terminal.ui.terminal_focused;
+                let (mut font, default_size) = if terminal {
+                    (
+                        self.preferences.values().terminal_font.clone(),
+                        crate::ui::fonts::FontSettings::TERMINAL.size,
+                    )
+                } else {
+                    (
+                        self.preferences.values().editor_font.clone(),
+                        crate::ui::fonts::FontSettings::EDITOR.size,
+                    )
                 };
-                self.set_editor_font(crate::ui::fonts::FontSettings {
-                    size,
-                    ..self.preferences.values().editor_font.clone()
-                });
+                font.size = match action {
+                    Action::IncreaseFontSize => font.size.saturating_add(1),
+                    Action::DecreaseFontSize => font.size.saturating_sub(1),
+                    _ => default_size,
+                };
+                if terminal {
+                    self.set_terminal_font(font);
+                } else {
+                    self.set_editor_font(font);
+                }
             }
             Action::SplitRight => self.split_focused(Direction::Right),
             Action::SplitLeft => self.split_focused(Direction::Left),

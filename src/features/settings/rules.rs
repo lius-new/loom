@@ -18,6 +18,9 @@ pub const FILE_NAME: &str = "settings.json";
 pub struct Settings {
     #[serde(default)]
     pub theme: ThemeId,
+    /// Interface scale as a percentage of OS scaling; null selects automatic scaling.
+    #[serde(default)]
+    pub ui_scale: Option<u16>,
     #[serde(default)]
     pub default_shell: ShellKind,
     #[serde(default)]
@@ -77,6 +80,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeId::default(),
+            ui_scale: None,
             default_shell: ShellKind::default(),
             terminal_profiles: Vec::new(),
             terminal_cursor_blink: true,
@@ -314,6 +318,7 @@ mod tests {
     fn settings_round_trip_as_json() {
         let settings = Settings {
             theme: ThemeId::parse("ember").unwrap(),
+            ui_scale: Some(130),
             default_shell: ShellKind::Bash,
             terminal_profiles: vec![crate::features::terminal::profiles::ShellProfile {
                 id: 7,
@@ -359,6 +364,29 @@ mod tests {
 #[cfg(test)]
 mod file_tests {
     use super::*;
+
+    #[test]
+    fn interface_scale_saves_reloads_and_resets_preserving_comments() {
+        let text = "{\n  // keep my settings\n  \"smooth_caret\": false\n}\n";
+        let original = parse(text).unwrap().settings;
+        let mut scaled = original.clone();
+        scaled.ui_scale = Some(150);
+        let saved = patch(text, &original, &scaled).unwrap();
+        assert!(saved.contains("// keep my settings"));
+        assert_eq!(parse(&saved).unwrap().settings, scaled);
+        assert_eq!(patch(&saved, &scaled, &original).unwrap(), text);
+        assert_eq!(
+            parse(r#"{"ui_scale": null}"#).unwrap().settings.ui_scale,
+            None
+        );
+        let invalid = parse(r#"{"ui_scale": "large", "smooth_caret": false}"#).unwrap();
+        assert_eq!(invalid.errors.len(), 1);
+        assert_eq!(invalid.settings.ui_scale, None);
+        assert!(!invalid.settings.smooth_caret);
+        let (overrides, errors) = parse_overrides(r#"{"ui_scale": 150}"#, Scope::Project).unwrap();
+        assert!(overrides.is_empty());
+        assert_eq!(errors.len(), 1);
+    }
 
     #[test]
     fn a_partial_file_overrides_only_its_values() {

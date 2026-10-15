@@ -44,6 +44,11 @@ pub fn run(state: &AppContext, command: Command) {
     state.update(|app| match command {
         Command::Toggle(setting) => setting.toggle(app),
         Command::Theme(id) => app.preferences.values_mut().theme = id,
+        Command::UiScaleStep(up) => {
+            app.preferences.values_mut().ui_scale =
+                crate::features::settings::scale::step(app.preferences.values().ui_scale, up);
+        }
+        Command::UiScaleReset => app.preferences.values_mut().ui_scale = None,
         Command::FontPreset(target, family) => target.set_family(app, &family),
         Command::FontStep(target, field, up) => {
             let font = field.step(target.get(app), up);
@@ -64,7 +69,7 @@ pub fn run(state: &AppContext, command: Command) {
 impl Setting {
     pub(crate) fn toggle(self, app: &mut AppState) {
         match self {
-            Self::Theme | Self::DefaultShell => {}
+            Self::Theme | Self::UiScale | Self::DefaultShell => {}
             Self::EditorFontFamily
             | Self::EditorFontSize
             | Self::EditorLineHeight
@@ -137,6 +142,117 @@ impl FontTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interface_scale_commands_clamp_and_reset_without_changing_fonts() {
+        use crate::features::settings::scale;
+        use lgui::platform::dpi::ScalePreference;
+        let state = crate::app::test_support::live(AppState::new());
+        assert_eq!(
+            crate::app::window::scale_preference(None),
+            ScalePreference::Auto
+        );
+        run(&state, Command::UiScaleStep(true));
+        assert_eq!(state.get().settings().ui_scale, Some(110));
+        assert_eq!(
+            crate::app::window::scale_preference(Some(110)),
+            ScalePreference::Multiplier(1.1)
+        );
+        for _ in 0..30 {
+            run(&state, Command::UiScaleStep(true));
+        }
+        assert_eq!(state.get().settings().ui_scale, Some(scale::MAX));
+        for _ in 0..30 {
+            run(&state, Command::UiScaleStep(false));
+        }
+        assert_eq!(state.get().settings().ui_scale, Some(scale::MIN));
+        run(&state, Command::UiScaleReset);
+        assert_eq!(state.get().settings().ui_scale, None);
+        run(&state, Command::UiScaleStep(false));
+        assert_eq!(state.get().settings().ui_scale, Some(90));
+        assert_eq!(state.get().settings().editor_font, FontSettings::EDITOR);
+        assert_eq!(state.get().settings().terminal_font, FontSettings::TERMINAL);
+
+        state.update(|app| {
+            let mut settings = app.settings();
+            settings.ui_scale = Some(u16::MAX);
+            app.apply_settings(settings);
+        });
+        assert_eq!(state.get().settings().ui_scale, Some(scale::MAX));
+    }
+
+    #[test]
+    fn interface_scale_controls_render_and_receive_clicks_at_different_scales() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{
+            InputEvent, Point, PointerButton, PointerData, UiScale, dispatch_runtime_output,
+        };
+        use lgui::session::UiSession;
+        use std::sync::{Arc, Mutex};
+        for factor in [0.8, 1.0, 1.5, 2.0] {
+            let exposed = Arc::new(Mutex::new(None::<AppContext>));
+            let output = exposed.clone();
+            let view: AppView = Arc::new(move |cx| {
+                let state = AppContext::detached(cx.state_with(AppState::new));
+                *output.lock().unwrap() = Some(state.clone());
+                render(cx.viewport(), state)
+            });
+            let context = ApplicationContext::empty(Default::default());
+            let mut session = UiSession::new();
+            let scale = UiScale::new(factor);
+            let viewport = UiRect::new(0.0, 0.0, 1000.0 / factor, 900.0 / factor);
+            session.render_view(&view, viewport, scale);
+            let state = exposed.lock().unwrap().clone().unwrap();
+            for (label, expected) in [("+", Some(110)), ("\u{2212}", Some(100)), ("Reset", None)] {
+                let button = session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|node| node.text.as_deref() == Some(label))
+                    .unwrap()
+                    .layout_rect;
+                // Native input arrives in physical pixels and is converted by lgui.
+                let center = Point::new(
+                    (button.left + button.right) / 2.0,
+                    (button.top + button.bottom) / 2.0,
+                );
+                let point = scale.logical_point(scale.physical_point(center));
+                for event in [
+                    InputEvent::PointerDown {
+                        pointer: PointerData::mouse(point),
+                        button: PointerButton::Left,
+                    },
+                    InputEvent::PointerUp {
+                        pointer: PointerData::mouse(point),
+                        button: PointerButton::Left,
+                    },
+                ] {
+                    let events = session.handle_input(event);
+                    dispatch_runtime_output(
+                        events,
+                        &context,
+                        &lgui::window::WindowId::new("settings-test"),
+                        |action| session.handle_default_action(action),
+                        |_| {},
+                    );
+                }
+                assert_eq!(
+                    state.get().settings().ui_scale,
+                    expected,
+                    "{label} at {factor}"
+                );
+                session.render_view(&view, viewport, scale);
+                let value = expected.map_or_else(|| "Auto".to_owned(), |value| format!("{value}%"));
+                assert!(
+                    session
+                        .tree()
+                        .nodes()
+                        .iter()
+                        .any(|node| node.text.as_deref() == Some(value.as_str()))
+                );
+            }
+        }
+    }
 
     #[test]
     fn toggles_flip_their_backing_preference() {
@@ -245,6 +361,47 @@ mod tests {
             app.preferences.values().terminal_font,
             FontSettings::TERMINAL
         );
+    }
+
+    #[test]
+    fn terminal_font_size_actions_preserve_editor_scroll_and_other_font_fields() {
+        let mut app = AppState::new();
+        app.workspace
+            .open_path("zoom.rs".into(), "fn main() {}\n".repeat(100));
+        app.workspace.set_active_scroll(17.0, 240.0);
+        app.set_terminal_font(FontSettings {
+            family: "Consolas".into(),
+            line_height: 180,
+            ..FontSettings::TERMINAL
+        });
+        app.terminal.ui.terminal_focused = true;
+        app.apply(Action::IncreaseFontSize);
+        assert_eq!(app.preferences.values().terminal_font.size, 13);
+        app.apply(Action::DecreaseFontSize);
+        assert_eq!(app.preferences.values().terminal_font.size, 12);
+        for _ in 0..40 {
+            app.apply(Action::IncreaseFontSize);
+        }
+        assert_eq!(app.preferences.values().terminal_font.size, fonts::MAX_SIZE);
+        for _ in 0..40 {
+            app.apply(Action::DecreaseFontSize);
+        }
+        assert_eq!(app.preferences.values().terminal_font.size, fonts::MIN_SIZE);
+        app.apply(Action::ResetFontSize);
+        assert_eq!(
+            app.preferences.values().terminal_font,
+            FontSettings {
+                family: "Consolas".into(),
+                line_height: 180,
+                ..FontSettings::TERMINAL
+            }
+        );
+        assert_eq!(app.preferences.values().editor_font, FontSettings::EDITOR);
+        assert_eq!(app.workspace.active_scroll(), (17.0, 240.0));
+        app.terminal.ui.terminal_focused = false;
+        app.apply(Action::IncreaseFontSize);
+        assert_eq!(app.preferences.values().editor_font.size, 13);
+        assert_eq!(app.preferences.values().terminal_font.size, 12);
     }
 
     #[test]

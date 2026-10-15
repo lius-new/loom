@@ -88,9 +88,9 @@ actions! {
     OpenKeymapFile => "workspace::OpenKeymapFile", "Open the user keymap.json";
     OpenSettingsFile => "workspace::OpenSettingsFile", "Open the user settings.json";
     OpenProjectSettingsFile => "workspace::OpenProjectSettingsFile", "Open the project .loom/settings.json";
-    IncreaseFontSize => "workspace::IncreaseFontSize", "Increase the editor font size";
-    DecreaseFontSize => "workspace::DecreaseFontSize", "Decrease the editor font size";
-    ResetFontSize => "workspace::ResetFontSize", "Reset the editor font size";
+    IncreaseFontSize => "workspace::IncreaseFontSize", "Increase the focused editor or terminal font size";
+    DecreaseFontSize => "workspace::DecreaseFontSize", "Decrease the focused editor or terminal font size";
+    ResetFontSize => "workspace::ResetFontSize", "Reset the focused editor or terminal font size";
     CloneRepository => "workspace::CloneRepository", "Clone a Git repository";
     CloseOverlay => "workspace::CloseOverlay", "Close menus and transient overlays";
     ActivatePaneLeft => "workspace::ActivatePaneLeft", "Focus the pane to the left";

@@ -291,6 +291,34 @@ mod tests {
     }
 
     #[test]
+    fn font_size_shortcuts_target_the_focused_editor_or_terminal() {
+        for terminal in [false, true] {
+            let mut app = editor_app();
+            app.terminal.ui.terminal_focused = terminal;
+            app.editor.focused = !terminal;
+            let s = secondary();
+            for (event, expected, size) in [
+                (character("=", s), Action::IncreaseFontSize, 13),
+                (
+                    character("+", s | KeyModifiers::SHIFT),
+                    Action::IncreaseFontSize,
+                    14,
+                ),
+                (character("-", s), Action::DecreaseFontSize, 13),
+                (character("0", s), Action::ResetFontSize, 12),
+            ] {
+                let resolved = action(&app, event);
+                assert_eq!(resolved, Some(expected));
+                app.apply(resolved.unwrap());
+                let prefs = app.preferences.values();
+                assert_eq!(prefs.editor_font.size, if terminal { 12 } else { size });
+                assert_eq!(prefs.terminal_font.size, if terminal { size } else { 12 });
+                assert_eq!(prefs.ui_scale, None);
+            }
+        }
+    }
+
+    #[test]
     fn terminal_keeps_shell_keys_and_clipboard_conventions() {
         let mut app = AppState::new();
         app.terminal.ui.terminal_focused = true;

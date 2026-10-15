@@ -155,6 +155,22 @@ directory. If a saved directory no longer exists, Loom falls back to the first
 workspace folder, then the application's working directory. Shell profiles
 and custom prompts are loaded without modifying user configuration files.
 
+### Interface size
+
+Settings → Appearance → **Interface scale** resizes the entire app, including
+tabs, sidebars, menus, icons and controls. Use **−** / **+** to choose 80%–200%
+in 10 percentage point steps, relative to the operating system's display scale.
+**Reset** restores automatic scaling. Changes apply immediately and persist
+across restarts. Editor and terminal font sizes can still be adjusted separately.
+
+**Ctrl + +** (or **Ctrl + =**) and **Ctrl + −** adjust the terminal font size
+while the terminal has focus, and the editor font size otherwise. **Ctrl + 0**
+resets that font's size. On macOS, use Command instead of Ctrl.
+
+The same setting is available in the user `settings.json` as `"ui_scale": 120`.
+Remove it or set it to `null` to restore automatic scaling. Like other appearance
+preferences, it cannot be overridden by project settings.
+
 ### Customizing key bindings
 
 Shortcuts come from a Zed-style keymap. The **Keymap** page (Ctrl + K Ctrl + S,

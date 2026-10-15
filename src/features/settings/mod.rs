@@ -3,6 +3,7 @@ pub mod font;
 pub mod jsonc;
 pub mod project;
 pub mod rules;
+pub mod scale;
 pub mod theme_id;
 
 pub mod model;
