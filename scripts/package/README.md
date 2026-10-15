@@ -10,10 +10,10 @@ node scripts/package/package.mjs all --platform linux   # explicit
 
 | Step | Purpose |
 | --- | --- |
-| `setup` | Download and verify the packaging toolchain and inputs into `.packaging/tools` (Windows: Inno Setup, MinGit; Linux: appimagetool and its runtime) |
-| `compile` | `cargo build --release --locked` |
-| `package` | Stage the application folder, check it, write the portable archive (Windows zip with the managed Git runtime, Linux tar.gz) |
-| `bundle` | Build the installers from the staged folder (Windows setup, Linux .deb and AppImage) and write `SHA256SUMS` |
+| `setup` | Download and verify the packaging toolchain and inputs into `.packaging/tools` (Windows: Inno Setup, MinGit; Linux: appimagetool and its runtime; macOS: checks the Xcode tools and adds both Rust targets) |
+| `compile` | `cargo build --release --locked` (macOS: both architectures, merged with `lipo`) |
+| `package` | Stage the application folder, check it, write the portable archive (Windows zip with the managed Git runtime, Linux tar.gz, macOS signed Loom.app in a zip) |
+| `bundle` | Build the installers from the staged folder (Windows setup, Linux .deb and AppImage, macOS .dmg) and write `SHA256SUMS` |
 
 Every step can run on its own; each checks that the previous one has run.
 `--expect-version x.y.z` fails early when `Cargo.toml` has a different version
@@ -23,7 +23,8 @@ Every step can run on its own; each checks that the previous one has run.
 
 All downloads, tools, staging folders and artifacts live in the git-ignored
 `.packaging/` directory. Nothing is installed system-wide; delete the folder to
-start clean. Inno Setup is installed with its own portable mode
+start clean. The one exception is `rustup target add` on macOS, which adds the
+Rust targets to the toolchain. Inno Setup is installed with its own portable mode
 (`/PORTABLE=1`), which writes no registry entries, shortcuts or uninstaller.
 
 ```
@@ -32,6 +33,7 @@ start clean. Inno Setup is installed with its own portable mode
   tools/       innosetup-<version>/, mingit-<version>/, appimagetool-<version>/
   windows/     stage/
   linux/       stage/, deb/, appimage/
+  macos/       stage/Loom.app, dmg/
   dist/        final artifacts
 ```
 
@@ -98,7 +100,35 @@ step prints it); building on ubuntu-24.04 means glibc 2.39 or newer.
 To upgrade appimagetool or the runtime, update the version, URL and SHA-256
 together in `linux/index.mjs`.
 
-## Other platforms
+## macOS
 
-macOS is not implemented yet (`--platform macos` reports this); its release
-workflow is a placeholder.
+Built on macOS with the Xcode Command Line Tools; nothing is downloaded.
+`compile` builds `aarch64-apple-darwin` and `x86_64-apple-darwin` with
+`MACOSX_DEPLOYMENT_TARGET=11.0` and merges them into one universal binary.
+
+- `Loom-<version>-macos-universal.dmg`: Loom.app next to an Applications link,
+  to drag-install.
+- `Loom-<version>-macos-universal.zip`: the same Loom.app (made with `ditto`,
+  which keeps the signature intact).
+- The bundle id is `io.github.lius-new.loom`. `package` fails if the binary
+  links anything outside `/usr/lib` and `/System/Library`, so a Homebrew
+  library can never sneak in.
+- No Git runtime is bundled: Loom uses the `git` on PATH (`/usr/bin/git`
+  offers to install the Command Line Tools when they are missing).
+- Terminal command: link `Loom.app/Contents/Resources/bin/loom` into PATH, for
+  example `ln -s /Applications/Loom.app/Contents/Resources/bin/loom
+  /usr/local/bin/loom`. It makes relative paths absolute and starts a new
+  instance.
+
+Signing is ad-hoc by default. Gatekeeper then blocks the downloaded app: open
+it with Control-click > Open, or run `xattr -dr com.apple.quarantine
+/Applications/Loom.app`. Setting `LOOM_MACOS_SIGN_IDENTITY` to a Developer ID
+Application identity in the keychain signs with the hardened runtime; adding
+`LOOM_MACOS_NOTARY_APPLE_ID`, `LOOM_MACOS_NOTARY_TEAM_ID` and
+`LOOM_MACOS_NOTARY_PASSWORD` (an app-specific password) also notarizes and
+staples the app and the disk image. `release-macos.yml` lists the matching
+repository secrets.
+
+Loom.app declares no document types: opening a file from Finder sends an
+Apple Event that Loom does not handle yet, so "Open With" would start Loom
+without the file.

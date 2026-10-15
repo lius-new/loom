@@ -7,10 +7,11 @@
 //   setup    Install the packaging toolchain into .packaging/tools
 //   compile  Build the release binary with Cargo
 //   package  Stage the application folder and write the portable archive
-//   bundle   Build the installers (Windows setup, Linux .deb and AppImage)
+//   bundle   Build the installers (Windows setup, Linux .deb and AppImage,
+//            macOS .dmg)
 //
 // Options:
-//   --platform <name>         windows or linux (default: the current OS)
+//   --platform <name>         windows, macos or linux (default: the current OS)
 //   --expect-version <x.y.z>  Fail unless Cargo.toml has this version
 //
 // Downloads, tools, staging folders and final artifacts all live under the
@@ -19,6 +20,7 @@
 import path from 'node:path';
 
 import * as linux from './linux/index.mjs';
+import * as macos from './macos/index.mjs';
 import * as windows from './windows/index.mjs';
 import { DIST_DIR, PackagingError, ROOT, cargoPackageField, fail } from './lib/util.mjs';
 
@@ -37,15 +39,19 @@ const PLATFORMS = {
     package: linux.packageApp,
     bundle: linux.bundle,
   },
+  macos: {
+    setup: macos.setup,
+    compile: macos.compile,
+    package: macos.packageApp,
+    bundle: macos.bundle,
+  },
 };
-
-const PLANNED_PLATFORMS = new Set(['macos']);
 
 function usage() {
   console.log(`Usage: node scripts/package/package.mjs <${[...STEPS, 'all'].join('|')}> [options]
 
 Options:
-  --platform <name>         windows or linux (default: the current OS)
+  --platform <name>         windows, macos or linux (default: the current OS)
   --expect-version <x.y.z>  Fail unless Cargo.toml has this version
   -h, --help                Show this help`);
 }
@@ -104,9 +110,6 @@ async function main() {
   const options = parseArguments(process.argv.slice(2));
   const platform = PLATFORMS[options.platform];
   if (!platform) {
-    if (PLANNED_PLATFORMS.has(options.platform)) {
-      fail(`Packaging for ${options.platform} is not implemented yet.`);
-    }
     fail(`Unknown platform: ${options.platform ?? process.platform}`);
   }
 

@@ -92,10 +92,10 @@ jobs:
             os: windows-2025
             target_name: windows-x86_64
             extension: zip
-          - label: macOS ARM64
+          - label: macOS universal
             os: macos-15
-            target_name: macos-aarch64
-            extension: tar.gz
+            target_name: macos-universal
+            extension: zip
 
     steps:
       - name: Check out repository
@@ -128,7 +128,9 @@ jobs:
       - name: Run tests
         run: cargo test --locked --workspace
 
+      # macOS packaging compiles both architectures itself.
       - name: Build release binary
+        if: runner.os != 'macOS'
         run: cargo build --locked --release
 
       # Same staged folder and tar.gz as the Linux release; it uses the system Git.
@@ -140,25 +142,16 @@ jobs:
           mkdir -p dist
           cp ".packaging/dist/Loom-$LOOM_VERSION-linux-x86_64.tar.gz" dist/
 
-      - name: Package macOS binary
+      # Same ad-hoc signed universal Loom.app and .zip as the macOS release.
+      - name: Package macOS app
         if: runner.os == 'macOS'
         shell: bash
-        env:
-          PACKAGE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}
-          ARCHIVE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}.${{ matrix.extension }}
         run: |
-          mkdir -p "dist/$PACKAGE"
-          cp target/release/Loom README.md LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md "dist/$PACKAGE/"
-          chmod +x "dist/$PACKAGE/Loom"
-          bash scripts/stage-system-git-runtime.sh "dist/$PACKAGE"
-          runtime="$PWD/dist/$PACKAGE/runtime/git"
-          smoke="$RUNNER_TEMP/loom-git-smoke"
-          rm -rf "$smoke"
-          mkdir -p "$smoke"
-          GIT_EXEC_PATH="$runtime/libexec/git-core" GIT_TEMPLATE_DIR="$runtime/share/git-core/templates" \
-            "$runtime/bin/git" -C "$smoke" init
-          GIT_EXEC_PATH="$runtime/libexec/git-core" "$runtime/bin/git" -C "$smoke" status --porcelain=v2
-          tar -czf "dist/$ARCHIVE" -C dist "$PACKAGE"
+          for step in setup compile package; do
+            node scripts/package/package.mjs "$step" --platform macos --expect-version "$LOOM_VERSION"
+          done
+          mkdir -p dist
+          cp ".packaging/dist/Loom-$LOOM_VERSION-macos-universal.zip" dist/
 
       - name: Package Windows binary
         if: runner.os == 'Windows'

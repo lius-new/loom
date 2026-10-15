@@ -127,7 +127,7 @@ jobs:
           path: dist
 
       # Each platform workflow adds its own assets to the shared release. The
-      # Windows workflow runs on the same tag, so creation can race: fall back
+      # other platforms run on the same tag, so creation can race: fall back
       # to uploading when the release appeared in the meantime.
       - name: Create or update GitHub release
         env:
