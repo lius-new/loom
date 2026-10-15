@@ -408,6 +408,44 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         .find(|(pane, _)| *pane == focused_pane)
         .map_or(editor_area, |(_, rect)| *rect);
     let code_rect = pane_body_rect(focused_rect);
+    let external_drop_state = state.clone();
+    let external_drop_focus = editor_focus.clone();
+    let external_drop_application = application.as_ref().clone();
+    let external_drop_panes = pane_rects.clone();
+    cx.use_effect(pane_rects.clone(), move || {
+        let cleanup = crate::infrastructure::file_drop::install(w, move |paths, (x, y)| {
+            let Some(pane) = external_drop_panes
+                .iter()
+                .find(|(_, rect)| rect.contains(lgui::core::Point::new(x, y)))
+                .map(|(pane, _)| *pane)
+            else {
+                return;
+            };
+            let state = external_drop_state.clone();
+            let focus = external_drop_focus.clone();
+            // Defer until the native window callback has returned.
+            external_drop_application.post(move || {
+                let loader = state.services().and_then(|runtime| runtime.file_loader());
+                let mut opened = false;
+                state.try_update(|app| {
+                    if app.editor.close_request.is_some()
+                        || app.git.ui.confirm.is_some()
+                        || app.git.ui.clone_visible
+                        || app.git.ui.stash_switch.is_some()
+                    {
+                        return false;
+                    }
+                    let paths = paths.into_iter().filter(|path| !path.is_dir()).collect();
+                    opened = super::file_loading::request_files(app, pane, paths, loader.as_ref());
+                    opened
+                });
+                if opened {
+                    focus.focus();
+                }
+            });
+        });
+        cleanup
+    });
     let tab_visibility_state = state.clone();
     let tab_visibility_items = strips
         .iter()

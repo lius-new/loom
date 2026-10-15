@@ -23,6 +23,7 @@ pub struct PendingFile {
     active: Option<FileId>,
     origin_pane: PaneId,
     folders: Vec<PathBuf>,
+    remaining: Vec<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -57,7 +58,22 @@ impl FileLoader {
                 let state = ready_state.clone();
                 ready_application.post(move || {
                     if lease.is_current(generation) {
-                        state.try_update(|app| finish(app, generation, prepared));
+                        let loader = state.services().and_then(|runtime| runtime.file_loader());
+                        state.try_update(|app| {
+                            let next = app
+                                .editor
+                                .pending_file
+                                .as_ref()
+                                .filter(|pending| {
+                                    pending.generation == generation && valid(app, pending)
+                                })
+                                .map(|pending| (pending.pane, pending.remaining.clone()));
+                            let changed = finish(app, generation, prepared);
+                            if let Some((pane, paths)) = next {
+                                request_files(app, pane, paths, loader.as_ref());
+                            }
+                            changed
+                        });
                     } else {
                         crate::infrastructure::ui_dispatch::retire(prepared);
                     }
@@ -122,6 +138,7 @@ pub fn request(
         active: app.workspace.pane(pane).and_then(|p| p.active()),
         origin_pane,
         folders: app.explorer.model.roots().to_vec(),
+        remaining: Vec::new(),
     };
     app.editor.pending_file = Some(pending.clone());
     if !loader.worker.send_work(pending.clone()) {
@@ -135,6 +152,42 @@ pub fn request(
 
 pub fn cancel(app: &mut AppState) {
     app.editor.pending_file = None;
+}
+
+/// Keep all files in a native drop; starting separate requests would supersede
+/// every file except the last. Each item still uses the interactive loader.
+pub(crate) fn request_files(
+    app: &mut AppState,
+    pane: PaneId,
+    paths: Vec<PathBuf>,
+    loader: Option<&FileLoader>,
+) -> bool {
+    if app.workspace.pane(pane).is_none() || paths.is_empty() {
+        return false;
+    }
+    app.workspace.activate_pane(pane);
+    let mut paths = paths.into_iter();
+    while let Some(path) = paths.next() {
+        if app.workspace.file_id_for_path(&path).is_some() || loader.is_none() {
+            crate::app::explorer::open_tree_file(app, path, 2, loader);
+        } else {
+            request(app, path, OpenMode::Permanent, None, loader);
+            if let Some(pending) = &mut app.editor.pending_file {
+                pending.remaining = paths.collect();
+            }
+            break;
+        }
+    }
+    true
+}
+
+fn valid(app: &AppState, pending: &PendingFile) -> bool {
+    app.explorer.model.roots() == pending.folders
+        && app.workspace.active_pane() == pending.origin_pane
+        && app
+            .workspace
+            .pane(pending.pane)
+            .is_some_and(|pane| pane.active() == pending.active)
 }
 
 fn show_indicator(app: &mut AppState, generation: u64, now: Instant) -> bool {
@@ -164,12 +217,7 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
         crate::infrastructure::ui_dispatch::retire(prepared);
         return false;
     };
-    let valid = app.explorer.model.roots() == pending.folders
-        && app.workspace.active_pane() == pending.origin_pane
-        && app
-            .workspace
-            .pane(pending.pane)
-            .is_some_and(|p| p.active() == pending.active);
+    let valid = valid(app, &pending);
     cancel(app);
     if !valid {
         crate::infrastructure::ui_dispatch::retire(prepared);
@@ -297,6 +345,123 @@ mod tests {
         fn drop(&mut self) {
             self.runtime.clear_file_loader();
         }
+    }
+
+    #[test]
+    fn external_drop_loads_every_file_in_order_and_keeps_tabs_permanent() {
+        let h = Harness::new(|request| {
+            if request.path == PathBuf::from("bad.bin") {
+                return Err("Unsupported encoding".into());
+            }
+            Ok(PreparedTextFile::new(request.path.clone(), "loaded".into()))
+        });
+        h.state.update(|app| {
+            let pane = app.workspace.active_pane();
+            assert!(request_files(
+                app,
+                pane,
+                ["first.txt", "bad.bin", "second.txt", "first.txt"]
+                    .map(PathBuf::from)
+                    .to_vec(),
+                h.runtime.file_loader().as_ref()
+            ));
+        });
+        h.pump_until(|app| app.editor.pending_file.is_none());
+        let app = h.state.get();
+        let paths: Vec<_> = app
+            .workspace
+            .active_items()
+            .iter()
+            .map(|id| app.workspace.meta(*id).unwrap().path.clone())
+            .collect();
+        assert_eq!(
+            paths,
+            ["current.txt", "first.txt", "second.txt"].map(PathBuf::from)
+        );
+        assert_eq!(
+            app.workspace.active_path(),
+            Some(std::path::Path::new("first.txt"))
+        );
+        assert!(app.workspace.preview().is_none());
+    }
+
+    #[test]
+    fn external_drop_opens_in_target_pane_and_preserves_unsaved_document() {
+        let h =
+            Harness::new(|request| Ok(PreparedTextFile::new(request.path.clone(), "new".into())));
+        let original = h.state.get().workspace.active_pane();
+        let mut target = original;
+        h.state.update(|app| {
+            app.workspace
+                .active_editor_mut()
+                .unwrap()
+                .replace_selection("unsaved ", loom_editor_core::text::EditKind::Typing)
+                .unwrap();
+            target = app
+                .workspace
+                .split_empty(original, crate::model::pane_layout::Direction::Right)
+                .unwrap();
+            request_files(
+                app,
+                target,
+                vec!["dropped.txt".into()],
+                h.runtime.file_loader().as_ref(),
+            );
+        });
+        h.pump_until(|app| app.editor.pending_file.is_none());
+        let app = h.state.get();
+        assert_eq!(app.workspace.active_pane(), target);
+        let original_file = app.workspace.pane(original).unwrap().active().unwrap();
+        assert_eq!(
+            app.workspace.meta(original_file).unwrap().path,
+            PathBuf::from("current.txt")
+        );
+        assert!(app.workspace.is_dirty(original_file));
+        assert_eq!(
+            app.workspace.editor(original).unwrap().text(),
+            "unsaved Keep this screen"
+        );
+        assert_eq!(
+            app.workspace.active_path(),
+            Some(std::path::Path::new("dropped.txt"))
+        );
+    }
+
+    #[test]
+    fn superseding_external_drop_cancels_its_remaining_files() {
+        let (release, gate) = mpsc::channel();
+        let h = Harness::new(move |request| {
+            if request.path == PathBuf::from("first.txt") {
+                gate.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+            Ok(PreparedTextFile::new(request.path.clone(), "loaded".into()))
+        });
+        h.state.update(|app| {
+            request_files(
+                app,
+                app.workspace.active_pane(),
+                vec!["first.txt".into(), "second.txt".into()],
+                h.runtime.file_loader().as_ref(),
+            );
+        });
+        h.open("replacement.txt");
+        release.send(()).unwrap();
+        h.pump_until(|app| app.editor.pending_file.is_none());
+        let app = h.state.get();
+        assert!(
+            app.workspace
+                .file_id_for_path(std::path::Path::new("first.txt"))
+                .is_none()
+        );
+        assert!(
+            app.workspace
+                .file_id_for_path(std::path::Path::new("second.txt"))
+                .is_none()
+        );
+        assert_eq!(
+            app.workspace.active_path(),
+            Some(std::path::Path::new("replacement.txt"))
+        );
     }
 
     #[test]
@@ -544,6 +709,7 @@ mod tests {
                             active: None,
                             origin_pane: pane,
                             folders: Vec::new(),
+                            remaining: Vec::new(),
                         });
                     } else {
                         app.workspace

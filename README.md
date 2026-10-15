@@ -25,6 +25,9 @@ loom/
   skipped on restore; unsaved text still uses the existing Save/Don't Save prompt.
 - Open UTF-8 text files up to 64 MiB from the Explorer, file dialog or launch
   arguments. Workspace search has a separate 4 MiB per-file limit.
+- On Windows, drag files from another application into an editor pane or its
+  tab strip to open them as permanent tabs in that pane. Multiple files open in
+  order; existing tabs and unsaved edits are preserved. Folders are ignored.
 - Interactive file opens prepare text and indexes on a background worker while
   retaining the current editor. A target tab reserves its icon slot; only opens
   taking more than 300 ms show a loading indicator. Close that tab to cancel;
