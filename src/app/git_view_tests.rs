@@ -65,6 +65,10 @@ mod panel_virtualization_tests {
             repository_state: RepositoryState::Normal,
             operation_step: None,
             head_oid: None,
+            tags: Arc::new(vec![TagInfo {
+                name: "v1.0.0".into(),
+                commit: Some("abc00004".into()),
+            }]),
             stashes: Arc::new(vec![StashInfo {
                 index: 0,
                 oid: "stash".into(),
@@ -196,8 +200,10 @@ mod panel_virtualization_tests {
         let worktrees = find(&session, "WORKTREES");
         let stashes = find(&session, "STASHES");
         let commits = find(&session, "COMMITS");
-        assert_eq!(worktrees.top, footer_top - SECTION_H * 3.0);
+        assert_eq!(worktrees.top, footer_top - SECTION_H * 4.0);
         assert_eq!(stashes.top, worktrees.bottom);
+        assert_eq!(find(&session, "TAGS").top, stashes.bottom);
+        assert_eq!(find(&session, "TAGS").bottom, commits.top);
         assert_eq!(commits.bottom, footer_top);
         assert!(find(&session, "UNSTAGED").top < worktrees.top);
         let commit_input = find(&session, "Commit message");
@@ -317,13 +323,14 @@ mod panel_virtualization_tests {
         assert_eq!(state.get().git.ui.scroll, changes_scroll);
         assert_eq!(find(&session, "WORKTREES").top, details_top);
         assert_eq!(find(&session, "STASHES").top, details_top + SECTION_H);
-        assert_eq!(find(&session, "COMMITS").top, details_top + SECTION_H * 2.0);
+        assert_eq!(find(&session, "TAGS").top, details_top + SECTION_H * 2.0);
+        assert_eq!(find(&session, "COMMITS").top, details_top + SECTION_H * 3.0);
         save_drawer_preview(&session, &context, viewport, "git-drawer-sticky-commits");
         collapse_sticky(
             &mut session,
             "COMMITS",
             HISTORY,
-            details_top + SECTION_H * 2.0,
+            details_top + SECTION_H * 3.0,
         );
         assert_eq!(state.get().git.ui.details_scroll, 0.0);
         collapse_sticky(&mut session, "UNSTAGED", UNSTAGED, TOPLINE_H);
@@ -395,6 +402,7 @@ mod panel_virtualization_tests {
         save_drawer_preview(&session, &context, viewport, "git-drawer-sticky-worktrees");
         state.update(|app| {
             app.git.ui.collapsed_sections.remove(&STASHES);
+            app.git.ui.collapsed_sections.remove(&TAGS);
             app.git.ui.collapsed_sections.remove(&HISTORY);
         });
         session.render_view(&view, viewport, UiScale::ONE);
@@ -410,8 +418,9 @@ mod panel_virtualization_tests {
         assert_eq!(find(&session, "STASHES").top, worktrees_top + SECTION_H);
         assert_eq!(
             find(&session, "COMMITS").top,
-            worktrees_top + SECTION_H * 2.0
+            worktrees_top + SECTION_H * 3.0
         );
+        assert_eq!(find(&session, "TAGS").top, worktrees_top + SECTION_H * 2.0);
         save_drawer_preview(&session, &context, viewport, "git-drawer-stacked-details");
         collapse_sticky(&mut session, "WORKTREES", WORKTREES, worktrees_top);
         assert_eq!(state.get().git.ui.details_scroll, 0.0);
@@ -432,6 +441,7 @@ mod panel_virtualization_tests {
             app.git.ui.scroll = 0.0;
             app.git.ui.details_scroll = 0.0;
             app.git.ui.collapsed_sections.insert(STASHES);
+            app.git.ui.collapsed_sections.insert(TAGS);
             app.git.ui.collapsed_sections.insert(HISTORY);
         });
         session.render_view(&view, viewport, UiScale::ONE);
@@ -515,6 +525,28 @@ mod panel_virtualization_tests {
         }
         assert!(state.get().git.model.history_commit().is_none());
         state.update(|app| {
+            app.git.ui.collapsed_sections.insert(HISTORY);
+            app.git.ui.collapsed_sections.remove(&TAGS);
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(find(&session, "Tag: v1.0.0").top >= find(&session, "TAGS").bottom);
+        save_drawer_preview(&session, &context, viewport, "git-drawer-tags");
+        store.update(|snapshot| {
+            Arc::make_mut(&mut snapshot.repositories)
+                .get_mut(&id)
+                .unwrap()
+                .tags = Arc::default();
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|node| node.text.as_deref() == Some("No tags yet."))
+        );
+        state.update(|app| {
+            app.git.ui.collapsed_sections.insert(TAGS);
             app.git.ui.collapsed_sections.insert(HISTORY);
             app.git.ui.collapsed_sections.remove(&WORKTREES);
         });
@@ -660,6 +692,7 @@ mod panel_virtualization_tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            tags: Default::default(),
             worktrees: Default::default(),
             features: Default::default(),
             generation: 0,
@@ -822,6 +855,112 @@ mod panel_virtualization_tests {
         assert!(middle.start > 100); // Entries after the old 100-file cap are reachable.
         let end = visible_rows(0.0, 100_000.0 * ROW_H, 100_000.0 * ROW_H + 480.0, 100_000);
         assert_eq!(end.end, 100_000);
+    }
+
+    #[test]
+    fn tag_click_opens_its_commit_and_non_commit_tags_remain_labels() {
+        use crate::ui::git::commands::{Binding, Command, Frame};
+        use crate::ui::git::state::GitPanelState;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        let viewport = UiRect::new(0.0, 0.0, 180.0, 80.0);
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state_with(GitPanelState::default);
+            let captured = captured.clone();
+            let binding = Binding::new(state.into(), Frame::default, move |command| {
+                if let Command::OpenCommitChanges { root, oid, focus } = command {
+                    captured.lock().unwrap().push((root, oid, focus));
+                }
+                true
+            });
+            let focus = cx.focus_handle(UiId::new("tag-test-editor"));
+            let mut rows = panel(viewport, VisualStyle::default());
+            for (index, tag) in [
+                TagInfo {
+                    name: "releases/very-long-release-name".into(),
+                    commit: Some("resolved-commit".into()),
+                },
+                TagInfo {
+                    name: "tree".into(),
+                    commit: None,
+                },
+            ]
+            .iter()
+            .enumerate()
+            {
+                rows = rows.child(tag_row(
+                    UiRect::new(
+                        0.0,
+                        index as f32 * ROW_H,
+                        viewport.right,
+                        (index + 1) as f32 * ROW_H,
+                    ),
+                    tag,
+                    false,
+                    std::path::Path::new("repo"),
+                    &binding,
+                    &focus,
+                ));
+            }
+            rows
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let tag = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| {
+                node.semantics.as_ref().is_some_and(|semantics| {
+                    semantics.name.as_deref() == Some("Tag: releases/very-long-release-name")
+                })
+            })
+            .unwrap();
+        assert_eq!(tag.semantics.as_ref().unwrap().role, SemanticRole::Button);
+        let tree_tag = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| {
+                node.semantics
+                    .as_ref()
+                    .is_some_and(|semantics| semantics.name.as_deref() == Some("Tag: tree"))
+            })
+            .unwrap();
+        assert_eq!(
+            tree_tag.semantics.as_ref().unwrap().role,
+            SemanticRole::Label
+        );
+        let context = ApplicationContext::empty(Default::default());
+        for y in [ROW_H / 2.0, ROW_H * 1.5] {
+            let point = PointerData::mouse(Point::new(40.0, y));
+            for input in [
+                InputEvent::PointerDown {
+                    pointer: point.clone(),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: point.clone(),
+                    button: PointerButton::Left,
+                },
+            ] {
+                dispatch_runtime_output(
+                    session.handle_input(input),
+                    &context,
+                    &lgui::window::WindowId::new("tag-row-test"),
+                    |action| session.handle_default_action(action),
+                    |_| {},
+                );
+            }
+        }
+        assert_eq!(
+            *requests.lock().unwrap(),
+            vec![(PathBuf::from("repo"), "resolved-commit".into(), None)]
+        );
     }
 
     #[test]
@@ -1280,6 +1419,7 @@ mod panel_action_tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            tags: Default::default(),
             worktrees: Default::default(),
             features: Default::default(),
             generation: 0,

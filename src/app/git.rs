@@ -2297,6 +2297,7 @@ mod tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            tags: Default::default(),
             worktrees: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 0,

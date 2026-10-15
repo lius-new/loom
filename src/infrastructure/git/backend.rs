@@ -429,17 +429,43 @@ impl CliGitBackend {
         Ok(branches)
     }
 
-    pub fn tags(&self, repository: &Path) -> GitResult<Vec<String>> {
+    pub fn tags(&self, repository: &Path) -> GitResult<Vec<TagInfo>> {
         let text = self
             .runner
             .run(
                 GitCommand::new()
                     .cwd(repository)
-                    .args(["tag", "--list", "--sort=-creatordate"])
+                    .args([
+                        "for-each-ref",
+                        "--sort=-creatordate",
+                        "--format=%(refname:strip=2)%00%(objecttype)%00%(objectname)%00%(*objecttype)%00%(*objectname)",
+                        "refs/tags/",
+                    ])
                     .read_only(),
             )?
             .stdout_text()?;
-        Ok(text.lines().map(str::to_owned).collect())
+        text.lines()
+            .map(|line| {
+                let fields = line.split('\0').collect::<Vec<_>>();
+                if fields.len() != 5 {
+                    return Err(GitError::new(
+                        GitErrorKind::InvalidOutput,
+                        "Invalid tag output.",
+                    ));
+                }
+                let commit = if fields[1] == "commit" {
+                    Some(fields[2].to_owned())
+                } else if fields[3] == "commit" {
+                    Some(fields[4].to_owned())
+                } else {
+                    None
+                };
+                Ok(TagInfo {
+                    name: fields[0].to_owned(),
+                    commit,
+                })
+            })
+            .collect()
     }
 
     pub fn switch(&self, repository: &Path, branch: &str) -> GitResult<()> {
@@ -1233,6 +1259,12 @@ impl CliGitBackend {
             operation_step,
             head_oid: parsed.head_oid,
             stashes: read_stashes(&repository.common_dir).into(),
+            tags: if untracked == "no" {
+                Vec::new()
+            } else {
+                self.tags(&repository.worktree_root)?
+            }
+            .into(),
             worktrees: if untracked == "no" {
                 Vec::new()
             } else {
@@ -1719,6 +1751,54 @@ pub(crate) mod tests {
             "first\n"
         );
         assert_eq!(scan(&backend).stashes.len(), 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tag_snapshots_include_lightweight_annotated_and_packed_refs_outside_head() {
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        let git = |args: &[&str]| {
+            backend
+                .runner()
+                .run(GitCommand::new().cwd(&root).args(args))
+                .unwrap()
+                .stdout_text()
+                .unwrap()
+        };
+        git(&["commit", "--allow-empty", "-m", "initial"]);
+        let initial = git(&["rev-parse", "HEAD"]).trim().to_owned();
+        git(&["tag", "v1.0"]);
+        git(&["tag", "-a", "releases/v2.0", "-m", "Release two"]);
+        git(&["switch", "--orphan", "other"]);
+        git(&["commit", "--allow-empty", "-m", "other root"]);
+        git(&["tag", "other-root"]);
+        let other = git(&["rev-parse", "HEAD"]).trim().to_owned();
+        git(&["switch", "main"]);
+        // A tag can also point at a tree; it must be listed without a commit action.
+        git(&["tag", "tree", "HEAD^{tree}"]);
+        git(&["pack-refs", "--all"]);
+        let discovered = backend.discover(std::slice::from_ref(&root)).unwrap();
+        let scan = || backend.status(&discovered[0], RepositoryId(1), 1).unwrap();
+        let before = scan();
+        for (name, commit) in [
+            ("v1.0", Some(&initial)),
+            ("releases/v2.0", Some(&initial)),
+            ("other-root", Some(&other)),
+            ("tree", None),
+        ] {
+            let tag = before.tags.iter().find(|tag| tag.name == name).unwrap();
+            assert_eq!(tag.commit.as_ref(), commit);
+        }
+        assert_eq!(before.tags.len(), 4);
+        git(&["tag", "-d", "v1.0"]);
+        let after = scan();
+        assert_eq!(after.tags.len(), 3);
+        assert!(
+            !before.same_state(&after),
+            "Tag changes must refresh the drawer even with unchanged HEAD"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

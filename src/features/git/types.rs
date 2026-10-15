@@ -205,6 +205,8 @@ pub struct RepositorySnapshot {
     pub head_oid: Option<String>,
     /// Stashes, newest first.
     pub stashes: Arc<Vec<StashInfo>>,
+    /// Repository tags, newest first, including tags outside HEAD's history.
+    pub tags: Arc<Vec<TagInfo>>,
     /// All worktrees sharing this repository, including the main worktree.
     pub worktrees: Arc<Vec<WorktreeInfo>>,
     pub features: RepositoryFeatures,
@@ -238,6 +240,7 @@ impl RepositorySnapshot {
             operation_step,
             head_oid,
             stashes,
+            tags,
             worktrees,
             features,
             generation: _,
@@ -256,6 +259,7 @@ impl RepositorySnapshot {
             && *operation_step == other.operation_step
             && *head_oid == other.head_oid
             && *stashes == other.stashes
+            && *tags == other.tags
             && *worktrees == other.worktrees
             && *features == other.features
     }
@@ -500,6 +504,13 @@ pub struct StashInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagInfo {
+    pub name: String,
+    /// The commit a lightweight or annotated tag points at, when applicable.
+    pub commit: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorktreeInfo {
     pub path: PathBuf,
     pub oid: String,
@@ -572,6 +583,7 @@ mod tests {
             operation_step: None,
             head_oid: None,
             stashes: Default::default(),
+            tags: Default::default(),
             worktrees: Default::default(),
             features: RepositoryFeatures::default(),
             generation: 1,

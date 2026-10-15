@@ -18,7 +18,7 @@ pub struct GitUiState {
     /// The drawer row under the pointer, which shows its action buttons.
     pub hover: Option<GitHover>,
     pub scroll: f32,
-    /// Independent scroll of the Worktrees/Stashes/Commits area.
+    /// Independent scroll of the Worktrees/Stashes/Tags/Commits area.
     pub details_scroll: f32,
     pub scrollbar_dragging: bool,
     pub scrollbar_drag_offset: f32,
@@ -68,6 +68,7 @@ impl Default for GitUiState {
             collapsed_sections: [
                 crate::ui::git::panel::WORKTREES,
                 crate::ui::git::panel::STASHES,
+                crate::ui::git::panel::TAGS,
                 crate::ui::git::panel::HISTORY,
             ]
             .into_iter()

@@ -11,7 +11,7 @@ use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 use crate::features::git::model::{ExpandedCommit, GitHistory};
 use crate::features::git::{
     ChangeKind, CommitSummary, ConflictSide, DiffTarget, FileState, RepositorySnapshot,
-    RepositoryState, StashInfo, WorktreeInfo,
+    RepositoryState, StashInfo, TagInfo, WorktreeInfo,
 };
 use crate::ui::components::input::{
     self, AccessInputOptions, InputBinding, InputState, InputStyle,
@@ -425,8 +425,9 @@ pub fn render(
         section_height(WORKTREES, repository.worktrees.len() * 2)
     } else {
         0.0
-    } + section_height(HISTORY, history_rows.len());
-    let detail_headers = 1
+    } + section_height(TAGS, repository.tags.len().max(1))
+        + section_height(HISTORY, history_rows.len());
+    let detail_headers = 2
         + usize::from(!repository.stashes.is_empty())
         + usize::from(repository.worktrees.len() > 1);
     let (content_rect, prompt_rect, details_rect) =
@@ -618,6 +619,54 @@ pub fn render(
                     state.clone(),
                     store.clone(),
                 ));
+            }
+        }
+    }
+    {
+        let collapsed = app.ui.collapsed_sections.contains(&TAGS);
+        headers.push(SectionHeader {
+            rect: UiRect::new(rect.left, y, content_rect.right, y + SECTION_H),
+            filter: TAGS,
+            title: "TAGS",
+            collapsed,
+            buttons: Vec::new(),
+        });
+        y += SECTION_H;
+        if !collapsed {
+            let rows_top = y;
+            let count = repository.tags.len().max(1);
+            let visible = visible_rows(
+                rows_top,
+                content_rect.top + scroll,
+                content_rect.bottom + scroll,
+                count,
+            );
+            y += count as f32 * ROW_H;
+            for index in visible {
+                let row_y = rows_top + index as f32 * ROW_H;
+                let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
+                if let Some(tag) = repository.tags.get(index) {
+                    let hover = GitHover::Tag(tag.name.clone());
+                    let hovered = app.ui.hover.as_ref() == Some(&hover);
+                    hover_targets.push((row_rect, hover));
+                    content.push(tag_row(
+                        row_rect,
+                        tag,
+                        hovered,
+                        &repository.worktree_root,
+                        &state,
+                        &editor_focus,
+                    ));
+                } else {
+                    content.push(
+                        text(
+                            UiRect::new(rect.left + 26.0, row_y, rect.right - 12.0, row_y + ROW_H),
+                            "No tags yet.",
+                            theme::mono(theme::c().text_ghost, theme::SMALL),
+                        )
+                        .into(),
+                    );
+                }
             }
         }
     }
@@ -1074,6 +1123,7 @@ pub const STASHES: u8 = 4;
 /// The recent commits, last in the drawer.
 pub const HISTORY: u8 = 5;
 pub const WORKTREES: u8 = 6;
+pub const TAGS: u8 = 7;
 
 /// The drawer row under the pointer, which shows its action buttons.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1085,6 +1135,8 @@ pub enum GitHover {
     Folder(u8, PathBuf),
     /// A stash, by commit id.
     Stash(String),
+    /// A tag, by its full name.
+    Tag(String),
     /// A history commit, by commit id.
     Commit(String),
     /// A file of an expanded history commit.
@@ -1707,6 +1759,78 @@ pub(crate) fn history_row(
     }
 }
 
+/// Tags open their target commit without changing the checked-out revision.
+pub(crate) fn tag_row(
+    rect: UiRect,
+    tag: &TagInfo,
+    hovered: bool,
+    repository: &std::path::Path,
+    state: &Binding,
+    editor_focus: &UiFocusHandle,
+) -> Element {
+    let label_rect = UiRect::new(rect.left + 30.0, rect.top, rect.right - 12.0, rect.bottom);
+    let label =
+        crate::ui::tabs::ellipsize(&tag.name, label_rect.width().max(0.0), theme::SMALL, 400);
+    let mut row = panel(
+        rect,
+        if hovered {
+            VisualStyle::filled(theme::c().surface)
+        } else {
+            VisualStyle::default()
+        },
+    )
+    .key(format!("git-tag-{}", tag.name))
+    .semantics(
+        Semantics::new(if tag.commit.is_some() {
+            SemanticRole::Button
+        } else {
+            SemanticRole::Label
+        })
+        .name(format!("Tag: {}", tag.name)),
+    )
+    .child(crate::ui::drawer::drawer_icon(
+        UiId::owned(format!("git-tag-icon-{}", tag.name)),
+        "git-ref-tag",
+        theme::icon_rect(UiRect::new(
+            rect.left + 10.0,
+            rect.top + 4.0,
+            rect.left + 22.0,
+            rect.bottom - 4.0,
+        )),
+        theme::c().syntax.type_name,
+    ))
+    .child(clip(label_rect, 0.0, 0.0).child(text(
+        label_rect,
+        label,
+        theme::mono(
+            if hovered {
+                theme::c().text
+            } else {
+                theme::c().text_dim
+            },
+            theme::SMALL,
+        ),
+    )));
+    if let Some(oid) = &tag.commit {
+        let state = state.clone();
+        let focus = editor_focus.clone();
+        let root = repository.to_path_buf();
+        let oid = oid.clone();
+        row = row
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                state.dispatch(Command::OpenCommitChanges {
+                    root: root.clone(),
+                    oid: oid.clone(),
+                    focus: None,
+                });
+                focus.focus();
+            });
+    }
+    row
+}
+
 /// A collapsible section title with right-hand buttons.
 pub(crate) fn section_header(
     rect: UiRect,
@@ -1723,6 +1847,7 @@ pub(crate) fn section_header(
         UNTRACKED => "git-section-untracked-chevron",
         STASHES => "git-section-stashes-chevron",
         WORKTREES => "git-section-worktrees-chevron",
+        TAGS => "git-section-tags-chevron",
         _ => "git-section-history-chevron",
     };
     let section = panel(rect, VisualStyle::filled(theme::c().sidebar))

@@ -41,6 +41,7 @@ fn large_repository_prepare_and_panel_frame() {
         operation_step: None,
         head_oid: None,
         stashes: Arc::default(),
+        tags: Arc::default(),
         worktrees: Arc::default(),
         features: Default::default(),
         generation: 1,
