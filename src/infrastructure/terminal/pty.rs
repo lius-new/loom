@@ -1,5 +1,7 @@
 //! Platform PTY process adapters, retaining the existing launch and quoting policy.
-use crate::features::terminal::{ShellKind, TerminalSize};
+#[cfg(windows)]
+use crate::features::terminal::ShellKind;
+use crate::features::terminal::TerminalSize;
 #[cfg(not(windows))]
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 #[cfg(windows)]
@@ -201,7 +203,7 @@ pub(super) fn spawn_shell_option(
         .program
         .as_deref()
         .ok_or("Shell program is unavailable")?;
-    let mut command = CommandBuilder::new(&program);
+    let mut command = CommandBuilder::new(program);
     let integration = crate::infrastructure::terminal::integration::ShellIntegration::for_launch(
         program,
         &option.args,

@@ -3,6 +3,7 @@
 mod tests {
     use crate::app::terminal_binding::TerminalTab;
     use crate::app::terminal_binding::fixtures::Sessions as TerminalTabs;
+    #[cfg(windows)]
     use crate::app::terminal_runtime::TerminalDisplay;
     use crate::features::terminal::ShellKind;
     use crate::features::terminal::TerminalSize;
@@ -11,9 +12,11 @@ mod tests {
     #[cfg(windows)]
     use crate::infrastructure::terminal::pty::shell_friendly_path;
     use crate::infrastructure::terminal::session::TerminalController;
+    #[cfg(windows)]
     use lgui::ApplicationHandle;
     use std::env;
     use std::path::PathBuf;
+    #[cfg(windows)]
     use std::sync::Arc;
     #[cfg(windows)]
     use std::thread;

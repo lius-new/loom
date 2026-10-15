@@ -11,7 +11,7 @@ use crate::features::terminal::ShellKind;
 
 use crate::infrastructure::session_filesystem as filesystem;
 pub(crate) use filesystem::session_path;
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(crate) use filesystem::write_json;
 
 pub use crate::domain::window_geometry::WindowGeometry;
