@@ -947,6 +947,40 @@ impl CliGitBackend {
         Ok(())
     }
 
+    pub fn push_tag(&self, repository: &Path, remote: &str, name: &str) -> GitResult<()> {
+        self.validate_tag_name(repository, name)?;
+        validate_ref(remote)?;
+        if !self
+            .remotes(repository)?
+            .iter()
+            .any(|entry| entry.name == remote)
+        {
+            return Err(GitError::new(
+                GitErrorKind::Other,
+                "The remote is no longer configured.",
+            ));
+        }
+        let reference = format!("refs/tags/{name}");
+        let refspec = format!("{reference}:{reference}");
+        self.runner.run(
+            GitCommand::new()
+                .cwd(repository)
+                .args([
+                    "-c",
+                    &format!("remote.{remote}.mirror=false"),
+                    "push",
+                    "--progress",
+                    "--no-follow-tags",
+                    "--",
+                    remote,
+                    &refspec,
+                ])
+                .allow_prompt()
+                .timeout(Duration::from_secs(60 * 30)),
+        )?;
+        Ok(())
+    }
+
     pub fn continue_operation(&self, repository: &Path, state: RepositoryState) -> GitResult<()> {
         let args = match state {
             RepositoryState::MergeInProgress => vec!["merge", "--continue"],
@@ -1896,6 +1930,83 @@ pub(crate) mod tests {
             !before.same_state(&after),
             "Tag changes must refresh the drawer even with unchanged HEAD"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pushing_a_tag_sends_only_that_ref_and_preserves_remote_conflicts() {
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        let git = |args: &[&str]| {
+            backend
+                .runner()
+                .run(GitCommand::new().cwd(&root).args(args))
+                .unwrap()
+                .stdout_text()
+                .unwrap()
+        };
+        let remote = root.join("remote.git");
+        git(&["init", "--bare", remote.to_str().unwrap()]);
+        backend
+            .add_remote(&root, "origin", remote.to_str().unwrap())
+            .unwrap();
+        git(&["commit", "--allow-empty", "-m", "initial"]);
+        let initial = git(&["rev-parse", "HEAD"]).trim().to_owned();
+        backend
+            .create_tag(&root, "releases/v1", Some(&initial))
+            .unwrap();
+        git(&[
+            "tag",
+            "-a",
+            "--no-sign",
+            "-m",
+            "Other release",
+            "other/annotation",
+        ]);
+        git(&["branch", "releases/v1"]);
+        git(&["config", "push.followTags", "true"]);
+        git(&["config", "remote.origin.mirror", "true"]);
+        git(&["config", "remote.origin.push", "+refs/heads/*:refs/heads/*"]);
+        let remote_git = |args: &[&str]| {
+            backend
+                .runner()
+                .run(GitCommand::new().cwd(&remote).args(args))
+                .unwrap()
+                .stdout_text()
+                .unwrap()
+        };
+        backend.push_tag(&root, "origin", "releases/v1").unwrap();
+        assert_eq!(
+            remote_git(&["for-each-ref", "--format=%(refname)"])
+                .lines()
+                .collect::<Vec<_>>(),
+            ["refs/tags/releases/v1"]
+        );
+        assert_eq!(
+            remote_git(&["rev-parse", "refs/tags/releases/v1"]).trim(),
+            initial
+        );
+        git(&["commit", "--allow-empty", "-m", "next"]);
+        git(&["tag", "--force", "--no-sign", "releases/v1", "HEAD"]);
+        assert!(backend.push_tag(&root, "origin", "releases/v1").is_err());
+        assert_eq!(
+            remote_git(&["rev-parse", "refs/tags/releases/v1"]).trim(),
+            initial
+        );
+        backend
+            .push_tag(&root, "origin", "other/annotation")
+            .unwrap();
+        assert_eq!(
+            remote_git(&["rev-parse", "refs/tags/other/annotation"]),
+            git(&["rev-parse", "refs/tags/other/annotation"])
+        );
+        assert_eq!(
+            remote_git(&["cat-file", "-t", "refs/tags/other/annotation"]).trim(),
+            "tag"
+        );
+        assert!(remote_git(&["for-each-ref", "refs/heads"]).is_empty());
+        assert!(backend.push_tag(&root, "missing", "releases/v1").is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 

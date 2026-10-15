@@ -1392,8 +1392,11 @@ mod panel_virtualization_tests {
             &state.get().git,
             &GitStoreSnapshot::default(),
         );
-        assert_eq!(entries.len(), 1);
-        assert!(matches!(&entries[0], menu::Entry::Item { label, .. } if label == "Delete Tag…"));
+        assert_eq!(entries.len(), 3);
+        assert!(
+            matches!(&entries[0], menu::Entry::Item { label, .. } if label == "Push Tag to Remote…")
+        );
+        assert!(matches!(&entries[2], menu::Entry::Item { label, .. } if label == "Delete Tag…"));
         save_drawer_preview(&session, &context, viewport, "git-tag-context-menu");
         click(&mut session, "Delete Tag…", PointerButton::Left);
         click(&mut session, "Cancel", PointerButton::Left);
@@ -1405,6 +1408,140 @@ mod panel_virtualization_tests {
         assert_eq!(
             requests.lock().unwrap().last().unwrap(),
             &("delete".into(), "repo".into(), "v1.0".into())
+        );
+    }
+
+    #[test]
+    fn tag_push_menu_selects_the_exact_remote_and_tag() {
+        use crate::ui::git::{
+            commands::{Binding, Command, Frame},
+            menu,
+            state::GitPanelState,
+        };
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+        let viewport = UiRect::new(0.0, 0.0, 420.0, 260.0);
+        let requests = Arc::new(Mutex::new(Vec::<(PathBuf, String, String)>::new()));
+        let captured = requests.clone();
+        let exposed = Arc::new(Mutex::new(None::<State<GitPanelState>>));
+        let output = exposed.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state_with(|| {
+                let mut app = GitPanelState::default();
+                app.ui.menu = Some(GitMenu {
+                    pos: (24.0, 24.0),
+                    target: GitMenuTarget::Tags {
+                        repository: "repo".into(),
+                        name: "releases/v1".into(),
+                    },
+                    hover: None,
+                });
+                app
+            });
+            *output.lock().unwrap() = Some(state.clone());
+            let target = state.clone();
+            let captured = captured.clone();
+            let binding = Binding::new(state.clone().into(), Frame::default, move |command| {
+                match command {
+                    Command::RequestPushTag { root, name, pos } => target.update(|app| {
+                        app.ui.menu = Some(GitMenu {
+                            pos,
+                            target: GitMenuTarget::TagPushRemotes {
+                                repository: root,
+                                name,
+                                request: 7,
+                                remotes: None,
+                            },
+                            hover: None,
+                        });
+                    }),
+                    Command::PushTag { root, name, remote } => {
+                        captured.lock().unwrap().push((root, name, remote))
+                    }
+                    _ => panic!("Unexpected tag push menu command"),
+                }
+                true
+            });
+            let store = cx.state_with(GitStoreSnapshot::default);
+            let mut root = panel(viewport, VisualStyle::filled(theme::c().bg));
+            if let Some(menu) = state.get().ui.menu {
+                root = root.child(menu::render(
+                    viewport,
+                    &menu,
+                    binding,
+                    store.into(),
+                    cx.focus_handle(UiId::new("tag-push-editor")),
+                ));
+            }
+            root
+        });
+        let context = ApplicationContext::empty(Default::default());
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        let click = |session: &mut UiSession, label: &str| {
+            let node = session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| node.text.as_deref() == Some(label))
+                .unwrap_or_else(|| panic!("Missing menu entry {label}"));
+            let rect = session.tree().hit_for_id(&node.id).unwrap().rect;
+            let pointer =
+                PointerData::mouse(Point::new(rect.left + 12.0, (rect.top + rect.bottom) / 2.0));
+            for input in [
+                InputEvent::PointerDown {
+                    pointer: pointer.clone(),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: pointer.clone(),
+                    button: PointerButton::Left,
+                },
+            ] {
+                dispatch_runtime_output(
+                    session.handle_input(input),
+                    &context,
+                    &lgui::window::WindowId::new("tag-push-menu-test"),
+                    |action| session.handle_default_action(action),
+                    |_| {},
+                );
+                session.render_view(&view, viewport, UiScale::ONE);
+            }
+        };
+        click(&mut session, "Push Tag to Remote…");
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|node| node.text.as_deref() == Some("Loading remotes…"))
+        );
+        assert!(requests.lock().unwrap().is_empty());
+        state.update(|app| {
+            let menu = app.ui.menu.as_mut().unwrap();
+            assert!(!menu.finish_tag_remotes(6, Ok(vec!["stale".into()])));
+            assert!(menu.finish_tag_remotes(7, Ok(vec!["origin".into(), "upstream".into()])));
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|node| node.text.as_deref() == Some("Push to origin"))
+        );
+        save_drawer_preview(&session, &context, viewport, "git-tag-push-remotes");
+        click(&mut session, "Push to upstream");
+        assert!(state.get().ui.menu.is_none());
+        assert_eq!(
+            *requests.lock().unwrap(),
+            vec![("repo".into(), "releases/v1".into(), "upstream".into())]
         );
     }
 
@@ -2551,7 +2688,7 @@ mod menu_tests {
             .into_iter()
             .filter_map(|entry| match entry {
                 Entry::Item { label, .. } => Some(label),
-                Entry::Separator => None,
+                Entry::Separator | Entry::Message(_) => None,
             })
             .collect()
     }
@@ -2592,6 +2729,38 @@ mod menu_tests {
             conflicts.iter().any(|label| label == "Keep Current (Ours)")
                 && conflicts.iter().any(|label| label == "Mark as Resolved")
         );
+    }
+
+    #[test]
+    fn tag_remote_menu_handles_empty_errors_and_replaced_requests() {
+        let app = AppState::new();
+        let mut menu = GitMenu {
+            pos: (0.0, 0.0),
+            target: GitMenuTarget::TagPushRemotes {
+                repository: "repo".into(),
+                name: "v1.0".into(),
+                request: 2,
+                remotes: None,
+            },
+            hover: None,
+        };
+        assert!(!menu.finish_tag_remotes(1, Ok(vec!["stale".into()])));
+        assert!(
+            matches!(&entries(&menu.target, &app.git, &GitStoreSnapshot::default())[0], Entry::Message(message) if message == "Loading remotes…")
+        );
+        assert!(menu.finish_tag_remotes(2, Ok(Vec::new())));
+        assert!(
+            matches!(&entries(&menu.target, &app.git, &GitStoreSnapshot::default())[0], Entry::Message(message) if message == "No remotes configured.")
+        );
+        assert!(menu.finish_tag_remotes(2, Err("Could not load remotes.".into())));
+        assert!(
+            matches!(&entries(&menu.target, &app.git, &GitStoreSnapshot::default())[0], Entry::Message(message) if message == "Could not load remotes.")
+        );
+        menu.target = GitMenuTarget::Tags {
+            repository: "other".into(),
+            name: "v2.0".into(),
+        };
+        assert!(!menu.finish_tag_remotes(2, Ok(vec!["origin".into()])));
     }
 
     #[test]

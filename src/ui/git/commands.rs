@@ -80,6 +80,16 @@ pub enum Command {
         root: PathBuf,
         name: String,
     },
+    RequestPushTag {
+        root: PathBuf,
+        name: String,
+        pos: (f32, f32),
+    },
+    PushTag {
+        root: PathBuf,
+        name: String,
+        remote: String,
+    },
     LoadMoreHistory {
         root: PathBuf,
     },

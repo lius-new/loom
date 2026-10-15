@@ -824,6 +824,111 @@ pub fn delete_tag(
     )
 }
 
+pub fn request_push_tag(
+    state: &AppContext,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    name: String,
+    pos: (f32, f32),
+) -> bool {
+    use crate::ui::git::menu::{GitMenu, GitMenuTarget};
+    static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let snapshot = store.get();
+    let Some(repository) = snapshot
+        .repository_for_path(root)
+        .filter(|repository| repository.worktree_root == root)
+    else {
+        return false;
+    };
+    if snapshot.operation.is_some() || !repository.tags.iter().any(|tag| tag.name == name) {
+        return false;
+    }
+    let root = repository.worktree_root.clone();
+    let request = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state.update(|app| {
+        app.git.ui.clear_hover_cards();
+        app.git.ui.menu = Some(GitMenu {
+            pos,
+            target: GitMenuTarget::TagPushRemotes {
+                repository: root.clone(),
+                name,
+                request,
+                remotes: None,
+            },
+            hover: None,
+        });
+    });
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
+        finish_tag_remotes(state, request, Err("Git is not available.".into()));
+        return true;
+    };
+    let worker_state = state.clone();
+    let worker = thread::Builder::new()
+        .name("loom-git-tag-remotes".into())
+        .spawn(move || {
+            let remotes = crate::infrastructure::git::service()
+                .and_then(|service| service.backend().remotes(&root))
+                .map(|remotes| {
+                    let mut names = remotes
+                        .into_iter()
+                        .map(|remote| remote.name)
+                        .collect::<Vec<_>>();
+                    names.sort_by_key(|name| name != "origin");
+                    names
+                })
+                .map_err(|error| error.user_message());
+            application.post(move || finish_tag_remotes(&worker_state, request, remotes));
+        });
+    if let Err(error) = worker {
+        finish_tag_remotes(
+            state,
+            request,
+            Err(format!("Could not load remotes: {error}")),
+        );
+    }
+    true
+}
+
+fn finish_tag_remotes(state: &AppContext, request: u64, remotes: Result<Vec<String>, String>) {
+    state.try_update(|app| {
+        app.git
+            .ui
+            .menu
+            .as_mut()
+            .is_some_and(|menu| menu.finish_tag_remotes(request, remotes))
+    });
+}
+
+pub fn push_tag(
+    state: &AppContext,
+    store: &State<GitStoreSnapshot>,
+    root: &Path,
+    name: String,
+    remote: String,
+) -> bool {
+    let Some(repository) = store
+        .get()
+        .repository_for_path(root)
+        .filter(|repository| {
+            repository.worktree_root == root && repository.tags.iter().any(|tag| tag.name == name)
+        })
+        .cloned()
+    else {
+        return false;
+    };
+    let message = format!("Pushing tag {name} to {remote}…");
+    let success = format!("Pushed tag {name} to {remote}.");
+    run_with(
+        state,
+        store,
+        repository,
+        OperationKind::Push,
+        message,
+        move |service, root| service.write(root, |backend| backend.push_tag(root, &remote, &name)),
+        move |app, ()| app.show_success(success),
+    )
+}
+
 /// Ask before dropping the stash `oid`.
 pub fn request_drop_stash(
     state: &AppContext,

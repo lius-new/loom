@@ -82,6 +82,12 @@ pub(crate) fn run(state: &AppContext, store: &State<GitStoreSnapshot>, command: 
             super::git::request_delete_tag(state, store, &root, name)
         }
         Command::DeleteTag { root, name } => super::git::delete_tag(state, store, &root, name),
+        Command::RequestPushTag { root, name, pos } => {
+            super::git::request_push_tag(state, store, &root, name, pos)
+        }
+        Command::PushTag { root, name, remote } => {
+            super::git::push_tag(state, store, &root, name, remote)
+        }
         Command::LoadMoreHistory { root } => {
             if store.get().active().is_some_and(|repository| {
                 repository.worktree_root == root

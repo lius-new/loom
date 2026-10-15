@@ -37,6 +37,12 @@ pub enum GitMenuTarget {
         repository: PathBuf,
         name: String,
     },
+    TagPushRemotes {
+        repository: PathBuf,
+        name: String,
+        request: u64,
+        remotes: Option<Result<Vec<String>, String>>,
+    },
     /// The workspace's repositories, to choose the active one.
     Repositories,
 }
@@ -47,6 +53,27 @@ pub struct GitMenu {
     pub pos: (f32, f32),
     pub target: GitMenuTarget,
     pub hover: Option<usize>,
+}
+
+impl GitMenu {
+    pub(crate) fn finish_tag_remotes(
+        &mut self,
+        request: u64,
+        result: Result<Vec<String>, String>,
+    ) -> bool {
+        if let GitMenuTarget::TagPushRemotes {
+            request: current,
+            remotes,
+            ..
+        } = &mut self.target
+            && *current == request
+        {
+            *remotes = Some(result);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +98,8 @@ pub(crate) enum MenuAction {
     RevertCommit,
     CreateTag,
     DeleteTag,
+    ChooseTagRemote,
+    PushTag(usize),
 }
 
 pub(crate) enum Entry {
@@ -81,6 +110,7 @@ pub(crate) enum Entry {
         action: MenuAction,
     },
     Separator,
+    Message(String),
 }
 
 pub(crate) fn item(label: &str, action: MenuAction) -> Entry {
@@ -151,7 +181,25 @@ pub(crate) fn entries(
             Entry::Separator,
             item("Revert Commit", MenuAction::RevertCommit),
         ],
-        GitMenuTarget::Tags { .. } => vec![item("Delete Tag…", MenuAction::DeleteTag)],
+        GitMenuTarget::Tags { .. } => vec![
+            item("Push Tag to Remote…", MenuAction::ChooseTagRemote),
+            Entry::Separator,
+            item("Delete Tag…", MenuAction::DeleteTag),
+        ],
+        GitMenuTarget::TagPushRemotes { remotes, .. } => match remotes {
+            None => vec![Entry::Message("Loading remotes…".into())],
+            Some(Err(error)) => vec![Entry::Message(error.clone())],
+            Some(Ok(remotes)) if remotes.is_empty() => {
+                vec![Entry::Message("No remotes configured.".into())]
+            }
+            Some(Ok(remotes)) => remotes
+                .iter()
+                .enumerate()
+                .map(|(index, remote)| {
+                    item(&format!("Push to {remote}"), MenuAction::PushTag(index))
+                })
+                .collect(),
+        },
         GitMenuTarget::Repositories => {
             let active = git.active().map(|repository| repository.id);
             git.repositories
@@ -174,6 +222,7 @@ pub(crate) fn perform(
     state: &Binding,
     store: &Snapshot,
     editor_focus: &UiFocusHandle,
+    pos: (f32, f32),
 ) {
     if let GitMenuTarget::File {
         repository,
@@ -254,12 +303,21 @@ pub(crate) fn perform(
             | MenuAction::OpenCommitChanges
             | MenuAction::RevertCommit
             | MenuAction::CreateTag
+            | MenuAction::ChooseTagRemote
+            | MenuAction::PushTag(_)
             | MenuAction::DeleteTag => {}
         }
         return;
     }
     if let GitMenuTarget::Tags { repository, name } = target {
         match action {
+            MenuAction::ChooseTagRemote => {
+                state.dispatch(Command::RequestPushTag {
+                    root: repository.clone(),
+                    name: name.clone(),
+                    pos,
+                });
+            }
             MenuAction::DeleteTag => {
                 state.dispatch(Command::RequestDeleteTag {
                     root: repository.clone(),
@@ -267,6 +325,24 @@ pub(crate) fn perform(
                 });
             }
             _ => {}
+        }
+        return;
+    }
+    if let GitMenuTarget::TagPushRemotes {
+        repository,
+        name,
+        remotes: Some(Ok(remotes)),
+        ..
+    } = target
+    {
+        if let MenuAction::PushTag(index) = action
+            && let Some(remote) = remotes.get(index)
+        {
+            state.dispatch(Command::PushTag {
+                root: repository.clone(),
+                name: name.clone(),
+                remote: remote.clone(),
+            });
         }
         return;
     }
@@ -353,7 +429,7 @@ pub fn render(
     let menu_w = entries
         .iter()
         .map(|entry| match entry {
-            Entry::Item { label, .. } => label_left + measure(label) + 24.0,
+            Entry::Item { label, .. } | Entry::Message(label) => label_left + measure(label) + 24.0,
             Entry::Separator => 0.0,
         })
         .fold(MENU_W, f32::max);
@@ -361,7 +437,7 @@ pub fn render(
         + entries
             .iter()
             .map(|entry| match entry {
-                Entry::Item { .. } => ITEM_H,
+                Entry::Item { .. } | Entry::Message(_) => ITEM_H,
                 Entry::Separator => SEP_H,
             })
             .sum::<f32>();
@@ -409,6 +485,15 @@ pub fn render(
     let mut y = card.top + PAD;
     let mut index = 0usize;
     for entry in entries {
+        if let Entry::Message(message) = &entry {
+            surface = surface.child(text(
+                UiRect::new(card.left + 10.0, y, card.right - 10.0, y + ITEM_H),
+                message.clone(),
+                theme::mono(theme::c().text_dim, theme::UI_SIZE),
+            ));
+            y += ITEM_H;
+            continue;
+        }
         let Entry::Item {
             label,
             checked,
@@ -431,6 +516,7 @@ pub fn render(
         let click_store = store.clone();
         let click_focus = editor_focus.clone();
         let target = menu.target.clone();
+        let pos = menu.pos;
         let mut row = panel(
             rect,
             if hovered {
@@ -460,6 +546,7 @@ pub fn render(
                 &click_state,
                 &click_store,
                 &click_focus,
+                pos,
             );
         });
         let color = if hovered {
