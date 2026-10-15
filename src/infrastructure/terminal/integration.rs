@@ -263,7 +263,18 @@ unset LOOM_INTEGRATION_DIR LOOM_ZDOTDIR LOOM_TERMINAL_CWD
 
 const SH: &str = r#"
 if [ -n "$LOOM_ORIGINAL_ENV" ] && [ -r "$LOOM_ORIGINAL_ENV" ]; then . "$LOOM_ORIGINAL_ENV"; fi
-PS1='$(printf "\033]9;9;%s\007" "$PWD")'"${PS1:-\$ }"
+# Bash running as sh (macOS /bin/sh) counts unmarked prompt escapes as visible
+# text and splits long ones with carriage returns, so report outside PS1 there.
+if [ -n "$BASH_VERSION" ]; then
+    __loom_report_cwd() {
+        __loom_status=$?
+        printf '\033]9;9;%s\007' "$PWD"
+        return "$__loom_status"
+    }
+    PROMPT_COMMAND="__loom_report_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+else
+    PS1='$(printf "\033]9;9;%s\007" "$PWD")'"${PS1:-\$ }"
+fi
 unset LOOM_ORIGINAL_ENV LOOM_TERMINAL_CWD
 "#;
 

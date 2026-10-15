@@ -790,7 +790,10 @@ mod tests {
             button: PointerButton::Left,
         });
         assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
-        assert_eq!(tabs.get().tabs()[0].label(), "pwsh · Other");
+        assert_eq!(
+            tabs.get().tabs()[0].label(),
+            format!("{} · Other", ShellKind::default().short_label())
+        );
 
         tabs.update(|tabs| tabs.update_programs(&[(1, Some("node".into()))]));
         state.update(|app| {
@@ -811,7 +814,10 @@ mod tests {
             pointer: automatic,
             button: PointerButton::Left,
         });
-        assert_eq!(tabs.get().tabs()[0].label(), "pwsh · node");
+        assert_eq!(
+            tabs.get().tabs()[0].label(),
+            format!("{} · node", ShellKind::default().short_label())
+        );
         tabs.update(|tabs| tabs.update_programs(&[(1, None)]));
 
         send(InputEvent::PointerDown {
