@@ -18,13 +18,14 @@ use crate::ui::theme;
 pub(crate) const CARD_W: f32 = 480.0;
 pub(crate) const CARD_H: f32 = 156.0;
 pub(crate) const WORKTREE_CARD_H: f32 = 258.0;
-pub(crate) const TAG_CARD_H: f32 = 210.0;
+pub(crate) const TAG_CARD_H: f32 = 258.0;
 pub(crate) const TAG_INPUT_ID: &str = "git-tag-name";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitConfirmAction {
     CreateTag {
         repository: PathBuf,
+        branch: String,
         target: String,
     },
     DeleteTag {
@@ -96,7 +97,9 @@ pub(crate) fn resolve(state: &Binding, confirmed: bool) {
         return;
     }
     match confirm.action {
-        GitConfirmAction::CreateTag { repository, target } => {
+        GitConfirmAction::CreateTag {
+            repository, target, ..
+        } => {
             state.dispatch(Command::CreateTag {
                 root: repository,
                 name,
@@ -238,10 +241,12 @@ pub fn render(
         confirm.title.clone(),
         theme::sans_semibold(theme::c().text_bright, 15.0),
     ));
-    if create_tag {
+    if let GitConfirmAction::CreateTag { branch, target, .. } = &confirm.action {
         root = root.child(tag_form(
             card,
             &confirm.message,
+            branch,
+            target,
             state.clone(),
             tag_input_focus,
         ));
@@ -327,14 +332,21 @@ pub fn render(
     )
 }
 
-fn tag_form(card: UiRect, message: &str, state: Binding, focus: UiFocusHandle) -> Element {
+fn tag_form(
+    card: UiRect,
+    message: &str,
+    branch: &str,
+    target: &str,
+    state: Binding,
+    focus: UiFocusHandle,
+) -> Element {
     use crate::ui::components::input::{self, AccessInputOptions, InputBinding, InputStyle};
     use std::sync::Arc;
     let field = UiRect::new(
         card.left + 22.0,
-        card.top + 80.0,
+        card.top + 138.0,
         card.right - 22.0,
-        card.top + 112.0,
+        card.top + 170.0,
     );
     let submit = state.clone();
     let cancel = state.clone();
@@ -345,6 +357,40 @@ fn tag_form(card: UiRect, message: &str, state: Binding, focus: UiFocusHandle) -
             UiRect::new(field.left, card.top + 48.0, field.right, card.top + 70.0),
             message.to_owned(),
             theme::sans(theme::c().text_muted, theme::UI_SIZE),
+        ))
+        .child(text(
+            UiRect::new(
+                field.left,
+                card.top + 84.0,
+                field.left + 64.0,
+                card.top + 108.0,
+            ),
+            "Branch",
+            theme::sans(theme::c().text_muted, theme::UI_SIZE),
+        ))
+        .child(text(
+            UiRect::new(
+                field.left + 74.0,
+                card.top + 84.0,
+                field.right,
+                card.top + 108.0,
+            ),
+            crate::ui::tabs::ellipsize(
+                &format!(
+                    "{} ({})",
+                    branch,
+                    crate::features::git::diff_document::short_oid(target)
+                ),
+                (field.width() - 74.0).max(0.0),
+                theme::UI_SIZE,
+                400,
+            ),
+            theme::mono(theme::c().text, theme::UI_SIZE),
+        ))
+        .child(text(
+            UiRect::new(field.left, card.top + 116.0, field.right, card.top + 132.0),
+            "Tag name",
+            theme::sans(theme::c().text_muted, theme::SMALL),
         ))
         .child(theme::bordered(
             field,

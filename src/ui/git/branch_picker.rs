@@ -819,7 +819,15 @@ pub(crate) fn item_row(
     // Secondary actions live on the selected branch row, in the same
     // trailing slot as its metadata. They never add another list item.
     let action = worktree_checkout.filter(|_| selected);
-    let action_w = measure("New Worktree", theme::SMALL, 400) + 16.0;
+    let tag_action = match row {
+        Row::Branch(branch)
+            if selected && !branch.oid.is_empty() && store.get().operation.is_none() =>
+        {
+            Some(branch.clone())
+        }
+        _ => None,
+    };
+    let action_w = super::action_button::width("New Worktree");
     let trailing_right = rect.right - 10.0;
     let action_rect = UiRect::new(
         trailing_right - action_w,
@@ -827,7 +835,18 @@ pub(crate) fn item_row(
         trailing_right,
         rect.bottom - 2.0,
     );
-    let meta = if action.is_some() {
+    let tag_right = if action.is_some() {
+        action_rect.left - 6.0
+    } else {
+        trailing_right
+    };
+    let tag_rect = UiRect::new(
+        tag_right - super::action_button::width("New Tag"),
+        rect.top + 2.0,
+        tag_right,
+        rect.bottom - 2.0,
+    );
+    let meta = if action.is_some() || tag_action.is_some() {
         String::new()
     } else {
         meta
@@ -839,7 +858,9 @@ pub(crate) fn item_row(
     };
     let meta =
         crate::ui::tabs::ellipsize(&meta, (meta_w - TEXT_MARGIN).max(0.0), theme::SMALL, 400);
-    let label_right = if action.is_some() {
+    let label_right = if tag_action.is_some() {
+        tag_rect.left - 8.0
+    } else if action.is_some() {
         action_rect.left - 8.0
     } else {
         trailing_right - meta_w - 8.0
@@ -878,34 +899,36 @@ pub(crate) fn item_row(
     if let Some(checkout) = action {
         let repository = repository.to_path_buf();
         let name = format!("Check out {} in a new worktree", checkout.target());
-        let mut label_style = theme::sans(theme::c().text_soft, theme::SMALL);
-        label_style.align = lgui::prelude::TextAlign::Center;
-        item = item.child(
-            Element::new(move |cx| {
-                let hovered = cx.context.interaction_flags(&cx.id).hovered;
-                let style = VisualStyle::filled(if hovered {
-                    theme::c().surface
-                } else {
-                    theme::c().active_line
-                })
-                .radius(3.0);
-                UiElement::panel(cx.id, action_rect, style).children(cx.children)
-            })
-            .key(format!("branch-picker.worktree-{index}"))
-            .event_policy(EventPolicy::INTERACTIVE)
-            .semantics(Semantics::new(SemanticRole::Button).name(name))
-            .cursor(CursorIcon::Pointer)
-            .on_click(move |cx: &mut UiEventContext| {
-                cx.stop_propagation();
-                {
-                    state.dispatch(Command::RequestCreateWorktree {
-                        repository: repository.clone(),
-                        checkout: checkout.clone(),
-                    });
-                };
-            })
-            .child(text(action_rect, "New Worktree", label_style)),
-        );
+        let state = state.clone();
+        item = item.child(super::action_button::render(
+            action_rect,
+            format!("branch-picker.worktree-{index}"),
+            "New Worktree",
+            name,
+            move || {
+                state.dispatch(Command::RequestCreateWorktree {
+                    repository: repository.clone(),
+                    checkout: checkout.clone(),
+                });
+            },
+        ));
+    }
+    if let Some(branch) = tag_action {
+        let repository = repository.to_path_buf();
+        let name = format!("Create tag from {}", branch.name);
+        item = item.child(super::action_button::render(
+            tag_rect,
+            format!("branch-picker.tag-{index}"),
+            "New Tag",
+            name,
+            move || {
+                state.dispatch(Command::RequestCreateTag {
+                    root: repository.clone(),
+                    branch: branch.name.clone(),
+                    target: branch.oid.clone(),
+                });
+            },
+        ));
     }
     item
 }

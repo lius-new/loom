@@ -70,7 +70,11 @@ pub(crate) fn run(state: &AppContext, store: &State<GitStoreSnapshot>, command: 
             true
         }
         Command::Commit => super::git::commit(state, store),
-        Command::RequestCreateTag { root } => super::git::request_create_tag(state, store, &root),
+        Command::RequestCreateTag {
+            root,
+            branch,
+            target,
+        } => super::git::request_create_tag(state, store, &root, branch, target),
         Command::CreateTag { root, name, target } => {
             super::git::create_tag(state, store, &root, name, target)
         }

@@ -188,7 +188,6 @@ fn append_section_headers(
     content: &mut Vec<Element>,
     hover_targets: &mut Vec<(UiRect, GitHover)>,
     state: &Binding,
-    repository: &std::path::Path,
 ) {
     let mut targets = Vec::with_capacity(headers.len() + hover_targets.len());
     for (index, header) in headers.into_iter().enumerate() {
@@ -198,7 +197,6 @@ fn append_section_headers(
             .max(viewport.top + scroll + index as f32 * SECTION_H);
         let rect = UiRect::new(header.rect.left, top, header.rect.right, top + SECTION_H);
         targets.push((rect, GitHover::Section(header.filter)));
-        let filter = header.filter;
         let element = section_header(
             rect,
             header.filter,
@@ -207,11 +205,7 @@ fn append_section_headers(
             header.buttons,
             state.clone(),
         );
-        content.push(if filter == TAGS {
-            tag_context_menu(element, repository, None, state)
-        } else {
-            element
-        });
+        content.push(element);
     }
     targets.append(hover_targets);
     *hover_targets = targets;
@@ -543,7 +537,6 @@ pub fn render(
         &mut content,
         &mut hover_targets,
         &state,
-        &repository.worktree_root,
     );
     let changes_content = std::mem::take(&mut content);
     let changes_hover = std::mem::take(&mut hover_targets);
@@ -733,7 +726,6 @@ pub fn render(
         &mut content,
         &mut hover_targets,
         &state,
-        &repository.worktree_root,
     );
     let hover_regions = [
         (changes_rect, changes_scroll, changes_hover),
@@ -1883,13 +1875,13 @@ pub(crate) fn tag_row(
             theme::SMALL,
         ),
     )));
-    tag_context_menu(row, repository, Some(tag.name.clone()), state)
+    tag_context_menu(row, repository, tag.name.clone(), state)
 }
 
 fn tag_context_menu(
     element: Element,
     repository: &std::path::Path,
-    name: Option<String>,
+    name: String,
     state: &Binding,
 ) -> Element {
     let state = state.clone();

@@ -682,6 +682,8 @@ pub fn request_create_tag(
     state: &AppContext,
     store: &State<GitStoreSnapshot>,
     root: &Path,
+    branch: String,
+    target: String,
 ) -> bool {
     let snapshot = store.get();
     let Some(repository) = snapshot
@@ -693,23 +695,25 @@ pub fn request_create_tag(
     if snapshot.operation.is_some() {
         return false;
     }
-    let Some(target) = repository.head_oid.clone() else {
+    if target.is_empty() {
         state.update(|app| app.show_toast("Create a commit before adding a tag."));
         return false;
-    };
+    }
     let repository = repository.worktree_root.clone();
     state.update(|app| {
         app.git.ui.menu = None;
+        app.git.ui.branch_picker = None;
         app.git.ui.tag_input = Default::default();
         app.git.ui.confirm = Some(GitConfirm {
-            title: "Create Tag".into(),
-            message: format!(
-                "Create a local tag at commit {}.",
-                target.chars().take(8).collect::<String>()
-            ),
+            title: "New Tag".into(),
+            message: "Create a local tag at the selected branch's current commit.".into(),
             confirm_label: "Create",
             destructive: false,
-            action: GitConfirmAction::CreateTag { repository, target },
+            action: GitConfirmAction::CreateTag {
+                repository,
+                branch,
+                target,
+            },
             restore_terminal: app.terminal.ui.terminal_focused,
         });
     });

@@ -1,4 +1,5 @@
 //! Source Control views: projected state, frame inputs and semantic commands.
+pub(crate) mod action_button;
 pub mod badge;
 pub mod branch_picker;
 pub mod clone;

@@ -1053,7 +1053,7 @@ mod panel_virtualization_tests {
     }
 
     #[test]
-    fn tag_context_menus_create_and_delete_through_the_dialogs() {
+    fn branch_action_creates_tag_and_tag_menu_deletes_through_the_dialogs() {
         use crate::ui::components::state_access::StateAccess;
         use crate::ui::git::{
             commands::{Binding, Command, Frame},
@@ -1112,7 +1112,10 @@ mod panel_virtualization_tests {
                 Frame::default,
                 move |command| match command {
                     Command::CreateTag { root, name, target } => {
-                        assert_eq!(target, "abc00000");
+                        assert_eq!(
+                            target, "def00000",
+                            "Use the selected branch tip instead of HEAD"
+                        );
                         captured.lock().unwrap().push(("create".into(), root, name));
                         true
                     }
@@ -1123,6 +1126,7 @@ mod panel_virtualization_tests {
                     Command::OpenCommitChanges { .. } => {
                         panic!("Right-click must not open commit changes")
                     }
+                    Command::Checkout { .. } => panic!("Creating a tag must not switch branches"),
                     command => crate::app::git_view::run(&dispatch_state, &dispatch_store, command),
                 },
             );
@@ -1145,6 +1149,18 @@ mod panel_virtualization_tests {
                 cx.focus_handle(UiId::new("tag-menu-commit")),
                 UiId::new("tag-menu-commit"),
             );
+            if let Some(picker) = state.get().git.ui.branch_picker {
+                root = root.child(crate::ui::git::branch_picker::render(
+                    viewport,
+                    24.0,
+                    &picker,
+                    state.get().git.ui.branch_picker_input.text(),
+                    binding.clone(),
+                    store.clone().into(),
+                    cx.focus_handle(UiId::new("tag-test-branch-input")),
+                    UiId::new("tag-test-branch-input"),
+                ));
+            }
             if let Some(menu) = state.get().git.ui.menu {
                 root = root.child(menu::render(
                     viewport,
@@ -1220,19 +1236,57 @@ mod panel_virtualization_tests {
                 },
             );
         };
-        click(&mut session, "TAGS", PointerButton::Right);
+        assert!(
+            !session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|node| node.text.as_deref() == Some("New Tag")),
+            "Tag creation belongs to the branch picker"
+        );
+        state.update(|app| {
+            app.git.ui.branch_picker = Some(crate::ui::git::branch_picker::BranchPicker {
+                repository: "repo".into(),
+                repository_name: "repo".into(),
+                anchor_x: 8.0,
+                listing: BranchListing::Ready {
+                    branches: vec![BranchInfo {
+                        name: "feature/release".into(),
+                        remote: false,
+                        current: false,
+                        oid: "def00000".into(),
+                        upstream: None,
+                        worktree_path: None,
+                    }]
+                    .into(),
+                    worktrees: Arc::from([]),
+                },
+                collapsed_worktrees: Default::default(),
+                selected: 0,
+                scroll: 0.0,
+                query: String::new(),
+                sequence: 1,
+                restore_terminal: false,
+            });
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        save_drawer_preview(&session, &context, viewport, "git-branch-new-tag-action");
+        click(&mut session, "New Tag", PointerButton::Left);
         assert!(!state.get().git.ui.collapsed_sections.contains(&TAGS));
-        assert!(matches!(
-            state.get().git.ui.menu.unwrap().target,
-            GitMenuTarget::Tags { name: None, .. }
-        ));
-        click(&mut session, "Create Tag…", PointerButton::Left);
+        assert!(state.get().git.ui.branch_picker.is_none());
         assert!(
             matches!(
                 state.get().git.ui.confirm.map(|confirm| confirm.action),
                 Some(GitConfirmAction::CreateTag { .. })
             ),
-            "Create menu must open its dialog"
+            "The branch action must open its dialog"
+        );
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|node| node.text.as_deref() == Some("feature/release (def00000)"))
         );
         session.runtime().run_effects();
         let updates = session.apply_pending_updates();
@@ -1270,8 +1324,15 @@ mod panel_virtualization_tests {
         );
         click(&mut session, "Tag: v1.0", PointerButton::Right);
         assert!(
-            matches!(state.get().git.ui.menu.unwrap().target, GitMenuTarget::Tags { name: Some(name), .. } if name == "v1.0")
+            matches!(state.get().git.ui.menu.unwrap().target, GitMenuTarget::Tags { name, .. } if name == "v1.0")
         );
+        let entries = menu::entries(
+            &state.get().git.ui.menu.unwrap().target,
+            &state.get().git,
+            &GitStoreSnapshot::default(),
+        );
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(&entries[0], menu::Entry::Item { label, .. } if label == "Delete Tag…"));
         save_drawer_preview(&session, &context, viewport, "git-tag-context-menu");
         click(&mut session, "Delete Tag…", PointerButton::Left);
         click(&mut session, "Cancel", PointerButton::Left);
