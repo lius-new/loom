@@ -1,0 +1,33 @@
+//! Opaque separators aligned to the display's physical pixel grid.
+
+use lgui::core::{PhysicalRect, UiElement};
+use lgui::prelude::{Element, UiRect, VisualStyle};
+
+use crate::ui::theme;
+
+pub fn bottom(rect: UiRect) -> Element {
+    horizontal(rect, true)
+}
+
+pub fn top(rect: UiRect) -> Element {
+    horizontal(rect, false)
+}
+
+fn horizontal(rect: UiRect, bottom_edge: bool) -> Element {
+    Element::new(move |cx| {
+        let scale = cx.context.scale();
+        let width = scale.physical_length(1.0);
+        let top = if bottom_edge {
+            scale.physical_value(rect.bottom) - width
+        } else {
+            scale.physical_value(rect.top)
+        };
+        let line = scale.logical_rect(PhysicalRect::new(
+            scale.physical_value(rect.left),
+            top,
+            scale.physical_value(rect.right),
+            top + width,
+        ));
+        UiElement::panel(cx.id, line, VisualStyle::filled(theme::c().border))
+    })
+}

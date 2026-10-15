@@ -107,8 +107,5 @@ pub fn header(
             )),
     );
 
-    header.child(panel(
-        UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-        VisualStyle::filled(theme::c().border),
-    ))
+    header.child(crate::ui::components::divider::bottom(rect))
 }

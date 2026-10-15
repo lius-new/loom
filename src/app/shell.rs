@@ -920,12 +920,6 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     ));
 
     for (&(pane, strip), &(_, body)) in strips.iter().zip(bodies.iter()) {
-        root = root.child(super::tabs::render(
-            pane,
-            strip,
-            state.clone(),
-            editor_focus.clone(),
-        ));
         // Only the focused pane's surface carries the focusable id, so
         // keyboard and IME input always reach the focused pane.
         let surface_id = if pane == focused_pane {
@@ -971,6 +965,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 super::chrome::welcome(body, state.clone(), surface_id, editor_focus.clone())
             }
         });
+        // The surface's fractional top edge must not paint over the tab border.
+        root = root.child(super::tabs::render(
+            pane,
+            strip,
+            state.clone(),
+            editor_focus.clone(),
+        ));
     }
     for sash in s.workspace.layout().sashes(editor_area.into()) {
         root = root.child(super::pane_chrome::render(sash, state.clone()));

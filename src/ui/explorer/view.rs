@@ -82,7 +82,7 @@ pub fn render(
     let header_rect = UiRect::new(rect.left, rect.top, rect.right, rect.top + HEADER_H);
     let content_rect = UiRect::new(rect.left, header_rect.bottom, rect.right, rect.bottom);
 
-    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar)).child(header);
+    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
     // Background right-click capture: covers the drawer at the lowest z-order.
     // Rows and the resize handle are drawn later and sit above it, so they win
@@ -278,6 +278,9 @@ pub fn render(
             ));
         }
     }
+
+    // Keep the tree's fractional top edge beneath the header separator.
+    bar = bar.child(header);
 
     // Resize handle on the drawer's left edge. An 8px invisible hit strip
     // (drawn last, above the file rows) carries the drag; the 1px filled panel

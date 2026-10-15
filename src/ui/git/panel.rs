@@ -275,15 +275,6 @@ pub fn render(
             )),
         );
     }
-    root = root.child(panel(
-        UiRect::new(
-            rect.left,
-            rect.top + TOPLINE_H - 1.0,
-            rect.right,
-            rect.top + TOPLINE_H,
-        ),
-        VisualStyle::filled(theme::c().border),
-    ));
     let Some(repository) = git.active() else {
         let message = if git.initializing {
             "Detecting Git and scanning repositories…".to_owned()
@@ -303,7 +294,9 @@ pub fn render(
             message,
             theme::sans(theme::c().text_dim, theme::UI_SIZE),
         ));
-        return root.child(git_resize_handle(rect, state, resizing));
+        return root
+            .child(crate::ui::components::divider::bottom(topline))
+            .child(git_resize_handle(rect, state, resizing));
     };
 
     let prepared = git.presentation.repositories.get(&repository.id);
@@ -694,16 +687,15 @@ pub fn render(
             details_max_scroll,
             state.clone(),
             ScrollRegion::Details,
-        ))
-        .child(panel(
-            UiRect::new(
-                rect.left,
-                details_rect.top,
-                rect.right,
-                (details_rect.top + 1.0).min(details_rect.bottom),
-            ),
-            VisualStyle::filled(theme::c().border),
         ));
+    if details_rect.height() > 0.0 {
+        root = root.child(crate::ui::components::divider::top(UiRect::new(
+            rect.left,
+            details_rect.top,
+            rect.right,
+            details_rect.bottom,
+        )));
+    }
     let field = UiRect::new(
         rect.left + 12.0,
         prompt_top + 4.0,
@@ -764,6 +756,8 @@ pub fn render(
     )
     .child(commit_options_button(options_rect, state.clone()));
     root = root.child(clip(field, 0.0, 0.0).child(commit_field));
+    // Keep the header edge crisp and above scrolling rows and operation banners.
+    root = root.child(crate::ui::components::divider::bottom(topline));
     root = root.child(git_resize_handle(rect, state, resizing));
     root
 }

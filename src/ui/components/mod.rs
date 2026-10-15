@@ -1,5 +1,6 @@
 //! Reusable, state-driven UI primitives.
 
+pub mod divider;
 pub mod input;
 pub mod loading_indicator;
 pub mod resize_handle;

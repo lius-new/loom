@@ -193,11 +193,7 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
         x += w + GAP;
     }
 
-    // Hairline top border (matches the title bar's bottom border).
-    bar = bar.child(panel(
-        UiRect::new(rect.left, rect.top, rect.right, rect.top + 1.0),
-        VisualStyle::filled(theme::c().border),
-    ));
+    bar = bar.child(crate::ui::components::divider::top(rect));
 
     bar
 }

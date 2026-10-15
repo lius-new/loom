@@ -523,15 +523,7 @@ pub fn render_tooltip(
 }
 
 fn active_tab_background(rect: UiRect) -> Element {
-    panel(rect, VisualStyle::filled(theme::c().active_tab).alpha(51)).child(panel(
-        UiRect::new(
-            rect.left,
-            (rect.bottom - 2.0).max(rect.top),
-            rect.right,
-            rect.bottom,
-        ),
-        VisualStyle::filled(theme::c().accent),
-    ))
+    panel(rect, VisualStyle::filled(theme::c().active_tab).alpha(51))
 }
 
 pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusHandle) -> Element {
@@ -541,12 +533,7 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
     let labels = s.workspace.tab_labels(pane);
 
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar))
-        .key(format!("tab-strip-{}", pane.get()))
-        // Paint the strip border first so the active tab's accent stays visible.
-        .child(panel(
-            UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-            VisualStyle::filled(theme::c().border),
-        ));
+        .key(format!("tab-strip-{}", pane.get()));
     let controls_left = controls_left(rect, &s, pane);
     let layout = tab_layout(rect, &s, pane, false);
     let tab_viewport = UiRect::new(
@@ -575,6 +562,7 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
         });
     }
 
+    let mut active_rect = None;
     // Tabs fill the strip vertically and meet without gaps or outer padding.
     if s.welcome_panes.contains(&pane)
         && !s
@@ -592,6 +580,7 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
             rect.left + TABS_PAD + tab_w,
             rect.bottom - PILL_INSET,
         );
+        active_rect = Some(pill);
         tab_layer = tab_layer.child(active_tab_background(pill).child(text(
             UiRect::new(pill.left + PAD, pill.top, pill.right - PAD, pill.bottom),
             label,
@@ -670,6 +659,7 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
         let focus = editor_focus.clone();
         // The active tab uses a neutral background and an accent bottom edge.
         let mut tab_el = if Some(id) == active {
+            active_rect = Some(pill);
             active_tab_background(pill)
         } else {
             panel(pill, VisualStyle::default().radius(2.0))
@@ -1003,6 +993,21 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
                 theme::c().text_muted,
             )),
         );
+    }
+
+    // Paint the 1px separator after all backgrounds,
+    // fades and scrollbar layers so they cannot tint or cover the edge.
+    bar = bar.child(crate::ui::components::divider::bottom(rect));
+    if let Some(active) = active_rect {
+        bar = bar.child(clip(tab_viewport, -layout.scroll_x, 0.0).child(panel(
+            UiRect::new(
+                active.left,
+                (active.bottom - 2.0).max(active.top),
+                active.right,
+                active.bottom,
+            ),
+            VisualStyle::filled(theme::c().accent),
+        )));
     }
 
     bar

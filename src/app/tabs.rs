@@ -439,6 +439,153 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn tab_and_drawer_dividers_stay_crisp_at_fractional_scales() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{UiId, UiScale};
+        use lgui::prelude::{VisualStyle, group, panel};
+        use lgui::renderer::{FrameInfo, FrameReason};
+        use lgui::session::UiSession;
+        use std::sync::Arc;
+
+        let viewport = UiRect::new(0.0, 0.0, 760.0, 100.0);
+        let title = UiRect::new(0.0, 0.0, 400.0, theme::TITLEBAR_H);
+        let strip = UiRect::new(0.0, title.bottom, 400.0, title.bottom + theme::TABS_H);
+        let drawer = UiRect::new(440.0, title.bottom, 760.0, strip.bottom);
+        let details = UiRect::new(
+            drawer.left,
+            drawer.bottom + 20.0,
+            drawer.right,
+            viewport.bottom,
+        );
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(|| {
+                let mut app = AppState::new();
+                app.drawer.visible = true;
+                for index in 0..20 {
+                    app.workspace
+                        .open_path(PathBuf::from(format!("file{index}.rs")), String::new());
+                }
+                let first = app.workspace.active_items()[0];
+                app.workspace.set_active(first);
+                let pane = app.workspace.active_pane();
+                app.editor.tabs.tab_scroll.insert(pane, 10.0);
+                app.editor.tabs.tab_strip_hovered = Some(pane);
+                app
+            }));
+            let pane = state.get().workspace.active_pane();
+            panel(viewport, VisualStyle::filled(theme::c().bg))
+                .child(panel(
+                    UiRect::new(strip.left, strip.bottom, strip.right, viewport.bottom),
+                    VisualStyle::filled(theme::c().bg),
+                ))
+                .child(crate::ui::titlebar::render(
+                    title,
+                    crate::app::chrome::title_binding(&state),
+                    group(title),
+                ))
+                .child(render(
+                    pane,
+                    strip,
+                    state,
+                    cx.focus_handle(UiId::new("tab-border-test")),
+                ))
+                .child(crate::ui::drawer::header(
+                    drawer,
+                    crate::ui::drawer::DrawerMode::Files,
+                    Arc::new(|_| {}),
+                    Arc::new(|| {}),
+                ))
+                .child(crate::ui::components::divider::top(details))
+        });
+        let context = ApplicationContext::empty(Default::default());
+        context
+            .resources()
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                crate::app::svg_icons(),
+            )));
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        for factor in [0.75, 0.8, 0.85, 0.875, 0.9, 0.96, 1.0, 1.25, 1.5, 2.0] {
+            let scale = UiScale::new(factor);
+            let mut session = UiSession::new();
+            session.render_view(&view, viewport, scale);
+            let physical = scale.physical_rect(viewport);
+            let frame = FrameInfo::new(physical, &[], scale, FrameReason::SceneChange, true);
+            let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(4 * 1024 * 1024);
+            lgui::assets::backend::with_render_resources(
+                &context,
+                lgui::assets::backend::render_resources(),
+                || surface.draw(&session.tree().scene().project_to_physical(scale), &frame),
+            )
+            .unwrap();
+            let pixel = |x: i32, y: i32| {
+                let offset = (y as usize * physical.width() as usize + x as usize) * 4;
+                &surface.pixels()[offset..offset + 4]
+            };
+            for x in [200.0, 396.0, 600.0] {
+                let color = theme::c().border.0;
+                let expected = &[
+                    (color & 255) as u8,
+                    ((color >> 8) & 255) as u8,
+                    ((color >> 16) & 255) as u8,
+                    255,
+                ];
+                for row in 1..=scale.physical_length(1.0) {
+                    assert_eq!(
+                        pixel(
+                            scale.physical_value(x),
+                            scale.physical_value(strip.bottom) - row
+                        ),
+                        expected,
+                        "scale={factor}, x={x}, row={row}",
+                    );
+                    if factor.fract() == 0.0 && x < title.right {
+                        assert_eq!(
+                            pixel(
+                                scale.physical_value(x),
+                                scale.physical_value(title.bottom) - row
+                            ),
+                            expected,
+                        );
+                    }
+                }
+            }
+            let accent = theme::c().accent.0;
+            let border = theme::c().border.0;
+            for row in 0..scale.physical_length(1.0) {
+                assert_eq!(
+                    pixel(
+                        scale.physical_value(600.0),
+                        scale.physical_value(details.top) + row
+                    ),
+                    &[
+                        (border & 255) as u8,
+                        ((border >> 8) & 255) as u8,
+                        ((border >> 16) & 255) as u8,
+                        255
+                    ],
+                    "top divider must stay crisp at scale={factor}",
+                );
+            }
+            assert_eq!(
+                pixel(
+                    scale.physical_value(20.0),
+                    scale.physical_ui_value(strip.bottom).floor() as i32 - 1
+                ),
+                &[
+                    (accent & 255) as u8,
+                    ((accent >> 8) & 255) as u8,
+                    ((accent >> 16) & 255) as u8,
+                    255
+                ],
+                "active tab underline must remain visible at scale={factor}",
+            );
+        }
+    }
+
+    #[test]
     fn preview_tab_names_are_italic() {
         assert_eq!(tab_name_style(true, true).font_slant, TextFontSlant::Italic);
         assert_eq!(
