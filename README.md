@@ -1,295 +1,90 @@
-# Loom
+<p align="center">
+  <img src="icons/source/app-icon-transparent-128.png" alt="Loom" width="96" height="96">
+</p>
 
-A minimal text editor written in Rust, using the
-[lgui](https://github.com/lius-new/lgui) GUI library.
+<h1 align="center">Loom</h1>
 
-## Project layout
+<p align="center">
+  A fast, minimal code editor with an integrated terminal and Git, written in Rust.
+</p>
 
-```
-loom/
-├── assets/       # application and file-type icons
-├── Cargo.toml    # package manifest + lgui dependency
-└── src/          # application, editor, model, terminal, and UI modules
-```
+<p align="center">
+  <a href="https://github.com/lius-new/loom/actions/workflows/ci.yml"><img src="https://github.com/lius-new/loom/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a>
+</p>
+
+Loom is a desktop editor for Windows, macOS and Linux built on
+[lgui](https://github.com/lius-new/lgui), a Rust GUI library that renders with
+Skia. It aims to stay small and responsive while covering the daily loop of
+editing, searching, running commands and working with Git, without leaving the
+window.
+
+> [!NOTE]
+> Loom is in early development (version 0.1). Expect rough edges, and expect
+> settings and behavior to change between releases.
+
+![Loom with Source Control, a diff of the working tree, the file tree and a terminal](docs/images/screenshot.png)
 
 ## Features
 
-- UTF-8 text editing with grapheme-safe movement and deletion (including Chinese,
-  combining marks and Emoji); LF and CRLF line endings are preserved.
-- Click a file in the tree to open or reactivate its tab. Each document keeps its
-  own selection, scroll position and undo/redo history.
-- Restarting restores every file tab left open, including single-click previews
-  and a pending file load, in its saved pane and tab order. Normal window close
-  saves the final snapshot before exiting; Save/Don't Save exit decisions keep
-  the tab list intact until that snapshot is written. Unreadable files are
-  skipped on restore; unsaved text still uses the existing Save/Don't Save prompt.
-- Open UTF-8 text files up to 64 MiB from the Explorer, file dialog or launch
-  arguments. Workspace search has a separate 4 MiB per-file limit.
-- On Windows, drag files from another application into an editor pane or its
-  tab strip to open them as permanent tabs in that pane. Multiple files open in
-  order; existing tabs and unsaved edits are preserved. Folders are ignored.
-- Interactive file opens prepare text and indexes on a background worker while
-  retaining the current editor. A target tab reserves its icon slot; only opens
-  taking more than 300 ms show a loading indicator. Close that tab to cancel;
-  choosing another file or existing tab supersedes the pending open.
-- Startup restores tab metadata, order, panes and selection before reading any
-  file contents. A background worker prepares the selected documents first;
-  surviving tabs are filled in place without changing focus. Restoring tabs are
-  remembered on exit and cannot edit or save their empty staging buffers.
-- Large documents use plain text rendering and suppress automatic Vim match
-  highlighting. Long lines are rendered in horizontal viewport slices, without
-  truncating the file; sparse Unicode indexes keep cursor lookup local. Line
-  widths, dirty-state checks, syntax colors and text layouts are cached.
-- Click to place the caret, drag to select, Shift-click to extend the selection,
-  double-click to select a word, and triple-click or click a line number to select
-  a line. Dragging line numbers selects whole lines. Holding a drag beyond the
-  viewport scrolls continuously.
-- Right-click for Undo, Redo, Cut, Copy, Paste and Select All. Clipboard failures
-  leave the source text intact.
-- Mouse wheel scrolls vertically; Shift-wheel scrolls horizontally.
-- Chinese IME preedit text is displayed at the caret, with the native candidate
-  window anchored there. Only committed input changes the document.
+- **Editing** — grapheme-aware UTF-8 editing (CJK, combining marks, emoji),
+  preserved LF/CRLF line endings, per-tab undo history, split panes, IME input
+  and an optional Vim mode. Files up to 64 MiB open on a background
+  worker; long lines and large files stay responsive.
+- **Sessions** — tabs, panes, selections and terminals come back exactly as you
+  left them after a restart.
+- **Workspace search** — search every folder with case, whole-word, regex and
+  include/exclude globs; respects `.gitignore` and searches unsaved buffers.
+- **Integrated terminal** — PowerShell, Command Prompt, Git Bash, bash, zsh,
+  fish or any custom shell, in tabs and splits that follow your working
+  directory across `cd` and restarts.
+- **Git** — staging, commits, fetch/pull/push, branches, tags, stashes,
+  history, single-file diffs and worktrees, refreshed in the background
+  across every repository in the workspace.
+- **Customizable** — light, dark and high-contrast themes, a Zed-style
+  `keymap.json` with contexts and key sequences, per-project
+  `.loom/settings.json`, interface scaling from 80% to 200% and Material file
+  icons.
 
-### Git worktrees
+## Installation
 
-The branch picker groups worktrees beneath their checked-out branch. Branch rows
-show the worktree count and expand or collapse the directory list. Each worktree
-has its own path and actions; choosing one adds it to the workspace and selects
-its repository. The existing folders stay available in the repository switcher.
+Download a package for your platform from the
+[Releases](https://github.com/lius-new/loom/releases) page.
 
-Source Control shows a **WORKTREES** section when a repository has multiple
-worktrees, with the branch, current worktree and lock status. Hover a row to open,
-add or delete it. Deletion asks for confirmation; modified or untracked files
-require a separate force-delete confirmation. The main, current and locked
-worktrees cannot be deleted from this section.
-
-Source Control keeps file changes in the upper area. **WORKTREES**, **STASHES**
-and **COMMITS** start collapsed in a separate area anchored at the bottom.
-The commit input follows short change lists and stays below the scrollable
-changes area for long lists. Expanding the bottom sections scrolls their
-contents independently while preserving room for changes above, including
-when the repository has no changes.
-
-In the branch picker, select an available branch and choose **New Worktree**.
-Typing a new branch name also offers this action. The dialog shows the branch and
-destination folder, defaulting to a sibling such as `../loom-feature-x`;
-**Browse…** changes its parent folder. Creation adds the worktree to the workspace
-and selects its repository.
-
-### Workspace search
-
-Press **Ctrl+Shift+F** (Command+Shift+F on macOS), or click the search icon in the
-right drawer, to search the contents of every workspace folder. The search bar
-supports match case, whole word and regular expressions. Expand **Filters**
-for comma-separated include/exclude globs (`*.rs`, `src/**`, `*.{rs,ts}`), and
-options to include hidden or ignored files. Enter or the refresh button runs the
-search again; Escape or the stop button stops it. Use the clear icon to clear the
-query and results. Active filters show a count and a reset icon. Alt+C, Alt+W,
-Alt+R and Alt+F toggle case, whole word, regular expressions and filters.
-
-Results are grouped by file. Click a match to preview and select it, double-click
-to keep its tab, or use Down/Up to navigate results and Enter to open the selected
-match. Files already open in Loom use their current buffer, including unsaved
-edits. Query and option changes debounce for 200 ms. Search also updates when
-workspace buffers or relevant disk files change; ignored build output and
-excluded paths do not normally trigger it. Opening other panels, expanding
-filters, scrolling, or regaining window focus preserves the current search.
-The Explorer icon returns to the file tree without changing the drawer's
-position or width; returning to Search keeps its results.
-
-Search respects `.gitignore`, `.ignore` and `.rgignore` by default, never follows
-symbolic links, and always excludes `.git` internals. The first version searches
-UTF-8 text files up to 4 MiB and matches within individual lines; binary,
-unsupported-encoding and oversized files are skipped with a count in the footer;
-expand it for the reason breakdown. Results are
-limited to 10,000 matches across 5,000 files. Regular expressions use Rust's
-`regex` syntax (without lookaround/backreferences). Cross-file replacement is
-not included.
-
-### Editing shortcuts
-
-| Shortcut | Action |
+| Platform | Packages |
 | --- | --- |
-| Arrow keys | Move by character or line; vertical movement remembers the desired column |
-| Ctrl + Left / Right | Move by word |
-| Home / End | Move to line start / end |
-| Ctrl + Home / End | Move to document start / end |
-| Page Up / Page Down | Move by one viewport |
-| Shift + any movement above | Extend selection from its anchor |
-| Ctrl + A | Select all |
-| Ctrl + C / X / V | Copy / cut / paste |
-| Ctrl + Z / Y | Undo / redo (Ctrl + Shift + Z also redoes) |
-| Backspace / Delete | Delete the selection or previous / next character |
-| Ctrl + Backspace / Delete | Delete the selection or previous / next word |
-| Enter | Insert a newline with the current indentation |
-| Tab / Shift + Tab | Indent / outdent; a selection applies to all selected lines |
-| Esc | Close the editor menu, or clear the selection |
-| Ctrl + S | Save the active file |
+| Windows x64 | `…-windows-x86_64-setup.exe` (per-user installer, no admin rights) or `…-portable.zip` |
+| macOS 11+ (Apple Silicon and Intel) | `…-macos-universal.dmg` or `.zip` |
+| Linux x64 | `.deb`, `.AppImage`, or `.tar.gz` (run `./install.sh` to install for the current user) |
 
-Indentation uses two spaces; existing tabs display at four-column tab stops.
-Typing replaces the selection. Consecutive typing/deletion is grouped for undo;
-movement, paste, indentation, saving and focus changes separate undo groups.
-Editor shortcuts apply while the editor has focus; the terminal keeps its own
-keyboard handling. On macOS, Command takes the place of Ctrl.
+Each release includes a `SHA256SUMS` file per platform.
 
-### Terminal sessions
+- **Windows**: packages are not code-signed yet, so SmartScreen warns on first
+  run. A Git runtime is included.
+- **macOS**: until the app is notarized, Gatekeeper blocks the first launch.
+  Control-click Loom.app and choose **Open**, or run
+  `xattr -dr com.apple.quarantine /Applications/Loom.app`. Loom uses the
+  system `git`.
+- **Linux**: requires glibc 2.39 or newer (for example Ubuntu 24.04, Fedora 40)
+  and an X11 or Wayland session. Loom uses the system `git`.
 
-On Windows, Loom offers installed PowerShell, Command Prompt and Bash (with
-Git Bash preferred). On Linux and macOS, the system default follows `$SHELL`,
-then the account's login shell, then `/bin/sh`.
+All packages provide a `loom` command that opens files and folders:
+`loom .`, `loom path/to/file`. See [Packaging](scripts/package/README.md) for
+what each package installs.
 
-Settings → Terminal lets you add, edit and remove custom terminals by name,
-executable and launch arguments, and choose a default. Unavailable custom
-terminals keep their configuration and are disabled until their path is fixed.
-An unavailable saved default is kept, and new terminals use the first available
-shell until its path is fixed. Restored terminals whose shell is unavailable
-start a fallback shell with a notice, and launch their own shell again the next
-time they start after it is repaired. Deleting the default terminal resets the default.
+## Building from source
 
-PowerShell, Command Prompt, Bash, zsh, fish and POSIX shells can report their
-working directory to Loom. Custom commands and startup-file arguments take
-precedence over automatic integration and may provide their own directory reports.
-Each terminal remembers its latest directory after `cd` and restores it when
-the application restarts. New tabs and splits inherit the current terminal's
-directory. If a saved directory no longer exists, Loom falls back to the first
-workspace folder, then the application's working directory. Shell profiles
-and custom prompts are loaded without modifying user configuration files.
-
-### Interface size
-
-Settings → Appearance → **Interface scale** resizes the entire app, including
-tabs, sidebars, menus, icons and controls. Use **−** / **+** to choose 80%–200%
-in 10 percentage point steps, relative to the operating system's display scale.
-**Reset** restores automatic scaling. Changes apply immediately and persist
-across restarts. Editor and terminal font sizes can still be adjusted separately.
-
-**Ctrl + +** (or **Ctrl + =**) and **Ctrl + −** adjust the terminal font size
-while the terminal has focus, and the editor font size otherwise. **Ctrl + 0**
-resets that font's size. On macOS, use Command instead of Ctrl.
-
-The same setting is available in the user `settings.json` as `"ui_scale": 120`.
-Remove it or set it to `null` to restore automatic scaling. Like other appearance
-preferences, it cannot be overridden by project settings.
-
-### Customizing key bindings
-
-Shortcuts come from a Zed-style keymap. The **Keymap** page (Ctrl + K Ctrl + S,
-or Settings → Keyboard → Open Keymap) opens in its own tab and lists every
-action with its bindings; filter it by action, keystroke or context. Its
-**Edit keymap.json** button opens your `keymap.json` (`%APPDATA%\Loom` on
-Windows). Saved changes apply immediately; entries with mistakes are reported
-and skipped.
-
-```jsonc
-[
-  {
-    "context": "Editor",                     // where the bindings apply
-    "bindings": {
-      "alt-up": "editor::MoveToBeginning",   // keystrokes → action
-      "secondary-y": null,                   // null disables a default binding
-      "secondary-k secondary-d": ["pane::ActivateItem", 0] // sequences, arguments
-    }
-  }
-]
-```
-
-- **Keystrokes** join modifiers with `-`: `ctrl`, `alt`, `shift`, `cmd`, and
-  `secondary` (Command on macOS, Ctrl elsewhere). Separate a sequence with spaces.
-- **Contexts**: `Workspace` (always), `Editor`, `Terminal`, `Input`, `Menu`,
-  `CloseConfirmation`, `CloneRepository`. Combine them with `&&`, `||`, `!` and
-  `>` (ancestor), and test attributes such as `extension == rs` or `os == windows`.
-- **Precedence**: a binding in a more specific context wins (Editor over
-  Workspace); within one context, later bindings — yours — win.
-
-`LOOM_LOG_KEYS=1` in a debug build prints how each keystroke resolved. The design
-is documented in [KEYMAP_PLAN.md](KEYMAP_PLAN.md).
-
-## File icons
-
-The entire workspace tree uses a focused subset of the open-source Material
-Icon Theme, including closed folders, open folders, and file types. Exact
-filenames such as `Cargo.toml` and `Dockerfile` take priority over extensions;
-compound extensions are matched longest-first, and unknown files use a generic
-document icon. Attribution, source revision, and the upstream MIT license are
-stored with the SVG assets under
-`assets/icon-themes/material/`.
-
-## Git integration
-
-Press `Ctrl+Shift+G` (or `Command+Shift+G`) to open Source Control. Loom discovers
-repositories for every workspace root and direct nested repository, then keeps
-branch, upstream, ahead/behind, staged, working-tree, untracked, rename and
-conflict state refreshed in the background. The title bar, status bar, file
-tree, editor gutter and Source Control drawer consume the same immutable
-repository snapshot.
-
-The Source Control drawer supports staging and unstaging, commit, fetch, pull
-and push. The Git backend also provides typed operations for hunk patches,
-branches, tags, history, blame, stash, worktrees, remotes, merge/rebase/
-cherry-pick recovery, submodules, LFS and sparse checkout. Git operations run
-outside the UI thread, are serialized per repository, classify common errors,
-and redact credentials from diagnostic output.
-
-Drag a changed file from Source Control onto an editor pane to open its
-single-file diff, keeping the staged or working-tree comparison shown in the
-list. Dropping near a pane edge creates a split; dropping on a tab strip inserts
-the diff at the marker. Releasing outside the editor cancels the drag. Clicking
-a changed file continues to open All Changes at that file's section.
-
-Official packages contain a managed Git runtime with a SHA-256 manifest. Loom
-prefers that runtime and falls back to system Git when a managed runtime is not
-present. Advanced users and development builds can select a custom runtime
-through `GitRuntimeManager`. Open editor buffers are reconciled after Git
-operations: clean files reload automatically, while unsaved buffers are never
-overwritten and are marked when their disk version changes.
-
-## Build & run
-
-Rust 1.97.1, Clippy and rustfmt are pinned in `rust-toolchain.toml`; CI uses
-the same compiler. Windows builds with an existing Skia archive can use the
-[verified local cache helper](scripts/build/README.md), including for offline
-builds and baseline checks.
-
-The framework-independent editing core lives in
-[`crates/editor-core`](crates/editor-core/README.md). Run its tests without the
-GUI with `cargo test --locked -p loom-editor-core`; run all application and core
-regressions with `cargo test --locked --workspace`. Workspace domain rules also
-have a GUI-free verification entry point: `cargo test --locked -p loom-workspace-tests`.
+Loom builds with the Rust toolchain pinned in
+[`rust-toolchain.toml`](rust-toolchain.toml) (currently 1.97.1); `rustup`
+installs it automatically.
 
 ```sh
-cargo build --release --locked
+git clone https://github.com/lius-new/loom.git
+cd loom
 cargo run --release --locked
 ```
 
-The project follows the `main` branch of the lgui repository. `Cargo.lock`
-pins the exact lgui commit used by a build. Run `cargo update -p lgui` when you
-want to update that pinned commit.
-
-## Continuous integration and releases
-
-GitHub Actions checks formatting and Clippy on Linux, then tests and builds Loom
-on Ubuntu x64, Windows x64, and macOS ARM64. Successful runs expose packaged
-binaries as workflow artifacts.
-
-Each platform has its own release workflow. `release-windows.yml` validates
-that the requested version matches `Cargo.toml`, builds the per-user installer
-and portable zip with the scripts in [`scripts/package`](scripts/package/README.md),
-and publishes them to the GitHub release. Push a version tag such as `v0.1.0`,
-or run the workflow manually with `0.1.0`. The macOS and Linux workflows are
-placeholders until those packages are implemented.
-
-Build the Windows packages locally with:
-
-```sh
-node scripts/package/package.mjs all
-```
-
-`lgui` uses Skia for rendering and Winit for the window. The renderer is the
-**software** Skia backend (`renderer-skia-software`), which presents via
-`softbuffer`. `skia-safe` downloads a prebuilt Skia archive automatically at
-build time.
-
-## System dependencies (Debian / Ubuntu)
+On Debian or Ubuntu, install the native libraries first:
 
 ```sh
 sudo apt install build-essential \
@@ -298,5 +93,46 @@ sudo apt install build-essential \
     libwayland-dev libxkbcommon-dev
 ```
 
-A running X11 or Wayland desktop session is required to open the window.
-(On WSL2, enable WSLg and install the packages above inside the distro.)
+Skia is downloaded as a prebuilt archive during the first build. See
+[Building Loom](docs/building.md) for offline builds, tests, CI and packaging.
+
+## Documentation
+
+- [Editing](docs/editing.md) — mouse, keyboard shortcuts, files, sessions and large files
+- [Workspace search](docs/search.md)
+- [Terminal](docs/terminal.md)
+- [Git](docs/git.md)
+- [Settings and key bindings](docs/settings.md)
+- [Building Loom](docs/building.md)
+
+## Contributing
+
+Bug reports and pull requests are welcome on
+[GitHub](https://github.com/lius-new/loom/issues). Before opening a pull
+request, run the same checks as CI:
+
+```sh
+cargo fmt --all -- --check
+cargo test --locked --workspace
+node scripts/architecture/check.mjs
+```
+
+and Clippy with the flags in [`ci.yml`](.github/workflows/ci.yml). The editing
+core in [`crates/editor-core`](crates/editor-core/README.md) has no GUI
+dependencies and is the easiest place to start.
+
+## License
+
+Loom is licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Unless you explicitly state otherwise, any contribution
+intentionally submitted for inclusion in Loom shall be dual licensed as above,
+without any additional terms or conditions.
+
+Loom includes third-party code (the vt100 parser, parts of Zed's keymap
+design and, on Windows, Git); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The Material Icon Theme icons carry their MIT license and attribution in
+[`assets/icon-themes/material`](assets/icon-themes/material).
