@@ -60,6 +60,22 @@ pub(crate) enum ScrollRegion {
 }
 
 impl ScrollRegion {
+    fn load_more_at_bottom(self, state: &Binding, max_scroll: f32) {
+        if !matches!(self, Self::Details) {
+            return;
+        }
+        let app = state.get();
+        if self.scroll(&app) >= max_scroll
+            && !app.ui.collapsed_sections.contains(&HISTORY)
+            && app.model.history_can_load_more()
+            && let Some(history) = app.model.history()
+        {
+            state.dispatch(Command::LoadMoreHistory {
+                root: history.repository.clone(),
+            });
+        }
+    }
+
     pub(crate) fn key(self) -> &'static str {
         match self {
             Self::Changes => "git-changes-viewport",
@@ -136,6 +152,9 @@ pub(crate) fn scroll_region(
                     let next = (region.scroll(app) - step).clamp(0.0, max_scroll);
                     region.set_scroll(app, next);
                 });
+                if step < 0.0 {
+                    region.load_more_at_bottom(&wheel_state, max_scroll);
+                }
                 cx.stop_propagation();
             }
         });
@@ -888,6 +907,7 @@ pub(crate) fn git_vertical_scrollbar(
     })
     .on_pointer_up(move |_cx, _pointer| {
         drag_end.update(|app| region.set_drag(app, false, 0.0));
+        region.load_more_at_bottom(&drag_end, max_scroll);
     })
 }
 

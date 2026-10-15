@@ -787,6 +787,191 @@ mod panel_virtualization_tests {
         let end = visible_rows(0.0, 100_000.0 * ROW_H, 100_000.0 * ROW_H + 480.0, 100_000);
         assert_eq!(end.end, 100_000);
     }
+
+    #[test]
+    fn history_loads_at_the_bottom_without_a_loading_row_or_scroll_jump() {
+        use crate::features::git::model::HistoryRequest;
+        use crate::ui::git::commands::{Binding, Command, Frame};
+        use crate::ui::git::state::GitPanelState;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+
+        fn page(start: usize, end: usize) -> Vec<CommitSummary> {
+            (start..end)
+                .map(|index| CommitSummary {
+                    oid: format!("commit-{index}"),
+                    parents: Vec::new(),
+                    author: "author".into(),
+                    author_email: "author@example.com".into(),
+                    timestamp: 0,
+                    subject: format!("Commit {index}"),
+                    decorations: Vec::new(),
+                })
+                .collect()
+        }
+
+        for drag_scrollbar in [false, true] {
+            let viewport = UiRect::new(0.0, 0.0, 300.0, 180.0);
+            let requests = Arc::new(Mutex::new(Vec::<HistoryRequest>::new()));
+            let captured = requests.clone();
+            let exposed = Arc::new(Mutex::new(None::<State<GitPanelState>>));
+            let output = exposed.clone();
+            let view: AppView = Arc::new(move |cx| {
+                let state = cx.state_with(|| {
+                    let mut app = GitPanelState::default();
+                    app.ui.hovered = true;
+                    app.ui.collapsed_sections.remove(&HISTORY);
+                    let request = app
+                        .model
+                        .begin_history("repo".into(), Some("head".into()))
+                        .unwrap();
+                    app.model.finish_history_page(&request, Ok(page(0, 51)));
+                    app
+                });
+                *output.lock().unwrap() = Some(state.clone());
+                let target = state.clone();
+                let captured = captured.clone();
+                let binding = Binding::new(state.clone().into(), Frame::default, move |command| {
+                    if let Command::LoadMoreHistory { root } = command {
+                        target.try_update(|app| {
+                            if let Some(request) = app.model.begin_history_page(&root) {
+                                captured.lock().unwrap().push(request);
+                            }
+                            false
+                        });
+                    }
+                    true
+                });
+                let app = state.get();
+                let commits = app.model.history().unwrap().commits.as_ref().unwrap();
+                let content = commits
+                    .iter()
+                    .enumerate()
+                    .map(|(index, commit)| {
+                        Element::from(lgui::prelude::text(
+                            UiRect::new(
+                                0.0,
+                                index as f32 * ROW_H,
+                                280.0,
+                                (index + 1) as f32 * ROW_H,
+                            ),
+                            commit.subject.clone(),
+                            theme::mono(theme::c().text, theme::SMALL),
+                        ))
+                        .key(commit.oid.clone())
+                    })
+                    .collect();
+                let bottom = commits.len() as f32 * ROW_H;
+                scroll_region(
+                    viewport,
+                    content,
+                    bottom,
+                    app.ui.details_scroll,
+                    bottom - viewport.height(),
+                    binding,
+                    ScrollRegion::Details,
+                )
+            });
+            let mut session = UiSession::new();
+            session.render_view(&view, viewport, UiScale::ONE);
+            let state = exposed.lock().unwrap().clone().unwrap();
+            let context = ApplicationContext::empty(Default::default());
+            let send = |session: &mut UiSession, input| {
+                dispatch_runtime_output(
+                    session.handle_input(input),
+                    &context,
+                    &lgui::window::WindowId::new("history-pagination-test"),
+                    |action| session.handle_default_action(action),
+                    |_| {},
+                );
+                session.render_view(&view, viewport, UiScale::ONE);
+            };
+            let wheel = |y| InputEvent::Wheel {
+                point: Point::new(100.0, 100.0),
+                delta: WheelDelta::pixels(0.0, y),
+            };
+            send(&mut session, wheel(-20.0));
+            assert!(requests.lock().unwrap().is_empty());
+            if drag_scrollbar {
+                let point = PointerData::mouse(Point::new(viewport.right - 6.0, 12.0));
+                send(
+                    &mut session,
+                    InputEvent::PointerDown {
+                        pointer: point,
+                        button: PointerButton::Left,
+                    },
+                );
+                let bottom = PointerData::mouse(Point::new(viewport.right - 6.0, 175.0));
+                send(&mut session, InputEvent::PointerMove(bottom.clone()));
+                send(
+                    &mut session,
+                    InputEvent::PointerUp {
+                        pointer: bottom,
+                        button: PointerButton::Left,
+                    },
+                );
+            } else {
+                send(&mut session, wheel(-10_000.0));
+            }
+            assert_eq!(requests.lock().unwrap().len(), 1);
+            let scroll = state.get().ui.details_scroll;
+            let last_rect = |session: &UiSession| {
+                let node = session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|node| node.text.as_deref() == Some("Commit 49"))
+                    .unwrap();
+                session.tree().hit_for_id(&node.id).unwrap().rect
+            };
+            let before = last_rect(&session);
+            let node_count = session.tree().nodes().len();
+            send(&mut session, wheel(-10_000.0));
+            assert_eq!(requests.lock().unwrap().len(), 1);
+            assert_eq!(session.tree().nodes().len(), node_count);
+            let request = requests.lock().unwrap()[0].clone();
+            state.update(|app| {
+                app.model.finish_history_page(&request, Ok(page(50, 101)));
+            });
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert_eq!(state.get().ui.details_scroll, scroll);
+            assert_eq!(last_rect(&session), before);
+            state.update(|app| {
+                app.ui.collapsed_sections.insert(HISTORY);
+            });
+            send(&mut session, wheel(-10_000.0));
+            assert_eq!(requests.lock().unwrap().len(), 1);
+            state.update(|app| {
+                app.ui.collapsed_sections.remove(&HISTORY);
+            });
+            send(&mut session, wheel(-10_000.0));
+            assert_eq!(requests.lock().unwrap().len(), 2);
+            let request = requests.lock().unwrap()[1].clone();
+            state.update(|app| {
+                app.model.finish_history_page(&request, Ok(page(100, 103)));
+            });
+            send(&mut session, wheel(-10_000.0));
+            assert_eq!(requests.lock().unwrap().len(), 2);
+            assert_eq!(
+                state
+                    .get()
+                    .model
+                    .history()
+                    .unwrap()
+                    .commits
+                    .as_ref()
+                    .unwrap()
+                    .len(),
+                103
+            );
+            assert!(!session.tree().nodes().iter().any(|node| {
+                node.text
+                    .as_deref()
+                    .is_some_and(|label| label.contains("Loading"))
+            }));
+        }
+    }
 }
 mod panel_action_tests {
     use super::*;

@@ -57,6 +57,9 @@ pub enum Command {
         anchor: lgui::prelude::UiRect,
     },
     Commit,
+    LoadMoreHistory {
+        root: PathBuf,
+    },
     ToggleCommit {
         root: PathBuf,
         oid: String,

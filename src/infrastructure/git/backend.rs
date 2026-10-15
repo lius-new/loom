@@ -1723,6 +1723,56 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn history_pages_keep_their_snapshot_when_new_commits_arrive() {
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        let commit = |index| {
+            backend
+                .runner()
+                .run(GitCommand::new().cwd(&root).args([
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    &format!("Commit {index}"),
+                ]))
+                .unwrap();
+        };
+        for index in 0..56 {
+            commit(index);
+        }
+        let head = backend.history(&root, None, None, 0, 1).unwrap()[0]
+            .oid
+            .clone();
+        let mut first = backend.history(&root, Some(&head), None, 0, 51).unwrap();
+        assert_eq!(first.len(), 51);
+        first.truncate(50);
+        commit(56);
+        let second = backend.history(&root, Some(&head), None, 50, 51).unwrap();
+        assert_eq!(second.len(), 6);
+        first.extend(second);
+        let expected = backend.history(&root, Some(&head), None, 0, 500).unwrap();
+        // Ref badges follow live refs; the commit order stays anchored to head.
+        assert_eq!(
+            first.iter().map(|commit| &commit.oid).collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|commit| &commit.oid)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            first
+                .iter()
+                .map(|commit| &commit.oid)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            56
+        );
+        assert!(first.iter().all(|commit| commit.subject != "Commit 56"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn real_repository_amends_without_a_message_and_undoes_commits() {
         let Some((root, backend)) = repository() else {
             return;

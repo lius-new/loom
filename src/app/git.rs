@@ -14,7 +14,7 @@ use crate::features::git::actions::{
 };
 use crate::features::git::diff_document::{ChangeBlock, DiffDocument};
 use crate::features::git::error::GitErrorKind;
-use crate::features::git::model::GitHistory;
+use crate::features::git::model::{HISTORY_PAGE_SIZE, HistoryRequest};
 use crate::features::git::{
     ConflictSide, GitError, GitResult, GitStoreSnapshot, HeadState, OperationKind, RemoteInfo,
     RepositorySnapshot, RepositoryState,
@@ -850,40 +850,93 @@ pub fn request_discard_block(state: &AppContext, root: PathBuf, path: PathBuf, b
     });
 }
 
-/// How many commits the history section lists.
-pub const HISTORY_LIMIT: usize = 50;
-
 /// Load the newest commits of `root`'s HEAD, which is at `head`, into the
 /// Source Control history. Read-only, so it runs beside any operation.
 pub fn load_history(state: &AppContext, root: PathBuf, head: Option<String>) {
     let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return;
     };
+    let mut request = None;
+    state.try_update(|app| {
+        request = app.git.model.begin_history(root, head);
+        if request.is_some() {
+            app.git.ui.details_scroll = 0.0;
+        }
+        request.is_some()
+    });
+    if let Some(request) = request {
+        load_history_page(state, application, request);
+    }
+}
+
+pub fn load_more_history(state: &AppContext, root: PathBuf) {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
+        return;
+    };
+    let mut request = None;
+    state.try_update(|app| {
+        request = app.git.model.begin_history_page(&root);
+        // Bookkeeping only: no loading row, animation, or intermediate frame.
+        false
+    });
+    if let Some(request) = request {
+        load_history_page(state, application, request);
+    }
+}
+
+fn load_history_page(
+    state: &AppContext,
+    application: lgui::ApplicationHandle,
+    request: HistoryRequest,
+) {
     let worker_state = state.clone();
-    let _ = thread::Builder::new()
+    let failed_request = request.clone();
+    let worker = thread::Builder::new()
         .name("loom-git-history".into())
         .spawn(move || {
-            let commits = if head.is_none() {
+            let commits = if request.head.is_none() {
                 Ok(Vec::new())
             } else {
                 crate::infrastructure::git::service()
                     .and_then(|service| {
-                        service
-                            .backend()
-                            .history(&root, None, None, 0, HISTORY_LIMIT)
+                        service.backend().history(
+                            &request.repository,
+                            request.head.as_deref(),
+                            None,
+                            request.skip,
+                            HISTORY_PAGE_SIZE + 1,
+                        )
                     })
                     .map_err(|error| error.user_message())
             };
             application.post(move || {
-                worker_state.update(move |app| {
-                    app.git.model.set_history(GitHistory {
-                        repository: root,
-                        head,
-                        commits,
-                    });
+                worker_state.try_update(move |app| {
+                    let error = commits.as_ref().err().cloned();
+                    if !app.git.model.finish_history_page(&request, commits) {
+                        return false;
+                    }
+                    if request.skip > 0
+                        && let Some(error) = error
+                    {
+                        app.show_error(error);
+                    }
+                    true
                 });
             });
         });
+    if let Err(error) = worker {
+        state.try_update(|app| {
+            let message = format!("Could not load commits: {error}");
+            let accepted = app
+                .git
+                .model
+                .finish_history_page(&failed_request, Err(message.clone()));
+            if accepted && failed_request.skip > 0 {
+                app.show_error(message);
+            }
+            accepted
+        });
+    }
 }
 
 /// Expand commit `oid` in the history, loading the files it changed.

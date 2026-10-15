@@ -66,6 +66,20 @@ pub(crate) fn run(state: &AppContext, store: &State<GitStoreSnapshot>, command: 
             true
         }
         Command::Commit => super::git::commit(state, store),
+        Command::LoadMoreHistory { root } => {
+            if store.get().active().is_some_and(|repository| {
+                repository.worktree_root == root
+                    && state
+                        .get()
+                        .git
+                        .model
+                        .history()
+                        .is_some_and(|history| history.head == repository.head_oid)
+            }) {
+                super::git::load_more_history(state, root);
+            }
+            true
+        }
         Command::ToggleCommit { root, oid } => {
             super::git::toggle_commit(state, root, oid);
             true

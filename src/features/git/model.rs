@@ -19,6 +19,17 @@ pub struct GitHistory {
     pub commits: Result<Vec<CommitSummary>, String>,
 }
 
+pub const HISTORY_PAGE_SIZE: usize = 50;
+
+/// Identifies both the frozen history revision and one in-flight page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryRequest {
+    sequence: u64,
+    pub repository: PathBuf,
+    pub head: Option<String>,
+    pub skip: usize,
+}
+
 /// A history commit expanded to list the files it changed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExpandedCommit {
@@ -33,6 +44,9 @@ const COMMIT_DETAIL_CACHE: usize = 64;
 #[derive(Clone, Debug, Default)]
 pub struct GitModel {
     history: Option<GitHistory>,
+    history_sequence: u64,
+    history_pending: Option<HistoryRequest>,
+    history_has_more: bool,
     history_commit: Option<ExpandedCommit>,
     commit_details: HashMap<String, Result<CommitDetails, String>>,
     open_diff_sequence: u64,
@@ -51,7 +65,109 @@ impl GitModel {
     }
 
     pub fn set_history(&mut self, history: GitHistory) {
+        self.history_sequence += 1;
+        self.history_pending = None;
+        self.history_has_more = false;
         self.history = Some(history);
+    }
+
+    /// Reopening unchanged history preserves its loaded pages and expanded row.
+    pub fn begin_history(
+        &mut self,
+        repository: PathBuf,
+        head: Option<String>,
+    ) -> Option<HistoryRequest> {
+        if self
+            .history_pending
+            .as_ref()
+            .is_some_and(|request| request.repository == repository && request.head == head)
+            || self.history.as_ref().is_some_and(|history| {
+                history.repository == repository && history.head == head && history.commits.is_ok()
+            })
+        {
+            return None;
+        }
+        self.history = None;
+        self.history_has_more = false;
+        self.history_commit = None;
+        Some(self.history_request(repository, head, 0))
+    }
+
+    pub fn history_can_load_more(&self) -> bool {
+        self.history_has_more && self.history_pending.is_none()
+    }
+
+    pub fn begin_history_page(&mut self, repository: &Path) -> Option<HistoryRequest> {
+        if !self.history_can_load_more() {
+            return None;
+        }
+        let history = self
+            .history
+            .as_ref()
+            .filter(|history| history.repository == repository && history.head.is_some())?;
+        let skip = history.commits.as_ref().ok()?.len();
+        Some(self.history_request(history.repository.clone(), history.head.clone(), skip))
+    }
+
+    fn history_request(
+        &mut self,
+        repository: PathBuf,
+        head: Option<String>,
+        skip: usize,
+    ) -> HistoryRequest {
+        self.history_sequence += 1;
+        let request = HistoryRequest {
+            sequence: self.history_sequence,
+            repository,
+            head,
+            skip,
+        };
+        self.history_pending = Some(request.clone());
+        request
+    }
+
+    /// The extra lookahead commit determines exhaustion without an empty fetch.
+    /// Failed later pages retain the list and can be retried by scrolling again.
+    pub fn finish_history_page(
+        &mut self,
+        request: &HistoryRequest,
+        result: Result<Vec<CommitSummary>, String>,
+    ) -> bool {
+        if self.history_pending.as_ref() != Some(request) {
+            return false;
+        }
+        self.history_pending = None;
+        if request.skip == 0 {
+            let has_more = result
+                .as_ref()
+                .is_ok_and(|commits| commits.len() > HISTORY_PAGE_SIZE);
+            let commits = result.map(|mut commits| {
+                commits.truncate(HISTORY_PAGE_SIZE);
+                commits
+            });
+            self.set_history(GitHistory {
+                repository: request.repository.clone(),
+                head: request.head.clone(),
+                commits,
+            });
+            self.history_has_more = has_more;
+        } else if let Ok(mut page) = result {
+            let Some(history) = self.history.as_mut().filter(|history| {
+                history.repository == request.repository && history.head == request.head
+            }) else {
+                return false;
+            };
+            let Ok(commits) = &mut history.commits else {
+                return false;
+            };
+            if commits.len() != request.skip {
+                return false;
+            }
+            self.history_has_more = page.len() > HISTORY_PAGE_SIZE;
+            page.truncate(HISTORY_PAGE_SIZE);
+            commits.extend(page);
+        }
+        true
     }
 
     pub fn history_commit(&self) -> Option<&ExpandedCommit> {
@@ -192,6 +308,110 @@ impl GitModel {
 mod tests {
     use super::*;
     use crate::features::git::DiffTarget;
+
+    fn commits(start: usize, end: usize) -> Vec<CommitSummary> {
+        (start..end)
+            .map(|index| CommitSummary {
+                oid: format!("commit-{index}"),
+                parents: Vec::new(),
+                author: "author".into(),
+                author_email: "author@example.com".into(),
+                timestamp: 0,
+                subject: format!("Commit {index}"),
+                decorations: Vec::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn history_pages_append_once_preserve_expansion_and_stop_at_an_exact_page_boundary() {
+        let mut model = GitModel::default();
+        let root = PathBuf::from("repo");
+        let first = model
+            .begin_history(root.clone(), Some("head".into()))
+            .unwrap();
+        assert!(
+            model
+                .begin_history(root.clone(), first.head.clone())
+                .is_none()
+        );
+        assert!(model.finish_history_page(&first, Ok(commits(0, 51))));
+        assert_eq!(
+            model.history().unwrap().commits.as_ref().unwrap(),
+            &commits(0, 50)
+        );
+        model.toggle_commit("commit-2".into());
+        model.set_commit_files("commit-2", Ok(Vec::new()));
+        let second = model.begin_history_page(&root).unwrap();
+        assert_eq!(second.skip, 50);
+        assert_eq!(second.head, first.head);
+        assert!(model.begin_history_page(&root).is_none());
+        assert!(!model.history_can_load_more());
+        assert_eq!(model.history().unwrap().commits.as_ref().unwrap().len(), 50);
+        assert!(model.finish_history_page(&second, Ok(commits(50, 100))));
+        assert!(!model.finish_history_page(&second, Ok(commits(50, 100))));
+        assert_eq!(
+            model.history().unwrap().commits.as_ref().unwrap(),
+            &commits(0, 100)
+        );
+        assert_eq!(model.history_commit().unwrap().oid, "commit-2");
+        assert!(model.history_commit().unwrap().files.is_some());
+        assert!(model.begin_history_page(&root).is_none());
+        assert!(model.begin_history(root, first.head).is_none());
+    }
+
+    #[test]
+    fn history_rejects_late_pages_after_repository_or_head_changes() {
+        let mut model = GitModel::default();
+        let first = model
+            .begin_history("a".into(), Some("head".into()))
+            .unwrap();
+        let other = model
+            .begin_history("b".into(), Some("head".into()))
+            .unwrap();
+        let returned = model
+            .begin_history("a".into(), Some("head".into()))
+            .unwrap();
+        assert!(!model.finish_history_page(&first, Ok(commits(0, 51))));
+        assert!(!model.finish_history_page(&other, Ok(commits(0, 51))));
+        assert!(model.finish_history_page(&returned, Ok(commits(0, 51))));
+        let page = model.begin_history_page(Path::new("a")).unwrap();
+        let newer = model
+            .begin_history("a".into(), Some("new-head".into()))
+            .unwrap();
+        assert!(!model.finish_history_page(&page, Ok(commits(50, 101))));
+        assert!(model.finish_history_page(&newer, Ok(commits(100, 103))));
+        assert_eq!(
+            model.history().unwrap().commits.as_ref().unwrap(),
+            &commits(100, 103)
+        );
+        assert!(!model.history_can_load_more());
+    }
+
+    #[test]
+    fn failed_history_pages_keep_the_list_and_allow_a_retry() {
+        let mut model = GitModel::default();
+        let first = model
+            .begin_history("repo".into(), Some("head".into()))
+            .unwrap();
+        model.finish_history_page(&first, Ok(commits(0, 51)));
+        assert!(model.begin_history_page(Path::new("other")).is_none());
+        let page = model.begin_history_page(Path::new("repo")).unwrap();
+        assert!(model.finish_history_page(&page, Err("read failed".into())));
+        assert_eq!(
+            model.history().unwrap().commits.as_ref().unwrap(),
+            &commits(0, 50)
+        );
+        let retry = model.begin_history_page(Path::new("repo")).unwrap();
+        assert_eq!(retry.skip, page.skip);
+        assert!(!model.finish_history_page(&page, Ok(commits(50, 101))));
+        model.finish_history_page(&retry, Ok(commits(50, 53)));
+        assert_eq!(
+            model.history().unwrap().commits.as_ref().unwrap(),
+            &commits(0, 53)
+        );
+        assert!(!model.history_can_load_more());
+    }
 
     fn request(path: &str) -> DiffRequest {
         DiffRequest {
