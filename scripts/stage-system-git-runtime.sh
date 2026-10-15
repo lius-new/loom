@@ -7,10 +7,23 @@ trap 'rm -rf "$staging"' EXIT
 
 mkdir -p "$staging/bin" "$staging/libexec/git-core" "$staging/share/git-core/templates"
 cp "$(command -v git)" "$staging/bin/git"
-cp -a "$(git --exec-path)"/. "$staging/libexec/git-core"/
+exec_path="$(git --exec-path)"
+cp -a "$exec_path"/. "$staging/libexec/git-core"/
+# Homebrew links some helpers outside git-core (git-cvsserver -> ../../bin/...).
+# Replace absolute or dangling links with their targets; drop links already broken.
+while IFS= read -r -d '' link; do
+  if [[ "$(readlink "$link")" != /* && -e "$link" ]]; then
+    continue
+  fi
+  source="$exec_path/${link#"$staging/libexec/git-core/"}"
+  rm "$link"
+  if [[ -e "$source" ]]; then
+    cp -RL "$source" "$link"
+  fi
+done < <(find "$staging/libexec/git-core" -type l -print0)
 
 template_candidates=(
-  "$(git --exec-path)/../../share/git-core/templates"
+  "$exec_path/../../share/git-core/templates"
   "/usr/share/git-core/templates"
   "/opt/homebrew/share/git-core/templates"
 )
