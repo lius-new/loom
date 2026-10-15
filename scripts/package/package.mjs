@@ -7,10 +7,10 @@
 //   setup    Install the packaging toolchain into .packaging/tools
 //   compile  Build the release binary with Cargo
 //   package  Stage the application folder and write the portable archive
-//   bundle   Build the installer from the staged folder
+//   bundle   Build the installers (Windows setup, Linux .deb and AppImage)
 //
 // Options:
-//   --platform <name>         windows (default on Windows), macos, linux
+//   --platform <name>         windows or linux (default: the current OS)
 //   --expect-version <x.y.z>  Fail unless Cargo.toml has this version
 //
 // Downloads, tools, staging folders and final artifacts all live under the
@@ -18,6 +18,7 @@
 
 import path from 'node:path';
 
+import * as linux from './linux/index.mjs';
 import * as windows from './windows/index.mjs';
 import { DIST_DIR, PackagingError, ROOT, cargoPackageField, fail } from './lib/util.mjs';
 
@@ -30,15 +31,21 @@ const PLATFORMS = {
     package: windows.packageApp,
     bundle: windows.bundle,
   },
+  linux: {
+    setup: linux.setup,
+    compile: linux.compile,
+    package: linux.packageApp,
+    bundle: linux.bundle,
+  },
 };
 
-const PLANNED_PLATFORMS = new Set(['macos', 'linux']);
+const PLANNED_PLATFORMS = new Set(['macos']);
 
 function usage() {
   console.log(`Usage: node scripts/package/package.mjs <${[...STEPS, 'all'].join('|')}> [options]
 
 Options:
-  --platform <name>         windows (default on Windows), macos, linux
+  --platform <name>         windows or linux (default: the current OS)
   --expect-version <x.y.z>  Fail unless Cargo.toml has this version
   -h, --help                Show this help`);
 }

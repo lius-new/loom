@@ -1,20 +1,145 @@
-# Placeholder: Linux packaging (.deb / AppImage) is not implemented yet.
-# Only manual runs are enabled so release tags do not trigger a failing job.
-# When implemented, add `--platform linux` support to scripts/package and
-# mirror release-windows.yml.
-
 name: Release (Linux)
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version from Cargo.toml, without the leading v
+        required: true
+        default: "0.1.0"
+      publish:
+        description: Upload the packages to the GitHub release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-linux-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  placeholder:
-    name: Package Linux (not implemented)
+  package:
+    name: Package Linux x64
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Report status
-        run: echo "::notice::Linux packaging is not implemented yet."
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="$INPUT_VERSION"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            dpkg-dev \
+            libfreetype-dev \
+            libfontconfig-dev \
+            libegl1-mesa-dev \
+            libgl1-mesa-dev \
+            libgles2-mesa-dev \
+            libwayland-dev \
+            libxkbcommon-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+
+      - name: Show Node.js version
+        run: node --version
+
+      # The packaging scripts verify Cargo.toml against the requested version
+      # before doing any work.
+      - name: Install packaging toolchain
+        run: node scripts/package/package.mjs setup --platform linux --expect-version ${{ steps.version.outputs.version }}
+
+      - name: Run tests
+        run: cargo test --locked --workspace
+
+      - name: Compile
+        run: node scripts/package/package.mjs compile --platform linux --expect-version ${{ steps.version.outputs.version }}
+
+      - name: Package
+        run: node scripts/package/package.mjs package --platform linux --expect-version ${{ steps.version.outputs.version }}
+
+      - name: Build .deb and AppImage
+        run: node scripts/package/package.mjs bundle --platform linux --expect-version ${{ steps.version.outputs.version }}
+
+      - name: Check the .deb installs
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          deb=".packaging/dist/Loom-$VERSION-linux-x86_64.deb"
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb"
+          sudo apt-get install --yes --no-install-recommends "./$deb"
+          test -x /opt/loom/Loom
+          test "$(readlink -f /usr/bin/loom)" = /opt/loom/bin/loom
+          sudo apt-get remove --yes loom
+          test ! -e /opt/loom
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Loom-${{ steps.version.outputs.version }}-linux-x86_64
+          path: .packaging/dist/Loom-${{ steps.version.outputs.version }}-linux-x86_64*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to GitHub release
+    needs: package
+    # Tag pushes always publish; manual runs only when asked to.
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: Loom-${{ needs.package.outputs.version }}-linux-x86_64
+          path: dist
+
+      # Each platform workflow adds its own assets to the shared release. The
+      # Windows workflow runs on the same tag, so creation can race: fall back
+      # to uploading when the release appeared in the meantime.
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.package.outputs.version }}
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            ! gh release create "$TAG" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Loom $VERSION" \
+              --generate-notes; then
+            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          fi

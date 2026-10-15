@@ -131,8 +131,17 @@ jobs:
       - name: Build release binary
         run: cargo build --locked --release
 
-      - name: Package Unix binary
-        if: runner.os != 'Windows'
+      # Same staged folder and tar.gz as the Linux release; it uses the system Git.
+      - name: Package Linux binary
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          node scripts/package/package.mjs package --platform linux --expect-version "$LOOM_VERSION"
+          mkdir -p dist
+          cp ".packaging/dist/Loom-$LOOM_VERSION-linux-x86_64.tar.gz" dist/
+
+      - name: Package macOS binary
+        if: runner.os == 'macOS'
         shell: bash
         env:
           PACKAGE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}

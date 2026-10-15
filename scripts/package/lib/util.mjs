@@ -160,6 +160,24 @@ export function createZip(directory, archive) {
   ]);
 }
 
+/**
+ * Create a gzipped tar whose single top-level entry is `directory`, with
+ * root ownership so extracted files belong to whoever extracts them.
+ */
+export function createTarGz(directory, archive) {
+  fs.rmSync(archive, { force: true });
+  run('tar', [
+    '--owner=0',
+    '--group=0',
+    '--numeric-owner',
+    '-czf',
+    archive,
+    '-C',
+    path.dirname(directory),
+    path.basename(directory),
+  ]);
+}
+
 /** All files below `directory`, as sorted forward-slash relative paths. */
 export function listFiles(directory) {
   const files = [];

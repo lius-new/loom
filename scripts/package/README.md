@@ -4,15 +4,16 @@ Node.js scripts (no npm dependencies, Node 20+) that build Loom's
 distributable packages.
 
 ```bash
-node scripts/package/package.mjs all
+node scripts/package/package.mjs all                    # current OS
+node scripts/package/package.mjs all --platform linux   # explicit
 ```
 
 | Step | Purpose |
 | --- | --- |
-| `setup` | Download and verify the packaging toolchain and inputs (Inno Setup, MinGit) into `.packaging/tools` |
+| `setup` | Download and verify the packaging toolchain and inputs into `.packaging/tools` (Windows: Inno Setup, MinGit; Linux: appimagetool and its runtime) |
 | `compile` | `cargo build --release --locked` |
-| `package` | Stage the application folder with the managed Git runtime, smoke-test it, write the portable zip |
-| `bundle` | Build the installer from the staged folder and write `SHA256SUMS` |
+| `package` | Stage the application folder, check it, write the portable archive (Windows zip with the managed Git runtime, Linux tar.gz) |
+| `bundle` | Build the installers from the staged folder (Windows setup, Linux .deb and AppImage) and write `SHA256SUMS` |
 
 Every step can run on its own; each checks that the previous one has run.
 `--expect-version x.y.z` fails early when `Cargo.toml` has a different version
@@ -28,8 +29,9 @@ start clean. Inno Setup is installed with its own portable mode
 ```
 .packaging/
   downloads/   verified archives (reused while their SHA-256 matches)
-  tools/       innosetup-<version>/, mingit-<version>/
+  tools/       innosetup-<version>/, mingit-<version>/, appimagetool-<version>/
   windows/     stage/
+  linux/       stage/, deb/, appimage/
   dist/        final artifacts
 ```
 
@@ -67,7 +69,36 @@ in `windows/index.mjs`. Never change the installer's `AppId`.
   component in a signed sparse MSIX package, so it waits until Loom has code
   signing.
 
+## Linux
+
+Built on x86_64 Linux with `tar`, `dpkg-deb` and `dpkg-shlibdeps` (Debian
+or Ubuntu: `dpkg-dev`). appimagetool and the AppImage type 2 runtime are
+pinned downloads; appimagetool runs from its extracted contents, so the build
+needs no FUSE, and the runtime is passed explicitly so nothing unpinned is
+fetched.
+
+- `Loom-<version>-linux-x86_64.tar.gz`: the application folder. Run
+  `./install.sh` to copy it to `~/.local/lib/loom` and add `~/.local/bin/loom`,
+  the menu entry and icons for the current user; `install.sh --uninstall`
+  removes exactly those. `./Loom` also runs in place.
+- `Loom-<version>-linux-x86_64.deb`: installs into `/opt/loom`, with
+  `/usr/bin/loom`, the menu entry and hicolor icons. Depends on `git` and the
+  libraries `dpkg-shlibdeps` finds; the X11/Wayland libraries winit opens at
+  runtime are Recommends. Pre-release versions use `~` so they sort below the
+  release.
+- `Loom-<version>-linux-x86_64.AppImage`: the same folder under
+  `usr/lib/loom`. It does not bundle shared libraries; it relies on the
+  desktop libraries every distribution ships.
+- Linux packages carry no Git runtime: Loom uses the `git` on PATH.
+- `loom <path>...` detaches from the terminal, like `loom.cmd` on Windows.
+
+The release binary requires the glibc of the build machine (the `package`
+step prints it); building on ubuntu-24.04 means glibc 2.39 or newer.
+
+To upgrade appimagetool or the runtime, update the version, URL and SHA-256
+together in `linux/index.mjs`.
+
 ## Other platforms
 
-macOS and Linux are not implemented yet (`--platform macos|linux` reports
-this); their release workflows are placeholders.
+macOS is not implemented yet (`--platform macos` reports this); its release
+workflow is a placeholder.
