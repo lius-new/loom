@@ -65,6 +65,9 @@ pub fn render(
     editor_focus: lgui::core::UiFocusHandle,
 ) -> Element {
     let snapshot = state.get();
+    if snapshot.ui.terminal_workspace_picker.is_some() {
+        return super::workspace_picker::render(viewport, state, terminal_focus);
+    }
     let Some(menu) = snapshot.ui.terminal_tab_context_menu else {
         return panel(viewport, VisualStyle::default());
     };

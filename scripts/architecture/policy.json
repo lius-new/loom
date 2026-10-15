@@ -627,6 +627,14 @@
       "owner": "ui/terminal/state",
       "migrated_in": "shell selector"
     },
+    "ui/terminal/state.terminal_workspace_root": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "terminal workspace selection"
+    },
+    "ui/terminal/state.terminal_workspace_picker": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "terminal workspace selection"
+    },
     "ui/terminal/state.terminal_tab_context_menu": {
       "owner": "ui/terminal/state",
       "migrated_in": "R7.4"

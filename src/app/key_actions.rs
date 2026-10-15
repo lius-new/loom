@@ -74,9 +74,11 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
         return false;
     };
     let mut composing = false;
+    let mut workspace_picker = false;
     let mut pending = Vec::new();
     let mut stack = Vec::new();
     env.state.try_update(|app| {
+        workspace_picker = app.terminal.ui.terminal_workspace_picker.is_some();
         composing = app.editor.is_composing()
             || !app.explorer.ui.create_input.preedit.is_empty()
             || !app.git.ui.commit_input.preedit.is_empty()
@@ -87,8 +89,9 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
         stack = context_stack::context_stack(app);
         false
     });
-    // IME composition owns every key until it commits or cancels.
-    if composing {
+    // Composition and the workspace picker handle their own input before
+    // editor/terminal bindings can consume navigation or confirmation keys.
+    if composing || workspace_picker {
         return false;
     }
     let keymap = keymap::current();

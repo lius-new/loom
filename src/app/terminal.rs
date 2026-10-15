@@ -82,20 +82,84 @@ pub(crate) fn new_from_target(
     tabs: &TerminalStore,
     id: SessionId,
     shell: Option<ShellKind>,
-    workspace_fallback: bool,
 ) -> Option<SessionId> {
     let tab = target(tabs, id)?;
-    let cwd = tab.working_directory().or_else(|| {
-        workspace_fallback
-            .then(|| state.get().explorer.model.roots().first().cloned())
-            .flatten()
-    });
-    Some(new(
+    request_new(
         state,
         tabs,
-        shell.unwrap_or_else(|| tab.controller.shell()),
-        cwd,
-    ))
+        Some(id),
+        Some(shell.unwrap_or_else(|| tab.controller.shell())),
+    )
+}
+
+fn new_workspace_directory(app: &AppState) -> Option<PathBuf> {
+    let roots = app.explorer.model.roots();
+    app.workspace
+        .active_path()
+        .and_then(|path| app.workspace_folder_of(path))
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| {
+            app.terminal
+                .ui
+                .terminal_workspace_root
+                .as_ref()
+                .filter(|root| roots.contains(root))
+                .cloned()
+        })
+        .or_else(|| (roots.len() == 1).then(|| roots[0].clone()))
+}
+
+fn request_new(
+    state: &AppContext,
+    tabs: &TerminalStore,
+    target: Option<SessionId>,
+    shell: Option<ShellKind>,
+) -> Option<SessionId> {
+    let app = state.get();
+    let cwd = new_workspace_directory(&app);
+    if cwd.is_none() && app.explorer.model.roots().len() > 1 {
+        state.update(|app| {
+            app.keymap.clear_pending();
+            app.terminal.ui.terminal_shell_menu = false;
+            app.terminal.ui.terminal_tab_context_menu = None;
+            app.terminal.ui.terminal_workspace_picker =
+                Some(crate::ui::terminal::state::WorkspacePicker {
+                    target,
+                    shell,
+                    selected: 0,
+                    scroll: 0,
+                });
+        });
+        return None;
+    }
+    let shell = shell.unwrap_or_else(|| app.effective_shell_at(cwd.as_deref()));
+    Some(new(state, tabs, shell, cwd))
+}
+
+pub(crate) fn choose_workspace(
+    state: &AppContext,
+    tabs: &TerminalStore,
+    root: PathBuf,
+) -> Option<SessionId> {
+    let app = state.get();
+    let picker = app.terminal.ui.terminal_workspace_picker.as_ref()?;
+    if !app.explorer.model.roots().contains(&root) {
+        return None;
+    }
+    if picker.target.is_some_and(|id| target(tabs, id).is_none()) {
+        state.update(|app| app.terminal.ui.terminal_workspace_picker = None);
+        return None;
+    }
+    let shell = picker
+        .shell
+        .unwrap_or_else(|| app.effective_shell_at(Some(&root)));
+    let id = new(state, tabs, shell, Some(root.clone()));
+    state.update(|app| {
+        app.terminal.ui.terminal_workspace_root = Some(root);
+        app.terminal.ui.terminal_workspace_picker = None;
+        app.terminal_chrome.show_terminal = true;
+    });
+    Some(id)
 }
 pub(crate) fn select(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> bool {
     if target(tabs, id).is_none() {
@@ -164,7 +228,7 @@ pub(crate) fn menu_action(
         return false;
     }
     match action {
-        MenuAction::New => new_from_target(state, tabs, id, None, true).is_some(),
+        MenuAction::New => new_from_target(state, tabs, id, None).is_some(),
         MenuAction::Split => split(state, tabs, id).is_some(),
         _ => close(state, tabs, id, action, application),
     }
@@ -209,11 +273,7 @@ pub fn toggle_panel(
         });
     let mut selected = default_session;
     if opening && selected.is_none() {
-        let cwd = app.explorer.model.roots().first().cloned();
-        let shell = app.effective_shell_at(cwd.as_deref());
-        terminal_tabs.update(|tabs| {
-            selected = Some(tabs.add_at(shell, cwd));
-        });
+        selected = request_new(state, terminal_tabs, None, None);
     }
     if opening && let Some(id) = selected {
         terminal_tabs.update(|tabs| tabs.select(id));

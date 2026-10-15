@@ -51,11 +51,15 @@ mod tests {
                 layout.attach(1);
                 app.layout.application_layout = Some(layout);
                 app.terminal.ui.terminal_shell_menu = true;
+                app.explorer
+                    .model
+                    .restore(vec!["workspace-root".into()], vec![]);
                 app
             }));
             let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
                 tabs.set_profiles(&state.get().preferences.values().terminal_profiles);
+                tabs.restore_directories(&[Some("remembered-cwd".into())]);
                 tabs
             });
             *output.lock().unwrap() = Some((state.clone(), tabs.clone()));
@@ -164,6 +168,8 @@ mod tests {
         let tab = tabs.get().active().unwrap().clone();
         assert_eq!(tab.controller.shell(), ShellKind::Custom(10));
         assert_eq!(tab.controller.short_label(), "Custom 10");
+        assert_eq!(tab.cwd, Some("workspace-root".into()));
+        assert_eq!(original.cwd, Some("remembered-cwd".into()));
         assert_eq!(
             state
                 .get()
@@ -194,6 +200,110 @@ mod tests {
             mouse_cell_at(content, Point::new(1000.0, 1000.0), 10, 20),
             (9, 19)
         );
+    }
+
+    #[test]
+    fn workspace_picker_supports_cancel_keyboard_choice_and_first_terminal() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, UiScale, dispatch_runtime_output};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+        let exposed = Arc::new(Mutex::new(None));
+        let output = exposed.clone();
+        let viewport = UiRect::new(0.0, 0.0, 600.0, 400.0);
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(|| {
+                let mut app = AppState::new();
+                app.explorer
+                    .model
+                    .restore(vec!["project-a".into(), "project-b".into()], vec![]);
+                app.workspace
+                    .open_path("outside-project.txt".into(), String::new());
+                app.editor.focused = true;
+                app
+            }));
+            let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
+                TerminalTabs::restored(vec![], None)
+            });
+            let terminal_id = cx.use_stable_id();
+            let terminal_focus = cx.focus_handle(terminal_id);
+            let editor_id = cx.use_stable_id();
+            let editor_focus = cx.focus_handle(editor_id);
+            *output.lock().unwrap() = Some((
+                state.clone(),
+                tabs.clone(),
+                terminal_focus.clone(),
+                editor_focus.clone(),
+            ));
+            let env = crate::app::key_actions::KeyEnv {
+                state: state.clone(),
+                git_store: cx.state_with(crate::features::git::GitStoreSnapshot::default),
+                application: ApplicationContext::empty(Default::default()),
+                editor_focus: editor_focus.clone(),
+                editor_rect: viewport,
+                terminal: None,
+            };
+            let menu = crate::app::terminal_view::menu(
+                viewport,
+                state,
+                tabs,
+                Arc::new(ApplicationHandle::new(|task| task(), || {})),
+                terminal_focus,
+                editor_focus,
+            );
+            crate::app::key_actions::attach(menu, env)
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let (state, tabs, terminal_focus, editor_focus) = exposed.lock().unwrap().clone().unwrap();
+        let pending = || {
+            state.update(|app| app.terminal_chrome.show_terminal = false);
+            crate::app::terminal::toggle_panel(&state, &tabs, &editor_focus, &terminal_focus);
+        };
+        let context = ApplicationContext::empty(Default::default());
+        fn press(
+            session: &mut UiSession,
+            context: &ApplicationContext,
+            view: &AppView,
+            viewport: UiRect,
+            named: NamedKey,
+        ) {
+            let events = session.handle_input(InputEvent::Keyboard(key(
+                LogicalKey::Named(named),
+                Default::default(),
+            )));
+            dispatch_runtime_output(
+                events,
+                context,
+                &lgui::window::WindowId::new("workspace-picker-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(view, viewport, UiScale::ONE);
+        }
+        pending();
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|n| n.text.as_deref() == Some("project-b"))
+        );
+        press(&mut session, &context, &view, viewport, NamedKey::Escape);
+        assert!(state.get().terminal.ui.terminal_workspace_picker.is_none());
+        assert!(tabs.get().is_empty());
+        pending();
+        session.render_view(&view, viewport, UiScale::ONE);
+        press(&mut session, &context, &view, viewport, NamedKey::ArrowDown);
+        press(&mut session, &context, &view, viewport, NamedKey::Enter);
+        assert_eq!(tabs.get().tabs().len(), 1);
+        assert_eq!(tabs.get().active().unwrap().cwd, Some("project-b".into()));
+        assert_eq!(
+            state.get().terminal.ui.terminal_workspace_root,
+            Some("project-b".into())
+        );
+        assert!(state.get().terminal.ui.terminal_workspace_picker.is_none());
     }
 
     #[test]

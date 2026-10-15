@@ -237,8 +237,7 @@ pub(crate) fn render_view(
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
-            if commands::new_from_target(&add_state, &add_tabs, active_tab_id, new_shell, true)
-                .is_none()
+            if commands::new_from_target(&add_state, &add_tabs, active_tab_id, new_shell).is_none()
             {
                 return;
             }

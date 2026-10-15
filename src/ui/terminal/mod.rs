@@ -7,3 +7,4 @@ pub(crate) mod settings;
 pub(crate) mod settings_binding;
 pub(crate) mod state;
 pub(crate) mod view;
+mod workspace_picker;

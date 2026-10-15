@@ -118,6 +118,7 @@ impl AppState {
     pub fn restored() -> Self {
         let mut app = Self::new();
         let session = crate::app::workspace_session::load();
+        app.terminal.ui.terminal_workspace_root = session.terminal_workspace_root;
         app.terminal_chrome.show_terminal =
             session.show_terminal && !session.terminal_tabs.is_empty();
         if let Some(height) = session.terminal_height.filter(|height| height.is_finite()) {
@@ -488,6 +489,7 @@ impl AppState {
     }
 
     fn close_menus(&mut self) {
+        self.terminal.ui.terminal_workspace_picker = None;
         self.editor.menu = None;
         self.explorer.ui.menu = None;
         self.explorer.ui.menu_target = None;

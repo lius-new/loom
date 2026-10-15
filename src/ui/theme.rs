@@ -19,6 +19,7 @@ pub struct Palette {
     pub surface: Color,     // elevated cards / inputs
     pub border: Color,      // divider borders
     pub active_line: Color, // active row / hover highlight
+    pub active_tab: Color,  // contrasting editor tab background
     pub selection: Color,
     pub accent: Color,
     pub accent_hover: Color,
@@ -128,6 +129,7 @@ const AURA_DARK: Palette = Palette {
     surface: Color(0x1c1f26),
     border: Color(0x262a35),
     active_line: Color(0x1a1d24),
+    active_tab: Color(0x303030),
     selection: Color(0x273449),
     accent: Color(0x818cf8), // electric indigo
     accent_hover: Color(0x6366f1),
@@ -191,6 +193,7 @@ const AURA_LIGHT: Palette = Palette {
     surface: Color(0xffffff),
     border: Color(0xe4e4e7),
     active_line: Color(0xeef0f4),
+    active_tab: Color(0xe4e4e4),
     selection: Color(0xdbe4ff),
     accent: Color(0x4f46e5),
     accent_hover: Color(0x4338ca),
@@ -255,6 +258,7 @@ const EMBER: Palette = Palette {
     surface: Color(0x262220),
     border: Color(0x332d29),
     active_line: Color(0x221e1b),
+    active_tab: Color(0x363636),
     selection: Color(0x44352a),
     accent: Color(0xfb923c),
     accent_hover: Color(0xf97316),
@@ -319,6 +323,7 @@ const HIGH_CONTRAST: Palette = Palette {
     surface: Color(0x141414),
     border: Color(0x6b6b6b),
     active_line: Color(0x1f1f1f),
+    active_tab: Color(0x3b3b3b),
     selection: Color(0x264f78),
     accent: Color(0x4cc2ff),
     accent_hover: Color(0x2aa7f0),

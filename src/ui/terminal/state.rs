@@ -28,10 +28,19 @@ pub struct TerminalUiState {
     pub terminal_shell_menu: bool,
     pub terminal_shell_scroll: usize,
     pub terminal_shell_selection: Option<crate::features::terminal::ShellKind>,
+    pub terminal_workspace_root: Option<std::path::PathBuf>,
+    pub terminal_workspace_picker: Option<WorkspacePicker>,
     pub terminal_tab_context_menu: Option<TerminalTabContextMenuState>,
     pub shell_editor: Option<ProfileEditor>,
     pub terminal_split_drag: Option<u64>,
     pub last_terminal_tab_click: Option<(Instant, u64, f32, f32, u8)>,
+}
+#[derive(Clone)]
+pub struct WorkspacePicker {
+    pub target: Option<crate::features::terminal::SessionId>,
+    pub shell: Option<crate::features::terminal::ShellKind>,
+    pub selected: usize,
+    pub scroll: usize,
 }
 impl TerminalUiState {
     pub fn terminal_tab_click_count(&mut self, terminal: u64, x: f32, y: f32) -> u8 {

@@ -316,9 +316,11 @@ impl TerminalController {
         {
             let mut parser = lock(&self.inner.parser);
             if parser.screen().size() != (size.rows, size.cols) {
-                let scrollback = parser.screen().scrollback();
-                parser.screen_mut().set_size(size.rows, size.cols);
-                parser.screen_mut().set_scrollback(scrollback);
+                let displacement = parser.screen_mut().resize(size.rows, size.cols);
+                if let Some(selection) = lock(&self.inner.selection).as_mut() {
+                    selection.anchor.row += i64::from(displacement);
+                    selection.head.row += i64::from(displacement);
+                }
             }
         }
 

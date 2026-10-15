@@ -41,6 +41,8 @@ pub struct WorkspaceSession {
     #[serde(default)]
     pub terminal_directories: Vec<Option<PathBuf>>,
     #[serde(default)]
+    pub terminal_workspace_root: Option<PathBuf>,
+    #[serde(default)]
     pub active_terminal: Option<usize>,
     #[serde(default)]
     pub show_terminal: bool,
@@ -72,6 +74,10 @@ pub fn save(open_folders: &[PathBuf], recent_folders: &[PathBuf]) -> io::Result<
 
 pub fn save_window_geometry(geometry: WindowGeometry) -> io::Result<()> {
     update(|session| session.window = Some(geometry))
+}
+
+pub fn save_terminal_workspace_root(root: Option<PathBuf>) -> io::Result<()> {
+    update(|session| session.terminal_workspace_root = root)
 }
 
 pub fn save_editor_layout(layout: Option<&EditorLayout>) -> io::Result<()> {
@@ -306,6 +312,7 @@ mod tests {
                 Some(PathBuf::from("two")),
             ],
             active_terminal: Some(1),
+            terminal_workspace_root: Some(PathBuf::from("two")),
             show_terminal: true,
             terminal_height: Some(320.0),
             source_control_open: true,

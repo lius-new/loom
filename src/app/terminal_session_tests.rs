@@ -5,7 +5,6 @@ mod tests {
     use crate::app::terminal_binding::fixtures::Sessions as TerminalTabs;
     use crate::app::terminal_runtime::TerminalDisplay;
     use crate::features::terminal::ShellKind;
-    #[cfg(windows)]
     use crate::features::terminal::TerminalSize;
     #[cfg(windows)]
     use crate::features::terminal::TerminalStatus;
@@ -20,6 +19,122 @@ mod tests {
     use std::thread;
     #[cfg(windows)]
     use std::{io::Write, path::Path, time::Duration};
+
+    #[test]
+    fn shrinking_and_growing_terminal_height_restores_logs_cursor_and_styles() {
+        let controller = TerminalController::new();
+        let size = TerminalSize {
+            rows: 8,
+            cols: 80,
+            pixel_width: 7,
+            pixel_height: 19,
+        };
+        controller.resize(size);
+        controller.test_parser().process(
+            "started api\r\n\r\nNative API started\r\nDocker dependencies remain running\r\n\x1b[31m[api] 中文服务日志\x1b[m\r\n[api] Swagger ready".as_bytes(),
+        );
+        let original = controller.test_parser().screen().clone();
+        let generation = controller.generation();
+        for rows in [3, 1, 5, 2, 8] {
+            controller.resize(TerminalSize { rows, ..size });
+        }
+        let parser = controller.test_parser();
+        assert_eq!(parser.screen().contents(), original.contents());
+        assert_eq!(
+            parser.screen().cursor_position(),
+            original.cursor_position()
+        );
+        assert_eq!(parser.screen().cell(4, 0), original.cell(4, 0));
+        assert_eq!(controller.generation(), generation);
+    }
+
+    #[test]
+    fn output_received_while_short_remains_in_history_after_growing() {
+        let controller = TerminalController::new();
+        let size = TerminalSize {
+            rows: 6,
+            cols: 80,
+            pixel_width: 7,
+            pixel_height: 19,
+        };
+        controller.resize(size);
+        controller
+            .test_parser()
+            .process(b"log 0\r\nlog 1\r\nlog 2\r\nlog 3");
+        controller.resize(TerminalSize { rows: 2, ..size });
+        controller.test_parser().process(b"\r\nlog 4\r\nlog 5");
+        controller.resize(size);
+        assert_eq!(
+            controller.test_parser().screen().contents(),
+            "log 0\nlog 1\nlog 2\nlog 3\nlog 4\nlog 5"
+        );
+    }
+
+    #[test]
+    fn height_resize_keeps_wrapped_lines_and_incomplete_escape_sequences() {
+        let mut parser = vt100::Parser::new(5, 6, 20);
+        parser.process(b"abcdefghijkl\r\nlast\x1b[3");
+        let original = parser.screen().contents();
+        parser.screen_mut().set_size(1, 6);
+        parser.screen_mut().set_size(5, 6);
+        assert_eq!(parser.screen().contents(), original);
+        assert!(parser.screen().row_wrapped(0));
+        parser.process(b"1m!");
+        assert_eq!(
+            parser.screen().cell(2, 4).unwrap().fgcolor(),
+            vt100::Color::Idx(1)
+        );
+        let mut parser = vt100::Parser::new(4, 6, 20);
+        parser.process(b"abcdef");
+        parser.screen_mut().set_size(2, 6);
+        parser.screen_mut().set_size(4, 6);
+        parser.process(b"g");
+        assert_eq!(parser.screen().contents(), "abcdefg");
+        assert!(parser.screen().row_wrapped(0));
+    }
+
+    #[test]
+    fn resizing_alternate_screen_keeps_primary_logs_and_history_separate() {
+        let mut parser = vt100::Parser::new(6, 40, 20);
+        parser.process(b"log 0\r\nlog 1\r\nlog 2\r\nlog 3\r\nlog 4");
+        let original = parser.screen().clone();
+        parser.process(b"\x1b[?1049hTUI screen");
+        parser.screen_mut().set_size(2, 40);
+        assert!(parser.screen().alternate_screen());
+        parser.screen_mut().set_scrollback(100);
+        assert_eq!(parser.screen().scrollback(), 0);
+        assert!(!parser.screen().contents().contains("log"));
+        parser.process(b"\x1b[?1049l");
+        parser.screen_mut().set_size(6, 40);
+        assert_eq!(parser.screen().contents(), original.contents());
+        assert_eq!(
+            parser.screen().cursor_position(),
+            original.cursor_position()
+        );
+    }
+
+    #[test]
+    fn shrinking_preserves_nonempty_rows_below_the_cursor() {
+        let mut parser = vt100::Parser::new(5, 40, 20);
+        parser.process(b"line 0\r\nline 1\r\nline 2\r\nline 3\x1b[H");
+        parser.screen_mut().set_size(2, 40);
+        parser.screen_mut().set_size(5, 40);
+        assert_eq!(parser.screen().contents(), "line 0\nline 1\nline 2\nline 3");
+    }
+
+    #[test]
+    fn shrinking_respects_history_limit_and_preserves_latest_logs() {
+        let mut parser = vt100::Parser::new(5, 40, 3);
+        parser.process(b"log 0\r\nlog 1\r\nlog 2\r\nlog 3\r\nlog 4");
+        parser.screen_mut().set_size(1, 40);
+        assert_eq!(parser.screen().contents(), "log 4");
+        parser.screen_mut().set_scrollback(100);
+        assert_eq!(parser.screen().scrollback(), 3);
+        assert_eq!(parser.screen().contents(), "log 1");
+        parser.screen_mut().set_scrollback(0);
+        parser.screen_mut().set_size(5, 40);
+        assert_eq!(parser.screen().contents(), "log 1\nlog 2\nlog 3\nlog 4");
+    }
 
     #[cfg(windows)]
     #[test]
@@ -626,11 +741,24 @@ mod tests {
             generation
         );
         assert_ne!(tabs.tabs()[0].group_id, tabs.tabs()[1].group_id);
+        let original_size = controller.test_parser().screen().size();
         controller.resize(TerminalSize {
             rows: 12,
             cols: 60,
             pixel_width: 440,
             pixel_height: 230,
+        });
+        let displaced = usize::from(original_size.0 - 12);
+        assert_eq!(
+            controller.test_parser().screen().scrollback(),
+            scrollback + displaced
+        );
+        assert_eq!(controller.selected_text(), selected);
+        controller.resize(TerminalSize {
+            rows: original_size.0,
+            cols: original_size.1,
+            pixel_width: 7,
+            pixel_height: 19,
         });
         assert_eq!(controller.test_selection(), selection);
         assert_eq!(controller.test_parser().screen().scrollback(), scrollback);

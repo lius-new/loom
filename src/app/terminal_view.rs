@@ -81,6 +81,7 @@ pub(crate) fn binding(
         move || {
             let app = frame.get();
             bindings::Frame {
+                workspace_roots: app.explorer.model.roots().to_vec(),
                 ui: app.terminal.ui,
                 chrome: bindings::Chrome {
                     resizing_terminal: app.terminal_chrome.resizing_terminal,
@@ -163,14 +164,13 @@ pub(crate) fn run(
         created: None,
     };
     match command {
+        Command::ChooseWorkspace(root) => {
+            result.created = commands::choose_workspace(state, tabs, root);
+            result.applied = result.created.is_some();
+        }
         Command::Select(id) => result.applied = commands::select(state, tabs, id),
-        Command::New {
-            target,
-            shell,
-            workspace_fallback,
-        } => {
-            result.created =
-                commands::new_from_target(state, tabs, target, shell, workspace_fallback);
+        Command::New { target, shell } => {
+            result.created = commands::new_from_target(state, tabs, target, shell);
             result.applied = result.created.is_some();
         }
         Command::Split(id) => {

@@ -87,6 +87,7 @@ pub struct Chrome {
 }
 #[derive(Clone)]
 pub struct Frame {
+    pub workspace_roots: Vec<PathBuf>,
     pub ui: TerminalUiState,
     pub chrome: Chrome,
     pub modifiers: lgui::core::KeyModifiers,
@@ -188,11 +189,11 @@ pub enum ClipboardShortcut {
     CopyOrPaste,
 }
 pub enum Command {
+    ChooseWorkspace(PathBuf),
     Select(SessionId),
     New {
         target: SessionId,
         shell: Option<ShellKind>,
-        workspace_fallback: bool,
     },
     Split(SessionId),
     Menu {
@@ -267,14 +268,8 @@ pub fn new_from_target(
     tabs: &Sessions,
     target: SessionId,
     shell: Option<ShellKind>,
-    workspace_fallback: bool,
 ) -> Option<SessionId> {
-    tabs.run(Command::New {
-        target,
-        shell,
-        workspace_fallback,
-    })
-    .created
+    tabs.run(Command::New { target, shell }).created
 }
 pub fn shell_menu(state: &Binding, _tabs: &Sessions, id: SessionId) -> bool {
     state.run(Command::ShellMenu(id)).applied

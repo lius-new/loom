@@ -334,6 +334,10 @@ pub(crate) fn save(tabs: &TerminalStore, visible: bool, height: f32) {
     );
 }
 pub(crate) fn install_save(cx: &mut RenderCx<'_, '_>, tabs: &TerminalStore, app: &AppState) {
+    let workspace_root = app.terminal.ui.terminal_workspace_root.clone();
+    cx.use_effect(workspace_root.clone(), move || {
+        let _ = crate::app::workspace_session::save_terminal_workspace_root(workspace_root);
+    });
     let snapshot = tabs.get();
     let visible = app.default_terminal_open();
     let height = app.terminal_chrome.terminal_h;

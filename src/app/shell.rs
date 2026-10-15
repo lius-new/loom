@@ -521,7 +521,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let mounted_terminal_focus = terminal_focus.clone();
     terminal_tab_context_menu::restore_focus_on_dismiss(
         cx,
-        s.terminal.ui.terminal_tab_context_menu.is_some(),
+        s.terminal.ui.terminal_tab_context_menu.is_some()
+            || s.terminal.ui.terminal_workspace_picker.is_some(),
         terminal_visible,
         terminal_focus.clone(),
         editor_focus.clone(),
@@ -796,6 +797,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     || app.explorer.ui.menu.is_some()
                     || app.editor.tabs.tab_context_menu.is_some()
                     || app.terminal.ui.terminal_tab_context_menu.is_some()
+                    || app.terminal.ui.terminal_workspace_picker.is_some()
                     || app.git.ui.branch_picker.is_some()
                     || app.git.ui.stash_switch.is_some()
                     || app.git.ui.menu.is_some()
@@ -1053,6 +1055,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     if s.explorer.ui.menu.is_none()
         && s.editor.tabs.tab_context_menu.is_none()
         && s.terminal.ui.terminal_tab_context_menu.is_none()
+        && s.terminal.ui.terminal_workspace_picker.is_none()
         && s.git.ui.branch_picker.is_none()
         && s.git.ui.stash_switch.is_none()
         && s.git.ui.menu.is_none()
@@ -1096,7 +1099,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     if s.editor.tabs.tab_context_menu.is_some() {
         root = root.child(super::tab_menu::render(vp, state.clone()));
     }
-    if s.terminal.ui.terminal_tab_context_menu.is_some() {
+    if s.terminal.ui.terminal_tab_context_menu.is_some()
+        || s.terminal.ui.terminal_workspace_picker.is_some()
+    {
         root = root.child(crate::app::terminal_view::menu(
             vp,
             state.clone(),

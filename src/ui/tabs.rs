@@ -23,16 +23,14 @@ use crate::ui::theme;
 pub(super) const PAD: f32 = 12.0;
 /// Gap between badge, name and close icon (gap-2 in the mockup).
 pub(super) const GAP: f32 = 6.0;
-/// Gap between adjacent tab pills.
-pub(super) const TAB_GAP: f32 = 4.0;
+/// Adjacent tabs meet without a gap.
+pub(super) const TAB_GAP: f32 = 0.0;
 /// Extra right margin inside text rects so the last glyph is not clipped.
 pub(super) const TEXT_MARGIN: f32 = 6.0;
-/// Left padding of the tab cluster. The strip itself has no padding — each
-/// cluster (tabs / controls) applies its own, so parent padding never leaks
-/// out as an outer margin.
-pub(super) const TABS_PAD: f32 = 8.0;
-/// Vertical inset of each tab pill inside the strip.
-pub(super) const PILL_INSET: f32 = 4.0;
+/// The tab cluster has no leading or trailing outer padding.
+pub(super) const TABS_PAD: f32 = 0.0;
+/// Tabs fill the strip vertically without an outer margin.
+pub(super) const PILL_INSET: f32 = 0.0;
 /// Upper bound for inactive tabs. The active tab uses its full natural width.
 pub(super) const MAX_TAB_W: f32 = 220.0;
 /// Keeps the badge, an ellipsis and the close button usable when tabs shrink.
@@ -524,6 +522,18 @@ pub fn render_tooltip(
     )
 }
 
+fn active_tab_background(rect: UiRect) -> Element {
+    panel(rect, VisualStyle::filled(theme::c().active_tab).alpha(51)).child(panel(
+        UiRect::new(
+            rect.left,
+            (rect.bottom - 2.0).max(rect.top),
+            rect.right,
+            rect.bottom,
+        ),
+        VisualStyle::filled(theme::c().accent),
+    ))
+}
+
 pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusHandle) -> Element {
     let snapshot = state.snapshot();
     let s = snapshot.frame();
@@ -531,7 +541,12 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
     let labels = s.workspace.tab_labels(pane);
 
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar))
-        .key(format!("tab-strip-{}", pane.get()));
+        .key(format!("tab-strip-{}", pane.get()))
+        // Paint the strip border first so the active tab's accent stays visible.
+        .child(panel(
+            UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
+            VisualStyle::filled(theme::c().border),
+        ));
     let controls_left = controls_left(rect, &s, pane);
     let layout = tab_layout(rect, &s, pane, false);
     let tab_viewport = UiRect::new(
@@ -560,9 +575,7 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
         });
     }
 
-    // Tabs are content-sized rounded pills, inset PILL_INSET vertically,
-    // separated by TAB_GAP. The strip has no padding; this cluster's left
-    // padding is TABS_PAD.
+    // Tabs fill the strip vertically and meet without gaps or outer padding.
     if s.welcome_panes.contains(&pane)
         && !s
             .editor
@@ -579,13 +592,11 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
             rect.left + TABS_PAD + tab_w,
             rect.bottom - PILL_INSET,
         );
-        tab_layer = tab_layer.child(
-            theme::bordered(pill, theme::c().bg, theme::c().border, 2.0, 1.0).child(text(
-                UiRect::new(pill.left + PAD, pill.top, pill.right - PAD, pill.bottom),
-                label,
-                theme::mono(theme::c().text_bright, theme::UI_SIZE),
-            )),
-        );
+        tab_layer = tab_layer.child(active_tab_background(pill).child(text(
+            UiRect::new(pill.left + PAD, pill.top, pill.right - PAD, pill.bottom),
+            label,
+            theme::mono(theme::c().text_bright, theme::UI_SIZE),
+        )));
     }
     // Only tabs near the viewport become elements. The drag source is kept
     // even when edge auto-scroll moves it away so its keyed element survives
@@ -657,10 +668,9 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
 
         let st = state.clone();
         let focus = editor_focus.clone();
-        // Active tab gets a crisp 1px border; see theme::bordered for why a
-        // filled ring is used instead of a stroked outline.
+        // The active tab uses a neutral background and an accent bottom edge.
         let mut tab_el = if Some(id) == active {
-            theme::bordered(pill, theme::c().bg, theme::c().border, 2.0, 1.0)
+            active_tab_background(pill)
         } else {
             panel(pill, VisualStyle::default().radius(2.0))
         }
@@ -994,12 +1004,6 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
             )),
         );
     }
-
-    // Hairline bottom border (matches the title bar).
-    bar = bar.child(panel(
-        UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-        VisualStyle::filled(theme::c().border),
-    ));
 
     bar
 }

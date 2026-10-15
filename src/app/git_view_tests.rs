@@ -167,6 +167,37 @@ mod panel_virtualization_tests {
         let commit_input = find(&session, "Commit message");
         assert_eq!(commit_input.bottom + 5.0, worktrees.top);
         assert_eq!(commit_input.height(), 22.0);
+        let keyed_rect = |key: &'static str| {
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| node.id == UiId::new(key))
+                .unwrap_or_else(|| panic!("Missing element {key}"))
+                .layout_rect
+        };
+        let check = keyed_rect("git-commit-button-icon");
+        let arrow = keyed_rect("git-commit-options-icon");
+        let divider = session
+            .tree()
+            .nodes()
+            .iter()
+            .map(|node| node.layout_rect)
+            .find(|rect| {
+                rect.width() == 1.0
+                    && rect.left >= check.right
+                    && rect.right <= arrow.left
+                    && rect.top >= check.top
+                    && rect.bottom <= check.bottom
+            })
+            .expect("Divider between commit icons");
+        let commit = find(&session, "Commit changes");
+        let options = find(&session, "Commit options");
+        assert_eq!(commit.width(), options.width());
+        assert_eq!(check.left - commit.left, divider.left - check.right);
+        assert_eq!(divider.left - check.right, arrow.left - divider.right);
+        assert_eq!(arrow.left - divider.right, options.right - arrow.right);
+        assert_eq!(options.right, viewport.right - 12.0 - 1.0);
         save_drawer_preview(&session, &context, viewport, "git-drawer-long-changes");
         assert!(
             session.tree().nodes().len() < 600,

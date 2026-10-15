@@ -710,17 +710,17 @@ pub fn render(
         (rect.right - 12.0).max(rect.left + 12.0),
         (prompt_bottom - 4.0).max(prompt_top + 4.0),
     );
-    let button_w = 20.0_f32.min((field.width() - 8.0).max(0.0) / 3.0);
+    let button_w = 24.0_f32.min((field.width() - 3.0).max(0.0) / 3.0);
     let options_rect = UiRect::new(
-        field.right - 4.0 - button_w,
+        field.right - 1.0 - button_w,
         field.top + 2.0,
-        field.right - 4.0,
+        field.right - 1.0,
         field.bottom - 2.0,
     );
     let commit_button_rect = UiRect::new(
-        options_rect.left - 2.0 - button_w,
+        options_rect.left - 1.0 - button_w,
         options_rect.top,
-        options_rect.left - 2.0,
+        options_rect.left - 1.0,
         options_rect.bottom,
     );
     let commit_field = theme::bordered(
@@ -750,6 +750,18 @@ pub fn render(
         state.clone(),
         store.clone(),
     ))
+    .child(
+        panel(
+            UiRect::new(
+                options_rect.left - 1.0,
+                options_rect.top + 4.0,
+                options_rect.left,
+                options_rect.bottom - 4.0,
+            ),
+            VisualStyle::filled(theme::c().border),
+        )
+        .key("git-commit-actions-divider"),
+    )
     .child(commit_options_button(options_rect, state.clone()));
     root = root.child(clip(field, 0.0, 0.0).child(commit_field));
     root = root.child(git_resize_handle(rect, state, resizing));
@@ -963,12 +975,7 @@ pub(crate) fn commit_options_button(rect: UiRect, state: Binding) -> Element {
     .child(crate::ui::drawer::drawer_icon(
         "git-commit-options-icon",
         "chevron-down",
-        UiRect::new(
-            rect.left + 2.0,
-            rect.top + (rect.height() - 14.0) / 2.0,
-            rect.left + 16.0,
-            rect.top + (rect.height() + 14.0) / 2.0,
-        ),
+        theme::icon_rect(rect),
         color,
     ))
 }

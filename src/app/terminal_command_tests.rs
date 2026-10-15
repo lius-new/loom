@@ -12,6 +12,7 @@ use lgui::core::UiScale;
 use lgui::prelude::{UiRect, VisualStyle, panel};
 use lgui::services::{Clipboard, ClipboardError};
 use lgui::session::UiSession;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 pub(super) fn fixture() -> (UiSession, AppContext, TerminalStore) {
@@ -65,8 +66,13 @@ fn invariant(state: &AppContext, tabs: &TerminalStore) {
 }
 
 #[test]
-fn menu_commands_resolve_inactive_target_shell_directory_and_group_at_execution() {
+fn menu_new_uses_workspace_root_while_split_inherits_target_live_directory() {
     let (_session, state, tabs) = fixture();
+    state.update(|app| {
+        app.explorer
+            .model
+            .restore(vec!["workspace-root".into()], vec![]);
+    });
     let clicked = new(&state, &tabs, ShellKind::Cmd, Some("clicked-cwd".into()));
     let controller = target(&tabs, clicked).unwrap().controller.test_controller();
     *controller.test_cwd() = Some("live-cwd".into());
@@ -81,7 +87,7 @@ fn menu_commands_resolve_inactive_target_shell_directory_and_group_at_execution(
     ));
     let created = tabs.get().active().unwrap();
     assert_eq!(created.controller.shell(), ShellKind::Cmd);
-    assert_eq!(created.cwd, Some("live-cwd".into()));
+    assert_eq!(created.cwd, Some("workspace-root".into()));
     select(&state, &tabs, active);
     assert!(menu_action(
         &state,
@@ -132,7 +138,7 @@ fn closed_targets_cannot_select_create_split_close_or_send_input_to_survivor() {
         assert!(!menu_action(&state, &tabs, closed, action, &app));
     }
     assert!(!select(&state, &tabs, closed));
-    assert!(new_from_target(&state, &tabs, closed, Some(ShellKind::Bash), false).is_none());
+    assert!(new_from_target(&state, &tabs, closed, Some(ShellKind::Bash)).is_none());
     assert!(split(&state, &tabs, closed).is_none());
     assert!(!write(&tabs, closed, b"stale"));
     let clip = TestClipboard::default();
@@ -141,6 +147,100 @@ fn closed_targets_cannot_select_create_split_close_or_send_input_to_survivor() {
     assert!(control.test_writes().is_empty());
     assert_eq!(tabs.get().active_id(), Some(survivor));
     assert_eq!(tabs.get().tabs().len(), 1);
+    invariant(&state, &tabs);
+}
+
+#[test]
+fn ordinary_new_uses_current_workspace_without_overwriting_restored_directories() {
+    let (_session, state, tabs) = fixture();
+    let restored = tabs.get().active_id().unwrap();
+    tabs.update(|tabs| tabs.restore_directories(&[Some("remembered-cwd".into())]));
+    for roots in [
+        vec![PathBuf::from("workspace-a")],
+        vec![PathBuf::from("workspace-c")],
+        vec![],
+    ] {
+        let expected = roots.first().cloned();
+        state.update(|app| app.explorer.model.restore(roots, vec![]));
+        let created = new_from_target(&state, &tabs, restored, Some(ShellKind::Bash)).unwrap();
+        assert_eq!(target(&tabs, created).unwrap().cwd, expected);
+        assert_eq!(
+            target(&tabs, created).unwrap().controller.shell(),
+            ShellKind::Bash
+        );
+        assert_eq!(
+            target(&tabs, restored).unwrap().working_directory(),
+            Some("remembered-cwd".into())
+        );
+        invariant(&state, &tabs);
+    }
+    let sibling = split(&state, &tabs, restored).unwrap();
+    assert_eq!(
+        target(&tabs, sibling).unwrap().cwd,
+        Some("remembered-cwd".into())
+    );
+    invariant(&state, &tabs);
+}
+
+#[test]
+fn active_file_selects_its_innermost_workspace_before_remembered_choice() {
+    let (_session, state, tabs) = fixture();
+    let source = tabs.get().active_id().unwrap();
+    state.update(|app| {
+        app.explorer.model.restore(
+            vec![
+                "project-a".into(),
+                "project-b".into(),
+                "project-b/nested".into(),
+            ],
+            vec![],
+        );
+        app.terminal.ui.terminal_workspace_root = Some("project-a".into());
+    });
+    for (file, root) in [
+        ("project-b/src/main.rs", "project-b"),
+        ("project-b/nested/main.rs", "project-b/nested"),
+        ("project-a/lib.rs", "project-a"),
+    ] {
+        state.update(|app| {
+            app.workspace.open_path(file.into(), String::new());
+        });
+        let id = new_from_target(&state, &tabs, source, None).unwrap();
+        assert_eq!(target(&tabs, id).unwrap().cwd, Some(root.into()));
+        assert!(state.get().terminal.ui.terminal_workspace_picker.is_none());
+    }
+    invariant(&state, &tabs);
+}
+
+#[test]
+fn ambiguous_new_waits_for_choice_remembers_it_and_rejects_removed_roots() {
+    let (_session, state, tabs) = fixture();
+    let source = tabs.get().active_id().unwrap();
+    state.update(|app| {
+        app.explorer
+            .model
+            .restore(vec!["project-a".into(), "project-b".into()], vec![])
+    });
+    assert!(new_from_target(&state, &tabs, source, Some(ShellKind::Bash)).is_none());
+    assert_eq!(tabs.get().tabs().len(), 1);
+    assert!(choose_workspace(&state, &tabs, "removed".into()).is_none());
+    let id = choose_workspace(&state, &tabs, "project-b".into()).unwrap();
+    assert_eq!(target(&tabs, id).unwrap().cwd, Some("project-b".into()));
+    assert_eq!(
+        target(&tabs, id).unwrap().controller.shell(),
+        ShellKind::Bash
+    );
+    assert!(state.get().terminal.ui.terminal_workspace_picker.is_none());
+    let next = new_from_target(&state, &tabs, id, None).unwrap();
+    assert_eq!(target(&tabs, next).unwrap().cwd, Some("project-b".into()));
+    state.update(|app| {
+        app.explorer
+            .model
+            .restore(vec!["project-a".into(), "project-c".into()], vec![])
+    });
+    assert!(new_from_target(&state, &tabs, next, None).is_none());
+    assert!(state.get().terminal.ui.terminal_workspace_picker.is_some());
+    assert!(choose_workspace(&state, &tabs, "project-b".into()).is_none());
     invariant(&state, &tabs);
 }
 

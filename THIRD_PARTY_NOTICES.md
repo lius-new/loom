@@ -1,5 +1,12 @@
 # Third-party notices
 
+## vt100 terminal parser
+
+`vendor/vt100` contains vt100 0.16.2 by Jesse Luehrs, licensed under MIT
+(see `vendor/vt100/LICENSE`). Loom modifies height resizing to preserve terminal
+history and exposes the row displacement for selection tracking. Upstream:
+https://github.com/doy/vt100-rust.
+
 Official Loom packages may include a managed Git runtime. Git is licensed under
 the GNU General Public License version 2. Runtime packages must retain Git's
 license, source-offer information, upstream version, download URL, and the
