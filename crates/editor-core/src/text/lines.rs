@@ -87,7 +87,7 @@ impl LineIndex {
             // Long lines have a sparse index for viewport and cursor lookups.
             // Never split a grapheme, including combining marks and emoji.
             for (byte, grapheme) in line.grapheme_indices(true) {
-                if line.len() > 4096
+                if line.len() > 256
                     && (positions.is_empty() || byte - positions.last().unwrap().byte >= 256)
                 {
                     positions.push(Position {
@@ -217,7 +217,7 @@ impl LineIndex {
             .next_start(line)
             .map(|offset| (offset as isize + delta) as usize);
         let end = content_end(text, start, next);
-        if end - start <= 4096 || self.positions[line].len() < 3 {
+        if end - start <= 256 || self.positions[line].len() < 3 {
             return false;
         }
         let positions = &mut self.positions[line];

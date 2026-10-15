@@ -122,8 +122,8 @@ pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
         code_left,
         rect.top,
         code_left + metrics.content_w,
-    )
-    .0 - code_left;
+        (scroll_x, metrics.viewport_w),
+    ) - code_left;
     if caret < scroll_x + CURSOR_REVEAL_MARGIN {
         scroll_x = (caret - CURSOR_REVEAL_MARGIN).max(0.0);
     } else if caret > scroll_x + metrics.viewport_w - CURSOR_REVEAL_MARGIN {

@@ -263,7 +263,6 @@ pub(crate) fn render(
 
         // Vim draws its own visual selection; other views show the core one.
         let selections = &s.selections;
-        let large_file = buffer.len() > 4 * 1024 * 1024 || buffer.max_line_display_width() > 4096;
         let matches = &s.search_matches;
         for line_index in visible_lines.clone() {
             let y = code_top + line_index as f32 * fonts::editor().line_h;
@@ -282,9 +281,13 @@ pub(crate) fn render(
                 let from = range.start.max(start).min(end);
                 let to = range.end.min(end).max(start);
                 let left = caret_x(layout.as_ref(), buffer.text()[start..from].chars().count())
-                    .unwrap_or(line_left);
+                    .unwrap_or_else(|| {
+                        code_left + buffer.display_column(from) as f32 * fonts::editor().char_w
+                    });
                 let mut right = caret_x(layout.as_ref(), buffer.text()[start..to].chars().count())
-                    .unwrap_or(left);
+                    .unwrap_or_else(|| {
+                        code_left + buffer.display_column(to) as f32 * fonts::editor().char_w
+                    });
                 if range.end > end {
                     right += fonts::editor().char_w;
                 }
@@ -308,17 +311,15 @@ pub(crate) fn render(
             let mut x = line_left;
             let mut char_offset = 0;
             let mut display_column = initial_column;
-            let spans = if large_file {
-                vec![(line.to_owned(), theme::c().text)]
-            } else {
-                syntax::highlight_line(line, meta.lang)
-            };
+            let spans =
+                syntax::highlight_window(&buffer, id, line_index, window.clone(), meta.lang);
             for (span, color) in spans {
                 char_offset += span.chars().count();
-                let next_x = caret_x(layout.as_ref(), char_offset)
-                    .unwrap_or_else(|| x + span.chars().count() as f32 * fonts::editor().char_w);
-                let span_rect = UiRect::new(x, y, next_x.max(x) + 4.0, y + fonts::editor().line_h);
                 let (display, _, column) = expand_tabs(&span, display_column);
+                let next_x = caret_x(layout.as_ref(), char_offset).unwrap_or_else(|| {
+                    x + (column - display_column) as f32 * fonts::editor().char_w
+                });
+                let span_rect = UiRect::new(x, y, next_x.max(x) + 4.0, y + fonts::editor().line_h);
                 display_column = column;
                 code = code.child(text(span_rect, display, fonts::editor().style(color)));
                 x = next_x;
@@ -329,13 +330,14 @@ pub(crate) fn render(
         let editor_focused = s.focused && focused_pane;
         if editor_focused && visible_lines.contains(&cursor_line) {
             let cursor_y = code_top + cursor_line as f32 * fonts::editor().line_h;
-            let (cursor_x, cursor_layout) = document_caret(
+            let cursor_x = document_caret(
                 &buffer,
                 cursor_line,
                 cursor_col,
                 code_left,
                 cursor_y,
                 layout_right,
+                (scroll_x, metrics.viewport_w),
             );
             let shape = s.cursor_shape;
             let cell = [cursor_x, cursor_y];
@@ -352,15 +354,15 @@ pub(crate) fn render(
                     .map_or(0, |grapheme| grapheme.chars().count());
                 let right = (chars > 0)
                     .then(|| {
-                        if buffer.line(cursor_line).len() > 4096 {
-                            let offset = buffer.next_grapheme(buffer.cursor());
-                            Some(
-                                code_left
-                                    + buffer.display_column(offset) as f32 * fonts::editor().char_w,
-                            )
-                        } else {
-                            caret_x(cursor_layout.as_ref(), cursor_col + chars)
-                        }
+                        Some(document_caret(
+                            &buffer,
+                            cursor_line,
+                            cursor_col + chars,
+                            code_left,
+                            cursor_y,
+                            layout_right,
+                            (scroll_x, metrics.viewport_w),
+                        ))
                     })
                     .flatten()
                     .unwrap_or(cursor_x + fonts::editor().char_w)
@@ -776,14 +778,15 @@ pub(crate) fn line_window(
     scroll_x: f32,
     width: f32,
 ) -> Range<usize> {
-    if buffer.line(line).len() <= 4096 {
-        return buffer.line_range(line);
-    }
     let char_w = fonts::editor().char_w.max(1.0);
     let left = (scroll_x / char_w).floor() as usize;
     let right = ((scroll_x + width) / char_w).ceil() as usize;
+    // Stable column bands let small scrolls reuse the same shaped fragment.
+    // Bounds depend on the viewport, never on file size or a byte threshold.
+    let left = left.saturating_sub(16) / 32 * 32;
+    let right = right.saturating_add(16).div_ceil(32) * 32;
     buffer
-        .display_column_range(line, left.saturating_sub(32), right.saturating_add(32))
+        .display_column_range(line, left, right)
         .unwrap_or_else(|| {
             let end = buffer.line_end(line);
             end..end
@@ -797,28 +800,29 @@ pub(crate) fn document_caret(
     left: f32,
     top: f32,
     right: f32,
-) -> (f32, Option<LineLayout>) {
-    if buffer.line(line).len() > 4096 {
-        let offset = buffer.offset_at_char_column(line, column);
-        let visual = buffer.display_column(offset);
-        let range = buffer
-            .display_column_range(line, visual.saturating_sub(32), visual.saturating_add(32))
-            .unwrap_or(offset..offset);
-        let initial = buffer.display_column(range.start);
-        let origin = left + initial as f32 * fonts::editor().char_w;
-        let layout =
-            layout_line_at_column(&buffer.text()[range.clone()], origin, top, right, initial);
-        let chars = buffer.text()[range.start..offset].chars().count();
-        return (
-            caret_x(layout.as_ref(), chars)
-                .unwrap_or(left + visual as f32 * fonts::editor().char_w),
-            None,
+    viewport: (f32, f32),
+) -> f32 {
+    let offset = buffer.offset_at_char_column(line, column);
+    let visual = buffer.display_column(offset);
+    let mut range = line_window(buffer, line, viewport.0, viewport.1);
+    // Revealing an off-screen caret still uses a bounded fragment. On-screen
+    // geometry uses exactly the same fragment as paint and pointer hit testing.
+    if offset < range.start || offset > range.end {
+        range = line_window(
+            buffer,
+            line,
+            (visual as f32 * fonts::editor().char_w - viewport.1 / 2.0).max(0.0),
+            viewport.1,
         );
     }
-    let layout = layout_line(buffer.line(line), left, top, right);
-    let x =
-        caret_x(layout.as_ref(), column).unwrap_or(left + column as f32 * fonts::editor().char_w);
-    (x, layout)
+    let initial = buffer.display_column(range.start);
+    let origin = left + initial as f32 * fonts::editor().char_w;
+    let layout = layout_line_at_column(&buffer.text()[range.clone()], origin, top, right, initial);
+    caret_x(
+        layout.as_ref(),
+        buffer.text()[range.start..offset].chars().count(),
+    )
+    .unwrap_or(left + visual as f32 * fonts::editor().char_w)
 }
 
 pub(crate) fn scroll_metrics(rect: UiRect, code_left: f32, buffer: &TextBuffer) -> ScrollMetrics {
@@ -906,8 +910,8 @@ pub(crate) fn scroll_from_thumb(thumb_start: f32, travel: f32, max_scroll: f32) 
 /// Layout uses expanded tabs, while all buffer positions remain source character indices.
 #[derive(Clone)]
 pub(crate) struct LineLayout {
-    pub(crate) layout: TextLayout,
-    pub(crate) source_to_display: Vec<usize>,
+    pub(crate) layout: std::sync::Arc<TextLayout>,
+    pub(crate) source_to_display: std::sync::Arc<[usize]>,
     pub(crate) width: f32,
 }
 
@@ -985,8 +989,8 @@ pub(crate) fn layout_line_at_column(
     request.font_families = fonts::editor().families;
     let layout = text::layout(&request).map(|layout| LineLayout {
         width: layout.width,
-        layout,
-        source_to_display,
+        layout: std::sync::Arc::new(layout),
+        source_to_display: source_to_display.into(),
     });
     if line.len() <= 8192
         && let Some(layout) = &layout
@@ -1053,52 +1057,30 @@ pub(crate) fn cursor_offset_from_point(
     point_y: f32,
 ) -> usize {
     let line = line_index_from_point(point_y, rect.top, scroll_y, buffer.line_count());
-    let line_text = buffer.line(line);
     let content_x = point_x + scroll_x;
-    if line_text.len() > 4096 {
-        let column =
-            ((content_x - code_left).max(0.0) / fonts::editor().char_w.max(1.0)).round() as usize;
-        let approximate = buffer.offset_at_display_column(line, column);
-        let range = buffer
-            .display_column_range(line, column.saturating_sub(32), column.saturating_add(32))
-            .unwrap_or(approximate..approximate);
-        let initial = buffer.display_column(range.start);
-        let left = code_left + initial as f32 * fonts::editor().char_w;
-        let layout = layout_line_at_column(
-            &buffer.text()[range.clone()],
-            left,
-            rect.top,
-            code_left + metrics.content_w,
-            initial,
-        );
-        return layout
-            .map(|layout| {
-                let local = hit_column(&layout, content_x, point_y);
-                let offset = buffer.text()[range.clone()]
-                    .char_indices()
-                    .nth(local)
-                    .map_or(range.end, |(byte, _)| range.start + byte);
-                buffer.grapheme_floor(offset)
-            })
-            .unwrap_or(approximate);
-    }
+    let range = line_window(buffer, line, scroll_x, metrics.viewport_w);
+    let initial = buffer.display_column(range.start);
+    let left = code_left + initial as f32 * fonts::editor().char_w;
+    let line_text = &buffer.text()[range.clone()];
     let content_y = point_y + scroll_y;
     let line_top = rect.top + line as f32 * fonts::editor().line_h;
-    let char_index = layout_line(
+    let char_index = layout_line_at_column(
         line_text,
-        code_left,
+        left,
         line_top,
         code_left + metrics.content_w,
+        initial,
     )
     .map(|layout| hit_column(&layout, content_x, content_y))
-    .unwrap_or_else(|| fallback_hit_column(line_text, content_x - code_left));
-    let line_start = buffer.line_start(line);
-    line_start
-        + line_text
-            .char_indices()
-            .nth(char_index)
-            .map(|(offset, _)| offset)
-            .unwrap_or(line_text.len())
+    .unwrap_or_else(|| fallback_hit_column(line_text, content_x - left));
+    buffer.grapheme_floor(
+        range.start
+            + line_text
+                .char_indices()
+                .nth(char_index)
+                .map(|(offset, _)| offset)
+                .unwrap_or(line_text.len()),
+    )
 }
 
 pub(crate) fn line_index_from_point(
@@ -1125,7 +1107,16 @@ pub(crate) fn ime_cursor_rect(app: &ViewState, rect: UiRect) -> UiRect {
     let (sx, sy) = document.scroll;
     let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
     let top = rect.top + line as f32 * fonts::editor().line_h - sy;
-    let mut x = document_caret(&buffer, line, col, left, top, left + 100000.0).0 - sx;
+    let metrics = scroll_metrics(rect, left, &buffer);
+    let mut x = document_caret(
+        &buffer,
+        line,
+        col,
+        left,
+        top,
+        left + metrics.content_w,
+        (sx, metrics.viewport_w),
+    ) - sx;
     let pane = app.pane;
     if let Some(session) = app.preedit_for(pane, document.id) {
         let index = session

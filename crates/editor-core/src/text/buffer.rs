@@ -439,6 +439,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn medium_line_indexes_survive_edits_across_old_size_thresholds() {
+        for count in [80, 130, 260, 820, 1030] {
+            let mut buffer = TextBuffer::new("ab中e\u{301}\t".repeat(count));
+            for insertion in ["x", "中", "\t", "e\u{301}", ""] {
+                let start = buffer.offset_at_display_column(0, 95);
+                let end = buffer.next_grapheme(start);
+                buffer
+                    .apply_edits(vec![Edit::replace(start..end, insertion)])
+                    .unwrap();
+                let fresh = TextBuffer::new(buffer.text().to_owned());
+                assert_eq!(
+                    buffer.max_line_display_width(),
+                    fresh.max_line_display_width()
+                );
+                for column in (0..buffer.line_display_width(0)).step_by(37) {
+                    let offset = buffer.offset_at_display_column(0, column);
+                    assert_eq!(offset, fresh.offset_at_display_column(0, column));
+                    assert_eq!(buffer.display_column(offset), fresh.display_column(offset));
+                    assert_eq!(buffer.line_col(offset), fresh.line_col(offset));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn grapheme_queries_step_over_clusters_and_crlf() {
         let buffer = TextBuffer::new("中e\u{301}👩‍💻\r\n尾");
         let mut offset = 0;

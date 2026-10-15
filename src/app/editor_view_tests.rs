@@ -58,6 +58,162 @@ fn long_unicode_windows_remain_on_grapheme_boundaries_near_the_end() {
 }
 
 #[test]
+fn viewport_windows_bound_medium_and_long_lines_without_a_byte_threshold() {
+    let width = 720.0;
+    let char_w = fonts::editor().char_w;
+    for len in [512, 3245, 4095, 4096, 4097, 100_000] {
+        let buffer = TextBuffer::new("x".repeat(len));
+        for column in [0, len / 2, len - 30] {
+            let scroll = column as f32 * char_w;
+            let range = line_window(&buffer, 0, scroll, width);
+            assert!(range.len() <= (width / char_w).ceil() as usize + 192);
+            assert!(range.contains(&column));
+        }
+        assert_eq!(buffer.len(), len);
+    }
+}
+
+#[test]
+fn real_layout_keeps_scrolled_carets_hits_ime_and_selection_in_agreement() {
+    use lgui::{
+        application::{AppView, ApplicationContext},
+        core::UiScale,
+        session::UiSession,
+    };
+    use std::sync::Arc;
+    let context = ApplicationContext::empty(Default::default());
+    let _fonts = lgui::backend::install_text_environment(
+        &context,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    fonts::set(&fonts::FontSettings::EDITOR, &fonts::FontSettings::TERMINAL);
+    for source in [
+        "const item={value:123};function get(a){return a.value;}".repeat(65),
+        "中e\u{301}👩‍💻\tabc123 ".repeat(180),
+    ] {
+        let mut app = document(&source);
+        app.editor.focused = true;
+        let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
+        let left = fonts::editor().gutter_w() + theme::CODE_PAD;
+        let char_w = fonts::editor().char_w;
+        let buffer = app.workspace.active_editor().unwrap();
+        let start = buffer.offset_at_display_column(0, 1000);
+        let end = buffer.offset_at_display_column(0, 1020);
+        app.workspace
+            .active_editor_mut()
+            .unwrap()
+            .select_range(start..end);
+        app.workspace.set_active_scroll(970.0 * char_w, 0.0);
+        let initial = Arc::new(Mutex::new(Some(app)));
+        let exposed = Arc::new(Mutex::new(None));
+        let output = exposed.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state =
+                AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()));
+            let git = cx.state_with(GitStoreSnapshot::default);
+            *output.lock().unwrap() = Some(state.clone());
+            let id = UiId::new("bounded-editor-test");
+            let focus = cx.focus_handle(id.clone());
+            render(PaneId::new(1), rect, state, git, id, focus)
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, rect, UiScale::ONE);
+        let state: AppContext = exposed.lock().unwrap().clone().unwrap();
+        let app = state.get();
+        let buffer = app.workspace.active_editor().unwrap();
+        let sx = app.workspace.active_scroll().0;
+        let metrics = scroll_metrics(rect, left, &buffer);
+        let range = line_window(&buffer, 0, sx, metrics.viewport_w);
+        let initial_column = buffer.display_column(range.start);
+        let origin = left + initial_column as f32 * char_w;
+        let layout = layout_line_at_column(
+            &buffer.text()[range.clone()],
+            origin,
+            0.0,
+            left + metrics.content_w,
+            initial_column,
+        )
+        .unwrap();
+        for offset in [start, end] {
+            let chars = buffer.text()[range.start..offset].chars().count();
+            let x = caret_x(Some(&layout), chars).unwrap();
+            let hit = cursor_offset_from_point(
+                &buffer,
+                rect,
+                left,
+                metrics,
+                sx,
+                0.0,
+                x - sx + 0.05,
+                fonts::editor().line_h / 2.0,
+            );
+            assert_eq!(hit, offset);
+        }
+        let cursor = buffer.cursor();
+        let x = caret_x(
+            Some(&layout),
+            buffer.text()[range.start..cursor].chars().count(),
+        )
+        .unwrap();
+        let ime = session
+            .tree()
+            .node(&UiId::new("bounded-editor-test"))
+            .unwrap()
+            .ime_cursor_rect
+            .unwrap();
+        assert!((ime.left - (x - sx)).abs() < 0.01);
+        let selection = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| {
+                node.style == lgui::prelude::VisualStyle::filled(theme::c().accent).alpha(55)
+            })
+            .unwrap();
+        let expected_left = caret_x(
+            Some(&layout),
+            buffer.text()[range.start..start].chars().count(),
+        )
+        .unwrap();
+        let expected_right = caret_x(
+            Some(&layout),
+            buffer.text()[range.start..end].chars().count(),
+        )
+        .unwrap();
+        assert!((selection.layout_rect.width() - (expected_right - expected_left)).abs() < 0.01);
+        assert_eq!(buffer.selected_text(), Some(&source[start..end]));
+        drop(app);
+        state.update(|app| {
+            let mut editor = app.workspace.active_editor_mut().unwrap();
+            let end = editor.len();
+            editor.select_range(0..end);
+        });
+        session.render_view(&view, rect, UiScale::ONE);
+        let selection = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| {
+                node.style == lgui::prelude::VisualStyle::filled(theme::c().accent).alpha(55)
+            })
+            .unwrap();
+        assert!(
+            selection.layout_rect.width() >= metrics.viewport_w,
+            "a selection spanning both crop edges must cover the entire visible row"
+        );
+        assert_eq!(
+            state
+                .get()
+                .workspace
+                .active_editor()
+                .unwrap()
+                .selected_text(),
+            Some(source.as_str())
+        );
+    }
+}
+
+#[test]
 #[ignore = "manual large-file rendering performance baseline"]
 fn large_file_interaction_baseline() {
     use lgui::{application::AppView, core::UiScale, session::UiSession};
@@ -408,8 +564,9 @@ fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_cha
             line as f32 * fonts::editor().line_h,
             viewport.right,
         );
-        (caret_x(layout.as_ref(), col).unwrap_or(left + col as f32 * fonts::editor().char_w)
-            - app.workspace.active_scroll().0)
+        (caret_x(layout.as_ref(), col).unwrap_or(
+            left + buffer.display_column(buffer.cursor()) as f32 * fonts::editor().char_w,
+        ) - app.workspace.active_scroll().0)
             .round()
     };
     let left = fonts::editor().gutter_w() + theme::CODE_PAD;
