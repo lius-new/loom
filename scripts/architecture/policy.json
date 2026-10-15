@@ -623,6 +623,10 @@
       "owner": "ui/terminal/state",
       "migrated_in": "R7.4"
     },
+    "ui/terminal/state.terminal_shell_selection": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "shell selector"
+    },
     "ui/terminal/state.terminal_tab_context_menu": {
       "owner": "ui/terminal/state",
       "migrated_in": "R7.4"

@@ -27,6 +27,7 @@ pub struct TerminalUiState {
     pub terminal_focused: bool,
     pub terminal_shell_menu: bool,
     pub terminal_shell_scroll: usize,
+    pub terminal_shell_selection: Option<crate::features::terminal::ShellKind>,
     pub terminal_tab_context_menu: Option<TerminalTabContextMenuState>,
     pub shell_editor: Option<ProfileEditor>,
     pub terminal_split_drag: Option<u64>,

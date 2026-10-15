@@ -210,6 +210,13 @@ pub(crate) fn render_view(
     ));
 
     let tool_right = rect.right - 38.0;
+    let selected_shell = app_state.ui.terminal_shell_selection.and_then(|kind| {
+        app_state
+            .shell_options
+            .iter()
+            .find(|option| option.kind == kind && option.available())
+    });
+    let new_shell = selected_shell.map(|option| option.kind);
     let add_tabs = terminal_tabs.clone();
     let add_state = state.clone();
     let add_focus = terminal_focus.clone();
@@ -230,7 +237,8 @@ pub(crate) fn render_view(
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .on_click(move || {
-            if commands::new_from_target(&add_state, &add_tabs, active_tab_id, None, true).is_none()
+            if commands::new_from_target(&add_state, &add_tabs, active_tab_id, new_shell, true)
+                .is_none()
             {
                 return;
             }
@@ -253,7 +261,9 @@ pub(crate) fn render_view(
         .clamp(52.0, 220.0)
         .min(available_width);
     let shell_label = ellipsize(
-        &terminal_tabs.short_label(controller),
+        &selected_shell
+            .map(|option| option.name.clone())
+            .unwrap_or_else(|| terminal_tabs.short_label(controller)),
         (max_instance_width - 47.0 - TEXT_MARGIN).max(0.0),
         theme::SMALL,
         400,
@@ -400,7 +410,6 @@ pub(crate) fn render_view(
             rect,
             state.clone(),
             terminal_focus.clone(),
-            terminal_tabs.clone(),
         ));
     }
 
@@ -1023,10 +1032,9 @@ pub(crate) fn shell_menu(
     bounds: UiRect,
     state: Binding,
     focus: UiFocusHandle,
-    terminal_tabs: Sessions,
 ) -> Element {
-    let options = state.get().shell_options.clone();
-    let menu_target = terminal_tabs.get().active_id();
+    let frame = state.get();
+    let options = frame.shell_options;
     let space = (bounds.bottom - instance_rect.bottom).max(instance_rect.top - bounds.top);
     let visible = (((space - 12.0) / SHELL_MENU_ROW_H).floor() as usize)
         .clamp(1, 7)
@@ -1073,23 +1081,21 @@ pub(crate) fn shell_menu(
         );
         let row_state = state.clone();
         let row_focus = focus.clone();
-        let row_tabs = terminal_tabs.clone();
-        let mut item =
-            panel(row, VisualStyle::default().radius(3.0)).key(format!("terminal-shell-{shell:?}"));
+        let style = if frame.ui.terminal_shell_selection == Some(shell) {
+            VisualStyle::filled(theme::c().active_line)
+        } else {
+            VisualStyle::default()
+        };
+        let mut item = panel(row, style.radius(3.0)).key(format!("terminal-shell-{shell:?}"));
         if option.available() {
             item = item
                 .event_policy(EventPolicy::INTERACTIVE)
                 .cursor(CursorIcon::Pointer)
                 .on_click(move || {
-                    let Some(target) = menu_target else {
-                        return;
-                    };
-                    if commands::new_from_target(&row_state, &row_tabs, target, Some(shell), false)
-                        .is_none()
-                    {
-                        return;
-                    }
-                    row_state.ui.update(|app| app.terminal_shell_menu = false);
+                    row_state.ui.update(|app| {
+                        app.terminal_shell_selection = Some(shell);
+                        app.terminal_shell_menu = false;
+                    });
                     row_focus.focus();
                 });
         }

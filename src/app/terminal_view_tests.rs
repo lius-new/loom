@@ -4,7 +4,7 @@ mod tests {
     use crate::app::state::AppState;
     use crate::app::terminal_binding::TerminalTabs;
     use crate::app::terminal_runtime::TerminalDisplay;
-    use crate::app::terminal_view::{render, render_terminal_tabs, session_rects, shell_menu};
+    use crate::app::terminal_view::{render, render_terminal_tabs, session_rects};
     use crate::features::terminal::{ShellKind, TerminalRun};
     use crate::ui::terminal::keys::key_bytes;
     use crate::ui::terminal::view::*;
@@ -16,7 +16,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn shell_menu_keeps_missing_profiles_disabled_and_creates_custom_sessions_in_layout() {
+    fn shell_menu_only_selects_available_profiles_and_plus_creates_selected_shell() {
         use crate::domain::application_layout::ApplicationLayout;
         use crate::features::terminal::profiles::ShellProfile;
         use lgui::application::{AppView, ApplicationContext};
@@ -60,40 +60,34 @@ mod tests {
             });
             *output.lock().unwrap() = Some((state.clone(), tabs.clone()));
             let id = cx.use_stable_id();
-            let focus = cx.focus_handle(id);
-            group(viewport).child(shell_menu(
-                UiRect::new(300.0, 0.0, 390.0, 30.0),
+            let focus = cx.focus_handle(id.clone());
+            let editor_id = cx.use_stable_id();
+            let editor_focus = cx.focus_handle(editor_id);
+            let controller = tabs.get().active().unwrap().controller.clone();
+            group(viewport).child(render(
                 viewport,
                 state,
+                editor_focus,
                 focus,
+                id,
+                controller,
                 tabs,
+                Arc::new(ApplicationHandle::new(|task| task(), || {})),
+                true,
+                viewport.height(),
             ))
         });
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
         let (state, tabs) = exposed.lock().unwrap().clone().unwrap();
         let context = ApplicationContext::empty(Default::default());
-        fn click_label(
+        fn click(
             session: &mut UiSession,
             context: &ApplicationContext,
             view: &AppView,
             viewport: UiRect,
-            label: &str,
+            point: Point,
         ) {
-            let node = session
-                .tree()
-                .nodes()
-                .iter()
-                .find(|n| {
-                    n.text
-                        .as_deref()
-                        .is_some_and(|text| text.starts_with(label))
-                })
-                .unwrap_or_else(|| panic!("missing menu label {label}"));
-            let point = Point::new(
-                (node.layout_rect.left + node.layout_rect.right) * 0.5,
-                (node.layout_rect.top + node.layout_rect.bottom) * 0.5,
-            );
             for event in [
                 InputEvent::PointerDown {
                     pointer: PointerData::mouse(point),
@@ -115,11 +109,58 @@ mod tests {
                 session.render_view(view, viewport, UiScale::ONE);
             }
         }
-        click_label(&mut session, &context, &view, viewport, "Custom 1");
+        fn label_point(session: &UiSession, label: &str) -> Point {
+            let node = session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|n| {
+                    n.text
+                        .as_deref()
+                        .is_some_and(|text| text.starts_with(label))
+                })
+                .unwrap_or_else(|| panic!("missing menu label {label}"));
+            Point::new(
+                (node.layout_rect.left + node.layout_rect.right) * 0.5,
+                (node.layout_rect.top + node.layout_rect.bottom) * 0.5,
+            )
+        }
+        let original = tabs.get().active().unwrap().clone();
+        let point = label_point(&session, "Custom 1");
+        click(&mut session, &context, &view, viewport, point);
         assert_eq!(tabs.get().tabs().len(), 1);
+        assert!(state.get().terminal.ui.terminal_shell_selection.is_none());
+        assert!(state.get().terminal.ui.terminal_shell_menu);
         state.update(|app| app.terminal.ui.terminal_shell_scroll = 9);
         session.render_view(&view, viewport, UiScale::ONE);
-        click_label(&mut session, &context, &view, viewport, "Custom 10");
+        let point = label_point(&session, "Custom 10");
+        click(&mut session, &context, &view, viewport, point);
+        assert_eq!(tabs.get().tabs().len(), 1);
+        assert_eq!(tabs.get().active_id(), Some(original.id));
+        assert_eq!(
+            tabs.get().active().unwrap().controller.shell(),
+            original.controller.shell()
+        );
+        assert_eq!(
+            state.get().terminal.ui.terminal_shell_selection,
+            Some(ShellKind::Custom(10))
+        );
+        assert!(!state.get().terminal.ui.terminal_shell_menu);
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|n| n.text.as_deref() == Some("Custom 10"))
+        );
+        click(
+            &mut session,
+            &context,
+            &view,
+            viewport,
+            Point::new(viewport.right - 19.0, 17.0),
+        );
+        assert_eq!(tabs.get().tabs().len(), 2);
         let tab = tabs.get().active().unwrap().clone();
         assert_eq!(tab.controller.shell(), ShellKind::Custom(10));
         assert_eq!(tab.controller.short_label(), "Custom 10");

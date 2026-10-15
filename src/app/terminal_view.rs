@@ -354,19 +354,6 @@ pub(crate) fn menu(
 }
 
 #[cfg(test)]
-pub(crate) fn shell_menu(
-    instance: UiRect,
-    bounds: UiRect,
-    state: AppContext,
-    focus: UiFocusHandle,
-    tabs: TerminalStore,
-) -> Element {
-    let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
-    let (state, tabs, _) = binding(&state, &tabs, &application);
-    view::shell_menu(instance, bounds, state, focus, tabs)
-}
-
-#[cfg(test)]
 pub(crate) fn session_rects(
     rect: UiRect,
     tabs: &[crate::app::terminal_binding::TerminalTab],
