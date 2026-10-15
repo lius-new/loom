@@ -26,6 +26,8 @@ pub use crate::ui::chrome::diff_binding::DiffSplit;
 
 #[derive(Clone, Default)]
 pub struct EditorState {
+    /// Changes only when a current background highlight result becomes ready.
+    pub syntax_revision: u64,
     pub tabs: crate::ui::chrome::tab_state::UiState,
     /// Pending close operation waiting for the user to resolve dirty files.
     pub close_request: Option<CloseRequest>,

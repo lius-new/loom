@@ -207,6 +207,7 @@ pub(crate) fn binding(
     let read_git = git.clone();
     let dispatcher = state.clone();
     let overlay_git = git.clone();
+    let syntax_state = state.clone();
     Binding::new(
         move || snapshot(reader.get(), read_git.get(), pane, rect),
         move |event| {
@@ -274,6 +275,20 @@ pub(crate) fn binding(
             }
         },
     )
+    .with_highlights(move |document, windows| {
+        syntax_state
+            .services()
+            .and_then(|runtime| runtime.highlighter())
+            .map_or_else(Vec::new, |highlighter| {
+                highlighter.worker.query(
+                    pane,
+                    document.id,
+                    crate::features::syntax::Source::new(&document.buffer),
+                    document.meta.lang,
+                    windows,
+                )
+            })
+    })
 }
 
 pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Event) -> bool {

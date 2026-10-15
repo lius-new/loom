@@ -95,7 +95,6 @@ pub(crate) fn render(
 
     if let Some(document) = &s.document {
         let id = document.id;
-        let meta = &document.meta;
         let buffer = document.editor();
         let line_count = buffer.line_count();
         let (cursor_line, cursor_col) = buffer.line_col();
@@ -264,6 +263,14 @@ pub(crate) fn render(
         // Vim draws its own visual selection; other views show the core one.
         let selections = &s.selections;
         let matches = &s.search_matches;
+        let windows = visible_lines
+            .clone()
+            .map(|line| crate::features::syntax::Window {
+                line: buffer.line_range(line),
+                range: line_window(&buffer, line, scroll_x, metrics.viewport_w),
+            })
+            .collect();
+        let ready = state.highlights(document, windows);
         for line_index in visible_lines.clone() {
             let y = code_top + line_index as f32 * fonts::editor().line_h;
             let window = line_window(&buffer, line_index, scroll_x, metrics.viewport_w);
@@ -311,8 +318,14 @@ pub(crate) fn render(
             let mut x = line_left;
             let mut char_offset = 0;
             let mut display_column = initial_column;
-            let spans =
-                syntax::highlight_window(&buffer, id, line_index, window.clone(), meta.lang);
+            let spans = syntax::highlight_window(
+                &buffer,
+                window.clone(),
+                ready
+                    .iter()
+                    .find(|tokens| tokens.range == window)
+                    .map(|tokens| tokens.spans.as_ref()),
+            );
             for (span, color) in spans {
                 char_offset += span.chars().count();
                 let (display, _, column) = expand_tabs(&span, display_column);
@@ -913,16 +926,72 @@ pub(crate) struct LineLayout {
     pub(crate) layout: std::sync::Arc<TextLayout>,
     pub(crate) source_to_display: std::sync::Arc<[usize]>,
     pub(crate) width: f32,
+    origin: (f32, f32),
 }
 
-type LayoutKey = (u32, usize, u32, u32, u32, usize);
+type LayoutKey = (u32, usize, u32, usize);
+struct LayoutEntry {
+    layout: LineLayout,
+    used: u64,
+    bytes: usize,
+}
 #[derive(Default)]
 struct LayoutCache {
-    entries: HashMap<LayoutKey, HashMap<String, LineLayout>>,
+    entries: HashMap<LayoutKey, HashMap<String, LayoutEntry>>,
     len: usize,
+    clock: u64,
+    bytes: usize,
+    hits: usize,
+    misses: usize,
+    evictions: usize,
+}
+const LAYOUT_BUDGET: usize = 8 * 1024 * 1024;
+impl LayoutCache {
+    fn trim(&mut self) {
+        while self.bytes > LAYOUT_BUDGET || self.len > 2048 {
+            let Some((key, line)) = self
+                .entries
+                .iter()
+                .flat_map(|(key, lines)| {
+                    lines
+                        .iter()
+                        .map(move |(line, entry)| (*key, line, entry.used))
+                })
+                .min_by_key(|(_, _, used)| *used)
+                .map(|(key, line, _)| (key, line.clone()))
+            else {
+                break;
+            };
+            let lines = self.entries.get_mut(&key).unwrap();
+            self.bytes -= lines.remove(&line).unwrap().bytes;
+            self.len -= 1;
+            self.evictions += 1;
+            if lines.is_empty() {
+                self.entries.remove(&key);
+            }
+        }
+    }
 }
 thread_local! {
     static LINE_LAYOUTS: RefCell<LayoutCache> = RefCell::new(LayoutCache::default());
+}
+#[cfg(test)]
+pub(crate) fn layout_cache_stats() -> (usize, usize, usize, usize, usize) {
+    LINE_LAYOUTS.with(|cache| {
+        let cache = cache.borrow();
+        (
+            cache.hits,
+            cache.misses,
+            cache.evictions,
+            cache.bytes,
+            cache.len,
+        )
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn clear_layout_cache() {
+    LINE_LAYOUTS.with(|cache| *cache.borrow_mut() = LayoutCache::default());
 }
 /// Expand tabs at four-column stops for editor and diff display.
 pub(crate) fn expand_tabs(line: &str, initial_column: usize) -> (String, Vec<usize>, usize) {
@@ -956,59 +1025,78 @@ pub(crate) fn layout_line_at_column(
     line: &str,
     left: f32,
     top: f32,
-    right: f32,
+    _right: f32,
     column: usize,
 ) -> Option<LineLayout> {
     let font = fonts::editor();
     let key = (
         font.size.to_bits(),
         font.families.as_ptr() as usize,
-        left.to_bits(),
-        top.to_bits(),
-        right.to_bits(),
+        font.line_h.to_bits(),
         column % 4,
     );
-    if let Some(layout) = LINE_LAYOUTS.with(|cache| {
-        cache
-            .borrow()
+    if let Some(mut layout) = LINE_LAYOUTS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.clock += 1;
+        let used = cache.clock;
+        let found = cache
             .entries
-            .get(&key)
-            .and_then(|entries| entries.get(line))
-            .cloned()
+            .get_mut(&key)
+            .and_then(|entries| entries.get_mut(line))
+            .map(|entry| {
+                entry.used = used;
+                entry.layout.clone()
+            });
+        if found.is_some() {
+            cache.hits += 1;
+        } else {
+            cache.misses += 1;
+        }
+        found
     }) {
+        layout.origin = (left, top);
         return Some(layout);
     }
     let (display, source_to_display, _) = expand_tabs(line, column);
-    let bounds = UiRect::new(
-        left,
-        top,
-        right.max(left + 1.0),
-        top + fonts::editor().line_h,
-    );
+    let bounds = UiRect::new(0.0, 0.0, 16_777_216.0, fonts::editor().line_h);
     let mut request = TextLayoutRequest::single_line(&display, bounds, fonts::editor().size, 400);
     request.font_families = fonts::editor().families;
     let layout = text::layout(&request).map(|layout| LineLayout {
         width: layout.width,
         layout: std::sync::Arc::new(layout),
         source_to_display: source_to_display.into(),
+        origin: (0.0, 0.0),
     });
     if line.len() <= 8192
         && let Some(layout) = &layout
     {
         LINE_LAYOUTS.with(|cache| {
             let mut cache = cache.borrow_mut();
-            if cache.len >= 256 {
-                *cache = LayoutCache::default();
-            }
-            cache
-                .entries
-                .entry(key)
-                .or_default()
-                .insert(line.to_owned(), layout.clone());
+            cache.clock += 1;
+            let used = cache.clock;
+            let bytes = line.len()
+                + layout.source_to_display.len()
+                    * (std::mem::size_of::<usize>() + 2 * std::mem::size_of::<UiRect>())
+                + layout.layout.clusters().len() * std::mem::size_of::<lgui::text::TextCluster>()
+                + layout.layout.lines().len() * std::mem::size_of::<lgui::text::TextLineMetrics>()
+                + std::mem::size_of::<LayoutEntry>();
+            cache.entries.entry(key).or_default().insert(
+                line.to_owned(),
+                LayoutEntry {
+                    layout: layout.clone(),
+                    used,
+                    bytes,
+                },
+            );
             cache.len += 1;
+            cache.bytes += bytes;
+            cache.trim();
         });
     }
-    layout
+    layout.map(|mut layout| {
+        layout.origin = (left, top);
+        layout
+    })
 }
 pub(crate) fn caret_x(layout: Option<&LineLayout>, char_index: usize) -> Option<f32> {
     let layout = layout?;
@@ -1016,10 +1104,16 @@ pub(crate) fn caret_x(layout: Option<&LineLayout>, char_index: usize) -> Option<
         .source_to_display
         .get(char_index)
         .or_else(|| layout.source_to_display.last())?;
-    layout.layout.caret_rect(index).map(|rect| rect.left)
+    layout
+        .layout
+        .caret_rect(index)
+        .map(|rect| rect.left + layout.origin.0)
 }
 pub(crate) fn hit_column(layout: &LineLayout, x: f32, y: f32) -> usize {
-    let index = layout.layout.hit_test(x, y).index;
+    let index = layout
+        .layout
+        .hit_test(x - layout.origin.0, y - layout.origin.1)
+        .index;
     layout
         .source_to_display
         .iter()

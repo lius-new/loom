@@ -95,6 +95,8 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/window_geometry.rs')return ['infrastructure','domain','lgui','windows_sys','std::process'].includes(root);
   if(file==='src/infrastructure/document_filesystem.rs')return ['infrastructure','std::fs'].includes(root);
   if(file==='src/infrastructure/file_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
+  if(file==='src/infrastructure/file_drop.rs')return ['infrastructure','domain','lgui','windows_sys'].includes(root);
+  if(file==='src/infrastructure/syntax_worker.rs'||file==='src/infrastructure/syntax_worker_tests.rs')return ['infrastructure','features','domain','std::thread'].includes(root);
   if(file==='src/infrastructure/keymap_filesystem.rs')return ['infrastructure','features','std::fs'].includes(root);
   if(file.startsWith('src/features/settings/'))return ['features','domain','serde','serde_json'].includes(root);
   if(['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs'].includes(file))return ['infrastructure','features','domain','std::fs'].includes(root);

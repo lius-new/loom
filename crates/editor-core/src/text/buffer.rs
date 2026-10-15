@@ -1,8 +1,8 @@
 //! The text of one document, the queries editing behaviours build on, and
 //! the one place where the text changes.
 
-use std::ops::Range;
 use std::sync::Arc;
+use std::{collections::VecDeque, ops::Range};
 
 use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
@@ -66,6 +66,7 @@ pub struct TextBuffer {
     lines: Arc<LineIndex>,
     history: Arc<History>,
     version: u64,
+    revisions: Arc<VecDeque<super::revision::TextRevision>>,
     /// The line break of the first line, kept for when no line break is left.
     ending: &'static str,
 }
@@ -80,6 +81,7 @@ impl TextBuffer {
             text: Arc::new(text),
             history: Arc::default(),
             version: 0,
+            revisions: Arc::default(),
             ending,
         }
     }
@@ -114,6 +116,29 @@ impl TextBuffer {
         self.version
     }
 
+    /// Returns exact edit provenance, or None after reload/history eviction.
+    /// No source strings or undo payloads are retained by this journal.
+    pub fn revisions_since(
+        &self,
+        version: u64,
+        snapshot: usize,
+    ) -> Option<Vec<super::revision::TextRevision>> {
+        let mut current = (version, snapshot);
+        let mut result = Vec::new();
+        for revision in self.revisions.iter().filter(|r| r.after_version > version) {
+            if (revision.before_version, revision.before_snapshot) != current {
+                return None;
+            }
+            current = (revision.after_version, revision.after_snapshot);
+            result.push(revision.clone());
+        }
+        (current == (self.version, self.snapshot_identity())).then_some(result)
+    }
+
+    pub fn revision_log(&self) -> Arc<VecDeque<super::revision::TextRevision>> {
+        self.revisions.clone()
+    }
+
     /// Replace the whole text with a version loaded from disk. History is
     /// reset because it describes a different file revision.
     pub fn reload(&mut self, contents: String) {
@@ -134,9 +159,33 @@ impl TextBuffer {
         if edits.is_empty() {
             return Ok(ChangeSet::default());
         }
+        let before_snapshot = self.snapshot_identity();
+        let before_version = self.version;
         let changes = apply(Arc::make_mut(&mut self.text), edits);
         Arc::make_mut(&mut self.lines).update(&self.text, &changes);
         self.version += 1;
+        let revision = super::revision::TextRevision {
+            before_version,
+            after_version: self.version,
+            before_snapshot,
+            after_snapshot: self.snapshot_identity(),
+            edits: changes
+                .changes()
+                .iter()
+                .map(|change| super::revision::RevisionEdit {
+                    old: change.old.clone(),
+                    new: change.new_range(),
+                    line_breaks: change.removed.contains(['\r', '\n'])
+                        || change.inserted.contains(['\r', '\n']),
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        };
+        let journal = Arc::make_mut(&mut self.revisions);
+        journal.push_back(revision);
+        while journal.len() > 64 || journal.iter().map(|r| r.edits.len()).sum::<usize>() > 2048 {
+            journal.pop_front();
+        }
         if let Some(ending) = first_line_ending(&self.text, &self.lines) {
             self.ending = ending;
         }

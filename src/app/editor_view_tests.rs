@@ -12,6 +12,51 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 #[test]
+fn layout_cache_reuses_geometry_across_scroll_and_resize_with_correct_hit_testing() {
+    let context = lgui::application::ApplicationContext::empty(Default::default());
+    let _fonts = lgui::backend::install_text_environment(
+        &context,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    clear_layout_cache();
+    let text = "ab\t中e\u{301}😀";
+    let a = layout_line_at_column(text, 30.0, 40.0, 800.0, 0).unwrap();
+    let b = layout_line_at_column(text, -200.0, 180.0, 420.0, 4).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&a.layout, &b.layout));
+    for index in [0, 1, 2, 3, 4, 6, 7] {
+        let x = caret_x(Some(&a), index).unwrap();
+        let shifted = caret_x(Some(&b), index).unwrap();
+        assert!((shifted - x + 230.0).abs() < 0.01);
+        assert_eq!(hit_column(&a, x + 0.01, 45.0), index);
+        assert_eq!(hit_column(&b, shifted + 0.01, 185.0), index);
+    }
+    let different_tabs = layout_line_at_column(text, 30.0, 40.0, 800.0, 1).unwrap();
+    assert!(!std::sync::Arc::ptr_eq(&a.layout, &different_tabs.layout));
+    assert_eq!(layout_cache_stats().0, 1);
+}
+
+#[test]
+fn layout_cache_evicts_individual_cold_entries_without_clearing_hot_geometry() {
+    let context = lgui::application::ApplicationContext::empty(Default::default());
+    let _fonts = lgui::backend::install_text_environment(
+        &context,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    clear_layout_cache();
+    let hot = layout_line("hot retained line", 0.0, 0.0, 800.0).unwrap();
+    for i in 0..2100 {
+        let text = format!("{i}:{}", "cold entry ".repeat(10));
+        layout_line(&text, 0.0, 0.0, 800.0).unwrap();
+        let reused = layout_line("hot retained line", 0.0, 0.0, 800.0).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&hot.layout, &reused.layout));
+    }
+    let (_, _, evictions, bytes, len) = layout_cache_stats();
+    assert!(evictions > 0);
+    assert!(bytes <= 8 * 1024 * 1024);
+    assert!(len <= 2048);
+}
+
+#[test]
 fn multi_megabyte_single_line_windows_and_clicks_are_bounded() {
     let buffer = TextBuffer::new("a".repeat(8 * 1024 * 1024));
     let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
@@ -107,9 +152,20 @@ fn real_layout_keeps_scrolled_carets_hits_ime_and_selection_in_agreement() {
         let initial = Arc::new(Mutex::new(Some(app)));
         let exposed = Arc::new(Mutex::new(None));
         let output = exposed.clone();
+        let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
+        let view_runtime = runtime.clone();
+        let tasks = crate::app::test_support::UiTasks::default();
+        let application = tasks.application();
         let view: AppView = Arc::new(move |cx| {
             let state =
-                AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()));
+                AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()))
+                    .with_runtime(&view_runtime);
+            if view_runtime.highlighter().is_none() {
+                view_runtime.install_highlighter(crate::app::syntax::Highlighter::new(
+                    state.clone(),
+                    application.clone(),
+                ));
+            }
             let git = cx.state_with(GitStoreSnapshot::default);
             *output.lock().unwrap() = Some(state.clone());
             let id = UiId::new("bounded-editor-test");
@@ -119,6 +175,47 @@ fn real_layout_keeps_scrolled_carets_hits_ime_and_selection_in_agreement() {
         let mut session = UiSession::new();
         session.render_view(&view, rect, UiScale::ONE);
         let state: AppContext = exposed.lock().unwrap().clone().unwrap();
+        let before_ime = session
+            .tree()
+            .node(&UiId::new("bounded-editor-test"))
+            .unwrap()
+            .ime_cursor_rect;
+        let before_selection = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| {
+                node.style == lgui::prelude::VisualStyle::filled(theme::c().accent).alpha(55)
+            })
+            .unwrap()
+            .layout_rect;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while tasks.pending_ids().is_empty() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        tasks.run_all();
+        assert!(state.get().editor.syntax_revision > 0);
+        session.render_view(&view, rect, UiScale::ONE);
+        assert_eq!(
+            session
+                .tree()
+                .node(&UiId::new("bounded-editor-test"))
+                .unwrap()
+                .ime_cursor_rect,
+            before_ime
+        );
+        assert_eq!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| node.style
+                    == lgui::prelude::VisualStyle::filled(theme::c().accent).alpha(55))
+                .unwrap()
+                .layout_rect,
+            before_selection
+        );
         let app = state.get();
         let buffer = app.workspace.active_editor().unwrap();
         let sx = app.workspace.active_scroll().0;

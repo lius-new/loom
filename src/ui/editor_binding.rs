@@ -135,6 +135,14 @@ pub(crate) struct Binding {
     read: Arc<dyn Fn() -> ViewState + Send + Sync>,
     dispatch: Arc<dyn Fn(Event) + Send + Sync>,
     overlay: Arc<dyn Fn(PeekPlacement) -> Option<Element> + Send + Sync>,
+    highlights: Arc<
+        dyn Fn(
+                &ViewDocument,
+                Vec<crate::features::syntax::Window>,
+            ) -> Vec<crate::features::syntax::WindowTokens>
+            + Send
+            + Sync,
+    >,
 }
 impl Binding {
     pub fn new(
@@ -146,10 +154,31 @@ impl Binding {
             read: Arc::new(read),
             dispatch: Arc::new(dispatch),
             overlay: Arc::new(overlay),
+            highlights: Arc::new(|_, _| Vec::new()),
         }
     }
     pub fn get(&self) -> ViewState {
         (self.read)()
+    }
+    pub fn with_highlights(
+        mut self,
+        provider: impl Fn(
+            &ViewDocument,
+            Vec<crate::features::syntax::Window>,
+        ) -> Vec<crate::features::syntax::WindowTokens>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.highlights = Arc::new(provider);
+        self
+    }
+    pub fn highlights(
+        &self,
+        document: &ViewDocument,
+        windows: Vec<crate::features::syntax::Window>,
+    ) -> Vec<crate::features::syntax::WindowTokens> {
+        (self.highlights)(document, windows)
     }
     pub fn send(&self, event: Event) {
         (self.dispatch)(event);

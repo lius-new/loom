@@ -63,12 +63,21 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             loading_state.clone(),
             loading_application.clone(),
         );
+        loading_runtime.install_highlighter(super::syntax::Highlighter::new(
+            loading_state.clone(),
+            loading_application.clone(),
+        ));
+        // The first frame can precede service installation. Schedule another
+        // projection so every visible pane can request its initial windows.
+        loading_state
+            .update(|app| app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1));
         let loader =
             crate::app::file_loading::FileLoader::new(loading_state.clone(), loading_application);
         loading_runtime.install_file_loader(loader);
         move || {
             restore.shutdown();
             loading_runtime.clear_file_loader();
+            loading_runtime.clear_highlighter();
         }
     });
     let program_tabs = terminal_tabs.clone();
@@ -243,6 +252,14 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         changed
     });
     let s = state.get();
+    let syntax_runtime = runtime.clone();
+    let syntax_open = s.workspace.ordered_documents();
+    cx.use_effect(syntax_open.clone(), move || {
+        if let Some(highlighter) = syntax_runtime.highlighter() {
+            highlighter.worker.retain(syntax_open);
+        }
+        || {}
+    });
     layout_map::refresh(&s, &layout_map_store, content_area, session_ids.clone());
     theme::set(s.preferences.values().theme);
     crate::ui::fonts::set(

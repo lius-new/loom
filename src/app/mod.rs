@@ -21,6 +21,7 @@ mod presentation;
 pub(crate) mod runtime;
 mod shell;
 pub(crate) mod state;
+pub(crate) mod syntax;
 #[cfg(test)]
 pub(crate) mod test_support;
 

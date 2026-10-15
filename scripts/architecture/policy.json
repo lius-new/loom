@@ -71,6 +71,10 @@
     "retired_entry_files_retained": true
   },
   "editor_state_ownership": {
+    "syntax_revision": {
+      "owner": "app/state/editor: version-checked background syntax invalidation; worker owned by AppRuntime",
+      "migrated_in": "incremental syntax"
+    },
     "close_request": {
       "owner": "app/state/editor",
       "migrated_in": "R3"

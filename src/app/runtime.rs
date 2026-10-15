@@ -16,12 +16,32 @@ pub(crate) struct AppRuntime {
 
 #[derive(Default)]
 struct Services {
+    highlighter: Option<super::syntax::Highlighter>,
     file_loader: Option<FileLoader>,
     application: Option<ApplicationHandle>,
     search_cancel: Option<Arc<AtomicBool>>,
 }
 
 impl AppRuntime {
+    pub(crate) fn highlighter(&self) -> Option<super::syntax::Highlighter> {
+        self.services.lock().unwrap().highlighter.clone()
+    }
+    pub(crate) fn install_highlighter(&self, highlighter: super::syntax::Highlighter) {
+        if let Some(previous) = self
+            .services
+            .lock()
+            .unwrap()
+            .highlighter
+            .replace(highlighter)
+        {
+            previous.shutdown();
+        }
+    }
+    pub(crate) fn clear_highlighter(&self) {
+        if let Some(previous) = self.services.lock().unwrap().highlighter.take() {
+            previous.shutdown();
+        }
+    }
     pub(crate) fn terminal_mounts(&self) -> &Arc<crate::app::terminal_effects::Mounts> {
         &self.terminal_mounts
     }
@@ -81,6 +101,9 @@ impl Drop for AppRuntime {
     fn drop(&mut self) {
         self.terminals.shutdown();
         let services = self.services.get_mut().unwrap();
+        if let Some(highlighter) = services.highlighter.take() {
+            highlighter.shutdown();
+        }
         if let Some(cancel) = services.search_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }

@@ -8,3 +8,4 @@ pub(crate) mod search;
 pub(crate) mod terminal;
 
 pub mod settings;
+pub(crate) mod syntax;
