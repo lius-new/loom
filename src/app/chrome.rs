@@ -301,8 +301,11 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
             let counts = info.diagnostics;
             lines.push(line(
                 format!(
-                    "diagnostics: {} published, {} shown, {} outdated",
-                    counts.published, counts.shown, counts.outdated
+                    "diagnostics: {} published, {} shown, {} moved, {} dropped",
+                    counts.published,
+                    counts.shown,
+                    counts.carried,
+                    counts.outdated + counts.unknown
                 ),
                 if counts.published > 0 && counts.shown == 0 {
                     Level::Warning

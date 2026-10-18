@@ -129,6 +129,8 @@ pub(crate) struct DiagnosticCounts {
     pub outdated: usize,
     /// Dropped because the document is not open in this server any more.
     pub unknown: usize,
+    /// Shown after being moved along the edits the server had not seen yet.
+    pub carried: usize,
 }
 
 /// One running background task of a server.
@@ -150,7 +152,9 @@ const SEMANTIC_DEBOUNCE: Duration = Duration::from_millis(75);
 /// describes. A part is only meant to be shown for exactly that state.
 #[derive(Default)]
 struct Entry {
-    diagnostics: Option<(Stamp, Arc<[Diagnostic]>)>,
+    /// The state they describe, and the text of that state so they can be moved
+    /// along later edits.
+    diagnostics: Option<(Stamp, Arc<[Diagnostic]>, Arc<String>)>,
     semantic: Option<(Stamp, Arc<[TokenSpan]>)>,
 }
 
@@ -255,8 +259,8 @@ impl Manager {
             diagnostics: entry
                 .diagnostics
                 .as_ref()
-                .filter(|(at, _)| *at == stamp)
-                .map(|(_, v)| v.clone()),
+                .filter(|(at, ..)| *at == stamp)
+                .map(|(_, v, _)| v.clone()),
             semantic: entry
                 .semantic
                 .as_ref()
@@ -562,8 +566,32 @@ impl Coordinator {
         for at in created {
             self.start(at);
         }
+        self.follow_edits();
         for at in 0..self.instances.len() {
             self.sync(at);
+        }
+    }
+
+    /// Moves each document's diagnostics along the edits made since they were
+    /// computed, so underlines stay on their text while the server catches up (and
+    /// when it has nothing new to say, because its findings did not change).
+    fn follow_edits(&mut self) {
+        let mut store = self.results.lock().unwrap();
+        for instance in &self.instances {
+            for document in &instance.documents {
+                let Some(entry) = store.get_mut(&uri::key(&document.uri)) else {
+                    continue;
+                };
+                let Some((stamp, found, text)) = &entry.diagnostics else {
+                    continue;
+                };
+                if *stamp == document.stamp {
+                    continue;
+                }
+                let carried = diagnostics::carry(text, &document.text, found.to_vec());
+                entry.diagnostics = Some((document.stamp, carried.into(), document.text.clone()));
+                self.results_changed = true;
+            }
         }
     }
 
@@ -795,7 +823,8 @@ impl Coordinator {
             return;
         };
         enum Outcome {
-            Shown(String, Stamp, Vec<Diagnostic>),
+            Shown(String, Stamp, Vec<Diagnostic>, Arc<String>),
+            Carried(String, Stamp, Vec<Diagnostic>, Arc<String>),
             Outdated,
             Unknown,
         }
@@ -822,14 +851,34 @@ impl Coordinator {
                     }
                     None => true,
                 };
+                let encoding = ready.capabilities.position_encoding;
                 if describes_now {
                     Outcome::Shown(
                         key,
                         document.stamp,
-                        published.resolve(&document.text, ready.capabilities.position_encoding),
+                        published.resolve(&document.text, encoding),
+                        document.text.clone(),
                     )
                 } else {
-                    Outcome::Outdated
+                    // The server is behind the typing. Keep what it found, moved
+                    // along the edits it has not seen, so a diagnostic that is still
+                    // true does not vanish when the server has nothing new to say.
+                    let old = published
+                        .version
+                        .and_then(|v| i32::try_from(v).ok())
+                        .and_then(|v| ready.sync.text_of(&document.uri, v));
+                    match old {
+                        Some(old) => {
+                            let resolved = published.resolve(&old, encoding);
+                            Outcome::Carried(
+                                key,
+                                document.stamp,
+                                diagnostics::carry(&old, &document.text, resolved),
+                                document.text.clone(),
+                            )
+                        }
+                        None => Outcome::Outdated,
+                    }
                 }
             }
         };
@@ -837,11 +886,16 @@ impl Coordinator {
         counts.published += 1;
         match outcome {
             Outcome::Unknown => counts.unknown += 1,
+            Outcome::Carried(key, stamp, carried, text) => {
+                counts.carried += 1;
+                let mut store = self.results.lock().unwrap();
+                store.entry(key).or_default().diagnostics = Some((stamp, carried.into(), text));
+            }
             Outcome::Outdated => counts.outdated += 1,
-            Outcome::Shown(key, stamp, resolved) => {
+            Outcome::Shown(key, stamp, resolved, text) => {
                 counts.shown += 1;
                 let mut store = self.results.lock().unwrap();
-                store.entry(key).or_default().diagnostics = Some((stamp, resolved.into()));
+                store.entry(key).or_default().diagnostics = Some((stamp, resolved.into(), text));
             }
         }
         self.results_changed = true;

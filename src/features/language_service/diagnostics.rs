@@ -161,6 +161,51 @@ impl Published {
     }
 }
 
+/// Diagnostics computed for `old` carried over to `new`, the way an editor keeps
+/// the underlines of a server that has not caught up with the typing yet. The
+/// two texts differ by one stretch (their common beginning and end are found), so
+/// a diagnostic before it stays, one after it moves by the change in length, and
+/// one that touches the changed stretch is dropped: the server will say more once
+/// it has analysed the new text.
+pub fn carry(old: &str, new: &str, diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    let limit = old.len().min(new.len());
+    let mut prefix = old
+        .bytes()
+        .zip(new.bytes())
+        .take_while(|(a, b)| a == b)
+        .count()
+        .min(limit);
+    while !old.is_char_boundary(prefix) || !new.is_char_boundary(prefix) {
+        prefix -= 1;
+    }
+    let mut suffix = old
+        .bytes()
+        .rev()
+        .zip(new.bytes().rev())
+        .take_while(|(a, b)| a == b)
+        .count()
+        .min(limit - prefix);
+    while !old.is_char_boundary(old.len() - suffix) || !new.is_char_boundary(new.len() - suffix) {
+        suffix -= 1;
+    }
+    let old_end = old.len() - suffix;
+    let delta = new.len() as isize - old.len() as isize;
+    diagnostics
+        .into_iter()
+        .filter_map(|mut found| {
+            if found.range.end <= prefix {
+                Some(found)
+            } else if found.range.start >= old_end {
+                found.range = (found.range.start as isize + delta) as usize
+                    ..(found.range.end as isize + delta) as usize;
+                Some(found)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +280,49 @@ mod tests {
         let found = p.resolve("ab\n", Utf16);
         assert_eq!(found[0].message, "early");
         assert!(found[1].range.end <= 3);
+    }
+
+    fn found(start: usize, end: usize) -> Diagnostic {
+        Diagnostic {
+            range: start..end,
+            severity: Severity::Error,
+            message: "m".into(),
+            source: None,
+            code: None,
+        }
+    }
+
+    #[test]
+    fn diagnostics_follow_the_text_when_the_server_is_behind() {
+        let old = "aaaa\nbbbb\ncccc\n";
+        // A line is inserted between the first and the last.
+        let new = "aaaa\nbbbb\nNEW LINE\ncccc\n";
+        let carried = carry(old, new, vec![found(0, 4), found(10, 14)]);
+        assert_eq!(
+            carried.iter().map(|d| d.range.clone()).collect::<Vec<_>>(),
+            [0..4, 19..23],
+            "before stays, after moves by the length of the insertion"
+        );
+        assert_eq!(&new[19..23], "cccc");
+    }
+
+    #[test]
+    fn a_diagnostic_on_the_edited_stretch_is_dropped() {
+        let carried = carry(
+            "let x = 1;",
+            "let y = 1;",
+            vec![found(4, 5), found(0, 3), found(8, 10)],
+        );
+        let ranges: Vec<_> = carried.iter().map(|d| d.range.clone()).collect();
+        assert_eq!(ranges, [0..3, 8..10]);
+    }
+
+    #[test]
+    fn identical_texts_and_multibyte_edits_are_handled() {
+        assert_eq!(carry("same", "same", vec![found(1, 3)]), vec![found(1, 3)]);
+        let carried = carry("é1é", "é22é", vec![found(0, 2), found(3, 5)]);
+        assert_eq!(carried, vec![found(0, 2), found(4, 6)]);
+        assert_eq!(carry("", "new", vec![found(0, 0)]), vec![found(0, 0)]);
     }
 
     #[test]

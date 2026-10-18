@@ -690,3 +690,63 @@ fn background_tasks_logs_and_the_command_are_reported() {
         f.mgr().infos()[0].tasks.is_empty().then_some(())
     });
 }
+
+#[test]
+fn diagnostics_for_an_older_version_are_moved_along_the_edits_not_lost() {
+    // The server answers late and never republishes: what it said about the text it
+    // saw must still show once the text has moved on.
+    let f = Fixture::new(&["--diagnostics", "--diag-once", "--diag-delay-ms", "400"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    // The server has the first text; its answer is still 400 ms away.
+    f.wait_method_count("textDocument/didOpen", 1);
+    // An edit after the diagnosed stretch, made before the server answers.
+    f.show(vec![f.doc("a.fk", 5, "fn a plus more")]);
+    let found = f.wait_for("carried diagnostics", || {
+        f.results_at("a.fk", 5).diagnostics
+    });
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].range,
+        0..2,
+        "the underline is where the text it described still is"
+    );
+    let counts = f.mgr().infos()[0].diagnostics;
+    assert_eq!((counts.published, counts.carried, counts.shown), (1, 1, 0));
+}
+
+#[test]
+fn a_diagnostic_on_text_that_was_edited_before_the_server_answered_is_dropped() {
+    let f = Fixture::new(&["--diagnostics", "--diag-once", "--diag-delay-ms", "400"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    // The server has the first text; its answer is still 400 ms away.
+    f.wait_method_count("textDocument/didOpen", 1);
+    // The diagnosed first two characters are replaced.
+    f.show(vec![f.doc("a.fk", 5, "xx a")]);
+    f.wait_for("the publication", || {
+        (f.mgr().infos()[0].diagnostics.published == 1).then_some(())
+    });
+    assert!(
+        f.results_at("a.fk", 5)
+            .diagnostics
+            .is_none_or(|d| d.is_empty())
+    );
+}
+
+#[test]
+fn underlines_follow_the_typing_while_the_server_has_nothing_new_to_say() {
+    let f = Fixture::new(&["--diagnostics", "--diag-once"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    f.wait_for("the first diagnostics", || {
+        f.results_at("a.fk", 0).diagnostics
+    });
+    // The server never answers again, yet every later state has the diagnostic,
+    // moved to where its text now is.
+    f.show(vec![f.doc("a.fk", 1, "// top\nfn a")]);
+    let moved = f.wait_for("the moved diagnostic", || {
+        f.results_at("a.fk", 1).diagnostics
+    });
+    assert_eq!(moved[0].range, 7..9);
+    f.show(vec![f.doc("a.fk", 2, "// top\nfn a b")]);
+    let still = f.wait_for("it follows again", || f.results_at("a.fk", 2).diagnostics);
+    assert_eq!(still[0].range, 7..9);
+}

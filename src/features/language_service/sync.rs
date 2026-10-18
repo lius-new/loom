@@ -42,6 +42,9 @@ pub struct Notification {
 /// How many protocol versions are remembered per document, to match a server's
 /// answer (for example diagnostics) with the editor state it was computed from.
 const HISTORY: usize = 32;
+/// How many of the most recent texts are kept (shared with the editor, so this
+/// costs a pointer each unless the text has since been edited).
+const TEXT_HISTORY: usize = 8;
 
 struct Open {
     uri: String,
@@ -49,14 +52,19 @@ struct Open {
     sent: Stamp,
     version: i32,
     history: VecDeque<(i32, Stamp)>,
+    texts: VecDeque<(i32, Arc<String>)>,
 }
 
 impl Open {
-    fn remember(&mut self) {
+    fn remember(&mut self, text: &Arc<String>) {
         if self.history.len() == HISTORY {
             self.history.pop_front();
         }
         self.history.push_back((self.version, self.sent));
+        if self.texts.len() == TEXT_HISTORY {
+            self.texts.pop_front();
+        }
+        self.texts.push_back((self.version, text.clone()));
     }
 }
 
@@ -115,6 +123,15 @@ impl DocumentSync {
             .map(|(_, stamp)| *stamp)
     }
 
+    /// The text that was sent as protocol `version` of `uri`, if still remembered.
+    pub fn text_of(&self, uri: &str, version: i32) -> Option<Arc<String>> {
+        let open = self.open.get(&uri::key(uri))?;
+        open.texts
+            .iter()
+            .find(|(v, _)| *v == version)
+            .map(|(_, text)| text.clone())
+    }
+
     /// The notifications that make the server's documents match `desired`: closes
     /// first, then opens, then changes. Documents that already match produce none.
     pub fn reconcile(&mut self, desired: &[DesiredDocument]) -> Vec<Notification> {
@@ -163,15 +180,16 @@ impl DocumentSync {
                         sent: document.stamp,
                         version: 1,
                         history: VecDeque::new(),
+                        texts: VecDeque::new(),
                     };
-                    open.remember();
+                    open.remember(&document.text);
                     self.open.insert(key.clone(), open);
                 }
                 Some(open) if open.sent == document.stamp => {}
                 Some(open) => {
                     open.version += 1;
                     open.sent = document.stamp;
-                    open.remember();
+                    open.remember(&document.text);
                     if self.sync.change != SyncKind::None {
                         changes.push(Notification {
                             method: "textDocument/didChange",

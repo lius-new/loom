@@ -220,7 +220,11 @@ fn main() {
             ("textDocument/didOpen" | "textDocument/didChange", None) => {
                 // --diagnostics: one error over the first two characters, tagged
                 // with the document version unless --diag-unversioned.
-                if options.flag("--diagnostics") {
+                // --diag-once: only the first publication, like a server that sees no
+                // change in its findings; --diag-delay-ms: publish late.
+                let first = method == "textDocument/didOpen";
+                if options.flag("--diagnostics") && (first || !options.flag("--diag-once")) {
+                    std::thread::sleep(Duration::from_millis(options.number("--diag-delay-ms")));
                     let document = &message["params"]["textDocument"];
                     let mut params = json!({
                         "uri": document["uri"],
