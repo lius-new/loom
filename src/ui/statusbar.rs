@@ -79,6 +79,8 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
             theme::mono_bold(theme::c().accent, theme::SMALL),
         ));
     }
+    let language_first = items.len();
+    let language_count = s.language.len();
     for note in &s.language {
         let style = match note.level {
             crate::ui::chrome::NoteLevel::Quiet => theme::mono(theme::c().text_dim, theme::SMALL),
@@ -193,14 +195,35 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
         .sum::<f32>()
         + GAP * (items.len().saturating_sub(1)) as f32;
     let mut x = rect.right - EDGE_PAD - total;
-    for (label, style) in items {
+    // The language server notes are one click target that opens its panel.
+    let mut language_span: Option<(f32, f32)> = None;
+    for (index, (label, style)) in items.into_iter().enumerate() {
         let w = measure(&label, style.weight);
+        if (language_first..language_first + language_count).contains(&index) {
+            let (from, _) = language_span.unwrap_or((x, x));
+            language_span = Some((from, x + w + TEXT_MARGIN));
+        }
         bar = bar.child(text(
             UiRect::new(x, rect.top, x + w + TEXT_MARGIN, rect.bottom),
             label,
             style,
         ));
         x += w + GAP;
+    }
+    if let Some((from, to)) = language_span {
+        let panel_state = state.clone();
+        bar = bar.child(
+            panel(
+                UiRect::new(from - 4.0, rect.top, to + 4.0, rect.bottom),
+                VisualStyle::default(),
+            )
+            .event_policy(EventPolicy::INTERACTIVE)
+            .cursor(lgui::core::CursorIcon::Pointer)
+            .semantics(Semantics::new(SemanticRole::Button).name("Language servers"))
+            .on_click(move || {
+                panel_state.run(StatusCommand::LanguagePanel);
+            }),
+        );
     }
 
     bar = bar.child(crate::ui::components::divider::top(rect));

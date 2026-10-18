@@ -179,6 +179,22 @@ fn main() {
                         "params": { "registrations": [] }
                     }));
                 }
+                if options.flag("--progress") {
+                    out.send(&json!({
+                        "jsonrpc": "2.0", "id": 9200, "method": "window/workDoneProgress/create",
+                        "params": { "token": "load" }
+                    }));
+                    out.send(&json!({
+                        "jsonrpc": "2.0", "method": "$/progress",
+                        "params": { "token": "load", "value": {
+                            "kind": "begin", "title": "Loading project", "message": "0/10", "percentage": 0 } }
+                    }));
+                    out.send(&json!({
+                        "jsonrpc": "2.0", "method": "$/progress",
+                        "params": { "token": "load", "value": {
+                            "kind": "report", "message": "3/10", "percentage": 30 } }
+                    }));
+                }
                 if options.flag("--log-message") {
                     out.send(&json!({
                         "jsonrpc": "2.0", "method": "window/logMessage",
@@ -223,6 +239,12 @@ fn main() {
                 }
             }
             ("textDocument/didSave", None) => {
+                if options.flag("--progress") {
+                    out.send(&json!({
+                        "jsonrpc": "2.0", "method": "$/progress",
+                        "params": { "token": "load", "value": { "kind": "end" } }
+                    }));
+                }
                 if options.flag("--refresh-on-save") {
                     out.send(&json!({
                         "jsonrpc": "2.0", "id": 9100, "method": "workspace/semanticTokens/refresh"

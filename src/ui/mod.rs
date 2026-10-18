@@ -13,6 +13,7 @@ pub(crate) mod editor_binding;
 pub mod explorer;
 pub mod git;
 pub mod keymap_page;
+pub mod language_panel;
 pub mod pane_sash;
 pub mod search;
 pub mod settings;

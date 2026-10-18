@@ -597,3 +597,96 @@ fn real_rust_analyzer_sees_files_changed_outside_the_editor() {
     drop(manager);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Opens `LOOM_RA_FILE` with one invalid line appended and prints what rust-analyzer
+/// reports and when. `cargo test --bin Loom real_rust_analyzer_reports_a_syntax_error -- --ignored --nocapture`
+#[test]
+#[ignore = "needs rust-analyzer and LOOM_RA_FILE"]
+fn real_rust_analyzer_reports_a_syntax_error() {
+    let file = PathBuf::from(std::env::var("LOOM_RA_FILE").expect("LOOM_RA_FILE"));
+    let root = PathBuf::from(std::env::var("LOOM_RA_ROOT").expect("LOOM_RA_ROOT"));
+    let mut text = std::fs::read_to_string(&file).unwrap();
+    text = text.replacen("fn main() {\n", "fn main() {\n    s\n", 1);
+    let manager = Manager::start(Registry::builtin(), Options::default(), || {});
+    let stamp = Stamp {
+        incarnation: 1,
+        version: 0,
+    };
+    manager.update(Snapshot {
+        documents: vec![SnapshotDocument {
+            language: Registry::builtin().resolve_path(&file),
+            path: file.clone(),
+            stamp,
+            text: Arc::new(text),
+        }],
+        workspace_roots: vec![root],
+        servers: vec![LanguageServerSetting {
+            server: "rust-analyzer".into(),
+            enabled: true,
+            command: std::env::var("LOOM_RUST_ANALYZER").ok(),
+            args: None,
+            initialization_options: None,
+        }],
+    });
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(120) {
+        let r = manager.results(&file, stamp);
+        let found = r.diagnostics.as_ref().is_some_and(|d| !d.is_empty());
+        println!(
+            "{:>5.1}s {:?} tasks={:?} diagnostics={:?}",
+            started.elapsed().as_secs_f32(),
+            manager.infos().first().map(|i| i.status.clone()),
+            manager.infos().first().map(|i| i
+                .tasks
+                .iter()
+                .map(|t| format!("{} {:?}", t.title, t.percentage))
+                .collect::<Vec<_>>()),
+            r.diagnostics
+                .as_ref()
+                .map(|d| d.iter().map(|d| d.message.clone()).collect::<Vec<_>>())
+        );
+        if found {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+#[test]
+fn background_tasks_logs_and_the_command_are_reported() {
+    let f = Fixture::new(&["--progress", "--log-message", "--sync", "object"]);
+    f.show(vec![f.doc("a.fk", 0, "x")]);
+    let info = f.wait_for("a running task", || {
+        f.mgr().infos().into_iter().find(|i| !i.tasks.is_empty())
+    });
+    assert_eq!(info.status, Status::Ready);
+    assert_eq!(info.tasks.len(), 1);
+    assert_eq!(info.tasks[0].title, "Loading project");
+    f.wait_for("the progress report", || {
+        let t = f
+            .mgr()
+            .infos()
+            .into_iter()
+            .next()?
+            .tasks
+            .into_iter()
+            .next()?;
+        (t.percentage == Some(30) && t.message.as_deref() == Some("3/10")).then_some(())
+    });
+    let info = f.mgr().infos().remove(0);
+    assert!(info.process_id.is_some());
+    assert!(info.command.contains("fake_lsp"), "{}", info.command);
+    f.wait_for("the log message", || {
+        f.mgr().infos()[0]
+            .log
+            .iter()
+            .any(|l| l == "info: hello from the fake server")
+            .then_some(())
+    });
+
+    // The server ends the task.
+    f.mgr().saved(f.dir.join("a.fk"), Arc::new("x".into()));
+    f.wait_for("the task to end", || {
+        f.mgr().infos()[0].tasks.is_empty().then_some(())
+    });
+}

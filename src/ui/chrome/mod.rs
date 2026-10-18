@@ -109,6 +109,7 @@ pub struct StatusNote {
 pub enum StatusCommand {
     ToggleTerminal,
     ToggleSourceControl,
+    LanguagePanel,
 }
 #[derive(Clone)]
 pub struct StatusBinding {

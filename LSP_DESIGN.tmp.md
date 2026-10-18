@@ -193,7 +193,7 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 | P4c 可见结果 | 待验证 | R-L3 | — | 缺 Linux/macOS；真实 smoke 为 opt-in 测试（--ignored） |
 | P4d 同步/delta 优化 | 未开始 | — | — | 首期正确性稳定后按数据决定 |
 | P4e 通用文件监视 | 未开始 | — | — | 第二真实服务器或已知自监视缺口需要时启动 |
-| P4f 完整进度 | 未开始 | — | — | 按需求接入通用进度 token 与多任务 |
+| P4f 完整进度 | 待验证 | R-L4 | — | 缺 Linux/macOS；丢失 end 的有界清理依赖实例重启/退出（未单独加超时） |
 
 ### 5.2 关键检查点
 
@@ -207,7 +207,7 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 - [x] **P4c-3**：opt-in 真实服务器 smoke 及差异化假服务器验证有环境、版本和结果记录。
 - [ ] **P4d-1**：正文差分镜像一致，semantic delta 的数组索引、无序 edits 和非法结果回 full 通过。
 - [ ] **P4e-1**：监视注册/取消、glob、relative pattern、额外根 lease、rename/rescan 收敛通过后才声明能力。
-- [ ] **P4f-1**：progress create/begin/report/end、并发任务和实例退出清理通过后才声明能力。
+- [x] **P4f-1**：progress create/begin/report/end、并发任务和实例退出清理通过后才声明能力。
 
 ### 5.3 证据与阻塞记录
 
@@ -252,3 +252,15 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 - 应用：编辑器在语义 token 与当前文本一致时将其覆盖在语法 span 上；诊断以红/黄/蓝下划线绘制；状态栏右侧显示服务器状态（启动中/重启中/已停止/未找到）以及当前文件的错误与警告数。结果到达时通过与语法 worker 相同的修订号触发重绘。
 - 测试：manager_tests 共 20 个进程级用例（含版本化/无版本诊断、去抖、null 清除、无能力不请求、refresh、结果随文档和服务器消失）；应用级测试验证结果可经桥读取；真实 rust-analyzer 1.97.1（8bab26f4 2026-07-14，Windows，无客户端 watcher 能力）opt-in 测试 real_rust_analyzer_sees_files_changed_outside_the_editor：lib.rs 声明 mod other 时得到 unresolved module 诊断和 2 个语义 span；在编辑器外新建 other.rs 后诊断清除。
 未验证：Cargo.toml 修改、已存在文件的外部修改、git 分支切换；Linux/macOS；诊断的悬停消息入口（目前只有下划线与计数）。
+
+记录编号 / 日期：R-L4 / 2026-10-18
+阶段 / 检查点 ID：P4f / P4f-1；P4c-2 补充（状态与面板）
+状态：待验证
+起因：用户在大项目里输入语法错误后界面没有反馈。复现（真实 rust-analyzer 1.97.1，Windows，打开本仓库 build.rs 加一行错误）：约 9–27 秒后才推送诊断，期间状态栏显示“就绪”，没有任何加载提示。
+实现证据：
+- 协议：客户端声明 window.workDoneProgress；`$/progress` 解析为 Begin/Report/End（字符串或数字 token，百分比上限 100，部分结果等非 work-done 负载忽略）；协调器按实例保存任务列表（最多 32 个，实例重启即清空），并保存最近 100 条 logMessage/showMessage。
+- 状态栏：就绪但有后台任务时显示“服务器: 任务标题 百分比”；点击服务器状态区域打开面板（与 JetBrains/VS Code/Zed 一致，不是标签页）。
+- 面板（ui/language_panel.rs，数据驱动）：每个实例一节——服务器与状态、根目录、失败/不可用原因与设置提示、任务（标题、百分比、消息）、文档数与进程号、最近日志；失败或重启中时附 stderr 最后几行；按钮“Restart servers”。点面板外关闭。
+- 诊断：完全相同的诊断去重。
+- 测试：session 的 progress 解析；manager 的任务/日志/命令报告（假服务器 --progress）；真实 rust-analyzer 的 opt-in 测试可打印任务序列（Fetching → Roots Scanned → Building compile-time-deps → Indexing 1%…97% → cargo check）。
+未做：面板内的“停止”和“打开设置”按钮；每个任务的取消；面板内的诊断列表与悬停消息。

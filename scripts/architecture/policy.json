@@ -852,7 +852,8 @@
       "toast",
       "toast_seq",
       "welcome_hover",
-      "workspace_home_hover"
+      "workspace_home_hover",
+      "language_panel"
     ],
     "SidebarChrome": [
       "visible",

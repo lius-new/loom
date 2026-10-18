@@ -19,7 +19,7 @@ use crate::features::language_service::{
     diagnostics::{self, Diagnostic},
     plan::{self, Assignment, InstanceKey},
     semantic,
-    session::{Event, SessionOptions, State},
+    session::{Event, ProgressUpdate, SessionOptions, State},
     sync::{DesiredDocument, DocumentSync, Notification, Stamp},
     uri,
 };
@@ -106,7 +106,28 @@ pub(crate) struct InstanceInfo {
     pub root: PathBuf,
     pub status: Status,
     pub documents: usize,
+    /// The program and its arguments as started.
+    pub command: String,
+    pub process_id: Option<u32>,
+    /// Background work the server reports, such as loading the project.
+    pub tasks: Vec<TaskInfo>,
+    /// Recent messages the server logged or showed, oldest first.
+    pub log: Vec<String>,
+    /// The last lines the server wrote to its error output.
+    pub stderr: Vec<String>,
 }
+
+/// One running background task of a server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TaskInfo {
+    pub title: String,
+    pub message: Option<String>,
+    pub percentage: Option<u8>,
+}
+
+/// Messages and tasks kept per instance.
+const MAX_LOG: usize = 100;
+const MAX_TASKS: usize = 32;
 
 /// How long after the last edit a document's semantic tokens are asked for.
 const SEMANTIC_DEBOUNCE: Duration = Duration::from_millis(75);
@@ -251,6 +272,8 @@ struct Ready {
     since: Instant,
     capabilities: ServerCapabilities,
     semantic: SemanticState,
+    /// Work-done progress tokens in the order they began.
+    tasks: Vec<(String, TaskInfo)>,
 }
 
 /// When to ask for a document's semantic tokens and which answers still count.
@@ -292,6 +315,8 @@ struct Instance {
     failures: usize,
     documents: Vec<DesiredDocument>,
     idle_since: Option<Instant>,
+    /// What the server said recently, for the status panel.
+    log: std::collections::VecDeque<String>,
 }
 
 struct Coordinator {
@@ -512,6 +537,7 @@ impl Coordinator {
                 key,
                 phase: Phase::Failed(String::new()),
                 failures: 0,
+                log: Default::default(),
                 documents,
                 idle_since: None,
             });
@@ -531,6 +557,7 @@ impl Coordinator {
         let tx = self.tx.clone();
         let instance = &mut self.instances[at];
         instance.run += 1;
+        instance.log.clear();
         let (id, run) = (instance.id, instance.run);
         let key = &instance.key;
         let Some(root_uri) = uri::file_uri(&key.root) else {
@@ -597,6 +624,7 @@ impl Coordinator {
                         since: Instant::now(),
                         capabilities,
                         semantic: SemanticState::default(),
+                        tasks: Vec::new(),
                     }));
                 }
                 self.sync(at);
@@ -620,12 +648,72 @@ impl Coordinator {
                 }
             }
             Event::Response { tag, outcome, .. } => self.semantic_response(at, tag, outcome),
+            Event::Progress { token, update } => self.progress(at, token, update),
+            Event::Log { level, message } => self.remember(at, level, &message),
+            Event::ShowMessage { level, message } => self.remember(at, level, &message),
             Event::StateChanged(State::Failed(reason)) => self.failed(at, reason),
             Event::StateChanged(State::Stopped) => {
                 // Nobody asked it to stop while it was running here.
                 self.failed(at, "the server exited".to_owned());
             }
             _ => {}
+        }
+    }
+
+    fn remember(&mut self, at: usize, level: i64, message: &str) {
+        let label = match level {
+            1 => "error",
+            2 => "warning",
+            3 => "info",
+            _ => "log",
+        };
+        let log = &mut self.instances[at].log;
+        if log.len() == MAX_LOG {
+            log.pop_front();
+        }
+        log.push_back(format!("{label}: {message}"));
+    }
+
+    fn progress(&mut self, at: usize, token: String, update: ProgressUpdate) {
+        let Phase::Running(Running {
+            ready: Some(ready), ..
+        }) = &mut self.instances[at].phase
+        else {
+            return;
+        };
+        let tasks = &mut ready.tasks;
+        match update {
+            ProgressUpdate::Begin {
+                title,
+                message,
+                percentage,
+            } => {
+                tasks.retain(|(known, _)| *known != token);
+                if tasks.len() < MAX_TASKS {
+                    tasks.push((
+                        token,
+                        TaskInfo {
+                            title,
+                            message,
+                            percentage,
+                        },
+                    ));
+                }
+            }
+            ProgressUpdate::Report {
+                message,
+                percentage,
+            } => {
+                if let Some((_, task)) = tasks.iter_mut().find(|(known, _)| *known == token) {
+                    if message.is_some() {
+                        task.message = message;
+                    }
+                    if percentage.is_some() {
+                        task.percentage = percentage;
+                    }
+                }
+            }
+            ProgressUpdate::End { .. } => tasks.retain(|(known, _)| *known != token),
         }
     }
 
@@ -869,6 +957,28 @@ impl Coordinator {
                     .to_string(),
                 root: instance.key.root.clone(),
                 documents: instance.documents.len(),
+                command: std::iter::once(instance.key.launch.command.as_str())
+                    .chain(instance.key.launch.args.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                process_id: match &instance.phase {
+                    Phase::Running(running) => Some(running.client.process_id()),
+                    _ => None,
+                },
+                tasks: match &instance.phase {
+                    Phase::Running(Running {
+                        ready: Some(ready), ..
+                    }) => ready.tasks.iter().map(|(_, task)| task.clone()).collect(),
+                    _ => Vec::new(),
+                },
+                log: instance.log.iter().cloned().collect(),
+                stderr: match &instance.phase {
+                    Phase::Running(running) => {
+                        let tail = running.client.stderr_tail();
+                        tail[tail.len().saturating_sub(30)..].to_vec()
+                    }
+                    _ => Vec::new(),
+                },
                 status: match &instance.phase {
                     Phase::Running(Running { ready: Some(_), .. }) => Status::Ready,
                     Phase::Running(_) => Status::Starting,

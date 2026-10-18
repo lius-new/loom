@@ -76,6 +76,11 @@ pub enum Event {
         level: i64,
         message: String,
     },
+    /// A step of a background task the server reports (`$/progress`).
+    Progress {
+        token: String,
+        update: ProgressUpdate,
+    },
     /// `window/showMessage` or `window/showMessageRequest`.
     ShowMessage {
         level: i64,
@@ -85,6 +90,57 @@ pub enum Event {
     Refused {
         method: String,
     },
+}
+
+/// One report of a work-done progress token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProgressUpdate {
+    Begin {
+        title: String,
+        message: Option<String>,
+        /// 0 to 100, if the server knows.
+        percentage: Option<u8>,
+    },
+    Report {
+        message: Option<String>,
+        percentage: Option<u8>,
+    },
+    End {
+        message: Option<String>,
+    },
+}
+
+/// Reads the parameters of `$/progress`. Anything that is not work-done progress
+/// (for example partial results) is not ours to show.
+pub fn parse_progress(params: &Value) -> Option<(String, ProgressUpdate)> {
+    let token = match params.get("token")? {
+        Value::String(token) => token.clone(),
+        Value::Number(token) => token.to_string(),
+        _ => return None,
+    };
+    let value = params.get("value")?;
+    let message = value
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let percentage = value
+        .get("percentage")
+        .and_then(Value::as_u64)
+        .map(|p| p.min(100) as u8);
+    let update = match value.get("kind")?.as_str()? {
+        "begin" => ProgressUpdate::Begin {
+            title: value.get("title")?.as_str()?.to_owned(),
+            message,
+            percentage,
+        },
+        "report" => ProgressUpdate::Report {
+            message,
+            percentage,
+        },
+        "end" => ProgressUpdate::End { message },
+        _ => return None,
+    };
+    Some((token, update))
 }
 
 /// What to do after an input: messages to send and events to deliver.
@@ -330,9 +386,13 @@ impl Session {
                 level: level(&params),
                 message: text(&params),
             }],
-            // Progress, tracing and the server's own cancellations carry nothing
-            // this client acts on.
-            "$/progress" | "$/logTrace" | "$/cancelRequest" | "telemetry/event" => Vec::new(),
+            "$/progress" => parse_progress(&params)
+                .map(|(token, update)| Event::Progress { token, update })
+                .into_iter()
+                .collect(),
+            // Tracing and the server's own cancellations carry nothing this
+            // client acts on.
+            "$/logTrace" | "$/cancelRequest" | "telemetry/event" => Vec::new(),
             _ => vec![Event::Notification { method, params }],
         };
         Output {
@@ -369,7 +429,7 @@ impl Session {
                 events.push(Event::SemanticTokensRefresh);
                 Ok(Value::Null)
             }
-            // Accepted and ignored: Loom shows no progress yet (P4f).
+            // Tokens are tracked from their first report.
             "window/workDoneProgress/create" => Ok(Value::Null),
             "workspace/diagnostic/refresh"
             | "workspace/codeLens/refresh"

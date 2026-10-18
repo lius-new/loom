@@ -594,3 +594,48 @@ fn an_answer_to_nothing_is_counted_not_acted_on() {
     assert_eq!(session.receive(answer(555, json!(1))), Output::default());
     assert_eq!(session.late_responses, 1);
 }
+
+#[test]
+fn progress_reports_are_read_for_every_kind_and_other_payloads_are_ignored() {
+    use crate::features::language_service::session::{ProgressUpdate, parse_progress};
+    let begin = parse_progress(&json!({ "token": "t", "value": {
+        "kind": "begin", "title": "Indexing", "message": "a", "percentage": 5 } }));
+    assert_eq!(
+        begin,
+        Some((
+            "t".into(),
+            ProgressUpdate::Begin {
+                title: "Indexing".into(),
+                message: Some("a".into()),
+                percentage: Some(5)
+            }
+        ))
+    );
+    let report =
+        parse_progress(&json!({ "token": 7, "value": { "kind": "report", "percentage": 400 } }));
+    assert_eq!(
+        report,
+        Some((
+            "7".into(),
+            ProgressUpdate::Report {
+                message: None,
+                percentage: Some(100)
+            }
+        )),
+        "numeric tokens work and the percentage is capped"
+    );
+    assert_eq!(
+        parse_progress(&json!({ "token": "t", "value": { "kind": "end" } })),
+        Some(("t".into(), ProgressUpdate::End { message: None }))
+    );
+    // Partial results and malformed reports are not ours.
+    assert_eq!(
+        parse_progress(&json!({ "token": "t", "value": [1, 2] })),
+        None
+    );
+    assert_eq!(
+        parse_progress(&json!({ "token": "t", "value": { "kind": "begin" } })),
+        None
+    );
+    assert_eq!(parse_progress(&json!({ "value": { "kind": "end" } })), None);
+}

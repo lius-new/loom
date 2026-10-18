@@ -62,4 +62,6 @@ pub struct ChromeState {
     pub toast_seq: u64,
     pub welcome_hover: Option<usize>,
     pub workspace_home_hover: Option<usize>,
+    /// The language server panel opened from the status bar.
+    pub language_panel: bool,
 }

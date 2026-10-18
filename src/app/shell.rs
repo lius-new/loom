@@ -1178,6 +1178,25 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
 
     // ---- Overlays ------------------------------------------------------
+    if s.chrome.language_panel {
+        let panel_state = state.clone();
+        root = root.child(crate::ui::language_panel::render(
+            vp,
+            &super::chrome::language_panel_frame(&state),
+            std::sync::Arc::new(move |event| match event {
+                crate::ui::language_panel::Event::Close => {
+                    panel_state.update(|app| app.chrome.language_panel = false);
+                }
+                crate::ui::language_panel::Event::Restart => {
+                    if let Some(services) =
+                        panel_state.services().and_then(|r| r.language_services())
+                    {
+                        services.restart();
+                    }
+                }
+            }),
+        ));
+    }
     if let Some(pos) = s.editor.menu {
         root = root.child(super::editor_view::menu(
             vp,

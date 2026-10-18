@@ -172,6 +172,9 @@ pub fn status_binding(
             StatusCommand::ToggleTerminal => {
                 crate::app::terminal::toggle_panel(&writer, &tabs, &editor, &terminal)
             }
+            StatusCommand::LanguagePanel => writer.update(|app| {
+                app.chrome.language_panel = !app.chrome.language_panel;
+            }),
             StatusCommand::ToggleSourceControl => writer.update(|app| {
                 app.apply(crate::features::keymap::action::Action::ToggleSourceControl)
             }),
@@ -211,7 +214,17 @@ fn language_notes(
     };
     let (text, level) = match &info.status {
         Status::Starting => (format!("{name}: starting…"), NoteLevel::Quiet),
-        Status::Ready => (name.clone(), NoteLevel::Quiet),
+        Status::Ready => match info.tasks.first() {
+            // The server is connected but still working: say what on.
+            Some(task) => (
+                match task.percentage {
+                    Some(percent) => format!("{name}: {} {percent}%", task.title),
+                    None => format!("{name}: {}", task.title),
+                },
+                NoteLevel::Quiet,
+            ),
+            None => (name.clone(), NoteLevel::Quiet),
+        },
         Status::Restarting { .. } => (format!("{name}: restarting…"), NoteLevel::Warning),
         Status::Failed(_) => (format!("{name}: stopped"), NoteLevel::Error),
         Status::Unavailable(_) => (format!("{name}: not found"), NoteLevel::Quiet),
@@ -237,6 +250,79 @@ fn language_notes(
         }
     }
     notes
+}
+
+/// What the language server panel shows: every server that is running.
+pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Frame {
+    use crate::infrastructure::lsp::manager::Status;
+    use crate::ui::language_panel::{Frame, Level, Line, Section};
+    let Some(services) = state.services().and_then(|r| r.language_services()) else {
+        return Frame::default();
+    };
+    let line = |text: String, level| Line { text, level };
+    let sections = services
+        .infos()
+        .into_iter()
+        .map(|info| {
+            let (state_text, level) = match &info.status {
+                Status::Starting => ("starting".to_owned(), Level::Quiet),
+                Status::Ready if info.tasks.is_empty() => ("ready".to_owned(), Level::Quiet),
+                Status::Ready => ("working".to_owned(), Level::Quiet),
+                Status::Restarting { attempt, .. } => {
+                    (format!("restarting (attempt {attempt})"), Level::Warning)
+                }
+                Status::Failed(_) => ("stopped".to_owned(), Level::Error),
+                Status::Unavailable(_) => ("not available".to_owned(), Level::Quiet),
+            };
+            let mut lines = vec![line(info.root.display().to_string(), Level::Quiet)];
+            match &info.status {
+                Status::Restarting { reason, .. } | Status::Failed(reason) => {
+                    lines.push(line(reason.clone(), Level::Error));
+                }
+                Status::Unavailable(reason) => {
+                    lines.push(line(reason.clone(), Level::Quiet));
+                    lines.push(line(
+                        "Set another program with language_servers in settings.json.".to_owned(),
+                        Level::Quiet,
+                    ));
+                }
+                _ => {}
+            }
+            for task in &info.tasks {
+                let mut text = task.title.clone();
+                if let Some(percent) = task.percentage {
+                    text.push_str(&format!(" {percent}%"));
+                }
+                if let Some(message) = &task.message {
+                    text.push_str(&format!(" — {message}"));
+                }
+                lines.push(line(text, Level::Quiet));
+            }
+            lines.push(line(
+                format!(
+                    "{} documents{}",
+                    info.documents,
+                    info.process_id
+                        .map(|p| format!(", pid {p}"))
+                        .unwrap_or_default()
+                ),
+                Level::Quiet,
+            ));
+            let broken = matches!(info.status, Status::Restarting { .. } | Status::Failed(_));
+            let recent = info.log.iter().rev().take(3).rev();
+            lines.extend(recent.map(|l| line(l.clone(), Level::Quiet)));
+            if broken {
+                let tail = info.stderr.iter().rev().take(3).rev();
+                lines.extend(tail.map(|l| line(l.clone(), Level::Warning)));
+            }
+            Section {
+                title: format!("{} — {state_text}", info.server),
+                level,
+                lines,
+            }
+        })
+        .collect();
+    Frame { sections }
 }
 
 pub fn status(

@@ -146,8 +146,17 @@ impl Published {
             })
             .collect();
         out.sort_by(|a, b| {
-            (a.range.start, a.range.end, a.severity).cmp(&(b.range.start, b.range.end, b.severity))
+            (a.range.start, a.range.end, a.severity, &a.message, &a.code).cmp(&(
+                b.range.start,
+                b.range.end,
+                b.severity,
+                &b.message,
+                &b.code,
+            ))
         });
+        // Servers sometimes report the same problem twice (rust-analyzer does for
+        // a syntax error seen by two of its checks); one is enough to show.
+        out.dedup();
         out
     }
 }
@@ -226,6 +235,15 @@ mod tests {
         let found = p.resolve("ab\n", Utf16);
         assert_eq!(found[0].message, "early");
         assert!(found[1].range.end <= 3);
+    }
+
+    #[test]
+    fn identical_diagnostics_are_shown_once() {
+        let same = json!({ "range": { "start": at(0, 0), "end": at(0, 1) }, "message": "twice" });
+        let other = json!({ "range": { "start": at(0, 0), "end": at(0, 1) }, "message": "other" });
+        let found = published(json!([same, other, same])).resolve("x", Utf16);
+        let messages: Vec<&str> = found.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(messages.len(), 2, "{messages:?}");
     }
 
     #[test]

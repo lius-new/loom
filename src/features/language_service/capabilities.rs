@@ -247,7 +247,7 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
             "semanticTokens": { "refreshSupport": true }
         },
         "window": {
-            "workDoneProgress": false,
+            "workDoneProgress": true,
             "showMessage": { "messageActionItem": { "additionalPropertiesSupport": false } }
         }
     })
@@ -390,7 +390,7 @@ mod tests {
             json!(false)
         );
         assert_eq!(caps["workspace"]["applyEdit"], json!(false));
-        assert_eq!(caps["window"]["workDoneProgress"], json!(false));
+        assert_eq!(caps["window"]["workDoneProgress"], json!(true));
         assert_eq!(
             caps["workspace"]["semanticTokens"]["refreshSupport"],
             json!(true)

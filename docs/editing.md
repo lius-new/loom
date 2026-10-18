@@ -115,3 +115,8 @@ status bar, and draws the server's semantic highlighting over the syntax colours
 once it has analysed the current text. Nothing changes if the server is missing
 or still starting: the syntax colours stay. See [settings](settings.md) to choose
 another program or turn a server off.
+
+Click the server name in the status bar to open the language server panel: it
+shows each running server, what it is busy with (for example indexing a large
+project, during which errors may not appear yet), its recent messages, and a
+button to restart the servers.
