@@ -305,16 +305,20 @@ pub(crate) fn render(
                     y + fonts::editor().line_h,
                 ))
             };
-            for diagnostic in s.diagnostics.iter() {
-                if let Some(r) = line_rect(&diagnostic.range) {
-                    use crate::features::language_service::diagnostics::Severity;
-                    let colour = match diagnostic.severity {
-                        Severity::Error => theme::c().error,
-                        Severity::Warning => theme::c().warning,
-                        Severity::Information | Severity::Hint => theme::c().accent,
-                    };
-                    let underline = UiRect::new(r.left, r.bottom - 2.0, r.right, r.bottom);
-                    code = code.child(panel(underline, VisualStyle::filled(colour)));
+            // Hints (a compiler's "add `;` here") are not underlined: they only
+            // repeat a nearby error. Of the rest, the more serious is drawn last so
+            // it stays on top where two share a place.
+            use crate::features::language_service::diagnostics::Severity;
+            for (severity, colour) in [
+                (Severity::Information, theme::c().accent),
+                (Severity::Warning, theme::c().warning),
+                (Severity::Error, theme::c().error),
+            ] {
+                for diagnostic in s.diagnostics.iter().filter(|d| d.severity == severity) {
+                    if let Some(r) = line_rect(&diagnostic.range) {
+                        let underline = UiRect::new(r.left, r.bottom - 2.0, r.right, r.bottom);
+                        code = code.child(panel(underline, VisualStyle::filled(colour)));
+                    }
                 }
             }
             for found in matches {

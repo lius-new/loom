@@ -606,7 +606,10 @@ fn real_rust_analyzer_reports_a_syntax_error() {
     let file = PathBuf::from(std::env::var("LOOM_RA_FILE").expect("LOOM_RA_FILE"));
     let root = PathBuf::from(std::env::var("LOOM_RA_ROOT").expect("LOOM_RA_ROOT"));
     let mut text = std::fs::read_to_string(&file).unwrap();
-    text = text.replacen("fn main() {\n", "fn main() {\n    s\n", 1);
+    if std::env::var("LOOM_RA_AS_IS").is_err() {
+        text = text.replacen("fn main() {\n", "fn main() {\n    s\n", 1);
+    }
+    let sent = text.clone();
     let manager = Manager::start(Registry::builtin(), Options::default(), || {});
     let stamp = Stamp {
         incarnation: 1,
@@ -629,6 +632,7 @@ fn real_rust_analyzer_reports_a_syntax_error() {
         }],
     });
     let started = Instant::now();
+    let mut printed = 0;
     while started.elapsed() < Duration::from_secs(120) {
         let r = manager.results(&file, stamp);
         let found = r.diagnostics.as_ref().is_some_and(|d| !d.is_empty());
@@ -646,7 +650,23 @@ fn real_rust_analyzer_reports_a_syntax_error() {
                 .map(|d| d.iter().map(|d| d.message.clone()).collect::<Vec<_>>())
         );
         if found {
-            break;
+            let all = manager.results(&file, stamp).diagnostics.unwrap();
+            if all.len() != printed {
+                printed = all.len();
+                for d in all.iter() {
+                    println!(
+                        "DIAG {:?} {:?} {:?} {:?}",
+                        d.severity,
+                        d.range,
+                        &sent[d.range.clone()],
+                        d.message
+                    );
+                }
+            }
+            // Keep listening a while: compiler diagnostics come later.
+            if started.elapsed() > Duration::from_secs(45) {
+                break;
+            }
         }
         std::thread::sleep(Duration::from_millis(500));
     }
