@@ -100,3 +100,12 @@ compound extensions are matched longest-first, and unknown files use a generic
 document icon. Attribution, source revision, and the upstream MIT license are
 stored with the SVG assets under
 [`assets/icon-themes/material/`](../assets/icon-themes/material/).
+
+## Language servers
+
+For languages with a language server (Rust uses rust-analyzer), Loom shows the
+server's errors and warnings as underlines in the editor and their counts in the
+status bar, and draws the server's semantic highlighting over the syntax colours
+once it has analysed the current text. Nothing changes if the server is missing
+or still starting: the syntax colours stay. See [settings](settings.md) to choose
+another program or turn a server off.

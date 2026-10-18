@@ -47,6 +47,8 @@ pub(crate) struct ViewState {
     pub cursor_shape: CursorShape,
     pub selections: Vec<Range<usize>>,
     pub search_matches: Vec<Range<usize>>,
+    /// What the language server reports for this exact text.
+    pub diagnostics: Arc<[crate::features::language_service::diagnostics::Diagnostic]>,
     pub smooth_caret: bool,
     pub dragging: bool,
     pub caret_dragging: bool,

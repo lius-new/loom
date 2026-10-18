@@ -148,6 +148,7 @@ pub fn status_binding(
                 pending: app.keymap.pending().to_vec(),
                 source_control: app.source_control.visible,
                 diff_loading: app.git.model.diff_loading().is_some(),
+                language: language_notes(&reader, &app),
                 vim: crate::app::editor_vim::is_active(&app)
                     .then(|| (app.editor.vim.mode(), app.editor.vim.status())),
                 file: app.workspace.active().map(|id| FileStatus {
@@ -177,6 +178,67 @@ pub fn status_binding(
         },
     )
 }
+/// The language server's state and the active file's diagnostic counts.
+fn language_notes(
+    state: &AppContext,
+    app: &crate::app::state::AppState,
+) -> Vec<crate::ui::chrome::StatusNote> {
+    use crate::features::language_service::diagnostics::Severity;
+    use crate::infrastructure::lsp::manager::Status;
+    use crate::ui::chrome::{NoteLevel, StatusNote};
+    let mut notes = Vec::new();
+    let Some(id) = app.workspace.active() else {
+        return notes;
+    };
+    let Some(services) = state.services().and_then(|r| r.language_services()) else {
+        return notes;
+    };
+    let Some(document) = app.workspace.documents.get(&id).filter(|d| d.is_text()) else {
+        return notes;
+    };
+    let registry = crate::domain::language::Registry::builtin();
+    let Some((definition, _)) = registry.server_for(document.meta.lang) else {
+        return notes;
+    };
+    let name = definition.display_name.to_string();
+    let infos = services.infos();
+    let info = infos
+        .iter()
+        .filter(|i| i.server == name && document.meta.path.starts_with(&i.root))
+        .max_by_key(|i| i.root.components().count());
+    let Some(info) = info else {
+        return notes;
+    };
+    let (text, level) = match &info.status {
+        Status::Starting => (format!("{name}: starting…"), NoteLevel::Quiet),
+        Status::Ready => (name.clone(), NoteLevel::Quiet),
+        Status::Restarting { .. } => (format!("{name}: restarting…"), NoteLevel::Warning),
+        Status::Failed(_) => (format!("{name}: stopped"), NoteLevel::Error),
+        Status::Unavailable(_) => (format!("{name}: not found"), NoteLevel::Quiet),
+    };
+    notes.push(StatusNote { text, level });
+    if let Some(found) = services
+        .results(&document.meta.path, &document.stamp(id))
+        .diagnostics
+    {
+        let count = |severity| found.iter().filter(|d| d.severity == severity).count();
+        let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
+        if errors > 0 {
+            notes.push(StatusNote {
+                text: format!("{errors} error{}", if errors == 1 { "" } else { "s" }),
+                level: NoteLevel::Error,
+            });
+        }
+        if warnings > 0 {
+            notes.push(StatusNote {
+                text: format!("{warnings} warning{}", if warnings == 1 { "" } else { "s" }),
+                level: NoteLevel::Warning,
+            });
+        }
+    }
+    notes
+}
+
 pub fn status(
     rect: UiRect,
     state: AppContext,

@@ -180,7 +180,7 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 
 ## 5. 实施进度跟踪
 
-最近更新：2026-10-18。P4a、P4b 已实现并待验证（假服务器与真实进程已测，真实 rust-analyzer 的自监视尚未实测）；其余子阶段未开始。
+最近更新：2026-10-18。P4a–P4c 已实现并待验证（假服务器与真实进程已测；真实 rust-analyzer 已验证诊断、语义 token 与未打开文件的创建；Cargo.toml 变化、外部修改与 git 分支切换的自监视仍未实测）；其余子阶段未开始。
 
 状态与证据规则沿用 [主设计第 19 节](LANGUAGE_SERVICES_DESIGN.tmp.md#19-实施进度跟踪)。本节是 P4 状态的唯一维护位置；默认先交付 P4a–P4c，后续子阶段按需求启动，不把未启动的可选项算作首期阻塞。
 
@@ -190,7 +190,7 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 | --- | --- | --- | --- | --- |
 | P4a 通道与生命周期 | 待验证 | R-L1 | — | 缺 Linux/macOS 运行（Windows Job Object 已在 R-L2 加入并测试） |
 | P4b 文档同步 | 待验证 | R-L2 | — | 缺 rust-analyzer 自监视实测（P4b-3，随 P4c 的真实 smoke 一起做）；Linux/macOS 未运行 |
-| P4c 可见结果 | 未开始 | — | — | 诊断、semantic full、刷新、状态及真实 smoke |
+| P4c 可见结果 | 待验证 | R-L3 | — | 缺 Linux/macOS；真实 smoke 为 opt-in 测试（--ignored） |
 | P4d 同步/delta 优化 | 未开始 | — | — | 首期正确性稳定后按数据决定 |
 | P4e 通用文件监视 | 未开始 | — | — | 第二真实服务器或已知自监视缺口需要时启动 |
 | P4f 完整进度 | 未开始 | — | — | 按需求接入通用进度 token 与多任务 |
@@ -201,10 +201,10 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 - [x] **P4a-2**：半包/粘包、服务端请求、超时、取消、异常退出与幂等清理通过。
 - [x] **P4b-1**：所有正文写入口、不可见文档及多窗格共享会话同步通过。
 - [x] **P4b-2**：URI、根目录、打开代次、协议版本和 UTF-8/UTF-16 转换通过。
-- [ ] **P4b-3**：锁定真实服务器版本与有效配置；未打开文件、项目清单和分支变化的自监视已实测。若失败，记录必要 watcher 提前或支持范围调整。
-- [ ] **P4c-1**：push diagnostics、semantic full/空结果、refresh 与过期结果丢弃通过。
-- [ ] **P4c-2**：连接/等待/结果状态真实；无服务器或能力缺失不影响本地编辑与基础高亮。
-- [ ] **P4c-3**：opt-in 真实服务器 smoke 及差异化假服务器验证有环境、版本和结果记录。
+- [ ] **P4b-3**（部分：新建未打开文件已实测，见 R-L3；Cargo.toml 变化、外部修改、分支切换未测）：锁定真实服务器版本与有效配置；未打开文件、项目清单和分支变化的自监视已实测。若失败，记录必要 watcher 提前或支持范围调整。
+- [x] **P4c-1**：push diagnostics、semantic full/空结果、refresh 与过期结果丢弃通过。
+- [x] **P4c-2**：连接/等待/结果状态真实；无服务器或能力缺失不影响本地编辑与基础高亮。
+- [x] **P4c-3**：opt-in 真实服务器 smoke 及差异化假服务器验证有环境、版本和结果记录。
 - [ ] **P4d-1**：正文差分镜像一致，semantic delta 的数组索引、无序 edits 和非法结果回 full 通过。
 - [ ] **P4e-1**：监视注册/取消、glob、relative pattern、额外根 lease、rename/rescan 收敛通过后才声明能力。
 - [ ] **P4f-1**：progress create/begin/report/end、并发任务和实例退出清理通过后才声明能力。
@@ -242,3 +242,13 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 - 应用桥（app/language_services.rs）：AppContext::update/try_update 之后对打开文档做指纹（文档、版本、语言代次、路径、根目录、服务器设置），指纹变化才向协调器发快照；因此任何写入口（输入、撤销、替换、磁盘重载、改名）都不会漏。保存后发 didSave。超过 8 MiB 的文档不同步。应用级测试用假服务器验证打开、修改、无变化不发送、保存、关闭。
 - Windows Job Object（infrastructure/lsp/job.rs）：服务器进程加入 kill-on-close 作业，Client 结束或 Loom 崩溃时其子进程一并结束；有测试。
 未验证：真实 rust-analyzer 的未打开文件/Cargo.toml/分支切换自监视（需 P4c 的诊断作为观测手段）；Linux/macOS。
+
+记录编号 / 日期：R-L3 / 2026-10-18
+阶段 / 检查点 ID：P4c / P4c-1、P4c-2、P4c-3；P4b-3 部分
+状态：待验证
+实现证据：
+- 纯规则：diagnostics.rs（publishDiagnostics 解析，坏条目单独丢弃，缺 severity 视为错误，位置按协商编码解析为字节范围，空范围扩成一个字符，按位置排序）；semantic.rs（full 数据按相对编码解码并校验：长度非 5 的倍数、负数/非整数/溢出、类型超出 legend 均拒绝；未绘制的类型跳过；跨行截断；重叠丢弃；null 与空集合都清除；compose 把语义类覆盖到语法树 span 上并保持铺满窗口）；position.rs 增加 LineIndex（LF/CRLF/CR）。
+- 协调器：诊断带 version 时经同步历史映射到编辑器戳，只在等于当前文档戳时接受，无 version 时按最新状态接受并在下一次编辑后自然失效；语义请求在编辑停顿 75 ms 后发出，每文档至多一个在途，响应按（文档戳、refresh 代次）校验，过期则重新排程；ContentModified 重试；refresh 递增代次并让全部文档重新请求；没有 full 能力的服务器不发请求；实例失败、文档离开时清除结果。结果只对精确的编辑器状态返回。
+- 应用：编辑器在语义 token 与当前文本一致时将其覆盖在语法 span 上；诊断以红/黄/蓝下划线绘制；状态栏右侧显示服务器状态（启动中/重启中/已停止/未找到）以及当前文件的错误与警告数。结果到达时通过与语法 worker 相同的修订号触发重绘。
+- 测试：manager_tests 共 20 个进程级用例（含版本化/无版本诊断、去抖、null 清除、无能力不请求、refresh、结果随文档和服务器消失）；应用级测试验证结果可经桥读取；真实 rust-analyzer 1.97.1（8bab26f4 2026-07-14，Windows，无客户端 watcher 能力）opt-in 测试 real_rust_analyzer_sees_files_changed_outside_the_editor：lib.rs 声明 mod other 时得到 unresolved module 诊断和 2 个语义 span；在编辑器外新建 other.rs 后诊断清除。
+未验证：Cargo.toml 修改、已存在文件的外部修改、git 分支切换；Linux/macOS；诊断的悬停消息入口（目前只有下划线与计数）。

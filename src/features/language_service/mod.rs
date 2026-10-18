@@ -2,11 +2,13 @@
 //! messages, capability negotiation and the session state machine. Starting
 //! processes and moving bytes belongs to `infrastructure::lsp`.
 pub(crate) mod capabilities;
+pub(crate) mod diagnostics;
 pub(crate) mod framing;
 pub(crate) mod message;
 pub(crate) mod plan;
 pub(crate) mod position;
 pub(crate) mod root;
+pub(crate) mod semantic;
 pub(crate) mod session;
 #[cfg(test)]
 mod session_tests;

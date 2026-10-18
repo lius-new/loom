@@ -91,6 +91,20 @@ pub struct StatusFrame {
     pub source_control: bool,
     pub diff_loading: bool,
     pub vim: Option<(loom_editor_core::vim::Mode, loom_editor_core::vim::Status)>,
+    /// What the language server and its diagnostics say about the active file.
+    pub language: Vec<StatusNote>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteLevel {
+    Quiet,
+    Warning,
+    Error,
+}
+/// One short phrase for the right side of the status bar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusNote {
+    pub text: String,
+    pub level: NoteLevel,
 }
 pub enum StatusCommand {
     ToggleTerminal,

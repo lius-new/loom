@@ -305,6 +305,18 @@ pub(crate) fn render(
                     y + fonts::editor().line_h,
                 ))
             };
+            for diagnostic in s.diagnostics.iter() {
+                if let Some(r) = line_rect(&diagnostic.range) {
+                    use crate::features::language_service::diagnostics::Severity;
+                    let colour = match diagnostic.severity {
+                        Severity::Error => theme::c().error,
+                        Severity::Warning => theme::c().warning,
+                        Severity::Information | Severity::Hint => theme::c().accent,
+                    };
+                    let underline = UiRect::new(r.left, r.bottom - 2.0, r.right, r.bottom);
+                    code = code.child(panel(underline, VisualStyle::filled(colour)));
+                }
+            }
             for found in matches {
                 if let Some(r) = line_rect(found) {
                     code = code.child(panel(r, VisualStyle::filled(theme::c().warning).alpha(45)));

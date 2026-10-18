@@ -63,8 +63,21 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             loading_state.clone(),
             loading_application.clone(),
         );
-        loading_runtime
-            .install_language_services(super::language_services::LanguageServices::new(|| {}));
+        // Results from a server repaint the editor through the same revision the
+        // syntax worker uses.
+        let results_state = loading_state.clone();
+        let results_ready = crate::infrastructure::ui_dispatch::LatestNotification::new(
+            loading_application.clone(),
+            move |()| {
+                results_state.try_update(|app| {
+                    app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
+                    true
+                });
+            },
+        );
+        loading_runtime.install_language_services(super::language_services::LanguageServices::new(
+            move || results_ready.send(()),
+        ));
         loading_runtime.install_highlighter(super::syntax::Highlighter::new(
             loading_state.clone(),
             loading_application.clone(),

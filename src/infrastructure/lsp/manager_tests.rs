@@ -367,3 +367,233 @@ fn dropping_the_manager_shuts_servers_down() {
     assert!(methods.contains(&"shutdown".to_owned()), "{methods:?}");
     assert!(methods.contains(&"exit".to_owned()), "{methods:?}");
 }
+
+impl Fixture {
+    fn results_at(&self, name: &str, version: u64) -> super::manager::DocumentResults {
+        self.mgr().results(
+            &self.dir.join(name),
+            Stamp {
+                incarnation: 1,
+                version,
+            },
+        )
+    }
+}
+
+#[test]
+fn versioned_diagnostics_apply_to_the_state_they_describe() {
+    let f = Fixture::new(&["--diagnostics"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    let found = f.wait_for("diagnostics", || f.results_at("a.fk", 0).diagnostics);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].range, 0..2);
+    assert_eq!(found[0].message, "fake error");
+
+    // After an edit the old state's diagnostics no longer apply, and the server's
+    // answer for the new version is attached to the new state.
+    f.show(vec![f.doc("a.fk", 5, "fn b")]);
+    assert!(
+        f.results_at("a.fk", 0).diagnostics.is_some(),
+        "kept for the old state until replaced"
+    );
+    f.wait_for("diagnostics for the new state", || {
+        f.results_at("a.fk", 5).diagnostics
+    });
+    assert!(
+        f.results_at("a.fk", 4).diagnostics.is_none(),
+        "never for a state it was not computed for"
+    );
+}
+
+#[test]
+fn unversioned_diagnostics_apply_to_the_latest_state_only() {
+    let f = Fixture::new(&["--diagnostics", "--diag-unversioned"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    f.wait_for("diagnostics", || f.results_at("a.fk", 0).diagnostics);
+    f.show(vec![f.doc("a.fk", 1, "fn ab")]);
+    f.wait_for("diagnostics for the new state", || {
+        f.results_at("a.fk", 1).diagnostics
+    });
+}
+
+#[test]
+fn semantic_tokens_are_requested_after_a_pause_and_decoded_for_their_state() {
+    let f = Fixture::new(&["--semantic", "full"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    let spans = f.wait_for("semantic tokens", || f.results_at("a.fk", 0).semantic);
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].range, 0..2);
+    assert_eq!(spans[0].class.map(|c| c.name()), Some("keyword"));
+    f.show(vec![f.doc("a.fk", 3, "fn c")]);
+    f.wait_for("tokens for the edit", || f.results_at("a.fk", 3).semantic);
+    assert!(f.results_at("a.fk", 2).semantic.is_none());
+}
+
+#[test]
+fn rapid_edits_are_one_request() {
+    let f = Fixture::new(&["--semantic", "full"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    f.wait_for("first tokens", || f.results_at("a.fk", 0).semantic);
+    for v in 1..=8 {
+        f.show(vec![f.doc("a.fk", v, "fn x")]);
+    }
+    f.wait_for("last tokens", || f.results_at("a.fk", 8).semantic);
+    let requests = f
+        .methods()
+        .iter()
+        .filter(|m| *m == "textDocument/semanticTokens/full")
+        .count();
+    assert!(requests <= 3, "debounced, got {requests}");
+}
+
+#[test]
+fn a_null_answer_clears_the_layer() {
+    let f = Fixture::new(&["--semantic", "full", "--semantic-null"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    let spans = f.wait_for("an empty layer", || f.results_at("a.fk", 0).semantic);
+    assert!(spans.is_empty());
+}
+
+#[test]
+fn a_server_without_full_tokens_is_never_asked() {
+    let f = Fixture::new(&["--semantic", "range"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    f.wait_method_count("textDocument/didOpen", 1);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !f.methods()
+            .contains(&"textDocument/semanticTokens/full".to_owned())
+    );
+    assert!(f.results_at("a.fk", 0).semantic.is_none());
+}
+
+#[test]
+fn a_refresh_request_asks_again_even_though_the_text_is_unchanged() {
+    let f = Fixture::new(&[
+        "--semantic",
+        "full",
+        "--sync",
+        "object",
+        "--refresh-on-save",
+    ]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    f.wait_method_count("textDocument/semanticTokens/full", 1);
+    f.mgr().saved(f.dir.join("a.fk"), Arc::new("fn a".into()));
+    f.wait_method_count("textDocument/semanticTokens/full", 2);
+}
+
+#[test]
+fn results_vanish_with_the_document_and_the_server() {
+    let f = Fixture::new(&["--diagnostics", "--semantic", "full"]);
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    f.wait_for("both layers", || {
+        let r = f.results_at("a.fk", 0);
+        (r.diagnostics.is_some() && r.semantic.is_some()).then_some(())
+    });
+    f.show(vec![]);
+    f.wait_for("results to go", || {
+        let r = f.results_at("a.fk", 0);
+        (r.diagnostics.is_none() && r.semantic.is_none()).then_some(())
+    });
+}
+
+/// Needs a real rust-analyzer (set `LOOM_RUST_ANALYZER` to its path, or have it on
+/// PATH) and cargo. Run with `cargo test --bin Loom real_rust_analyzer -- --ignored --nocapture`.
+///
+/// It records the facts P4b-3 asks for: the server's version, and whether it
+/// notices a file created on disk while that file is not open in the editor.
+#[test]
+#[ignore = "needs rust-analyzer"]
+fn real_rust_analyzer_sees_files_changed_outside_the_editor() {
+    let program = std::env::var("LOOM_RUST_ANALYZER").unwrap_or_else(|_| "rust-analyzer".into());
+    let version = std::process::Command::new(&program)
+        .arg("--version")
+        .output();
+    println!(
+        "rust-analyzer: {:?}",
+        version.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    );
+
+    let dir = std::env::temp_dir().join(format!("loom-ra-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"smoke\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    let lib = "mod other;\npub fn f() {}\n";
+    std::fs::write(dir.join("src/lib.rs"), lib).unwrap();
+
+    let manager = Manager::start(Registry::builtin(), Options::default(), || {});
+    let path = dir.join("src/lib.rs");
+    let document = SnapshotDocument {
+        language: Registry::builtin().resolve_path(&path),
+        path: path.clone(),
+        stamp: Stamp {
+            incarnation: 1,
+            version: 0,
+        },
+        text: Arc::new(lib.to_owned()),
+    };
+    let servers = vec![LanguageServerSetting {
+        server: "rust-analyzer".into(),
+        enabled: true,
+        command: Some(program),
+        args: None,
+        initialization_options: None,
+    }];
+    manager.update(Snapshot {
+        documents: vec![document],
+        workspace_roots: vec![dir.clone()],
+        servers,
+    });
+
+    let wait = |what: &str, check: &dyn Fn() -> bool| {
+        let limit = Instant::now() + Duration::from_secs(180);
+        while !check() {
+            assert!(
+                Instant::now() < limit,
+                "timed out: {what}; {:?}",
+                manager.infos()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    };
+    let stamp = Stamp {
+        incarnation: 1,
+        version: 0,
+    };
+    let diagnostics = || manager.results(&path, stamp).diagnostics;
+    wait("an unresolved-module diagnostic", &|| {
+        diagnostics().is_some_and(|d| d.iter().any(|d| d.message.contains("unresolved module")))
+    });
+    println!(
+        "before: {:?}",
+        diagnostics().map(|d| d.iter().map(|d| d.message.clone()).collect::<Vec<_>>())
+    );
+
+    wait("semantic tokens", &|| {
+        manager
+            .results(&path, stamp)
+            .semantic
+            .is_some_and(|t| !t.is_empty())
+    });
+    println!(
+        "semantic spans: {:?}",
+        manager.results(&path, stamp).semantic.map(|t| t.len())
+    );
+
+    // Create the missing file behind the editor's back.
+    std::fs::write(dir.join("src/other.rs"), "pub fn g() {}\n").unwrap();
+    wait(
+        "the diagnostic to clear after the file appeared on disk",
+        &|| {
+            diagnostics()
+                .is_some_and(|d| !d.iter().any(|d| d.message.contains("unresolved module")))
+        },
+    );
+    println!("after: {:?}", diagnostics().map(|d| d.len()));
+    drop(manager);
+    let _ = std::fs::remove_dir_all(&dir);
+}

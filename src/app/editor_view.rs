@@ -1,6 +1,7 @@
 //! Compose the pane scene and application intents; the viewport never sees root state.
 use crate::app::context::AppContext;
 use lgui::prelude::{State, UiRect};
+use std::sync::Arc;
 
 use super::{editor, state::AppState};
 use crate::domain::identity::PaneId;
@@ -175,6 +176,7 @@ pub(crate) fn snapshot(
         },
         selections,
         search_matches,
+        diagnostics: Arc::from(Vec::new()),
         smooth_caret: app.preferences.values().smooth_caret,
         dragging: state.drag.is_some(),
         caret_dragging: state.caret_dragging,
@@ -210,7 +212,18 @@ pub(crate) fn binding(
     let overlay_git = git.clone();
     let syntax_state = state.clone();
     Binding::new(
-        move || snapshot(reader.get(), read_git.get(), pane, rect),
+        move || {
+            let mut view = snapshot(reader.get(), read_git.get(), pane, rect);
+            if let Some(document) = &view.document
+                && let Some(services) = reader.services().and_then(|r| r.language_services())
+                && let Some(found) = services
+                    .results(&document.meta.path, &document.stamp)
+                    .diagnostics
+            {
+                view.diagnostics = found;
+            }
+            view
+        },
         move |event| {
             if let Event::Peek { line } = event {
                 let app = dispatcher.get();
@@ -281,13 +294,35 @@ pub(crate) fn binding(
             .services()
             .and_then(|runtime| runtime.highlighter())
             .map_or_else(Vec::new, |highlighter| {
-                highlighter.worker.query(
+                let mut tokens = highlighter.worker.query(
                     pane,
                     document.stamp,
                     crate::features::syntax::Source::new(&document.buffer),
                     document.meta.lang,
                     windows,
-                )
+                );
+                // The server's semantic tokens, when they describe exactly this text,
+                // are drawn over the syntax tree's classes.
+                if let Some(semantic) = syntax_state
+                    .services()
+                    .and_then(|runtime| runtime.language_services())
+                    .and_then(|services| {
+                        services
+                            .results(&document.meta.path, &document.stamp)
+                            .semantic
+                    })
+                    .filter(|spans| !spans.is_empty())
+                {
+                    for window in &mut tokens {
+                        let composed = crate::features::language_service::semantic::compose(
+                            &window.spans,
+                            &semantic,
+                            window.range.clone(),
+                        );
+                        window.spans = composed.into();
+                    }
+                }
+                tokens
             })
     })
 }

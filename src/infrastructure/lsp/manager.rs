@@ -16,13 +16,16 @@ use super::client::{Client, Launch, Timeouts};
 use crate::domain::language::{Registry, ResolvedLanguage};
 use crate::features::language_service::{
     capabilities::ServerCapabilities,
+    diagnostics::{self, Diagnostic},
     plan::{self, Assignment, InstanceKey},
+    semantic,
     session::{Event, SessionOptions, State},
     sync::{DesiredDocument, DocumentSync, Notification, Stamp},
     uri,
 };
 use crate::features::settings::servers::LanguageServerSetting;
-use serde_json::Value;
+use crate::features::syntax::TokenSpan;
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
@@ -105,6 +108,26 @@ pub(crate) struct InstanceInfo {
     pub documents: usize,
 }
 
+/// How long after the last edit a document's semantic tokens are asked for.
+const SEMANTIC_DEBOUNCE: Duration = Duration::from_millis(75);
+
+/// What the servers said about one document, each part with the editor state it
+/// describes. A part is only meant to be shown for exactly that state.
+#[derive(Default)]
+struct Entry {
+    diagnostics: Option<(Stamp, Arc<[Diagnostic]>)>,
+    semantic: Option<(Stamp, Arc<[TokenSpan]>)>,
+}
+
+type Store = Arc<Mutex<HashMap<String, Entry>>>;
+
+/// The server results that apply to a document in a given state.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DocumentResults {
+    pub diagnostics: Option<Arc<[Diagnostic]>>,
+    pub semantic: Option<Arc<[TokenSpan]>>,
+}
+
 enum Msg {
     Snapshot(Box<Snapshot>),
     Saved {
@@ -123,6 +146,7 @@ enum Msg {
 pub(crate) struct Manager {
     tx: Sender<Msg>,
     infos: Arc<Mutex<Vec<InstanceInfo>>>,
+    results: Store,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -136,12 +160,15 @@ impl Manager {
     ) -> Self {
         let (tx, inbox) = mpsc::channel();
         let infos = Arc::new(Mutex::new(Vec::new()));
+        let results: Store = Arc::default();
         let coordinator = Coordinator {
             registry,
             options,
             tx: tx.clone(),
             inbox,
             infos: infos.clone(),
+            results: results.clone(),
+            results_changed: false,
             on_change: Box::new(on_change),
             instances: Vec::new(),
             next_id: 1,
@@ -156,6 +183,7 @@ impl Manager {
         Self {
             tx,
             infos,
+            results,
             thread: Some(thread),
         }
     }
@@ -177,6 +205,30 @@ impl Manager {
     pub fn infos(&self) -> Vec<InstanceInfo> {
         self.infos.lock().unwrap().clone()
     }
+
+    /// What the servers know about `path` in the editor state `stamp`. Results
+    /// computed for any other state are not returned.
+    pub fn results(&self, path: &Path, stamp: Stamp) -> DocumentResults {
+        let Some(uri) = uri::file_uri(path) else {
+            return DocumentResults::default();
+        };
+        let store = self.results.lock().unwrap();
+        let Some(entry) = store.get(&uri::key(&uri)) else {
+            return DocumentResults::default();
+        };
+        DocumentResults {
+            diagnostics: entry
+                .diagnostics
+                .as_ref()
+                .filter(|(at, _)| *at == stamp)
+                .map(|(_, v)| v.clone()),
+            semantic: entry
+                .semantic
+                .as_ref()
+                .filter(|(at, _)| *at == stamp)
+                .map(|(_, v)| v.clone()),
+        }
+    }
 }
 
 impl Drop for Manager {
@@ -191,14 +243,38 @@ impl Drop for Manager {
 struct Running {
     client: Client,
     /// Present once `initialize` has been answered.
-    ready: Option<Ready>,
+    ready: Option<Box<Ready>>,
 }
 
 struct Ready {
     sync: DocumentSync,
     since: Instant,
-    #[allow(dead_code)]
     capabilities: ServerCapabilities,
+    semantic: SemanticState,
+}
+
+/// When to ask for a document's semantic tokens and which answers still count.
+#[derive(Default)]
+struct SemanticState {
+    /// Raised when the server says its tokens changed; answers asked for before
+    /// that no longer count.
+    epoch: u64,
+    /// The state of each document (by URI key) last noticed.
+    noted: HashMap<String, Stamp>,
+    /// Documents to ask about, and when.
+    due: HashMap<String, Instant>,
+    /// Requests sent: tag to (document key, state asked about, epoch).
+    in_flight: HashMap<u64, (String, Stamp, u64)>,
+    next_tag: u64,
+}
+
+impl Ready {
+    fn wants_semantic_tokens(&self) -> bool {
+        self.capabilities
+            .semantic_tokens
+            .as_ref()
+            .is_some_and(|tokens| tokens.full)
+    }
 }
 
 enum Phase {
@@ -224,6 +300,9 @@ struct Coordinator {
     tx: Sender<Msg>,
     inbox: Receiver<Msg>,
     infos: Arc<Mutex<Vec<InstanceInfo>>>,
+    results: Store,
+    /// Results were stored since the last announcement.
+    results_changed: bool,
     on_change: Box<dyn Fn() + Send>,
     instances: Vec<Instance>,
     next_id: u64,
@@ -310,16 +389,20 @@ impl Coordinator {
                     Phase::Waiting { retry_at, .. } => Some(*retry_at),
                     _ => None,
                 };
-                match (idle, retry) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                }
+                let semantic = match &instance.phase {
+                    Phase::Running(Running {
+                        ready: Some(ready), ..
+                    }) => ready.semantic.due.values().min().copied(),
+                    _ => None,
+                };
+                [idle, retry, semantic].into_iter().flatten().min()
             })
             .min()
     }
 
     fn timers(&mut self) {
         let now = Instant::now();
+        self.request_semantic_tokens(now);
         let idle_stop = self.options.idle_stop;
         let mut stopping = Vec::new();
         self.instances.retain_mut(|instance| {
@@ -509,14 +592,34 @@ impl Coordinator {
         match event {
             Event::Ready(capabilities) => {
                 if let Phase::Running(running) = &mut self.instances[at].phase {
-                    running.ready = Some(Ready {
+                    running.ready = Some(Box::new(Ready {
                         sync: DocumentSync::new(capabilities.text_sync),
                         since: Instant::now(),
                         capabilities,
-                    });
+                        semantic: SemanticState::default(),
+                    }));
                 }
                 self.sync(at);
             }
+            Event::Notification { method, params }
+                if method == "textDocument/publishDiagnostics" =>
+            {
+                self.diagnostics(at, &params);
+            }
+            Event::SemanticTokensRefresh => {
+                let instance = &mut self.instances[at];
+                if let Phase::Running(Running {
+                    ready: Some(ready), ..
+                }) = &mut instance.phase
+                {
+                    ready.semantic.epoch += 1;
+                    let now = Instant::now();
+                    for document in &instance.documents {
+                        ready.semantic.due.insert(uri::key(&document.uri), now);
+                    }
+                }
+            }
+            Event::Response { tag, outcome, .. } => self.semantic_response(at, tag, outcome),
             Event::StateChanged(State::Failed(reason)) => self.failed(at, reason),
             Event::StateChanged(State::Stopped) => {
                 // Nobody asked it to stop while it was running here.
@@ -530,6 +633,13 @@ impl Coordinator {
         let stable_after = self.options.stable_after;
         let backoff = self.options.backoff.clone();
         let instance = &mut self.instances[at];
+        {
+            let mut store = self.results.lock().unwrap();
+            for document in &instance.documents {
+                store.remove(&uri::key(&document.uri));
+            }
+            self.results_changed = true;
+        }
         let stable = matches!(
             &instance.phase,
             Phase::Running(Running { ready: Some(ready), .. }) if ready.since.elapsed() >= stable_after
@@ -561,6 +671,152 @@ impl Coordinator {
         };
         for Notification { method, params } in ready.sync.reconcile(&instance.documents) {
             client.notify(method, params);
+        }
+        if ready.wants_semantic_tokens() {
+            let due = Instant::now() + SEMANTIC_DEBOUNCE;
+            for document in &instance.documents {
+                let key = uri::key(&document.uri);
+                if ready.semantic.noted.get(&key) != Some(&document.stamp) {
+                    ready.semantic.noted.insert(key.clone(), document.stamp);
+                    ready.semantic.due.insert(key, due);
+                }
+            }
+        }
+    }
+
+    /// Stores a server's diagnostics when they describe the document as it is now.
+    fn diagnostics(&mut self, at: usize, params: &Value) {
+        let Some(published) = diagnostics::parse(params) else {
+            return;
+        };
+        let instance = &self.instances[at];
+        let Phase::Running(Running {
+            ready: Some(ready), ..
+        }) = &instance.phase
+        else {
+            return;
+        };
+        let key = uri::key(&published.uri);
+        let Some(document) = instance.documents.iter().find(|d| uri::key(&d.uri) == key) else {
+            return;
+        };
+        // With a version the server says which text it looked at; without one we
+        // can only assume it is the latest, which the next edit invalidates.
+        let describes_now = match published.version {
+            Some(version) => {
+                i32::try_from(version)
+                    .ok()
+                    .and_then(|version| ready.sync.stamp_of(&document.uri, version))
+                    == Some(document.stamp)
+            }
+            None => true,
+        };
+        if !describes_now {
+            return;
+        }
+        let resolved = published.resolve(&document.text, ready.capabilities.position_encoding);
+        let stamp = document.stamp;
+        let mut store = self.results.lock().unwrap();
+        store.entry(key).or_default().diagnostics = Some((stamp, resolved.into()));
+        self.results_changed = true;
+    }
+
+    fn semantic_response(
+        &mut self,
+        at: usize,
+        tag: u64,
+        outcome: Result<Value, crate::features::language_service::message::ResponseError>,
+    ) {
+        let instance = &mut self.instances[at];
+        let Phase::Running(Running {
+            ready: Some(ready), ..
+        }) = &mut instance.phase
+        else {
+            return;
+        };
+        let Some((key, stamp, epoch)) = ready.semantic.in_flight.remove(&tag) else {
+            return;
+        };
+        let document = instance.documents.iter().find(|d| uri::key(&d.uri) == key);
+        let current = document.is_some_and(|d| d.stamp == stamp) && epoch == ready.semantic.epoch;
+        let now = Instant::now();
+        match outcome {
+            Ok(_) if !current => {
+                if document.is_some() {
+                    ready.semantic.due.insert(key, now);
+                }
+            }
+            Ok(value) => {
+                let Some(document) = document else { return };
+                let legend = ready
+                    .capabilities
+                    .semantic_tokens
+                    .as_ref()
+                    .map(|tokens| tokens.legend.clone())
+                    .unwrap_or_default();
+                // A null answer clears the layer, like an empty one.
+                let decoded = if value.is_null() {
+                    Ok(Vec::new())
+                } else {
+                    semantic::decode(
+                        value.get("data").unwrap_or(&Value::Null),
+                        &legend,
+                        &document.text,
+                        ready.capabilities.position_encoding,
+                    )
+                };
+                if let Ok(spans) = decoded {
+                    let mut store = self.results.lock().unwrap();
+                    store.entry(key).or_default().semantic = Some((stamp, spans.into()));
+                    self.results_changed = true;
+                }
+            }
+            Err(error) if crate::features::language_service::session::is_stale(&error) => {
+                if document.is_some() {
+                    ready.semantic.due.insert(key, now + SEMANTIC_DEBOUNCE);
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    /// Asks for the semantic tokens of documents whose wait is over.
+    fn request_semantic_tokens(&mut self, now: Instant) {
+        for instance in &mut self.instances {
+            let Phase::Running(Running {
+                client,
+                ready: Some(ready),
+            }) = &mut instance.phase
+            else {
+                continue;
+            };
+            let due: Vec<String> = ready
+                .semantic
+                .due
+                .iter()
+                .filter(|(_, when)| **when <= now)
+                .map(|(key, _)| key.clone())
+                .collect();
+            for key in due {
+                // One request per document at a time.
+                if ready.semantic.in_flight.values().any(|(k, _, _)| *k == key) {
+                    continue;
+                }
+                ready.semantic.due.remove(&key);
+                let Some(document) = instance.documents.iter().find(|d| uri::key(&d.uri) == key)
+                else {
+                    continue;
+                };
+                ready.semantic.next_tag += 1;
+                let tag = ready.semantic.next_tag;
+                let params = json!({ "textDocument": { "uri": document.uri } });
+                if client.request("textDocument/semanticTokens/full", params, tag) {
+                    ready
+                        .semantic
+                        .in_flight
+                        .insert(tag, (key, document.stamp, ready.semantic.epoch));
+                }
+            }
         }
     }
 
@@ -626,6 +882,21 @@ impl Coordinator {
                 },
             })
             .collect();
+        {
+            // Forget results of documents no server holds any more.
+            let held: std::collections::HashSet<String> = self
+                .instances
+                .iter()
+                .flat_map(|i| i.documents.iter().map(|d| uri::key(&d.uri)))
+                .collect();
+            let mut store = self.results.lock().unwrap();
+            let before = store.len();
+            store.retain(|key, _| held.contains(key));
+            self.results_changed |= store.len() != before;
+        }
+        if std::mem::take(&mut self.results_changed) {
+            (self.on_change)();
+        }
         if infos != self.published {
             *self.infos.lock().unwrap() = infos.clone();
             self.published = infos;

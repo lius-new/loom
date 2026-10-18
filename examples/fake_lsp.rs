@@ -201,6 +201,44 @@ fn main() {
                     std::process::exit(3);
                 }
             }
+            ("textDocument/didOpen" | "textDocument/didChange", None) => {
+                // --diagnostics: one error over the first two characters, tagged
+                // with the document version unless --diag-unversioned.
+                if options.flag("--diagnostics") {
+                    let document = &message["params"]["textDocument"];
+                    let mut params = json!({
+                        "uri": document["uri"],
+                        "diagnostics": [{
+                            "range": { "start": { "line": 0, "character": 0 },
+                                       "end": { "line": 0, "character": 2 } },
+                            "severity": 1, "message": "fake error", "source": "fake"
+                        }]
+                    });
+                    if !options.flag("--diag-unversioned") {
+                        params["version"] = document["version"].clone();
+                    }
+                    out.send(&json!({
+                        "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": params
+                    }));
+                }
+            }
+            ("textDocument/didSave", None) => {
+                if options.flag("--refresh-on-save") {
+                    out.send(&json!({
+                        "jsonrpc": "2.0", "id": 9100, "method": "workspace/semanticTokens/refresh"
+                    }));
+                }
+            }
+            ("textDocument/semanticTokens/full", Some(id)) => {
+                std::thread::sleep(Duration::from_millis(options.number("--slow-ms")));
+                // The first two characters are a keyword.
+                let result = if options.flag("--semantic-null") {
+                    Value::Null
+                } else {
+                    json!({ "data": [0, 0, 2, 0, 0] })
+                };
+                out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+            }
             ("shutdown", Some(id)) => {
                 shutdown_seen = true;
                 if !options.flag("--no-shutdown-reply") {

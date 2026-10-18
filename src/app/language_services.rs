@@ -56,6 +56,21 @@ impl LanguageServices {
         self.manager.restart();
     }
 
+    /// The server results that describe the document exactly as `stamp` says.
+    pub fn results(
+        &self,
+        path: &std::path::Path,
+        stamp: &crate::domain::document::DocumentStamp,
+    ) -> crate::infrastructure::lsp::manager::DocumentResults {
+        self.manager.results(
+            path,
+            Stamp {
+                incarnation: stamp.incarnation,
+                version: stamp.version,
+            },
+        )
+    }
+
     pub fn infos(&self) -> Vec<InstanceInfo> {
         self.manager.infos()
     }
@@ -170,6 +185,9 @@ mod tests {
             args: Some(vec![
                 "--sync".into(),
                 "object".into(),
+                "--diagnostics".into(),
+                "--semantic".into(),
+                "full".into(),
                 "--log".into(),
                 log.display().to_string(),
             ]),
@@ -190,6 +208,30 @@ mod tests {
             .unwrap();
         assert_eq!(opened.1["textDocument"]["languageId"], "rust");
         assert_eq!(opened.1["textDocument"]["text"], "fn a() {}");
+
+        // What the server answers is available for exactly the state it described.
+        let stamp = {
+            let app = state.get();
+            let (id, doc) = app
+                .workspace
+                .documents
+                .iter()
+                .find(|(_, d)| d.is_text())
+                .unwrap();
+            doc.stamp(*id)
+        };
+        let services = runtime.language_services().unwrap();
+        let limit = Instant::now() + Duration::from_secs(15);
+        let found = loop {
+            let results = services.results(&path, &stamp);
+            if let (Some(diagnostics), Some(semantic)) = (results.diagnostics, results.semantic) {
+                break (diagnostics, semantic);
+            }
+            assert!(Instant::now() < limit, "no results");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(found.0[0].message, "fake error");
+        assert_eq!(found.1[0].range, 0..2);
 
         // Any change to the buffer does, whichever way it was made.
         state.update(|app| {
@@ -227,6 +269,7 @@ mod tests {
         wait(&log, "textDocument/didSave", 1);
 
         drop(state);
+        drop(services);
         runtime.clear_language_services();
         let seen = methods(&log);
         assert!(

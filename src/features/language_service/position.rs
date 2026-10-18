@@ -53,6 +53,67 @@ pub fn byte_of(line: &str, column: u32, encoding: PositionEncoding) -> usize {
     }
 }
 
+/// Where each line of a text starts, for turning protocol positions into byte
+/// offsets in that text. Lines end at LF, CRLF or a lone CR, as the protocol
+/// defines them.
+pub struct LineIndex<'a> {
+    text: &'a str,
+    starts: Vec<usize>,
+}
+
+impl<'a> LineIndex<'a> {
+    pub fn new(text: &'a str) -> Self {
+        let bytes = text.as_bytes();
+        let mut starts = vec![0];
+        for (at, &byte) in bytes.iter().enumerate() {
+            match byte {
+                b'\n' => starts.push(at + 1),
+                b'\r' if bytes.get(at + 1) != Some(&b'\n') => starts.push(at + 1),
+                _ => {}
+            }
+        }
+        Self { text, starts }
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.starts.len()
+    }
+
+    /// The content of a line without its break; empty past the last line.
+    pub fn line(&self, line: usize) -> &'a str {
+        let Some(&start) = self.starts.get(line) else {
+            return "";
+        };
+        let end = self
+            .starts
+            .get(line + 1)
+            .copied()
+            .unwrap_or(self.text.len());
+        self.text[start..end].trim_end_matches(['\n', '\r'])
+    }
+
+    /// The byte offset of a position. A line past the end is the end of the text,
+    /// and a column past the end of a line is the end of that line.
+    pub fn offset(&self, position: Position, encoding: PositionEncoding) -> usize {
+        let line = position.line as usize;
+        let Some(&start) = self.starts.get(line) else {
+            return self.text.len();
+        };
+        start + byte_of(self.line(line), position.character, encoding)
+    }
+
+    /// The protocol position of a byte offset.
+    pub fn position(&self, offset: usize, encoding: PositionEncoding) -> Position {
+        let offset = offset.min(self.text.len());
+        let line = self.starts.partition_point(|&start| start <= offset) - 1;
+        let within = (offset - self.starts[line]).min(self.line(line).len());
+        Position {
+            line: u32::try_from(line).unwrap_or(u32::MAX),
+            character: column_of(self.line(line), within, encoding),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PositionEncoding::{Utf8, Utf16};
@@ -97,6 +158,48 @@ mod tests {
         assert_eq!(byte_of("", 3, Utf16), 0);
         assert_eq!(column_of(LINE, 999, Utf16), 6);
         assert_eq!(column_of("", 0, Utf8), 0);
+    }
+
+    #[test]
+    fn line_index_follows_the_protocol_line_rules() {
+        let text = "ab\r\ncd\rxy\n😀z";
+        let index = LineIndex::new(text);
+        assert_eq!(index.line_count(), 4);
+        assert_eq!(
+            (
+                index.line(0),
+                index.line(1),
+                index.line(2),
+                index.line(3),
+                index.line(9)
+            ),
+            ("ab", "cd", "xy", "😀z", "")
+        );
+        let at = |line, character| index.offset(Position { line, character }, Utf16);
+        assert_eq!(at(0, 1), 1);
+        assert_eq!(at(0, 99), 2, "past the end of a line is its end");
+        assert_eq!(at(1, 0), 4);
+        assert_eq!(at(3, 2), text.find('z').unwrap());
+        assert_eq!(at(9, 0), text.len(), "past the last line is the end");
+    }
+
+    #[test]
+    fn line_index_positions_round_trip() {
+        let text = "ab\r\ncd\nä😀z";
+        let index = LineIndex::new(text);
+        for encoding in [Utf8, Utf16] {
+            for (offset, _) in text.char_indices().chain([(text.len(), ' ')]) {
+                if text[..offset].ends_with('\r') && text[offset..].starts_with('\n') {
+                    continue; // between CR and LF is not a position
+                }
+                let position = index.position(offset, encoding);
+                assert_eq!(
+                    index.offset(position, encoding),
+                    offset,
+                    "{offset} {encoding:?}"
+                );
+            }
+        }
     }
 
     #[test]

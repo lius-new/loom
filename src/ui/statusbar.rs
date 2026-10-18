@@ -79,6 +79,16 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
             theme::mono_bold(theme::c().accent, theme::SMALL),
         ));
     }
+    for note in &s.language {
+        let style = match note.level {
+            crate::ui::chrome::NoteLevel::Quiet => theme::mono(theme::c().text_dim, theme::SMALL),
+            crate::ui::chrome::NoteLevel::Warning => {
+                theme::mono_bold(theme::c().warning, theme::SMALL)
+            }
+            crate::ui::chrome::NoteLevel::Error => theme::mono_bold(theme::c().error, theme::SMALL),
+        };
+        items.push((note.text.clone(), style));
+    }
     if let Some(file) = &s.file {
         if file.missing {
             items.push((
