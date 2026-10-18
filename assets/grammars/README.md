@@ -6,6 +6,8 @@ holding exactly:
 - `highlights.scm` — the highlight query.
 - `SOURCE.md` — upstream repository and commit, license, whether the query was
   modified, and the grammar crate version it matches.
+- `injections.scm` (optional) — where other languages are embedded; see
+  `src/features/syntax/injections.rs` for what the query may use.
 
 `build.rs` embeds these files and fails on anything else. A language description
 names a grammar by directory name; the native parser behind the name is

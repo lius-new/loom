@@ -759,3 +759,37 @@ fn an_oversized_document_is_shown_as_plain_text_and_says_so() {
     } = worker.stats().tree;
     assert_eq!((plain_fallbacks, full_parses), (1, 0));
 }
+
+#[test]
+fn embedded_languages_reach_the_screen_through_the_worker() {
+    let (send, receive) = mpsc::channel();
+    let worker = Worker::new(notify(send));
+    let text = "# Title\n\n```rust\nfn main() { let x = 1; }\n```\n\nSome *emphasis* here.\n";
+    let buffer = TextBuffer::new(text);
+    let language = builtin("markdown");
+    let windows = lines(&buffer, 0..buffer.line_count());
+    ask_lines(&worker, 1, &buffer, language, &windows);
+    wait(&receive);
+    let tokens = ask_lines(&worker, 1, &buffer, language, &windows);
+    assert_eq!(tokens.len(), windows.len());
+    let class_of = |needle: &str| {
+        let at = text.find(needle).unwrap();
+        tokens
+            .iter()
+            .find(|t| t.range.contains(&at))
+            .and_then(|t| class_at(&t.spans, at))
+    };
+    assert_eq!(class_of("Title"), Some(HighlightId::KEYWORD));
+    assert_eq!(class_of("fn main"), Some(HighlightId::KEYWORD));
+    assert_eq!(class_of("main"), Some(HighlightId::FUNCTION));
+    assert_eq!(class_of("emphasis"), Some(HighlightId::CONSTANT));
+    // Line by line, the worker agrees with one parse of the whole text.
+    for (window, got) in windows.iter().zip(&tokens) {
+        assert_eq!(
+            clipped(&got.spans, &window.range),
+            reference(&buffer, language, window),
+            "{:?}",
+            window.range
+        );
+    }
+}

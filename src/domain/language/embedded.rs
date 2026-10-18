@@ -66,7 +66,8 @@ mod tests {
         for js in ["a.js", "a.jsx", "script.mjs", "a.cjs"] {
             expect(js, "javascript", "javascript");
         }
-        expect("README.md", "plaintext", "plaintext");
+        expect("README.md", "markdown", "markdown");
+        expect("notes.txt", "plaintext", "plaintext");
         expect("Makefile", "plaintext", "plaintext");
     }
 

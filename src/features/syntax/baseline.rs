@@ -35,6 +35,36 @@ const TYPESCRIPT: &[&str] = &[
     "}",
 ];
 
+const JSON: &[&str] = &[
+    "{ \"id\": {n}, \"name\": \"item {n}\", \"tags\": [\"a\", \"b\"], \"ok\": true,",
+    "  \"ratio\": 1.5e3, \"none\": null, \"text\": \"quote \\\" tab \t\" },",
+];
+const CSS: &[&str] = &[
+    ".card-{n} > a:hover, #main[data-x=\"{n}\"] { color: #1a2b3c; margin: 0 auto; }",
+    "@media (min-width: 600px) { .row-{n} { display: grid; width: calc(100% - 2rem); } } /* note */",
+];
+// Script and style blocks are embedded languages.
+const HTML: &[&str] = &[
+    "<div class=\"box-{n}\" id=\"b{n}\"><p>Hello &amp; welcome {n}</p></div>",
+    "<script>const total{n} = [1, 2, 3].map((x) => x * {n}); // note</script>",
+    "<style>.row-{n} { color: red; margin: 0 4px; }</style>",
+    "<!-- comment {n} -->",
+];
+// Fenced code and inline text are embedded languages.
+const MARKDOWN: &[&str] = &[
+    "## Section {n}",
+    "",
+    "Some *emphasis* and **strong** text with `code` and a [link](http://x.y/{n}).",
+    "",
+    "```rust",
+    "fn sample_{n}() -> u32 { 40 + 2 }",
+    "```",
+    "",
+    "- item one",
+    "- item two",
+    "",
+];
+
 /// Sample lines for a built-in language by canonical name.
 pub(crate) fn template(language: &str) -> &'static [&'static str] {
     match language {
@@ -42,6 +72,10 @@ pub(crate) fn template(language: &str) -> &'static [&'static str] {
         "csharp" => CSHARP,
         "javascript" => JAVASCRIPT,
         "typescript" => TYPESCRIPT,
+        "json" => JSON,
+        "css" => CSS,
+        "html" => HTML,
+        "markdown" => MARKDOWN,
         "plaintext" => &["Label {n} 中é \"value\" 456 /* note */"],
         other => panic!("no baseline sample for `{other}`"),
     }
@@ -78,7 +112,17 @@ mod tests {
     use super::*;
     use crate::domain::language::builtin;
 
-    const LANGUAGES: [&str; 5] = ["rust", "csharp", "javascript", "typescript", "plaintext"];
+    const LANGUAGES: [&str; 9] = [
+        "rust",
+        "csharp",
+        "javascript",
+        "typescript",
+        "plaintext",
+        "json",
+        "css",
+        "html",
+        "markdown",
+    ];
 
     #[test]
     fn generated_fixtures_are_byte_stable() {

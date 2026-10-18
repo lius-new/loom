@@ -1,0 +1,9 @@
+{
+  "name": "json",
+  "display_name": "JSON",
+  "badge": "JSON",
+  "aliases": ["jsonc"],
+  "comments": { "line": "//", "block": ["/*", "*/"] },
+  "variants": [{ "id": "json", "grammar": "json" }],
+  "files": [{ "extensions": ["json", "jsonc", "geojson", "webmanifest"], "variant": "json" }]
+}

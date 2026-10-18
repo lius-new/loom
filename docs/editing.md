@@ -31,7 +31,7 @@
 ## Syntax highlighting
 
 Colours come from a syntax tree built with Tree-sitter for Rust, JavaScript
-(including JSX), TypeScript, TSX and C#. Because the whole file is parsed, a
+(including JSX), TypeScript, TSX, C#, JSON, CSS, HTML and Markdown. Because the whole file is parsed, a
 comment or string that starts above the screen is coloured correctly, and
 unfinished code keeps its colours instead of turning plain.
 
@@ -39,6 +39,12 @@ The parse runs in the background and never blocks typing. While a new version
 is still being parsed, the previous colours stay on screen, moved across the
 edits you made, and are replaced as soon as the parser catches up. Switching to
 another tab shows its colours at once.
+
+Code embedded in another language is coloured by its own grammar: `<script>`
+and `<style>` in HTML, and fenced code blocks in Markdown (```rust, ```js, and
+so on; an unknown language keeps the Markdown colours). Embedding goes up to four
+levels deep, and only the parts on screen are parsed, with at most 64 embedded
+regions and 4 MiB of embedded text parsed at once.
 
 Files larger than 8 MiB and file types without a grammar are drawn as plain text.
 Which language a file has comes from its name, or from the

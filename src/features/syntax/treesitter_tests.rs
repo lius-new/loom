@@ -73,6 +73,7 @@ fn rank(
     Capture {
         range,
         class,
+        depth: 0,
         rank: (pattern, order),
     }
 }
@@ -97,11 +98,13 @@ fn grammar_table_resources_and_descriptions_agree() {
         .filter_map(|variant| variant.grammar)
         .map(|grammar| registry.grammar_name(grammar))
         .collect();
+    // Grammars that exist only to be embedded in another language.
+    referenced.extend(grammars::EMBEDDED_ONLY);
     referenced.sort_unstable();
     referenced.dedup();
     assert_eq!(
         table, referenced,
-        "every grammar is used by a description and the reverse"
+        "every grammar is used by a description or is embedded-only, and the reverse"
     );
 
     for name in &table {

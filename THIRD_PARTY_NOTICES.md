@@ -41,6 +41,10 @@ only concatenated).
 | tree-sitter-javascript | 0.25.0 (query for JavaScript), 0.23.1 (query for TypeScript and TSX) | https://github.com/tree-sitter/tree-sitter-javascript | Max Brunsfeld |
 | tree-sitter-typescript | 0.23.2 | https://github.com/tree-sitter/tree-sitter-typescript | its contributors |
 | tree-sitter-c-sharp | 0.23.5 | https://github.com/tree-sitter/tree-sitter-c-sharp | Max Brunsfeld, Damien Guard, Amaan Qureshi, and contributors |
+| tree-sitter-json | 0.24.8 | https://github.com/tree-sitter/tree-sitter-json | Max Brunsfeld, Amaan Qureshi |
+| tree-sitter-css | 0.25.0 | https://github.com/tree-sitter/tree-sitter-css | Max Brunsfeld, Amaan Qureshi |
+| tree-sitter-html | 0.23.2 | https://github.com/tree-sitter/tree-sitter-html | Max Brunsfeld, Amaan Qureshi |
+| tree-sitter-md | 0.5.3 (block and inline grammars) | https://github.com/tree-sitter-grammars/tree-sitter-markdown | MDeiml and contributors |
 
 All of them are licensed under the MIT License:
 

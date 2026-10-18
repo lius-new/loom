@@ -11,6 +11,7 @@
 //! assets/grammars/README.md                 (optional, not embedded)
 //! assets/grammars/<grammar>/highlights.scm  (required)
 //! assets/grammars/<grammar>/SOURCE.md       (required)
+//! assets/grammars/<grammar>/injections.scm  (optional)
 //! ```
 //!
 //! Names are lowercase ASCII (`rust`, `c_sharp`). Anything unexpected fails the
@@ -22,6 +23,8 @@ pub const LANGUAGES_DIR: &str = "assets/languages";
 pub const GRAMMARS_DIR: &str = "assets/grammars";
 pub const SERVERS_DIR: &str = "assets/servers";
 const GRAMMAR_FILES: [&str; 2] = ["highlights.scm", "SOURCE.md"];
+/// Allowed but not required: the queries that find embedded languages.
+const OPTIONAL_GRAMMAR_FILES: [&str; 1] = ["injections.scm"];
 const GRAMMARS_NOTE: &str = "README.md";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -130,9 +133,12 @@ pub fn scan(root: &Path) -> Result<Scan, String> {
         let dir = grammars.join(&name);
         let mut found = Vec::new();
         for (file, is_file, _) in list(&dir)? {
-            if !is_file || !GRAMMAR_FILES.contains(&file.as_str()) {
+            if !is_file
+                || !(GRAMMAR_FILES.contains(&file.as_str())
+                    || OPTIONAL_GRAMMAR_FILES.contains(&file.as_str()))
+            {
                 return Err(format!(
-                    "{GRAMMARS_DIR}/{name}/{file}: only {GRAMMAR_FILES:?} are allowed"
+                    "{GRAMMARS_DIR}/{name}/{file}: only {GRAMMAR_FILES:?} and optionally {OPTIONAL_GRAMMAR_FILES:?} are allowed"
                 ));
             }
             found.push(file);
@@ -325,9 +331,9 @@ mod tests {
                 &[
                     ("assets/grammars/rust/highlights.scm", ""),
                     ("assets/grammars/rust/SOURCE.md", ""),
-                    ("assets/grammars/rust/injections.scm", ""),
+                    ("assets/grammars/rust/locals.scm", ""),
                 ],
-                "injections.scm",
+                "locals.scm",
             ),
             (
                 "nested grammar directory",

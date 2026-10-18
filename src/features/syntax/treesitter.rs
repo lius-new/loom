@@ -9,6 +9,8 @@
 //! and still follows from the tree's version; otherwise the document is parsed
 //! again. Editing happens on a private copy and replaces the stored tree only
 //! when the new parse finished, so a cancelled parse leaves the old state intact.
+use super::injections::InjectionQuery;
+use super::layers::{Layers, Tools};
 use super::queries::{self, CompiledQuery};
 use super::{Source, TokenSpan, Window, WindowTokens, grammars};
 use crate::domain::{
@@ -36,7 +38,6 @@ pub(crate) const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TREES: usize = 16;
 /// Captures read for one window; a window needing more is drawn partly plain.
 const MAX_CAPTURES: usize = 200_000;
-
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TreeStats {
     pub full_parses: usize,
@@ -49,10 +50,18 @@ pub(crate) struct TreeStats {
     pub query_compile_time: Duration,
     pub plain_fallbacks: usize,
     pub trees: usize,
+    /// Embedded regions parsed from scratch, reused from the previous parse, and
+    /// left out because a limit was reached.
+    pub layers: usize,
+    pub layer_parses: usize,
+    pub layer_reuses: usize,
+    pub layer_overflows: usize,
 }
 
 struct DocTree {
     tree: Tree,
+    /// Embedded languages, parsed as windows reach them.
+    layers: Layers,
     source: Source,
     grammar: GrammarId,
     used: u64,
@@ -61,8 +70,12 @@ struct DocTree {
 #[derive(Default)]
 pub(crate) struct TreeIndex {
     parsers: HashMap<GrammarId, Parser>,
+    /// Parsers for embedded regions, which carry included ranges and so are never
+    /// shared with whole-document parses.
+    layer_parsers: HashMap<&'static str, Parser>,
     /// `None` remembers a query that failed to compile, so it is not retried.
-    queries: HashMap<GrammarId, Option<Arc<CompiledQuery>>>,
+    queries: HashMap<&'static str, Option<Arc<CompiledQuery>>>,
+    injection_queries: HashMap<&'static str, Option<Arc<InjectionQuery>>>,
     docs: HashMap<FileId, DocTree>,
     clock: u64,
     pub stats: TreeStats,
@@ -101,7 +114,7 @@ impl TreeIndex {
             self.stats.plain_fallbacks += 1;
             return Some(windows.iter().map(plain).collect());
         }
-        let Some(query) = self.query(grammar) else {
+        let Some(query) = self.query_by_name(Registry::builtin().grammar_name(grammar)) else {
             self.stats.plain_fallbacks += 1;
             return Some(windows.iter().map(plain).collect());
         };
@@ -112,18 +125,52 @@ impl TreeIndex {
         if !current && !self.reparse(id, &source, grammar, cancel) {
             return None;
         }
+        // Parse the embedded languages the windows reach.
+        {
+            let doc = self.docs.get_mut(&id).expect("parsed or current");
+            let reached: Vec<Range<usize>> = windows.iter().map(|w| w.range.clone()).collect();
+            let mut tools = Tools {
+                parsers: &mut self.layer_parsers,
+                injection_queries: &mut self.injection_queries,
+                stats: &mut self.stats,
+                cancel,
+            };
+            doc.layers.ensure(&mut tools, &reached, &doc.source.text)?;
+        }
+        // The queries of the embedded languages, in the order of the layers.
+        let layer_names: Vec<&'static str> = self.docs[&id]
+            .layers
+            .list
+            .iter()
+            .map(|layer| layer.grammar)
+            .collect();
+        let layer_queries: Vec<Option<Arc<CompiledQuery>>> = layer_names
+            .into_iter()
+            .map(|name| self.query_by_name(name))
+            .collect();
         let doc = self.docs.get_mut(&id).expect("parsed or current");
         doc.used = self.clock;
         let started = Instant::now();
         let mut result = Vec::with_capacity(windows.len());
+        let mut sources: Vec<HighlightSource<'_>> = vec![HighlightSource {
+            tree: &doc.tree,
+            query: &query,
+            depth: 0,
+            bounds: 0..usize::MAX,
+        }];
+        for (layer, query) in doc.layers.list.iter().zip(&layer_queries) {
+            if let (Some(query), Some(tree)) = (query, &layer.tree) {
+                sources.push(HighlightSource {
+                    tree,
+                    query,
+                    depth: layer.depth,
+                    bounds: layer.bounds.clone(),
+                });
+            }
+        }
         for window in windows {
-            let spans = highlight(
-                &doc.tree,
-                &doc.source.text,
-                &query,
-                window.range.clone(),
-                cancel,
-            )?;
+            let spans =
+                highlight_sources(&sources, &doc.source.text, window.range.clone(), cancel)?;
             self.stats.query_runs += 1;
             result.push(WindowTokens::fresh(window.range.clone(), spans));
         }
@@ -132,11 +179,10 @@ impl TreeIndex {
         Some(result)
     }
 
-    fn query(&mut self, grammar: GrammarId) -> Option<Arc<CompiledQuery>> {
-        let name = Registry::builtin().grammar_name(grammar);
+    fn query_by_name(&mut self, name: &'static str) -> Option<Arc<CompiledQuery>> {
         let stats = &mut self.stats;
         self.queries
-            .entry(grammar)
+            .entry(name)
             .or_insert_with(|| {
                 let started = Instant::now();
                 let compiled = queries::compile(name);
@@ -184,6 +230,21 @@ impl TreeIndex {
         let Some(tree) = parse(parser, &source.text, edited.as_ref(), cancel) else {
             return false;
         };
+        let mut tools = Tools {
+            parsers: &mut self.layer_parsers,
+            injection_queries: &mut self.injection_queries,
+            stats: &mut self.stats,
+            cancel,
+        };
+        let Some(layers) = Layers::rebuild(
+            self.docs.get(&id).map(|doc| &doc.layers),
+            &mut tools,
+            name,
+            &tree,
+            &source.text,
+        ) else {
+            return false;
+        };
         self.stats.parse_time += started.elapsed();
         self.stats.parsed_bytes += source.text.len();
         if incremental {
@@ -195,12 +256,22 @@ impl TreeIndex {
             id,
             DocTree {
                 tree,
+                layers,
                 source: source.clone(),
                 grammar,
                 used: self.clock,
             },
         );
         true
+    }
+
+    /// The embedded languages parsed so far and how deep each is, for tests.
+    #[cfg(test)]
+    pub(crate) fn layer_summary(&self, id: FileId) -> Vec<(&'static str, u8)> {
+        self.docs
+            .get(&id)
+            .map(|doc| doc.layers.parsed())
+            .unwrap_or_default()
     }
 
     fn evict(&mut self, keep: FileId) {
@@ -218,6 +289,15 @@ impl TreeIndex {
         }
         self.stats.trees = self.docs.len();
     }
+}
+
+/// One tree and the query that colours it. Embedded layers cover only part of
+/// the text, so `bounds` lets a window skip the ones it cannot touch.
+pub(crate) struct HighlightSource<'a> {
+    pub tree: &'a Tree,
+    pub query: &'a CompiledQuery,
+    pub depth: u8,
+    pub bounds: Range<usize>,
 }
 
 fn point(point: BytePoint) -> Point {
@@ -289,6 +369,9 @@ fn plain(window: &Window) -> WindowTokens {
 pub(crate) struct Capture {
     pub(crate) range: Range<usize>,
     pub(crate) class: HighlightId,
+    /// How deeply embedded the language that made this capture is; the deeper
+    /// capture wins over a shallower one covering the same text.
+    pub(crate) depth: u8,
     /// (pattern, position within the query's results): later wins a tie.
     pub(crate) rank: (usize, usize),
 }
@@ -304,13 +387,53 @@ pub(crate) fn highlight(
     window: Range<usize>,
     cancel: &AtomicBool,
 ) -> Option<Vec<TokenSpan>> {
+    let source = HighlightSource {
+        tree,
+        query,
+        depth: 0,
+        bounds: 0..usize::MAX,
+    };
+    highlight_sources(&[source], text, window, cancel)
+}
+
+/// Like [`highlight`] for a document with embedded languages: the captures of
+/// every layer that reaches the window are resolved together.
+pub(crate) fn highlight_sources(
+    sources: &[HighlightSource<'_>],
+    text: &str,
+    window: Range<usize>,
+    cancel: &AtomicBool,
+) -> Option<Vec<TokenSpan>> {
     if window.is_empty() {
         return Some(Vec::new());
     }
+    let mut captures = Vec::new();
+    for source in sources {
+        if source.bounds.end <= window.start || source.bounds.start >= window.end {
+            continue;
+        }
+        collect_captures(source, text, &window, cancel, &mut captures)?;
+        if captures.len() >= MAX_CAPTURES {
+            break;
+        }
+    }
+    Some(spans_for(&window, captures))
+}
+
+fn collect_captures(
+    source: &HighlightSource<'_>,
+    text: &str,
+    window: &Range<usize>,
+    cancel: &AtomicBool,
+    captures: &mut Vec<Capture>,
+) -> Option<()> {
     let mut cursor = QueryCursor::new();
     cursor.set_byte_range(window.clone());
-    let mut matches = cursor.matches(&query.query, tree.root_node(), text.as_bytes());
-    let mut captures = Vec::new();
+    let mut matches = cursor.matches(
+        &source.query.query,
+        source.tree.root_node(),
+        text.as_bytes(),
+    );
     let mut seen = 0usize;
     while let Some(found) = matches.next() {
         seen += 1;
@@ -318,7 +441,7 @@ pub(crate) fn highlight(
             return None;
         }
         for capture in found.captures() {
-            let Some(class) = query.class_of(capture.index) else {
+            let Some(class) = source.query.class_of(capture.index) else {
                 continue;
             };
             // The capture keeps its whole extent even where it leaves the window,
@@ -328,6 +451,7 @@ pub(crate) fn highlight(
                 captures.push(Capture {
                     range,
                     class,
+                    depth: source.depth,
                     rank: (found.pattern_index, captures.len()),
                 });
             }
@@ -336,6 +460,10 @@ pub(crate) fn highlight(
             break;
         }
     }
+    Some(())
+}
+
+fn spans_for(window: &Range<usize>, captures: Vec<Capture>) -> Vec<TokenSpan> {
     let start = captures
         .iter()
         .map(|c| c.range.start)
@@ -354,7 +482,7 @@ pub(crate) fn highlight(
             span.range = span.range.start.max(window.start)..span.range.end.min(window.end);
         }
     }
-    Some(spans)
+    spans
 }
 
 /// Resolves overlapping captures into consecutive spans. At each point the
@@ -382,7 +510,13 @@ pub(crate) fn tile(window: Range<usize>, mut captures: Vec<Capture>) -> Vec<Toke
         let class = active
             .iter()
             .copied()
-            .min_by_key(|&index| (captures[index].range.len(), Reverse(captures[index].rank)))
+            .min_by_key(|&index| {
+                (
+                    Reverse(captures[index].depth),
+                    captures[index].range.len(),
+                    Reverse(captures[index].rank),
+                )
+            })
             .map(|index| captures[index].class);
         match spans.last_mut() {
             Some(last) if last.class == class => last.range.end = to,

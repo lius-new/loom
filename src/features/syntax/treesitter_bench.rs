@@ -279,3 +279,156 @@ fn treesitter_bench_first_colour_by_size() {
         }
     }
 }
+
+/// Documents with embedded languages (P5): first colour from a cold index, and a
+/// one-character edit once the layers exist. The layer count is printed because
+/// it, not the document size alone, decides the cost.
+#[test]
+#[ignore = "P5 measurement; run in release mode"]
+fn treesitter_bench_embedded_languages() {
+    for name in ["json", "css", "html", "markdown"] {
+        let language = builtin(name);
+        for kib in [64usize, 256, 1024] {
+            let buffer = TextBuffer::new(generate(name, kib * 1024));
+            let windows = viewport(&buffer, 0, 50);
+            let cancel = AtomicBool::new(false);
+            let mut layers = 0;
+            let mut overflows = 0;
+            let samples = timed(|| {
+                let mut index = TreeIndex::default();
+                index
+                    .prepare(
+                        FileId::new(1),
+                        Source::new(&buffer),
+                        language,
+                        &windows,
+                        &cancel,
+                    )
+                    .unwrap();
+                layers = index.stats.layers;
+                overflows = index.stats.layer_overflows;
+            });
+            let p95 = report(
+                &format!(
+                    "first colour, cold index, {name} {kib} KiB (regions {layers}, over limit {overflows})"
+                ),
+                samples,
+            );
+            // Measured in P5 on the reference machine, release build. Markdown is
+            // limited by its block grammar (about 360 ms per MiB), so it has its
+            // own tiers.
+            let budget = match (name, kib) {
+                ("markdown", ..=64) => 100.0,
+                ("markdown", ..=256) => 250.0,
+                ("markdown", _) => 900.0,
+                (_, ..=256) => 100.0,
+                _ => 275.0,
+            };
+            assert!(
+                ms(p95) <= budget,
+                "{name} {kib} KiB: p95 {:.1} ms is over the {budget} ms budget",
+                ms(p95)
+            );
+        }
+    }
+    for name in ["html", "markdown"] {
+        let language = builtin(name);
+        let mut buffer = TextBuffer::new(generate(name, MIB));
+        let mut index = TreeIndex::default();
+        let cancel = AtomicBool::new(false);
+        let id = FileId::new(1);
+        let middle = buffer.line_count() / 2;
+        index.prepare(
+            id,
+            Source::new(&buffer),
+            language,
+            &viewport(&buffer, 0, 1),
+            &cancel,
+        );
+        let samples = timed(|| {
+            let at = buffer.line_range(middle).start;
+            EditorMut::new(&mut buffer, &mut Selection::default(), Vec::new())
+                .replace(at..at, "x", EditKind::Other)
+                .unwrap();
+            let started = Instant::now();
+            let windows = viewport(&buffer, middle, 50);
+            index
+                .prepare(id, Source::new(&buffer), language, &windows, &cancel)
+                .unwrap();
+            started.elapsed()
+        });
+        report(
+            &format!("one-character edit, {name} 1 MiB with layers"),
+            samples,
+        );
+        let stats = index.stats;
+        println!(
+            "BENCH {name} stats: layers={} layer_parses={} layer_reuses={} overflows={} parse_time={:.1}ms",
+            stats.layers,
+            stats.layer_parses,
+            stats.layer_reuses,
+            stats.layer_overflows,
+            ms(stats.parse_time)
+        );
+    }
+}
+
+#[test]
+#[ignore = "P5 diagnosis; run in release mode"]
+fn treesitter_bench_markdown_pieces() {
+    let text = generate("markdown", MIB);
+    let cancel = AtomicBool::new(false);
+    let mut block = tree_sitter::Parser::new();
+    block
+        .set_language(&grammars::language("markdown").unwrap())
+        .unwrap();
+    let started = Instant::now();
+    let tree = parse(&mut block, &text, None, &cancel).unwrap();
+    println!(
+        "BENCH markdown block parse 1 MiB: {:.1}ms",
+        ms(started.elapsed())
+    );
+    let mut ranges = Vec::new();
+    let mut cursor = tree.walk();
+    fn walk(cursor: &mut tree_sitter::TreeCursor, out: &mut Vec<tree_sitter::Range>) {
+        loop {
+            if cursor.node().kind() == "inline" {
+                out.push(cursor.node().range());
+            } else if cursor.goto_first_child() {
+                walk(cursor, out);
+                cursor.goto_parent();
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    walk(&mut cursor, &mut ranges);
+    println!("BENCH inline ranges: {}", ranges.len());
+    let mut inline = tree_sitter::Parser::new();
+    inline
+        .set_language(&grammars::language("markdown_inline").unwrap())
+        .unwrap();
+    inline.set_included_ranges(&ranges).unwrap();
+    let started = Instant::now();
+    let inline_tree = parse(&mut inline, &text, None, &cancel).unwrap();
+    println!(
+        "BENCH markdown inline parse (all ranges): {:.1}ms",
+        ms(started.elapsed())
+    );
+    // The same ranges in chunks.
+    let started = Instant::now();
+    let mut total = 0;
+    for chunk in ranges.chunks(64) {
+        inline.set_included_ranges(chunk).unwrap();
+        total += parse(&mut inline, &text, None, &cancel)
+            .unwrap()
+            .root_node()
+            .child_count();
+    }
+    println!(
+        "BENCH markdown inline parse in chunks of 64: {:.1}ms ({total})",
+        ms(started.elapsed())
+    );
+    drop(inline_tree);
+}

@@ -1,0 +1,8 @@
+{
+  "name": "css",
+  "display_name": "CSS",
+  "badge": "CSS",
+  "comments": { "block": ["/*", "*/"] },
+  "variants": [{ "id": "css", "grammar": "css" }],
+  "files": [{ "extensions": ["css"], "variant": "css" }]
+}

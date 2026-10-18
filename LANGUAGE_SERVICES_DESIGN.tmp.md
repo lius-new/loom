@@ -932,7 +932,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 | P3a 验证与预算校准 | 待验证 | R-007 | — | 缺 Linux/macOS 编译验证（C 语法库）；P3b 用已定的分档预算验收 |
 | P3b 基础替换 | 待验证 | R-008 | — | 缺 Linux/macOS 编译验证；是否采用“只解析开头”的首屏优化留待数据证明需要 |
 | P4a–P4f LSP | [以独立跟踪表为准](LSP_DESIGN.tmp.md#5-实施进度跟踪) | — | — | 默认在 P3b 后开始，按子阶段交付 |
-| P5 嵌入与扩充 | 未开始 | — | — | 明确首批语言与两类注入样例 |
+| P5 嵌入与扩充 | 待验证 | R-009 | — | 缺 Linux/macOS 编译验证（新增 4 个 C grammar）；Markdown 的 YAML/TOML front matter 注入未做（没有对应 grammar） |
 | 结构功能、交互 LSP、主题导入 | 未开始 | — | — | 按需求单列设计和验收，不计入基础迁移完成条件 |
 | 外部语言包与 WASM | 未开始 | — | — | 有明确需求与运行约束后评估 |
 
@@ -956,7 +956,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 - [x] **P3b-4**：32 标签页、树逐出后的 Fresh 显示恢复，以及显示缓存未命中路径通过。
 - [x] **P3b-5**：删除旧 lexer、按行索引、TokenKind 临时映射和旧统计字段，无运行时 legacy 开关。
 - [ ] **P3b-6**（Windows 上 CI 同参数的 clippy、fmt、测试与架构门禁已通过；Linux/macOS 未运行）：适用 CI、架构检查和 Windows/Linux/macOS grammar 构建验证完成。
-- [ ] **P5-1**：首批新增语言与 Markdown/HTML 注入的范围更新、嵌套限制和预算验证完成。
+- [x] **P5-1**：首批新增语言（JSON、CSS、HTML、Markdown）与 Markdown 围栏代码/HTML script、style 注入的范围更新、嵌套限制和预算验证完成（Windows；Linux/macOS 未运行）。
 
 ### 19.4 证据与阻塞记录
 
@@ -1017,6 +1017,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 | 2026-10-18 | 实施 P2 的描述、注册表与内嵌资源（R-004） | Language 枚举已删除；注册表落在 domain/language 并对门禁做三处窄化放行 |
 | 2026-10-18 | 取消手动覆盖，修复改名重置语言代次，实施 file_associations（R-005、R-006） | P2 待验证 |
 | 2026-10-18 | 实施 P3a：Tree-sitter 引擎、五个 grammar、查询校验、投影原型与基准；预算改为分档（R-007） | Rust、JavaScript 已走语法树，其余仍走旧 lexer 直到 P3b |
+| 2026-10-18 | 实施 P5：新增 JSON/CSS/HTML/Markdown 与注入层引擎（R-009） | 注入层按窗口惰性解析；组合注入分块；预算与限制写入 layers.rs |
 | 2026-10-18 | 实施 P3b：全部语言走语法树，删除旧 lexer、行索引与临时映射，接入保留片段与投影（R-008） | 无运行时 legacy 开关；无 grammar 的语言为普通文本 |
 
 记录编号 / 日期：R-004 / 2026-10-18
@@ -1089,3 +1090,14 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 - 真实布局（Skia，release）下的两项既有检查在新引擎上通过：editor_navigation_highlight_continuity（逐步移动光标时已知颜色不丢，改为按类别而不是逐字节相同比较）与 editor_viewport_benchmark（worker 的结果与第二次独立解析逐窗口一致）。后者的样例：158 KB 的压缩 JS 首次可用 41.5 ms、1 MiB 单行压缩 JS 首次可用 188.6 ms，其余帧耗时低于 1 ms 至 6 ms；两个样例的编辑帧后都是一次增量解析。
 未完成：Linux/macOS 上 C grammar 的编译与测试；是否采用“只解析开头”的首屏优化（P3a 已量化，当前预算不需要它）；Settings 页面与状态栏不显示语言或高亮状态；编辑器在大于 8 MiB 时的降级提示只体现在统计计数中，没有界面提示。
 下一步：P4（LSP），按 LSP_DESIGN.tmp.md 从 P4a 开始；先建议在 Linux/macOS 跑一遍 P1–P3 的验证。
+
+记录编号 / 日期：R-009 / 2026-10-18
+阶段 / 检查点 ID：P5 / P5-1
+状态：待验证
+实现证据：
+- 新语言：json、css、html、markdown（grammar：tree-sitter-json 0.24.8、tree-sitter-css 0.25.0、tree-sitter-html 0.23.2、tree-sitter-md 0.5.3 的块与行内两个 grammar）；json/css/html 使用上游 highlights（json 把键改为 @property），markdown 两个查询为 Loom 分类重写，均记入各自 SOURCE.md；markdown_inline 是仅供嵌入的 grammar（grammars::EMBEDDED_ONLY），没有对应语言描述。别名 rs、jsx、jsonc 加入。build 扫描接受可选的 injections.scm。
+- 注入引擎：injections.rs（injections.scm 编译与校验：只允许 @injection.content/@injection.language 与 injection.language、combined、include-children；其余谓词/属性在加载时报错；围栏信息串按宽松规则取语言名；默认排除内容节点的具名子节点，以免把引用块的 `> ` 当作代码，匿名子节点是该节点自身文本的记号）与 layers.rs（层：先在宿主树上找出深度 1 的区域，只有窗口触及的区域才解析，解析后再找其内部区域；组合区域按 32 个范围/16 KiB 分块，因为单次带 2.5 万个范围的解析约 3.1 s、分块后约 0.5 s；区域文本与范围不变时沿用上一版的树；窗口不触及且层数/字节过半时释放旧树）。
+- 限制：深度 4（MAX_DEPTH）；每文档记住 10000 个区域；同时解析的层 64 个（MAX_LIVE_LAYERS）、4 MiB 嵌入文本（MAX_INJECTED_BYTES）；超出的区域保持宿主颜色并计入 layer_overflows。高亮合成顺序：更深的层 → 更短的范围 → 后写的规则。
+- 测试：injection_tests.rs 共 12 项（HTML script/style；Markdown 围栏的语言按信息串、别名、大小写、逗号后缀匹配，未知或 {.rust} 保持宿主颜色；行内文本分块且只解析可见块；引用块内围栏；markdown>html>javascript 三层嵌套；超过深度上限；超过层数上限；改围栏标记后改用另一种语言且结果与重新解析一致；删除结束围栏后区域延伸到结尾且一致；未变化的围栏不重新解析）；worker 层测试验证逐行窗口与整篇一次解析一致。新增 json/css/html/markdown 的固定样例与哈希。
+验收测量（release，Intel Core Ultra 7 255HX，冷启动首次着色 p95）：JSON 256 KiB 50.6 ms、1 MiB 201.7 ms；CSS 1 MiB 140.0 ms；HTML 1 MiB 159.0 ms；Markdown 64 KiB 54.5 ms、256 KiB 162.8 ms、1 MiB 614.8 ms。Markdown 受块 grammar 限制（1 MiB 整篇解析约 363 ms），因此有单独分档：64 KiB 100 ms、256 KiB 250 ms、1 MiB 900 ms；其余语言沿用 100/275 ms 分档。1 MiB 一个字符编辑：HTML 约 70 ms，Markdown 约 260–330 ms（块解析增量 + 重新定位区域），显示连续性由保留片段保证。
+未完成：Linux/macOS 上新增 C grammar 的编译；Markdown front matter（YAML/TOML）注入；组合层的增量解析（目前移动过的区域在需要时重新解析）；语义 token 与注入层的组合没有单独验证。

@@ -119,9 +119,10 @@ export function allowed(file, dependency) {
   if(file==='src/ui/explorer/context_menu.rs'&&root==='unicode_width')return true;
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
   // Native parsers: only the grammar table names grammar crates; the engine files use the runtime.
-  if(file==='src/features/syntax/grammars.rs')return ['features','domain','tree_sitter','tree_sitter_c_sharp','tree_sitter_javascript','tree_sitter_rust','tree_sitter_typescript'].includes(root);
+  if(file==='src/features/syntax/grammars.rs')return ['features','domain','tree_sitter','tree_sitter_c_sharp','tree_sitter_css','tree_sitter_html','tree_sitter_javascript','tree_sitter_json','tree_sitter_md','tree_sitter_rust','tree_sitter_typescript'].includes(root);
   if(file==='src/features/syntax/queries.rs'||file==='src/features/syntax/treesitter_tests.rs'||file==='src/features/syntax/treesitter_bench.rs')return ['features','domain','tree_sitter'].includes(root);
-  if(file==='src/features/syntax/treesitter.rs')return ['features','domain','tree_sitter','streaming_iterator'].includes(root);
+  if(['src/features/syntax/treesitter.rs','src/features/syntax/injections.rs'].includes(file))return ['features','domain','tree_sitter','streaming_iterator'].includes(root);
+  if(file==='src/features/syntax/layers.rs')return ['features','domain','tree_sitter'].includes(root);
   if(file.startsWith('src/features/language_service/'))return ['features','domain','serde_json'].includes(root);
   if(own==='features')return ['features','domain','input'].includes(root);
   if(own==='infrastructure')return ['infrastructure','domain'].includes(root)||dependency==='lgui'||dependency==='std::thread';

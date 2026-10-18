@@ -123,7 +123,8 @@ mod tests {
         assert_eq!(name("main.RS"), "rust");
         assert_eq!(name("component.tsx"), "typescript");
         assert_eq!(name("script.mjs"), "javascript");
-        assert_eq!(name("README.md"), "plaintext");
+        assert_eq!(name("README.md"), "markdown");
+        assert_eq!(name("notes.txt"), "plaintext");
     }
 
     #[test]

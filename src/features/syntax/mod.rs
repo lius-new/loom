@@ -4,6 +4,10 @@ pub(crate) mod baseline;
 #[cfg(test)]
 pub(crate) mod bench_support;
 mod grammars;
+#[cfg(test)]
+mod injection_tests;
+mod injections;
+mod layers;
 pub(crate) mod presentation;
 #[cfg(test)]
 mod presentation_tests;
