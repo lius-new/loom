@@ -1,9 +1,12 @@
 //! The set of known languages: ids, display data and how files are recognised.
 //! Built from descriptions, never from per-language code.
 use crate::domain::language::descriptor::{
-    Comments, Descriptor, normalize_extension, normalize_file_name,
+    Comments, Descriptor, RootFallback, RootStrategy, ServerDescriptor, normalize_extension,
+    normalize_file_name,
 };
-use crate::domain::language::{GrammarId, LanguageId, ResolvedLanguage, VariantId};
+use crate::domain::language::{
+    GrammarId, LanguageId, ResolvedLanguage, ServerDefinitionId, VariantId,
+};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
@@ -27,11 +30,40 @@ fn fail<T>(message: impl Into<String>) -> Result<T, RegistryError> {
     Err(RegistryError(message.into()))
 }
 
+/// How a variant is served by a language server.
+#[derive(Debug)]
+pub struct ServerBinding {
+    pub definition: ServerDefinitionId,
+    /// The `languageId` the server expects for documents of this variant.
+    pub language_id: Box<str>,
+}
+
+#[derive(Debug)]
+pub struct RootPolicy {
+    /// File names that mark a project folder, such as `Cargo.toml`.
+    pub markers: Vec<Box<str>>,
+    pub strategy: RootStrategy,
+    pub fallback: RootFallback,
+}
+
+#[derive(Debug)]
+pub struct ServerDefinition {
+    pub id: ServerDefinitionId,
+    pub name: Box<str>,
+    pub display_name: Box<str>,
+    pub command: Box<str>,
+    pub args: Vec<Box<str>>,
+    pub root: RootPolicy,
+    /// Compact JSON object text, if the server wants initialization options.
+    pub initialization_options: Option<Box<str>>,
+}
+
 #[derive(Debug)]
 pub struct LanguageVariant {
     pub id: VariantId,
     pub name: Box<str>,
     pub grammar: Option<GrammarId>,
+    pub server: Option<ServerBinding>,
 }
 
 #[derive(Debug)]
@@ -57,6 +89,8 @@ pub struct Registry {
     by_extension: HashMap<Box<str>, (LanguageId, usize)>,
     by_file_name: HashMap<Box<str>, (LanguageId, usize)>,
     plain_text: LanguageId,
+    servers: Vec<ServerDefinition>,
+    server_by_name: HashMap<Box<str>, ServerDefinitionId>,
 }
 
 impl Registry {
@@ -67,6 +101,36 @@ impl Registry {
         sources: &[(&str, &str)],
         grammars: &[&str],
     ) -> Result<Self, RegistryError> {
+        Self::from_parts(sources, grammars, &[])
+    }
+
+    /// Like `from_sources`, with the language server definitions as
+    /// `(file stem, definition JSON)` pairs. Server ids also follow sorted names.
+    pub fn from_parts(
+        sources: &[(&str, &str)],
+        grammars: &[&str],
+        servers: &[(&str, &str)],
+    ) -> Result<Self, RegistryError> {
+        let mut parsed_servers = Vec::with_capacity(servers.len());
+        for (stem, json) in servers {
+            let descriptor = ServerDescriptor::parse(json)
+                .and_then(|descriptor| descriptor.validate(stem).map(|()| descriptor))
+                .or_else(|error| fail(format!("server `{stem}`: {error}")))?;
+            parsed_servers.push(descriptor);
+        }
+        parsed_servers.sort_by(|a, b| a.name.cmp(&b.name));
+        if let Some(pair) = parsed_servers
+            .windows(2)
+            .find(|pair| pair[0].name == pair[1].name)
+        {
+            return fail(format!("server `{}` is defined twice", pair[0].name));
+        }
+        let server_id = |name: &str| {
+            parsed_servers
+                .binary_search_by(|server| server.name.as_str().cmp(name))
+                .map(|index| ServerDefinitionId(index as u32))
+        };
+
         let mut parsed = Vec::with_capacity(sources.len());
         for (stem, json) in sources {
             let descriptor = Descriptor::parse(json)
@@ -131,12 +195,28 @@ impl Registry {
                         }
                     },
                 };
+                let server = match &variant.server {
+                    None => None,
+                    Some(binding) => match server_id(&binding.definition) {
+                        Ok(definition) => Some(ServerBinding {
+                            definition,
+                            language_id: binding.language_id.as_str().into(),
+                        }),
+                        Err(_) => {
+                            return fail(format!(
+                                "language `{}` variant `{}` names unknown server `{}`",
+                                descriptor.name, variant.id, binding.definition
+                            ));
+                        }
+                    },
+                };
                 let id = variant_id(&descriptor.name, &variant.id);
                 variants[id.index()] = (LanguageId(index as u32), position);
                 language_variants.push(LanguageVariant {
                     id,
                     name: variant.id.as_str().into(),
                     grammar,
+                    server,
                 });
             }
             languages.push(LanguageDefinition {
@@ -203,6 +283,38 @@ impl Registry {
         let Some(&plain_text) = by_name.get(PLAIN_TEXT) else {
             return fail(format!("the `{PLAIN_TEXT}` language is required"));
         };
+        let server_by_name = parsed_servers
+            .iter()
+            .enumerate()
+            .map(|(index, server)| {
+                (
+                    server.name.as_str().into(),
+                    ServerDefinitionId(index as u32),
+                )
+            })
+            .collect();
+        let servers = parsed_servers
+            .iter()
+            .enumerate()
+            .map(|(index, server)| ServerDefinition {
+                id: ServerDefinitionId(index as u32),
+                name: server.name.as_str().into(),
+                display_name: server.display_name.as_str().into(),
+                command: server.command.as_str().into(),
+                args: server.args.iter().map(|a| a.as_str().into()).collect(),
+                root: RootPolicy {
+                    markers: server
+                        .root
+                        .markers
+                        .iter()
+                        .map(|m| m.as_str().into())
+                        .collect(),
+                    strategy: server.root.strategy,
+                    fallback: server.root.fallback,
+                },
+                initialization_options: server.options_json().map(String::into_boxed_str),
+            })
+            .collect();
         Ok(Self {
             languages,
             by_name,
@@ -211,6 +323,8 @@ impl Registry {
             by_extension,
             by_file_name,
             plain_text,
+            servers,
+            server_by_name,
         })
     }
 
@@ -222,6 +336,28 @@ impl Registry {
             crate::domain::language::embedded::registry()
                 .unwrap_or_else(|error| panic!("invalid built-in language resources: {error}"))
         })
+    }
+
+    pub fn servers(&self) -> &[ServerDefinition] {
+        &self.servers
+    }
+
+    pub fn server(&self, id: ServerDefinitionId) -> &ServerDefinition {
+        &self.servers[id.index()]
+    }
+
+    pub fn server_by_name(&self, name: &str) -> Option<ServerDefinitionId> {
+        self.server_by_name.get(name).copied()
+    }
+
+    /// The server that serves a document's language and the `languageId` to send
+    /// it, if there is one.
+    pub fn server_for(&self, resolved: ResolvedLanguage) -> Option<(&ServerDefinition, &str)> {
+        let (language, position) = self.variants[resolved.variant.index()];
+        let binding = self.definition(language).variants[position]
+            .server
+            .as_ref()?;
+        Some((self.server(binding.definition), &binding.language_id))
     }
 
     pub fn languages(&self) -> &[LanguageDefinition] {
@@ -302,6 +438,7 @@ impl Registry {
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::language::descriptor::{RootFallback as Fallback, RootStrategy as Strategy};
     use crate::domain::language::registry::*;
     use std::path::Path;
 
@@ -519,5 +656,177 @@ mod tests {
             registry.language_by_name("one")
         );
         assert_eq!(registry.language_by_name("two"), None);
+    }
+    fn server(name: &str, extra: &str) -> String {
+        format!(
+            r#"{{ "name": "{name}", "display_name": "{name}", "command": "{name}-bin",
+                 "root": {{ "markers": ["marker.toml"], "fallback": "workspace" }} {extra} }}"#
+        )
+    }
+    fn served(language: &str, definition: &str, id: &str) -> String {
+        format!(
+            r#"{{ "name": "{language}", "display_name": "{language}", "badge": "X",
+                 "variants": [{{ "id": "{language}",
+                   "server": {{ "definition": "{definition}", "language_id": "{id}" }} }}] }}"#
+        )
+    }
+    fn build_with_servers(
+        languages: &[(&str, String)],
+        servers: &[(&str, String)],
+    ) -> Result<Registry, RegistryError> {
+        let languages: Vec<(&str, &str)> =
+            languages.iter().map(|(n, j)| (*n, j.as_str())).collect();
+        let servers: Vec<(&str, &str)> = servers.iter().map(|(n, j)| (*n, j.as_str())).collect();
+        Registry::from_parts(&languages, &[], &servers)
+    }
+
+    #[test]
+    fn server_definitions_get_sorted_ids_and_variants_resolve_their_server() {
+        let registry = build_with_servers(
+            &[
+                ("plaintext", plain()),
+                ("zlang", served("zlang", "alpha-server", "z")),
+                ("alang", served("alang", "alpha-server", "a-id")),
+            ],
+            &[
+                ("zeta-server", server("zeta-server", "")),
+                (
+                    "alpha-server",
+                    server(
+                        "alpha-server",
+                        r#", "args": ["--stdio"], "initialization_options": { "k": 1 }"#,
+                    ),
+                ),
+            ],
+        )
+        .unwrap();
+        let names: Vec<_> = registry.servers().iter().map(|s| &*s.name).collect();
+        assert_eq!(names, ["alpha-server", "zeta-server"]);
+        let alpha = registry.server_by_name("alpha-server").unwrap();
+        assert_eq!(
+            registry
+                .server(alpha)
+                .args
+                .iter()
+                .map(|a| &**a)
+                .collect::<Vec<_>>(),
+            ["--stdio"]
+        );
+        assert_eq!(
+            registry.server(alpha).initialization_options.as_deref(),
+            Some(r#"{"k":1}"#)
+        );
+        assert_eq!(registry.server(alpha).root.fallback, Fallback::Workspace);
+        assert_eq!(registry.server(alpha).root.strategy, Strategy::Nearest);
+
+        // The protocol language id is the server's word, apart from Loom's names.
+        let a = registry.default_resolved(registry.language_by_name("alang").unwrap());
+        let z = registry.default_resolved(registry.language_by_name("zlang").unwrap());
+        let (definition, language_id) = registry.server_for(a).unwrap();
+        assert_eq!((&*definition.name, language_id), ("alpha-server", "a-id"));
+        assert_eq!(registry.server_for(z).unwrap().1, "z");
+        assert_eq!(
+            registry.server_for(registry.plain_text()).map(|s| s.1),
+            None
+        );
+    }
+
+    #[test]
+    fn a_server_may_serve_several_languages_and_a_language_may_have_no_server() {
+        let registry = build_with_servers(
+            &[
+                ("plaintext", plain()),
+                ("one", served("one", "shared", "one")),
+                ("two", served("two", "shared", "two-dialect")),
+            ],
+            &[("shared", server("shared", ""))],
+        )
+        .unwrap();
+        let shared = registry.server_by_name("shared").unwrap();
+        for (language, id) in [("one", "one"), ("two", "two-dialect")] {
+            let resolved = registry.default_resolved(registry.language_by_name(language).unwrap());
+            let (definition, language_id) = registry.server_for(resolved).unwrap();
+            assert_eq!((definition.id, language_id), (shared, id));
+        }
+    }
+
+    #[test]
+    fn server_problems_are_reported_with_a_reason() {
+        let cases: Vec<(&str, Result<Registry, RegistryError>)> = vec![
+            (
+                "unknown server",
+                build_with_servers(
+                    &[
+                        ("plaintext", plain()),
+                        ("one", served("one", "missing", "x")),
+                    ],
+                    &[],
+                ),
+            ),
+            (
+                "defined twice",
+                build_with_servers(
+                    &[("plaintext", plain())],
+                    &[("dup", server("dup", "")), ("dup", server("dup", ""))],
+                ),
+            ),
+            (
+                "must match the file name",
+                build_with_servers(&[("plaintext", plain())], &[("other", server("dup", ""))]),
+            ),
+            (
+                "root.markers needs",
+                build_with_servers(
+                    &[("plaintext", plain())],
+                    &[(
+                        "bad",
+                        r#"{ "name": "bad", "display_name": "bad", "command": "x",
+                             "root": { "markers": [], "fallback": "none" } }"#
+                            .into(),
+                    )],
+                ),
+            ),
+            (
+                "initialization_options must be a JSON object",
+                build_with_servers(
+                    &[("plaintext", plain())],
+                    &[("bad", server("bad", r#", "initialization_options": [1]"#))],
+                ),
+            ),
+            (
+                "unknown field",
+                build_with_servers(
+                    &[("plaintext", plain())],
+                    &[("bad", server("bad", r#", "port": 1"#))],
+                ),
+            ),
+            (
+                "is not a server name",
+                build_with_servers(
+                    &[
+                        ("plaintext", plain()),
+                        ("one", served("one", "Bad_Name", "x")),
+                    ],
+                    &[],
+                ),
+            ),
+            (
+                "plain word",
+                build_with_servers(
+                    &[
+                        ("plaintext", plain()),
+                        ("one", served("one", "s", "two words")),
+                    ],
+                    &[("s", server("s", ""))],
+                ),
+            ),
+        ];
+        for (expected, result) in cases {
+            let error = result.unwrap_err().to_string();
+            assert!(
+                error.contains(expected),
+                "expected {expected:?} in {error:?}"
+            );
+        }
     }
 }

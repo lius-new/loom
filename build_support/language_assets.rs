@@ -7,6 +7,7 @@
 //!
 //! ```text
 //! assets/languages/<name>.json
+//! assets/servers/<name>.json              (hyphens allowed in the name)
 //! assets/grammars/README.md                 (optional, not embedded)
 //! assets/grammars/<grammar>/highlights.scm  (required)
 //! assets/grammars/<grammar>/SOURCE.md       (required)
@@ -19,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 pub const LANGUAGES_DIR: &str = "assets/languages";
 pub const GRAMMARS_DIR: &str = "assets/grammars";
+pub const SERVERS_DIR: &str = "assets/servers";
 const GRAMMAR_FILES: [&str; 2] = ["highlights.scm", "SOURCE.md"];
 const GRAMMARS_NOTE: &str = "README.md";
 
@@ -37,12 +39,21 @@ pub struct Entry {
 pub struct Scan {
     pub languages: Vec<Entry>,
     pub grammars: Vec<Entry>,
+    pub servers: Vec<Entry>,
 }
 
 pub fn is_canonical_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// A language server name: lowercase words that may be joined by hyphens, as
+/// server programs usually are named (`rust-analyzer`).
+pub fn is_server_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 /// Sorted directory entries as `(file name, is real file, is real directory)`.
@@ -82,6 +93,26 @@ pub fn scan(root: &Path) -> Result<Scan, String> {
             name: name.to_owned(),
             absolute: languages.join(&file),
             relative: format!("{LANGUAGES_DIR}/{file}"),
+            file,
+        });
+    }
+
+    let servers = root.join(SERVERS_DIR);
+    for (file, is_file, _) in list(&servers)? {
+        let Some(name) = file.strip_suffix(".json").filter(|_| is_file) else {
+            return Err(format!(
+                "{SERVERS_DIR}/{file}: only <name>.json server definitions are allowed"
+            ));
+        };
+        if !is_server_name(name) {
+            return Err(format!(
+                "{SERVERS_DIR}/{file}: `{name}` is not a lowercase server name"
+            ));
+        }
+        result.servers.push(Entry {
+            name: name.to_owned(),
+            absolute: servers.join(&file),
+            relative: format!("{SERVERS_DIR}/{file}"),
             file,
         });
     }
@@ -168,9 +199,12 @@ pub fn render(scan: &Scan) -> String {
         "/// (name, file, path from the repository root, contents)\n\
          pub(crate) static LANGUAGE_FILES: &[(&str, &str, &str, &str)] = &[\n{}];\n\
          /// (grammar, file, path from the repository root, contents)\n\
-         pub(crate) static GRAMMAR_FILES: &[(&str, &str, &str, &str)] = &[\n{}];\n",
+         pub(crate) static GRAMMAR_FILES: &[(&str, &str, &str, &str)] = &[\n{}];\n\
+         /// (server, file, path from the repository root, contents)\n\
+         pub(crate) static SERVER_FILES: &[(&str, &str, &str, &str)] = &[\n{}];\n",
         table(&scan.languages),
-        table(&scan.grammars)
+        table(&scan.grammars),
+        table(&scan.servers)
     )
 }
 
@@ -192,6 +226,7 @@ mod tests {
             let _ = fs::remove_dir_all(&root);
             fs::create_dir_all(root.join(LANGUAGES_DIR)).unwrap();
             fs::create_dir_all(root.join(GRAMMARS_DIR)).unwrap();
+            fs::create_dir_all(root.join(SERVERS_DIR)).unwrap();
             Self(root)
         }
         fn file(&self, relative: &str, contents: &str) -> &Self {
@@ -220,7 +255,9 @@ mod tests {
             .file("assets/grammars/c_sharp/highlights.scm", "")
             .file("assets/grammars/c_sharp/SOURCE.md", "")
             .file("assets/grammars/ada/SOURCE.md", "")
-            .file("assets/grammars/ada/highlights.scm", "");
+            .file("assets/grammars/ada/highlights.scm", "")
+            .file("assets/servers/b-server.json", "{}")
+            .file("assets/servers/a_server.json", "{}");
         let scan = scan(&tree.0).unwrap();
         let names = |entries: &[Entry]| {
             entries
@@ -247,7 +284,7 @@ mod tests {
 
     #[test]
     fn rejects_anything_unexpected() {
-        let cases: [Case; 8] = [
+        let cases: [Case; 10] = [
             (
                 "stray language file",
                 &[("assets/languages/notes.txt", "")],
@@ -267,6 +304,16 @@ mod tests {
                 "nested language directory",
                 &[("assets/languages/extra/a.json", "")],
                 "only <name>.json",
+            ),
+            (
+                "stray server file",
+                &[("assets/servers/notes.txt", "")],
+                "only <name>.json",
+            ),
+            (
+                "upper case server",
+                &[("assets/servers/Rust-Analyzer.json", "")],
+                "lowercase server name",
             ),
             (
                 "grammar missing its source note",
@@ -340,6 +387,7 @@ mod tests {
         let rendered = render(&Scan {
             languages: vec![entry],
             grammars: Vec::new(),
+            servers: Vec::new(),
         });
         assert!(rendered.contains(r#"include_str!("C:\\a b\\x.json")"#));
     }
@@ -372,9 +420,10 @@ mod tests {
                 })
                 .collect()
         };
-        let (languages, grammars) = embedded_files();
+        let (languages, grammars, servers) = embedded_files();
         assert_eq!(embedded(languages), disk(&scanned.languages));
         assert_eq!(embedded(grammars), disk(&scanned.grammars));
+        assert_eq!(embedded(servers), disk(&scanned.servers));
         // Names that differ only by case would collide on case-insensitive disks.
         let mut lowered: Vec<_> = languages
             .iter()

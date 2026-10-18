@@ -3,6 +3,12 @@
   "display_name": "Rust",
   "badge": "RS",
   "comments": { "line": "//", "block": ["/*", "*/"] },
-  "variants": [{ "id": "rust", "grammar": "rust" }],
+  "variants": [
+    {
+      "id": "rust",
+      "grammar": "rust",
+      "server": { "definition": "rust-analyzer", "language_id": "rust" }
+    }
+  ],
   "files": [{ "extensions": ["rs"], "variant": "rust" }]
 }

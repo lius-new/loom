@@ -35,6 +35,10 @@ pub struct LanguageId(u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VariantId(u32);
 
+/// A language server definition (`assets/servers`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ServerDefinitionId(u32);
+
 /// A grammar resource. It names data, not a parser object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct GrammarId(u32);
@@ -42,7 +46,7 @@ pub struct GrammarId(u32);
 macro_rules! index {
     ($($id:ident),*) => {$(impl $id { pub fn index(self) -> usize { self.0 as usize } })*};
 }
-index!(LanguageId, VariantId, GrammarId);
+index!(LanguageId, VariantId, GrammarId, ServerDefinitionId);
 
 /// What a document's language is right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
