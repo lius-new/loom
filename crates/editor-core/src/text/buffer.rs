@@ -161,6 +161,18 @@ impl TextBuffer {
         }
         let before_snapshot = self.snapshot_identity();
         let before_version = self.version;
+        // Points describe the text before the transaction, so take them while
+        // the old text and line index still exist. `validate` sorted the edits
+        // and `apply` yields one change per edit in that order.
+        let points: Vec<_> = edits
+            .iter()
+            .map(|edit| {
+                (
+                    self.byte_point(edit.range.start),
+                    self.byte_point(edit.range.end),
+                )
+            })
+            .collect();
         let changes = apply(Arc::make_mut(&mut self.text), edits);
         Arc::make_mut(&mut self.lines).update(&self.text, &changes);
         self.version += 1;
@@ -172,12 +184,18 @@ impl TextBuffer {
             edits: changes
                 .changes()
                 .iter()
-                .map(|change| super::revision::RevisionEdit {
-                    old: change.old.clone(),
-                    new: change.new_range(),
-                    line_breaks: change.removed.contains(['\r', '\n'])
-                        || change.inserted.contains(['\r', '\n']),
-                })
+                .zip(points)
+                .map(
+                    |(change, (old_start_point, old_end_point))| super::revision::RevisionEdit {
+                        old: change.old.clone(),
+                        new: change.new_range(),
+                        old_start_point,
+                        old_end_point,
+                        inserted_extent: super::revision::TextExtent::of(&change.inserted),
+                        line_breaks: change.removed.contains(['\r', '\n'])
+                            || change.inserted.contains(['\r', '\n']),
+                    },
+                )
                 .collect::<Vec<_>>()
                 .into(),
         };
@@ -293,6 +311,17 @@ impl TextBuffer {
     /// The line containing `offset`. A line break belongs to the line it ends.
     pub fn line_of(&self, offset: usize) -> usize {
         self.lines.line_of(offset.min(self.text.len()))
+    }
+
+    /// `offset` as a row and a byte column. Rows count LF bytes, matching
+    /// parsers such as Tree-sitter; a CRLF pair is one break.
+    pub fn byte_point(&self, offset: usize) -> super::revision::BytePoint {
+        let offset = offset.min(self.text.len());
+        let row = self.lines.line_of(offset);
+        super::revision::BytePoint {
+            row,
+            column: offset - self.lines.start(row),
+        }
     }
 
     pub fn line_start(&self, line: usize) -> usize {

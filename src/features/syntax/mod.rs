@@ -1,4 +1,6 @@
 //! Incremental semantic spans. No theme, GUI state or worker handles live here.
+#[cfg(test)]
+mod baseline;
 mod index;
 mod lexer;
 #[cfg(test)]

@@ -17,7 +17,7 @@ mod history;
 mod lines;
 mod revision;
 mod selection;
-pub use self::revision::{RevisionEdit, TextRevision};
+pub use self::revision::{BytePoint, RevisionEdit, TextExtent, TextRevision};
 
 pub use buffer::TextBuffer;
 pub use change::{Assoc, Change, ChangeSet, Edit, EditError};
