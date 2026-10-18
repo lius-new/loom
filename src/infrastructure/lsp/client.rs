@@ -115,6 +115,7 @@ impl Client {
         }
         let mut child = process.spawn()?;
         let process_id = child.id();
+        let job = super::job::Job::adopt(&child);
         let stdin = child.stdin.take().expect("piped");
         let stdout = child.stdout.take().expect("piped");
         let stderr = child.stderr.take().expect("piped");
@@ -148,6 +149,7 @@ impl Client {
                     inbox,
                     outbox,
                     child,
+                    _job: job,
                     timeouts: launch.timeouts,
                     on_event: Box::new(on_event),
                     state: driver_state,
@@ -290,6 +292,8 @@ struct Driver {
     inbox: Receiver<Input>,
     outbox: Sender<Vec<u8>>,
     child: Child,
+    /// Ends the server's helper processes with it; dropped after the server.
+    _job: Option<super::job::Job>,
     timeouts: Timeouts,
     on_event: Box<dyn Fn(Event) + Send>,
     state: Arc<Mutex<State>>,

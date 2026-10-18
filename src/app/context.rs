@@ -27,11 +27,18 @@ impl AppContext {
             }
         }
     }
+    /// Tells the language servers about document changes this update made.
+    fn sync_language_services(&self, app: &AppState) {
+        if let Some(services) = self.services().and_then(|r| r.language_services()) {
+            services.sync(app);
+        }
+    }
     pub(crate) fn update(&self, change: impl FnOnce(&mut AppState)) {
         self.model.update(|app| {
             let before = app.editor.pending_file.as_ref().map(|p| p.generation);
             change(app);
             self.invalidate_cancelled(before, app);
+            self.sync_language_services(app);
         });
     }
     pub(crate) fn try_update(&self, change: impl FnOnce(&mut AppState) -> bool) -> bool {
@@ -39,6 +46,7 @@ impl AppContext {
             let before = app.editor.pending_file.as_ref().map(|p| p.generation);
             let changed = change(app);
             self.invalidate_cancelled(before, app);
+            self.sync_language_services(app);
             changed
         })
     }

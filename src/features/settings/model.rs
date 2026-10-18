@@ -16,6 +16,7 @@ pub struct Values {
     pub editor_font: super::font::FontSettings,
     pub terminal_font: super::font::FontSettings,
     pub file_associations: Vec<super::rules::FileAssociation>,
+    pub language_servers: Vec<super::servers::LanguageServerSetting>,
     pub project_settings: Vec<(PathBuf, super::project::ProjectSettings)>,
 }
 #[derive(Clone)]

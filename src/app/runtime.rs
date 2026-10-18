@@ -17,6 +17,7 @@ pub(crate) struct AppRuntime {
 #[derive(Default)]
 struct Services {
     highlighter: Option<super::syntax::Highlighter>,
+    language_services: Option<Arc<super::language_services::LanguageServices>>,
     file_loader: Option<FileLoader>,
     application: Option<ApplicationHandle>,
     search_cancel: Option<Arc<AtomicBool>>,
@@ -36,6 +37,28 @@ impl AppRuntime {
         {
             previous.shutdown();
         }
+    }
+    pub(crate) fn language_services(
+        &self,
+    ) -> Option<Arc<super::language_services::LanguageServices>> {
+        self.services.lock().unwrap().language_services.clone()
+    }
+    pub(crate) fn install_language_services(
+        &self,
+        services: super::language_services::LanguageServices,
+    ) {
+        // Dropping the previous one stops its servers.
+        let previous = self
+            .services
+            .lock()
+            .unwrap()
+            .language_services
+            .replace(Arc::new(services));
+        drop(previous);
+    }
+    pub(crate) fn clear_language_services(&self) {
+        let previous = self.services.lock().unwrap().language_services.take();
+        drop(previous);
     }
     pub(crate) fn clear_highlighter(&self) {
         if let Some(previous) = self.services.lock().unwrap().highlighter.take() {

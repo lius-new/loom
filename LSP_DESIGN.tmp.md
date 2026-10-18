@@ -180,7 +180,7 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 
 ## 5. 实施进度跟踪
 
-最近更新：2026-10-18。P4a 已实现并待验证（假服务器与真实进程已测，真实 rust-analyzer 尚未接入）；其余子阶段未开始。
+最近更新：2026-10-18。P4a、P4b 已实现并待验证（假服务器与真实进程已测，真实 rust-analyzer 的自监视尚未实测）；其余子阶段未开始。
 
 状态与证据规则沿用 [主设计第 19 节](LANGUAGE_SERVICES_DESIGN.tmp.md#19-实施进度跟踪)。本节是 P4 状态的唯一维护位置；默认先交付 P4a–P4c，后续子阶段按需求启动，不把未启动的可选项算作首期阻塞。
 
@@ -188,8 +188,8 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 
 | 阶段 | 当前状态 | 实现/验证证据 | 完成日期 | 下一步或启动条件 |
 | --- | --- | --- | --- | --- |
-| P4a 通道与生命周期 | 待验证 | R-L1 | — | 缺 Linux/macOS 运行；服务器进程的子进程树清理（Windows Job Object）未做 |
-| P4b 文档同步 | 未开始 | — | — | 事务桥接、URI/root、版本、编码与自监视验证 |
+| P4a 通道与生命周期 | 待验证 | R-L1 | — | 缺 Linux/macOS 运行（Windows Job Object 已在 R-L2 加入并测试） |
+| P4b 文档同步 | 待验证 | R-L2 | — | 缺 rust-analyzer 自监视实测（P4b-3，随 P4c 的真实 smoke 一起做）；Linux/macOS 未运行 |
 | P4c 可见结果 | 未开始 | — | — | 诊断、semantic full、刷新、状态及真实 smoke |
 | P4d 同步/delta 优化 | 未开始 | — | — | 首期正确性稳定后按数据决定 |
 | P4e 通用文件监视 | 未开始 | — | — | 第二真实服务器或已知自监视缺口需要时启动 |
@@ -199,8 +199,8 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 
 - [x] **P4a-1**：服务器绑定格式在本阶段加入并通过严格校验；非 Rust ServerDefinition 与不同能力组合不修改协议核心即可运行。
 - [x] **P4a-2**：半包/粘包、服务端请求、超时、取消、异常退出与幂等清理通过。
-- [ ] **P4b-1**：所有正文写入口、不可见文档及多窗格共享会话同步通过。
-- [ ] **P4b-2**：URI、根目录、打开代次、协议版本和 UTF-8/UTF-16 转换通过。
+- [x] **P4b-1**：所有正文写入口、不可见文档及多窗格共享会话同步通过。
+- [x] **P4b-2**：URI、根目录、打开代次、协议版本和 UTF-8/UTF-16 转换通过。
 - [ ] **P4b-3**：锁定真实服务器版本与有效配置；未打开文件、项目清单和分支变化的自监视已实测。若失败，记录必要 watcher 提前或支持范围调整。
 - [ ] **P4c-1**：push diagnostics、semantic full/空结果、refresh 与过期结果丢弃通过。
 - [ ] **P4c-2**：连接/等待/结果状态真实；无服务器或能力缺失不影响本地编辑与基础高亮。
@@ -231,3 +231,14 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 验证：cargo test --locked --workspace 全部通过（loom 830，其中协议核心 34 项、进程客户端 17 项）；进程测试连续重复运行稳定；clippy（CI 同参数）、fmt、架构门禁与 61 项自测通过。覆盖：5 种服务器能力组合的握手、参数与初始化选项到达服务器、非 ASCII 负载往返、一字节写与粘包、拒绝初始化与不支持的编码、初始化超时并结束进程、忽略的请求超时后会话继续并发出取消、崩溃（请求中与初始化后）、有序关停并回收进程、不回复 shutdown 与不退出的服务器被结束、Drop 结束进程、程序不存在、stderr 保留、服务端请求被应答并送达（配置按项、动态注册被拒）、无法解析的消息被跳过、坏帧与超大消息使会话失败、会话结束后命令被拒、仅由数据定义的非 Rust 服务器无需任何语言专用代码即可运行（其参数与 language_id 取自数据）。
 未完成：Linux/macOS 上运行；服务器子进程树的清理（强制结束时 rust-analyzer 派生的进程可能残留，计划在 P4b 以 Windows Job Object 与进程组处理）；settings 里的 language_servers 配置、应用接入与文档同步属 P4b。
 下一步：P4b（事务桥接、URI 与根目录解析、文档同步、位置编码转换）。
+
+记录编号 / 日期：R-L2 / 2026-10-18
+阶段 / 检查点 ID：P4b / P4b-1、P4b-2（P4b-3 未完成）
+状态：待验证
+实现证据：
+- 纯规则（features/language_service，无 I/O）：uri.rs（file URI 双向，Windows 盘符含被编码的冒号、UNC、空格/中文/#/?/% 往返，key 比较忽略盘符大小写）、position.rs（UTF-8/UTF-16 列与字节偏移互转，字符内部与代理对中间向下取整，越界取行尾）、root.rs（按 ServerDefinition 的 marker / nearest|outermost / 回退解析根，不越过工作区）、plan.rs（文档到实例键 (定义, 根, 启动参数) 的归属，设置变更即换实例）、sync.rs（reconcile：对比“应打开的文档及其戳”输出 didOpen/didChange/didClose，关闭在前、打开次之、修改最后；戳含 incarnation，换语言或 incarnation 重新打开；协议版本到编辑器戳的 32 条历史；didSave 按能力带或不带正文；整文替换，对 incremental 服务器同样合法）。
+- 设置：language_servers（server、enabled、command、args、initialization_options），逐项校验，仅用户级（项目级不可选择运行的程序）；文档见 docs/settings.md。
+- 协调器（infrastructure/lsp/manager.rs）：单线程拥有全部实例；快照只保留最新；根目录读盘只在新文档或设置变化时；1/2/4 秒退避重启三次后 Failed，用户重启恢复；程序不存在为 Unavailable 且不重试；空闲 60 秒停止；停止在后台线程执行；Drop 时先 didClose 再 shutdown/exit 并等待。12 个进程级测试覆盖。
+- 应用桥（app/language_services.rs）：AppContext::update/try_update 之后对打开文档做指纹（文档、版本、语言代次、路径、根目录、服务器设置），指纹变化才向协调器发快照；因此任何写入口（输入、撤销、替换、磁盘重载、改名）都不会漏。保存后发 didSave。超过 8 MiB 的文档不同步。应用级测试用假服务器验证打开、修改、无变化不发送、保存、关闭。
+- Windows Job Object（infrastructure/lsp/job.rs）：服务器进程加入 kill-on-close 作业，Client 结束或 Loom 崩溃时其子进程一并结束；有测试。
+未验证：真实 rust-analyzer 的未打开文件/Cargo.toml/分支切换自监视（需 P4c 的诊断作为观测手段）；Linux/macOS。

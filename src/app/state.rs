@@ -98,6 +98,7 @@ impl AppState {
                     editor_font: crate::ui::fonts::FontSettings::EDITOR,
                     terminal_font: crate::ui::fonts::FontSettings::TERMINAL,
                     file_associations: Vec::new(),
+                    language_servers: Vec::new(),
                     project_settings: Vec::new(),
                 },
             ),
@@ -163,6 +164,7 @@ impl AppState {
             editor_font: self.preferences.values().editor_font.clone(),
             terminal_font: self.preferences.values().terminal_font.clone(),
             file_associations: self.preferences.values().file_associations.clone(),
+            language_servers: self.preferences.values().language_servers.clone(),
         }
     }
 
@@ -188,6 +190,7 @@ impl AppState {
         self.preferences.values_mut().smooth_caret = settings.smooth_caret;
         self.preferences.values_mut().check_for_updates = settings.check_for_updates;
         self.preferences.values_mut().file_associations = settings.file_associations;
+        self.preferences.values_mut().language_servers = settings.language_servers;
         self.git.ui.inline_blame = settings.git_inline_blame;
         self.git.ui.split_diff = settings.git_split_diff;
         self.git.ui.tree_view = settings.git_tree_view;

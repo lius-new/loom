@@ -63,6 +63,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             loading_state.clone(),
             loading_application.clone(),
         );
+        loading_runtime
+            .install_language_services(super::language_services::LanguageServices::new(|| {}));
         loading_runtime.install_highlighter(super::syntax::Highlighter::new(
             loading_state.clone(),
             loading_application.clone(),
@@ -78,6 +80,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             restore.shutdown();
             loading_runtime.clear_file_loader();
             loading_runtime.clear_highlighter();
+            loading_runtime.clear_language_services();
         }
     });
     let program_tabs = terminal_tabs.clone();

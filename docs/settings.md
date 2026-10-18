@@ -65,6 +65,34 @@ Patterns use a small set of wildcards:
 A rule with an unknown language or an unsupported pattern is skipped and
 reported; the other rules still apply.
 
+## Language servers
+
+Loom talks to language servers (rust-analyzer for Rust) for the files you open.
+A server that is not installed is skipped quietly; nothing else changes. To
+change how a server runs, or to turn it off, add entries to `settings.json`:
+
+```jsonc
+"language_servers": [
+  {
+    "server": "rust-analyzer",
+    "command": "C:\tools\rust-analyzer.exe",   // another program
+    "args": [],                                   // replaces the default arguments
+    "initialization_options": { "checkOnSave": false },
+    "enabled": true
+  }
+]
+```
+
+Only `server` is required; everything else keeps the built-in value. The last
+entry for a server wins. A server runs once per project folder: the folder
+holding the nearest (or, for Rust, outermost) project file such as
+`Cargo.toml`, never above the open workspace folder. It stops a minute after
+its last file is closed, and a crashed server is restarted after 1, 2 and 4
+seconds before being reported as failed.
+
+This setting is only read from your own `settings.json`: a project's
+`.loom/settings.json` cannot choose which program Loom runs.
+
 ## Key bindings
 
 Shortcuts come from a Zed-style keymap. The **Keymap** page (Ctrl + K Ctrl + S,

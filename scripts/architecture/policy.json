@@ -773,6 +773,10 @@
       "owner": "features/settings/model: Values DTO",
       "migrated_in": "P2"
     },
+    "language_servers": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "P4b"
+    },
     "project_settings": {
       "owner": "features/settings/model: Values DTO",
       "migrated_in": "R8.2"

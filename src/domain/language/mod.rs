@@ -19,7 +19,12 @@ mod rules;
 pub(crate) use self::embedded::{Row, files as embedded_files};
 #[allow(unused_imports)]
 pub use self::embedded::{grammar_file, grammar_names};
-pub use self::registry::{LanguageDefinition, Registry};
+// The language service reads server root policies; the domain-only
+// verification package compiles this module without that reader.
+#[allow(unused_imports)]
+pub use self::descriptor::{RootFallback, RootStrategy};
+#[allow(unused_imports)]
+pub use self::registry::{LanguageDefinition, Registry, RootPolicy};
 // The settings and the application use these; the domain-only verification
 // package compiles this module without those users.
 #[allow(unused_imports)]

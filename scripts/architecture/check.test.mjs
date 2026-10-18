@@ -405,4 +405,8 @@ test('the language protocol core is pure and the client may start processes',()=
   assert.deepEqual(violations({'src/infrastructure/lsp/client.rs':'use std::process::Command;\nuse std::thread;\nuse serde_json::Value;\nuse crate::features::language_service::message::Message;'},policy()),[]);
   for(const source of ['use lgui::prelude::*;','use std::fs;','use crate::ui::theme;'])assert.ok(violations({'src/infrastructure/lsp/client.rs':source},policy()).length>0,source);
   assert.deepEqual(violations({'src/infrastructure/lsp/client_tests.rs':'use std::fs;'},policy()),[],'only the tests read the fake server log');
+  assert.deepEqual(violations({'src/infrastructure/lsp/manager_tests.rs':'use std::fs;'},policy()),[]);
+  assert.deepEqual(violations({'src/infrastructure/lsp/job.rs':'use windows_sys::Win32::Foundation::CloseHandle;'},policy()),[],'the job object is the one Windows call in the lsp module');
+  assert.ok(violations({'src/infrastructure/lsp/manager.rs':'use windows_sys::Win32::Foundation::CloseHandle;'},policy()).length>0);
+  assert.ok(violations({'src/infrastructure/lsp/manager.rs':'use std::fs;'},policy()).length>0,'the manager does not read files itself');
 });

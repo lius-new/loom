@@ -1,0 +1,239 @@
+//! The bridge from the application's documents to the language servers.
+//!
+//! After every change to the application state the bridge compares a cheap
+//! fingerprint of what the servers care about (which documents are open, their
+//! versions and languages, the folders, the server settings). Only a difference
+//! produces a snapshot for the manager, so typing costs one hash over the open
+//! documents and the manager's own thread does the rest. Because it looks at the
+//! state rather than at individual commands, no way of changing a document can
+//! be missed.
+use super::state::AppState;
+use crate::domain::language::Registry;
+use crate::features::language_service::sync::Stamp;
+use crate::infrastructure::lsp::manager::{
+    InstanceInfo, Manager, Options, Snapshot, SnapshotDocument,
+};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+/// Documents larger than this are not sent to servers.
+const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
+
+pub(crate) struct LanguageServices {
+    manager: Manager,
+    sent: Mutex<Option<u64>>,
+}
+
+impl LanguageServices {
+    pub fn new(on_change: impl Fn() + Send + 'static) -> Self {
+        Self {
+            manager: Manager::start(Registry::builtin(), Options::default(), on_change),
+            sent: Mutex::new(None),
+        }
+    }
+
+    /// Hands the manager the current documents if they differ from the last time.
+    pub fn sync(&self, app: &AppState) {
+        let fingerprint = fingerprint(app);
+        {
+            let mut sent = self.sent.lock().unwrap();
+            if *sent == Some(fingerprint) {
+                return;
+            }
+            *sent = Some(fingerprint);
+        }
+        self.manager.update(snapshot(app));
+    }
+
+    /// A document was written to disk.
+    pub fn saved(&self, path: PathBuf, text: Arc<String>) {
+        self.manager.saved(path, text);
+    }
+
+    pub fn restart(&self) {
+        self.manager.restart();
+    }
+
+    pub fn infos(&self) -> Vec<InstanceInfo> {
+        self.manager.infos()
+    }
+}
+
+fn fingerprint(app: &AppState) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    let mut ids: Vec<_> = app
+        .workspace
+        .documents
+        .iter()
+        .filter(|(_, d)| d.is_text() && d.buffer.len() <= MAX_DOCUMENT_BYTES)
+        .map(|(_, d)| {
+            (
+                &d.meta.path,
+                d.incarnation,
+                d.buffer.version(),
+                d.meta.language_generation,
+            )
+        })
+        .collect();
+    ids.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    ids.hash(&mut hasher);
+    app.explorer.model.roots().hash(&mut hasher);
+    let servers = &app.preferences.values().language_servers;
+    servers.len().hash(&mut hasher);
+    if !servers.is_empty() {
+        serde_json::to_string(servers)
+            .unwrap_or_default()
+            .hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn snapshot(app: &AppState) -> Snapshot {
+    let mut documents: Vec<SnapshotDocument> = app
+        .workspace
+        .documents
+        .iter()
+        .filter(|(_, d)| d.is_text() && d.buffer.len() <= MAX_DOCUMENT_BYTES)
+        .map(|(_, d)| SnapshotDocument {
+            path: d.meta.path.clone(),
+            language: d.meta.lang,
+            stamp: Stamp {
+                incarnation: d.incarnation,
+                version: d.buffer.version(),
+            },
+            text: d.buffer.text_snapshot(),
+        })
+        .collect();
+    documents.sort_by(|a, b| a.path.cmp(&b.path));
+    Snapshot {
+        documents,
+        workspace_roots: app.explorer.model.roots().to_vec(),
+        servers: app.preferences.values().language_servers.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{runtime::AppRuntime, test_support::live};
+    use crate::features::settings::servers::LanguageServerSetting;
+    use serde_json::Value;
+    use std::time::{Duration, Instant};
+
+    fn fake_server() -> PathBuf {
+        let exe = std::env::current_exe().unwrap();
+        let dir = exe.parent().and_then(|deps| deps.parent()).unwrap();
+        let name = if cfg!(windows) {
+            "fake_lsp.exe"
+        } else {
+            "fake_lsp"
+        };
+        dir.join("examples").join(name)
+    }
+
+    fn methods(log: &std::path::Path) -> Vec<(String, Value)> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter_map(|m| Some((m["method"].as_str()?.to_owned(), m["params"].clone())))
+            .collect()
+    }
+
+    fn wait(log: &std::path::Path, method: &str, count: usize) {
+        let limit = Instant::now() + Duration::from_secs(15);
+        while methods(log).iter().filter(|(m, _)| m == method).count() < count {
+            assert!(
+                Instant::now() < limit,
+                "no {method} #{count}: {:?}",
+                methods(log)
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn opening_editing_saving_and_closing_reach_the_server() {
+        let dir = std::env::temp_dir().join(format!("loom-bridge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("server.log");
+        let path = dir.join("a.rs");
+        std::fs::write(&path, "fn a() {}").unwrap();
+
+        let mut app = AppState::new();
+        app.preferences.values_mut().language_servers = vec![LanguageServerSetting {
+            server: "rust-analyzer".into(),
+            enabled: true,
+            command: Some(fake_server().display().to_string()),
+            args: Some(vec![
+                "--sync".into(),
+                "object".into(),
+                "--log".into(),
+                log.display().to_string(),
+            ]),
+            initialization_options: None,
+        }];
+        let runtime = Arc::new(AppRuntime::default());
+        runtime.install_language_services(LanguageServices::new(|| {}));
+        let state = live(app).with_runtime(&runtime);
+
+        // Opening a file reaches the server without any language-service call.
+        state.update(|app| {
+            app.workspace.open_path(path.clone(), "fn a() {}".into());
+        });
+        wait(&log, "textDocument/didOpen", 1);
+        let opened = methods(&log)
+            .into_iter()
+            .find(|(m, _)| m == "textDocument/didOpen")
+            .unwrap();
+        assert_eq!(opened.1["textDocument"]["languageId"], "rust");
+        assert_eq!(opened.1["textDocument"]["text"], "fn a() {}");
+
+        // Any change to the buffer does, whichever way it was made.
+        state.update(|app| {
+            let doc = app
+                .workspace
+                .documents
+                .values_mut()
+                .find(|d| d.is_text())
+                .unwrap();
+            doc.buffer.reload("fn a() { 1 }".into());
+        });
+        wait(&log, "textDocument/didChange", 1);
+        let changed = methods(&log)
+            .into_iter()
+            .find(|(m, _)| m == "textDocument/didChange")
+            .unwrap();
+        assert_eq!(changed.1["contentChanges"][0]["text"], "fn a() { 1 }");
+
+        // An update that changes nothing about documents sends nothing.
+        for _ in 0..5 {
+            state.update(|app| {
+                app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1)
+            });
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            methods(&log)
+                .iter()
+                .filter(|(m, _)| m == "textDocument/didChange")
+                .count(),
+            1
+        );
+
+        crate::app::workspace_commands::save_active_document(&state);
+        wait(&log, "textDocument/didSave", 1);
+
+        drop(state);
+        runtime.clear_language_services();
+        let seen = methods(&log);
+        assert!(
+            seen.iter().any(|(m, _)| m == "textDocument/didClose"),
+            "{seen:?}"
+        );
+        assert!(seen.iter().any(|(m, _)| m == "exit"), "{seen:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -44,9 +44,11 @@ pub fn save_document(state: &AppContext, id: FileId) -> bool {
     let Some((id, path, contents)) = state.get().workspace.save_snapshot(id) else {
         return false;
     };
+    let contents = std::sync::Arc::new(contents);
 
     match crate::infrastructure::document_filesystem::write(&path, contents.as_bytes()) {
         Ok(()) => {
+            let saved_path = path.clone();
             let project_settings = crate::features::settings::project::is_settings_file(&path);
             state.update(move |app| {
                 app.workspace.mark_saved(id);
@@ -54,6 +56,9 @@ pub fn save_document(state: &AppContext, id: FileId) -> bool {
                     app.refresh_project_settings();
                 }
             });
+            if let Some(services) = state.services().and_then(|r| r.language_services()) {
+                services.saved(saved_path, contents);
+            }
             true
         }
         Err(error) => {
