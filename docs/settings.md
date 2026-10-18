@@ -32,6 +32,39 @@ The same setting is available in the user `settings.json` as `"ui_scale": 120`.
 Remove it or set it to `null` to restore automatic scaling. Like other appearance
 preferences, it cannot be overridden by project settings.
 
+## File associations
+
+Loom picks a file's language from the file itself: its name and extension. To
+treat other files as a language, add ordered rules to `settings.json` (or to a
+workspace folder's `.loom/settings.json`):
+
+```jsonc
+"file_associations": [
+  { "pattern": "**/*.custom", "language": "rust" },
+  { "pattern": "scripts/*.tool", "language": "javascript" }
+]
+```
+
+`language` is a language name or alias such as `rust`, `csharp`, `javascript`
+or `typescript`. Rules are tried in order and the first match wins. A project's
+rules apply to files in that folder and come before your own, and both come
+before the built-in recognition. Changes apply to open files immediately, and a
+rename picks the language for the new name.
+
+Patterns use a small set of wildcards:
+
+- `*` matches any run of characters within one path segment, `?` matches one.
+- `**` as a whole segment matches any number of folders, including none.
+- A pattern without `/` matches the file name at any depth (`*.custom`).
+- A pattern with `/` matches the path below the workspace folder, from its
+  start (`docs/**/*.txt`). Files outside every workspace folder only match
+  patterns without `/`.
+- Case is ignored on Windows and macOS and respected elsewhere.
+- `[ ]`, `{ }` and `\` are not supported; a rule using them is skipped.
+
+A rule with an unknown language or an unsupported pattern is skipped and
+reported; the other rules still apply.
+
 ## Key bindings
 
 Shortcuts come from a Zed-style keymap. The **Keymap** page (Ctrl + K Ctrl + S,

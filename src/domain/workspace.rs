@@ -8,8 +8,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::domain::document::{DiskRead, DiskState, DocumentStamp, FileId, FileMeta};
+use crate::domain::document::{
+    DiskRead, DiskState, DocumentStamp, FileId, FileMeta, ResolvedLanguage,
+};
 use crate::domain::geometry::Rect;
+use crate::domain::language::LanguageRules;
 use crate::domain::pane_layout::{Direction, PaneId, PaneNode};
 use loom_editor_core::text::{Editor, EditorMut, Selection, TextBuffer};
 
@@ -242,6 +245,8 @@ pub struct Workspace<D, K> {
     pub(crate) pane_mru: Vec<PaneId>,
     pub(crate) next_file_id: u64,
     next_incarnation: u64,
+    /// File associations from settings, tried before the built-in recognition.
+    language_rules: Arc<LanguageRules>,
     pub(crate) next_pane_id: u64,
     retired: Vec<Retired<D, K>>,
 }
@@ -359,6 +364,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         let Some(id) = self.paths.remove(old_path) else {
             return false;
         };
+        let language = self.language_for(&new_path);
         let Some(document) = self.documents.get_mut(&id) else {
             return false;
         };
@@ -366,6 +372,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         // computed for the old language must stop matching, which only a bumped
         // generation guarantees; a plain rename within one language keeps it.
         let previous = std::mem::replace(&mut document.meta, FileMeta::from_path(new_path.clone()));
+        document.meta.lang = language;
         document.meta.language_generation =
             previous.language_generation + u64::from(previous.lang != document.meta.lang);
         document.disk_state = disk;
@@ -385,6 +392,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             pane_mru: vec![pane],
             next_file_id: 1,
             next_incarnation: 1,
+            language_rules: Arc::default(),
             next_pane_id: 2,
             retired: Vec::new(),
         }
@@ -1392,7 +1400,42 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     pub(crate) fn insert_document(&mut self, id: FileId, mut document: OpenDocument<D, K>) {
         document.incarnation = self.next_incarnation;
         self.next_incarnation += 1;
+        if document.is_shareable() {
+            // A new document has no results yet, so no generation bump is needed.
+            document.meta.lang = self.language_for(&document.meta.path);
+        }
         self.documents.insert(id, document);
+    }
+
+    /// The language the file decides: an association first, then the built-in
+    /// recognition by name and extension.
+    pub(crate) fn language_for(&self, path: &Path) -> ResolvedLanguage {
+        self.language_rules
+            .resolve(path)
+            .unwrap_or_else(|| crate::domain::language::from_path(path))
+    }
+
+    /// Installs new associations and re-recognizes every open file. A document
+    /// whose language changes gets a new language generation, so results for
+    /// the old language stop matching. Returns whether any document changed.
+    pub(crate) fn set_language_rules(&mut self, rules: Arc<LanguageRules>) -> bool {
+        self.language_rules = rules;
+        let mut changed = false;
+        let ids: Vec<FileId> = self.documents.keys().copied().collect();
+        for id in ids {
+            let Some(document) = self.documents.get(&id) else {
+                continue;
+            };
+            if !document.is_shareable() {
+                continue;
+            }
+            let language = self.language_for(&document.meta.path);
+            let document = self.documents.get_mut(&id).expect("checked above");
+            let generation = document.meta.language_generation;
+            document.meta.set_language(language);
+            changed |= document.meta.language_generation != generation;
+        }
+        changed
     }
 
     pub(crate) fn allocate_file_id(&mut self) -> FileId {

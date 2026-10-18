@@ -97,6 +97,7 @@ impl AppState {
                     check_for_updates: true,
                     editor_font: crate::ui::fonts::FontSettings::EDITOR,
                     terminal_font: crate::ui::fonts::FontSettings::TERMINAL,
+                    file_associations: Vec::new(),
                     project_settings: Vec::new(),
                 },
             ),
@@ -161,6 +162,7 @@ impl AppState {
             vim: self.editor.vim.options.into(),
             editor_font: self.preferences.values().editor_font.clone(),
             terminal_font: self.preferences.values().terminal_font.clone(),
+            file_associations: self.preferences.values().file_associations.clone(),
         }
     }
 
@@ -173,6 +175,8 @@ impl AppState {
         if settings == self.settings() {
             return false;
         }
+        let associations_changed =
+            settings.file_associations != self.preferences.values().file_associations;
         let shells_changed = settings.default_shell != self.preferences.values().default_shell
             || settings.terminal_profiles != self.preferences.values().terminal_profiles;
         self.preferences.values_mut().theme = settings.theme;
@@ -183,6 +187,7 @@ impl AppState {
         self.preferences.values_mut().terminal_cursor_blink = settings.terminal_cursor_blink;
         self.preferences.values_mut().smooth_caret = settings.smooth_caret;
         self.preferences.values_mut().check_for_updates = settings.check_for_updates;
+        self.preferences.values_mut().file_associations = settings.file_associations;
         self.git.ui.inline_blame = settings.git_inline_blame;
         self.git.ui.split_diff = settings.git_split_diff;
         self.git.ui.tree_view = settings.git_tree_view;
@@ -195,6 +200,9 @@ impl AppState {
         self.editor.vim.options = vim;
         if shells_changed {
             self.refresh_shells();
+        }
+        if associations_changed {
+            self.refresh_language_rules();
         }
         true
     }
@@ -327,9 +335,62 @@ impl AppState {
             }
         }
         self.preferences.values_mut().project_settings = fresh;
+        // Also runs when only the workspace folders changed: patterns that name
+        // directories are relative to the folder that holds the file. Files whose
+        // language does not change keep their stamp, so this costs no re-lexing.
+        self.refresh_language_rules();
         for message in messages {
             self.show_error(message);
         }
+    }
+
+    /// Rebuilds the file associations from the user's and every project's
+    /// settings and the workspace folders, and re-recognizes the open files.
+    /// Returns whether any open file changed language.
+    pub fn refresh_language_rules(&mut self) -> bool {
+        use crate::domain::language::{LanguageRules, PATH_CASE_INSENSITIVE, Registry};
+        use crate::features::settings::rules::FileAssociation;
+        let projects: Vec<(PathBuf, Vec<FileAssociation>)> = self
+            .preferences
+            .values()
+            .project_settings
+            .iter()
+            .map(|(root, project)| {
+                let rules = project
+                    .overrides
+                    .get("file_associations")
+                    .and_then(|value| serde_json::from_value(value.clone()).ok())
+                    .unwrap_or_default();
+                (root.clone(), rules)
+            })
+            .collect();
+        let project_specs: Vec<_> = projects
+            .iter()
+            .map(|(root, rules)| {
+                (
+                    root.clone(),
+                    rules.iter().map(FileAssociation::spec).collect(),
+                )
+            })
+            .collect();
+        let user: Vec<_> = self
+            .preferences
+            .values()
+            .file_associations
+            .iter()
+            .map(FileAssociation::spec)
+            .collect();
+        // Settings validate rules when they are read, so compiling reports nothing
+        // new; a rule that still fails is skipped and the rest apply.
+        let (rules, _) = LanguageRules::compile(
+            Registry::builtin(),
+            PATH_CASE_INSENSITIVE,
+            self.explorer.model.roots(),
+            &user,
+            &project_specs,
+        );
+        self.workspace
+            .set_language_rules(std::sync::Arc::new(rules))
     }
 
     pub fn shell_name(&self, kind: ShellKind) -> String {

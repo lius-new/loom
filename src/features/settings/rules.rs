@@ -10,9 +10,28 @@ use serde_json::{Map, Value};
 use super::font::FontSettings;
 use super::jsonc;
 use super::theme_id::ThemeId;
+use crate::domain::language::{AssociationSpec, Registry, validate_association};
 use crate::features::terminal::ShellKind;
 
 pub const FILE_NAME: &str = "settings.json";
+
+/// One `file_associations` rule: files whose path matches `pattern` are shown
+/// in `language`. Rules are tried in order and the first match wins.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileAssociation {
+    pub pattern: String,
+    pub language: String,
+}
+
+impl FileAssociation {
+    pub fn spec(&self) -> AssociationSpec<'_> {
+        AssociationSpec {
+            pattern: &self.pattern,
+            language: &self.language,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Settings {
@@ -44,6 +63,10 @@ pub struct Settings {
     pub editor_font: FontSettings,
     #[serde(default = "default_terminal_font")]
     pub terminal_font: FontSettings,
+    /// Ordered path patterns that choose a file's language before the built-in
+    /// recognition by name and extension.
+    #[serde(default)]
+    pub file_associations: Vec<FileAssociation>,
 }
 
 /// Preferences for Vim editing (`"vim"` in `settings.json`).
@@ -95,6 +118,7 @@ impl Default for Settings {
             check_for_updates: true,
             editor_font: FontSettings::EDITOR,
             terminal_font: FontSettings::TERMINAL,
+            file_associations: Vec::new(),
         }
     }
 }
@@ -116,7 +140,7 @@ pub struct LoadOutcome {
 
 /// Settings a project's `.loom/settings.json` may override. Everything else
 /// is a personal preference and only read from the user's file.
-pub const PROJECT_KEYS: &[&str] = &["default_shell"];
+pub const PROJECT_KEYS: &[&str] = &["default_shell", "file_associations"];
 
 /// Which file a settings source is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,6 +212,12 @@ pub fn parse_overrides(source: &str, scope: Scope) -> Result<(Overrides, Vec<Str
             }
             continue;
         }
+        // A bad rule is dropped with a message; the rules around it still apply.
+        let value = if key == "file_associations" {
+            valid_associations(value, &mut errors)
+        } else {
+            value
+        };
         let mut candidate = accepted.clone();
         candidate.insert(key.clone(), value.clone());
         accept(
@@ -200,6 +230,26 @@ pub fn parse_overrides(source: &str, scope: Scope) -> Result<(Overrides, Vec<Str
         );
     }
     Ok((accepted, errors))
+}
+
+/// The rules of a `file_associations` array that are well formed and name a
+/// known language. Anything that is not an array is left for `accept` to report.
+fn valid_associations(value: Value, errors: &mut Vec<String>) -> Value {
+    let Value::Array(items) = value else {
+        return value;
+    };
+    let registry = Registry::builtin();
+    let mut kept = Vec::new();
+    for (index, item) in items.into_iter().enumerate() {
+        let checked = serde_json::from_value::<FileAssociation>(item.clone())
+            .map_err(|error| error.to_string())
+            .and_then(|rule| validate_association(registry, rule.spec()));
+        match checked {
+            Ok(()) => kept.push(item),
+            Err(error) => errors.push(format!("file_associations[{index}]: {error}")),
+        }
+    }
+    Value::Array(kept)
 }
 
 /// Keep `candidate` when it still deserializes, otherwise report why.
@@ -350,12 +400,94 @@ mod tests {
                 size: 13,
                 ..FontSettings::TERMINAL
             },
+            file_associations: vec![FileAssociation {
+                pattern: "**/*.custom".into(),
+                language: "rust".into(),
+            }],
         };
 
         let json = serde_json::to_string(&settings).unwrap();
         let decoded: Settings = serde_json::from_str(&json).unwrap();
 
         assert_eq!(decoded, settings);
+    }
+
+    #[test]
+    fn file_associations_keep_good_rules_and_report_each_bad_one() {
+        let source = r##"{
+            "file_associations": [
+                { "pattern": "**/*.custom", "language": "rust" },
+                { "pattern": "[x].a", "language": "rust" },
+                { "pattern": "*.b", "language": "klingon" },
+                { "pattern": "*.c" },
+                { "pattern": "*.d", "language": "ts" },
+                { "pattern": "*.e", "language": "rust", "extra": true },
+                "not an object"
+            ]
+        }"##;
+        let outcome = parse(source).unwrap();
+        let kept: Vec<_> = outcome
+            .settings
+            .file_associations
+            .iter()
+            .map(|rule| (rule.pattern.as_str(), rule.language.as_str()))
+            .collect();
+        assert_eq!(kept, [("**/*.custom", "rust"), ("*.d", "ts")]);
+        assert_eq!(outcome.errors.len(), 5, "{:?}", outcome.errors);
+        assert!(
+            outcome.errors[0].contains("file_associations[1]")
+                && outcome.errors[0].contains("not supported")
+        );
+        assert!(
+            outcome.errors[1].contains("file_associations[2]")
+                && outcome.errors[1].contains("unknown language")
+        );
+        assert!(outcome.errors[2].contains("file_associations[3]"));
+        assert!(outcome.errors[3].contains("file_associations[5]"));
+        assert!(outcome.errors[4].contains("file_associations[6]"));
+    }
+
+    #[test]
+    fn file_associations_must_be_a_list() {
+        let outcome = parse(r#"{ "file_associations": "rust", "smooth_caret": false }"#).unwrap();
+        assert!(outcome.settings.file_associations.is_empty());
+        assert!(!outcome.settings.smooth_caret, "other settings still apply");
+        assert_eq!(outcome.errors.len(), 1);
+        assert!(outcome.errors[0].contains("file_associations"));
+    }
+
+    #[test]
+    fn projects_may_set_file_associations_and_nothing_personal() {
+        let (overrides, errors) = parse_overrides(
+            r#"{ "file_associations": [{ "pattern": "*.x", "language": "csharp" }], "theme": "ember" }"#,
+            Scope::Project,
+        )
+        .unwrap();
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("theme"));
+        let rules: Vec<FileAssociation> =
+            serde_json::from_value(overrides["file_associations"].clone()).unwrap();
+        assert_eq!(rules.len(), 1);
+    }
+
+    #[test]
+    fn unchanged_file_associations_are_never_written_back() {
+        let text = "{\n  // mine\n  \"file_associations\": [{ \"pattern\": \"*.x\", \"language\": \"rust\" }, { \"pattern\": \"*.y\", \"language\": \"nope\" }]\n}\n";
+        let current = parse(text).unwrap().settings;
+        assert_eq!(
+            current.file_associations.len(),
+            1,
+            "the bad rule is not loaded"
+        );
+        let mut new = current.clone();
+        new.smooth_caret = false;
+        let patched = patch(text, &current, &new).unwrap();
+        assert!(
+            patched.contains("// mine") && patched.contains("*.y"),
+            "the file keeps its own text: {patched}"
+        );
+        assert!(patched.contains("smooth_caret"));
     }
 
     #[test]

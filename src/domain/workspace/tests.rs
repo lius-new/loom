@@ -228,3 +228,144 @@ fn renaming_a_file_recomputes_its_language_and_invalidates_old_results() {
     assert_ne!(again, before);
     assert_ne!(again, relabelled);
 }
+
+mod associations {
+    use crate::domain::document::DiskState;
+    use crate::domain::identity::FileId;
+    use crate::domain::language::{AssociationSpec, LanguageRules, Registry};
+    use crate::domain::pane_layout::Direction;
+    use crate::domain::workspace::tests::{PureWorkspace, open};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    fn rules(
+        roots: &[&str],
+        user: &[(&str, &str)],
+        project: &[(&str, &str, &str)],
+    ) -> Arc<LanguageRules> {
+        let roots: Vec<PathBuf> = roots.iter().map(PathBuf::from).collect();
+        let user: Vec<AssociationSpec<'_>> = user
+            .iter()
+            .map(|&(pattern, language)| AssociationSpec { pattern, language })
+            .collect();
+        let projects: Vec<(PathBuf, Vec<AssociationSpec<'_>>)> = project
+            .iter()
+            .map(|&(root, pattern, language)| {
+                (
+                    PathBuf::from(root),
+                    vec![AssociationSpec { pattern, language }],
+                )
+            })
+            .collect();
+        let (rules, errors) =
+            LanguageRules::compile(Registry::builtin(), false, &roots, &user, &projects);
+        assert!(errors.is_empty(), "{errors:?}");
+        Arc::new(rules)
+    }
+    fn language(workspace: &PureWorkspace, id: FileId) -> &'static str {
+        workspace.documents[&id].meta.lang.name()
+    }
+
+    #[test]
+    fn a_file_opened_after_the_rules_gets_the_associated_language() {
+        let mut workspace = PureWorkspace::new();
+        workspace.set_language_rules(rules(&["/p"], &[("*.custom", "rust")], &[]));
+        let custom = open(&mut workspace, "/p/a.custom", "x");
+        let plain = open(&mut workspace, "/p/b.txt", "x");
+        let builtin = open(&mut workspace, "/p/c.cs", "x");
+        assert_eq!(language(&workspace, custom), "rust");
+        assert_eq!(language(&workspace, plain), "plaintext");
+        assert_eq!(
+            language(&workspace, builtin),
+            "csharp",
+            "built-in recognition is the fallback"
+        );
+        assert_eq!(workspace.documents[&custom].meta.language_generation, 0);
+    }
+
+    #[test]
+    fn an_association_beats_the_built_in_recognition_of_the_same_file() {
+        let mut workspace = PureWorkspace::new();
+        workspace.set_language_rules(rules(&["/p"], &[("*.rs", "csharp")], &[]));
+        let id = open(&mut workspace, "/p/a.rs", "x");
+        assert_eq!(language(&workspace, id), "csharp");
+    }
+
+    #[test]
+    fn installing_rules_re_recognizes_open_files_and_only_changed_ones_get_a_new_stamp() {
+        let mut workspace = PureWorkspace::new();
+        let custom = open(&mut workspace, "/p/a.custom", "x");
+        let other = open(&mut workspace, "/p/b.rs", "x");
+        let (custom_before, other_before) = (
+            workspace.documents[&custom].stamp(custom),
+            workspace.documents[&other].stamp(other),
+        );
+        assert_eq!(language(&workspace, custom), "plaintext");
+
+        let changed = workspace.set_language_rules(rules(&["/p"], &[("*.custom", "rust")], &[]));
+        assert!(changed);
+        assert_eq!(language(&workspace, custom), "rust");
+        assert_ne!(workspace.documents[&custom].stamp(custom), custom_before);
+        assert_eq!(
+            workspace.documents[&other].stamp(other),
+            other_before,
+            "unaffected files keep their stamp"
+        );
+
+        assert!(
+            !workspace.set_language_rules(rules(&["/p"], &[("*.custom", "rust")], &[])),
+            "the same rules change nothing"
+        );
+        assert!(
+            workspace.set_language_rules(Arc::default()),
+            "removing the rules reverts the file"
+        );
+        assert_eq!(language(&workspace, custom), "plaintext");
+    }
+
+    #[test]
+    fn renaming_applies_the_rules_to_the_new_name() {
+        let mut workspace = PureWorkspace::new();
+        workspace.set_language_rules(rules(&["/p"], &[("*.custom", "rust")], &[]));
+        let id = open(&mut workspace, "/p/a.txt", "x");
+        let before = workspace.documents[&id].stamp(id);
+        let disk = DiskState::from_contents("x");
+        assert!(workspace.move_path_with_disk(
+            "/p/a.txt".as_ref(),
+            "/p/a.custom".into(),
+            disk.clone()
+        ));
+        assert_eq!(language(&workspace, id), "rust");
+        assert_ne!(workspace.documents[&id].stamp(id), before);
+        assert!(workspace.move_path_with_disk("/p/a.custom".as_ref(), "/p/a.rs".into(), disk));
+        assert_eq!(
+            language(&workspace, id),
+            "rust",
+            "now by the built-in rule; same language"
+        );
+    }
+
+    #[test]
+    fn project_rules_only_reach_their_own_folder() {
+        let mut workspace = PureWorkspace::new();
+        workspace.set_language_rules(rules(&["/p", "/q"], &[], &[("/p", "*.x", "csharp")]));
+        let inside = open(&mut workspace, "/p/a.x", "x");
+        let outside = open(&mut workspace, "/q/a.x", "x");
+        assert_eq!(language(&workspace, inside), "csharp");
+        assert_eq!(language(&workspace, outside), "plaintext");
+    }
+
+    #[test]
+    fn every_pane_showing_a_document_sees_the_same_language() {
+        let mut workspace = PureWorkspace::new();
+        let id = open(&mut workspace, "/p/a.custom", "x");
+        let left = workspace.active_pane();
+        let right = workspace.split(left, Direction::Right).unwrap();
+        workspace.set_language_rules(rules(&["/p"], &[("*.custom", "rust")], &[]));
+        // One document, one metadata record: both panes read the same value.
+        assert_eq!(workspace.pane(left).and_then(|p| p.active()), Some(id));
+        assert_eq!(workspace.pane(right).and_then(|p| p.active()), Some(id));
+        assert_eq!(language(&workspace, id), "rust");
+        assert_eq!(workspace.documents.len(), 1);
+    }
+}

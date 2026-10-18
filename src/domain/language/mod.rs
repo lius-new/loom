@@ -8,6 +8,7 @@
 mod descriptor;
 mod embedded;
 mod registry;
+mod rules;
 
 // Only the application's tests compare the table with the files on disk; the
 // domain-only verification package compiles this module without that test.
@@ -15,6 +16,12 @@ mod registry;
 #[allow(unused_imports)]
 pub(crate) use self::embedded::{Row, files as embedded_files};
 pub use self::registry::{LanguageDefinition, Registry};
+// The settings and the application use these; the domain-only verification
+// package compiles this module without those users.
+#[allow(unused_imports)]
+pub use self::rules::{
+    AssociationSpec, LanguageRules, PATH_CASE_INSENSITIVE, validate as validate_association,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LanguageId(u32);

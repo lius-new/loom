@@ -74,3 +74,86 @@ fn custom_default_keeps_its_id_across_settings_and_workspace_json() {
         session
     );
 }
+
+#[test]
+fn file_associations_from_user_and_project_settings_choose_the_language() {
+    use crate::features::settings::rules::FileAssociation;
+    let base = std::env::temp_dir().join(format!(
+        "loom-associations-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let (project, other) = (base.join("project"), base.join("other"));
+    fs::create_dir_all(project.join(DIR_NAME)).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    fs::write(
+        path(&project),
+        r#"{ "file_associations": [{ "pattern": "**/*.cfg", "language": "typescript" }] }"#,
+    )
+    .unwrap();
+
+    let mut app = crate::app::state::AppState::new();
+    app.explorer
+        .model
+        .restore(vec![project.clone(), other.clone()], Vec::new());
+    let language = |app: &crate::app::state::AppState, file: &std::path::Path| {
+        let id = app.workspace.file_id_for_path(file).unwrap();
+        app.workspace.documents[&id].meta.lang.name()
+    };
+    let (in_project, in_other) = (project.join("a.cfg"), other.join("a.cfg"));
+    app.workspace.open_path(in_project.clone(), "x".into());
+    app.workspace.open_path(in_other.clone(), "x".into());
+    assert_eq!(language(&app, &in_project), "plaintext");
+    let before = {
+        let id = app.workspace.file_id_for_path(&in_project).unwrap();
+        app.workspace.documents[&id].stamp(id)
+    };
+
+    // The project file is read: its rule reaches the open file in its folder only.
+    app.refresh_project_settings();
+    assert_eq!(language(&app, &in_project), "typescript");
+    assert_eq!(language(&app, &in_other), "plaintext");
+    let id = app.workspace.file_id_for_path(&in_project).unwrap();
+    assert_ne!(app.workspace.documents[&id].stamp(id), before);
+
+    // A user rule applies everywhere the project has none, and loses to the project.
+    let mut settings = app.settings();
+    settings.file_associations = vec![
+        FileAssociation {
+            pattern: "*.cfg".into(),
+            language: "rust".into(),
+        },
+        FileAssociation {
+            pattern: "*.zzz".into(),
+            language: "csharp".into(),
+        },
+    ];
+    assert!(app.apply_settings(settings));
+    assert_eq!(
+        language(&app, &in_project),
+        "typescript",
+        "project beats user"
+    );
+    assert_eq!(language(&app, &in_other), "rust");
+    let zzz = other.join("b.zzz");
+    app.workspace.open_path(zzz.clone(), "x".into());
+    assert_eq!(
+        language(&app, &zzz),
+        "csharp",
+        "files opened later are recognised too"
+    );
+
+    // Removing the user rules reverts the file that only they covered.
+    let mut settings = app.settings();
+    settings.file_associations.clear();
+    assert!(app.apply_settings(settings));
+    assert_eq!(language(&app, &in_other), "plaintext");
+    assert_eq!(language(&app, &in_project), "typescript");
+
+    // Removing the project folder drops its rules.
+    app.explorer.model.restore(vec![other.clone()], Vec::new());
+    app.refresh_project_settings();
+    assert_eq!(language(&app, &in_project), "plaintext");
+
+    fs::remove_dir_all(&base).unwrap();
+}

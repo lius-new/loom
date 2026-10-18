@@ -201,6 +201,10 @@
       "owner": "domain/workspace",
       "migrated_in": "P1"
     },
+    "language_rules": {
+      "owner": "domain/workspace",
+      "migrated_in": "P2"
+    },
     "next_pane_id": {
       "owner": "domain/workspace",
       "migrated_in": "R4"
@@ -764,6 +768,10 @@
     "terminal_font": {
       "owner": "features/settings/model: Values DTO",
       "migrated_in": "R8.2"
+    },
+    "file_associations": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "P2"
     },
     "project_settings": {
       "owner": "features/settings/model: Values DTO",
