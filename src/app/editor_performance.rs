@@ -56,10 +56,10 @@ fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
                         &AtomicBool::new(false),
                     )
                     .expect("the reference parse is not cancelled");
-                for (actual, expected) in ready.iter().zip(&expected) {
+                for ((actual, expected), window) in ready.iter().zip(&expected).zip(&windows) {
                     assert_eq!(
-                        merged(actual.spans.as_ref()),
-                        merged(expected.spans.as_ref())
+                        merged(actual.spans.as_ref(), &window.range),
+                        merged(expected.spans.as_ref(), &window.range)
                     );
                 }
             }
@@ -71,16 +71,30 @@ fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
     queue.run_all();
 }
 
-/// Spans with equal neighbours joined: a window answered from several cache
-/// pages can split a run that one query returns whole.
-fn merged(spans: &[crate::features::syntax::TokenSpan]) -> Vec<crate::features::syntax::TokenSpan> {
+/// Spans cut to `range` with equal neighbours joined: a window answered from
+/// several cache pages can split a run that one query returns whole, and a token
+/// that crosses the window keeps its full range.
+fn merged(
+    spans: &[crate::features::syntax::TokenSpan],
+    range: &std::ops::Range<usize>,
+) -> Vec<crate::features::syntax::TokenSpan> {
     let mut out: Vec<crate::features::syntax::TokenSpan> = Vec::new();
     for span in spans {
+        let (start, end) = (
+            span.range.start.max(range.start),
+            span.range.end.min(range.end),
+        );
+        if start >= end {
+            continue;
+        }
         match out.last_mut() {
-            Some(last) if last.class == span.class && last.range.end == span.range.start => {
-                last.range.end = span.range.end;
+            Some(last) if last.class == span.class && last.range.end == start => {
+                last.range.end = end;
             }
-            _ => out.push(span.clone()),
+            _ => out.push(crate::features::syntax::TokenSpan {
+                range: start..end,
+                class: span.class,
+            }),
         }
     }
     out
@@ -148,10 +162,22 @@ fn editor_navigation_highlight_continuity() {
                             token.range.end > window.range.start
                                 && token.range.start < window.range.end
                         }) {
-                            assert!(
-                                actual.is_some_and(|tokens| tokens.spans.contains(token)),
-                                "caret scrolling erased a previously known semantic span"
-                            );
+                            // The same text keeps its class, wherever the page boundaries now
+                            // fall; a span may be cut or joined differently.
+                            let overlap = token.range.start.max(window.range.start)
+                                ..token.range.end.min(window.range.end);
+                            let class_at = |offset: usize| {
+                                actual.and_then(|tokens| {
+                                    tokens.spans.iter().find(|s| s.range.contains(&offset))
+                                })
+                            };
+                            for offset in [overlap.start, overlap.end - 1] {
+                                assert_eq!(
+                                    class_at(offset).map(|span| span.class),
+                                    Some(token.class),
+                                    "caret scrolling erased a previously known semantic span"
+                                );
+                            }
                         }
                     }
                 }

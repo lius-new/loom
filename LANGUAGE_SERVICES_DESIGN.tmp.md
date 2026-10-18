@@ -1086,5 +1086,6 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 验收测量（release，Intel Core Ultra 7 255HX；日志在 target/baseline/p3a/，本地未入库；仅限本机，换机器后须重新建立基线）：
 - 1 MiB 连续输入（每 100 ms 一次，共 50 次，解析被注入 150 ms 延迟）：50 行视口的每帧耗时 p50 0.10 ms、p95 0.19 ms、max 0.24 ms；2500 个窗口全部由保留片段按 Provisional 画出，没有拒绝也没有断链；投影累计 3.5 ms。每帧断言不低于锚点的着色行数（50 帧均通过）。
 - 首次着色预算（P3a 决定，脚本带断言）：冷启动 p95 最大值 256 KiB 86.9 ms（预算 100）、512 KiB 145.3 ms（预算 150）、1 MiB 262.8 ms（预算 275），均为 C#；余量最小处约 3%，换机器或工具链后须重新测量。Rust 1 MiB 194.7、TypeScript 193.8、JavaScript 167.8 ms。
+- 真实布局（Skia，release）下的两项既有检查在新引擎上通过：editor_navigation_highlight_continuity（逐步移动光标时已知颜色不丢，改为按类别而不是逐字节相同比较）与 editor_viewport_benchmark（worker 的结果与第二次独立解析逐窗口一致）。后者的样例：158 KB 的压缩 JS 首次可用 41.5 ms、1 MiB 单行压缩 JS 首次可用 188.6 ms，其余帧耗时低于 1 ms 至 6 ms；两个样例的编辑帧后都是一次增量解析。
 未完成：Linux/macOS 上 C grammar 的编译与测试；是否采用“只解析开头”的首屏优化（P3a 已量化，当前预算不需要它）；Settings 页面与状态栏不显示语言或高亮状态；编辑器在大于 8 MiB 时的降级提示只体现在统计计数中，没有界面提示。
 下一步：P4（LSP），按 LSP_DESIGN.tmp.md 从 P4a 开始；先建议在 Linux/macOS 跑一遍 P1–P3 的验证。
