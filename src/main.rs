@@ -15,6 +15,9 @@
     all(target_os = "windows", not(debug_assertions), not(test)),
     windows_subsystem = "windows"
 )]
+// The MSVC linker reports the export library it makes because the bundled
+// Tree-sitter C code exports its API; that line is not a problem.
+#![allow(linker_messages)]
 #![allow(dead_code)] // the data layer & palette expose an intentionally broad API
 
 mod app;

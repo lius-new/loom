@@ -50,7 +50,7 @@ fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
                     Tokens::new(&doc.buffer.text()[window.line.clone()], doc.meta.lang, 0)
                         .map(|(range, kind)| crate::features::syntax::TokenSpan {
                             range: window.line.start + range.start..window.line.start + range.end,
-                            kind,
+                            class: kind.highlight(),
                         })
                         .filter(|span| {
                             span.range.end > window.range.start

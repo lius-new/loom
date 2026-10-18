@@ -4,6 +4,6 @@
   "badge": "C#",
   "aliases": ["cs"],
   "comments": { "line": "//", "block": ["/*", "*/"] },
-  "variants": [{ "id": "csharp" }],
+  "variants": [{ "id": "csharp", "grammar": "c_sharp" }],
   "files": [{ "extensions": ["cs"], "variant": "csharp" }]
 }

@@ -13,8 +13,7 @@ fn moving_viewports_preserve_known_tokens_while_adjacent_pages_are_pending() {
     use std::sync::atomic::AtomicUsize;
     for language in [
         builtin("plaintext"),
-        builtin("javascript"),
-        builtin("rust"),
+        builtin("typescript"),
         builtin("csharp"),
     ] {
         let buffer = TextBuffer::new("Alpha123 中e\u{301}=\"value\"; 456 /*note*/ ".repeat(200));
@@ -48,7 +47,10 @@ fn moving_viewports_preserve_known_tokens_while_adjacent_pages_are_pending() {
             )
         };
         let reference: Vec<_> = Tokens::new(buffer.text(), language, 0)
-            .map(|(range, kind)| TokenSpan { range, kind })
+            .map(|(range, kind)| TokenSpan {
+                range,
+                class: kind.highlight(),
+            })
             .collect();
         let expected = |window: &Window| {
             reference
@@ -137,7 +139,10 @@ fn known_tokens_crossing_pages_remain_colored_when_the_original_page_leaves_the_
     entered.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(moved.complete);
     assert_eq!(moved.spans, known.spans);
-    assert_eq!(moved.spans[0].kind, crate::features::syntax::TokenKind::Str);
+    assert_eq!(
+        moved.spans[0].class,
+        Some(crate::features::highlighting::HighlightId::STRING)
+    );
     let further = query(2 * PAGE_BYTES + 40, 2 * PAGE_BYTES + 120).remove(0);
     assert!(further.complete);
     assert_eq!(further.spans, known.spans);
@@ -150,7 +155,7 @@ fn query(worker: &Worker, pane: u64, id: u64, buffer: &TextBuffer) -> Vec<Window
         PaneId::new(pane),
         stamp(id, buffer),
         Source::new(buffer),
-        builtin("javascript"),
+        builtin("typescript"),
         vec![Window {
             line: buffer.line_range(0),
             range: buffer.line_range(0),
@@ -228,7 +233,7 @@ fn superseded_versions_are_cancelled_and_only_the_latest_is_published() {
         .prepare(
             FileId::new(1),
             Source::new(&buffer),
-            builtin("javascript"),
+            builtin("typescript"),
             &[Window {
                 line: buffer.line_range(0),
                 range: buffer.line_range(0),
@@ -322,7 +327,7 @@ fn a_new_incarnation_or_language_generation_never_reuses_cached_windows() {
             PaneId::new(1),
             stamp,
             Source::new(&buffer),
-            builtin("javascript"),
+            builtin("typescript"),
             window(),
         )
     };
@@ -355,4 +360,88 @@ fn a_new_incarnation_or_language_generation_never_reuses_cached_windows() {
         ask(original).is_empty(),
         "going back to a stale stamp serves nothing either"
     );
+}
+
+#[test]
+fn languages_with_a_grammar_are_read_from_a_syntax_tree_and_the_rest_from_the_lexer() {
+    use crate::features::highlighting::HighlightId;
+    let (send, receive) = mpsc::channel();
+    let worker = Worker::new(move |stamp| {
+        send.send((stamp.document, stamp.snapshot_identity, stamp.version))
+            .ok();
+    });
+    let class_at = |tokens: &WindowTokens, text: &str, needle: &str| {
+        let at = text.find(needle).unwrap();
+        tokens
+            .spans
+            .iter()
+            .find(|span| span.range.contains(&at))
+            .and_then(|span| span.class)
+    };
+    let ask = |id: u64, buffer: &TextBuffer, language: &str| {
+        let window = Window {
+            line: buffer.line_range(0),
+            range: buffer.line_range(0),
+        };
+        worker.query(
+            PaneId::new(1),
+            stamp(id, buffer),
+            Source::new(buffer),
+            builtin(language),
+            vec![window],
+        )
+    };
+
+    let rust = TextBuffer::new("fn main() { let x = 1; } // note");
+    assert!(
+        ask(1, &rust, "rust").is_empty(),
+        "nothing is ready on the first frame"
+    );
+    wait(&receive);
+    let tokens = ask(1, &rust, "rust").remove(0);
+    assert!(tokens.complete);
+    assert_eq!(
+        class_at(&tokens, rust.text(), "main"),
+        Some(HighlightId::FUNCTION)
+    );
+    assert_eq!(
+        class_at(&tokens, rust.text(), "let"),
+        Some(HighlightId::KEYWORD)
+    );
+    assert_eq!(
+        class_at(&tokens, rust.text(), "note"),
+        Some(HighlightId::COMMENT)
+    );
+    let after_rust = worker.stats();
+    assert_eq!(
+        (after_rust.tree.full_parses, after_rust.index.scanned_bytes),
+        (1, 0),
+        "the lexer did not run"
+    );
+
+    let csharp = TextBuffer::new("public class A { } // note");
+    ask(2, &csharp, "csharp");
+    wait(&receive);
+    let tokens = ask(2, &csharp, "csharp").remove(0);
+    assert_eq!(
+        class_at(&tokens, csharp.text(), "public"),
+        Some(HighlightId::KEYWORD)
+    );
+    let after_csharp = worker.stats();
+    assert_eq!(
+        after_csharp.tree.full_parses, 1,
+        "no tree was built for a language without an enabled grammar"
+    );
+    assert!(after_csharp.index.scanned_bytes > 0, "the lexer handled it");
+
+    worker.retain(vec![]);
+    // Pruning runs on the worker thread, so give it a moment.
+    let limit = std::time::Instant::now() + Duration::from_secs(5);
+    while worker.stats().tree.trees != 0 {
+        assert!(
+            std::time::Instant::now() < limit,
+            "the tree was not dropped"
+        );
+        std::thread::yield_now();
+    }
 }

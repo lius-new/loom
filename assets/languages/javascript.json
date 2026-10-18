@@ -4,6 +4,6 @@
   "badge": "JS",
   "aliases": ["js"],
   "comments": { "line": "//", "block": ["/*", "*/"] },
-  "variants": [{ "id": "javascript" }],
+  "variants": [{ "id": "javascript", "grammar": "javascript" }],
   "files": [{ "extensions": ["js", "jsx", "mjs", "cjs"], "variant": "javascript" }]
 }

@@ -5,7 +5,9 @@ use crate::{
         identity::{FileId, PaneId},
         language::ResolvedLanguage,
     },
-    features::syntax::{Index, IndexStats, Source, TokenSpan, Window, WindowTokens},
+    features::syntax::{
+        Index, IndexStats, Source, TokenSpan, TreeIndex, TreeStats, Window, WindowTokens,
+    },
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -126,6 +128,7 @@ struct State {
     evictions: usize,
     prune: Option<Vec<FileId>>,
     index_stats: IndexStats,
+    tree_stats: TreeStats,
 }
 struct Shared {
     state: Mutex<State>,
@@ -152,6 +155,7 @@ pub(crate) struct Worker(Arc<Owner>);
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Stats {
     pub index: IndexStats,
+    pub tree: TreeStats,
     pub cache_bytes: usize,
     pub cache_hits: usize,
     pub evictions: usize,
@@ -174,6 +178,7 @@ impl Worker {
             .name("loom-syntax".into())
             .spawn(move || {
                 let mut index = Index::default();
+                let mut trees = TreeIndex::default();
                 loop {
                     let job = {
                         let mut state = background.state.lock().unwrap();
@@ -189,7 +194,10 @@ impl Worker {
                         if let Some(open) = state.prune.take() {
                             drop(state);
                             index.retain(&open);
-                            background.state.lock().unwrap().index_stats = index.stats;
+                            trees.retain(&open);
+                            let mut state = background.state.lock().unwrap();
+                            state.index_stats = index.stats;
+                            state.tree_stats = trees.stats;
                             continue;
                         }
                         let document = state.pending.pop_front().unwrap();
@@ -227,16 +235,29 @@ impl Worker {
                     };
                     let (request, windows, cancel) = job;
                     before_prepare();
-                    let result = index.prepare(
-                        request.document,
-                        request.source.clone(),
-                        request.lang,
-                        &windows,
-                        &cancel,
-                    );
+                    // Languages with an enabled grammar are read from a syntax
+                    // tree; the rest still go through the line lexer.
+                    let result = if TreeIndex::handles(request.lang) {
+                        trees.prepare(
+                            request.document,
+                            request.source.clone(),
+                            request.lang,
+                            &windows,
+                            &cancel,
+                        )
+                    } else {
+                        index.prepare(
+                            request.document,
+                            request.source.clone(),
+                            request.lang,
+                            &windows,
+                            &cancel,
+                        )
+                    };
                     let mut state = background.state.lock().unwrap();
                     state.running = None;
                     state.index_stats = index.stats;
+                    state.tree_stats = trees.stats;
                     if background.stopped.load(Ordering::Acquire) {
                         break;
                     }
@@ -477,6 +498,7 @@ impl Worker {
         let state = self.0.0.state.lock().unwrap();
         Stats {
             index: state.index_stats,
+            tree: state.tree_stats,
             cache_bytes: state.bytes,
             cache_hits: state.hits,
             evictions: state.evictions,
@@ -484,6 +506,9 @@ impl Worker {
     }
 }
 
+#[cfg(test)]
+#[path = "syntax_worker_bench.rs"]
+mod bench;
 #[cfg(test)]
 #[path = "syntax_worker_tests.rs"]
 mod tests;

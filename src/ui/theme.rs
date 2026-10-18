@@ -160,6 +160,10 @@ const AURA_DARK: Palette = Palette {
             (HighlightId::COMMENT, HighlightStyle::fg(0x64748b)),
             (HighlightId::NUMBER, HighlightStyle::fg(0xfb923c)),
             (HighlightId::PROPERTY, HighlightStyle::fg(0xa78bfa)),
+            (HighlightId::CONSTANT_BUILTIN, HighlightStyle::fg(0xf472b6)),
+            (HighlightId::VARIABLE_BUILTIN, HighlightStyle::fg(0xf472b6)),
+            (HighlightId::CONSTRUCTOR, HighlightStyle::fg(0xfbbf24)),
+            (HighlightId::MODULE, HighlightStyle::fg(0xfbbf24)),
         ],
         modifiers: &[],
     },
@@ -227,6 +231,10 @@ const AURA_LIGHT: Palette = Palette {
             (HighlightId::COMMENT, HighlightStyle::fg(0x64748b)),
             (HighlightId::NUMBER, HighlightStyle::fg(0xc2410c)),
             (HighlightId::PROPERTY, HighlightStyle::fg(0x7c3aed)),
+            (HighlightId::CONSTANT_BUILTIN, HighlightStyle::fg(0xdb2777)),
+            (HighlightId::VARIABLE_BUILTIN, HighlightStyle::fg(0xdb2777)),
+            (HighlightId::CONSTRUCTOR, HighlightStyle::fg(0xb45309)),
+            (HighlightId::MODULE, HighlightStyle::fg(0xb45309)),
         ],
         modifiers: &[],
     },
@@ -295,6 +303,10 @@ const EMBER: Palette = Palette {
             (HighlightId::COMMENT, HighlightStyle::fg(0x78716c)),
             (HighlightId::NUMBER, HighlightStyle::fg(0xc4b5fd)),
             (HighlightId::PROPERTY, HighlightStyle::fg(0xfdba74)),
+            (HighlightId::CONSTANT_BUILTIN, HighlightStyle::fg(0xfb7185)),
+            (HighlightId::VARIABLE_BUILTIN, HighlightStyle::fg(0xfb7185)),
+            (HighlightId::CONSTRUCTOR, HighlightStyle::fg(0x5eead4)),
+            (HighlightId::MODULE, HighlightStyle::fg(0x5eead4)),
         ],
         modifiers: &[],
     },
@@ -363,6 +375,10 @@ const HIGH_CONTRAST: Palette = Palette {
             (HighlightId::COMMENT, HighlightStyle::fg(0x9ca3af)),
             (HighlightId::NUMBER, HighlightStyle::fg(0xffab5e)),
             (HighlightId::PROPERTY, HighlightStyle::fg(0xd2a8ff)),
+            (HighlightId::CONSTANT_BUILTIN, HighlightStyle::fg(0xff7edb)),
+            (HighlightId::VARIABLE_BUILTIN, HighlightStyle::fg(0xff7edb)),
+            (HighlightId::CONSTRUCTOR, HighlightStyle::fg(0xffd60a)),
+            (HighlightId::MODULE, HighlightStyle::fg(0xffd60a)),
         ],
         modifiers: &[],
     },
@@ -571,6 +587,22 @@ mod tests {
                 assert_eq!(
                     theme.palette.syntax_color(class),
                     Color(rgb),
+                    "{id} {class:?}"
+                );
+            }
+            // Built-in constants and variables read like keywords, constructors and
+            // modules like types, as the former lexer drew true, this and Names.
+            for (class, like) in [
+                (HighlightId::CONSTANT_BUILTIN, HighlightId::KEYWORD),
+                (HighlightId::VARIABLE_BUILTIN, HighlightId::KEYWORD),
+                (HighlightId::CONSTRUCTOR, HighlightId::TYPE),
+                (HighlightId::MODULE, HighlightId::TYPE),
+                (HighlightId::FUNCTION_BUILTIN, HighlightId::FUNCTION),
+                (HighlightId::FUNCTION_MACRO, HighlightId::FUNCTION),
+            ] {
+                assert_eq!(
+                    theme.palette.syntax_color(class),
+                    theme.palette.syntax_color(like),
                     "{id} {class:?}"
                 );
             }

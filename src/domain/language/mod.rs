@@ -12,9 +12,13 @@ mod rules;
 
 // Only the application's tests compare the table with the files on disk; the
 // domain-only verification package compiles this module without that test.
+// The syntax feature reads grammar queries; the domain-only verification
+// package compiles this module without that reader.
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use self::embedded::{Row, files as embedded_files};
+#[allow(unused_imports)]
+pub use self::embedded::{grammar_file, grammar_names};
 pub use self::registry::{LanguageDefinition, Registry};
 // The settings and the application use these; the domain-only verification
 // package compiles this module without those users.

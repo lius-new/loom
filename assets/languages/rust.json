@@ -3,6 +3,6 @@
   "display_name": "Rust",
   "badge": "RS",
   "comments": { "line": "//", "block": ["/*", "*/"] },
-  "variants": [{ "id": "rust" }],
+  "variants": [{ "id": "rust", "grammar": "rust" }],
   "files": [{ "extensions": ["rs"], "variant": "rust" }]
 }

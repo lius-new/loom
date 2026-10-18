@@ -383,3 +383,18 @@ test('domain verification may share only the language asset scanner through its 
   ])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('can only include the production domain entry point')),source);
   assert.ok(violations({'crates/workspace-tests/src/other.rs':scanner},policy()).some(e=>e.includes('can only include the production domain entry point')));
 });
+test('only the grammar table may name grammar crates and only the engine files use the runtime',()=>{
+  const grammar='use tree_sitter::Language;\nfn f() { tree_sitter_rust::LANGUAGE; }';
+  assert.deepEqual(violations({'src/features/syntax/grammars.rs':grammar},policy()),[]);
+  assert.deepEqual(violations({'src/features/syntax/queries.rs':'use tree_sitter::Query;'},policy()),[]);
+  assert.deepEqual(violations({'src/features/syntax/treesitter.rs':'use tree_sitter::Parser;\nuse streaming_iterator::StreamingIterator;'},policy()),[]);
+  for(const [file,source] of [
+    ['src/features/syntax/queries.rs','fn f() { tree_sitter_rust::LANGUAGE; }'],
+    ['src/features/syntax/treesitter.rs','fn f() { tree_sitter_c_sharp::LANGUAGE; }'],
+    ['src/features/syntax/lexer.rs','use tree_sitter::Parser;'],
+    ['src/features/syntax/index.rs','fn f() { tree_sitter_javascript::LANGUAGE; }'],
+    ['src/features/highlighting/model.rs','use tree_sitter::Query;'],
+    ['src/ui/theme.rs','use tree_sitter::Query;'],
+    ['src/features/syntax/queries.rs','use streaming_iterator::StreamingIterator;'],
+  ])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('unregistered dependency')),`${file}: ${source}`);
+});

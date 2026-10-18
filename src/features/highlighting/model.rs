@@ -24,6 +24,12 @@ const CLASS_NAMES: &[&str] = &[
     "punctuation",
     "tag",
     "attribute",
+    "constant.builtin",
+    "variable.builtin",
+    "function.builtin",
+    "function.macro",
+    "constructor",
+    "module",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -50,6 +56,12 @@ impl HighlightId {
     pub const PUNCTUATION: Self = Self(16);
     pub const TAG: Self = Self(17);
     pub const ATTRIBUTE: Self = Self(18);
+    pub const CONSTANT_BUILTIN: Self = Self(19);
+    pub const VARIABLE_BUILTIN: Self = Self(20);
+    pub const FUNCTION_BUILTIN: Self = Self(21);
+    pub const FUNCTION_MACRO: Self = Self(22);
+    pub const CONSTRUCTOR: Self = Self(23);
+    pub const MODULE: Self = Self(24);
 
     pub const COUNT: usize = CLASS_NAMES.len();
 
@@ -146,6 +158,12 @@ mod tests {
             (HighlightId::PUNCTUATION, "punctuation"),
             (HighlightId::TAG, "tag"),
             (HighlightId::ATTRIBUTE, "attribute"),
+            (HighlightId::CONSTANT_BUILTIN, "constant.builtin"),
+            (HighlightId::VARIABLE_BUILTIN, "variable.builtin"),
+            (HighlightId::FUNCTION_BUILTIN, "function.builtin"),
+            (HighlightId::FUNCTION_MACRO, "function.macro"),
+            (HighlightId::CONSTRUCTOR, "constructor"),
+            (HighlightId::MODULE, "module"),
         ];
         assert_eq!(expected.len(), HighlightId::COUNT);
         for (id, name) in expected {
@@ -162,7 +180,14 @@ mod tests {
             id("function.method.call"),
             Some(HighlightId::FUNCTION_METHOD)
         );
-        assert_eq!(id("function.macro"), Some(HighlightId::FUNCTION));
+        assert_eq!(id("function.macro"), Some(HighlightId::FUNCTION_MACRO));
+        assert_eq!(
+            id("function.macro.rules"),
+            Some(HighlightId::FUNCTION_MACRO)
+        );
+        assert_eq!(id("function.special"), Some(HighlightId::FUNCTION));
+        assert_eq!(id("constant.numeric"), Some(HighlightId::CONSTANT));
+        assert_eq!(id("property.definition"), Some(HighlightId::PROPERTY));
         assert_eq!(id("type.builtin"), Some(HighlightId::TYPE_BUILTIN));
         assert_eq!(id("nonsense"), None);
         assert_eq!(id("nonsense.keyword"), None, "only a prefix is an ancestor");
@@ -180,6 +205,15 @@ mod tests {
             Some(HighlightId::COMMENT)
         );
         assert_eq!(HighlightId::KEYWORD.parent(), None);
+        assert_eq!(
+            HighlightId::FUNCTION_BUILTIN.parent(),
+            Some(HighlightId::FUNCTION)
+        );
+        assert_eq!(
+            HighlightId::VARIABLE_BUILTIN.parent(),
+            Some(HighlightId::VARIABLE)
+        );
+        assert_eq!(HighlightId::CONSTRUCTOR.parent(), None);
     }
 
     #[test]

@@ -30,7 +30,7 @@ impl Source {
     pub fn identity(&self) -> usize {
         Arc::as_ptr(&self.text) as usize
     }
-    fn changes_since(&self, old: &Self) -> Option<Vec<TextRevision>> {
+    pub(crate) fn changes_since(&self, old: &Self) -> Option<Vec<TextRevision>> {
         let mut current = (old.version, old.identity());
         let mut changes = Vec::new();
         for revision in self
@@ -117,7 +117,7 @@ impl Line {
             }
             let span = TokenSpan {
                 range: revision.map(span.range.start, false)..revision.map(span.range.end, true),
-                kind: span.kind,
+                class: span.class,
             };
             if self.future.is_empty() && span.range.start == cursor {
                 cursor = span.range.end;
@@ -169,7 +169,7 @@ impl Line {
             stats.scanned_bytes += range.len();
             let span = TokenSpan {
                 range: self.range.start + range.start..self.range.start + range.end,
-                kind,
+                class: kind.highlight(),
             };
             while self
                 .future

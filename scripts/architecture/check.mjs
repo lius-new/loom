@@ -46,6 +46,7 @@ export function dependencies(source) {
       } else if(/^[a-zA-Z_]\w*$/.test(ts[i+2]??''))found.add('crate::'+ts[i+2]);
     }
     if(['lgui','image','notify','conpty','portable_pty','windows_sys','libc'].includes(ts[i])&&ts[i+1]==='::')found.add(ts[i]);
+    if(/^tree_sitter\w*$/.test(ts[i])&&ts[i+1]==='::')found.add(ts[i]);
     if(ts[i]==='std'&&ts[i+1]==='::'&&['fs','process','thread','net'].includes(ts[i+2]))found.add('std::'+ts[i+2]);
     if(ts[i]==='std'&&ts[i+1]==='::'&&ts[i+2]==='{') {
       let depth=1;
@@ -96,7 +97,7 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/document_filesystem.rs')return ['infrastructure','std::fs'].includes(root);
   if(file==='src/infrastructure/file_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
   if(file==='src/infrastructure/file_drop.rs')return ['infrastructure','domain','lgui','windows_sys'].includes(root);
-  if(file==='src/infrastructure/syntax_worker.rs'||file==='src/infrastructure/syntax_worker_tests.rs')return ['infrastructure','features','domain','std::thread'].includes(root);
+  if(file==='src/infrastructure/syntax_worker.rs'||file==='src/infrastructure/syntax_worker_tests.rs'||file==='src/infrastructure/syntax_worker_bench.rs')return ['infrastructure','features','domain','std::thread'].includes(root);
   if(file==='src/infrastructure/keymap_filesystem.rs')return ['infrastructure','features','std::fs'].includes(root);
   if(file.startsWith('src/features/settings/'))return ['features','domain','serde','serde_json'].includes(root);
   if(['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs'].includes(file))return ['infrastructure','features','domain','std::fs'].includes(root);
@@ -116,6 +117,10 @@ export function allowed(file, dependency) {
   if(['src/ui/editor/view.rs','src/ui/components/text.rs'].includes(file)&&root==='unicode_width')return true;
   if(file==='src/ui/explorer/context_menu.rs'&&root==='unicode_width')return true;
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
+  // Native parsers: only the grammar table names grammar crates; the engine files use the runtime.
+  if(file==='src/features/syntax/grammars.rs')return ['features','domain','tree_sitter','tree_sitter_c_sharp','tree_sitter_javascript','tree_sitter_rust','tree_sitter_typescript'].includes(root);
+  if(file==='src/features/syntax/queries.rs'||file==='src/features/syntax/treesitter_tests.rs'||file==='src/features/syntax/treesitter_bench.rs')return ['features','domain','tree_sitter'].includes(root);
+  if(file==='src/features/syntax/treesitter.rs')return ['features','domain','tree_sitter','streaming_iterator'].includes(root);
   if(own==='features')return ['features','domain','input'].includes(root);
   if(own==='infrastructure')return ['infrastructure','domain'].includes(root)||dependency==='lgui'||dependency==='std::thread';
   return own==='legacy'&&root==='domain';

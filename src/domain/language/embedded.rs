@@ -12,6 +12,21 @@ pub(crate) fn files() -> (&'static [Row], &'static [Row]) {
 /// (name, file, path from the repository root, contents)
 pub(crate) type Row = (&'static str, &'static str, &'static str, &'static str);
 
+/// The text of a built-in grammar resource such as `highlights.scm`.
+pub fn grammar_file(grammar: &str, file: &str) -> Option<&'static str> {
+    GRAMMAR_FILES
+        .iter()
+        .find(|(name, name_file, ..)| *name == grammar && *name_file == file)
+        .map(|(.., contents)| *contents)
+}
+
+/// The names of the grammars that have resources, sorted.
+pub fn grammar_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = GRAMMAR_FILES.iter().map(|(name, ..)| *name).collect();
+    names.dedup();
+    names
+}
+
 /// The registry for the embedded descriptions and grammar directories.
 pub(crate) fn registry() -> Result<Registry, RegistryError> {
     let sources: Vec<(&str, &str)> = LANGUAGE_FILES

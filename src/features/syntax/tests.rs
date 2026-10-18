@@ -19,7 +19,7 @@ fn expected(buffer: &TextBuffer, window: &Window) -> Vec<TokenSpan> {
     )
     .map(|(range, kind)| TokenSpan {
         range: window.line.start + range.start..window.line.start + range.end,
-        kind,
+        class: kind.highlight(),
     })
     .filter(|span| span.range.end > window.range.start && span.range.start < window.range.end)
     .collect()

@@ -1,6 +1,6 @@
 //! Turn ready semantic ranges into current-theme spans. No lexing occurs here.
 use crate::{
-    features::syntax::{TokenKind, TokenSpan},
+    features::{highlighting::HighlightId, syntax::TokenSpan},
     ui::theme,
 };
 use lgui::prelude::Color;
@@ -39,7 +39,7 @@ pub(crate) fn highlight_window(
         if from >= to {
             continue;
         }
-        let color = color_for(span.kind);
+        let color = color_for(span.class);
         let text = &buffer.text()[from..to];
         if let Some((previous, previous_color)) = result.last_mut()
             && *previous_color == color
@@ -59,9 +59,8 @@ pub(crate) fn highlight_window(
     result
 }
 
-fn color_for(kind: TokenKind) -> Color {
-    kind.highlight()
-        .map_or(theme::c().text, theme::syntax_color)
+fn color_for(class: Option<HighlightId>) -> Color {
+    class.map_or(theme::c().text, theme::syntax_color)
 }
 
 #[cfg(test)]
@@ -76,7 +75,10 @@ mod tests {
     fn pending_and_ready_spans_preserve_exact_text_and_combining_graphemes() {
         let buffer = TextBuffer::new("const e\u{301}=\"中👩‍💻\"; // comment");
         let tokens: Vec<_> = Tokens::new(buffer.text(), builtin("javascript"), 0)
-            .map(|(range, kind)| TokenSpan { range, kind })
+            .map(|(range, kind)| TokenSpan {
+                range,
+                class: kind.highlight(),
+            })
             .collect();
         let window = 0..buffer.len();
         for ready in [
