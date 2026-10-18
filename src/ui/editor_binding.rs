@@ -54,6 +54,7 @@ pub(crate) struct ViewState {
     pub caret_dragging: bool,
     pub preedit: Option<Preedit>,
     pub editor_gutter_hover: Option<(PaneId, usize)>,
+    pub editor_diagnostic_hover: Option<(PaneId, Range<usize>)>,
     pub editor_hovered: Option<PaneId>,
     pub editor_vertical_scrollbar_dragging: bool,
     pub editor_horizontal_scrollbar_dragging: bool,
@@ -102,6 +103,8 @@ pub(crate) enum Event {
         metrics: Metrics,
     },
     GutterHover(Option<(PaneId, usize)>),
+    /// The range of the diagnostic now under the pointer, if any.
+    DiagnosticHover(Option<(PaneId, Range<usize>)>),
     Peek {
         line: usize,
     },

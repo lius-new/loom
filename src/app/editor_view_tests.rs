@@ -1352,7 +1352,7 @@ fn editor_menu_executes_its_intent_and_keeps_editor_focus() {
 fn diagnostics_from_a_server_are_underlined_in_the_editor() {
     use lgui::{
         application::{AppView, ApplicationContext},
-        core::UiScale,
+        core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output},
         session::UiSession,
     };
     use std::sync::Arc;
@@ -1423,18 +1423,27 @@ fn diagnostics_from_a_server_are_underlined_in_the_editor() {
     let state: AppContext = exposed.lock().unwrap().clone().unwrap();
     // Make the services see the document, then wait for the server's answer.
     state.update(|app| app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1));
-    let underline = lgui::prelude::VisualStyle::filled(theme::c().error);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    loop {
-        tasks.run_all();
-        session.render_view(&view, rect, UiScale::ONE);
-        if session
+    // The underline is a wave stroked in the error colour.
+    let squiggle = |session: &UiSession| {
+        session
             .tree()
             .nodes()
             .iter()
-            .any(|node| node.style == underline)
-        {
-            break;
+            .find(|node| {
+                node.path.is_some()
+                    && node
+                        .path_style
+                        .stroke
+                        .is_some_and(|stroke| stroke.color == theme::c().error)
+            })
+            .map(|node| node.paint_bounds)
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let underline = loop {
+        tasks.run_all();
+        session.render_view(&view, rect, UiScale::ONE);
+        if let Some(bounds) = squiggle(&session) {
+            break bounds;
         }
         assert!(
             std::time::Instant::now() < deadline,
@@ -1450,5 +1459,58 @@ fn diagnostics_from_a_server_are_underlined_in_the_editor() {
                 .collect::<Vec<_>>()
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    };
+    // The scrollbar's ruler marks the line too.
+    assert!(
+        session.tree().nodes().iter().any(|node| {
+            node.style == lgui::prelude::VisualStyle::filled(theme::c().error)
+                && node.layout_rect.right == rect.right - 1.0
+        }),
+        "no ruler mark for the error"
+    );
+    // The pointer over the underlined text opens its message.
+    let has_message = |session: &UiSession| {
+        session
+            .tree()
+            .nodes()
+            .iter()
+            .any(|node| node.text.as_deref() == Some("fake error"))
+    };
+    assert!(!has_message(&session));
+    let over = Point::new(
+        (underline.left + underline.right) / 2.0,
+        underline.top - 4.0,
+    );
+    let send = |session: &mut UiSession, input| {
+        let events = session.handle_input(input);
+        dispatch_runtime_output(
+            events,
+            &context,
+            &lgui::window::WindowId::new("diagnostic-test"),
+            |action| session.handle_default_action(action),
+            |_| {},
+        );
+        session.render_view(&view, rect, UiScale::ONE);
+    };
+    send(
+        &mut session,
+        InputEvent::PointerMove(PointerData::mouse(over)),
+    );
+    assert!(has_message(&session), "no hover card over the underline");
+    assert!(
+        session
+            .tree()
+            .nodes()
+            .iter()
+            .any(|node| node.text.as_deref() == Some("fake")),
+        "the card names the reporting tool"
+    );
+    send(
+        &mut session,
+        InputEvent::PointerMove(PointerData::mouse(Point::new(700.0, 300.0))),
+    );
+    assert!(
+        !has_message(&session),
+        "the card stays after the pointer left"
+    );
 }

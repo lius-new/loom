@@ -190,6 +190,7 @@ pub(crate) fn snapshot(
                 cursor: value.cursor,
             }),
         editor_gutter_hover: state.editor_gutter_hover,
+        editor_diagnostic_hover: state.editor_diagnostic_hover.clone(),
         editor_hovered: state.editor_hovered,
         editor_vertical_scrollbar_dragging: state.editor_vertical_scrollbar_dragging,
         editor_horizontal_scrollbar_dragging: state.editor_horizontal_scrollbar_dragging,
@@ -350,6 +351,8 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
         }
         Event::PointerUp => app.editor.drag = None,
         Event::Wheel { x, y, metrics } => {
+            // The card belongs to where the pointer was; scrolling moves the text.
+            app.editor.editor_diagnostic_hover = None;
             let (x, y) = if app.editor.modifiers.shift() {
                 (x + y, 0.0)
             } else {
@@ -367,7 +370,15 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
             app.editor.editor_gutter_hover = hovered;
             return changed;
         }
-        Event::Text(text) => editor::insert_text(app, &text, rect),
+        Event::DiagnosticHover(hovered) => {
+            let changed = app.editor.editor_diagnostic_hover != hovered;
+            app.editor.editor_diagnostic_hover = hovered;
+            return changed;
+        }
+        Event::Text(text) => {
+            app.editor.editor_diagnostic_hover = None;
+            editor::insert_text(app, &text, rect)
+        }
         Event::Composition { text, cursor } => editor::update_composition(app, &text, cursor),
         Event::CompositionEnd => app.editor.ime = None,
         Event::Focus => app.editor.focused = true,

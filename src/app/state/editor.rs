@@ -36,6 +36,9 @@ pub struct EditorState {
     /// The 1-based line under the pointer in a pane's gutter, which
     /// thickens that line's Git change bar.
     pub editor_gutter_hover: Option<(PaneId, usize)>,
+    /// The range of the diagnostic under the pointer in a pane's code, whose
+    /// message shows in a hover card.
+    pub editor_diagnostic_hover: Option<(PaneId, Range<usize>)>,
     /// Pointer x offset from the editor horizontal thumb's left.
     pub editor_horizontal_scrollbar_drag_offset: f32,
     /// True while the editor's horizontal overlay scrollbar is being dragged.

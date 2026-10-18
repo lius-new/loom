@@ -864,6 +864,15 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     app.editor.editor_gutter_hover = None;
                     changed = true;
                 }
+                if app
+                    .editor
+                    .editor_diagnostic_hover
+                    .as_ref()
+                    .is_some_and(|(pane, _)| Some(*pane) != hovered)
+                {
+                    app.editor.editor_diagnostic_hover = None;
+                    changed = true;
+                }
                 if hovered.is_none() {
                     app.chrome.welcome_hover = None;
                     app.chrome.workspace_home_hover = None;

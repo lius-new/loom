@@ -11,13 +11,15 @@ use lgui::core::{
     CursorIcon, EventPolicy, KeyState, PointerButton, SemanticRole, Semantics, UiElement,
     UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip,
 };
-use lgui::prelude::{Element, UiRect, VisualStyle, group, panel, text};
+use lgui::core::{PathStyle, Point, Stroke, UiPath, UiPathCommand, path};
+use lgui::prelude::{Color, Element, UiRect, VisualStyle, group, panel, text};
 use lgui::text::{self, TextLayout, TextLayoutRequest};
 
 use super::gutter;
 use super::syntax;
 use crate::domain::identity::PaneId;
 use crate::domain::line_change::LineChange;
+use crate::features::language_service::diagnostics::{Diagnostic, Severity};
 use crate::ui::editor_binding::{Binding, Event, PeekPlacement, ViewState};
 use crate::ui::fonts;
 use crate::ui::theme;
@@ -271,6 +273,8 @@ pub(crate) fn render(
             })
             .collect();
         let ready = state.highlights(document, windows);
+        // Where each underlined diagnostic is on screen, least serious first.
+        let mut diagnostic_hits: Vec<(UiRect, Range<usize>)> = Vec::new();
         for line_index in visible_lines.clone() {
             let y = code_top + line_index as f32 * fonts::editor().line_h;
             let window = line_window(&buffer, line_index, scroll_x, metrics.viewport_w);
@@ -308,16 +312,17 @@ pub(crate) fn render(
             // Hints (a compiler's "add `;` here") are not underlined: they only
             // repeat a nearby error. Of the rest, the more serious is drawn last so
             // it stays on top where two share a place.
-            use crate::features::language_service::diagnostics::Severity;
-            for (severity, colour) in [
-                (Severity::Information, theme::c().accent),
-                (Severity::Warning, theme::c().warning),
-                (Severity::Error, theme::c().error),
-            ] {
+            for severity in [Severity::Information, Severity::Warning, Severity::Error] {
                 for diagnostic in s.diagnostics.iter().filter(|d| d.severity == severity) {
                     if let Some(r) = line_rect(&diagnostic.range) {
-                        let underline = UiRect::new(r.left, r.bottom - 2.0, r.right, r.bottom);
-                        code = code.child(panel(underline, VisualStyle::filled(colour)));
+                        code = code.child(squiggle(r, severity_colour(severity)));
+                        let on_screen = UiRect::new(
+                            r.left - scroll_x,
+                            r.top - scroll_y,
+                            r.right - scroll_x,
+                            r.bottom - scroll_y,
+                        );
+                        diagnostic_hits.push((on_screen, diagnostic.range.clone()));
                     }
                 }
             }
@@ -456,6 +461,38 @@ pub(crate) fn render(
 
         content = content.child(clip(code_viewport, -scroll_x, -scroll_y).child(code));
         root = root.child(content);
+
+        // The pointer over an underline opens its message, as in VS Code and
+        // IntelliJ. Where two overlap, the more serious one wins.
+        let hover_area = UiRect::new(
+            code_viewport.left,
+            code_viewport.top,
+            code_viewport.right - if has_vertical { SCROLLBAR_SIZE } else { 0.0 },
+            code_viewport.bottom - if has_horizontal { SCROLLBAR_SIZE } else { 0.0 },
+        );
+        let hovered_diagnostic = s
+            .editor_diagnostic_hover
+            .as_ref()
+            .filter(|(hovered_pane, _)| *hovered_pane == pane)
+            .and_then(|(_, range)| diagnostic_hits.iter().rev().find(|(_, r)| r == range))
+            .cloned();
+        let st_diagnostic_hover = state.clone();
+        let dragging = s.dragging;
+        root = root.on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
+            if let UiEventPayload::PointerMove { pointer } = payload {
+                let point = pointer.point;
+                let hovered = (!dragging && hover_area.contains(point))
+                    .then(|| {
+                        diagnostic_hits
+                            .iter()
+                            .rev()
+                            .find(|(r, _)| r.contains(point))
+                    })
+                    .flatten()
+                    .map(|(_, range)| (pane, range.clone()));
+                st_diagnostic_hover.send(Event::DiagnosticHover(hovered));
+            }
+        });
         if s.peek_visible {
             if let Some(overlay) = state.overlay(PeekPlacement {
                 rect: UiRect::new(rect.left, code_top, rect.right, rect.bottom),
@@ -483,6 +520,18 @@ pub(crate) fn render(
                     .map(|mark| (mark.first, mark.lines, mark.change)),
             ));
         }
+        if !s.diagnostics.is_empty() {
+            root = root.child(diagnostic_ruler(
+                rect,
+                metrics,
+                has_horizontal,
+                fonts::editor().line_h,
+                s.diagnostics
+                    .iter()
+                    .filter(|d| d.severity != Severity::Hint)
+                    .map(|d| (document.buffer.line_of(d.range.start), d.severity)),
+            ));
+        }
         if has_vertical {
             root = root.child(vertical_scrollbar(
                 pane,
@@ -508,6 +557,12 @@ pub(crate) fn render(
         }
         if has_vertical && has_horizontal {
             root = root.child(scrollbar_corner(pane, rect));
+        }
+        if let Some((anchor, range)) = hovered_diagnostic {
+            let found: Vec<_> = s.diagnostics.iter().filter(|d| d.range == range).collect();
+            if let Some(card) = diagnostic_card(&found, anchor, hover_area) {
+                root = root.child(card);
+            }
         }
     }
 
@@ -597,6 +652,187 @@ pub(crate) fn overview_ruler(
         ruler = flush(ruler, previous);
     }
     ruler
+}
+
+fn severity_colour(severity: Severity) -> Color {
+    match severity {
+        Severity::Error => theme::c().error,
+        Severity::Warning => theme::c().warning,
+        Severity::Information | Severity::Hint => theme::c().accent,
+    }
+}
+
+/// Half the period and the height of a diagnostic's wavy underline.
+const SQUIGGLE_STEP: f32 = 2.0;
+const SQUIGGLE_HEIGHT: f32 = 2.5;
+
+/// A wavy underline along the bottom of `r`, the way VS Code and IntelliJ mark
+/// a problem; a straight bar reads as a link or a cursor. It is at least one
+/// period wide so a one-character range still shows a wave.
+fn squiggle(r: UiRect, colour: Color) -> Element {
+    let right = r.right.max(r.left + 2.0 * SQUIGGLE_STEP);
+    let low = r.bottom - 1.0;
+    let high = low - SQUIGGLE_HEIGHT;
+    let mut commands = vec![UiPathCommand::MoveTo(Point::new(r.left, low))];
+    let mut x = r.left;
+    let mut up = true;
+    while x < right {
+        x = (x + SQUIGGLE_STEP).min(right);
+        commands.push(UiPathCommand::LineTo(Point::new(
+            x,
+            if up { high } else { low },
+        )));
+        up = !up;
+    }
+    path(
+        UiRect::new(r.left, high - 1.0, right, low + 1.0),
+        UiPath::new(commands),
+        PathStyle {
+            fill: None,
+            fill_alpha: 0,
+            stroke: Some(Stroke::new(colour, 1.0, 255)),
+        },
+    )
+}
+
+/// Diagnostic marks along the editor's right edge, beside the Git lane, so
+/// problems off screen can be found from the scrollbar. A line's most serious
+/// problem is drawn last, over the others.
+fn diagnostic_ruler(
+    rect: UiRect,
+    metrics: ScrollMetrics,
+    has_horizontal: bool,
+    row_height: f32,
+    marks: impl IntoIterator<Item = (usize, Severity)>,
+) -> Element {
+    let corner = if has_horizontal { SCROLLBAR_SIZE } else { 0.0 };
+    let lane = UiRect::new(
+        rect.right - 5.0,
+        rect.top,
+        rect.right - 1.0,
+        rect.bottom - corner,
+    );
+    let scale = lane.height() / metrics.content_h.max(metrics.viewport_h);
+    let mut marks: Vec<_> = marks.into_iter().collect();
+    marks.sort_by_key(|&(line, severity)| (std::cmp::Reverse(severity), line));
+    marks.dedup();
+    let mut ruler = group(lane);
+    for (line, severity) in marks {
+        let top = (lane.top + line as f32 * row_height * scale).min(lane.bottom - MIN_MARK_LENGTH);
+        let bottom = (lane.top + (line + 1) as f32 * row_height * scale).max(top + MIN_MARK_LENGTH);
+        ruler = ruler.child(panel(
+            UiRect::new(lane.left, top, lane.right, bottom),
+            VisualStyle::filled(severity_colour(severity)),
+        ));
+    }
+    ruler
+}
+
+const CARD_PAD: f32 = 8.0;
+const CARD_ROW: f32 = 18.0;
+const CARD_MAX_W: f32 = 640.0;
+
+/// The hover card of the diagnostics at `anchor`: each one's message beside a
+/// mark of its severity, with the reporting tool and code faint after it, as
+/// VS Code shows `rustc(E0425)`. It opens above the underline, or below when
+/// there is no room, and stays inside `area`.
+fn diagnostic_card(found: &[&Diagnostic], anchor: UiRect, area: UiRect) -> Option<Element> {
+    if found.is_empty() {
+        return None;
+    }
+    let mut found = found.to_vec();
+    found.sort_by_key(|d| d.severity);
+    let size = theme::UI_SIZE;
+    let measure = |s: &str| crate::ui::tabs::measure(s, size, 400);
+    let mark_w = 14.0;
+    // One entry per diagnostic: its message lines and the faint origin.
+    let entries: Vec<(Severity, Vec<&str>, Option<String>)> = found
+        .iter()
+        .map(|d| {
+            let origin = match (&d.source, &d.code) {
+                (Some(source), Some(code)) => Some(format!("{source}({code})")),
+                (Some(source), None) => Some(source.clone()),
+                (None, Some(code)) => Some(code.clone()),
+                (None, None) => None,
+            };
+            let lines = d.message.lines().filter(|l| !l.trim().is_empty()).collect();
+            (d.severity, lines, origin)
+        })
+        .collect();
+    let mut natural = 0.0f32;
+    let mut rows = 0usize;
+    for (_, lines, origin) in &entries {
+        for (i, line) in lines.iter().enumerate() {
+            let mut w = measure(line);
+            if i + 1 == lines.len()
+                && let Some(origin) = origin
+            {
+                w += 8.0 + measure(origin);
+            }
+            natural = natural.max(w);
+        }
+        rows += lines.len().max(1);
+    }
+    let width = (natural + mark_w + 2.0 * CARD_PAD)
+        .min(CARD_MAX_W)
+        .min((area.width() - 8.0).max(80.0));
+    let height = rows as f32 * CARD_ROW + 2.0 * CARD_PAD + (entries.len() - 1) as f32 * 9.0;
+    let top = if anchor.top - height - 4.0 >= area.top {
+        anchor.top - height - 4.0
+    } else {
+        anchor.bottom + 4.0
+    };
+    let left = anchor
+        .left
+        .min(area.right - width - 4.0)
+        .max(area.left + 4.0);
+    let card_rect = UiRect::new(left, top, left + width, top + height);
+    let body = UiRect::new(
+        card_rect.left + CARD_PAD,
+        card_rect.top + CARD_PAD,
+        card_rect.right - CARD_PAD,
+        card_rect.bottom - CARD_PAD,
+    );
+    let mut content = clip(body, 0.0, 0.0);
+    let mut y = body.top;
+    for (index, (severity, lines, origin)) in entries.iter().enumerate() {
+        if index > 0 {
+            content = content.child(panel(
+                UiRect::new(body.left, y + 4.0, body.right, y + 5.0),
+                VisualStyle::filled(theme::c().border),
+            ));
+            y += 9.0;
+        }
+        let dot_top = y + (CARD_ROW - 8.0) / 2.0;
+        content = content.child(panel(
+            UiRect::new(body.left, dot_top, body.left + 8.0, dot_top + 8.0),
+            VisualStyle::filled(severity_colour(*severity)).radius(2.0),
+        ));
+        let text_left = body.left + mark_w;
+        for (i, line) in lines.iter().enumerate() {
+            let row = UiRect::new(text_left, y, body.right, y + CARD_ROW);
+            content = content.child(text(
+                row,
+                (*line).to_owned(),
+                theme::sans(theme::c().text_bright, size),
+            ));
+            if i + 1 == lines.len()
+                && let Some(origin) = origin
+            {
+                let after = text_left + measure(line) + 8.0;
+                content = content.child(text(
+                    UiRect::new(after, y, body.right.max(after), y + CARD_ROW),
+                    origin.clone(),
+                    theme::sans(theme::c().text_faint, size),
+                ));
+            }
+            y += CARD_ROW;
+        }
+        if lines.is_empty() {
+            y += CARD_ROW;
+        }
+    }
+    Some(theme::bordered(card_rect, theme::c().surface, theme::c().border, 4.0, 1.0).child(content))
 }
 
 pub(crate) fn vertical_scrollbar(
