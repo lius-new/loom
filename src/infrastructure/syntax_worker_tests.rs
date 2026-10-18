@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::language::builtin;
 
 fn stamp(id: u64, buffer: &TextBuffer) -> DocumentStamp {
     DocumentStamp::new(FileId::new(id), 1, 0, buffer)
@@ -11,10 +12,10 @@ fn moving_viewports_preserve_known_tokens_while_adjacent_pages_are_pending() {
     use crate::features::syntax::{TokenSpan, Tokens};
     use std::sync::atomic::AtomicUsize;
     for language in [
-        Language::PlainText,
-        Language::JavaScript,
-        Language::Rust,
-        Language::CSharp,
+        builtin("plaintext"),
+        builtin("javascript"),
+        builtin("rust"),
+        builtin("csharp"),
     ] {
         let buffer = TextBuffer::new("Alpha123 中e\u{301}=\"value\"; 456 /*note*/ ".repeat(200));
         let (send, receive) = mpsc::channel();
@@ -122,7 +123,7 @@ fn known_tokens_crossing_pages_remain_colored_when_the_original_page_leaves_the_
             PaneId::new(1),
             stamp(1, &buffer),
             Source::new(&buffer),
-            Language::PlainText,
+            builtin("plaintext"),
             vec![Window {
                 line: buffer.line_range(0),
                 range: buffer.grapheme_floor(start)..buffer.grapheme_floor(end),
@@ -149,7 +150,7 @@ fn query(worker: &Worker, pane: u64, id: u64, buffer: &TextBuffer) -> Vec<Window
         PaneId::new(pane),
         stamp(id, buffer),
         Source::new(buffer),
-        Language::JavaScript,
+        builtin("javascript"),
         vec![Window {
             line: buffer.line_range(0),
             range: buffer.line_range(0),
@@ -227,7 +228,7 @@ fn superseded_versions_are_cancelled_and_only_the_latest_is_published() {
         .prepare(
             FileId::new(1),
             Source::new(&buffer),
-            Language::JavaScript,
+            builtin("javascript"),
             &[Window {
                 line: buffer.line_range(0),
                 range: buffer.line_range(0),
@@ -321,7 +322,7 @@ fn a_new_incarnation_or_language_generation_never_reuses_cached_windows() {
             PaneId::new(1),
             stamp,
             Source::new(&buffer),
-            Language::JavaScript,
+            builtin("javascript"),
             window(),
         )
     };

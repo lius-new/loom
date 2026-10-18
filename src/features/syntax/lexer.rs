@@ -1,4 +1,4 @@
-use crate::domain::language::Language;
+use crate::domain::language::ResolvedLanguage;
 use std::ops::Range;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TokenKind {
@@ -12,19 +12,40 @@ pub enum TokenKind {
     Plain,
 }
 
+/// Which keyword table applies. The lexer keeps its own table because it is
+/// replaced in P3b; nothing here is part of a language description.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Dialect {
+    CSharp,
+    Rust,
+    Script,
+    Plain,
+}
+
+impl Dialect {
+    fn of(language: ResolvedLanguage) -> Self {
+        match language.name() {
+            "csharp" => Self::CSharp,
+            "rust" => Self::Rust,
+            "typescript" | "javascript" => Self::Script,
+            _ => Self::Plain,
+        }
+    }
+}
+
 pub(crate) struct Tokens<'a> {
     source: &'a str,
-    lang: Language,
+    dialect: Dialect,
     offset: usize,
     cancel: Option<&'a std::sync::atomic::AtomicBool>,
     checked: usize,
     stopped: bool,
 }
 impl<'a> Tokens<'a> {
-    pub(crate) fn new(source: &'a str, lang: Language, offset: usize) -> Self {
+    pub(crate) fn new(source: &'a str, lang: ResolvedLanguage, offset: usize) -> Self {
         Self {
             source,
-            lang,
+            dialect: Dialect::of(lang),
             offset,
             cancel: None,
             checked: 0,
@@ -102,9 +123,9 @@ impl Iterator for Tokens<'_> {
                 .rsplit(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
                 .next()
                 .unwrap_or("");
-            if is_keyword(text, self.lang) {
+            if is_keyword(text, self.dialect) {
                 TokenKind::Kw
-            } else if is_builtin_type(text, self.lang) || prev == "new" {
+            } else if is_builtin_type(text, self.dialect) || prev == "new" {
                 TokenKind::Type
             } else if self.peek() == Some('(') {
                 TokenKind::Fn
@@ -135,9 +156,9 @@ impl Iterator for Tokens<'_> {
         (!self.stopped).then_some((start..self.offset, kind))
     }
 }
-fn is_keyword(text: &str, lang: Language) -> bool {
-    let list: &[&str] = match lang {
-        Language::CSharp => &[
+fn is_keyword(text: &str, dialect: Dialect) -> bool {
+    let list: &[&str] = match dialect {
+        Dialect::CSharp => &[
             "namespace",
             "public",
             "sealed",
@@ -178,13 +199,13 @@ fn is_keyword(text: &str, lang: Language) -> bool {
             "struct",
             "enum",
         ],
-        Language::Rust => &[
+        Dialect::Rust => &[
             "pub", "struct", "impl", "fn", "self", "let", "mut", "use", "mod", "if", "else",
             "match", "for", "while", "loop", "return", "true", "false", "where", "type", "trait",
             "enum", "const", "static", "ref", "async", "await", "move", "in", "as", "box", "dyn",
             "unsafe", "extern", "crate", "super",
         ],
-        Language::TypeScript | Language::JavaScript => &[
+        Dialect::Script => &[
             "import",
             "from",
             "export",
@@ -222,26 +243,26 @@ fn is_keyword(text: &str, lang: Language) -> bool {
             "of",
             "as",
         ],
-        Language::PlainText => &[],
+        Dialect::Plain => &[],
     };
     list.contains(&text)
 }
 
-fn is_builtin_type(text: &str, lang: Language) -> bool {
-    let list: &[&str] = match lang {
-        Language::CSharp => &[
+fn is_builtin_type(text: &str, dialect: Dialect) -> bool {
+    let list: &[&str] = match dialect {
+        Dialect::CSharp => &[
             "string", "decimal", "bool", "void", "int", "long", "double", "float", "byte", "char",
             "object", "dynamic",
         ],
-        Language::Rust => &[
+        Dialect::Rust => &[
             "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64",
             "bool", "str", "char",
         ],
-        Language::TypeScript | Language::JavaScript => &[
+        Dialect::Script => &[
             "string", "number", "boolean", "any", "void", "unknown", "never", "object", "symbol",
             "bigint",
         ],
-        Language::PlainText => &[],
+        Dialect::Plain => &[],
     };
     list.contains(&text)
 }

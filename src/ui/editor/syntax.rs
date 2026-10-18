@@ -68,14 +68,14 @@ fn color_for(kind: TokenKind) -> Color {
 mod tests {
     use super::*;
     use crate::{
-        domain::language::Language,
+        domain::language::builtin,
         features::{highlighting::HighlightId, syntax::Tokens},
     };
 
     #[test]
     fn pending_and_ready_spans_preserve_exact_text_and_combining_graphemes() {
         let buffer = TextBuffer::new("const e\u{301}=\"中👩‍💻\"; // comment");
-        let tokens: Vec<_> = Tokens::new(buffer.text(), Language::JavaScript, 0)
+        let tokens: Vec<_> = Tokens::new(buffer.text(), builtin("javascript"), 0)
             .map(|(range, kind)| TokenSpan { range, kind })
             .collect();
         let window = 0..buffer.len();

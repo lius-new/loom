@@ -1,0 +1,12 @@
+{
+  "name": "typescript",
+  "display_name": "TypeScript",
+  "badge": "TS",
+  "aliases": ["ts"],
+  "comments": { "line": "//", "block": ["/*", "*/"] },
+  "variants": [{ "id": "typescript" }, { "id": "tsx" }],
+  "files": [
+    { "extensions": ["ts", "mts", "cts"], "variant": "typescript" },
+    { "extensions": ["tsx"], "variant": "tsx" }
+  ]
+}

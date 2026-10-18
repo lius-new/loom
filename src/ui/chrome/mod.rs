@@ -76,7 +76,7 @@ impl TitleBinding {
 
 #[derive(Clone)]
 pub struct FileStatus {
-    pub lang: crate::domain::document::Language,
+    pub lang: crate::domain::document::ResolvedLanguage,
     pub missing: bool,
     pub conflict: bool,
     pub cursor: Option<(usize, usize)>,

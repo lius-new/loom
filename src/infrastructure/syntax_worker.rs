@@ -3,7 +3,7 @@ use crate::{
     domain::{
         document::DocumentStamp,
         identity::{FileId, PaneId},
-        language::Language,
+        language::ResolvedLanguage,
     },
     features::syntax::{Index, IndexStats, Source, TokenSpan, Window, WindowTokens},
 };
@@ -49,7 +49,7 @@ struct Request {
     stamp: DocumentStamp,
     document: FileId,
     source: Source,
-    lang: Language,
+    lang: ResolvedLanguage,
     windows: Vec<Window>,
 }
 
@@ -58,7 +58,7 @@ struct Epoch {
     version: u64,
     incarnation: u64,
     language_generation: u64,
-    lang: Language,
+    lang: ResolvedLanguage,
     cancel: Arc<AtomicBool>,
 }
 impl Epoch {
@@ -77,7 +77,7 @@ struct Key {
     language_generation: u64,
     identity: usize,
     version: u64,
-    lang: Language,
+    lang: ResolvedLanguage,
     start: usize,
     end: usize,
 }
@@ -294,7 +294,7 @@ impl Worker {
         pane: PaneId,
         stamp: DocumentStamp,
         source: Source,
-        lang: Language,
+        lang: ResolvedLanguage,
         windows: Vec<Window>,
     ) -> Vec<WindowTokens> {
         let shared = &self.0.0;

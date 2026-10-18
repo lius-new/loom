@@ -1,0 +1,9 @@
+{
+  "name": "javascript",
+  "display_name": "JavaScript",
+  "badge": "JS",
+  "aliases": ["js"],
+  "comments": { "line": "//", "block": ["/*", "*/"] },
+  "variants": [{ "id": "javascript" }],
+  "files": [{ "extensions": ["js", "jsx", "mjs", "cjs"], "variant": "javascript" }]
+}

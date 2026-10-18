@@ -90,7 +90,7 @@ export function allowed(file, dependency) {
   if(own==='core')return ['identity','text','normal','commands','vim','buffer','change','editor','history','lines','selection','command','ex','exec','insert','key','motion','object','register','search','regex','unicode_segmentation','unicode_width'].includes(root);
   if(root==='loom_editor_core')return true;
   if(own==='app'||file==='src/main.rs')return true;
-  if(own==='domain')return root==='domain'||(['src/domain/workspace_session.rs','src/domain/window_geometry.rs'].includes(file)&&['serde','serde_json'].includes(root));
+  if(own==='domain')return root==='domain'||(['src/domain/workspace_session.rs','src/domain/window_geometry.rs','src/domain/language/descriptor.rs'].includes(file)&&['serde','serde_json'].includes(root));
   if(file.startsWith('src/features/keymap/'))return ['features','domain','serde_json','input','Movement'].includes(root);
   if(file==='src/infrastructure/window_geometry.rs')return ['infrastructure','domain','lgui','windows_sys','std::process'].includes(root);
   if(file==='src/infrastructure/document_filesystem.rs')return ['infrastructure','std::fs'].includes(root);
@@ -204,7 +204,10 @@ export function violations(sources, policy) {
     if(['src/terminal_session.rs','src/terminal_profiles.rs','src/terminal_directory.rs','src/terminal_program.rs'].includes(file)&&/\bpub(?:\s*\([^)]*\))?\s+use\s+crate\s*::\s*features\s*::\s*terminal\b/.test(ts.join(' ')))problems.push(file+': terminal types must use their feature paths, not legacy re-exports');
     if(layer(file)==='domain-verification') {
       if(policy.exceptions[file])problems.push(`${file}: domain verification cannot have migration exceptions`);
-      if(ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!')||(/#\s*\[\s*path\s*=/.test(source)&&(file!=='crates/workspace-tests/src/isolated.rs'||!/^#\[path = "\.\.\/\.\.\/\.\.\/src\/domain\/mod\.rs"\]$/m.test(source))))problems.push(`${file}: domain verification can only include the production domain entry point`);
+      // The domain's language assets are generated at build time, so this package's
+      // build script may share the one scanner that builds them, and nothing else.
+      const sharedScanner=file==='crates/workspace-tests/build.rs'&&(source.match(/#\s*\[\s*path\s*=/g)??[]).length===1&&/^#\[path = "\.\.\/\.\.\/build_support\/language_assets\.rs"\]$/m.test(source);
+      if(ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!')||(/#\s*\[\s*path\s*=/.test(source)&&!sharedScanner&&(file!=='crates/workspace-tests/src/isolated.rs'||!/^#\[path = "\.\.\/\.\.\/\.\.\/src\/domain\/mod\.rs"\]$/m.test(source))))problems.push(`${file}: domain verification can only include the production domain entry point`);
     }
     if(layer(file)==='core') {
       if(policy.exceptions[file])problems.push(`${file}: editing core cannot have migration exceptions`);
@@ -280,7 +283,11 @@ export function violations(sources, policy) {
     if(layer(file)==='domain') {
       if(policy.exceptions[file])problems.push(`${file}: domain cannot have migration exceptions`);
       if(ts.some(t=>['UiRect','Color','ApplicationHandle','FileLoader','InputState'].includes(t)))problems.push(`${file}: domain must not contain framework or runtime types`);
-      if(ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(`${file}: domain cannot include adapter sources`);
+      // One exception: the built-in language table that build.rs writes to OUT_DIR is
+      // immutable compiled-in data, not an adapter. Any other include stays forbidden.
+      const includes=ts.filter((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!').length;
+      const generatedTable=file==='src/domain/language/embedded.rs'&&includes===1&&/include!\s*\(\s*concat!\s*\(\s*env!\s*\(\s*"OUT_DIR"\s*\)\s*,\s*"\/language_assets\.rs"\s*\)\s*\)\s*;/.test(source);
+      if(includes>0&&!generatedTable)problems.push(`${file}: domain cannot include adapter sources`);
     }
     if(layer(file)==='ui'&&ts.includes('AppState')&&!policy.root_state_adapters.includes(file))problems.push(`${file}: new root-state adapter`);
     if(/\.\s*runtime\s*\(/.test(ts.join(' '))&&!(policy.framework_runtime_access??policy.runtime_bridges??[]).includes(file))problems.push(`${file}: unregistered runtime bridge`);

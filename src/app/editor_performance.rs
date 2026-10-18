@@ -188,8 +188,8 @@ fn editor_viewport_benchmark() {
         ("minified-1m.js", js.repeat(12_000)),
     ];
     if let Some(path) = std::env::var_os("LOOM_EDITOR_PROFILE_FILE") {
-        let label = if crate::domain::language::Language::from_path(std::path::Path::new(&path))
-            == crate::domain::language::Language::JavaScript
+        let label = if crate::domain::language::from_path(std::path::Path::new(&path)).name()
+            == "javascript"
         {
             "local-input.js"
         } else {

@@ -1,0 +1,9 @@
+{
+  "name": "csharp",
+  "display_name": "C#",
+  "badge": "C#",
+  "aliases": ["cs"],
+  "comments": { "line": "//", "block": ["/*", "*/"] },
+  "variants": [{ "id": "csharp" }],
+  "files": [{ "extensions": ["cs"], "variant": "csharp" }]
+}

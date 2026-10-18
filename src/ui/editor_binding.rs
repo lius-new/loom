@@ -11,12 +11,12 @@ use loom_editor_core::text::{Editor, Selection, TextBuffer};
 use loom_editor_core::vim::CursorShape;
 
 use crate::domain::document::DocumentStamp;
-use crate::domain::language::Language;
+use crate::domain::language::ResolvedLanguage;
 use crate::domain::line_change::LineChange;
 
 pub(crate) struct DocumentMeta {
     pub path: PathBuf,
-    pub lang: Language,
+    pub lang: ResolvedLanguage,
 }
 pub(crate) struct ViewDocument {
     pub id: FileId,

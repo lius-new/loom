@@ -143,7 +143,7 @@ fn retargeting_metadata_keeps_identity_views_and_shared_history() {
 
 #[test]
 fn stamps_separate_lifetimes_text_versions_and_languages() {
-    use crate::domain::language::Language;
+    use crate::domain::language::builtin;
     let mut workspace = PureWorkspace::new();
     let id = open(&mut workspace, "a.rs", "fn a() {}");
     let first = workspace.documents[&id].stamp(id);
@@ -169,7 +169,7 @@ fn stamps_separate_lifetimes_text_versions_and_languages() {
         .get_mut(&id)
         .unwrap()
         .meta
-        .set_language(Language::PlainText);
+        .set_language(builtin("plaintext"));
     let relabelled = workspace.documents[&id].stamp(id);
     assert_eq!(relabelled.version, edited.version);
     assert_eq!(relabelled.snapshot_identity, edited.snapshot_identity);
@@ -179,7 +179,7 @@ fn stamps_separate_lifetimes_text_versions_and_languages() {
         .get_mut(&id)
         .unwrap()
         .meta
-        .set_language(Language::PlainText);
+        .set_language(builtin("plaintext"));
     assert_eq!(
         workspace.documents[&id].stamp(id),
         relabelled,

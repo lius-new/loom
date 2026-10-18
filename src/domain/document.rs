@@ -3,14 +3,14 @@
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-pub use crate::domain::language::Language;
+pub use crate::domain::language::ResolvedLanguage;
 
 pub use crate::domain::identity::FileId;
 
 #[derive(Clone, Debug)]
 pub struct FileMeta {
     pub name: String,
-    pub lang: Language,
+    pub lang: ResolvedLanguage,
     /// Bumped whenever the effective language changes, so results computed for
     /// the old language are dropped even if the text did not change.
     pub language_generation: u64,
@@ -86,7 +86,7 @@ impl FileMeta {
             .file_name()
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        let lang = Language::from_path(&path);
+        let lang = crate::domain::language::from_path(&path);
         Self {
             name,
             lang,
@@ -97,7 +97,7 @@ impl FileMeta {
 
     /// Change the language and invalidate everything derived from the old one.
     #[allow(dead_code)] // First caller: the manual language override in P2.
-    pub fn set_language(&mut self, lang: Language) {
+    pub fn set_language(&mut self, lang: ResolvedLanguage) {
         if self.lang != lang {
             self.lang = lang;
             self.language_generation += 1;
@@ -118,19 +118,23 @@ mod tests {
     use crate::domain::document::*;
 
     #[test]
-    fn detects_supported_editor_languages_from_paths() {
-        assert_eq!(Language::from_path(Path::new("main.RS")), Language::Rust);
-        assert_eq!(
-            Language::from_path(Path::new("component.tsx")),
-            Language::TypeScript
-        );
-        assert_eq!(
-            Language::from_path(Path::new("script.mjs")),
-            Language::JavaScript
-        );
-        assert_eq!(
-            Language::from_path(Path::new("README.md")),
-            Language::PlainText
-        );
+    fn metadata_gets_its_language_from_the_path() {
+        let name = |path: &str| FileMeta::from_path(path.into()).lang.name();
+        assert_eq!(name("main.RS"), "rust");
+        assert_eq!(name("component.tsx"), "typescript");
+        assert_eq!(name("script.mjs"), "javascript");
+        assert_eq!(name("README.md"), "plaintext");
+    }
+
+    #[test]
+    fn changing_the_language_bumps_the_generation_only_when_it_changes() {
+        let mut meta = FileMeta::from_path("a.rs".into());
+        let rust = meta.lang;
+        meta.set_language(rust);
+        assert_eq!(meta.language_generation, 0);
+        meta.set_language(crate::domain::language::builtin("plaintext"));
+        assert_eq!(meta.language_generation, 1);
+        meta.set_language(rust);
+        assert_eq!(meta.language_generation, 2);
     }
 }

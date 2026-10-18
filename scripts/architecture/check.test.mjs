@@ -353,3 +353,33 @@ test('chrome field owners cannot silently disappear or grow',()=>{
  const p=policy();p.chrome_ownership={ChromeState:['toast']};
  for(const sources of [{},{'src/app/state/chrome.rs':'struct ChromeState {}'},{'src/app/state/chrome.rs':'struct ChromeState {toast:Toast,service:Service}'}])assert.ok(violations(sources,p).some(e=>e.includes('chrome owner')));
 });
+test('only the built-in language table may be included into the domain',()=>{
+  const table='include!(concat!(env!("OUT_DIR"), "/language_assets.rs"));';
+  const embedded='src/domain/language/embedded.rs';
+  assert.deepEqual(violations({[embedded]:'use crate::domain::language::registry::Registry;\n'+table},policy()),[]);
+  for(const [file,source] of [
+    [embedded,'include!("../../model/workspace.rs");'],
+    [embedded,table+'\ninclude_str!("secret.txt");'],
+    [embedded,'include!(concat!(env!("OUT_DIR"), "/other.rs"));'],
+    ['src/domain/language/registry.rs',table],
+    ['src/domain/document.rs',table],
+  ])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('domain cannot include adapter sources')),`${file}: ${source}`);
+});
+test('the language description parser may use serde and no other domain file may',()=>{
+  const source='use serde::Deserialize;';
+  assert.deepEqual(violations({'src/domain/language/descriptor.rs':source},policy()),[]);
+  for(const file of ['src/domain/language/registry.rs','src/domain/document.rs'])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('unregistered dependency serde')));
+  assert.ok(violations({'src/domain/language/descriptor.rs':'use lgui::prelude::*;'},policy()).length>0);
+  assert.ok(violations({'src/domain/language/descriptor.rs':'use std::fs;'},policy()).length>0);
+});
+test('domain verification may share only the language asset scanner through its build script',()=>{
+  const file='crates/workspace-tests/build.rs';
+  const scanner='#[path = "../../build_support/language_assets.rs"]\nmod language_assets;';
+  assert.deepEqual(violations({[file]:scanner},policy()),[]);
+  for(const source of [
+    '#[path = "../../src/app/mod.rs"]\nmod app;',
+    scanner+'\n#[path = "../../src/app/mod.rs"]\nmod app;',
+    'include!("../../src/model/workspace.rs");',
+  ])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('can only include the production domain entry point')),source);
+  assert.ok(violations({'crates/workspace-tests/src/other.rs':scanner},policy()).some(e=>e.includes('can only include the production domain entry point')));
+});

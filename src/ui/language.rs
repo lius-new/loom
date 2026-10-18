@@ -3,16 +3,18 @@ use lgui::prelude::Color;
 
 use crate::ui::theme;
 
-use crate::domain::language::Language;
+use crate::domain::language::ResolvedLanguage;
 
-impl Language {
+impl ResolvedLanguage {
+    /// The badge color for the language. Languages the theme has no color for
+    /// read as muted text, which is also what plain text uses.
     pub fn badge_color(self) -> Color {
-        match self {
-            Self::CSharp => theme::c().badge.csharp,
-            Self::Rust => theme::c().badge.rust,
-            Self::TypeScript => theme::c().badge.typescript,
-            Self::JavaScript => theme::c().badge.javascript,
-            Self::PlainText => theme::c().text_muted,
+        match self.name() {
+            "csharp" => theme::c().badge.csharp,
+            "rust" => theme::c().badge.rust,
+            "typescript" => theme::c().badge.typescript,
+            "javascript" => theme::c().badge.javascript,
+            _ => theme::c().text_muted,
         }
     }
 }

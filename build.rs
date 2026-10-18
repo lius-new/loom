@@ -1,7 +1,11 @@
+#[path = "build_support/language_assets.rs"]
+mod language_assets;
+
 fn main() {
     println!("cargo:rerun-if-changed=icons/app.ico");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=scripts/terminal_console_probe.rs");
+    language_assets::emit_build_step(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap())

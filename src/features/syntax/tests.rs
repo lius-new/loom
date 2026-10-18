@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::{identity::FileId, language::Language};
+use crate::domain::{identity::FileId, language::builtin};
 use loom_editor_core::text::{EditKind, EditorMut, Selection, TextBuffer};
 use std::{ops::Range, sync::atomic::AtomicBool};
 
@@ -12,13 +12,17 @@ fn windows(buffer: &TextBuffer) -> Vec<Window> {
         .collect()
 }
 fn expected(buffer: &TextBuffer, window: &Window) -> Vec<TokenSpan> {
-    Tokens::new(&buffer.text()[window.line.clone()], Language::JavaScript, 0)
-        .map(|(range, kind)| TokenSpan {
-            range: window.line.start + range.start..window.line.start + range.end,
-            kind,
-        })
-        .filter(|span| span.range.end > window.range.start && span.range.start < window.range.end)
-        .collect()
+    Tokens::new(
+        &buffer.text()[window.line.clone()],
+        builtin("javascript"),
+        0,
+    )
+    .map(|(range, kind)| TokenSpan {
+        range: window.line.start + range.start..window.line.start + range.end,
+        kind,
+    })
+    .filter(|span| span.range.end > window.range.start && span.range.start < window.range.end)
+    .collect()
 }
 fn edit(buffer: &mut TextBuffer, range: Range<usize>, text: &str) {
     EditorMut::new(buffer, &mut Selection::default(), Vec::new())
@@ -31,7 +35,7 @@ fn check(index: &mut Index, buffer: &TextBuffer) {
         .prepare(
             FileId::new(1),
             Source::new(buffer),
-            Language::JavaScript,
+            builtin("javascript"),
             &windows,
             &AtomicBool::new(false),
         )
@@ -105,7 +109,7 @@ fn unchanged_lines_keep_tokens_after_an_edit_and_line_number_shift() {
         .prepare(
             FileId::new(1),
             Source::new(&buffer),
-            Language::JavaScript,
+            builtin("javascript"),
             &[Window {
                 line: line.clone(),
                 range: line.clone(),
@@ -147,7 +151,7 @@ fn partial_windows_preserve_string_comment_and_unicode_token_context() {
             .prepare(
                 FileId::new(1),
                 Source::new(&buffer),
-                Language::JavaScript,
+                builtin("javascript"),
                 std::slice::from_ref(&window),
                 &AtomicBool::new(false),
             )
@@ -165,7 +169,7 @@ fn indexes_evict_under_budget_and_cancellation_never_returns_partial_results() {
             .prepare(
                 FileId::new(id),
                 Source::new(&buffer),
-                Language::JavaScript,
+                builtin("javascript"),
                 &windows(&buffer),
                 &AtomicBool::new(false),
             )
@@ -179,7 +183,7 @@ fn indexes_evict_under_budget_and_cancellation_never_returns_partial_results() {
             .prepare(
                 FileId::new(20),
                 Source::new(&buffer),
-                Language::JavaScript,
+                builtin("javascript"),
                 &windows(&buffer),
                 &AtomicBool::new(true)
             )

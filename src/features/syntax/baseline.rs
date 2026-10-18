@@ -5,7 +5,6 @@
 //! behaviour that is deliberately NOT correct and is replaced in P3b, so they must
 //! not be read as a language-correctness specification.
 use super::{TokenKind, Tokens};
-use crate::domain::language::Language;
 
 const RUST: &[&str] = &[
     "pub fn compute_{n}<'a>(input: &'a str, limit: usize) -> Option<&'a str> {",
@@ -41,18 +40,20 @@ const TYPESCRIPT: &[&str] = &[
     "}",
 ];
 
-pub(crate) fn template(language: Language) -> &'static [&'static str] {
+/// Sample lines for a built-in language by canonical name.
+pub(crate) fn template(language: &str) -> &'static [&'static str] {
     match language {
-        Language::Rust => RUST,
-        Language::CSharp => CSHARP,
-        Language::JavaScript => JAVASCRIPT,
-        Language::TypeScript => TYPESCRIPT,
-        Language::PlainText => &["Label {n} 中e\u{301} \"value\" 456 /* note */"],
+        "rust" => RUST,
+        "csharp" => CSHARP,
+        "javascript" => JAVASCRIPT,
+        "typescript" => TYPESCRIPT,
+        "plaintext" => &["Label {n} 中é \"value\" 456 /* note */"],
+        other => panic!("no baseline sample for `{other}`"),
     }
 }
 
 /// Whole lines only, so every fixture ends on a line boundary and is >= `bytes`.
-pub(crate) fn generate(language: Language, bytes: usize) -> String {
+pub(crate) fn generate(language: &str, bytes: usize) -> String {
     let lines = template(language);
     let mut out = String::with_capacity(bytes + 128);
     let mut n = 0usize;
@@ -80,14 +81,9 @@ pub(crate) const SIZES: [usize; 3] = [10 * KIB, 100 * KIB, 1024 * KIB];
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::language::{ResolvedLanguage, builtin};
 
-    const LANGUAGES: [Language; 5] = [
-        Language::Rust,
-        Language::CSharp,
-        Language::JavaScript,
-        Language::TypeScript,
-        Language::PlainText,
-    ];
+    const LANGUAGES: [&str; 5] = ["rust", "csharp", "javascript", "typescript", "plaintext"];
 
     #[test]
     fn generated_fixtures_are_byte_stable() {
@@ -100,7 +96,7 @@ mod tests {
                 assert_eq!(text, generate(language, size));
                 report.push_str(&format!(
                     "{} {} {}\n",
-                    language.long_name(),
+                    builtin(language).display_name(),
                     size,
                     sha256_hex(&text)
                 ));
@@ -111,7 +107,7 @@ mod tests {
         assert_eq!(report, expected.replace("\r\n", "\n"));
     }
 
-    fn kinds(source: &str, language: Language) -> Vec<(&str, TokenKind)> {
+    fn kinds(source: &str, language: ResolvedLanguage) -> Vec<(&str, TokenKind)> {
         Tokens::new(source, language, 0)
             .map(|(range, kind)| (&source[range], kind))
             .collect()
@@ -123,7 +119,7 @@ mod tests {
     fn legacy_lexer_has_no_cross_line_state() {
         let source = "/* first\nsecond line */ let x = 1;";
         let second = &source[source.find('\n').unwrap() + 1..];
-        let tokens = kinds(second, Language::JavaScript);
+        let tokens = kinds(second, builtin("javascript"));
         assert!(
             !tokens.iter().any(|(_, kind)| *kind == TokenKind::Comment),
             "line two is not seen as a comment: {tokens:?}"
@@ -133,7 +129,7 @@ mod tests {
     /// Classification here is heuristic (design section 2): the next token decides.
     #[test]
     fn legacy_lexer_classifies_by_neighbouring_text() {
-        let tokens = kinds("value(1); Value; x.y", Language::Rust);
+        let tokens = kinds("value(1); Value; x.y", builtin("rust"));
         assert!(tokens.contains(&("value", TokenKind::Fn)));
         assert!(tokens.contains(&("Value", TokenKind::Type)));
         assert!(tokens.contains(&("y", TokenKind::Prop)));

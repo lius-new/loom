@@ -334,7 +334,7 @@ build.rs 在所有目标平台执行资源生成，同时声明两个资源根�
 
 **启动与按需加载。** 注册表启动时解析描述、分配 ID、建立名称与文件规则索引；这一阶段不创建 Parser 或编译查询。P3a 起统一校验 native factory、grammar 资源目录和描述引用的一致性。查询在 grammar 首次被使用时由 syntax worker 编译，按 GrammarId/资源代次缓存；同一 grammar 的多个语言变体共享已编译资源。内置资源代次固定为 0，运行时语言选择/配置代次仍可变化。
 
-**分层。** descriptor.rs、embedded.rs 和 registry.rs 位于 features/language，描述解析不依赖 Tree-sitter。原生工厂表、查询编译与 grammar 适配位于 features/syntax；domain 只保存 ID 与轻量元数据。内部资源来源接口首期只有 Embedded 实现，不提前建设外部包加载器。
+**分层。** 描述格式、校验、注册表与内嵌表位于 domain/language（P2 实施时由原定的 features/language 移入）。原因：文档创建与重命名发生在 domain 内（`FileMeta::from_path`、重命名后重新识别），识别必须在 domain 内可用；注册表是纯逻辑，内置资源是编译进程序的不可变数据，不依赖 Tree-sitter、GUI 或文件系统。架构门禁为此做了三处窄化放行并各有自测：descriptor.rs 可用 serde；embedded.rs 可 include 且仅限 `concat!(env!("OUT_DIR"), "/language_assets.rs")` 一条；domain 验证包的 build.rs 可共享同一个扫描器（`#[path]` 仅限 build_support/language_assets.rs）。其余 domain 文件仍不得 include、不得用 serde、不得使用 `super`。原生工厂表、查询编译与 grammar 适配位于 features/syntax；内部资源来源接口首期只有 Embedded 实现，不提前建设外部包加载器。
 
 **错误边界。** 内置资源是随版本发布的受控输入，格式/引用/查询错误必须在构建或测试中失败；运行时若意外发现仍返回明确初始化错误，不把损坏的内置资源静默注册成 PlainText。无 grammar 的合法语言、预算超限、取消或正常解析恢复与资源内容错误分开处理；将来的外部来源才引入单包拒绝/回退策略。
 
@@ -635,14 +635,16 @@ build.rs                      # 扫描资源、生成 OUT_DIR/language_assets.rs
 crates/editor-core/src/text/
   revision.rs                 # 通用编辑几何元数据
   buffer.rs / change.rs       # 原文可用时捕获编辑信息
+build_support/
+  language_assets.rs          # build.rs 与 domain 验证包共用的资源扫描/生成器（仅 std），自带测试
 src/domain/
-  language.rs                 # 开放 LanguageId / GrammarId 与轻量描述
-  document.rs                 # 文档语言选择与元数据
-src/features/
   language/
+    mod.rs                    # LanguageId / VariantId / GrammarId、ResolvedLanguage
     descriptor.rs             # JSON 描述格式、serde 严格反序列化与校验
     embedded.rs               # include! 生成的内嵌表，唯一内置资源来源
     registry.rs               # 排序 ID 分配、名称映射、识别与别名
+  document.rs                 # 文档语言选择与元数据
+src/features/
   highlighting/
     model.rs                  # 统一分类、修饰符、coverage、结果戳
     compose.rs                # 各来源范围合成的纯逻辑
@@ -898,7 +900,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 
 ### 19.1 更新规则
 
-- 最近更新：2026-10-18。P0 基线部分完成，P1 公共基础已实现并待验证；其余阶段未开始。证据见 19.4 的记录 R-001 至 R-003。
+- 最近更新：2026-10-18。P0 基线部分完成，P1 公共基础已实现并待验证，P2 注册表与内嵌资源已完成大半（缺文件关联设置与手动覆盖）；其余阶段未开始。证据见 19.4 的记录 R-001 至 R-004。
 - 状态统一使用：未开始、进行中、待验证、已完成、受阻；按需后续项在备注中注明启动条件。
 - 勾选 `[x]` 表示该条目已有实现和验证证据；只写完代码但未完成验证时保留 `[ ]`，阶段标为“待验证”。
 - 阶段完成必须满足第 13–14 节全部适用验收标准。以下清单是关键检查点，不替代正文，也不按勾选数量估算工作量百分比。
@@ -912,7 +914,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 | --- | --- | --- | --- | --- |
 | P0 基线 | 进行中 | R-001 | — | 补多样本性能基线（p50/p95）、缓存条件与 8 MiB/64 MiB/压缩单行样例；确认 UI 门槛 |
 | P1 公共基础 | 待验证 | R-002、R-003 | — | 缺 Linux/macOS 编译验证与首次桥接耗时测量；资源代次随 P2 注册表加入 |
-| P2 注册表 | 未开始 | — | — | JSON 描述、生成内嵌表、排序 ID、识别与资源校验；不预置服务器字段 |
+| P2 注册表 | 进行中 | R-004 | — | 剩余：file_associations 设置、手动覆盖（所有窗格一致）；Linux/macOS 增量重建验证 |
 | P3a 验证与预算校准 | 未开始 | — | — | 工厂/目录/查询一致性，两语言探针、独立解析与查询编译数据 |
 | P3b 基础替换 | 未开始 | — | — | 使用 P3a 已确认预算，完成语言替换与显示连续性 |
 | P4a–P4f LSP | [以独立跟踪表为准](LSP_DESIGN.tmp.md#5-实施进度跟踪) | — | — | 默认在 P3b 后开始，按子阶段交付 |
@@ -927,9 +929,9 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 - [x] **P1-1**：DocumentStamp、语言代次与旧结果失效测试完成（资源代次随 P2 注册表加入：内置资源固定为 0，目前没有可变资源）。
 - [x] **P1-2**：统一分类与新主题表接通；临时 TokenKind 映射位于 features/syntax/legacy_class.rs，P3b 随 lexer 删除。
 - [x] **P1-3**：编辑几何覆盖多处编辑、Unicode、CRLF、撤销重做及 revision 断链。
-- [ ] **P2-1**：LanguageId/GrammarId 注册、非内置测试语言和 TSX 变体通过。
+- [x] **P2-1**：LanguageId/VariantId/GrammarId 注册、非内置测试语言和 TSX 变体通过。
 - [ ] **P2-2**：文件关联、手动覆盖、重命名及多窗格一致性通过。
-- [ ] **P2-3**：严格 JSON 描述与 badge/名称/识别数据迁移完成；build.rs 内嵌表、排序与磁盘清单/增量重建校验通过。
+- [ ] **P2-3**（Windows 已验证；Linux/macOS 增量重建未运行）：严格 JSON 描述与 badge/名称/识别数据迁移完成；build.rs 内嵌表、排序与磁盘清单/增量重建校验通过。
 - [ ] **P3a-1**：Rust 与 JavaScript 或 C# 使用同一路径；增量结果与完整解析一致。
 - [ ] **P3a-2**：1 MiB 两语言集成路径，以及 C#/TS/TSX 无旧树完整解析已有原始采样。
 - [ ] **P3a-3**：100 ms 候选预算已确认或有证据修订；UI 投影 S/R/E 与耗时上限已记录。
@@ -998,3 +1000,16 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 | 2026-10-18 | 明确语言 JSON / grammar 目录分离、生成内嵌表、校验与编译计时 | 仅修订设计和检查点；未生成资源或修改 build.rs |
 | 2026-10-18 | 实施 P0 fixture 与 P1 编辑几何（R-001、R-002） | 新增 baseline.rs、fixture 哈希与 RevisionEdit 几何字段；P0、P1 仍为进行中 |
 | 2026-10-18 | 完成 P1：统一分类、样式表主题、DocumentStamp（R-003） | SyntaxColors 已删除；高亮 worker 按完整 stamp 失效；P1 待验证 |
+| 2026-10-18 | 实施 P2 的描述、注册表与内嵌资源（R-004） | Language 枚举已删除；注册表落在 domain/language 并对门禁做三处窄化放行 |
+
+记录编号 / 日期：R-004 / 2026-10-18
+阶段 / 检查点 ID：P2 / P2-1、P2-3（部分）
+状态：进行中
+实现证据：
+- 资源：assets/languages/{plaintext,rust,csharp,javascript,typescript}.json（typescript 含 typescript、tsx 两个变体）；assets/grammars/README.md。现有描述不引用 grammar（P3a 随资源目录一并加入）。
+- 构建：build_support/language_assets.rs（仅用 std 的扫描器与生成器，拒绝未知文件、缺文件、非规范名称、额外目录与符号链接）；build.rs 与 crates/workspace-tests/build.rs 共用它，把表写入 OUT_DIR/language_assets.rs。
+- 注册表：src/domain/language/（descriptor.rs 严格解析与校验；registry.rs 按排序名称分配 LanguageId/VariantId/GrammarId，处理扩展名、精确文件名与别名冲突，要求 plaintext；embedded.rs 内嵌表）。Language 枚举、from_path、badge、long_name 已删除，数据迁入 JSON；FileMeta.lang 改为 ResolvedLanguage；旧 lexer 以规范名称选关键字表（lexer.rs 内的 Dialect，随 lexer 在 P3b 删除）。
+- 与设计的偏差：注册表放在 domain/language 而非 features/language（见 6.5 分层）。架构门禁三处窄化放行并各有自测：descriptor.rs 可用 serde；embedded.rs 可 include 且仅限生成表一条；domain 验证包 build.rs 可 #[path] 共享扫描器。
+验证：cargo test --locked --workspace 全部通过（loom 730、editor-core 73、workspace-tests 43）；新增覆盖描述的未知字段/非法值负例、ID 排序稳定、变体默认项、精确名优先于扩展名、冲突与缺失项报告、旧 Language::from_path 的全部扩展名映射、徽章与显示名与原状态栏一致、扫描器的负例与确定性输出、内嵌表与磁盘逐项核对（独立列目录）。门禁自测 59 项通过，clippy（CI 同参数）与 fmt 通过。增量重建在 Windows 上实测：新增、重命名、修改、删除描述文件后，未 clean 的再次构建都刷新了内嵌表（磁盘核对测试每次通过）。
+未运行：Linux/macOS 的增量重建验证；P2-2（file_associations 设置、手动覆盖、多窗格一致性）；打包源码包含必需输入的检查。
+下一步：P2-2。

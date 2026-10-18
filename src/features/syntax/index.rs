@@ -1,5 +1,5 @@
 use super::{TokenSpan, Tokens};
-use crate::domain::{identity::FileId, language::Language};
+use crate::domain::{identity::FileId, language::ResolvedLanguage};
 use loom_editor_core::text::{TextBuffer, TextRevision};
 use std::{
     collections::{HashMap, VecDeque},
@@ -132,7 +132,7 @@ impl Line {
     fn ensure(
         &mut self,
         source: &str,
-        lang: Language,
+        lang: ResolvedLanguage,
         end: usize,
         cancel: &AtomicBool,
         stats: &mut IndexStats,
@@ -209,7 +209,7 @@ impl Line {
 
 struct Document {
     source: Source,
-    lang: Language,
+    lang: ResolvedLanguage,
     lines: HashMap<Range<usize>, Line>,
     used: u64,
 }
@@ -241,7 +241,7 @@ impl Index {
         &mut self,
         id: FileId,
         source: Source,
-        lang: Language,
+        lang: ResolvedLanguage,
         windows: &[Window],
         cancel: &AtomicBool,
     ) -> Option<Vec<WindowTokens>> {

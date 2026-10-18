@@ -24,6 +24,11 @@ mod infrastructure;
 mod model;
 mod ui;
 
+// The build script's resource scanner, compiled here so its checks run as tests.
+#[cfg(test)]
+#[path = "../build_support/language_assets.rs"]
+mod language_assets_build;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     app::run()
 }
