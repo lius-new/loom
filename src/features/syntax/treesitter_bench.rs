@@ -238,7 +238,7 @@ fn treesitter_bench_projection_limits() {
 /// First colour by document size, without the thread hop: a fresh tree index
 /// (query not compiled, no tree) parses and reads the first 50 lines.
 #[test]
-#[ignore = "P3a measurement; run in release mode"]
+#[ignore = "budget check; run in release mode on the reference machine"]
 fn treesitter_bench_first_colour_by_size() {
     for name in ["rust", "javascript", "typescript", "csharp"] {
         let language = builtin(name);
@@ -258,9 +258,23 @@ fn treesitter_bench_first_colour_by_size() {
                     )
                     .unwrap()
             });
-            report(
+            let p95 = report(
                 &format!("first colour, cold index, {name} {kib} KiB"),
                 samples,
+            );
+            // The budgets decided in P3a (design 10.5): p95 from a cold start,
+            // release build, on the reference machine.
+            let budget = if kib <= 256 {
+                100.0
+            } else if kib <= 512 {
+                150.0
+            } else {
+                275.0
+            };
+            assert!(
+                ms(p95) <= budget,
+                "{name} {kib} KiB: p95 {:.1} ms is over the {budget} ms budget",
+                ms(p95)
             );
         }
     }

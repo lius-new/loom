@@ -2,7 +2,7 @@
 use super::{context::AppContext, state::AppState};
 use crate::{
     app::{runtime::AppRuntime, syntax::Highlighter, test_support::UiTasks},
-    features::syntax::{Source, Tokens, Window},
+    features::syntax::{Source, TreeIndex, Window},
 };
 use crate::{features::git::GitStoreSnapshot, ui::editor::view};
 use lgui::{
@@ -12,7 +12,7 @@ use lgui::{
     session::UiSession,
 };
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 
@@ -43,21 +43,25 @@ fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
             windows.clone(),
         );
         if ready.len() == windows.len() && ready.iter().all(|tokens| tokens.complete) {
-            // Check semantic context against a complete independent scan of each
-            // line, including windows deep inside minified strings/comments.
-            for (actual, window) in ready.iter().zip(&windows).filter(|_| verify) {
-                let expected: Vec<_> =
-                    Tokens::new(&doc.buffer.text()[window.line.clone()], doc.meta.lang, 0)
-                        .map(|(range, kind)| crate::features::syntax::TokenSpan {
-                            range: window.line.start + range.start..window.line.start + range.end,
-                            class: kind.highlight(),
-                        })
-                        .filter(|span| {
-                            span.range.end > window.range.start
-                                && span.range.start < window.range.end
-                        })
-                        .collect();
-                assert_eq!(actual.spans.as_ref(), expected);
+            // Check the colours against a second, independent parse of the same
+            // text, including windows deep inside minified strings and comments.
+            if verify {
+                let mut reference = TreeIndex::default();
+                let expected = reference
+                    .prepare(
+                        id,
+                        Source::new(&doc.buffer),
+                        doc.meta.lang,
+                        &windows,
+                        &AtomicBool::new(false),
+                    )
+                    .expect("the reference parse is not cancelled");
+                for (actual, expected) in ready.iter().zip(&expected) {
+                    assert_eq!(
+                        merged(actual.spans.as_ref()),
+                        merged(expected.spans.as_ref())
+                    );
+                }
             }
             break;
         }
@@ -65,6 +69,21 @@ fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
         std::thread::sleep(Duration::from_millis(1));
     }
     queue.run_all();
+}
+
+/// Spans with equal neighbours joined: a window answered from several cache
+/// pages can split a run that one query returns whole.
+fn merged(spans: &[crate::features::syntax::TokenSpan]) -> Vec<crate::features::syntax::TokenSpan> {
+    let mut out: Vec<crate::features::syntax::TokenSpan> = Vec::new();
+    for span in spans {
+        match out.last_mut() {
+            Some(last) if last.class == span.class && last.range.end == span.range.start => {
+                last.range.end = span.range.end;
+            }
+            _ => out.push(span.clone()),
+        }
+    }
+    out
 }
 
 #[test]
@@ -310,8 +329,7 @@ fn editor_viewport_benchmark() {
         session.render_view(&ui, rect, UiScale::ONE);
         let edit_frame_ms = start.elapsed().as_secs_f64() * 1000.0;
         wait_ready(&state, &queue, rect, true);
-        let edit_scanned_bytes =
-            worker.stats().index.scanned_bytes - before_edit.index.scanned_bytes;
+        let edit_parsed_bytes = worker.stats().tree.parsed_bytes - before_edit.tree.parsed_bytes;
         // Check the actual input's position mapping without logging any text.
         let app = state.get();
         let buffer = app.workspace.active_editor().unwrap();
@@ -359,8 +377,10 @@ fn editor_viewport_benchmark() {
             "scroll_max_ms":frames[19],"nodes":nodes,"submitted_chars":submitted_chars,
             "initial_ready_ms":initial_ready_ms,"initial_highlighted_frame_ms":initial_highlighted_frame_ms,
             "highlighted_scroll_median_ms":highlighted_frames[10],"highlighted_scroll_max_ms":highlighted_frames[19],
-            "jump_frame_ms":jump_frame_ms,"jump_ready_ms":jump_ready_ms,"edit_frame_ms":edit_frame_ms,"edit_scanned_bytes":edit_scanned_bytes,
-            "scanned_bytes":stats.index.scanned_bytes,"reused_tokens":stats.index.reused_tokens,"reused_lines":stats.index.reused_lines,
+            "jump_frame_ms":jump_frame_ms,"jump_ready_ms":jump_ready_ms,"edit_frame_ms":edit_frame_ms,"edit_parsed_bytes":edit_parsed_bytes,
+            "parsed_bytes":stats.tree.parsed_bytes,"full_parses":stats.tree.full_parses,"incremental_parses":stats.tree.incremental_parses,
+            "parse_ms":stats.tree.parse_time.as_secs_f64() * 1000.0,"query_ms":stats.tree.query_time.as_secs_f64() * 1000.0,
+            "provisional_windows":stats.provisional.windows,
             "syntax_cache_hits":stats.cache_hits,"syntax_cache_bytes":stats.cache_bytes,"syntax_evictions":stats.evictions,
             "layout_hits":layout_hits,"layout_misses":layout_misses,"layout_evictions":layout_evictions,"layout_bytes":layout_bytes})
         );

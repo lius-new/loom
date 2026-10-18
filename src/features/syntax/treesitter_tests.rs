@@ -443,9 +443,13 @@ fn spans_tile_every_window_without_gaps_or_overlaps_and_rebuild_the_text() {
                 .unwrap()
                 .class;
             assert_eq!(
-                span.class, whole_class,
-                "{language} at {}",
-                span.range.start
+                span.class,
+                whole_class,
+                "{language} at {} (window {:?}, part {:?}, text {:?})",
+                span.range.start,
+                window.range,
+                part.spans.iter().take(4).collect::<Vec<_>>(),
+                &text[span.range.start.saturating_sub(6)..(span.range.start + 6).min(text.len())]
             );
         }
         assert_eq!(
@@ -657,14 +661,20 @@ fn windows_that_do_not_fit_the_text_are_refused() {
 }
 
 #[test]
-fn only_enabled_grammars_use_the_tree_path() {
-    assert!(TreeIndex::handles(builtin("rust")));
-    assert!(TreeIndex::handles(builtin("javascript")));
-    assert!(
-        !TreeIndex::handles(builtin("csharp")),
-        "still on the lexer until P3b"
-    );
-    assert!(!TreeIndex::handles(builtin("typescript")));
-    assert!(!TreeIndex::handles(builtin("plaintext")));
-    let _ = classes("rust", "fn a() {}");
+fn a_language_without_a_grammar_is_one_plain_span_and_builds_no_tree() {
+    let text = "fn a() { 42 } // looks like code";
+    assert_eq!(classes("plaintext", text), [(text.to_owned(), None)]);
+    let mut index = TreeIndex::default();
+    let buffer = TextBuffer::new(text);
+    spans_of(&mut index, 1, &buffer, builtin("plaintext"));
+    assert_eq!((index.stats.full_parses, index.stats.trees), (0, 0));
+    // Every language that has a grammar colours something in this sample.
+    for language in ["rust", "javascript", "typescript", "csharp"] {
+        assert!(
+            classes(language, "int x = 42; // note")
+                .iter()
+                .any(|(_, class)| class.is_some()),
+            "{language}"
+        );
+    }
 }

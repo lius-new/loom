@@ -1,10 +1,5 @@
-//! P0 baseline: deterministic source fixtures and the lexer's current limits.
-//!
-//! The generated samples are what later phases measure against (see the design
-//! draft, sections 13–14). The hashes pin the bytes; the limitation tests record
-//! behaviour that is deliberately NOT correct and is replaced in P3b, so they must
-//! not be read as a language-correctness specification.
-use super::{TokenKind, Tokens};
+//! Deterministic source samples for tests and measurements. The hashes pin the
+//! bytes so later runs measure the same input (design sections 13-14).
 
 const RUST: &[&str] = &[
     "pub fn compute_{n}<'a>(input: &'a str, limit: usize) -> Option<&'a str> {",
@@ -81,7 +76,7 @@ pub(crate) const SIZES: [usize; 3] = [10 * KIB, 100 * KIB, 1024 * KIB];
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::language::{ResolvedLanguage, builtin};
+    use crate::domain::language::builtin;
 
     const LANGUAGES: [&str; 5] = ["rust", "csharp", "javascript", "typescript", "plaintext"];
 
@@ -105,33 +100,5 @@ mod tests {
         let expected = include_str!("../../../tests/fixtures/languages/generated.sha256");
         // A Windows checkout may have converted the file to CRLF.
         assert_eq!(report, expected.replace("\r\n", "\n"));
-    }
-
-    fn kinds(source: &str, language: ResolvedLanguage) -> Vec<(&str, TokenKind)> {
-        Tokens::new(source, language, 0)
-            .map(|(range, kind)| (&source[range], kind))
-            .collect()
-    }
-
-    /// Baseline of KNOWN-WRONG behaviour (design section 2): the lexer runs per
-    /// line and carries no state across lines. Replaced by Tree-sitter in P3b.
-    #[test]
-    fn legacy_lexer_has_no_cross_line_state() {
-        let source = "/* first\nsecond line */ let x = 1;";
-        let second = &source[source.find('\n').unwrap() + 1..];
-        let tokens = kinds(second, builtin("javascript"));
-        assert!(
-            !tokens.iter().any(|(_, kind)| *kind == TokenKind::Comment),
-            "line two is not seen as a comment: {tokens:?}"
-        );
-    }
-
-    /// Classification here is heuristic (design section 2): the next token decides.
-    #[test]
-    fn legacy_lexer_classifies_by_neighbouring_text() {
-        let tokens = kinds("value(1); Value; x.y", builtin("rust"));
-        assert!(tokens.contains(&("value", TokenKind::Fn)));
-        assert!(tokens.contains(&("Value", TokenKind::Type)));
-        assert!(tokens.contains(&("y", TokenKind::Prop)));
     }
 }

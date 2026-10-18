@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 pub(crate) const SAMPLES: usize = 50;
 pub(crate) const MIB: usize = 1024 * 1024;
 
-pub(crate) fn report(label: &str, mut samples: Vec<Duration>) {
+/// Prints the samples and returns the 95th percentile.
+pub(crate) fn report(label: &str, mut samples: Vec<Duration>) -> Duration {
     let raw: Vec<String> = samples.iter().map(|d| format!("{:.2}", ms(*d))).collect();
     samples.sort();
     let at = |q: f64| ms(samples[((samples.len() - 1) as f64 * q).round() as usize]);
@@ -18,6 +19,7 @@ pub(crate) fn report(label: &str, mut samples: Vec<Duration>) {
         ms(*samples.last().unwrap()),
         raw.join(", ")
     );
+    samples[((samples.len() - 1) as f64 * 0.95).round() as usize]
 }
 
 pub(crate) fn ms(duration: Duration) -> f64 {

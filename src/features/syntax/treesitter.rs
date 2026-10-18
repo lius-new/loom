@@ -36,9 +36,6 @@ pub(crate) const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TREES: usize = 16;
 /// Captures read for one window; a window needing more is drawn partly plain.
 const MAX_CAPTURES: usize = 200_000;
-/// Grammars the tree-sitter path handles. Languages whose grammar is not listed
-/// still use the former lexer; P3b lists them all and deletes the lexer.
-pub(crate) const ENABLED: &[&str] = &["javascript", "rust"];
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TreeStats {
@@ -72,13 +69,6 @@ pub(crate) struct TreeIndex {
 }
 
 impl TreeIndex {
-    /// Whether this path colours `language`.
-    pub(crate) fn handles(language: ResolvedLanguage) -> bool {
-        language
-            .grammar
-            .is_some_and(|grammar| ENABLED.contains(&Registry::builtin().grammar_name(grammar)))
-    }
-
     pub(crate) fn retain(&mut self, open: &[FileId]) {
         self.docs.retain(|id, _| open.contains(id));
         self.stats.trees = self.docs.len();
@@ -94,7 +84,6 @@ impl TreeIndex {
         windows: &[Window],
         cancel: &AtomicBool,
     ) -> Option<Vec<WindowTokens>> {
-        let grammar = language.grammar?;
         self.clock += 1;
         if windows
             .iter()
@@ -102,6 +91,11 @@ impl TreeIndex {
         {
             return None;
         }
+        // Without a grammar the text is plain.
+        let Some(grammar) = language.grammar else {
+            self.docs.remove(&id);
+            return Some(windows.iter().map(plain).collect());
+        };
         if source.text.len() > MAX_DOCUMENT_BYTES {
             self.docs.remove(&id);
             self.stats.plain_fallbacks += 1;
@@ -131,11 +125,7 @@ impl TreeIndex {
                 cancel,
             )?;
             self.stats.query_runs += 1;
-            result.push(WindowTokens {
-                range: window.range.clone(),
-                spans: spans.into(),
-                complete: true,
-            });
+            result.push(WindowTokens::fresh(window.range.clone(), spans));
         }
         self.stats.query_time += started.elapsed();
         self.evict(id);
@@ -293,11 +283,7 @@ fn plain(window: &Window) -> WindowTokens {
             class: None,
         }]
     };
-    WindowTokens {
-        range: window.range.clone(),
-        spans: spans.into(),
-        complete: true,
-    }
+    WindowTokens::fresh(window.range.clone(), spans)
 }
 
 pub(crate) struct Capture {
@@ -308,7 +294,9 @@ pub(crate) struct Capture {
 }
 
 /// The spans for `window`, tiling it completely: text no pattern colours is a
-/// span with no class. `None` when cancelled.
+/// span with no class. A token that starts before or ends after the window keeps
+/// its full range, so the result may reach past the window on either side.
+/// `None` when cancelled.
 pub(crate) fn highlight(
     tree: &Tree,
     text: &str,
@@ -333,8 +321,9 @@ pub(crate) fn highlight(
             let Some(class) = query.class_of(capture.index) else {
                 continue;
             };
-            let node = capture.node.byte_range();
-            let range = node.start.max(window.start)..node.end.min(window.end);
+            // The capture keeps its whole extent even where it leaves the window,
+            // so a long token stays known to the pages beside this one.
+            let range = capture.node.byte_range();
             if range.start < range.end {
                 captures.push(Capture {
                     range,
@@ -347,7 +336,25 @@ pub(crate) fn highlight(
             break;
         }
     }
-    Some(tile(window, captures))
+    let start = captures
+        .iter()
+        .map(|c| c.range.start)
+        .fold(window.start, usize::min);
+    let end = captures
+        .iter()
+        .map(|c| c.range.end)
+        .fold(window.end, usize::max);
+    let mut spans = tile(start..end, captures);
+    // Tokens keep their full range, but nothing is claimed about text the query
+    // did not look at: spans that miss the window are dropped, and the plain
+    // stretches between captures are cut to the window.
+    spans.retain(|span| span.range.end > window.start && span.range.start < window.end);
+    for span in &mut spans {
+        if span.class.is_none() {
+            span.range = span.range.start.max(window.start)..span.range.end.min(window.end);
+        }
+    }
+    Some(spans)
 }
 
 /// Resolves overlapping captures into consecutive spans. At each point the

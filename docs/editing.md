@@ -28,6 +28,22 @@
   surviving tabs are filled in place without changing focus. Restoring tabs are
   remembered on exit and cannot edit or save their empty staging buffers.
 
+## Syntax highlighting
+
+Colours come from a syntax tree built with Tree-sitter for Rust, JavaScript
+(including JSX), TypeScript, TSX and C#. Because the whole file is parsed, a
+comment or string that starts above the screen is coloured correctly, and
+unfinished code keeps its colours instead of turning plain.
+
+The parse runs in the background and never blocks typing. While a new version
+is still being parsed, the previous colours stay on screen, moved across the
+edits you made, and are replaced as soon as the parser catches up. Switching to
+another tab shows its colours at once.
+
+Files larger than 8 MiB and file types without a grammar are drawn as plain text.
+Which language a file has comes from its name, or from the
+[file associations](settings.md#file-associations) in your settings.
+
 ## Large files
 
 Large documents use plain text rendering and suppress automatic Vim match

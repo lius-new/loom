@@ -67,20 +67,35 @@ fn color_for(class: Option<HighlightId>) -> Color {
 mod tests {
     use super::*;
     use crate::{
+        domain::identity::FileId,
         domain::language::builtin,
-        features::{highlighting::HighlightId, syntax::Tokens},
+        features::{
+            highlighting::HighlightId,
+            syntax::{Source, TreeIndex, Window},
+        },
     };
+    use std::sync::atomic::AtomicBool;
 
     #[test]
     fn pending_and_ready_spans_preserve_exact_text_and_combining_graphemes() {
         let buffer = TextBuffer::new("const e\u{301}=\"中👩‍💻\"; // comment");
-        let tokens: Vec<_> = Tokens::new(buffer.text(), builtin("javascript"), 0)
-            .map(|(range, kind)| TokenSpan {
-                range,
-                class: kind.highlight(),
-            })
-            .collect();
         let window = 0..buffer.len();
+        let tokens = TreeIndex::default()
+            .prepare(
+                FileId::new(1),
+                Source::new(&buffer),
+                builtin("javascript"),
+                &[Window {
+                    line: window.clone(),
+                    range: window.clone(),
+                }],
+                &AtomicBool::new(false),
+            )
+            .unwrap()
+            .remove(0)
+            .spans
+            .to_vec();
+        assert!(tokens.len() > 3, "the sample has several spans");
         for ready in [
             None,
             Some(tokens.as_slice()),

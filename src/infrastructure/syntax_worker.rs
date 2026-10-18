@@ -1,13 +1,13 @@
-//! Coalesced viewport work. Lexing and index mutation never hold the UI lock.
+//! Coalesced viewport work. Parsing and querying never hold the UI lock.
+pub(crate) use self::retained::ProvisionalStats;
+use self::retained::RetainedSet;
 use crate::{
     domain::{
         document::DocumentStamp,
         identity::{FileId, PaneId},
         language::ResolvedLanguage,
     },
-    features::syntax::{
-        Index, IndexStats, Source, TokenSpan, TreeIndex, TreeStats, Window, WindowTokens,
-    },
+    features::syntax::{Freshness, Source, TokenSpan, TreeIndex, TreeStats, Window, WindowTokens},
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -103,6 +103,15 @@ struct Cached {
     bytes: usize,
 }
 impl Cached {
+    /// The spans cut to `range`.
+    fn clipped(&self, range: &std::ops::Range<usize>) -> impl Iterator<Item = TokenSpan> + '_ {
+        let range = range.clone();
+        self.intersecting(&range).iter().map(move |span| TokenSpan {
+            range: span.range.start.max(range.start)..span.range.end.min(range.end),
+            class: span.class,
+        })
+    }
+
     fn intersecting(&self, range: &std::ops::Range<usize>) -> &[TokenSpan] {
         let first = self
             .window
@@ -127,8 +136,10 @@ struct State {
     hits: usize,
     evictions: usize,
     prune: Option<Vec<FileId>>,
-    index_stats: IndexStats,
     tree_stats: TreeStats,
+    /// The last fully coloured spans of each document, for drawing while a
+    /// newer version is parsed.
+    retained: RetainedSet,
 }
 struct Shared {
     state: Mutex<State>,
@@ -154,8 +165,8 @@ fn stop(shared: &Shared) {
 pub(crate) struct Worker(Arc<Owner>);
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Stats {
-    pub index: IndexStats,
     pub tree: TreeStats,
+    pub provisional: ProvisionalStats,
     pub cache_bytes: usize,
     pub cache_hits: usize,
     pub evictions: usize,
@@ -177,7 +188,6 @@ impl Worker {
         thread::Builder::new()
             .name("loom-syntax".into())
             .spawn(move || {
-                let mut index = Index::default();
                 let mut trees = TreeIndex::default();
                 loop {
                     let job = {
@@ -193,10 +203,8 @@ impl Worker {
                         }
                         if let Some(open) = state.prune.take() {
                             drop(state);
-                            index.retain(&open);
                             trees.retain(&open);
                             let mut state = background.state.lock().unwrap();
-                            state.index_stats = index.stats;
                             state.tree_stats = trees.stats;
                             continue;
                         }
@@ -235,28 +243,15 @@ impl Worker {
                     };
                     let (request, windows, cancel) = job;
                     before_prepare();
-                    // Languages with an enabled grammar are read from a syntax
-                    // tree; the rest still go through the line lexer.
-                    let result = if TreeIndex::handles(request.lang) {
-                        trees.prepare(
-                            request.document,
-                            request.source.clone(),
-                            request.lang,
-                            &windows,
-                            &cancel,
-                        )
-                    } else {
-                        index.prepare(
-                            request.document,
-                            request.source.clone(),
-                            request.lang,
-                            &windows,
-                            &cancel,
-                        )
-                    };
+                    let result = trees.prepare(
+                        request.document,
+                        request.source.clone(),
+                        request.lang,
+                        &windows,
+                        &cancel,
+                    );
                     let mut state = background.state.lock().unwrap();
                     state.running = None;
-                    state.index_stats = index.stats;
                     state.tree_stats = trees.stats;
                     if background.stopped.load(Ordering::Acquire) {
                         break;
@@ -348,7 +343,7 @@ impl Worker {
                 .get(&document)
                 .is_some_and(|epoch| epoch.cancel.load(Ordering::Relaxed));
         if changed {
-            if let Some(old) = state.epochs.insert(
+            let old = state.epochs.insert(
                 document,
                 Epoch {
                     identity: request.source.identity(),
@@ -358,10 +353,43 @@ impl Worker {
                     lang,
                     cancel: Arc::new(AtomicBool::new(false)),
                 },
-            ) {
+            );
+            if let Some(old) = &old {
                 old.cancel.store(true, Ordering::Release);
             }
             if changed_data {
+                // The spans that were ready for the previous version are kept
+                // for drawing, unless the language or the document's lifetime
+                // changed, when they say nothing about this text.
+                let pages: Vec<_> = state
+                    .ready
+                    .iter()
+                    .filter(|(key, _)| key.document == document)
+                    .map(|(key, entry)| (key.start..key.end, entry.window.spans.clone()))
+                    .collect();
+                match old {
+                    Some(old)
+                        if (old.incarnation, old.language_generation, old.lang)
+                            == (
+                                request.stamp.incarnation,
+                                request.stamp.language_generation,
+                                lang,
+                            ) =>
+                    {
+                        if !pages.is_empty() {
+                            state.retained.keep(
+                                document,
+                                old.version,
+                                old.identity,
+                                old.incarnation,
+                                old.language_generation,
+                                old.lang,
+                                pages,
+                            );
+                        }
+                    }
+                    _ => state.retained.forget(document),
+                }
                 state.ready.retain(|key, _| key.document != document);
                 state.bytes = state.ready.values().map(|entry| entry.bytes).sum();
             }
@@ -371,11 +399,7 @@ impl Worker {
         let mut request = request;
         for window in windows {
             if window.range.is_empty() {
-                result.push(WindowTokens {
-                    range: window.range,
-                    spans: Arc::from([]),
-                    complete: true,
-                });
+                result.push(WindowTokens::fresh(window.range, Vec::new()));
                 continue;
             }
             let blocks = pages(&request.source, &window);
@@ -395,7 +419,12 @@ impl Worker {
                     if block.range == window.range {
                         exact = Some(entry.window.clone());
                     } else {
-                        spans.extend_from_slice(entry.intersecting(&window.range));
+                        // Each ready page speaks for its own part of the window, so a
+                        // long token seen from one page cannot mask what the next one
+                        // found inside it.
+                        let own = block.range.start.max(window.range.start)
+                            ..block.range.end.min(window.range.end);
+                        spans.extend(entry.clipped(&own));
                     }
                     state.hits += 1;
                 } else {
@@ -444,7 +473,19 @@ impl Worker {
                     range: window.range,
                     spans: spans.into(),
                     complete,
+                    freshness: Freshness::Fresh,
                 });
+            } else if let Some(provisional) = state.retained.provisional(
+                document,
+                &request.source,
+                request.stamp.incarnation,
+                request.stamp.language_generation,
+                lang,
+                &window,
+            ) {
+                // Nothing is ready for this version yet: draw the previous
+                // colours, moved across the edits, instead of plain text.
+                result.push(provisional);
             }
         }
         let in_flight = state
@@ -491,14 +532,15 @@ impl Worker {
         });
         state.ready.retain(|key, _| open.contains(&key.document));
         state.bytes = state.ready.values().map(|entry| entry.bytes).sum();
+        state.retained.retain(&open);
         state.prune = Some(open);
         self.0.0.wake.notify_one();
     }
     pub fn stats(&self) -> Stats {
         let state = self.0.0.state.lock().unwrap();
         Stats {
-            index: state.index_stats,
             tree: state.tree_stats,
+            provisional: state.retained.stats,
             cache_bytes: state.bytes,
             cache_hits: state.hits,
             evictions: state.evictions,
@@ -509,6 +551,8 @@ impl Worker {
 #[cfg(test)]
 #[path = "syntax_worker_bench.rs"]
 mod bench;
+#[path = "syntax_worker_retained.rs"]
+mod retained;
 #[cfg(test)]
 #[path = "syntax_worker_tests.rs"]
 mod tests;
