@@ -732,10 +732,36 @@ const CARD_PAD: f32 = 8.0;
 const CARD_ROW: f32 = 18.0;
 const CARD_MAX_W: f32 = 640.0;
 
+/// The gap between a hover card and the underline it explains.
+const CARD_GAP: f32 = 4.0;
+
+/// Where a `width` × `height` hover card for `anchor` opens: below the
+/// underline, or above it when the space below is too short; starting at the
+/// underline's left edge, or ending at its right edge when the space to the
+/// right is too narrow. It stays inside `area` either way.
+fn card_origin(anchor: UiRect, area: UiRect, width: f32, height: f32) -> (f32, f32) {
+    let below = anchor.bottom + CARD_GAP;
+    let above = anchor.top - CARD_GAP - height;
+    let top = if below + height <= area.bottom || above < area.top {
+        below
+    } else {
+        above
+    };
+    let left = if anchor.left + width <= area.right - CARD_GAP {
+        anchor.left
+    } else {
+        anchor.right - width
+    };
+    let top = top.min(area.bottom - height).max(area.top);
+    let left = left
+        .min(area.right - width - CARD_GAP)
+        .max(area.left + CARD_GAP);
+    (left, top)
+}
+
 /// The hover card of the diagnostics at `anchor`: each one's message beside a
 /// mark of its severity, with the reporting tool and code faint after it, as
-/// VS Code shows `rustc(E0425)`. It opens above the underline, or below when
-/// there is no room, and stays inside `area`.
+/// VS Code shows `rustc(E0425)`. It is placed by [`card_origin`].
 fn diagnostic_card(found: &[&Diagnostic], anchor: UiRect, area: UiRect) -> Option<Element> {
     if found.is_empty() {
         return None;
@@ -777,15 +803,7 @@ fn diagnostic_card(found: &[&Diagnostic], anchor: UiRect, area: UiRect) -> Optio
         .min(CARD_MAX_W)
         .min((area.width() - 8.0).max(80.0));
     let height = rows as f32 * CARD_ROW + 2.0 * CARD_PAD + (entries.len() - 1) as f32 * 9.0;
-    let top = if anchor.top - height - 4.0 >= area.top {
-        anchor.top - height - 4.0
-    } else {
-        anchor.bottom + 4.0
-    };
-    let left = anchor
-        .left
-        .min(area.right - width - 4.0)
-        .max(area.left + 4.0);
+    let (left, top) = card_origin(anchor, area, width, height);
     let card_rect = UiRect::new(left, top, left + width, top + height);
     let body = UiRect::new(
         card_rect.left + CARD_PAD,
@@ -1484,4 +1502,42 @@ pub(crate) fn ime_cursor_rect(app: &ViewState, rect: UiRect) -> UiRect {
 /// Lines in one page of an editor of this size, for page movements.
 pub(crate) fn page_lines(rect: UiRect) -> usize {
     (rect.height() / fonts::editor().line_h).floor().max(1.0) as usize
+}
+
+#[cfg(test)]
+mod card_placement_tests {
+    use super::*;
+
+    const AREA: UiRect = UiRect {
+        left: 0.0,
+        top: 0.0,
+        right: 800.0,
+        bottom: 600.0,
+    };
+
+    #[test]
+    fn a_card_opens_below_and_to_the_right_of_its_underline() {
+        let anchor = UiRect::new(100.0, 200.0, 140.0, 220.0);
+        assert_eq!(card_origin(anchor, AREA, 300.0, 80.0), (100.0, 224.0));
+    }
+
+    #[test]
+    fn a_card_opens_above_when_the_space_below_is_too_short() {
+        let anchor = UiRect::new(100.0, 540.0, 140.0, 560.0);
+        assert_eq!(card_origin(anchor, AREA, 300.0, 80.0), (100.0, 456.0));
+    }
+
+    #[test]
+    fn a_card_ends_at_the_underline_when_the_space_to_the_right_is_too_narrow() {
+        let anchor = UiRect::new(600.0, 200.0, 700.0, 220.0);
+        assert_eq!(card_origin(anchor, AREA, 300.0, 80.0), (400.0, 224.0));
+    }
+
+    #[test]
+    fn a_card_that_fits_neither_way_stays_inside_the_editor() {
+        let anchor = UiRect::new(10.0, 290.0, 30.0, 310.0);
+        let (left, top) = card_origin(anchor, AREA, 900.0, 700.0);
+        assert_eq!(left, CARD_GAP.max(AREA.right - 900.0 - CARD_GAP));
+        assert_eq!(top, AREA.top);
+    }
 }
