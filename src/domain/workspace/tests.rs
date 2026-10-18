@@ -197,3 +197,34 @@ fn stamps_separate_lifetimes_text_versions_and_languages() {
     let other = open(&mut workspace, "b.rs", "fn a() {}");
     assert_ne!(workspace.documents[&other].incarnation, again.incarnation);
 }
+
+#[test]
+fn renaming_a_file_recomputes_its_language_and_invalidates_old_results() {
+    let mut workspace = PureWorkspace::new();
+    let id = open(&mut workspace, "a.rs", "fn a() {}");
+    let before = workspace.documents[&id].stamp(id);
+    let disk = || DiskState::from_contents("fn a() {}");
+
+    // Same language: nothing derived from the old name is stale.
+    assert!(workspace.move_path_with_disk("a.rs".as_ref(), "b.rs".into(), disk()));
+    let renamed = workspace.documents[&id].stamp(id);
+    assert_eq!(
+        renamed, before,
+        "a rename within one language changes nothing"
+    );
+
+    // Another language: the same text and snapshot must still not match.
+    assert!(workspace.move_path_with_disk("b.rs".as_ref(), "b.txt".into(), disk()));
+    let relabelled = workspace.documents[&id].stamp(id);
+    assert_eq!(workspace.documents[&id].meta.lang.name(), "plaintext");
+    assert_eq!(relabelled.version, before.version);
+    assert_eq!(relabelled.snapshot_identity, before.snapshot_identity);
+    assert_ne!(relabelled, before);
+
+    // And back again: still a different stamp from either earlier one.
+    assert!(workspace.move_path_with_disk("b.txt".as_ref(), "c.rs".into(), disk()));
+    let again = workspace.documents[&id].stamp(id);
+    assert_eq!(workspace.documents[&id].meta.lang.name(), "rust");
+    assert_ne!(again, before);
+    assert_ne!(again, relabelled);
+}

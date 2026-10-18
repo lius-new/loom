@@ -362,7 +362,12 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         let Some(document) = self.documents.get_mut(&id) else {
             return false;
         };
-        document.meta = FileMeta::from_path(new_path.clone());
+        // The file decides the language, so a rename may change it. Results
+        // computed for the old language must stop matching, which only a bumped
+        // generation guarantees; a plain rename within one language keeps it.
+        let previous = std::mem::replace(&mut document.meta, FileMeta::from_path(new_path.clone()));
+        document.meta.language_generation =
+            previous.language_generation + u64::from(previous.lang != document.meta.lang);
         document.disk_state = disk;
         document.missing_on_disk = false;
         self.paths.insert(new_path, id);
