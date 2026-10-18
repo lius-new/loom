@@ -1,5 +1,6 @@
 //! Compact reference badges beside commit subjects.
 
+use crate::features::highlighting::HighlightId;
 use lgui::core::{SemanticRole, Semantics, UiId};
 use lgui::prelude::{Color, Element, UiRect, VisualStyle, panel, text};
 
@@ -60,9 +61,9 @@ impl<'a> Reference<'a> {
 
     fn color(self) -> Color {
         match self.kind {
-            Kind::Current | Kind::Branch => theme::c().syntax.function,
-            Kind::Remote => theme::c().syntax.property,
-            Kind::Tag => theme::c().syntax.type_name,
+            Kind::Current | Kind::Branch => theme::syntax_color(HighlightId::FUNCTION),
+            Kind::Remote => theme::syntax_color(HighlightId::PROPERTY),
+            Kind::Tag => theme::syntax_color(HighlightId::TYPE),
         }
     }
 

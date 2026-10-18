@@ -1,4 +1,5 @@
 //! Tag metadata and target commit details, using the history hover-card chrome.
+use crate::features::highlighting::HighlightId;
 use lgui::core::{SemanticRole, Semantics};
 use lgui::prelude::{Element, UiRect};
 
@@ -26,7 +27,7 @@ pub(crate) fn render(
     let inner = width - panel::CARD_PAD * 2.0;
     let mut lines = panel::wrap_text(&card.tag.name, inner)
         .into_iter()
-        .map(|line| CardLine::Text(vec![(line, theme::c().syntax.type_name)], true))
+        .map(|line| CardLine::Text(vec![(line, theme::syntax_color(HighlightId::TYPE))], true))
         .collect::<Vec<_>>();
     match &card.details {
         Ok(details) => {

@@ -1,5 +1,6 @@
 //! Parent-based commit lanes, including continuations through expanded files.
 
+use crate::features::highlighting::HighlightId;
 use lgui::core::{
     PathStyle, Point, Stroke, UiElement, UiId, UiPath, UiPathCommand, path, precompiled,
 };
@@ -257,12 +258,12 @@ impl Graph {
 
 fn color(index: usize) -> Color {
     let colors = [
-        theme::c().syntax.function,
-        theme::c().syntax.property,
+        theme::syntax_color(HighlightId::FUNCTION),
+        theme::syntax_color(HighlightId::PROPERTY),
         theme::c().git.staged,
-        theme::c().syntax.number,
-        theme::c().syntax.keyword,
-        theme::c().syntax.type_name,
+        theme::syntax_color(HighlightId::NUMBER),
+        theme::syntax_color(HighlightId::KEYWORD),
+        theme::syntax_color(HighlightId::TYPE),
     ];
     colors[index % colors.len()]
 }

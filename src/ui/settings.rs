@@ -3,6 +3,7 @@
 //! Controls dispatch semantic commands; app-level effects persist the
 //! values, so there is no separate apply/save step.
 
+use crate::features::highlighting::HighlightId;
 use lgui::core::{CursorIcon, EventPolicy, TextStyle, UiEventContext, WheelUnit, clip};
 use lgui::prelude::{
     Color, Element, TextAlign, UiRect, VisualStyle, component, group, panel, text,
@@ -909,9 +910,21 @@ fn theme_picker(rect: UiRect, selected: ThemeId, state: Binding) -> Element {
 
         // Mini code lines: (indent, [(width, color)]).
         let lines: [(f32, &[(f32, Color)]); 3] = [
-            (0.0, &[(18.0, p.syntax.keyword), (30.0, p.syntax.function)]),
-            (10.0, &[(22.0, p.syntax.property), (36.0, p.syntax.string)]),
-            (10.0, &[(44.0, p.syntax.comment)]),
+            (
+                0.0,
+                &[
+                    (18.0, p.syntax_color(HighlightId::KEYWORD)),
+                    (30.0, p.syntax_color(HighlightId::FUNCTION)),
+                ],
+            ),
+            (
+                10.0,
+                &[
+                    (22.0, p.syntax_color(HighlightId::PROPERTY)),
+                    (36.0, p.syntax_color(HighlightId::STRING)),
+                ],
+            ),
+            (10.0, &[(44.0, p.syntax_color(HighlightId::COMMENT))]),
         ];
         let mut element = theme::bordered(card, p.bg, ring, 6.0, ring_w);
         for (row, (indent, bars)) in lines.into_iter().enumerate() {

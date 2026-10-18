@@ -60,22 +60,17 @@ pub(crate) fn highlight_window(
 }
 
 fn color_for(kind: TokenKind) -> Color {
-    match kind {
-        TokenKind::Kw => theme::c().syntax.keyword,
-        TokenKind::Fn => theme::c().syntax.function,
-        TokenKind::Type => theme::c().syntax.type_name,
-        TokenKind::Str => theme::c().syntax.string,
-        TokenKind::Comment => theme::c().syntax.comment,
-        TokenKind::Num => theme::c().syntax.number,
-        TokenKind::Prop => theme::c().syntax.property,
-        TokenKind::Plain => theme::c().text,
-    }
+    kind.highlight()
+        .map_or(theme::c().text, theme::syntax_color)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{domain::language::Language, features::syntax::Tokens};
+    use crate::{
+        domain::language::Language,
+        features::{highlighting::HighlightId, syntax::Tokens},
+    };
 
     #[test]
     fn pending_and_ready_spans_preserve_exact_text_and_combining_graphemes() {
@@ -106,11 +101,8 @@ mod tests {
             }
         }
         let spans = highlight_window(&buffer, window, Some(&tokens));
-        assert_eq!(spans[0].1, theme::c().syntax.keyword);
-        assert!(
-            spans.iter().any(
-                |(text, color)| text.contains("comment") && *color == theme::c().syntax.comment
-            )
-        );
+        assert_eq!(spans[0].1, theme::syntax_color(HighlightId::KEYWORD));
+        assert!(spans.iter().any(|(text, color)| text.contains("comment")
+            && *color == theme::syntax_color(HighlightId::COMMENT)));
     }
 }

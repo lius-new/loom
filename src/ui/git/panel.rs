@@ -1,5 +1,6 @@
 //! Source Control drawer.
 
+use crate::features::highlighting::HighlightId;
 use std::path::PathBuf;
 
 use lgui::core::{
@@ -1861,7 +1862,7 @@ pub(crate) fn tag_row(
             rect.left + 22.0,
             rect.bottom - 4.0,
         )),
-        theme::c().syntax.type_name,
+        theme::syntax_color(HighlightId::TYPE),
     ))
     .child(clip(label_rect, 0.0, 0.0).child(text(
         label_rect,

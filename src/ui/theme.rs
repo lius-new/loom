@@ -5,6 +5,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::features::highlighting::{HighlightId, HighlightModifiers, HighlightStyle, StyleTable};
 use lgui::prelude::{Color, Element, Stroke, TextAlign, TextStyle, UiRect, VisualStyle, panel};
 
 // ---- Palettes ----------------------------------------------------------
@@ -41,7 +42,8 @@ pub struct Palette {
     pub error_text: Color,
     pub warning: Color,
 
-    pub syntax: SyntaxColors,
+    /// Syntax styles by highlight class; read through `syntax_style`.
+    pub(crate) syntax: StyleTable,
     pub diff: DiffColors,
     pub git: GitColors,
     pub badge: BadgeColors,
@@ -49,15 +51,15 @@ pub struct Palette {
     pub ansi: [u32; 16],
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct SyntaxColors {
-    pub keyword: Color,
-    pub function: Color,
-    pub type_name: Color,
-    pub string: Color,
-    pub comment: Color,
-    pub number: Color,
-    pub property: Color,
+impl Palette {
+    /// The class's foreground color, or the normal text color when this theme
+    /// gives the class none.
+    pub(crate) fn syntax_color(&self, class: HighlightId) -> Color {
+        self.syntax
+            .resolve(class, HighlightModifiers::NONE)
+            .fg
+            .map_or(self.text, Color)
+    }
 }
 
 /// Diff rows and the editor gutter's change markers.
@@ -149,14 +151,17 @@ const AURA_DARK: Palette = Palette {
     error_text: Color(0xfda4af),
     warning: Color(0xfbbf24),
 
-    syntax: SyntaxColors {
-        keyword: Color(0xf472b6),
-        function: Color(0x60a5fa),
-        type_name: Color(0xfbbf24),
-        string: Color(0x4ade80),
-        comment: Color(0x64748b),
-        number: Color(0xfb923c),
-        property: Color(0xa78bfa),
+    syntax: StyleTable {
+        classes: &[
+            (HighlightId::KEYWORD, HighlightStyle::fg(0xf472b6)),
+            (HighlightId::FUNCTION, HighlightStyle::fg(0x60a5fa)),
+            (HighlightId::TYPE, HighlightStyle::fg(0xfbbf24)),
+            (HighlightId::STRING, HighlightStyle::fg(0x4ade80)),
+            (HighlightId::COMMENT, HighlightStyle::fg(0x64748b)),
+            (HighlightId::NUMBER, HighlightStyle::fg(0xfb923c)),
+            (HighlightId::PROPERTY, HighlightStyle::fg(0xa78bfa)),
+        ],
+        modifiers: &[],
     },
     diff: DiffColors {
         add_bg: Color(0x142a27), // rgba(16,185,129,.12) over bg
@@ -213,14 +218,17 @@ const AURA_LIGHT: Palette = Palette {
     error_text: Color(0xbe123c),
     warning: Color(0xb45309),
 
-    syntax: SyntaxColors {
-        keyword: Color(0xdb2777),
-        function: Color(0x2563eb),
-        type_name: Color(0xb45309),
-        string: Color(0x15803d),
-        comment: Color(0x64748b),
-        number: Color(0xc2410c),
-        property: Color(0x7c3aed),
+    syntax: StyleTable {
+        classes: &[
+            (HighlightId::KEYWORD, HighlightStyle::fg(0xdb2777)),
+            (HighlightId::FUNCTION, HighlightStyle::fg(0x2563eb)),
+            (HighlightId::TYPE, HighlightStyle::fg(0xb45309)),
+            (HighlightId::STRING, HighlightStyle::fg(0x15803d)),
+            (HighlightId::COMMENT, HighlightStyle::fg(0x64748b)),
+            (HighlightId::NUMBER, HighlightStyle::fg(0xc2410c)),
+            (HighlightId::PROPERTY, HighlightStyle::fg(0x7c3aed)),
+        ],
+        modifiers: &[],
     },
     diff: DiffColors {
         add_bg: Color(0xdef2eb), // rgba(16,185,129,.12) over bg
@@ -278,14 +286,17 @@ const EMBER: Palette = Palette {
     error_text: Color(0xfca5a5),
     warning: Color(0xfacc15),
 
-    syntax: SyntaxColors {
-        keyword: Color(0xfb7185),
-        function: Color(0xfacc15),
-        type_name: Color(0x5eead4),
-        string: Color(0xa3e635),
-        comment: Color(0x78716c),
-        number: Color(0xc4b5fd),
-        property: Color(0xfdba74),
+    syntax: StyleTable {
+        classes: &[
+            (HighlightId::KEYWORD, HighlightStyle::fg(0xfb7185)),
+            (HighlightId::FUNCTION, HighlightStyle::fg(0xfacc15)),
+            (HighlightId::TYPE, HighlightStyle::fg(0x5eead4)),
+            (HighlightId::STRING, HighlightStyle::fg(0xa3e635)),
+            (HighlightId::COMMENT, HighlightStyle::fg(0x78716c)),
+            (HighlightId::NUMBER, HighlightStyle::fg(0xc4b5fd)),
+            (HighlightId::PROPERTY, HighlightStyle::fg(0xfdba74)),
+        ],
+        modifiers: &[],
     },
     diff: DiffColors {
         add_bg: Color(0x292e17), // rgba(132,204,22,.12) over bg
@@ -343,14 +354,17 @@ const HIGH_CONTRAST: Palette = Palette {
     error_text: Color(0xff9e9e),
     warning: Color(0xffd60a),
 
-    syntax: SyntaxColors {
-        keyword: Color(0xff7edb),
-        function: Color(0x7cc7ff),
-        type_name: Color(0xffd60a),
-        string: Color(0x7dff8a),
-        comment: Color(0x9ca3af),
-        number: Color(0xffab5e),
-        property: Color(0xd2a8ff),
+    syntax: StyleTable {
+        classes: &[
+            (HighlightId::KEYWORD, HighlightStyle::fg(0xff7edb)),
+            (HighlightId::FUNCTION, HighlightStyle::fg(0x7cc7ff)),
+            (HighlightId::TYPE, HighlightStyle::fg(0xffd60a)),
+            (HighlightId::STRING, HighlightStyle::fg(0x7dff8a)),
+            (HighlightId::COMMENT, HighlightStyle::fg(0x9ca3af)),
+            (HighlightId::NUMBER, HighlightStyle::fg(0xffab5e)),
+            (HighlightId::PROPERTY, HighlightStyle::fg(0xd2a8ff)),
+        ],
+        modifiers: &[],
     },
     diff: DiffColors {
         add_bg: Color(0x0f3a1e),
@@ -389,6 +403,17 @@ impl ThemeId {
 }
 
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
+
+/// The active theme's style for a highlight class and its modifiers. Unset
+/// attributes are left for the caller to default.
+pub(crate) fn syntax_style(class: HighlightId, modifiers: HighlightModifiers) -> HighlightStyle {
+    c().syntax.resolve(class, modifiers)
+}
+
+/// The active theme's foreground for a highlight class.
+pub(crate) fn syntax_color(class: HighlightId) -> Color {
+    c().syntax_color(class)
+}
 
 /// The active palette.
 pub fn c() -> &'static Palette {
@@ -498,6 +523,64 @@ pub fn bordered(rect: UiRect, fill: Color, border: Color, radius: f32, width: f3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The colors the former `SyntaxColors` fields held, per built-in theme, in
+    /// the order keyword, function, type, string, comment, number, property.
+    /// Moving them into the class table must not change how any theme looks.
+    #[test]
+    fn built_in_themes_keep_their_syntax_colors() {
+        let classes = [
+            HighlightId::KEYWORD,
+            HighlightId::FUNCTION,
+            HighlightId::TYPE,
+            HighlightId::STRING,
+            HighlightId::COMMENT,
+            HighlightId::NUMBER,
+            HighlightId::PROPERTY,
+        ];
+        let expected: [(&str, [u32; 7]); 4] = [
+            (
+                "aura-dark",
+                [
+                    0xf472b6, 0x60a5fa, 0xfbbf24, 0x4ade80, 0x64748b, 0xfb923c, 0xa78bfa,
+                ],
+            ),
+            (
+                "aura-light",
+                [
+                    0xdb2777, 0x2563eb, 0xb45309, 0x15803d, 0x64748b, 0xc2410c, 0x7c3aed,
+                ],
+            ),
+            (
+                "ember",
+                [
+                    0xfb7185, 0xfacc15, 0x5eead4, 0xa3e635, 0x78716c, 0xc4b5fd, 0xfdba74,
+                ],
+            ),
+            (
+                "high-contrast",
+                [
+                    0xff7edb, 0x7cc7ff, 0xffd60a, 0x7dff8a, 0x9ca3af, 0xffab5e, 0xd2a8ff,
+                ],
+            ),
+        ];
+        assert_eq!(expected.len(), THEMES.len());
+        for (id, colors) in expected {
+            let theme = THEMES.iter().find(|theme| theme.id == id).unwrap();
+            for (class, rgb) in classes.into_iter().zip(colors) {
+                assert_eq!(
+                    theme.palette.syntax_color(class),
+                    Color(rgb),
+                    "{id} {class:?}"
+                );
+            }
+            // A class a theme does not style reads as ordinary text.
+            assert_eq!(
+                theme.palette.syntax_color(HighlightId::VARIABLE),
+                theme.palette.text
+            );
+        }
+    }
 
     #[test]
     fn theme_ids_are_unique() {

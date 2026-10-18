@@ -310,4 +310,78 @@ mod geometry_tests {
             }
         }
     }
+    #[test]
+    fn undo_and_redo_record_replayable_geometry() {
+        use crate::text::{EditKind, EditorMut, Selection};
+        let mut buffer = TextBuffer::new("one\r\ntwo 中\nthree");
+        let mut steps = 0;
+        let mut check = |buffer: &mut TextBuffer, op: &dyn Fn(&mut EditorMut<'_>)| {
+            let before_text = buffer.text().to_owned();
+            let since = buffer.clone();
+            op(&mut EditorMut::new(
+                buffer,
+                &mut Selection::default(),
+                Vec::new(),
+            ));
+            let revisions = buffer
+                .revisions_since(since.version(), since.snapshot_identity())
+                .expect("the journal covers this step");
+            assert_eq!(
+                revisions.len(),
+                1,
+                "one batch per step keeps the replay simple"
+            );
+            replay(&before_text, buffer.text(), buffer, &since);
+            steps += 1;
+        };
+        check(&mut buffer, &|e| {
+            e.replace(3..5, "\n\n\n", EditKind::Other).unwrap();
+        });
+        check(&mut buffer, &|e| {
+            e.replace(0..1, "😀x", EditKind::Other).unwrap();
+        });
+        check(&mut buffer, &|e| {
+            e.undo();
+        });
+        check(&mut buffer, &|e| {
+            e.undo();
+        });
+        check(&mut buffer, &|e| {
+            e.redo();
+        });
+        check(&mut buffer, &|e| {
+            e.redo();
+        });
+        assert_eq!(steps, 6);
+        assert_eq!(buffer.text(), "😀xne\n\n\ntwo 中\nthree");
+    }
+
+    #[test]
+    fn reload_and_divergent_snapshots_break_the_chain() {
+        let mut buffer = TextBuffer::new("a\nb");
+        let since = buffer.clone();
+        buffer.apply_edits(vec![Edit::insert(1, "\n")]).unwrap();
+        assert!(
+            buffer
+                .revisions_since(since.version(), since.snapshot_identity())
+                .is_some()
+        );
+        buffer.reload("a\nb\nc".into());
+        assert!(
+            buffer
+                .revisions_since(since.version(), since.snapshot_identity())
+                .is_none()
+        );
+        // Recovery is a fresh baseline: from a snapshot taken after the reload
+        // the chain is intact again.
+        let after = buffer.clone();
+        buffer.apply_edits(vec![Edit::insert(0, "x")]).unwrap();
+        assert_eq!(
+            buffer
+                .revisions_since(after.version(), after.snapshot_identity())
+                .unwrap()
+                .len(),
+            1
+        );
+    }
 }

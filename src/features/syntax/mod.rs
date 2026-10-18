@@ -2,6 +2,7 @@
 #[cfg(test)]
 mod baseline;
 mod index;
+mod legacy_class;
 mod lexer;
 #[cfg(test)]
 mod tests;
