@@ -882,6 +882,29 @@ impl Coordinator {
                 }
             }
         };
+        // Say why a publication was not used, so a missing underline can be explained.
+        let why = match &outcome {
+            Outcome::Unknown => {
+                let open: Vec<&str> = self.instances[at]
+                    .documents
+                    .iter()
+                    .map(|d| d.uri.as_str())
+                    .collect();
+                Some(format!(
+                    "diagnostics for {} dropped: not an open document (open: {})",
+                    published.uri,
+                    open.join(", ")
+                ))
+            }
+            Outcome::Outdated => Some(format!(
+                "diagnostics for {} dropped: server version {:?} is no longer remembered",
+                published.uri, published.version
+            )),
+            _ => None,
+        };
+        if let Some(why) = why {
+            self.remember(at, 3, &why);
+        }
         let counts = &mut self.instances[at].diagnostics;
         counts.published += 1;
         match outcome {

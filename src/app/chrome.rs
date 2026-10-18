@@ -301,11 +301,8 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
             let counts = info.diagnostics;
             lines.push(line(
                 format!(
-                    "diagnostics: {} published, {} shown, {} moved, {} dropped",
-                    counts.published,
-                    counts.shown,
-                    counts.carried,
-                    counts.outdated + counts.unknown
+                    "diagnostics: {} published, {} shown, {} moved, {} outdated, {} other file",
+                    counts.published, counts.shown, counts.carried, counts.outdated, counts.unknown
                 ),
                 if counts.published > 0 && counts.shown == 0 {
                     Level::Warning
@@ -324,7 +321,7 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 Level::Quiet,
             ));
             let broken = matches!(info.status, Status::Restarting { .. } | Status::Failed(_));
-            let recent = info.log.iter().rev().take(3).rev();
+            let recent = info.log.iter().rev().take(6).rev();
             lines.extend(recent.map(|l| line(l.clone(), Level::Quiet)));
             if broken {
                 let tail = info.stderr.iter().rev().take(3).rev();

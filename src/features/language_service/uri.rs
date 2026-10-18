@@ -43,7 +43,14 @@ fn decode(text: &str) -> Option<String> {
 pub fn file_uri_for(path: &str, windows: bool) -> Option<String> {
     let mut uri = String::from("file://");
     if windows {
-        let normalized = path.replace('\\', "/");
+        let mut normalized = path.replace('\\', "/");
+        // The extended-length spelling (what canonicalize gives on Windows) names
+        // the same file as the plain one.
+        if let Some(rest) = normalized.strip_prefix("//?/UNC/") {
+            normalized = format!("//{rest}");
+        } else if let Some(rest) = normalized.strip_prefix("//?/") {
+            normalized = rest.to_owned();
+        }
         if let Some(unc) = normalized.strip_prefix("//") {
             // \\server\share\a.rs: the server is the authority.
             let (host, rest) = unc.split_once('/')?;
@@ -233,6 +240,18 @@ mod tests {
         assert_eq!(
             file_path_for("file://localhost/C:/a.rs", true).as_deref(),
             Some(r"C:\a.rs")
+        );
+    }
+
+    #[test]
+    fn the_extended_length_spelling_names_the_same_file() {
+        assert_eq!(
+            windows(r"\\?\D:\Documents\a.rs"),
+            windows(r"D:\Documents\a.rs")
+        );
+        assert_eq!(
+            windows(r"\\?\UNC\server\share\a.rs"),
+            windows(r"\\server\share\a.rs")
         );
     }
 
