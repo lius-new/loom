@@ -298,6 +298,18 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 }
                 lines.push(line(text, Level::Quiet));
             }
+            let counts = info.diagnostics;
+            lines.push(line(
+                format!(
+                    "diagnostics: {} published, {} shown, {} outdated",
+                    counts.published, counts.shown, counts.outdated
+                ),
+                if counts.published > 0 && counts.shown == 0 {
+                    Level::Warning
+                } else {
+                    Level::Quiet
+                },
+            ));
             lines.push(line(
                 format!(
                     "{} documents{}",

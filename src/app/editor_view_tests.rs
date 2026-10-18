@@ -1345,3 +1345,110 @@ fn editor_menu_executes_its_intent_and_keeps_editor_focus() {
     );
     assert!(value.editor.focused);
 }
+
+/// A server's diagnostics are drawn as underlines in the real editor view, from the
+/// server process to the scene tree.
+#[test]
+fn diagnostics_from_a_server_are_underlined_in_the_editor() {
+    use lgui::{
+        application::{AppView, ApplicationContext},
+        core::UiScale,
+        session::UiSession,
+    };
+    use std::sync::Arc;
+    let context = ApplicationContext::empty(Default::default());
+    let _fonts = lgui::backend::install_text_environment(
+        &context,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    fonts::set(&fonts::FontSettings::EDITOR, &fonts::FontSettings::TERMINAL);
+    let exe = std::env::current_exe().unwrap();
+    let fake = exe
+        .parent()
+        .and_then(|deps| deps.parent())
+        .unwrap()
+        .join("examples")
+        .join(if cfg!(windows) {
+            "fake_lsp.exe"
+        } else {
+            "fake_lsp"
+        });
+    let mut app = AppState::new();
+    app.workspace.open_path(
+        std::env::temp_dir().join("loom-diagnostic-test.rs"),
+        "fn a() {}\nsecond line\n".into(),
+    );
+    app.preferences.values_mut().language_servers =
+        vec![crate::features::settings::servers::LanguageServerSetting {
+            server: "rust-analyzer".into(),
+            enabled: true,
+            command: Some(fake.display().to_string()),
+            args: Some(vec!["--sync".into(), "full".into(), "--diagnostics".into()]),
+            initialization_options: None,
+        }];
+    let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
+    let initial = Arc::new(Mutex::new(Some(app)));
+    let exposed = Arc::new(Mutex::new(None));
+    let output = exposed.clone();
+    let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
+    let view_runtime = runtime.clone();
+    let tasks = crate::app::test_support::UiTasks::default();
+    let application = tasks.application();
+    let view: AppView = Arc::new(move |cx| {
+        let state = AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()))
+            .with_runtime(&view_runtime);
+        if view_runtime.highlighter().is_none() {
+            view_runtime.install_highlighter(crate::app::syntax::Highlighter::new(
+                state.clone(),
+                application.clone(),
+            ));
+            let results_state = state.clone();
+            view_runtime.install_language_services(
+                crate::app::language_services::LanguageServices::new(move || {
+                    results_state.try_update(|app| {
+                        app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
+                        true
+                    });
+                }),
+            );
+        }
+        let git = cx.state_with(GitStoreSnapshot::default);
+        *output.lock().unwrap() = Some(state.clone());
+        let id = UiId::new("diagnostic-editor-test");
+        let focus = cx.focus_handle(id.clone());
+        render(PaneId::new(1), rect, state, git, id, focus)
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, rect, UiScale::ONE);
+    let state: AppContext = exposed.lock().unwrap().clone().unwrap();
+    // Make the services see the document, then wait for the server's answer.
+    state.update(|app| app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1));
+    let underline = lgui::prelude::VisualStyle::filled(theme::c().error);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        tasks.run_all();
+        session.render_view(&view, rect, UiScale::ONE);
+        if session
+            .tree()
+            .nodes()
+            .iter()
+            .any(|node| node.style == underline)
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no underline was drawn; infos {:?}; services {}; docs {:?}",
+            runtime.language_services().map(|s| s.infos()),
+            runtime.language_services().is_some(),
+            state
+                .get()
+                .workspace
+                .documents
+                .values()
+                .map(|d| (d.is_text(), d.meta.path.clone(), d.meta.lang.name()))
+                .collect::<Vec<_>>()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}

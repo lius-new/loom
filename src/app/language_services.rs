@@ -279,4 +279,85 @@ mod tests {
         assert!(seen.iter().any(|(m, _)| m == "exit"), "{seen:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Like the real application: a document is opened, then edited in several
+    /// steps while rust-analyzer is still loading. Needs LOOM_RA_FILE and LOOM_RA_ROOT.
+    #[test]
+    #[ignore = "needs rust-analyzer"]
+    fn real_rust_analyzer_diagnostics_reach_the_current_state_after_edits() {
+        let file = PathBuf::from(std::env::var("LOOM_RA_FILE").unwrap());
+        let root = PathBuf::from(std::env::var("LOOM_RA_ROOT").unwrap());
+        let original = std::fs::read_to_string(&file).unwrap();
+        let mut app = AppState::new();
+        app.explorer.model.restore(vec![root], Vec::new());
+        app.preferences.values_mut().language_servers = vec![LanguageServerSetting {
+            server: "rust-analyzer".into(),
+            enabled: true,
+            command: std::env::var("LOOM_RUST_ANALYZER").ok(),
+            args: None,
+            initialization_options: None,
+        }];
+        let runtime = Arc::new(AppRuntime::default());
+        runtime.install_language_services(LanguageServices::new(|| {}));
+        let state = live(app).with_runtime(&runtime);
+        state.update(|app| {
+            app.workspace.open_path(file.clone(), original.clone());
+        });
+        // Type a bad line one character at a time, as a person would.
+        for step in 0..6 {
+            std::thread::sleep(Duration::from_millis(400));
+            state.update(|app| {
+                let doc = app
+                    .workspace
+                    .documents
+                    .values_mut()
+                    .find(|d| d.is_text())
+                    .unwrap();
+                let text = original.replacen(
+                    "fn main() {
+",
+                    &format!(
+                        "fn main() {{
+    {}
+",
+                        "s".repeat(step + 1)
+                    ),
+                    1,
+                );
+                doc.buffer.reload(text);
+            });
+        }
+        let services = runtime.language_services().unwrap();
+        let started = Instant::now();
+        loop {
+            let stamp = {
+                let app = state.get();
+                let (id, doc) = app
+                    .workspace
+                    .documents
+                    .iter()
+                    .find(|(_, d)| d.is_text())
+                    .unwrap();
+                doc.stamp(*id)
+            };
+            let found = services.results(&file, &stamp).diagnostics;
+            println!(
+                "{:>5.1}s {:?} {:?}",
+                started.elapsed().as_secs_f32(),
+                services
+                    .infos()
+                    .first()
+                    .map(|i| (i.status.clone(), i.tasks.len())),
+                found.as_ref().map(|d| d.len())
+            );
+            if found.is_some_and(|d| !d.is_empty()) {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(90),
+                "no diagnostics for the current state"
+            );
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
 }

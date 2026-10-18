@@ -115,6 +115,20 @@ pub(crate) struct InstanceInfo {
     pub log: Vec<String>,
     /// The last lines the server wrote to its error output.
     pub stderr: Vec<String>,
+    pub diagnostics: DiagnosticCounts,
+}
+
+/// What became of the diagnostics a server published, so a missing underline can
+/// be told apart: nothing published, published for another version of the text,
+/// or published and shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DiagnosticCounts {
+    pub published: usize,
+    pub shown: usize,
+    /// Dropped because they described an older state of the document.
+    pub outdated: usize,
+    /// Dropped because the document is not open in this server any more.
+    pub unknown: usize,
 }
 
 /// One running background task of a server.
@@ -317,6 +331,7 @@ struct Instance {
     idle_since: Option<Instant>,
     /// What the server said recently, for the status panel.
     log: std::collections::VecDeque<String>,
+    diagnostics: DiagnosticCounts,
 }
 
 struct Coordinator {
@@ -538,6 +553,7 @@ impl Coordinator {
                 phase: Phase::Failed(String::new()),
                 failures: 0,
                 log: Default::default(),
+                diagnostics: DiagnosticCounts::default(),
                 documents,
                 idle_since: None,
             });
@@ -558,6 +574,7 @@ impl Coordinator {
         let instance = &mut self.instances[at];
         instance.run += 1;
         instance.log.clear();
+        instance.diagnostics = DiagnosticCounts::default();
         let (id, run) = (instance.id, instance.run);
         let key = &instance.key;
         let Some(root_uri) = uri::file_uri(&key.root) else {
@@ -777,6 +794,11 @@ impl Coordinator {
         let Some(published) = diagnostics::parse(params) else {
             return;
         };
+        enum Outcome {
+            Shown(String, Stamp, Vec<Diagnostic>),
+            Outdated,
+            Unknown,
+        }
         let instance = &self.instances[at];
         let Phase::Running(Running {
             ready: Some(ready), ..
@@ -785,27 +807,43 @@ impl Coordinator {
             return;
         };
         let key = uri::key(&published.uri);
-        let Some(document) = instance.documents.iter().find(|d| uri::key(&d.uri) == key) else {
-            return;
-        };
-        // With a version the server says which text it looked at; without one we
-        // can only assume it is the latest, which the next edit invalidates.
-        let describes_now = match published.version {
-            Some(version) => {
-                i32::try_from(version)
-                    .ok()
-                    .and_then(|version| ready.sync.stamp_of(&document.uri, version))
-                    == Some(document.stamp)
+        let outcome = match instance.documents.iter().find(|d| uri::key(&d.uri) == key) {
+            None => Outcome::Unknown,
+            Some(document) => {
+                // With a version the server says which text it looked at; without
+                // one we can only assume it is the latest, which the next edit
+                // invalidates.
+                let describes_now = match published.version {
+                    Some(version) => {
+                        i32::try_from(version)
+                            .ok()
+                            .and_then(|version| ready.sync.stamp_of(&document.uri, version))
+                            == Some(document.stamp)
+                    }
+                    None => true,
+                };
+                if describes_now {
+                    Outcome::Shown(
+                        key,
+                        document.stamp,
+                        published.resolve(&document.text, ready.capabilities.position_encoding),
+                    )
+                } else {
+                    Outcome::Outdated
+                }
             }
-            None => true,
         };
-        if !describes_now {
-            return;
+        let counts = &mut self.instances[at].diagnostics;
+        counts.published += 1;
+        match outcome {
+            Outcome::Unknown => counts.unknown += 1,
+            Outcome::Outdated => counts.outdated += 1,
+            Outcome::Shown(key, stamp, resolved) => {
+                counts.shown += 1;
+                let mut store = self.results.lock().unwrap();
+                store.entry(key).or_default().diagnostics = Some((stamp, resolved.into()));
+            }
         }
-        let resolved = published.resolve(&document.text, ready.capabilities.position_encoding);
-        let stamp = document.stamp;
-        let mut store = self.results.lock().unwrap();
-        store.entry(key).or_default().diagnostics = Some((stamp, resolved.into()));
         self.results_changed = true;
     }
 
@@ -972,6 +1010,7 @@ impl Coordinator {
                     _ => Vec::new(),
                 },
                 log: instance.log.iter().cloned().collect(),
+                diagnostics: instance.diagnostics,
                 stderr: match &instance.phase {
                     Phase::Running(running) => {
                         let tail = running.client.stderr_tail();
