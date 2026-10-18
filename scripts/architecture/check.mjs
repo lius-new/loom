@@ -93,6 +93,7 @@ export function allowed(file, dependency) {
   if(own==='app'||file==='src/main.rs')return true;
   if(own==='domain')return root==='domain'||(['src/domain/workspace_session.rs','src/domain/window_geometry.rs','src/domain/language/descriptor.rs'].includes(file)&&['serde','serde_json'].includes(root));
   if(file.startsWith('src/features/keymap/'))return ['features','domain','serde_json','input','Movement'].includes(root);
+  if(file.startsWith('src/infrastructure/lsp/'))return ['infrastructure','features','domain','serde_json','std::process','std::thread'].includes(root)||(file==='src/infrastructure/lsp/client_tests.rs'&&root==='std::fs');
   if(file==='src/infrastructure/window_geometry.rs')return ['infrastructure','domain','lgui','windows_sys','std::process'].includes(root);
   if(file==='src/infrastructure/document_filesystem.rs')return ['infrastructure','std::fs'].includes(root);
   if(file==='src/infrastructure/file_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
@@ -121,6 +122,7 @@ export function allowed(file, dependency) {
   if(file==='src/features/syntax/grammars.rs')return ['features','domain','tree_sitter','tree_sitter_c_sharp','tree_sitter_javascript','tree_sitter_rust','tree_sitter_typescript'].includes(root);
   if(file==='src/features/syntax/queries.rs'||file==='src/features/syntax/treesitter_tests.rs'||file==='src/features/syntax/treesitter_bench.rs')return ['features','domain','tree_sitter'].includes(root);
   if(file==='src/features/syntax/treesitter.rs')return ['features','domain','tree_sitter','streaming_iterator'].includes(root);
+  if(file.startsWith('src/features/language_service/'))return ['features','domain','serde_json'].includes(root);
   if(own==='features')return ['features','domain','input'].includes(root);
   if(own==='infrastructure')return ['infrastructure','domain'].includes(root)||dependency==='lgui'||dependency==='std::thread';
   return own==='legacy'&&root==='domain';

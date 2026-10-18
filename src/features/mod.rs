@@ -3,6 +3,7 @@ pub(crate) mod explorer;
 pub(crate) mod git;
 pub(crate) mod highlighting;
 pub(crate) mod keymap;
+pub(crate) mod language_service;
 
 pub(crate) mod search;
 

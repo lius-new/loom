@@ -10,6 +10,7 @@ pub(crate) mod workspace_filesystem;
 pub(crate) mod terminal;
 
 pub mod config_watcher;
+pub mod lsp;
 pub mod project_settings;
 pub mod settings_filesystem;
 
