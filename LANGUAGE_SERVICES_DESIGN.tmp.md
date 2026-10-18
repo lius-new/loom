@@ -898,7 +898,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 
 ### 19.1 更新规则
 
-- 最近更新：2026-10-18。P0 基线与 P1 编辑几何部分已实施；其余阶段未开始。证据见 19.4 的记录 R-001、R-002。
+- 最近更新：2026-10-18。P0 基线部分完成，P1 公共基础已实现并待验证；其余阶段未开始。证据见 19.4 的记录 R-001 至 R-003。
 - 状态统一使用：未开始、进行中、待验证、已完成、受阻；按需后续项在备注中注明启动条件。
 - 勾选 `[x]` 表示该条目已有实现和验证证据；只写完代码但未完成验证时保留 `[ ]`，阶段标为“待验证”。
 - 阶段完成必须满足第 13–14 节全部适用验收标准。以下清单是关键检查点，不替代正文，也不按勾选数量估算工作量百分比。
@@ -911,7 +911,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 | 阶段 | 当前状态 | 实现/验证证据 | 完成日期 | 下一步或启动条件 |
 | --- | --- | --- | --- | --- |
 | P0 基线 | 进行中 | R-001 | — | 补多样本性能基线（p50/p95）、缓存条件与 8 MiB/64 MiB/压缩单行样例；确认 UI 门槛 |
-| P1 公共基础 | 进行中 | R-002 | — | 编辑几何已落地（撤销重做与断链待测）；DocumentStamp、统一分类、主题表未开始 |
+| P1 公共基础 | 待验证 | R-002、R-003 | — | 缺 Linux/macOS 编译验证与首次桥接耗时测量；资源代次随 P2 注册表加入 |
 | P2 注册表 | 未开始 | — | — | JSON 描述、生成内嵌表、排序 ID、识别与资源校验；不预置服务器字段 |
 | P3a 验证与预算校准 | 未开始 | — | — | 工厂/目录/查询一致性，两语言探针、独立解析与查询编译数据 |
 | P3b 基础替换 | 未开始 | — | — | 使用 P3a 已确认预算，完成语言替换与显示连续性 |
@@ -924,9 +924,9 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 
 - [ ] **P0-1**（部分：fixture 与哈希已固定，缓存条件未记录）：固定源码 fixture、哈希、参考机器、构建和缓存条件。
 - [ ] **P0-2**（部分：单样本编辑性能与现有测试数量已记录，缺多样本与 UI 帧基线）：保存现有行为、布局/输入性能与生命周期基线，明确旧 lexer 预期的适用范围。
-- [ ] **P1-1**：DocumentStamp、语言/资源代次与旧结果失效测试完成。
-- [ ] **P1-2**：统一分类与新主题表接通；临时 TokenKind 映射有明确删除位置。
-- [ ] **P1-3**（部分：多处编辑、Unicode、CRLF、随机回放已测；撤销重做与 revision 断链尚未单测）：编辑几何覆盖多处编辑、Unicode、CRLF、撤销重做及 revision 断链。
+- [x] **P1-1**：DocumentStamp、语言代次与旧结果失效测试完成（资源代次随 P2 注册表加入：内置资源固定为 0，目前没有可变资源）。
+- [x] **P1-2**：统一分类与新主题表接通；临时 TokenKind 映射位于 features/syntax/legacy_class.rs，P3b 随 lexer 删除。
+- [x] **P1-3**：编辑几何覆盖多处编辑、Unicode、CRLF、撤销重做及 revision 断链。
 - [ ] **P2-1**：LanguageId/GrammarId 注册、非内置测试语言和 TSX 变体通过。
 - [ ] **P2-2**：文件关联、手动覆盖、重命名及多窗格一致性通过。
 - [ ] **P2-3**：严格 JSON 描述与 badge/名称/识别数据迁移完成；build.rs 内嵌表、排序与磁盘清单/增量重建校验通过。
@@ -960,12 +960,25 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 下一步：补多样本性能与缓存条件后再将 P0 标为待验证。
 
 记录编号 / 日期：R-002 / 2026-10-18
-阶段 / 检查点 ID：P1 / P1-3（部分完成）
-状态：进行中
+阶段 / 检查点 ID：P1 / P1-3
+状态：完成（撤销重做与断链测试见 R-003）
 实现证据：crates/editor-core/src/text/revision.rs（BytePoint、TextExtent、RevisionEdit 新增 old_start_point / old_end_point / inserted_extent / new_end_point()）；crates/editor-core/src/text/buffer.rs（apply_edits 在改动文本前取旧坐标；新增 TextBuffer::byte_point）；mod.rs 导出。
 验证：cargo test --locked --workspace 全部通过（loom 702、editor-core 71，较基线分别 +3、+3）；新增测试包含第 5.3 节示例（从后往前应用，第一步新终点为 7 而非 8）、CRLF/独立 CR/中文/emoji 的行列、300 组随机多 edit 回放并与直接计算的坐标逐项比对。cargo fmt --check、与 CI 相同参数的 clippy、架构门禁及其 56 项自测均通过。未跨平台运行。
-未完成：撤销/重做与 revision 断链（reload、超出 64 条上限）的几何测试；P1 的 DocumentStamp、统一分类、主题表。
-下一步：补撤销重做几何测试，然后开始 DocumentStamp 与统一分类。
+未完成：无（本条）。
+下一步：见 R-003。
+
+记录编号 / 日期：R-003 / 2026-10-18
+阶段 / 检查点 ID：P1 / P1-1、P1-2、P1-3
+状态：待验证
+实现证据：
+- 统一分类：src/features/highlighting/（HighlightId 与点分层级回退、HighlightModifiers、HighlightStyle、StyleTable；解析规则为子类覆盖父类、未设置属性继承、显式 false 清除、修饰符规则按表顺序后者生效）。
+- 主题：src/ui/theme.rs 以 StyleTable 取代 SyntaxColors；Palette::syntax_color 与 theme::syntax_color 取代对字段的直接读取，git 图、标签、设置预览同步改用类查询；测试 built_in_themes_keep_their_syntax_colors 固定四套内置主题各 7 个颜色，外观不变。
+- 临时桥接：src/features/syntax/legacy_class.rs（TokenKind 到 HighlightId），P3b 随 lexer 删除。
+- DocumentStamp：src/domain/document.rs（document、incarnation、version、snapshot_identity、language_generation）；FileMeta.language_generation 与 set_language；Workspace::insert_document 是唯一的文档入口并分配 incarnation；高亮 worker 的 Request、Epoch、Key 均携带 stamp，完成回调传回 stamp，应用层以完整 stamp 比较后才刷新（src/infrastructure/syntax_worker.rs、src/app/syntax.rs）。
+- 架构门禁：scripts/architecture/policy.json 登记 Workspace.next_incarnation。
+验证：cargo test --locked --workspace 全部通过（loom 712、editor-core 73，较 P0 基线 699、68 分别 +13、+5）；新增测试覆盖分类名回退、样式继承与修饰符冲突、四套主题颜色、stamp 在编辑/换语言/关闭重开时的变化、以及同一文档在新 incarnation 或新语言代次下不复用 worker 缓存。与 CI 相同参数的 clippy、cargo fmt --check、架构门禁及 56 项自测通过。未运行：Linux/macOS 编译、桥接元数据比较耗时（P1 尚未引入全表比较，该项属 P4b）、性能基线对比。
+未完成：资源代次（P2）；字体粗体/斜体等样式属性已可解析但未接入绘制，按设计 7.4 暂不承诺。
+下一步：P2——开放 LanguageId、JSON 描述与 build.rs 内嵌表。
 
 每次推进可追加以下记录，并在上表填写对应记录编号或提交/文件链接：
 
@@ -984,3 +997,4 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 | 2026-10-18 | 建立主设计与 LSP 草案的进度跟踪 | 文档更新；所有实施检查点仍未完成 |
 | 2026-10-18 | 明确语言 JSON / grammar 目录分离、生成内嵌表、校验与编译计时 | 仅修订设计和检查点；未生成资源或修改 build.rs |
 | 2026-10-18 | 实施 P0 fixture 与 P1 编辑几何（R-001、R-002） | 新增 baseline.rs、fixture 哈希与 RevisionEdit 几何字段；P0、P1 仍为进行中 |
+| 2026-10-18 | 完成 P1：统一分类、样式表主题、DocumentStamp（R-003） | SyntaxColors 已删除；高亮 worker 按完整 stamp 失效；P1 待验证 |

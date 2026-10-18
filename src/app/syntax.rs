@@ -1,6 +1,9 @@
 //! Own the syntax worker and deliver coalesced, version-checked UI invalidations.
 use super::context::AppContext;
-use crate::infrastructure::{syntax_worker::Worker, ui_dispatch::LatestNotification};
+use crate::{
+    domain::{document::DocumentStamp, identity::FileId},
+    infrastructure::{syntax_worker::Worker, ui_dispatch::LatestNotification},
+};
 use lgui::ApplicationHandle;
 use std::collections::HashMap;
 use std::sync::{
@@ -17,7 +20,8 @@ impl Highlighter {
     pub fn new(state: AppContext, application: ApplicationHandle) -> Self {
         let alive = Arc::new(AtomicBool::new(true));
         let deliver_alive = alive.clone();
-        let completed = Arc::new(Mutex::new(HashMap::new()));
+        let completed: Arc<Mutex<HashMap<FileId, DocumentStamp>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let delivery = completed.clone();
         let notifications = LatestNotification::new(application, move |()| {
             let completed = std::mem::take(&mut *delivery.lock().unwrap());
@@ -25,16 +29,12 @@ impl Highlighter {
                 return;
             }
             state.try_update(|app| {
-                if !completed
-                    .into_iter()
-                    .any(|(document, (identity, version))| {
-                        app.workspace.documents.get(&document).is_some_and(|doc| {
-                            doc.is_text()
-                                && doc.buffer.snapshot_identity() == identity
-                                && doc.buffer.version() == version
-                        })
-                    })
-                {
+                if !completed.into_iter().any(|(document, stamp)| {
+                    app.workspace
+                        .documents
+                        .get(&document)
+                        .is_some_and(|doc| doc.is_text() && doc.stamp(document) == stamp)
+                }) {
                     return false;
                 }
                 app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
@@ -42,11 +42,8 @@ impl Highlighter {
             });
         });
         Self {
-            worker: Worker::new(move |document, identity, version| {
-                completed
-                    .lock()
-                    .unwrap()
-                    .insert(document, (identity, version));
+            worker: Worker::new(move |stamp| {
+                completed.lock().unwrap().insert(stamp.document, stamp);
                 notifications.send(())
             }),
             alive,
@@ -99,7 +96,7 @@ mod tests {
                 .unwrap();
             highlighter.worker.query(
                 crate::domain::identity::PaneId::new(1),
-                *id,
+                doc.stamp(*id),
                 Source::new(&doc.buffer),
                 doc.meta.lang,
                 vec![Window {

@@ -140,3 +140,60 @@ fn retargeting_metadata_keeps_identity_views_and_shared_history() {
     assert!(workspace.mark_saved_with_disk(id, DiskState::from_contents("base")));
     assert!(!workspace.is_dirty(id));
 }
+
+#[test]
+fn stamps_separate_lifetimes_text_versions_and_languages() {
+    use crate::domain::language::Language;
+    let mut workspace = PureWorkspace::new();
+    let id = open(&mut workspace, "a.rs", "fn a() {}");
+    let first = workspace.documents[&id].stamp(id);
+    assert_eq!(
+        first,
+        workspace.documents[&id].stamp(id),
+        "stable until something changes"
+    );
+
+    // An edit moves the version and the snapshot.
+    normal::insert(
+        &mut workspace.editor_mut(workspace.active_pane()).unwrap(),
+        "x",
+    );
+    let edited = workspace.documents[&id].stamp(id);
+    assert_ne!(first, edited);
+    assert!(edited.version > first.version);
+    assert_eq!(edited.language_generation, first.language_generation);
+
+    // Switching language keeps the text but must still invalidate results.
+    workspace
+        .documents
+        .get_mut(&id)
+        .unwrap()
+        .meta
+        .set_language(Language::PlainText);
+    let relabelled = workspace.documents[&id].stamp(id);
+    assert_eq!(relabelled.version, edited.version);
+    assert_eq!(relabelled.snapshot_identity, edited.snapshot_identity);
+    assert_ne!(relabelled, edited);
+    workspace
+        .documents
+        .get_mut(&id)
+        .unwrap()
+        .meta
+        .set_language(Language::PlainText);
+    assert_eq!(
+        workspace.documents[&id].stamp(id),
+        relabelled,
+        "setting the same language is not a change"
+    );
+
+    // Closing and reopening the same file never reproduces an old stamp, even
+    // for identical text, and each install gets its own incarnation.
+    let incarnation = workspace.documents[&id].incarnation;
+    workspace.close(id);
+    let reopened = open(&mut workspace, "a.rs", "fn a() {}");
+    let again = workspace.documents[&reopened].stamp(reopened);
+    assert_ne!(again.incarnation, incarnation);
+    assert_ne!(again, first);
+    let other = open(&mut workspace, "b.rs", "fn a() {}");
+    assert_ne!(workspace.documents[&other].incarnation, again.incarnation);
+}

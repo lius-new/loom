@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::domain::document::{DiskRead, DiskState, FileId, FileMeta};
+use crate::domain::document::{DiskRead, DiskState, DocumentStamp, FileId, FileMeta};
 use crate::domain::geometry::Rect;
 use crate::domain::pane_layout::{Direction, PaneId, PaneNode};
 use loom_editor_core::text::{Editor, EditorMut, Selection, TextBuffer};
@@ -42,6 +42,9 @@ pub struct ViewState {
 
 #[derive(Clone)]
 pub(crate) struct OpenDocument<D, K> {
+    /// Which lifetime of this document services and caches belong to. Zero until
+    /// the workspace installs it; see `Workspace::insert_document`.
+    pub(crate) incarnation: u64,
     pub(crate) meta: FileMeta,
     pub(crate) buffer: TextBuffer,
     pub(crate) saved_text: Arc<String>,
@@ -66,6 +69,7 @@ impl<D: Clone, K: Clone + Ord> OpenDocument<D, K> {
         let buffer = TextBuffer::new(contents);
         let saved_text = buffer.text_snapshot();
         Self {
+            incarnation: 0,
             meta,
             buffer,
             saved_text,
@@ -80,6 +84,17 @@ impl<D: Clone, K: Clone + Ord> OpenDocument<D, K> {
             missing_on_disk: false,
             loading: None,
         }
+    }
+
+    /// The identity of this document's text, language and lifetime right now.
+    /// Results keyed by an older stamp must not be shown or published.
+    pub(crate) fn stamp(&self, id: FileId) -> DocumentStamp {
+        DocumentStamp::new(
+            id,
+            self.incarnation,
+            self.meta.language_generation,
+            &self.buffer,
+        )
     }
 
     /// Whether this tab edits a file on disk (not a diff or the settings page).
@@ -226,6 +241,7 @@ pub struct Workspace<D, K> {
     /// Panes by recency of focus, most recent first.
     pub(crate) pane_mru: Vec<PaneId>,
     pub(crate) next_file_id: u64,
+    next_incarnation: u64,
     pub(crate) next_pane_id: u64,
     retired: Vec<Retired<D, K>>,
 }
@@ -363,6 +379,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             active_pane: pane,
             pane_mru: vec![pane],
             next_file_id: 1,
+            next_incarnation: 1,
             next_pane_id: 2,
             retired: Vec::new(),
         }
@@ -1233,7 +1250,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         );
         document.loading = Some(false);
         let id = self.allocate_file_id();
-        self.documents.insert(id, document);
+        self.insert_document(id, document);
         self.paths.insert(path, id);
         let pane = self.active_pane;
         self.insert_item(pane, id, usize::MAX, None);
@@ -1335,7 +1352,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         let pane = self.active_pane;
         let replacement_index = self.preview_replacement_index(pane, mode);
         let id = self.allocate_file_id();
-        self.documents.insert(id, prepared.0);
+        self.insert_document(id, prepared.0);
         self.paths.insert(path, id);
         self.insert_item(pane, id, replacement_index.unwrap_or(usize::MAX), None);
         if mode == OpenMode::Preview {
@@ -1363,6 +1380,14 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             .position(|id| *id == preview)
             // The new tab is inserted before the old preview is closed.
             .map(|index| index + 1)
+    }
+
+    /// The one way a document enters the workspace: it gets a fresh incarnation,
+    /// so a stale result for an earlier document can never match it.
+    pub(crate) fn insert_document(&mut self, id: FileId, mut document: OpenDocument<D, K>) {
+        document.incarnation = self.next_incarnation;
+        self.next_incarnation += 1;
+        self.documents.insert(id, document);
     }
 
     pub(crate) fn allocate_file_id(&mut self) -> FileId {
@@ -1405,7 +1430,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         meta.name = page.title().to_owned();
         let mut document = OpenDocument::new(meta, String::new(), DiskState::from_contents(""));
         document.page = Some(page);
-        self.documents.insert(id, document);
+        self.insert_document(id, document);
         let pane = self.active_pane;
         self.insert_item(pane, id, usize::MAX, None);
         self.active_pane_mut().active = Some(id);

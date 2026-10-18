@@ -146,7 +146,7 @@ impl Workspace {
             },
         );
         document.diff = Some(diff);
-        self.core.documents.insert(id, document);
+        self.core.insert_document(id, document);
         self.insert_item(pane, id, usize::MAX, None);
         self.core.panes.get_mut(&pane).unwrap().active = Some(id);
         id

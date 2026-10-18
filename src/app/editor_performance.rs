@@ -37,7 +37,7 @@ fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
     loop {
         let ready = worker.query(
             pane,
-            id,
+            doc.stamp(id),
             Source::new(&doc.buffer),
             doc.meta.lang,
             windows.clone(),

@@ -88,6 +88,7 @@ pub(crate) fn snapshot(
             let value = app.workspace.editor(pane)?;
             Some(ViewDocument {
                 id,
+                stamp: app.workspace.documents.get(&id)?.stamp(id),
                 meta: DocumentMeta {
                     path: meta.path.clone(),
                     lang: meta.lang,
@@ -282,7 +283,7 @@ pub(crate) fn binding(
             .map_or_else(Vec::new, |highlighter| {
                 highlighter.worker.query(
                     pane,
-                    document.id,
+                    document.stamp,
                     crate::features::syntax::Source::new(&document.buffer),
                     document.meta.lang,
                     windows,

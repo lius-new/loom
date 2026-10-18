@@ -1,4 +1,8 @@
 use super::*;
+
+fn stamp(id: u64, buffer: &TextBuffer) -> DocumentStamp {
+    DocumentStamp::new(FileId::new(id), 1, 0, buffer)
+}
 use loom_editor_core::text::{EditKind, EditorMut, Selection, TextBuffer};
 use std::{sync::mpsc, time::Duration};
 
@@ -18,8 +22,9 @@ fn moving_viewports_preserve_known_tokens_while_adjacent_pages_are_pending() {
         let (release, gate) = mpsc::channel();
         let jobs = AtomicUsize::new(0);
         let worker = Worker::start(
-            move |a, b, c| {
-                send.send((a, b, c)).ok();
+            move |stamp| {
+                send.send((stamp.document, stamp.snapshot_identity, stamp.version))
+                    .ok();
             },
             move || {
                 if jobs.fetch_add(1, Ordering::Relaxed) == 1 {
@@ -35,7 +40,7 @@ fn moving_viewports_preserve_known_tokens_while_adjacent_pages_are_pending() {
         let query = |window: &Window| {
             worker.query(
                 PaneId::new(1),
-                FileId::new(1),
+                stamp(1, &buffer),
                 Source::new(&buffer),
                 language,
                 vec![window.clone()],
@@ -101,8 +106,9 @@ fn known_tokens_crossing_pages_remain_colored_when_the_original_page_leaves_the_
     let (release, gate) = mpsc::channel();
     let jobs = std::sync::atomic::AtomicUsize::new(0);
     let worker = Worker::start(
-        move |a, b, c| {
-            send.send((a, b, c)).ok();
+        move |stamp| {
+            send.send((stamp.document, stamp.snapshot_identity, stamp.version))
+                .ok();
         },
         move || {
             if jobs.fetch_add(1, Ordering::Relaxed) == 1 {
@@ -114,7 +120,7 @@ fn known_tokens_crossing_pages_remain_colored_when_the_original_page_leaves_the_
     let query = |start, end| {
         worker.query(
             PaneId::new(1),
-            FileId::new(1),
+            stamp(1, &buffer),
             Source::new(&buffer),
             Language::PlainText,
             vec![Window {
@@ -141,7 +147,7 @@ fn known_tokens_crossing_pages_remain_colored_when_the_original_page_leaves_the_
 fn query(worker: &Worker, pane: u64, id: u64, buffer: &TextBuffer) -> Vec<WindowTokens> {
     worker.query(
         PaneId::new(pane),
-        FileId::new(id),
+        stamp(id, buffer),
         Source::new(buffer),
         Language::JavaScript,
         vec![Window {
@@ -168,8 +174,9 @@ fn gated() -> GatedWorker {
     let (send, receive) = mpsc::channel();
     let first = AtomicBool::new(true);
     let worker = Worker::start(
-        move |id, identity, version| {
-            send.send((id, identity, version)).ok();
+        move |stamp| {
+            send.send((stamp.document, stamp.snapshot_identity, stamp.version))
+                .ok();
         },
         move || {
             if first.swap(false, Ordering::Relaxed) {
@@ -235,8 +242,9 @@ fn superseded_versions_are_cancelled_and_only_the_latest_is_published() {
 #[test]
 fn switching_files_and_split_panes_reuse_completed_windows_and_index() {
     let (send, receive) = mpsc::channel();
-    let worker = Worker::new(move |a, b, c| {
-        send.send((a, b, c)).ok();
+    let worker = Worker::new(move |stamp| {
+        send.send((stamp.document, stamp.snapshot_identity, stamp.version))
+            .ok();
     });
     let a = TextBuffer::new("const a=1;".repeat(100));
     let b = TextBuffer::new("const b=2;".repeat(100));
@@ -292,4 +300,58 @@ fn closed_files_and_shutdown_discard_in_flight_results() {
         }
         assert!(receive.try_recv().is_err());
     }
+}
+
+#[test]
+fn a_new_incarnation_or_language_generation_never_reuses_cached_windows() {
+    let (send, receive) = mpsc::channel();
+    let worker = Worker::new(move |stamp| {
+        send.send((stamp.document, stamp.snapshot_identity, stamp.version))
+            .ok();
+    });
+    let buffer = TextBuffer::new("const a=1;".repeat(100));
+    let window = || {
+        vec![Window {
+            line: buffer.line_range(0),
+            range: buffer.line_range(0),
+        }]
+    };
+    let ask = |stamp: DocumentStamp| {
+        worker.query(
+            PaneId::new(1),
+            stamp,
+            Source::new(&buffer),
+            Language::JavaScript,
+            window(),
+        )
+    };
+    let original = stamp(1, &buffer);
+    assert!(ask(original).is_empty());
+    wait(&receive);
+    assert_eq!(ask(original).len(), 1, "the original stamp is served");
+
+    // Same document id, same text, same snapshot: only the lifetime differs.
+    let reopened = DocumentStamp {
+        incarnation: original.incarnation + 1,
+        ..original
+    };
+    assert!(
+        ask(reopened).is_empty(),
+        "a reopened document must not see the old windows"
+    );
+    wait(&receive);
+    assert_eq!(ask(reopened).len(), 1);
+
+    // Same text again, but the language was switched.
+    let relabelled = DocumentStamp {
+        language_generation: original.language_generation + 1,
+        ..reopened
+    };
+    assert!(ask(relabelled).is_empty());
+    wait(&receive);
+    assert_eq!(ask(relabelled).len(), 1);
+    assert!(
+        ask(original).is_empty(),
+        "going back to a stale stamp serves nothing either"
+    );
 }

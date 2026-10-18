@@ -1,6 +1,7 @@
 //! Coalesced viewport work. Lexing and index mutation never hold the UI lock.
 use crate::{
     domain::{
+        document::DocumentStamp,
         identity::{FileId, PaneId},
         language::Language,
     },
@@ -45,6 +46,7 @@ fn pages(source: &Source, window: &Window) -> Vec<Window> {
 }
 #[derive(Clone)]
 struct Request {
+    stamp: DocumentStamp,
     document: FileId,
     source: Source,
     lang: Language,
@@ -54,6 +56,8 @@ struct Request {
 struct Epoch {
     identity: usize,
     version: u64,
+    incarnation: u64,
+    language_generation: u64,
     lang: Language,
     cancel: Arc<AtomicBool>,
 }
@@ -61,12 +65,16 @@ impl Epoch {
     fn matches(&self, request: &Request) -> bool {
         self.identity == request.source.identity()
             && self.version == request.source.version
+            && self.incarnation == request.stamp.incarnation
+            && self.language_generation == request.stamp.language_generation
             && self.lang == request.lang
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Key {
     document: FileId,
+    incarnation: u64,
+    language_generation: u64,
     identity: usize,
     version: u64,
     lang: Language,
@@ -77,6 +85,8 @@ impl Key {
     fn new(request: &Request, window: &Window) -> Self {
         Self {
             document: request.document,
+            incarnation: request.stamp.incarnation,
+            language_generation: request.stamp.language_generation,
             identity: request.source.identity(),
             version: request.source.version,
             lang: request.lang,
@@ -147,11 +157,11 @@ pub(crate) struct Stats {
     pub evictions: usize,
 }
 impl Worker {
-    pub fn new(ready: impl Fn(FileId, usize, u64) + Send + Sync + 'static) -> Self {
+    pub fn new(ready: impl Fn(DocumentStamp) + Send + Sync + 'static) -> Self {
         Self::start(ready, || {})
     }
     fn start(
-        ready: impl Fn(FileId, usize, u64) + Send + Sync + 'static,
+        ready: impl Fn(DocumentStamp) + Send + Sync + 'static,
         before_prepare: impl Fn() + Send + 'static,
     ) -> Self {
         let shared = Arc::new(Shared {
@@ -270,11 +280,7 @@ impl Worker {
                         state.evictions += 1;
                     }
                     drop(state);
-                    ready(
-                        request.document,
-                        request.source.identity(),
-                        request.source.version,
-                    );
+                    ready(request.stamp);
                 }
             })
             .expect("could not start syntax worker");
@@ -286,7 +292,7 @@ impl Worker {
     pub fn query(
         &self,
         pane: PaneId,
-        document: FileId,
+        stamp: DocumentStamp,
         source: Source,
         lang: Language,
         windows: Vec<Window>,
@@ -298,7 +304,14 @@ impl Worker {
         // Only request bookkeeping and immutable viewport results share this
         // lock. The scanner owns its index outside it, even during cancellation.
         let mut state = shared.state.lock().unwrap();
+        debug_assert_eq!(
+            (stamp.version, stamp.snapshot_identity),
+            (source.version, source.identity()),
+            "the stamp and the source must describe the same text"
+        );
+        let document = stamp.document;
         let request = Request {
+            stamp,
             document,
             source,
             lang,
@@ -319,6 +332,8 @@ impl Worker {
                 Epoch {
                     identity: request.source.identity(),
                     version: request.source.version,
+                    incarnation: request.stamp.incarnation,
+                    language_generation: request.stamp.language_generation,
                     lang,
                     cancel: Arc::new(AtomicBool::new(false)),
                 },
@@ -375,6 +390,8 @@ impl Worker {
                 let used = state.clock;
                 for (key, entry) in &mut state.ready {
                     if key.document != document
+                        || key.incarnation != request.stamp.incarnation
+                        || key.language_generation != request.stamp.language_generation
                         || key.identity != request.source.identity()
                         || key.version != request.source.version
                         || key.lang != lang

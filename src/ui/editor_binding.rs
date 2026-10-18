@@ -10,6 +10,7 @@ use loom_editor_core::identity::{FileId, PaneId};
 use loom_editor_core::text::{Editor, Selection, TextBuffer};
 use loom_editor_core::vim::CursorShape;
 
+use crate::domain::document::DocumentStamp;
 use crate::domain::language::Language;
 use crate::domain::line_change::LineChange;
 
@@ -19,6 +20,8 @@ pub(crate) struct DocumentMeta {
 }
 pub(crate) struct ViewDocument {
     pub id: FileId,
+    /// Names the exact document lifetime, text and language this view shows.
+    pub stamp: DocumentStamp,
     pub meta: DocumentMeta,
     pub buffer: TextBuffer,
     pub selection: Selection,

@@ -197,6 +197,10 @@
       "owner": "domain/workspace",
       "migrated_in": "R4"
     },
+    "next_incarnation": {
+      "owner": "domain/workspace",
+      "migrated_in": "P1"
+    },
     "next_pane_id": {
       "owner": "domain/workspace",
       "migrated_in": "R4"
