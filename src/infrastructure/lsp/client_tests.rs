@@ -185,6 +185,66 @@ fn methods(log: &[Value]) -> Vec<String> {
         .collect()
 }
 
+#[test]
+fn concurrent_fake_servers_keep_shared_log_messages_intact() {
+    let log = std::env::temp_dir().join(format!(
+        "loom-shared-lsp-{}-{}.log",
+        std::process::id(),
+        RUNS.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_file(&log);
+    let _cleanup = Cleanup(log.clone());
+    let mut servers: Vec<_> = (0..4)
+        .map(|_| launch(&["--log", log.to_str().unwrap()], quick()))
+        .collect();
+    for server in &mut servers {
+        server.ready();
+    }
+    let barrier = std::sync::Barrier::new(servers.len());
+    std::thread::scope(|scope| {
+        for (writer, mut server) in servers.into_iter().enumerate() {
+            let barrier = &barrier;
+            scope.spawn(move || {
+                barrier.wait();
+                for sequence in 0..16 {
+                    let params = json!({
+                        "writer": writer, "sequence": sequence,
+                        "items": (0..32).map(|n| json!({"n": n, "text": "日志内容"})).collect::<Vec<_>>()
+                    });
+                    assert!(server.client.request("custom/shared-log", params.clone(), sequence));
+                    assert_eq!(server.response(sequence).unwrap()["params"], params);
+                }
+                server.client.stop();
+            });
+        }
+    });
+    // Restarted instances overlap while the old process shuts down. Every log
+    // record must survive that overlap, including initialize and didOpen.
+    let records: Vec<Value> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one complete JSON message per line"))
+        .collect();
+    let requests: std::collections::HashSet<_> = records
+        .iter()
+        .filter(|record| record["method"] == "custom/shared-log")
+        .map(|record| {
+            (
+                record["params"]["writer"].as_u64().unwrap(),
+                record["params"]["sequence"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(requests.len(), 64);
+    assert_eq!(
+        methods(&records)
+            .iter()
+            .filter(|m| *m == "initialize")
+            .count(),
+        4
+    );
+}
+
 /// Server flags, then the encoding, sync kind and (full, delta, range) semantic modes expected.
 type Case<'a> = (
     &'a [&'a str],

@@ -135,7 +135,13 @@ fn main() {
         if let Some(path) = options.value("--log")
             && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path)
         {
-            let _ = writeln!(file, "{value}");
+            // A replacement server can initialize while the previous process
+            // logs shutdown. Formatting into the file performs many appends,
+            // which can interleave and corrupt both records. Append one encoded
+            // message at a time so shared logs keep complete JSON lines.
+            let mut record = serde_json::to_vec(value).unwrap();
+            record.push(b'\n');
+            let _ = file.write_all(&record);
         }
     };
     let mut input = std::io::BufReader::new(std::io::stdin().lock());

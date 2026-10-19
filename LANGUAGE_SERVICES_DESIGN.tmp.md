@@ -1218,7 +1218,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 
 记录编号 / 日期：R-016 / 2026-10-19
 阶段：统一本地与 GitHub Actions 的 CMake / Skia 依赖准备
-状态：实施完成，Windows 验证通过；GitHub 三平台实际运行待推送验收
+状态：实施完成，Windows 验证通过；首次 GitHub 三平台依赖准备、宿主测试及 WASM 回归通过，完整 CI 复验见 R-017
 实现证据：
 - 新增 scripts/dependencies，manifest.json 固定 CMake 3.31.6 和 Skia 0.99.0 的官方 URL、SHA-256、宿主归档布局和目标特性。CMake 校验和取自 Kitware 官方发布校验文件，Skia 校验和取自官方 GitHub release asset digest。
 - 缓存位于 .packaging/dependencies，下载到唯一临时文件，校验后发布；每次复用核对归档哈希，解压内容按文件/符号链接清单核对，损坏时从归档重建，并串行化并发解压。无需系统预装 CMake，不安装全局工具，不修改父进程 PATH。
@@ -1231,3 +1231,12 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 跨平台输入核验：全部五种 CMake 归档的 SHA-256 和可执行文件路径已逐项验证，四个 Skia 目标归档的 SHA-256、内嵌版本/key 均通过；macOS 归档在 Windows 上仅列目录，实际解压/执行由 macOS runner 验证，不计作 macOS 实机通过。
 证据日志：.tmp/dependency-managed-compile.log、.tmp/dependency-cargo-wrapper.log、.tmp/dependency-platform-inputs.log、.tmp/dependency-node-tests.log、.tmp/dependency-standalone-host.log、.tmp/dependency-wasm-regression.log、.tmp/dependency-actions-lint.log；本地忽略输出不入库。
 未完成：GitHub Actions 远端 Windows/Linux/macOS 全流程，以及 Rust 1.97.1 的实际验证。当前环境未推送或触发发布流程，不能将本地与静态检查等同于远端成功。后续可将其他编译/打包依赖逐项纳入统一清单，本轮只统一 CMake/Skia。
+
+
+记录编号 / 日期：R-017 / 2026-10-19
+阶段：GitHub Actions 跟踪与并发假服务器日志修复
+状态：修复完成，本地验证通过；推送后复跑完整 CI
+首次远端证据：4d55a87 已推送，CI https://github.com/lius-new/loom/actions/runs/39207936248 。Windows x64、Linux x64、macOS universal 的共享依赖准备、宿主测试与独立 WASM 回归均通过，固定 Rust 1.97.1 的 Clippy 也通过。质量任务在物理移除语言资源后的完整宿主测试中，changing_the_launch_replaces_the_instance 等待第二次 initialize 超时；错误现场新进程已 Ready。该轮 release 编译在准备修复时仍进行，未计为成功。
+原因与修复：旧、新假服务器在替换期间同时向同一 server.log 追加日志。writeln! 对 serde_json::Value 的格式化包含多次底层写入，两个进程的记录可能交错，产生被测试读取器丢弃的损坏 JSON 行。examples/fake_lsp.rs 改为先编码完整 JSON 和换行，再一次 write_all 追加；不改变正式 LSP 管理器，不增加超时，不忽略断言。
+回归证据：新增 concurrent_fake_servers_keep_shared_log_messages_intact，用四个真实客户端/假服务器进程并发发送 64 个带中文和结构化参数的请求，共用一份日志；所有行必须是完整 JSON，请求键全部保留且四次 initialize 可读。修复前本地稳定复现损坏 JSON；修复后完整 LSP 套件 45 项通过、2 项原有真实服务器用例忽略，CI 同参数 Clippy、fmt 及 diff 检查通过。
+日志：.tmp/actions-job-117914739053.log、.tmp/actions-shared-log-before.log、.tmp/actions-lsp-regression.log、.tmp/actions-log-fix-clippy.log；临时日志不入库。修复提交需要在远端完整 CI 中复验三平台构建和质量门禁。
