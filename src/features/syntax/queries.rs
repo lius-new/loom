@@ -17,9 +17,8 @@
 //! When patterns overlap, the shorter range wins, and for equal ranges the
 //! pattern written later in the file. The upstream queries put general patterns
 //! first and specific ones after, which is what that rule needs.
-use crate::domain::language::grammar_file;
+use super::Resources;
 use crate::features::highlighting::HighlightId;
-use crate::features::syntax::grammars;
 use tree_sitter::{Language, Query};
 
 const HIGHLIGHTS: &str = "highlights.scm";
@@ -41,12 +40,12 @@ impl CompiledQuery {
     }
 }
 
-pub(crate) fn compile(grammar: &str) -> Result<CompiledQuery, String> {
-    let language = grammars::language(grammar)
-        .ok_or_else(|| format!("no native parser is registered for grammar `{grammar}`"))?;
-    let source = grammar_file(grammar, HIGHLIGHTS)
+pub(crate) fn compile(resources: &dyn Resources, grammar: &str) -> Result<CompiledQuery, String> {
+    let language = resources.language(grammar)?;
+    let source = resources
+        .text(grammar, HIGHLIGHTS)?
         .ok_or_else(|| format!("grammar `{grammar}` has no {HIGHLIGHTS}"))?;
-    compile_source(&language, source).map_err(|error| format!("grammar `{grammar}`: {error}"))
+    compile_source(&language, &source).map_err(|error| format!("grammar `{grammar}`: {error}"))
 }
 
 pub(crate) fn compile_source(language: &Language, source: &str) -> Result<CompiledQuery, String> {

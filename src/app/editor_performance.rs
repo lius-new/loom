@@ -2,7 +2,7 @@
 use super::{context::AppContext, state::AppState};
 use crate::{
     app::{runtime::AppRuntime, syntax::Highlighter, test_support::UiTasks},
-    features::syntax::{Source, TreeIndex, Window},
+    features::syntax::{Source, Window},
 };
 use crate::{features::git::GitStoreSnapshot, ui::editor::view};
 use lgui::{
@@ -46,7 +46,7 @@ fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
             // Check the colours against a second, independent parse of the same
             // text, including windows deep inside minified strings and comments.
             if verify {
-                let mut reference = TreeIndex::default();
+                let mut reference = crate::features::syntax::test_support::index();
                 let expected = reference
                     .prepare(
                         id,

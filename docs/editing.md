@@ -30,6 +30,13 @@
 
 ## Syntax highlighting
 
+All supported languages, including Markdown and JSON, ship as independent
+dynamic language packages: the editor loads their parsers and queries when
+their content becomes visible. Opening Markdown does not load the languages of
+off-screen code fences. Installed package updates take effect after restarting
+Loom. Packages are discovered in application resources and the user data directory.
+Plain text works without packages. See [Language packages](languages.md).
+
 Colours come from a syntax tree built with Tree-sitter for Rust, JavaScript
 (including JSX), TypeScript, TSX, C#, JSON, CSS, HTML and Markdown. Because the whole file is parsed, a
 comment or string that starts above the screen is coloured correctly, and

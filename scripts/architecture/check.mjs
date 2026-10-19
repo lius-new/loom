@@ -45,7 +45,7 @@ export function dependencies(source) {
         }
       } else if(/^[a-zA-Z_]\w*$/.test(ts[i+2]??''))found.add('crate::'+ts[i+2]);
     }
-    if(['lgui','image','notify','conpty','portable_pty','windows_sys','libc'].includes(ts[i])&&ts[i+1]==='::')found.add(ts[i]);
+    if(['lgui','image','notify','conpty','portable_pty','windows_sys','libc','libloading'].includes(ts[i])&&ts[i+1]==='::')found.add(ts[i]);
     if(/^tree_sitter\w*$/.test(ts[i])&&ts[i+1]==='::')found.add(ts[i]);
     if(ts[i]==='std'&&ts[i+1]==='::'&&['fs','process','thread','net'].includes(ts[i+2]))found.add('std::'+ts[i+2]);
     if(ts[i]==='std'&&ts[i+1]==='::'&&ts[i+2]==='{') {
@@ -99,6 +99,7 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/file_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
   if(file==='src/infrastructure/file_drop.rs')return ['infrastructure','domain','lgui','windows_sys'].includes(root);
   if(file==='src/infrastructure/syntax_worker.rs'||file==='src/infrastructure/syntax_worker_tests.rs'||file==='src/infrastructure/syntax_worker_bench.rs'||file==='src/infrastructure/syntax_worker_retained.rs')return ['infrastructure','features','domain','std::thread'].includes(root);
+  if(file==='src/infrastructure/language_packs.rs'||file==='src/infrastructure/language_packs_tests.rs')return ['infrastructure','features','domain','libloading','serde','serde_json','tree_sitter','tree_sitter_language','std::fs'].includes(root)||(file.endsWith('_tests.rs')&&root==='std::process');
   if(file==='src/infrastructure/keymap_filesystem.rs')return ['infrastructure','features','std::fs'].includes(root);
   if(file.startsWith('src/features/settings/'))return ['features','domain','serde','serde_json'].includes(root);
   if(['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs'].includes(file))return ['infrastructure','features','domain','std::fs'].includes(root);
@@ -119,7 +120,8 @@ export function allowed(file, dependency) {
   if(file==='src/ui/explorer/context_menu.rs'&&root==='unicode_width')return true;
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
   // Native parsers: only the grammar table names grammar crates; the engine files use the runtime.
-  if(file==='src/features/syntax/grammars.rs')return ['features','domain','tree_sitter','tree_sitter_c_sharp','tree_sitter_css','tree_sitter_html','tree_sitter_javascript','tree_sitter_json','tree_sitter_md','tree_sitter_rust','tree_sitter_typescript'].includes(root);
+  if(file==='src/features/syntax/grammars.rs')return ['features','domain','tree_sitter'].includes(root);
+  if(file==='src/features/syntax/test_support.rs')return ['features','infrastructure','tree_sitter'].includes(root);
   if(file==='src/features/syntax/queries.rs'||file==='src/features/syntax/treesitter_tests.rs'||file==='src/features/syntax/treesitter_bench.rs')return ['features','domain','tree_sitter'].includes(root);
   if(['src/features/syntax/treesitter.rs','src/features/syntax/injections.rs'].includes(file))return ['features','domain','tree_sitter','streaming_iterator'].includes(root);
   if(file==='src/features/syntax/layers.rs')return ['features','domain','tree_sitter'].includes(root);
@@ -158,6 +160,10 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
+    if(file==='src/features/syntax/mod.rs' && /mod\s+test_support/.test(source)
+      && !/#\[cfg\(test\)\]\s+pub\(crate\)\s+mod test_support;/.test(source)) {
+      problems.push('Syntax resource fixtures must remain cfg(test) only');
+    }
     if(layer(file)==='ui'&&ts.includes('AppContext'))problems.push(file+': UI cannot receive application command contexts');
     if(file==='src/app/state.rs'&&ts.some(t=>['attach_runtime','runtime','AppRuntime','AppContext','Weak'].includes(t)))problems.push(file+': AppState must remain capability-free');
     if(file==='src/app/context.rs') {const fields=structFields(source,'AppContext');if(JSON.stringify(fields)!==JSON.stringify(['model','runtime'])||!ts.join(' ').match(/runtime : Weak < AppRuntime >/))problems.push(file+': command context must carry only model and weak runtime');}
@@ -386,10 +392,31 @@ export function readSources(root) {
   return result;
 }
 
+export function runtimeGrammarManifestErrors(source) {
+  let section='';
+  const errors=[];
+  const external=name => name.startsWith('loom-grammar-') ||
+    (name.startsWith('tree-sitter-') && name!=='tree-sitter-language');
+  for(const raw of source.split(/\r?\n/)) {
+    const line=raw.replace(/#.*$/,'').trim();
+    if(line.startsWith('['))section=line.slice(1,line.lastIndexOf(']'));
+    const runtime=/^(?:dependencies(?:\.|$)|target\..*\.dependencies(?:\.|$))/.test(section);
+    if(!runtime)continue;
+    const names=[line.match(/^([\w-]+)\s*=/)?.[1],
+      ...[...line.matchAll(/\bpackage\s*=\s*"([^"]+)"/g)].map(m=>m[1]),
+      section.match(/dependencies\.([\w-]+)$/)?.[1]].filter(Boolean);
+    if(names.some(external) || /\bpath\s*=\s*"[^"]*language-packs\//.test(line)) {
+      errors.push('Loom runtime dependencies must not link language grammars');
+    }
+  }
+  return errors;
+}
+
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
   const policy=JSON.parse(fs.readFileSync(new URL('./policy.json',import.meta.url),'utf8'));
   const sources=readSources(root),errors=violations(sources,policy);
+  errors.push(...runtimeGrammarManifestErrors(fs.readFileSync(path.join(root,'Cargo.toml'),'utf8')));
   const verificationManifest=path.join(root,'crates/workspace-tests/Cargo.toml');
   if(fs.existsSync(verificationManifest))errors.push(...verificationManifestErrors(fs.readFileSync(verificationManifest,'utf8')));
   if(errors.length){console.error(errors.join('\n'));process.exitCode=1;}

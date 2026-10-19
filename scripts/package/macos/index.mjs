@@ -9,6 +9,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { stageLanguagePacks } from '../lib/language-packs.mjs';
 
 import {
   DIST_DIR,
@@ -169,8 +170,15 @@ export function packageApp({ version }) {
     fs.copyFileSync(path.join(ROOT, file), path.join(resources, file));
   }
   writeIcon(path.join(resources, 'Loom.icns'));
+  const modules = stageLanguagePacks({
+    profiles: RUST_TARGETS.map(target => path.join(ROOT, 'target', target, 'release')),
+    destination: path.join(resources, 'language-packs'),
+    platform: 'darwin',
+    combine: (inputs, output) => run('lipo', ['-create', '-output', output, ...inputs]),
+  });
+  for (const module of modules) sign(module, identity);
 
-  sign(app, identity);
+  sign(app, identity, path.join(ROOT, 'scripts/package/macos/entitlements.plist'));
   checkApp(app);
 
   step('Creating .zip');
@@ -235,11 +243,13 @@ function writeIcon(output) {
  * notarization requires. Ad-hoc signing still matters: arm64 refuses to run
  * unsigned code, and the bundle needs a seal over its resources.
  */
-function sign(target, identity) {
+function sign(target, identity, entitlements) {
   step(`Signing ${path.basename(target)} (${identity || 'ad-hoc'})`);
   const args = identity
-    ? ['--force', '--timestamp', '--options', 'runtime', '--sign', identity, target]
-    : ['--force', '--sign', '-', target];
+    ? ['--force', '--timestamp', '--options', 'runtime', '--sign', identity]
+    : ['--force', '--sign', '-'];
+  if (entitlements) args.push('--entitlements', entitlements);
+  args.push(target);
   run('codesign', args);
 }
 

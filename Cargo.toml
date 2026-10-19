@@ -9,8 +9,8 @@ repository = "https://github.com/lius-new/loom"
 readme = "README.md"
 
 [workspace]
-members = ["crates/editor-core", "crates/workspace-tests"]
-default-members = [".", "crates/editor-core"]
+members = ["crates/editor-core", "crates/workspace-tests", "crates/language-packs/*"]
+default-members = [".", "crates/editor-core", "crates/language-packs/*"]
 exclude = ["vendor/vt100"]
 resolver = "3"
 
@@ -36,20 +36,25 @@ unicode-width = "0.2"
 regex = "1"
 tree-sitter = "0.27"
 streaming-iterator = "0.1"
-tree-sitter-rust = "0.24"
-tree-sitter-javascript = "0.25"
-tree-sitter-typescript = "0.23"
-tree-sitter-c-sharp = "0.23"
+tree-sitter-language = "0.1"
+libloading = "0.8"
 ignore = "0.4"
 globset = "0.4"
 ureq = "2.12"
-tree-sitter-json = "0.24"
-tree-sitter-css = "0.25"
-tree-sitter-html = "0.23"
-tree-sitter-md = "0.5"
+
+[build-dependencies]
+serde_json = "1"
 
 [dev-dependencies]
+loom-grammar-json = { path = "crates/language-packs/json" }
+loom-grammar-markdown = { path = "crates/language-packs/markdown" }
 loom-editor-core = { path = "crates/editor-core", features = ["diagnostics"] }
+loom-grammar-rust = { path = "crates/language-packs/rust" }
+loom-grammar-javascript = { path = "crates/language-packs/javascript" }
+loom-grammar-typescript = { path = "crates/language-packs/typescript" }
+loom-grammar-csharp = { path = "crates/language-packs/csharp" }
+loom-grammar-css = { path = "crates/language-packs/css" }
+loom-grammar-html = { path = "crates/language-packs/html" }
 
 [dependencies.lgui]
 git = "https://github.com/lius-new/lgui.git"

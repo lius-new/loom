@@ -21,6 +21,13 @@ The project follows the `main` branch of the lgui repository. `Cargo.lock`
 pins the exact lgui commit used by a build. Run `cargo update -p lgui` when you
 want to update that pinned commit.
 
+The default build also builds all separate native language modules, including
+Markdown and JSON. Plain text needs no package; all parsers are shared libraries
+loaded only when visible content needs them. The build stages independent
+package manifests and query files in `target/<profile>/language-packs/`. Build the
+workspace once before using cargo run; building only -p loom does not build
+the separate modules. See [Language packages](languages.md) for the disk format.
+
 ## System dependencies (Debian / Ubuntu)
 
 ```sh
@@ -40,7 +47,8 @@ loom/
 ├── assets/          # UI icons, file-type icons and the default keymap
 ├── crates/
 │   ├── editor-core/       # GUI-free editing core
-│   └── workspace-tests/   # GUI-free workspace domain tests
+│   ├── workspace-tests/   # GUI-free workspace domain tests
+│   └── language-packs/    # separately built native grammar modules
 ├── icons/           # application icons for every platform
 ├── scripts/         # packaging, build-cache and architecture checks
 ├── src/             # application, editor, terminal, Git and UI modules

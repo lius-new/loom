@@ -1,5 +1,4 @@
 use super::presentation::{MAX_EDITS, MAX_REVISIONS, MAX_SPANS, Refused, project_window};
-use super::treesitter::TreeIndex;
 use super::{Source, TokenSpan, Window};
 use crate::domain::identity::FileId;
 use crate::domain::language::builtin;
@@ -256,7 +255,7 @@ fn projection_matches_a_byte_by_byte_model_for_random_edits() {
     let mut checked = 0;
     for round in 0..300 {
         let mut buffer = TextBuffer::new(generate("rust", 1536));
-        let mut index = TreeIndex::default();
+        let mut index = crate::features::syntax::test_support::index();
         let whole = Window {
             line: 0..buffer.len(),
             range: 0..buffer.len(),

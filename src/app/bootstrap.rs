@@ -10,6 +10,7 @@ use lgui::prelude::*;
 use lgui::{WinitApplication, WinitWindowIcon, WinitWindowOptions};
 
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
+    crate::infrastructure::language_packs::initialize();
     launch::init(std::env::args_os().skip(1));
     let native_window_options = native_window_options()?;
     let ui_scale = crate::infrastructure::settings_filesystem::load().ui_scale;

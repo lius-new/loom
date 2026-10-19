@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "id": "csharp",
+  "enabled": true,
+  "languages": [
+    {
+      "name": "csharp",
+      "display_name": "C#",
+      "badge": "C#",
+      "aliases": [
+        "cs"
+      ],
+      "comments": {
+        "line": "//",
+        "block": [
+          "/*",
+          "*/"
+        ]
+      },
+      "variants": [
+        {
+          "id": "csharp",
+          "grammar": "c_sharp"
+        }
+      ],
+      "files": [
+        {
+          "extensions": [
+            "cs"
+          ],
+          "variant": "csharp"
+        }
+      ]
+    }
+  ],
+  "servers": [],
+  "grammars": {
+    "c_sharp": {
+      "module": "loom_grammar_csharp",
+      "symbol": "loom_tree_sitter_c_sharp"
+    }
+  }
+}

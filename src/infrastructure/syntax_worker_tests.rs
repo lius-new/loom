@@ -34,7 +34,7 @@ fn clipped(spans: &[TokenSpan], range: &Range<usize>) -> Vec<TokenSpan> {
 
 /// What a fresh parse of the whole text says about `window`.
 fn reference(buffer: &TextBuffer, language: ResolvedLanguage, window: &Window) -> Vec<TokenSpan> {
-    let spans = TreeIndex::default()
+    let spans = crate::features::syntax::test_support::index()
         .prepare(
             FileId::new(9),
             Source::new(buffer),

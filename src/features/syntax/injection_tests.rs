@@ -42,7 +42,11 @@ fn class_at(spans: &[TokenSpan], text: &str, needle: &str) -> Option<&'static st
 fn class_of(language: &str, text: &str, needle: &str) -> Option<&'static str> {
     let buffer = TextBuffer::new(text);
     class_at(
-        &spans(&mut TreeIndex::default(), &buffer, language),
+        &spans(
+            &mut crate::features::syntax::test_support::index(),
+            &buffer,
+            language,
+        ),
         text,
         needle,
     )
@@ -116,7 +120,7 @@ fn inline_text_is_split_into_small_layers_and_only_the_visible_ones_are_parsed()
         ));
     }
     let buffer = TextBuffer::new(text.as_str());
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     // Colour only the first line: just the first group is parsed.
     let first = Window {
         line: 0..30,
@@ -171,7 +175,11 @@ fn quoted_fences_do_not_treat_the_quote_marks_as_code() {
     let text = "> ```rust\n> fn a() {}\n> ```\n";
     assert_eq!(class_of("markdown", text, "fn"), Some("keyword"));
     let buffer = TextBuffer::new(text);
-    let all = spans(&mut TreeIndex::default(), &buffer, "markdown");
+    let all = spans(
+        &mut crate::features::syntax::test_support::index(),
+        &buffer,
+        "markdown",
+    );
     // The `>` before the code is the block quote's, never the rust grammar's.
     let quote = text.find("> fn").unwrap();
     assert_ne!(class_at(&all, text, "> fn"), Some("keyword"));
@@ -187,7 +195,7 @@ fn languages_nest_up_to_the_depth_limit() {
     assert_eq!(class_of("markdown", text, "let"), Some("keyword"));
     assert_eq!(class_of("markdown", text, "1;"), Some("number"));
     let buffer = TextBuffer::new(text);
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     spans(&mut index, &buffer, "markdown");
     let summary = index.layer_summary(FileId::new(1));
     assert!(
@@ -211,7 +219,7 @@ fn deeper_nesting_than_the_limit_keeps_the_host_colours() {
         text.push('\n');
     }
     let buffer = TextBuffer::new(text.as_str());
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     spans(&mut index, &buffer, "markdown");
     let summary = index.layer_summary(FileId::new(1));
     assert!(
@@ -231,7 +239,7 @@ fn too_many_regions_are_left_out_and_counted() {
         text.push_str(&format!("```rust\nfn f{n}() {{}}\n```\n\n"));
     }
     let buffer = TextBuffer::new(text.as_str());
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     let all = spans(&mut index, &buffer, "markdown");
     assert_eq!(index.layer_summary(FileId::new(1)).len(), MAX_LIVE_LAYERS);
     assert!(index.stats.layer_overflows >= 20);
@@ -260,7 +268,7 @@ fn replace(buffer: &mut TextBuffer, from: usize, to: usize, with: &str) {
 fn editing_a_fence_marker_moves_the_region_to_another_language() {
     let text = "```rust\nfn a() {}\n```\n";
     let mut buffer = TextBuffer::new(text);
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     let before = spans(&mut index, &buffer, "markdown");
     assert_eq!(class_at(&before, text, "fn"), Some("keyword"));
 
@@ -276,7 +284,7 @@ fn editing_a_fence_marker_moves_the_region_to_another_language() {
     assert_eq!(
         after,
         spans(
-            &mut TreeIndex::default(),
+            &mut crate::features::syntax::test_support::index(),
             &TextBuffer::new(now.as_str()),
             "markdown"
         )
@@ -287,7 +295,7 @@ fn editing_a_fence_marker_moves_the_region_to_another_language() {
 fn removing_the_closing_fence_extends_the_region_to_the_end() {
     let text = "```rust\nfn a() {}\n```\n\nfn b() {}\n";
     let mut buffer = TextBuffer::new(text);
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     let before = spans(&mut index, &buffer, "markdown");
     let second = text.rfind("fn b").unwrap();
     assert_ne!(
@@ -314,7 +322,7 @@ fn removing_the_closing_fence_extends_the_region_to_the_end() {
     assert_eq!(
         after,
         spans(
-            &mut TreeIndex::default(),
+            &mut crate::features::syntax::test_support::index(),
             &TextBuffer::new(now.as_str()),
             "markdown"
         )
@@ -325,7 +333,7 @@ fn removing_the_closing_fence_extends_the_region_to_the_end() {
 fn an_unchanged_region_is_not_parsed_again() {
     let text = "```rust\nfn a() {}\n```\n\nSome text.\n";
     let mut buffer = TextBuffer::new(text);
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     spans(&mut index, &buffer, "markdown");
     let parses = index.stats.layer_parses;
     assert!(parses >= 2, "the fence and the inline text");

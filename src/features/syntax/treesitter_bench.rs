@@ -7,9 +7,8 @@
 //! tests/fixtures/languages/generated.sha256) and 50 samples after one warm-up.
 use super::Source;
 use super::bench_support::{MIB, SAMPLES, ms, report, timed, viewport};
-use super::grammars;
-use super::queries::compile;
-use super::treesitter::{TreeIndex, parse};
+use super::test_support::compile;
+use super::treesitter::parse;
 use crate::domain::identity::FileId;
 use crate::domain::language::{ResolvedLanguage, builtin};
 use crate::features::syntax::baseline::generate;
@@ -20,9 +19,9 @@ use std::{sync::atomic::AtomicBool, time::Instant};
 #[ignore = "P3a measurement; run in release mode"]
 fn treesitter_bench_resources_and_one_megabyte_parses() {
     println!("BENCH environment: 1 MiB samples from baseline::generate, {SAMPLES} samples");
-    for name in grammars::NAMES {
+    for name in crate::domain::language::grammar_names() {
         let started = Instant::now();
-        let language = grammars::language(name).unwrap();
+        let language = super::test_support::language(name).unwrap();
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&language).unwrap();
         println!(
@@ -30,7 +29,7 @@ fn treesitter_bench_resources_and_one_megabyte_parses() {
             ms(started.elapsed())
         );
     }
-    for name in grammars::NAMES {
+    for name in crate::domain::language::grammar_names() {
         let started = Instant::now();
         let compiled = compile(name).unwrap();
         println!(
@@ -40,7 +39,7 @@ fn treesitter_bench_resources_and_one_megabyte_parses() {
             compiled.query.capture_names().len()
         );
     }
-    for name in grammars::NAMES {
+    for name in crate::domain::language::grammar_names() {
         let started_samples = timed(|| compile(name).unwrap());
         report(&format!("query compile (repeat) {name}"), started_samples);
     }
@@ -55,7 +54,7 @@ fn treesitter_bench_resources_and_one_megabyte_parses() {
     ];
     for (grammar, sample) in cases {
         let text = generate(sample, MIB);
-        let language = grammars::language(grammar).unwrap();
+        let language = super::test_support::language(grammar).unwrap();
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&language).unwrap();
         let cancel = AtomicBool::new(false);
@@ -73,7 +72,7 @@ fn treesitter_bench_viewport_query_and_incremental_update() {
     for (name, grammar_sample) in [("rust", "rust"), ("javascript", "javascript")] {
         let language: ResolvedLanguage = builtin(name);
         let mut buffer = TextBuffer::new(generate(grammar_sample, MIB));
-        let mut index = TreeIndex::default();
+        let mut index = crate::features::syntax::test_support::index();
         let cancel = AtomicBool::new(false);
         let id = FileId::new(1);
         let middle = buffer.line_count() / 2;
@@ -135,7 +134,7 @@ fn treesitter_bench_prefix_only_parse() {
         ("c_sharp", "csharp"),
     ] {
         let text = generate(sample, MIB);
-        let language = grammars::language(grammar).unwrap();
+        let language = super::test_support::language(grammar).unwrap();
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&language).unwrap();
         for prefix in [16 * 1024, 64 * 1024, 256 * 1024] {
@@ -247,7 +246,7 @@ fn treesitter_bench_first_colour_by_size() {
             let windows = viewport(&buffer, 0, 50);
             let cancel = AtomicBool::new(false);
             let samples = timed(|| {
-                let mut index = TreeIndex::default();
+                let mut index = crate::features::syntax::test_support::index();
                 index
                     .prepare(
                         FileId::new(1),
@@ -295,7 +294,7 @@ fn treesitter_bench_embedded_languages() {
             let mut layers = 0;
             let mut overflows = 0;
             let samples = timed(|| {
-                let mut index = TreeIndex::default();
+                let mut index = crate::features::syntax::test_support::index();
                 index
                     .prepare(
                         FileId::new(1),
@@ -334,7 +333,7 @@ fn treesitter_bench_embedded_languages() {
     for name in ["html", "markdown"] {
         let language = builtin(name);
         let mut buffer = TextBuffer::new(generate(name, MIB));
-        let mut index = TreeIndex::default();
+        let mut index = crate::features::syntax::test_support::index();
         let cancel = AtomicBool::new(false);
         let id = FileId::new(1);
         let middle = buffer.line_count() / 2;
@@ -380,7 +379,7 @@ fn treesitter_bench_markdown_pieces() {
     let cancel = AtomicBool::new(false);
     let mut block = tree_sitter::Parser::new();
     block
-        .set_language(&grammars::language("markdown").unwrap())
+        .set_language(&super::test_support::language("markdown").unwrap())
         .unwrap();
     let started = Instant::now();
     let tree = parse(&mut block, &text, None, &cancel).unwrap();
@@ -407,7 +406,7 @@ fn treesitter_bench_markdown_pieces() {
     println!("BENCH inline ranges: {}", ranges.len());
     let mut inline = tree_sitter::Parser::new();
     inline
-        .set_language(&grammars::language("markdown_inline").unwrap())
+        .set_language(&super::test_support::language("markdown_inline").unwrap())
         .unwrap();
     inline.set_included_ranges(&ranges).unwrap();
     let started = Instant::now();

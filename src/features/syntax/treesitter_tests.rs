@@ -1,9 +1,10 @@
 use super::grammars;
-use super::queries::{compile, compile_source};
+use super::queries::compile_source;
+use super::test_support::{compile, grammar_file};
 use super::treesitter::{Capture, MAX_DOCUMENT_BYTES, TreeIndex, input_edit, tile};
 use super::{Source, TokenSpan, Window};
 use crate::domain::identity::FileId;
-use crate::domain::language::{Registry, ResolvedLanguage, builtin, grammar_file, grammar_names};
+use crate::domain::language::{Registry, ResolvedLanguage, builtin, grammar_names};
 use crate::features::highlighting::HighlightId;
 use crate::features::syntax::baseline::generate;
 use loom_editor_core::text::{Edit, EditKind, EditorMut, Selection, TextBuffer};
@@ -40,15 +41,20 @@ fn spans_of(
 /// (text, class name) for each span of a freshly parsed document.
 fn classes(language: &str, text: &str) -> Vec<(String, Option<&'static str>)> {
     let buffer = TextBuffer::new(text);
-    spans_of(&mut TreeIndex::default(), 1, &buffer, builtin(language))
-        .into_iter()
-        .map(|span| {
-            (
-                text[span.range].to_owned(),
-                span.class.map(HighlightId::name),
-            )
-        })
-        .collect()
+    spans_of(
+        &mut crate::features::syntax::test_support::index(),
+        1,
+        &buffer,
+        builtin(language),
+    )
+    .into_iter()
+    .map(|span| {
+        (
+            text[span.range].to_owned(),
+            span.class.map(HighlightId::name),
+        )
+    })
+    .collect()
 }
 
 /// The class name of the span that holds the first `needle` in `text`.
@@ -57,11 +63,16 @@ fn class_of(language: &str, text: &str, needle: &str) -> Option<&'static str> {
         .find(needle)
         .unwrap_or_else(|| panic!("`{needle}` not in the sample"));
     let buffer = TextBuffer::new(text);
-    spans_of(&mut TreeIndex::default(), 1, &buffer, builtin(language))
-        .into_iter()
-        .find(|span| span.range.contains(&at))
-        .and_then(|span| span.class)
-        .map(HighlightId::name)
+    spans_of(
+        &mut crate::features::syntax::test_support::index(),
+        1,
+        &buffer,
+        builtin(language),
+    )
+    .into_iter()
+    .find(|span| span.range.contains(&at))
+    .and_then(|span| span.class)
+    .map(HighlightId::name)
 }
 
 fn rank(
@@ -80,14 +91,14 @@ fn rank(
 
 #[test]
 fn grammar_table_resources_and_descriptions_agree() {
-    let table: Vec<&str> = grammars::NAMES.to_vec();
+    let table: Vec<&str> = grammar_names();
     let mut sorted = table.clone();
     sorted.sort_unstable();
     assert_eq!(table, sorted, "NAMES is kept sorted");
     assert_eq!(
         table,
-        grammar_names(),
-        "every factory has a resource directory and the reverse"
+        super::test_support::names(),
+        "the discovered packages match the registry"
     );
 
     let registry = Registry::builtin();
@@ -108,7 +119,8 @@ fn grammar_table_resources_and_descriptions_agree() {
     );
 
     for name in &table {
-        let language = grammars::language(name).unwrap_or_else(|| panic!("no factory for {name}"));
+        let language =
+            super::test_support::language(name).unwrap_or_else(|| panic!("no factory for {name}"));
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&language)
@@ -124,12 +136,12 @@ fn grammar_table_resources_and_descriptions_agree() {
             assert!(source.contains(needed), "{name}/SOURCE.md lacks `{needed}`");
         }
     }
-    assert!(grammars::language("brainfuck").is_none());
+    assert!(super::test_support::language("brainfuck").is_none());
 }
 
 #[test]
 fn every_built_in_query_compiles_and_every_capture_has_a_meaning() {
-    for name in grammars::NAMES {
+    for name in crate::domain::language::grammar_names() {
         let compiled = compile(name).unwrap_or_else(|error| panic!("{error}"));
         let captures = compiled.query.capture_names();
         assert!(!captures.is_empty(), "{name}");
@@ -145,7 +157,7 @@ fn every_built_in_query_compiles_and_every_capture_has_a_meaning() {
 
 #[test]
 fn queries_using_unsupported_features_are_rejected_with_a_reason() {
-    let language = grammars::language("rust").unwrap();
+    let language = super::test_support::language("rust").unwrap();
     let cases = [
         ("(identifier) @keyword", None),
         ("(identifier) @_helper", None),
@@ -276,7 +288,12 @@ fn typescript_and_tsx_add_types_and_use_their_own_grammar() {
     let tsx = registry.resolve_variant(typescript, "tsx").unwrap();
     let component = "const App = () => <div title=\"t\"><Box />{count as number}</div>;\n";
     let buffer = TextBuffer::new(component);
-    let spans = spans_of(&mut TreeIndex::default(), 1, &buffer, tsx);
+    let spans = spans_of(
+        &mut crate::features::syntax::test_support::index(),
+        1,
+        &buffer,
+        tsx,
+    );
     let class_at = |needle: &str| {
         let at = component.find(needle).unwrap();
         spans
@@ -324,7 +341,7 @@ fn plain_text_has_no_grammar_and_a_grammar_less_window_is_one_plain_span() {
     let buffer = TextBuffer::new(text);
     // Direct use with a document over the size limit gives the same shape.
     let big = TextBuffer::new("a".repeat(MAX_DOCUMENT_BYTES + 1));
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     let spans = spans_of(&mut index, 1, &big, builtin("rust"));
     assert_eq!(spans.len(), 1);
     assert_eq!(spans[0].class, None);
@@ -401,7 +418,7 @@ fn spans_tile_every_window_without_gaps_or_overlaps_and_rebuild_the_text() {
     for language in ["rust", "javascript", "typescript", "csharp"] {
         let text = generate(language, 100 * 1024);
         let buffer = TextBuffer::new(text.clone());
-        let mut index = TreeIndex::default();
+        let mut index = crate::features::syntax::test_support::index();
         let spans = spans_of(&mut index, 1, &buffer, builtin(language));
         assert_eq!(spans.first().unwrap().range.start, 0);
         assert_eq!(spans.last().unwrap().range.end, text.len());
@@ -482,7 +499,7 @@ fn incremental_updates_give_the_same_spans_as_parsing_again() {
     for language in ["rust", "javascript", "typescript", "csharp"] {
         let mut per_language = 0;
         let mut buffer = TextBuffer::new(generate(language, 4 * 1024));
-        let mut kept = TreeIndex::default();
+        let mut kept = crate::features::syntax::test_support::index();
         let mut rng = Rng(0x2545_f491_4f6c_dd1d ^ language.len() as u64);
         let lang = builtin(language);
         spans_of(&mut kept, 1, &buffer, lang);
@@ -521,7 +538,12 @@ fn incremental_updates_give_the_same_spans_as_parsing_again() {
                 continue;
             }
             let incremental = spans_of(&mut kept, 1, &buffer, lang);
-            let fresh = spans_of(&mut TreeIndex::default(), 1, &buffer, lang);
+            let fresh = spans_of(
+                &mut crate::features::syntax::test_support::index(),
+                1,
+                &buffer,
+                lang,
+            );
             assert_eq!(incremental, fresh, "{language} step {step}");
             compared += 1;
             per_language += 1;
@@ -568,7 +590,7 @@ fn the_journal_edit_matches_the_text_for_multi_edit_transactions() {
 fn a_cancelled_parse_leaves_the_stored_tree_usable() {
     let language = builtin("rust");
     let mut buffer = TextBuffer::new(generate("rust", 64 * 1024));
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     let before = spans_of(&mut index, 1, &buffer, language);
     EditorMut::new(&mut buffer, &mut Selection::default(), Vec::new())
         .replace(0..0, "// edit\n", EditKind::Other)
@@ -593,7 +615,12 @@ fn a_cancelled_parse_leaves_the_stored_tree_usable() {
     );
     // The next attempt continues from the old tree and matches a fresh parse.
     let after = spans_of(&mut index, 1, &buffer, language);
-    let fresh = spans_of(&mut TreeIndex::default(), 1, &buffer, language);
+    let fresh = spans_of(
+        &mut crate::features::syntax::test_support::index(),
+        1,
+        &buffer,
+        language,
+    );
     assert_eq!(after, fresh);
     assert_ne!(after, before);
     assert_eq!(index.stats.incremental_parses, 1);
@@ -602,7 +629,7 @@ fn a_cancelled_parse_leaves_the_stored_tree_usable() {
 #[test]
 fn a_reload_a_language_change_and_a_long_chain_all_start_from_a_full_parse() {
     let rust = builtin("rust");
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     let mut buffer = TextBuffer::new(generate("rust", 8 * 1024));
     spans_of(&mut index, 1, &buffer, rust);
     buffer.reload(generate("rust", 9 * 1024));
@@ -630,7 +657,7 @@ fn a_reload_a_language_change_and_a_long_chain_all_start_from_a_full_parse() {
 #[test]
 fn only_the_most_recent_trees_are_kept_and_closed_documents_are_dropped() {
     let rust = builtin("rust");
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     let buffer = TextBuffer::new(generate("rust", 2 * 1024));
     for id in 1..=20 {
         spans_of(&mut index, id, &buffer, rust);
@@ -653,7 +680,7 @@ fn windows_that_do_not_fit_the_text_are_refused() {
         line: 0..100,
         range: 0..100,
     };
-    let result = TreeIndex::default().prepare(
+    let result = crate::features::syntax::test_support::index().prepare(
         FileId::new(1),
         Source::new(&buffer),
         builtin("rust"),
@@ -667,7 +694,7 @@ fn windows_that_do_not_fit_the_text_are_refused() {
 fn a_language_without_a_grammar_is_one_plain_span_and_builds_no_tree() {
     let text = "fn a() { 42 } // looks like code";
     assert_eq!(classes("plaintext", text), [(text.to_owned(), None)]);
-    let mut index = TreeIndex::default();
+    let mut index = crate::features::syntax::test_support::index();
     let buffer = TextBuffer::new(text);
     spans_of(&mut index, 1, &buffer, builtin("plaintext"));
     assert_eq!((index.stats.full_parses, index.stats.trees), (0, 0));

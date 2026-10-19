@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {runtimeGrammarManifestErrors} from './check.mjs';
 import assert from 'node:assert/strict';
 import {dependencies,stateFields,structFields,violations,verificationManifestErrors} from './check.mjs';
 const policy=()=>({exceptions:{},root_state_adapters:[],runtime_bridges:[],state_ownership:{}});
@@ -383,12 +384,14 @@ test('domain verification may share only the language asset scanner through its 
   ])assert.ok(violations({[file]:source},policy()).some(e=>e.includes('can only include the production domain entry point')),source);
   assert.ok(violations({'crates/workspace-tests/src/other.rs':scanner},policy()).some(e=>e.includes('can only include the production domain entry point')));
 });
-test('only the grammar table may name grammar crates and only the engine files use the runtime',()=>{
-  const grammar='use tree_sitter::Language;\nfn f() { tree_sitter_rust::LANGUAGE; }';
+test('no syntax file may name grammar crates and only the engine files use the runtime',()=>{
+  const grammar='use tree_sitter::Language;';
   assert.deepEqual(violations({'src/features/syntax/grammars.rs':grammar},policy()),[]);
   assert.deepEqual(violations({'src/features/syntax/queries.rs':'use tree_sitter::Query;'},policy()),[]);
   assert.deepEqual(violations({'src/features/syntax/treesitter.rs':'use tree_sitter::Parser;\nuse streaming_iterator::StreamingIterator;'},policy()),[]);
   for(const [file,source] of [
+    ['src/features/syntax/grammars.rs','fn f() { tree_sitter_rust::LANGUAGE; }'],
+    ['src/features/syntax/grammars.rs','fn f() { tree_sitter_json::LANGUAGE; tree_sitter_md::LANGUAGE; }'],
     ['src/features/syntax/queries.rs','fn f() { tree_sitter_rust::LANGUAGE; }'],
     ['src/features/syntax/treesitter.rs','fn f() { tree_sitter_c_sharp::LANGUAGE; }'],
     ['src/features/syntax/lexer.rs','use tree_sitter::Parser;'],
@@ -409,4 +412,28 @@ test('the language protocol core is pure and the client may start processes',()=
   assert.deepEqual(violations({'src/infrastructure/lsp/job.rs':'use windows_sys::Win32::Foundation::CloseHandle;'},policy()),[],'the job object is the one Windows call in the lsp module');
   assert.ok(violations({'src/infrastructure/lsp/manager.rs':'use windows_sys::Win32::Foundation::CloseHandle;'},policy()).length>0);
   assert.ok(violations({'src/infrastructure/lsp/manager.rs':'use std::fs;'},policy()).length>0,'the manager does not read files itself');
+});
+
+test('language resources stay in infrastructure and test composition cannot enter production',()=>{
+  assert.deepEqual(violations({'src/infrastructure/language_packs.rs':'use libloading::Library; use std::fs; use tree_sitter::Language;'},policy()),[]);
+  for(const file of ['src/features/syntax/treesitter.rs','src/features/syntax/queries.rs']) {
+    for(const source of ['use std::fs;','use libloading::Library;','fn load() { libloading::Library::new("a"); }','use crate::infrastructure::language_packs;']) {
+      assert.ok(violations({[file]:source},policy()).length>0, file+source);
+    }
+  }
+  assert.ok(violations({'src/features/syntax/mod.rs':'pub(crate) mod test_support;'},policy()).length>0);
+  assert.deepEqual(violations({'src/features/syntax/mod.rs':'#[cfg(test)]\npub(crate) mod test_support;'},policy()),[]);
+});
+
+test('runtime manifest cannot statically link any grammars or package wrappers',()=>{
+  assert.deepEqual(runtimeGrammarManifestErrors('[dependencies]\ntree-sitter = "0.27"\ntree-sitter-language = "0.1"\n[dev-dependencies]\nloom-grammar-rust = { path = "crates/language-packs/rust" }'),[]);
+  for(const source of [
+    '[dependencies]\ntree-sitter-md = "0.5"',
+    '[dependencies]\ntree-sitter-json = "0.24"',
+    '[dependencies]\ntree-sitter-rust = "0.24"',
+    '[dependencies]\nrust_alias = { package = "tree-sitter-rust", version = "0.24" }',
+    '[dependencies.rust_alias]\npackage = "tree-sitter-rust"',
+    '[target.\'cfg(windows)\'.dependencies]\nloom-grammar-rust = { path = "crates/language-packs/rust" }',
+    '[dependencies]\nalias = { path = "crates/language-packs/rust" }',
+  ]) assert.ok(runtimeGrammarManifestErrors(source).length>0,source);
 });

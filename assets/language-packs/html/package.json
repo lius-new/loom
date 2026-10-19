@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "id": "html",
+  "enabled": true,
+  "languages": [
+    {
+      "name": "html",
+      "display_name": "HTML",
+      "badge": "HTML",
+      "aliases": [
+        "htm"
+      ],
+      "comments": {
+        "block": [
+          "<!--",
+          "-->"
+        ]
+      },
+      "variants": [
+        {
+          "id": "html",
+          "grammar": "html"
+        }
+      ],
+      "files": [
+        {
+          "extensions": [
+            "html",
+            "htm",
+            "xhtml"
+          ],
+          "variant": "html"
+        }
+      ]
+    }
+  ],
+  "servers": [],
+  "grammars": {
+    "html": {
+      "module": "loom_grammar_html",
+      "symbol": "loom_tree_sitter_html"
+    }
+  }
+}

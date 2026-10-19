@@ -12,13 +12,9 @@ mod rules;
 
 // Only the application's tests compare the table with the files on disk; the
 // domain-only verification package compiles this module without that test.
-// The syntax feature reads grammar queries; the domain-only verification
-// package compiles this module without that reader.
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use self::embedded::{Row, files as embedded_files};
-#[allow(unused_imports)]
-pub use self::embedded::{grammar_file, grammar_names};
 // The language service reads server root policies; the domain-only
 // verification package compiles this module without that reader.
 #[allow(unused_imports)]
@@ -83,6 +79,10 @@ impl ResolvedLanguage {
 /// The built-in language for a file path.
 pub fn from_path(path: &std::path::Path) -> ResolvedLanguage {
     Registry::builtin().resolve_path(path)
+}
+
+pub fn grammar_names() -> Vec<&'static str> {
+    Registry::builtin().grammar_names().collect()
 }
 
 /// A built-in language by canonical name or alias, in its default variant.

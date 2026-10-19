@@ -12,6 +12,8 @@ use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;
 
+static CURRENT: OnceLock<Registry> = OnceLock::new();
+
 /// The language every unrecognised file gets. A registry must define it.
 pub const PLAIN_TEXT: &str = "plaintext";
 
@@ -328,11 +330,10 @@ impl Registry {
         })
     }
 
-    /// The registry for the languages shipped in the binary. Its resources are
-    /// checked by tests and at build time, so a failure here is a defect.
+    /// Process registry: the startup package snapshot, or the plain-text fallback.
+    /// Tests use bundled metadata fixtures. This never loads grammar/query payloads.
     pub fn builtin() -> &'static Registry {
-        static BUILTIN: OnceLock<Registry> = OnceLock::new();
-        BUILTIN.get_or_init(|| {
+        CURRENT.get_or_init(|| {
             crate::domain::language::embedded::registry()
                 .unwrap_or_else(|error| panic!("invalid built-in language resources: {error}"))
         })
@@ -340,6 +341,18 @@ impl Registry {
 
     pub fn servers(&self) -> &[ServerDefinition] {
         &self.servers
+    }
+
+    /// Install the discovered package snapshot before documents are created.
+    /// IDs remain stable for this process; package changes require restart.
+    pub fn install(registry: Registry) -> Result<(), &'static str> {
+        CURRENT
+            .set(registry)
+            .map_err(|_| "the language registry is already in use")
+    }
+
+    pub fn grammar_names(&self) -> impl Iterator<Item = &str> {
+        self.grammars.iter().map(Box::as_ref)
     }
 
     pub fn server(&self, id: ServerDefinitionId) -> &ServerDefinition {

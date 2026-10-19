@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "id": "typescript",
+  "enabled": true,
+  "languages": [
+    {
+      "name": "typescript",
+      "display_name": "TypeScript",
+      "badge": "TS",
+      "aliases": [
+        "ts"
+      ],
+      "comments": {
+        "line": "//",
+        "block": [
+          "/*",
+          "*/"
+        ]
+      },
+      "variants": [
+        {
+          "id": "typescript",
+          "grammar": "typescript"
+        },
+        {
+          "id": "tsx",
+          "grammar": "tsx"
+        }
+      ],
+      "files": [
+        {
+          "extensions": [
+            "ts",
+            "mts",
+            "cts"
+          ],
+          "variant": "typescript"
+        },
+        {
+          "extensions": [
+            "tsx"
+          ],
+          "variant": "tsx"
+        }
+      ]
+    }
+  ],
+  "servers": [],
+  "grammars": {
+    "typescript": {
+      "module": "loom_grammar_typescript",
+      "symbol": "loom_tree_sitter_typescript"
+    },
+    "tsx": {
+      "module": "loom_grammar_typescript",
+      "symbol": "loom_tree_sitter_tsx"
+    }
+  }
+}

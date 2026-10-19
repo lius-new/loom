@@ -14,7 +14,7 @@
 //!   the range. Without it they are cut out, as Tree-sitter's own highlighter
 //!   does, so that for example the `> ` prefixes inside a quoted fence are not
 //!   code.
-use crate::features::syntax::grammars;
+use super::Resources;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tree_sitter::{Node, Point, Query, QueryCursor, Range, Tree};
 
@@ -42,13 +42,15 @@ pub(crate) struct Region {
 }
 
 /// `None` when the grammar has no injection query.
-pub(crate) fn compile(grammar: &str) -> Result<Option<InjectionQuery>, String> {
-    let Some(source) = crate::domain::language::grammar_file(grammar, "injections.scm") else {
+pub(crate) fn compile(
+    resources: &dyn Resources,
+    grammar: &str,
+) -> Result<Option<InjectionQuery>, String> {
+    let Some(source) = resources.text(grammar, "injections.scm")? else {
         return Ok(None);
     };
-    let language = grammars::language(grammar)
-        .ok_or_else(|| format!("no native parser is registered for grammar `{grammar}`"))?;
-    compile_source(&language, source)
+    let language = resources.language(grammar)?;
+    compile_source(&language, &source)
         .map(Some)
         .map_err(|error| format!("grammar `{grammar}` injections: {error}"))
 }

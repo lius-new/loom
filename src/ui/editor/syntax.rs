@@ -71,7 +71,7 @@ mod tests {
         domain::language::builtin,
         features::{
             highlighting::HighlightId,
-            syntax::{Source, TreeIndex, Window},
+            syntax::{Source, Window},
         },
     };
     use std::sync::atomic::AtomicBool;
@@ -80,7 +80,7 @@ mod tests {
     fn pending_and_ready_spans_preserve_exact_text_and_combining_graphemes() {
         let buffer = TextBuffer::new("const e\u{301}=\"中👩‍💻\"; // comment");
         let window = 0..buffer.len();
-        let tokens = TreeIndex::default()
+        let tokens = crate::features::syntax::test_support::index()
             .prepare(
                 FileId::new(1),
                 Source::new(&buffer),

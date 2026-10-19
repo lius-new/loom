@@ -12,7 +12,7 @@
 use super::injections::InjectionQuery;
 use super::layers::{Layers, Tools};
 use super::queries::{self, CompiledQuery};
-use super::{Source, TokenSpan, Window, WindowTokens, grammars};
+use super::{Source, TokenSpan, Window, WindowTokens};
 use crate::domain::{
     identity::FileId,
     language::{GrammarId, Registry, ResolvedLanguage},
@@ -67,7 +67,6 @@ struct DocTree {
     used: u64,
 }
 
-#[derive(Default)]
 pub(crate) struct TreeIndex {
     parsers: HashMap<GrammarId, Parser>,
     /// Parsers for embedded regions, which carry included ranges and so are never
@@ -79,9 +78,28 @@ pub(crate) struct TreeIndex {
     docs: HashMap<FileId, DocTree>,
     clock: u64,
     pub stats: TreeStats,
+    resources: Arc<dyn super::Resources>,
+}
+
+impl Default for TreeIndex {
+    fn default() -> Self {
+        Self::new(Arc::new(super::EmptyResources))
+    }
 }
 
 impl TreeIndex {
+    pub(crate) fn new(resources: Arc<dyn super::Resources>) -> Self {
+        Self {
+            parsers: HashMap::new(),
+            layer_parsers: HashMap::new(),
+            queries: HashMap::new(),
+            injection_queries: HashMap::new(),
+            docs: HashMap::new(),
+            clock: 0,
+            stats: TreeStats::default(),
+            resources,
+        }
+    }
     pub(crate) fn retain(&mut self, open: &[FileId]) {
         self.docs.retain(|id, _| open.contains(id));
         self.stats.trees = self.docs.len();
@@ -130,6 +148,7 @@ impl TreeIndex {
             let doc = self.docs.get_mut(&id).expect("parsed or current");
             let reached: Vec<Range<usize>> = windows.iter().map(|w| w.range.clone()).collect();
             let mut tools = Tools {
+                resources: self.resources.as_ref(),
                 parsers: &mut self.layer_parsers,
                 injection_queries: &mut self.injection_queries,
                 stats: &mut self.stats,
@@ -138,15 +157,15 @@ impl TreeIndex {
             doc.layers.ensure(&mut tools, &reached, &doc.source.text)?;
         }
         // The queries of the embedded languages, in the order of the layers.
-        let layer_names: Vec<&'static str> = self.docs[&id]
+        let layer_names: Vec<Option<&'static str>> = self.docs[&id]
             .layers
             .list
             .iter()
-            .map(|layer| layer.grammar)
+            .map(|layer| layer.tree.as_ref().map(|_| layer.grammar))
             .collect();
         let layer_queries: Vec<Option<Arc<CompiledQuery>>> = layer_names
             .into_iter()
-            .map(|name| self.query_by_name(name))
+            .map(|name| name.and_then(|name| self.query_by_name(name)))
             .collect();
         let doc = self.docs.get_mut(&id).expect("parsed or current");
         doc.used = self.clock;
@@ -185,7 +204,10 @@ impl TreeIndex {
             .entry(name)
             .or_insert_with(|| {
                 let started = Instant::now();
-                let compiled = queries::compile(name);
+                let compiled = queries::compile(self.resources.as_ref(), name);
+                if let Err(error) = &compiled {
+                    self.resources.report(error);
+                }
                 stats.queries_compiled += 1;
                 stats.query_compile_time += started.elapsed();
                 compiled.ok().map(Arc::new)
@@ -202,14 +224,14 @@ impl TreeIndex {
         cancel: &AtomicBool,
     ) -> bool {
         let name = Registry::builtin().grammar_name(grammar);
-        let Some(language) = grammars::language(name) else {
+        let Ok(language) = self.resources.language(name) else {
             return false;
         };
         let parser = self.parsers.entry(grammar).or_insert_with(|| {
             let mut parser = Parser::new();
             parser
                 .set_language(&language)
-                .expect("a built-in grammar matches the linked Tree-sitter version");
+                .expect("the resource adapter validated the Tree-sitter grammar ABI");
             parser
         });
         let started = Instant::now();
@@ -231,6 +253,7 @@ impl TreeIndex {
             return false;
         };
         let mut tools = Tools {
+            resources: self.resources.as_ref(),
             parsers: &mut self.layer_parsers,
             injection_queries: &mut self.injection_queries,
             stats: &mut self.stats,

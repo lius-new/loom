@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "id": "markdown",
+  "enabled": true,
+  "languages": [
+    {
+      "name": "markdown",
+      "display_name": "Markdown",
+      "badge": "MD",
+      "aliases": [
+        "md"
+      ],
+      "comments": {
+        "block": [
+          "<!--",
+          "-->"
+        ]
+      },
+      "variants": [
+        {
+          "id": "markdown",
+          "grammar": "markdown"
+        }
+      ],
+      "files": [
+        {
+          "extensions": [
+            "md",
+            "markdown",
+            "mdown",
+            "mkd"
+          ],
+          "variant": "markdown"
+        }
+      ]
+    }
+  ],
+  "servers": [],
+  "grammars": {
+    "markdown": {
+      "module": "loom_grammar_markdown",
+      "symbol": "loom_tree_sitter_markdown"
+    },
+    "markdown_inline": {
+      "module": "loom_grammar_markdown",
+      "symbol": "loom_tree_sitter_markdown_inline"
+    }
+  }
+}

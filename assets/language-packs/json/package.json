@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "json",
+  "enabled": true,
+  "languages": [
+    {
+      "name": "json",
+      "display_name": "JSON",
+      "badge": "JSON",
+      "aliases": [
+        "jsonc"
+      ],
+      "comments": {
+        "line": "//",
+        "block": [
+          "/*",
+          "*/"
+        ]
+      },
+      "variants": [
+        {
+          "id": "json",
+          "grammar": "json"
+        }
+      ],
+      "files": [
+        {
+          "extensions": [
+            "json",
+            "jsonc",
+            "geojson",
+            "webmanifest"
+          ],
+          "variant": "json"
+        }
+      ]
+    }
+  ],
+  "servers": [],
+  "grammars": {
+    "json": {
+      "module": "loom_grammar_json",
+      "symbol": "loom_tree_sitter_json"
+    }
+  }
+}

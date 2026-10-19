@@ -23,6 +23,13 @@ which turns on update checks; a plain `cargo build` has them off.
 
 ## Layout
 
+Every application package includes independent language-packs/<id>/package.json
+manifests, query resources and native modules, including JSON and Markdown.
+Packaging fails if a manifest-listed module is missing. macOS modules are merged from both
+target architectures and individually signed before signing the app bundle.
+Their presence in the package does not initialize a parser. Run package staging
+fixture tests with: node --test scripts/package/lib/language-packs.test.mjs.
+
 All downloads, tools, staging folders and artifacts live in the git-ignored
 `.packaging/` directory. Nothing is installed system-wide; delete the folder to
 start clean. The one exception is `rustup target add` on macOS, which adds the

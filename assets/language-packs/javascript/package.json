@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "javascript",
+  "enabled": true,
+  "languages": [
+    {
+      "name": "javascript",
+      "display_name": "JavaScript",
+      "badge": "JS",
+      "aliases": [
+        "js",
+        "jsx"
+      ],
+      "comments": {
+        "line": "//",
+        "block": [
+          "/*",
+          "*/"
+        ]
+      },
+      "variants": [
+        {
+          "id": "javascript",
+          "grammar": "javascript"
+        }
+      ],
+      "files": [
+        {
+          "extensions": [
+            "js",
+            "jsx",
+            "mjs",
+            "cjs"
+          ],
+          "variant": "javascript"
+        }
+      ]
+    }
+  ],
+  "servers": [],
+  "grammars": {
+    "javascript": {
+      "module": "loom_grammar_javascript",
+      "symbol": "loom_tree_sitter_javascript"
+    }
+  }
+}

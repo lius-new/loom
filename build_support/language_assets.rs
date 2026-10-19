@@ -174,6 +174,10 @@ pub fn emit_build_step(root: &Path) {
         "cargo:rerun-if-changed={}",
         root.join(GRAMMARS_DIR).display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join(SERVERS_DIR).display()
+    );
     let scan =
         scan(root).unwrap_or_else(|error| panic!("invalid built-in language assets: {error}"));
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"))
@@ -201,16 +205,45 @@ pub fn render(scan: &Scan) -> String {
         }
         out
     }
+    let mut names: Vec<_> = scan
+        .grammars
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .collect();
+    names.dedup();
+    let plain = scan
+        .languages
+        .iter()
+        .filter(|entry| entry.name == "plaintext")
+        .map(|entry| {
+            format!(
+                "    ({:?}, {:?}, {:?}, include_str!({:?})),\n",
+                entry.name,
+                entry.file,
+                entry.relative,
+                entry.absolute.to_string_lossy()
+            )
+        })
+        .collect::<String>();
     format!(
-        "/// (name, file, path from the repository root, contents)\n\
+        "/// Test metadata fixtures; production embeds only plain text.\n\
+         #[cfg(test)]\n\
          pub(crate) static LANGUAGE_FILES: &[(&str, &str, &str, &str)] = &[\n{}];\n\
-         /// (grammar, file, path from the repository root, contents)\n\
-         pub(crate) static GRAMMAR_FILES: &[(&str, &str, &str, &str)] = &[\n{}];\n\
-         /// (server, file, path from the repository root, contents)\n\
-         pub(crate) static SERVER_FILES: &[(&str, &str, &str, &str)] = &[\n{}];\n",
+         #[cfg(not(test))]\n\
+         pub(crate) static LANGUAGE_FILES: &[(&str, &str, &str, &str)] = &[\n{}];\n\
+         pub(crate) static GRAMMAR_FILES: &[(&str, &str, &str, &str)] = &[];\n\
+         #[cfg(test)]\n\
+         pub(crate) static SERVER_FILES: &[(&str, &str, &str, &str)] = &[\n{}];\n\
+         #[cfg(not(test))]\n\
+         pub(crate) static SERVER_FILES: &[(&str, &str, &str, &str)] = &[];\n\
+         #[cfg(test)]\n\
+         pub(crate) static GRAMMAR_NAMES: &[&str] = &{:?};\n\
+         #[cfg(not(test))]\n\
+         pub(crate) static GRAMMAR_NAMES: &[&str] = &[];\n",
         table(&scan.languages),
-        table(&scan.grammars),
-        table(&scan.servers)
+        plain,
+        table(&scan.servers),
+        names
     )
 }
 
@@ -428,7 +461,7 @@ mod tests {
         };
         let (languages, grammars, servers) = embedded_files();
         assert_eq!(embedded(languages), disk(&scanned.languages));
-        assert_eq!(embedded(grammars), disk(&scanned.grammars));
+        assert!(grammars.is_empty(), "all grammar resources stay on disk");
         assert_eq!(embedded(servers), disk(&scanned.servers));
         // Names that differ only by case would collide on case-insensitive disks.
         let mut lowered: Vec<_> = languages
@@ -447,6 +480,25 @@ mod tests {
         }
         for bad in ["", "Rust", "1a", "c-sharp", "c sharp", "中文", "_a"] {
             assert!(!is_canonical_name(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn no_grammar_queries_are_embedded_in_the_executable() {
+        let tree = Tree::new("core-boundary");
+        for grammar in ["json", "markdown", "markdown_inline", "rust", "css"] {
+            tree.file(
+                &format!("assets/grammars/{grammar}/highlights.scm"),
+                "query",
+            )
+            .file(&format!("assets/grammars/{grammar}/SOURCE.md"), "source");
+        }
+        let rendered = render(&scan(&tree.0).unwrap());
+        for external in ["json", "markdown", "markdown_inline", "rust", "css"] {
+            assert!(
+                !rendered.contains(&format!("assets/grammars/{external}/")),
+                "only the grammar name may be in metadata, never its query payload"
+            );
         }
     }
 }

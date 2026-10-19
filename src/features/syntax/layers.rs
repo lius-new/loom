@@ -22,7 +22,7 @@
 //! tree; one that moved or changed is parsed again when next needed.
 use super::injections::{self, InjectionQuery};
 use super::treesitter::{TreeStats, parse};
-use super::{grammars, injections::Region};
+use super::{Resources, injections::Region};
 use crate::domain::language::Registry;
 use std::{
     collections::HashMap,
@@ -70,6 +70,7 @@ pub(crate) struct Layers {
 
 /// What building layers needs from the index that owns the caches.
 pub(crate) struct Tools<'a> {
+    pub resources: &'a dyn Resources,
     pub parsers: &'a mut HashMap<&'static str, Parser>,
     pub injection_queries: &'a mut HashMap<&'static str, Option<Arc<InjectionQuery>>>,
     pub stats: &'a mut TreeStats,
@@ -86,7 +87,7 @@ pub(crate) fn resolve_grammar(name: &str) -> Option<&'static str> {
             .grammar
             .map(|grammar| registry.grammar_name(grammar));
     }
-    grammars::NAMES.iter().copied().find(|known| *known == name)
+    registry.grammar_names().find(|known| *known == name)
 }
 
 fn content_hash(text: &str, ranges: &[SitterRange]) -> u64 {
@@ -103,7 +104,13 @@ impl Tools<'_> {
     fn injection_query(&mut self, grammar: &'static str) -> Option<Arc<InjectionQuery>> {
         self.injection_queries
             .entry(grammar)
-            .or_insert_with(|| injections::compile(grammar).ok().flatten().map(Arc::new))
+            .or_insert_with(|| {
+                let result = injections::compile(self.resources, grammar);
+                if let Err(error) = &result {
+                    self.resources.report(error);
+                }
+                result.ok().flatten().map(Arc::new)
+            })
             .clone()
     }
 
@@ -153,7 +160,7 @@ impl Tools<'_> {
         ranges: &[SitterRange],
         text: &str,
     ) -> Result<Tree, bool> {
-        let language = grammars::language(grammar).ok_or(false)?;
+        let language = self.resources.language(grammar).map_err(|_| false)?;
         let parser = self.parsers.entry(grammar).or_insert_with(|| {
             let mut parser = Parser::new();
             parser

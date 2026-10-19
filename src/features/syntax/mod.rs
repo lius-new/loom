@@ -4,6 +4,7 @@ pub(crate) mod baseline;
 #[cfg(test)]
 pub(crate) mod bench_support;
 mod grammars;
+pub(crate) use self::grammars::{EmptyResources, Resources};
 #[cfg(test)]
 mod injection_tests;
 mod injections;
@@ -12,6 +13,8 @@ pub(crate) mod presentation;
 #[cfg(test)]
 mod presentation_tests;
 mod queries;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod treesitter;
 #[cfg(test)]
 mod treesitter_bench;

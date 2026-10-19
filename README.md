@@ -81,6 +81,7 @@ installs it automatically.
 ```sh
 git clone https://github.com/lius-new/loom.git
 cd loom
+cargo build --release --locked
 cargo run --release --locked
 ```
 
@@ -99,6 +100,7 @@ Skia is downloaded as a prebuilt archive during the first build. See
 ## Documentation
 
 - [Editing](docs/editing.md) — mouse, keyboard shortcuts, files, sessions and large files
+- [Language packages](docs/languages.md) — independent, demand-loaded packages and user installation
 - [Workspace search](docs/search.md)
 - [Terminal](docs/terminal.md)
 - [Git](docs/git.md)

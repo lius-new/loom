@@ -31,6 +31,9 @@ mod ui;
 #[cfg(test)]
 #[path = "../build_support/language_assets.rs"]
 mod language_assets_build;
+#[cfg(test)]
+#[path = "../build_support/language_packages.rs"]
+mod language_packages_build;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     app::run()

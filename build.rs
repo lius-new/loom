@@ -1,11 +1,20 @@
 #[path = "build_support/language_assets.rs"]
 mod language_assets;
+#[path = "build_support/language_packages.rs"]
+mod language_packages;
 
 fn main() {
     println!("cargo:rerun-if-changed=icons/app.ico");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=scripts/terminal_console_probe.rs");
     language_assets::emit_build_step(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
+    println!("cargo:rerun-if-changed=assets/language-packs");
+    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let profile = output.ancestors().nth(3).expect("Cargo profile directory");
+    language_packages::stage(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        &profile.join("language-packs"),
+    );
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap())

@@ -1,13 +1,13 @@
 # Loom 语言服务与语法高亮重构设计（临时草案）
 
 - 日期：2026-10-18。
-- 修订：语言描述与 grammar 资源分离，由 build.rs 生成内嵌表；增加资源校验、查询编译计时和相应跟踪项。
+- 修订：2026-10-19 已实现全动态语言包：Markdown、JSON 同样独立分发且默认启用；应用资源与用户目录自动发现，显示内容时加载，首版重启生效。Windows 验证见 R-011，跨平台验收仍待补齐。
 - 状态：实施中的设计与验收记录；已实现内容和未完成验证以第 19 节为准。
 - 范围：公共文档基础、语言注册表、Tree-sitter 基础高亮，以及与 LSP 的接入边界。
 - 默认顺序：公共基础 → 开放语言注册表 → 通用 Tree-sitter 基础高亮 → 通用 LSP 最小闭环 → 嵌入语言与常用语言扩展。
 - 文件用途：项目根目录临时设计与实施记录；设计稳定后再拆分进入正式文档。
 - 阅读范围：本文件主导公共模型与基础高亮实施；LSP 协议细节见 [LSP_DESIGN.tmp.md](LSP_DESIGN.tmp.md)。
-- 实施状态：P0 部分完成；P1、P2、P3a、P3b、P5 已实现并待跨平台等验证；P4a、P4b、P4c、P4f 已接入应用并待补充验证，P4d、P4e 未开始。更新入口见 [第 19 节进度跟踪](#19-实施进度跟踪)。
+- 实施状态：P0 部分完成；P1、P2、P3a、P3b、P5 已实现并待跨平台等验证；P4a、P4b、P4c、P4f 已接入应用并待补充验证，P4d、P4e 未开始。按需原生语言包已实现并完成 Windows 验证，Linux/macOS 仍待实机验收（第 11.3 节、R-011）。更新入口见 [第 19 节进度跟踪](#19-实施进度跟踪)。
 
 ## 1. 决策摘要
 
@@ -19,11 +19,11 @@
 4. 先用 Tree-sitter 替换自写 lexer，提供无需服务器的基础高亮、跨行上下文与编辑时的连续显示。Rust 是首个集成样例，必须用第二种语法明显不同的语言检验通用接口。
 5. 再接通用 LSP 客户端，交付文档同步、诊断和语义高亮；rust-analyzer 作为首个真实服务器样例，另用不同能力组合的假服务器验证协议通用性。
 6. 两个服务共享公共模型但互不依赖。事务后全量文档桥接属于 LSP 接入阶段，本地语法初期沿用视口查询提交最新快照，不要求先完成全部语言服务基础设施。
-7. 外部语言包、WASM、自动下载服务器、完整第三方主题格式均不作为前期依赖。
+7. 原始首期未实现外部语言包；2026-10-19 的后续实现已改为全动态独立语言包与用户目录发现，见第 11.3 节。WASM 运行时选型、自动下载服务器、完整第三方主题格式仍需分别设计与验收。
 8. 直接替换旧实现，不提供运行时 legacy 后端开关；基础替换阶段删除旧 lexer 与按行索引。现有主题保持视觉风格，但不长期保留旧颜色结构或会话迁移层。
-9. 内置语言资源由 JSON 语言描述、grammar 查询目录与代码中唯一的原生 grammar 工厂表组成。build.rs 生成内嵌文本表，启动时解析描述，首次使用时在后台编译查询。内置资源内容错误由构建/测试拦截，不作为常规静默降级场景；未来外部资源才需要容错加载策略，预算超限等正常运行回退仍然保留。
+9. 所有语言 grammar/query 均属于独立动态包，Markdown/JSON 默认随附并启用。启动扫描应用资源和用户目录的逐包清单，实际显示内容时后台加载；用户新增包无需中央注册或重新编译。坏包与资源失败按包隔离，纯文本始终可用，首版安装/更新/禁用后重启生效。
 
-通用性的验收是“增加语言时，修改描述、资源和必要的 grammar 绑定即可，文档版本、缓存、调度、合成与 LSP 协议核心无需修改”，并不等于现在就承诺所有语言或任意外部 grammar 都可无代码安装。
+通用性的验收是“增加兼容语言时，只安装自包含描述、查询与匹配平台/ABI 的动态模块，文档版本、缓存、调度、合成与 LSP 核心无需修改”。不承诺缺失平台二进制或 ABI 不兼容的任意 grammar 可直接运行。
 
 ## 2. 项目现状与保留边界
 
@@ -251,14 +251,14 @@ TypeScript / TSX 显式选择不同 grammar，JSX 使用经验证的 JavaScript 
 
 ### 6.2 扩展契约与反特例验收
 
-增加一种内置语言的步骤：
+增加一个随附语言包的步骤（外部用户只需安装完整包并重启）：
 
-1. 新增 `assets/languages/<name>.json`，声明识别规则、变体与 grammar 引用。
-2. 如需新 grammar，新增 `assets/grammars/<grammar>/` 的查询与 SOURCE.md，加入 grammar crate 依赖，并在唯一 grammar 工厂表增加注册项。
+1. 新增 assets/language-packs/<id>/package.json，声明语言识别、变体、服务器与 grammar/module/symbol；同步作者用的 assets/languages 和 assets/servers 测试描述。
+2. 新增 assets/grammars/<grammar>/ 的查询与 SOURCE.md，提供独立动态模块（随附包由 crates/language-packs 下的构建目标提供）。主程序不添加具体 grammar 正常依赖，不增加静态工厂分支。
 3. 增加识别、分类及必要的编辑 fixture。
 4. 涉及新增或变更第三方资源/依赖时更新 THIRD_PARTY_NOTICES。
 
-复用已有 grammar 且没有新增第三方材料时，通常只需第 1、3 步；必须由 fixture 证明语法与高亮覆盖符合该语言/变体，不能仅按名称相近推断兼容。例如 JSONC 的注释、尾逗号等所需行为需按锁定 grammar 实际验证。首期使用自定义 Rust 语法兼容测试语言验证复用路径，不为此额外引入 JSON。上述步骤不修改注册表加载代码、worker、范围合成或主题逻辑。
+包可复用兼容模块与查询，但需要在自身目录中完整提供对应资源；必须由 fixture 证明语法与高亮覆盖符合该语言/变体，不能仅按名称相近推断兼容。例如 JSONC 的注释、尾逗号等所需行为需按锁定 grammar 实际验证。首期使用自定义 Rust 语法兼容测试语言验证复用路径，不为此额外引入 JSON。上述步骤不修改注册表加载代码、worker、范围合成或主题逻辑。
 
 P2 替换 Language 枚举后，旧 lexer 仍运行到 P3b；它的关键字表临时按规范语言名称选择（如 rust、csharp），这部分局限在旧 lexer 中，随其一起删除，不把关键字表或 legacy backend 选择写入语言描述。未来 P4a 另行增加服务器绑定格式。
 
@@ -303,7 +303,9 @@ P2 就加入一个测试专用的非内置语言 ID，验证识别、重命名�
 
 徽章来自有效语言元数据；文件图标仍按现有文件名/扩展名系统处理，不与语法配置强绑定。
 
-### 6.5 内置资源的组织与加载
+### 6.5 核心资源与语言包的组织和加载
+
+2026-10-19 已改为全部 grammar/query 动态化，包括默认启用的 Markdown、JSON；主程序仅保留 Tree-sitter 引擎与纯文本回退。应用资源目录和用户数据目录逐包发现，实现与验证见第 11.3 节、R-010 与 R-011。
 
 **描述格式。** 每种语言一个 JSON，文件名为规范名称，使用现有 serde/serde_json；P2 不新增 TOML 解析器。所有描述层级使用 `deny_unknown_fields`，未知或拼错字段在测试期失败。示例：
 
@@ -326,19 +328,19 @@ P2 就加入一个测试专用的非内置语言 ID，验证识别、重命名�
 
 variants 必须非空，首项明确作为未指定变体时的默认项；ID 分配仍按名称排序，不依赖文件枚举顺序。files 规则直接引用语言内的变体，首版支持 extensions 与精确文件名 names，规则必须能唯一解析。comments 仅描述编辑用标记，不替代 grammar 的解析规则；无相应标记的字段可省略。grammar 可以省略，例如 plaintext。可选 aliases 只服务名称解析，不是额外语言注册。服务器绑定字段到 P4a 才加入。
 
-**内嵌方式。** build.rs 使用标准库扫描 `assets/languages/*.json` 与 `assets/grammars/*/`，按规范相对路径排序，生成 `OUT_DIR/language_assets.rs` 的静态文本表。每项包含规范名称、源相对路径与 `include_str!`，绝对输入路径从 CARGO_MANIFEST_DIR 推导并正确转义；不在运行时依赖源码目录存在。build.rs 不解析 JSON、不编译查询，因此无需把应用的 serde_json 另加为构建依赖。
+**内嵌方式。** 生产构建只内嵌纯文本描述，不链接任何具体 grammar，也不内嵌查询。完整语言/服务器描述表只用于测试隔离。随附包位于 assets/language-packs/<id>/package.json，包含语言描述、服务器描述、grammar 到模块及导出符号的映射；build.rs 将每包清单与其引用的查询复制到 target/<profile>/language-packs/<id>/。八个独立 workspace cdylib 提供全部语法（Markdown 块/行内共用一个库，TS/TSX 共用一个库），包装 crate 只作为主程序的开发测试依赖。
 
 grammar 目录首期只接受 highlights.scm 与 SOURCE.md，P5 再明确增加 injections.scm；缺少必需文件、未知文件、非预期嵌套目录、符号链接或非规范名称使构建失败，避免把输入静默漏掉。语言目录只接受描述 JSON。SOURCE.md 的内容含上游仓库/提交、许可证、查询是否修改及其对应 grammar crate/版本；按语言共享 crate 的多个 grammar 分别引用相应版本。
 
 生成过程从当前扫描结果完整覆盖单个输出文件，不依赖 OUT_DIR 为空或保留旧条目；内容未变化时可以避免重写。确定排序保证相同资源集的条目顺序与 ID 分配稳定，绝对路径的正确性与路径重映射另测，不据此承诺跨不同源码根的二进制逐字节一致。
 
-build.rs 在所有目标平台执行资源生成，同时声明两个资源根目录的 rerun-if-changed；保留已有图标、Cargo.toml 与终端探针的构建职责，不把通用资源生成误放入 Windows 专属分支。Cargo 官方说明目录路径会扫描其内部变化，仍需在 Windows/Linux/macOS 验证资源新增、删除、重命名与修改触发增量重建；测试独立扫描磁盘核对内嵌清单，作为必跑 CI 兜底。
+build.rs 在所有目标平台执行资源生成，同时声明语言、服务器、grammar 及包清单资源根目录的 rerun-if-changed；保留已有图标、Cargo.toml 与终端探针的构建职责，不把通用资源生成误放入 Windows 专属分支。Cargo 官方说明目录路径会扫描其内部变化，仍需在 Windows/Linux/macOS 验证资源新增、删除、重命名与修改触发增量重建；测试独立扫描磁盘核对内嵌清单，作为必跑 CI 兜底。
 
-**启动与按需加载。** 注册表启动时解析描述、分配 ID、建立名称与文件规则索引；这一阶段不创建 Parser 或编译查询。P3a 起统一校验 native factory、grammar 资源目录和描述引用的一致性。查询在 grammar 首次被使用时由 syntax worker 编译，按 GrammarId/资源代次缓存；同一 grammar 的多个语言变体共享已编译资源。内置资源代次固定为 0，运行时语言选择/配置代次仍可变化。
+**启动与按需加载。** bootstrap 自动扫描应用资源与用户数据目录的一级子目录，只读取各包 package.json 并安装进程生命周期内不变的注册表；不依赖全局 catalog.json。读取描述即可识别文件，不加载动态库、查询或 Parser。首次可见文档或可见注入区域的语法请求在 syntax worker 中经 Resources 接口加载所需资源；已发现但不可见的注入区域不提前编译查询。资源及失败结果缓存，安装/更新/禁用包后重启生效。
 
-**分层。** 描述格式、校验、注册表与内嵌表位于 domain/language（P2 实施时由原定的 features/language 移入）。原因：文档创建与重命名发生在 domain 内（`FileMeta::from_path`、重命名后重新识别），识别必须在 domain 内可用；注册表是纯逻辑，内置资源是编译进程序的不可变数据，不依赖 Tree-sitter、GUI 或文件系统。架构门禁为此做了三处窄化放行并各有自测：descriptor.rs 可用 serde；embedded.rs 可 include 且仅限 `concat!(env!("OUT_DIR"), "/language_assets.rs")` 一条；domain 验证包的 build.rs 可共享同一个扫描器（`#[path]` 仅限 build_support/language_assets.rs）。其余 domain 文件仍不得 include、不得用 serde、不得使用 `super`。原生工厂表、查询编译与 grammar 适配位于 features/syntax；内部资源来源接口首期只有 Embedded 实现，不提前建设外部包加载器。
+**分层。** 描述格式、校验、注册表与内嵌表位于 domain/language（P2 实施时由原定的 features/language 移入）。原因：文档创建与重命名发生在 domain 内（`FileMeta::from_path`、重命名后重新识别），识别必须在 domain 内可用；注册表是纯逻辑，内置资源是编译进程序的不可变数据，不依赖 Tree-sitter、GUI 或文件系统。架构门禁为此做了三处窄化放行并各有自测：descriptor.rs 可用 serde；embedded.rs 可 include 且仅限 `concat!(env!("OUT_DIR"), "/language_assets.rs")` 一条；domain 验证包的 build.rs 可共享同一个扫描器（`#[path]` 仅限 build_support/language_assets.rs）。其余 domain 文件仍不得 include、不得用 serde、不得使用 `super`。Resources 端口与查询编译位于 features/syntax（已删除静态 grammar 工厂）；文件读取和动态模块加载由 infrastructure/language_packs 实现并由 syntax worker 注入。生产 feature 不依赖基础设施，测试通过 cfg(test) 的组合夹具使用真实语言包。
 
-**错误边界。** 内置资源是随版本发布的受控输入，格式/引用/查询错误必须在构建或测试中失败；运行时若意外发现仍返回明确初始化错误，不把损坏的内置资源静默注册成 PlainText。无 grammar 的合法语言、预算超限、取消或正常解析恢复与资源内容错误分开处理；将来的外部来源才引入单包拒绝/回退策略。
+**错误边界。** 随附资源错误在构建和回归测试中检测；运行时坏清单、包间名称/规则冲突按包记录并跳过，不能破坏其余注册表。合法用户包可按同 ID 整包覆盖随附包，坏替换保留随附版本；enabled=false 禁用该 ID，用户包不得借用缺失的随附模块。缺少动态库、坏符号/ABI、缺失或错误查询只让对应语言降级普通文本，失败缓存并逐项记录；纯文本始终可用。
 
 ## 7. 统一高亮模型与主题
 
@@ -446,9 +448,9 @@ assets/grammars/
     SOURCE.md
 ```
 
-描述和查询由 build.rs 生成的表内嵌，发布包不依赖源码资源路径。grammar 首期是链接进程序的原生代码，不能通过读取 JSON/SCM 就新增解析能力。`features/syntax/grammars.rs` 是唯一的原生工厂表，把规范 grammar 名称映射到 Tree-sitter Language；其他模块不得直接引用具体 grammar crate。新增 grammar 只修改该工厂表、依赖与对应资源，不修改 worker 或注册表加载逻辑。
+当前描述和查询作为独立包的磁盘资源分发，发布包不依赖源码工作目录。features/syntax/grammars.rs 仅定义 Resources 端口，不再包含原生工厂或具体 grammar 引用；infrastructure/language_packs 按 package.json 加载动态模块、校验 ABI 和读取查询。新增兼容外部包无需修改或重编译主程序。原 P3a 静态工厂实现已由 R-011 替代。
 
-工厂名称、资源目录和描述中的 grammar 引用在 P3a 起做一致性测试；同一 crate 可以提供 typescript、tsx 两个工厂。SOURCE.md 记录上游/查询提交、许可证、修改说明及与 Cargo 依赖版本的对应关系，和 Cargo.lock 一起审阅升级。首期不运行时下载 grammar，不要求用户机器安装编译器。
+包的导出、资源目录和描述中的 grammar 引用做一致性测试；同一动态库可以提供 typescript、tsx 两个导出。SOURCE.md 记录上游/查询提交、许可证、修改说明及与 Cargo 依赖版本的对应关系，和 Cargo.lock 一起审阅升级。首期不运行时下载 grammar，不要求用户机器安装编译器。
 
 每个文档的状态包含语言资源键、已解析 stamp、源快照、Tree、解析状态与使用时间。Parser 可按 grammar 在单 worker 中复用；执行某文档解析时必须携带该文档的树与 stamp，不把 Parser 的暂存取消状态误认为其他文档状态。
 
@@ -466,7 +468,7 @@ assets/grammars/
 
 ### 9.3 Engine 接口策略
 
-首期只需要 Plain 与 TreeSitter 两条内部路径，切换由注册表声明的 grammar 能力决定；替换完成不保留 LegacyLexer 开关。合法的无 grammar 语言或预算超限可以普通文本显示，内置资源内容错误按 6.5 节处理，不作为正常降级输入。不要发布给外部语言包的稳定 ABI。
+首期只需要 Plain 与 TreeSitter 两条内部路径，切换由注册表声明的 grammar 能力决定；替换完成不保留 LegacyLexer 开关。合法的无 grammar 语言或预算超限可以普通文本显示，内置资源内容错误按 6.5 节处理，不作为正常降级输入。Tree-sitter 原生语法使用其 C ABI，应用内部接口不对包暴露 Rust ABI。
 
 确有复用价值时引入小型文档接口，其职责是 `reset(snapshot)`、`update(snapshot, revisions)`、`query(ranges)`，由调用者传入取消/预算上下文并接收显式成功、取消、失败结果。接口不返回颜色，也不拥有应用状态。
 
@@ -634,13 +636,21 @@ P3b 增加标签页验收：准备至少 32 个打开文档，使最近视口分
 
 首期不为此把解析库引入 editor-core，也不让核心异步等待 worker。
 
-### 11.3 外部语言包后置
+### 11.3 全动态独立语言包（已实现，跨平台待验证）
 
-资源访问经过内部 ResourceSource 边界，首期只有 Embedded 实现；不因预留来源边界就建设插件平台或运行时目录扫描。以后可以先增加用户配置目录覆盖：加载描述和查询，允许调整现有 grammar 的规则或添加语法兼容、复用已有 grammar 的语言，而不改变注册表使用接口。
+2026-10-19 用户确认“内置”表示随安装包分发并默认启用，不表示静态链接。Markdown（块/行内）、JSON、Rust、JavaScript、TypeScript/TSX、C#、HTML、CSS 全部使用同一动态加载通路；纯文本不需要包。用户可自行下载完整包，无需修改全局索引或重新编译 Loom。
 
-用户目录覆盖仍需独立确定优先级、同名冲突、校验、缓存代次与单包错误回退，不属于本次实施。全新 grammar 才需要新增可执行解析能力，后续默认评估 WASM；仅新增文本描述/查询不需要 WASM，也不能让它们偷偷加载原生代码。
+**独立格式。** 每包一个目录，目录名必须匹配 package.json 的 id。清单字段为 schema=1、id、enabled（默认 true）、languages、servers（默认空）、grammars；每包自行提供所有 grammar/server 引用。查询放在包内 grammars/<grammar>/，动态库放在 modules/。描述严格拒绝未知字段和不规范路径片段。具体格式、目录和安装示例见 docs/languages.md。
 
-外部包清单、grammar ABI、WASM 运行时、包版本与资源限制在实际需求出现后设计。第三方主题可作为单独能力提前交付，不依赖 WASM。
+**自动发现与冲突。** 启动按稳定排序扫描应用资源目录，再扫描用户数据目录。Windows 用户位置为 %LOCALAPPDATA%/Loom/language-packs；macOS 为 ~/Library/Application Support/Loom/language-packs；Linux 为有效绝对 $XDG_DATA_HOME/loom/language-packs 或 ~/.local/share/loom/language-packs。同 ID 的有效用户包整包覆盖随附包，禁用清单移除该 ID；坏用户替换保留随附版本。不同 ID 间重复 grammar、语言/别名、服务器或文件规则时拒绝新包并记录错误。无清单的目录和目录符号链接不作为包。缺少资源目录时仍可启动并使用纯文本。
+
+**加载边界。** 启动与文件识别只读清单。浏览目录、搜索、恢复隐藏标签及仅发现包已安装，均不读取 grammar/query、不加载语言库。默认启用同样不触发加载；显示 Markdown/JSON 才加载其模块。可见 Markdown 围栏或 HTML script/style 才加载其对应嵌入语言；不可见区域不提前编译查询。syntax worker 经 Resources 端口加载，生产 feature 不读取文件或依赖 infrastructure。
+
+**资源与生命周期。** 首版使用原生 DLL/.so/.dylib，manifest 指定 C 导出符号，加载时校验 Tree-sitter ABI。安装、更新、禁用后的清单通过重启重新发现，运行时注册表不变；不实现热重载与卸载。Tree/Query 可能持有库内指针，因此库句柄保留至进程退出。最多 64 个已加载原生模块，每根目录最多 128 个候选包、最多 128 个活动包；单清单 1 MiB、grammar 128 个、包内语言共 128 个、服务器 64 个；查询单文件 4 MiB、缓存总计 8 MiB。原生包是进程内受信代码，发布方需提供匹配平台/架构的模块。
+
+**发布。** 各平台发布脚本逐包复制清单/查询/模块，macOS 合并双架构并分别签名；应用签名附加第三方库加载 entitlement。定位跟随可执行文件（macOS 为 Contents/Resources），不依赖源码或工作目录。LSP 仍使用独立进程，安装或发现包不得自动启动服务器。
+
+**验收。** 覆盖所有语法含 Markdown/JSON 的启动零加载、首次使用和缓存、可见注入惰性加载、用户新增包无需重编译、覆盖与禁用、坏清单/冲突/缺模块/坏符号/坏查询隔离，以及重新发现模拟重启生效。冷子进程使用真实发布结构且关闭 Cargo 回退，核验 Windows 模块句柄；另有应用级目录、搜索和隐藏恢复的零加载回归。Windows 结果见 R-011，Linux/macOS 实机加载、实际安装器与新冷加载性能基线仍待验收。
 
 ## 12. 拟新增/修改文件与依赖方向
 
@@ -657,7 +667,7 @@ src/domain/
   language/
     mod.rs                    # LanguageId / VariantId / GrammarId、ResolvedLanguage
     descriptor.rs             # JSON 描述格式、serde 严格反序列化与校验
-    embedded.rs               # include! 生成的内嵌表，唯一内置资源来源
+    embedded.rs               # 生产纯文本回退；测试使用作者描述表
     registry.rs               # 排序 ID 分配、名称映射、识别与别名
   document.rs                 # 文档语言选择与元数据
 src/features/
@@ -665,7 +675,7 @@ src/features/
     model.rs                  # 统一分类、修饰符、coverage、结果戳
     compose.rs                # 各来源范围合成的纯逻辑
   syntax/
-    grammars.rs               # 唯一原生 grammar 工厂表，集中 grammar crate 引用
+    grammars.rs               # Resources 端口与无包纯文本后端，无具体 grammar 引用
     treesitter.rs             # 文档树、编辑更新、范围查询
     queries.rs                # 查询后台按需编译、缓存与适配
     presentation.rs           # 仅绘制用的 Provisional 范围投影
@@ -717,7 +727,7 @@ tests/fixtures/languages/      # 高亮、编辑与嵌入样例
 | P4f 通用进度 | workDoneProgress token 与并发任务 | 按需求独立交付；状态真实，重启/异常清理正确 |
 | P5 嵌入与扩充 | 少量新语言、Markdown/HTML 注入 | 代码块与 script/style 正确；编辑标记后范围更新；层数限制有效 |
 | 独立后续 | 结构功能、交互 LSP、主题导入 | 每项有独立行为规范，不由高亮迁移阶段隐式承诺 |
-| 最后评估 | 外部语言包与 WASM | 只有明确需求和运行约束后立项 |
+| 后续扩展 | WASM、包管理界面与热更新 | 原生独立语言包已实现；其余按明确需求分别评估 |
 
 P3 与 P4 共享 P1/P2 的模型，但互不依赖。默认先完成 P3b，让所有内置语言先获得基础高亮改进；事务桥接推迟到 P4b。P3 的风险仍包括树版本、取消、查询和输入连续性，不以“只接一个库”估计全部工作量。
 
@@ -916,7 +926,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 
 ### 19.1 更新规则
 
-- 最近更新：2026-10-19。P0 基线部分完成；P1 公共基础、P2 注册表与文件关联、P3a 预算校准、P3b Tree-sitter 基础替换及 P5 常用语言与嵌入语言均已实现并待验证，主要剩余 Linux/macOS 构建与运行等验收。旧 lexer 与按行索引已删除，预算按实测分档，手动语言覆盖与选择器已取消。P4a–P4c、P4f 已接入应用，状态与证据只维护在 LSP 草案第 5 节；P4d、P4e 未开始。证据见 19.4 的记录 R-001 至 R-009，以及 LSP 草案的 R-L1 至 R-L5。
+- 最近更新：2026-10-19。P0 基线部分完成；P1 公共基础、P2 注册表与文件关联、P3a 预算校准、P3b Tree-sitter 基础替换及 P5 常用语言与嵌入语言均已实现并待验证，主要剩余 Linux/macOS 构建与运行等验收。旧 lexer 与按行索引已删除，预算按实测分档，手动语言覆盖与选择器已取消。P4a–P4c、P4f 已接入应用，状态与证据只维护在 LSP 草案第 5 节；P4d、P4e 未开始。证据见 19.4 的记录 R-001 至 R-009，以及 LSP 草案的 R-L1 至 R-L5。全动态独立语言包、用户目录发现和重启生效的实施与验证见 R-011；跨平台仍待验证。
 - 状态统一使用：未开始、进行中、待验证、已完成、受阻；按需后续项在备注中注明启动条件。
 - 勾选 `[x]` 表示该条目已有实现和验证证据；只写完代码但未完成验证时保留 `[ ]`，阶段标为“待验证”。
 - 阶段完成必须满足第 13–14 节全部适用验收标准。以下清单是关键检查点，不替代正文，也不按勾选数量估算工作量百分比。
@@ -936,7 +946,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 | P4a–P4f LSP | [以独立跟踪表为准](LSP_DESIGN.tmp.md#5-实施进度跟踪) | — | — | 默认在 P3b 后开始，按子阶段交付 |
 | P5 嵌入与扩充 | 待验证 | R-009 | — | 缺 Linux/macOS 编译验证（新增 4 个 C grammar）；Markdown 的 YAML/TOML front matter 注入未做（没有对应 grammar） |
 | 结构功能、交互 LSP、主题导入 | 未开始 | — | — | 按需求单列设计和验收，不计入基础迁移完成条件 |
-| 外部语言包与 WASM | 未开始 | — | — | 有明确需求与运行约束后评估 |
+| 全动态独立语言包与用户目录发现 | 待验证 | R-011（2026-10-19） | — | Markdown/JSON 全动态、逐包清单、用户发现/覆盖/禁用、重启生效与回归已实现；跨平台实机及发布验收待补 |
 
 ### 19.3 关键检查点
 
@@ -951,7 +961,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 - [x] **P3a-1**：Rust 与 JavaScript 或 C# 使用同一路径；增量结果与完整解析一致。
 - [x] **P3a-2**：1 MiB 两语言集成路径，以及 C#/TS/TSX 无旧树完整解析已有原始采样。
 - [x] **P3a-3**：100 ms 候选预算已确认或有证据修订；UI 投影 S/R/E 与耗时上限已记录。
-- [x] **P3a-4**：唯一 grammar 工厂与目录/描述一致，SOURCE.md 齐全；全部查询编译与谓词/捕获校验通过，查询编译耗时单列。
+- [x] **P3a-4**：阶段历史的唯一 grammar 工厂与目录/描述一致（已由 R-011 的动态包替代），SOURCE.md 齐全；全部查询编译与谓词/捕获校验通过，查询编译耗时单列。
 - [x] **P3b-1**：Rust、JS、TS/TSX、C# 分类 fixture 与错误恢复通过。
 - [x] **P3b-2**：首次着色满足 P3a 确认预算，提供分项耗时和采样环境。
 - [x] **P3b-3**：1 MiB 连续输入逐帧与 UI 同步投影耗时通过，超限回退可观测。
@@ -1103,3 +1113,32 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 - 测试：injection_tests.rs 共 12 项（HTML script/style；Markdown 围栏的语言按信息串、别名、大小写、逗号后缀匹配，未知或 {.rust} 保持宿主颜色；行内文本分块且只解析可见块；引用块内围栏；markdown>html>javascript 三层嵌套；超过深度上限；超过层数上限；改围栏标记后改用另一种语言且结果与重新解析一致；删除结束围栏后区域延伸到结尾且一致；未变化的围栏不重新解析）；worker 层测试验证逐行窗口与整篇一次解析一致。新增 json/css/html/markdown 的固定样例与哈希。
 验收测量（release，Intel Core Ultra 7 255HX，冷启动首次着色 p95）：JSON 256 KiB 50.6 ms、1 MiB 201.7 ms；CSS 1 MiB 140.0 ms；HTML 1 MiB 159.0 ms；Markdown 64 KiB 54.5 ms、256 KiB 162.8 ms、1 MiB 614.8 ms。Markdown 受块 grammar 限制（1 MiB 整篇解析约 363 ms），因此有单独分档：64 KiB 100 ms、256 KiB 250 ms、1 MiB 900 ms；其余语言沿用 100/275 ms 分档。1 MiB 一个字符编辑：HTML 约 70 ms，Markdown 约 260–330 ms（块解析增量 + 重新定位区域），显示连续性由保留片段保证。
 未完成：Linux/macOS 上新增 C grammar 的编译；Markdown front matter（YAML/TOML）注入；组合层的增量解析（目前移动过的区域在需要时重新解析）；语义 token 与注入层的组合没有单独验证。
+
+
+记录编号 / 日期：R-010 / 2026-10-19
+阶段：按需语言包与发布资源改造（历史首版，已由 R-011 的全动态方案替代）
+状态：待验证（Windows 功能与回归已通过，跨平台仍待验收）
+实现证据：
+- 主程序仅静态链接 Markdown（块/行内）、JSON；纯文本无解析器。Rust、JS/JSX、TS/TSX、C#、CSS、HTML 由 crates/language-packs 的六个独立 cdylib 目标提供，开发测试依赖不进入主程序正常依赖图。
+- 启动只解析轻量 catalog.json 并固定注册表 ID；文件识别无需读取 grammar/query。非核心查询不再 include_str 内嵌。Parser 及资源读取保持在 syntax worker，已发现但不可见的注入层不会提前编译查询。
+- 加载器校验清单、路径片段、导出符号与 Tree-sitter ABI，缓存资源与失败并逐项记录错误；核心格式不受缺包/坏包影响。库句柄有界保留至进程结束，首版不热更新/卸载。
+- build.rs 为开发目标生成磁盘目录索引与查询资源；发布脚本复制目录索引/查询/模块，macOS 合并双架构模块并在签名应用前逐个签名。发布定位跟随可执行文件，与源码/工作目录无关。
+- 冷进程测试在 Windows 用 GetModuleHandleW 验证注册和核心 Markdown 解析后六个语言 DLL 均未加载，显示新测试语言后只加载 Rust。测试在发布目录结构和不同工作目录下增加新语言描述、grammar 与查询，无需改动或重编译主程序。
+- 加载活动测试覆盖 JSON/Markdown 零非核心资源请求、可见 Rust 围栏仅加载 Rust、重复请求缓存、缺模块/坏符号/坏查询独立回退。构建资源测试禁止非核心查询进入内嵌表；架构检查禁止非核心 grammar 或包装 crate 进入主程序正常依赖。
+- 应用级冷进程测试覆盖启动高亮服务、实际目录枚举、工作区搜索，以及后台恢复隐藏 Rust/CSS 标签页，完成后非核心模块加载和外部查询读取均为零。
+验证：Windows x86_64，rustc/cargo 1.98.0。cargo test --locked --offline --workspace --no-fail-fast 通过：loom 956 项、editor-core 73 项、host_contract 3 项、workspace-tests 63 项，共 1095 项通过、30 项忽略、无失败。CI 同参数 clippy、fmt 与 diff 检查通过；架构检查及其 63 项自测、发布资源 3 项自测通过（共 66 项 Node 测试）。
+产物核验：主程序编译/链接已生成 target/debug/deps/Loom.exe；默认输出 target/debug/Loom.exe 被正在运行的旧进程占用，未覆盖该进程。新程序及 6 个独立模块已组装到 target/language-pack-preview/。PE 检查确认主程序仅导出 tree_sitter_json、tree_sitter_markdown、tree_sitter_markdown_inline，未立即导入语言模块；正常依赖图也不含非核心 grammar 或模块包装 crate。
+未完成：Linux/macOS 实机动态加载；macOS lipo/codesign、各平台安装器的实际构建；Rust 1.97.1 环境与新的冷加载性能基线；热更新和包管理界面未实现。
+
+记录编号 / 日期：R-011 / 2026-10-19
+阶段：全部 grammar 动态化、独立语言包与用户目录自动发现
+状态：待验证（Windows 实施与回归已通过，Linux/macOS 实机及发布验收仍待补齐）
+实现证据：
+- 主程序正常依赖移除 tree-sitter-md、tree-sitter-json，所有八个语法模块独立构建；生产回退注册表仅含纯文本，无查询内嵌。
+- 随附包逐包 package.json；自动扫描应用资源及平台用户数据目录，支持整包覆盖、禁用、原子冲突拒绝和坏包隔离，不依赖中央 catalog。
+- 新增包、更新与禁用在下次启动生效，进程内注册表不可变；用户包禁用 Cargo/随附模块回退。
+- 冷子进程验证自定义扩展名识别与真实高亮：零初始模块，显示 Markdown、JSON、自定义用户语言后按需逐个加载。
+- 更新跨平台发布资源脚本、macOS 第三方库加载签名配置、用户安装文档、架构门禁与回归测试。
+验证：Windows x86_64，Rust/Cargo 1.98.0。最终 cargo test --locked --offline --workspace --no-fail-fast 全部通过：loom 965、editor-core 73、host_contract 3、workspace-tests 63，共 1104 项通过、30 项忽略、无失败。CI 同参数 Clippy、fmt、架构检查及其 63 项自测、发布资源 3 项自测（Node 共 66 项）、基线工具 3 项自测和 diff 检查通过。冷进程回归同时验证实际平台用户数据路径，不依赖 Cargo 模块回退；增量构建测试验证删除/重命名包及移除可选查询不会留下旧注册。
+产物核验：主程序正常依赖图无任何具体 grammar 或包装 crate；PE 导出中无 grammar 符号，也无语言模块的立即导入。新程序与 8 个完整独立包已组装到 target/language-pack-preview-v2/。默认 target/debug/Loom.exe 被正在运行的旧进程占用，编译/链接完成后最终复制受阻，未停止用户进程。
+未完成：Linux/macOS 实机动态加载和发布/签名/安装器验收，Rust 固定版本环境与新冷加载性能基线；自动下载、包管理界面和热更新不属首版。

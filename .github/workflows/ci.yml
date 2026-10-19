@@ -62,6 +62,7 @@ jobs:
         run: |
           node --test scripts/architecture/check.test.mjs
           node --test scripts/baseline/test-results.test.mjs
+          node --test scripts/package/lib/language-packs.test.mjs
           node scripts/architecture/check.mjs
 
       - name: Check formatting

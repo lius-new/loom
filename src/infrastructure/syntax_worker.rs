@@ -7,7 +7,7 @@ use crate::{
         identity::{FileId, PaneId},
         language::ResolvedLanguage,
     },
-    features::syntax::{Freshness, Source, TokenSpan, TreeIndex, TreeStats, Window, WindowTokens},
+    features::syntax::{Freshness, Source, TokenSpan, TreeStats, Window, WindowTokens},
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -188,7 +188,7 @@ impl Worker {
         thread::Builder::new()
             .name("loom-syntax".into())
             .spawn(move || {
-                let mut trees = TreeIndex::default();
+                let mut trees = crate::infrastructure::language_packs::index();
                 loop {
                     let job = {
                         let mut state = background.state.lock().unwrap();

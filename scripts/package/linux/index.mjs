@@ -5,6 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { stageLanguagePacks } from '../lib/language-packs.mjs';
 
 import {
   DIST_DIR,
@@ -250,6 +251,7 @@ export function packageApp({ version }) {
   fs.rmSync(path.join(PLATFORM_DIR, 'stage'), { recursive: true, force: true });
   fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
   fs.copyFileSync(binary, path.join(stage, 'Loom'));
+  stageLanguagePacks({ profiles: [path.dirname(binary)], destination: path.join(stage, 'language-packs') });
   fs.chmodSync(path.join(stage, 'Loom'), 0o755);
   writeExecutable(path.join(stage, 'bin', 'loom'), LOOM_COMMAND);
   writeExecutable(path.join(stage, 'install.sh'), INSTALL_SCRIPT);

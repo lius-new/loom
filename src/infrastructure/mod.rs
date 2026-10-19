@@ -23,6 +23,7 @@ pub mod file_watcher;
 pub mod document_filesystem;
 pub mod file_dialogs;
 pub mod file_drop;
+pub(crate) mod language_packs;
 pub(crate) mod syntax_worker;
 
 pub mod launch;
