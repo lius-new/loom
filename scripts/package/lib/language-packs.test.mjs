@@ -9,16 +9,17 @@ function fixture(t, platform) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-packaging-languages-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const profile = path.join(root, 'profile');
-  const pack = path.join(profile, 'language-packs', 'rust');
+  const pack = path.join(profile, 'rust');
   const query = path.join(pack, 'grammars', 'rust');
   fs.mkdirSync(query, { recursive: true });
   fs.writeFileSync(path.join(query, 'highlights.scm'), 'query');
   fs.writeFileSync(path.join(query, 'SOURCE.md'), 'license');
   fs.writeFileSync(path.join(pack, 'package.json'), JSON.stringify({
     schema: 1, id: 'rust', languages: [], servers: [],
-    grammars: { rust: { module: 'loom_grammar_rust', symbol: 'loom_tree_sitter_rust' } },
+    grammars: { rust: { module: 'rust', symbol: 'tree_sitter_rust' } },
   }));
-  fs.writeFileSync(path.join(profile, moduleFile('loom_grammar_rust', platform)), 'native');
+  fs.mkdirSync(path.join(pack, 'modules'));
+  fs.writeFileSync(path.join(pack, 'modules', moduleFile('rust', platform)), 'native');
   return { root, profile, pack };
 }
 
@@ -28,7 +29,7 @@ test('all platforms stage external modules and only manifest-listed queries', t 
     fs.mkdirSync(path.join(pack, 'grammars', 'unused'));
     fs.writeFileSync(path.join(pack, 'grammars', 'unused', 'highlights.scm'), 'stale');
     const destination = path.join(root, 'installed');
-    const binaries = stageLanguagePacks({ profiles: [profile], destination, platform });
+    const binaries = stageLanguagePacks({ source: profile, destination, platform });
     assert.equal(binaries.length, 1);
     assert.equal(fs.readFileSync(binaries[0], 'utf8'), 'native');
     assert.equal(fs.readFileSync(path.join(destination, 'rust/grammars/rust/highlights.scm'), 'utf8'), 'query');
@@ -39,33 +40,42 @@ test('all platforms stage external modules and only manifest-listed queries', t 
 
 test('missing modules and malformed paths stop packaging', t => {
   const { root, profile, pack } = fixture(t, 'win32');
-  fs.unlinkSync(path.join(profile, moduleFile('loom_grammar_rust', 'win32')));
-  assert.throws(() => stageLanguagePacks({ profiles: [profile], destination: path.join(root, 'installed'), platform: 'win32' }), /Missing language module/);
+  fs.unlinkSync(path.join(pack, 'modules', moduleFile('rust', 'win32')));
+  assert.throws(() => stageLanguagePacks({ source: profile, destination: path.join(root, 'installed'), platform: 'win32' }), /Missing prebuilt language module/);
   assert.throws(() => moduleFile('../escaped', 'win32'), /Invalid/);
   const catalog = JSON.parse(fs.readFileSync(path.join(pack, 'package.json')));
   catalog.grammars['../escaped'] = catalog.grammars.rust;
   fs.writeFileSync(path.join(pack, 'package.json'), JSON.stringify(catalog));
-  assert.throws(() => stageLanguagePacks({ profiles: [profile], destination: path.join(root, 'invalid'), platform: 'win32' }), /Invalid grammar/);
+  assert.throws(() => stageLanguagePacks({ source: profile, destination: path.join(root, 'invalid'), platform: 'win32' }), /Invalid grammar/);
 });
 
-test('universal packages combine each module once from both architectures', t => {
-  const first = fixture(t, 'darwin');
-  const second = fixture(t, 'darwin');
-  const calls = [];
-  const binaries = stageLanguagePacks({
-    profiles: [first.profile, second.profile],
-    destination: path.join(first.root, 'universal'),
-    platform: 'darwin',
-    combine(inputs, output) {
-      calls.push(inputs);
-      fs.writeFileSync(output, inputs.map(input => fs.readFileSync(input, 'utf8')).join('+'));
-    },
-  });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].length, 2);
-  assert.equal(fs.readFileSync(binaries[0], 'utf8'), 'native+native');
-  fs.writeFileSync(path.join(second.pack, 'package.json'), '{}');
-  assert.throws(() => stageLanguagePacks({
-    profiles: [first.profile, second.profile], destination: path.join(first.root, 'bad'), platform: 'darwin',
-  }), /manifests differ/);
+test('packaging requires prebuilt input and copies shared modules once', t => {
+  assert.throws(() => stageLanguagePacks({source:'', destination:'unused'}), /prebuilt/);
+  const {root,profile,pack}=fixture(t,'win32');
+  const manifest=JSON.parse(fs.readFileSync(path.join(pack,'package.json')));
+  manifest.grammars.inline=manifest.grammars.rust;
+  fs.writeFileSync(path.join(pack,'package.json'),JSON.stringify(manifest));
+  fs.cpSync(path.join(pack,'grammars/rust'),path.join(pack,'grammars/inline'),{recursive:true});
+  const binaries=stageLanguagePacks({source:profile,destination:path.join(root,'installed'),platform:'win32'});
+  assert.equal(binaries.length,1);
+  assert.equal(fs.existsSync(path.join(root,'installed/rust/grammars/inline/highlights.scm')),true);
+});
+
+test('standard filenames and default exports need no Loom wrapper or module rename', t => {
+  assert.equal(moduleFile('python', 'linux'), 'python.so');
+  assert.equal(moduleFile('python', 'darwin'), 'python.dylib');
+  assert.equal(moduleFile('python.so', 'darwin'), 'python.so');
+  assert.equal(moduleFile('libtree-sitter-python.so', 'linux'), 'libtree-sitter-python.so');
+  for (const invalid of ['../python.dll', 'a\\python.dll', 'C:python.dll', 'python.so.exe', 'python..dll']) {
+    assert.throws(() => moduleFile(invalid, 'win32'), /Invalid/);
+  }
+  const {root, profile, pack} = fixture(t, 'win32');
+  const manifest = JSON.parse(fs.readFileSync(path.join(pack, 'package.json')));
+  manifest.grammars.rust = {module: 'third-party-rust.dll'};
+  fs.writeFileSync(path.join(pack, 'package.json'), JSON.stringify(manifest));
+  fs.renameSync(path.join(pack, 'modules/rust.dll'), path.join(pack, 'modules/third-party-rust.dll'));
+  const binaries = stageLanguagePacks({source: profile, destination: path.join(root, 'installed'), platform: 'win32'});
+  assert.equal(path.basename(binaries[0]), 'third-party-rust.dll');
+  assert.equal(fs.readFileSync(binaries[0], 'utf8'), 'native');
+  assert.throws(() => moduleFile('python.so', 'win32'), /Invalid/);
 });

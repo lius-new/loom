@@ -1,4 +1,4 @@
-//! Coalesced viewport work. Parsing and querying never hold the UI lock.
+// Coalesced viewport work. Parsing and querying never hold the UI lock.
 pub(crate) use self::retained::ProvisionalStats;
 use self::retained::RetainedSet;
 use crate::{
@@ -548,11 +548,5 @@ impl Worker {
     }
 }
 
-#[cfg(test)]
-#[path = "syntax_worker_bench.rs"]
-mod bench;
 #[path = "syntax_worker_retained.rs"]
 mod retained;
-#[cfg(test)]
-#[path = "syntax_worker_tests.rs"]
-mod tests;

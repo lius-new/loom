@@ -40,8 +40,7 @@
   "servers": [],
   "grammars": {
     "javascript": {
-      "module": "loom_grammar_javascript",
-      "symbol": "loom_tree_sitter_javascript"
+      "module": "javascript"
     }
   }
 }

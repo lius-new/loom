@@ -1,5 +1,5 @@
 //! Language identity. Which languages exist, how files are recognised and what
-//! they are called comes from descriptions (`assets/languages`), not from code:
+//! they are called comes from installed package descriptions, not from code:
 //! adding a language adds data, not a branch anywhere.
 //!
 //! Ids are small and `Copy` so caches can key on them cheaply. They are only
@@ -10,11 +10,6 @@ mod embedded;
 mod registry;
 mod rules;
 
-// Only the application's tests compare the table with the files on disk; the
-// domain-only verification package compiles this module without that test.
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use self::embedded::{Row, files as embedded_files};
 // The language service reads server root policies; the domain-only
 // verification package compiles this module without that reader.
 #[allow(unused_imports)]

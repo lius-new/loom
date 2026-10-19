@@ -48,12 +48,10 @@
   "servers": [],
   "grammars": {
     "typescript": {
-      "module": "loom_grammar_typescript",
-      "symbol": "loom_tree_sitter_typescript"
+      "module": "typescript"
     },
     "tsx": {
-      "module": "loom_grammar_typescript",
-      "symbol": "loom_tree_sitter_tsx"
+      "module": "tsx"
     }
   }
 }

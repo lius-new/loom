@@ -23,12 +23,28 @@ which turns on update checks; a plain `cargo build` has them off.
 
 ## Layout
 
-Every application package includes independent language-packs/<id>/package.json
-manifests, query resources and native modules, including JSON and Markdown.
-Packaging fails if a manifest-listed module is missing. macOS modules are merged from both
-target architectures and individually signed before signing the app bundle.
-Their presence in the package does not initialize a parser. Run package staging
-fixture tests with: node --test scripts/package/lib/language-packs.test.mjs.
+Application assembly copies complete prebuilt standard Tree-sitter resources
+from LOOM_LANGUAGE_PACKS. Neither compile nor package builds grammar code. Obtain
+compatible modules from an external provider and combine them with metadata and
+queries following [the resource format](../../docs/languages.md). There is no
+language producer project or Loom-specific Rust wrapper.
+
+For local packaging, set LOOM_LANGUAGE_PACKS to the complete collection. For
+CI/releases, configure repository variables LOOM_LANGUAGE_PACKS_<TARGET>_URL and
+LOOM_LANGUAGE_PACKS_<TARGET>_SHA256 (WINDOWS_X86_64, LINUX_X86_64,
+MACOS_UNIVERSAL). fetch-languages.mjs verifies a pinned tar.gz with package folders
+at its root, then stages the unmodified modules and queries. Enabled JSON and
+Markdown are required for releases. An external resource feed must be supplied;
+no provider is built into this repository. CI without a feed exports the tested
+host alone, clearly labelled without language resources.
+
+For macOS, supply universal modules. Packaging signs the supplied modules before
+signing the app. Missing or platform-incompatible native files stop assembly.
+No Cargo profile or grammar source directory is consulted. Consumer tests:
+
+~~~sh
+node --test scripts/package/lib/language-packs.test.mjs scripts/package/fetch-languages.test.mjs
+~~~
 
 All downloads, tools, staging folders and artifacts live in the git-ignored
 `.packaging/` directory. Nothing is installed system-wide; delete the folder to

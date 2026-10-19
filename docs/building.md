@@ -21,12 +21,12 @@ The project follows the `main` branch of the lgui repository. `Cargo.lock`
 pins the exact lgui commit used by a build. Run `cargo update -p lgui` when you
 want to update that pinned commit.
 
-The default build also builds all separate native language modules, including
-Markdown and JSON. Plain text needs no package; all parsers are shared libraries
-loaded only when visible content needs them. The build stages independent
-package manifests and query files in `target/<profile>/language-packs/`. Build the
-workspace once before using cargo run; building only -p loom does not build
-the separate modules. See [Language packages](languages.md) for the disk format.
+The host build and default tests require no language resources or grammar sources.
+Loom includes the generic Tree-sitter engine and dynamically loads compatible
+standard language modules when used. There is no language producer workspace or
+Rust grammar wrapper. Place complete prebuilt language resources beside the
+executable or in the user data directory and restart; no editor rebuild is
+needed. See [Language resources](languages.md) for the format and release inputs.
 
 ## System dependencies (Debian / Ubuntu)
 
@@ -44,11 +44,10 @@ A running X11 or Wayland desktop session is required to open the window.
 
 ```
 loom/
-├── assets/          # UI icons, file-type icons and the default keymap
+├── assets/          # UI resources and language metadata/query templates
 ├── crates/
 │   ├── editor-core/       # GUI-free editing core
-│   ├── workspace-tests/   # GUI-free workspace domain tests
-│   └── language-packs/    # separately built native grammar modules
+│   └── workspace-tests/   # GUI-free workspace domain tests
 ├── icons/           # application icons for every platform
 ├── scripts/         # packaging, build-cache and architecture checks
 ├── src/             # application, editor, terminal, Git and UI modules

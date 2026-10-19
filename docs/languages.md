@@ -42,61 +42,68 @@ package does not invalidate the rest. Plaintext is reserved by the editor.
 Example installed layout (Windows):
 
 ~~~text
+Loom.exe
 language-packs/
-  fixture/
+  python/
     package.json
     grammars/
-      fixturegrammar/
+      python/
         highlights.scm
         SOURCE.md
         injections.scm          # optional
     modules/
-      loom_grammar_rust.dll
+      python.dll                # unchanged standard Tree-sitter library
 ~~~
 
-A minimal package can reuse a separately compiled Rust grammar to demonstrate
-a new language and extension entirely through data:
+A third-party language is registered entirely through files. For example:
 
 ~~~json
 {
   "schema": 1,
-  "id": "fixture",
-  "enabled": true,
+  "id": "python",
   "languages": [{
-    "name": "fixturelang",
-    "display_name": "Fixture",
-    "badge": "FIX",
-    "variants": [{ "id": "fixturelang", "grammar": "fixturegrammar" }],
-    "files": [{ "extensions": ["fixture"], "variant": "fixturelang" }]
+    "name": "python",
+    "display_name": "Python",
+    "badge": "PY",
+    "variants": [{ "id": "python", "grammar": "python" }],
+    "files": [{ "extensions": ["py", "pyw"], "variant": "python" }]
   }],
-  "servers": [],
   "grammars": {
-    "fixturegrammar": {
-      "module": "loom_grammar_rust",
-      "symbol": "loom_tree_sitter_rust"
-    }
+    "python": { "module": "python.dll" }
   }
 }
 ~~~
 
-The directory name must equal id. Package ids, grammar names, module basenames
-and exported symbols use lowercase ASCII letters, digits and underscores,
-starting with a letter. Unknown manifest fields and unsupported schema versions
-are rejected. enabled defaults to true; servers defaults to an empty list.
-Language and server descriptions use the existing descriptor format. Grammar
-and server references must resolve inside the same package. A package can supply
-multiple grammars and several entry points from one native module, as Markdown
-and TypeScript do. Native entry points have the C signature returning a pointer
-to a Tree-sitter TSLanguage; generated tree_sitter_* functions and Loom wrapper
-exports both work. No application-specific Rust ABI is required.
+The DLL exports the standard C entry point tree_sitter_python(), returning
+const TSLanguage*. The symbol field is optional and defaults to
+tree_sitter_<grammar>. Specify it explicitly when the resource key differs from
+the upstream grammar name, such as a custom variant reusing tree_sitter_python.
+No Loom-specific export, Rust wrapper, Cargo dependency or editor rebuild is
+needed. Loom contains one generic Tree-sitter engine and one generic loader.
 
-Ship platform and CPU compatible binaries. Module names gain .dll on Windows,
-lib prefix and .so on Linux, and lib prefix and .dylib on macOS. For example,
-loom_grammar_rust becomes libloom_grammar_rust.so on Linux. Query resources use
-the grammar key as their directory name. highlights.scm defines captures and
-SOURCE.md records grammar/query provenance and licenses. injections.scm is
-optional. A downloaded source grammar or query file alone is not a complete
-native package.
+The directory name must equal id. Package ids, grammar names and export symbols
+use lowercase ASCII letters, digits and underscores, starting with a letter.
+Unknown manifest fields and unsupported schema versions are rejected. enabled
+defaults to true; servers defaults to an empty list. Language and server
+references must resolve inside the same package. Several grammar entries may
+share a native module, or use separate standard modules (Markdown block/inline,
+TypeScript/TSX).
+
+Use a module filename to preserve it exactly: python.dll on Windows, python.so
+or libtree-sitter-python.so on Linux, and python.dylib or python.so on macOS.
+Filenames permit lowercase letters, digits, underscores and hyphens followed by
+.dll, .so or .dylib; paths and extra suffixes are rejected. Alternatively,
+module: "python" adds .dll/.so/.dylib for Windows/Linux/macOS, with no lib prefix.
+Supply binaries matching the OS, CPU and supported Tree-sitter ABI. Source files
+such as grammar.js or parser.c cannot be loaded as a native module. A prebuilt
+module is copied unchanged; building from source is the resource provider's job,
+using upstream tools such as tree-sitter build, independently of Loom.
+
+Query resources use the grammar key as their directory name. highlights.scm
+supplies highlight captures, SOURCE.md records provenance and licenses, and
+injections.scm is optional. Queries must match the parser version and Loom's
+supported captures/predicates; Neovim-specific query extensions are not
+implicitly supported just because its native parser can be loaded.
 
 ## Lazy loading and lifecycle
 
@@ -124,19 +131,72 @@ Limits: 128 package directories per discovery root and 128 active packages,
 64 loaded native modules, 4 MiB per query and 8 MiB cached query text. Installing a
 package does not launch an LSP server; document/server settings govern lifecycle.
 
-## Development and release staging
+## Build, verification and release inputs
 
-Run cargo build --locked (or add --release) to build the editor and all eight
-separate native modules, then cargo run --locked in the same profile. Building
-only -p loom builds the editor without grammar modules. Tests build those modules
-as development dependencies, which never enter the editor's normal dependency
-graph. Syntax tests use isolated bundled packages, not the developer's user packs.
+The repository has no language producer workspace and no loom-grammar-* wrapper.
+The host workspace and Cargo.lock contain no concrete grammar crate, including
+development and build dependencies. Host build.rs does not read or stage
+language files. Both commands work without any external language resources:
 
-Bundled manifests live at assets/language-packs/<id>/package.json. build.rs copies
-each manifest and its referenced queries from assets/grammars/ into
-target/<profile>/language-packs/<id>/. No grammar query is embedded in the editor;
-only the plain-text fallback descriptor is embedded in production. Development
-builds may find bundled native modules in the Cargo profile/deps directory.
-Release scripts copy modules into each package's modules/ directory. macOS
-packaging combines architecture slices and signs native modules before the app.
-Linux/macOS runtime, signing and installer verification still need those platforms.
+~~~sh
+cargo build --locked
+cargo test --locked --workspace
+~~~
+
+assets/language-packs/ holds only bundled language descriptions, queries and
+provenance. It contains no grammar source, native module or build project. These
+files are resource templates; they are not automatically installed by cargo
+build. A source build runs as plain text until complete compatible resources are
+placed beside the executable or in the user directory. JSON and Markdown are
+default-enabled resources in official distributions and remain demand-loaded.
+
+Application packaging consumes complete prebuilt resources via LOOM_LANGUAGE_PACKS:
+
+~~~sh
+# Set LOOM_LANGUAGE_PACKS to an existing collection for the target platform.
+node scripts/package/stage-languages.mjs /path/to/app/language-packs
+~~~
+
+It copies manifests, queries and native modules, without compiling any grammar
+or consulting Cargo profile/deps directories. The source collection can come
+from any provider following the file contract. macOS universal distributions
+need universal modules; the packager signs supplied modules before the app.
+
+CI and release workflows can fetch a pinned tar.gz containing package folders
+at its root. Configure repository variables LOOM_LANGUAGE_PACKS_<TARGET>_URL and
+LOOM_LANGUAGE_PACKS_<TARGET>_SHA256, where TARGET is WINDOWS_X86_64,
+LINUX_X86_64 or MACOS_UNIVERSAL. This is a build-time resource feed, not an
+application downloader. The fetch step verifies the checksum and requires
+enabled JSON and Markdown. Releases require this input; CI without a feed still
+builds/tests and uploads the host, explicitly without language resources.
+No external provider URL is hardcoded or created by this change.
+
+Real parser, injection, worker and installed-resource regressions live in the
+independent tests/language-runtime workspace. It depends only on the generic
+engine and production sources; it never builds language modules. Supply the
+complete eight-package regression collection, with standard native modules:
+
+~~~sh
+node tests/language-runtime/run.mjs --packages /path/to/prebuilt-packages --offline
+~~~
+
+Use --new-package <external-folder> --sample <new-file> to additionally test a
+genuinely new grammar (for example Python) absent from the baseline collection.
+
+The production-mode probe copies one compiled executable to a temporary app
+folder. It verifies plain text with no resources, installation beside that
+executable, moving the same resources to the isolated user directory, new
+extension recognition and real highlighting, lazy module loads, disabling on
+restart, and an unchanged executable hash. Host unit tests need no native
+resources; manual UI syntax benchmarks use LOOM_TEST_LANGUAGE_PACKS explicitly.
+
+~~~sh
+node scripts/architecture/standalone-host.mjs --offline
+~~~
+
+Omit --offline on a fresh dependency cache (as CI does).
+
+This physical-removal check excludes all language resources and the external
+runtime verifier, then runs the host formatter, dependency check, full build
+and workspace tests. The production host has no source reference, feature or
+custom cfg switch for the external verifier.

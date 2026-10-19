@@ -99,7 +99,7 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/file_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
   if(file==='src/infrastructure/file_drop.rs')return ['infrastructure','domain','lgui','windows_sys'].includes(root);
   if(file==='src/infrastructure/syntax_worker.rs'||file==='src/infrastructure/syntax_worker_tests.rs'||file==='src/infrastructure/syntax_worker_bench.rs'||file==='src/infrastructure/syntax_worker_retained.rs')return ['infrastructure','features','domain','std::thread'].includes(root);
-  if(file==='src/infrastructure/language_packs.rs'||file==='src/infrastructure/language_packs_tests.rs')return ['infrastructure','features','domain','libloading','serde','serde_json','tree_sitter','tree_sitter_language','std::fs'].includes(root)||(file.endsWith('_tests.rs')&&root==='std::process');
+  if(file==='src/infrastructure/language_packs.rs'||file==='src/infrastructure/language_packs_unit_tests.rs')return ['infrastructure','features','domain','libloading','serde','serde_json','tree_sitter','tree_sitter_language','std::fs'].includes(root)||(file.endsWith('_tests.rs')&&root==='std::process');
   if(file==='src/infrastructure/keymap_filesystem.rs')return ['infrastructure','features','std::fs'].includes(root);
   if(file.startsWith('src/features/settings/'))return ['features','domain','serde','serde_json'].includes(root);
   if(['src/infrastructure/settings_filesystem.rs','src/infrastructure/project_settings.rs'].includes(file))return ['infrastructure','features','domain','std::fs'].includes(root);
@@ -121,7 +121,6 @@ export function allowed(file, dependency) {
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
   // Native parsers: only the grammar table names grammar crates; the engine files use the runtime.
   if(file==='src/features/syntax/grammars.rs')return ['features','domain','tree_sitter'].includes(root);
-  if(file==='src/features/syntax/test_support.rs')return ['features','infrastructure','tree_sitter'].includes(root);
   if(file==='src/features/syntax/queries.rs'||file==='src/features/syntax/treesitter_tests.rs'||file==='src/features/syntax/treesitter_bench.rs')return ['features','domain','tree_sitter'].includes(root);
   if(['src/features/syntax/treesitter.rs','src/features/syntax/injections.rs'].includes(file))return ['features','domain','tree_sitter','streaming_iterator'].includes(root);
   if(file==='src/features/syntax/layers.rs')return ['features','domain','tree_sitter'].includes(root);
@@ -160,9 +159,11 @@ export function violations(sources, policy) {
     for(const dep of deps)if(!allowed(file,dep)&&!approved.includes(dep))problems.push(`${file}: unregistered dependency ${dep}`);
     for(const dep of approved)if(!deps.includes(dep))problems.push(`${file}: remove unused exception ${dep}`);
     const ts=tokens(source);
-    if(file==='src/features/syntax/mod.rs' && /mod\s+test_support/.test(source)
-      && !/#\[cfg\(test\)\]\s+pub\(crate\)\s+mod test_support;/.test(source)) {
-      problems.push('Syntax resource fixtures must remain cfg(test) only');
+    if(file==='src/features/syntax/mod.rs' && /mod\s+test_support/.test(source)) {
+      problems.push('Native syntax fixtures must be composed in the independent verification workspace');
+    }
+    if(file.startsWith('src/') && /#\[path\s*=\s*"[^"]*tests\/language-runtime\//.test(source)) {
+      problems.push(file+': host modules must not reference external native test files');
     }
     if(layer(file)==='ui'&&ts.includes('AppContext'))problems.push(file+': UI cannot receive application command contexts');
     if(file==='src/app/state.rs'&&ts.some(t=>['attach_runtime','runtime','AppRuntime','AppContext','Weak'].includes(t)))problems.push(file+': AppState must remain capability-free');
@@ -220,8 +221,7 @@ export function violations(sources, policy) {
       if(policy.exceptions[file])problems.push(`${file}: domain verification cannot have migration exceptions`);
       // The domain's language assets are generated at build time, so this package's
       // build script may share the one scanner that builds them, and nothing else.
-      const sharedScanner=file==='crates/workspace-tests/build.rs'&&(source.match(/#\s*\[\s*path\s*=/g)??[]).length===1&&/^#\[path = "\.\.\/\.\.\/build_support\/language_assets\.rs"\]$/m.test(source);
-      if(ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!')||(/#\s*\[\s*path\s*=/.test(source)&&!sharedScanner&&(file!=='crates/workspace-tests/src/isolated.rs'||!/^#\[path = "\.\.\/\.\.\/\.\.\/src\/domain\/mod\.rs"\]$/m.test(source))))problems.push(`${file}: domain verification can only include the production domain entry point`);
+      if(ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!')||(/#\s*\[\s*path\s*=/.test(source)&&(file!=='crates/workspace-tests/src/isolated.rs'||!/^#\[path = "\.\.\/\.\.\/\.\.\/src\/domain\/mod\.rs"\]$/m.test(source))))problems.push(`${file}: domain verification can only include the production domain entry point`);
     }
     if(layer(file)==='core') {
       if(policy.exceptions[file])problems.push(`${file}: editing core cannot have migration exceptions`);
@@ -297,10 +297,10 @@ export function violations(sources, policy) {
     if(layer(file)==='domain') {
       if(policy.exceptions[file])problems.push(`${file}: domain cannot have migration exceptions`);
       if(ts.some(t=>['UiRect','Color','ApplicationHandle','FileLoader','InputState'].includes(t)))problems.push(`${file}: domain must not contain framework or runtime types`);
-      // One exception: the built-in language table that build.rs writes to OUT_DIR is
-      // immutable compiled-in data, not an adapter. Any other include stays forbidden.
+      // One exception: metadata-only unit fixtures behind cfg(test) are
+      // not runtime resources. Any other include stays forbidden.
       const includes=ts.filter((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!').length;
-      const generatedTable=file==='src/domain/language/embedded.rs'&&includes===1&&/include!\s*\(\s*concat!\s*\(\s*env!\s*\(\s*"OUT_DIR"\s*\)\s*,\s*"\/language_assets\.rs"\s*\)\s*\)\s*;/.test(source);
+      const generatedTable=file==='src/domain/language/embedded.rs'&&includes===1&&/#\[cfg\(test\)\]\s*include!\s*\(\s*"\.\.\/\.\.\/\.\.\/tests\/fixtures\/language_registry\.rs"\s*\)\s*;/.test(source);
       if(includes>0&&!generatedTable)problems.push(`${file}: domain cannot include adapter sources`);
     }
     if(layer(file)==='ui'&&ts.includes('AppState')&&!policy.root_state_adapters.includes(file))problems.push(`${file}: new root-state adapter`);
@@ -392,6 +392,11 @@ export function readSources(root) {
   return result;
 }
 
+export function hostBuildScriptErrors(source) {
+  return /language[_-](?:packs|packages|assets)|(?:assets|language-packs)[\/\\](?:grammars|queries|manifests)|stage_packs/.test(source)
+    ? ['Host build script must not build or stage language resources'] : [];
+}
+
 export function runtimeGrammarManifestErrors(source) {
   let section='';
   const errors=[];
@@ -400,13 +405,14 @@ export function runtimeGrammarManifestErrors(source) {
   for(const raw of source.split(/\r?\n/)) {
     const line=raw.replace(/#.*$/,'').trim();
     if(line.startsWith('['))section=line.slice(1,line.lastIndexOf(']'));
-    const runtime=/^(?:dependencies(?:\.|$)|target\..*\.dependencies(?:\.|$))/.test(section);
+    const runtime=/(?:^|\.)(?:dev-|build-)?dependencies(?:\.|$)/.test(section);
+    if(section==='workspace' && /language-packs|loom-grammar/.test(line))errors.push('Host workspace must not include language package sources');
     if(!runtime)continue;
     const names=[line.match(/^([\w-]+)\s*=/)?.[1],
       ...[...line.matchAll(/\bpackage\s*=\s*"([^"]+)"/g)].map(m=>m[1]),
       section.match(/dependencies\.([\w-]+)$/)?.[1]].filter(Boolean);
     if(names.some(external) || /\bpath\s*=\s*"[^"]*language-packs\//.test(line)) {
-      errors.push('Loom runtime dependencies must not link language grammars');
+      errors.push('Loom build, development and runtime dependencies must not reference language grammars');
     }
   }
   return errors;
@@ -417,6 +423,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   const policy=JSON.parse(fs.readFileSync(new URL('./policy.json',import.meta.url),'utf8'));
   const sources=readSources(root),errors=violations(sources,policy);
   errors.push(...runtimeGrammarManifestErrors(fs.readFileSync(path.join(root,'Cargo.toml'),'utf8')));
+  errors.push(...hostBuildScriptErrors(fs.readFileSync(path.join(root,'build.rs'),'utf8')));
   const verificationManifest=path.join(root,'crates/workspace-tests/Cargo.toml');
   if(fs.existsSync(verificationManifest))errors.push(...verificationManifestErrors(fs.readFileSync(verificationManifest,'utf8')));
   if(errors.length){console.error(errors.join('\n'));process.exitCode=1;}

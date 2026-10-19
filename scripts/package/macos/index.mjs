@@ -171,10 +171,8 @@ export function packageApp({ version }) {
   }
   writeIcon(path.join(resources, 'Loom.icns'));
   const modules = stageLanguagePacks({
-    profiles: RUST_TARGETS.map(target => path.join(ROOT, 'target', target, 'release')),
     destination: path.join(resources, 'language-packs'),
     platform: 'darwin',
-    combine: (inputs, output) => run('lipo', ['-create', '-output', output, ...inputs]),
   });
   for (const module of modules) sign(module, identity);
 

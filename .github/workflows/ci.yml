@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  LOOM_LANGUAGE_PACKS: .packaging/language-artifacts
   LOOM_VERSION: 0.1.1
 
 jobs:
@@ -60,9 +61,9 @@ jobs:
 
       - name: Check architecture boundaries
         run: |
-          node --test scripts/architecture/check.test.mjs
+          node --test scripts/architecture/check.test.mjs scripts/architecture/standalone-host.test.mjs scripts/architecture/language-resources.test.mjs
           node --test scripts/baseline/test-results.test.mjs
-          node --test scripts/package/lib/language-packs.test.mjs
+          node --test scripts/package/lib/language-packs.test.mjs scripts/package/fetch-languages.test.mjs
           node scripts/architecture/check.mjs
 
       - name: Check formatting
@@ -78,23 +79,32 @@ jobs:
           -A clippy::let_and_return
           -A clippy::manual_div_ceil
 
+      - name: Verify host without language sources
+        run: node scripts/architecture/standalone-host.mjs
+
   build:
     name: Build ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    env:
+      LOOM_LANGUAGE_PACKS_URL: ${{ vars[format('LOOM_LANGUAGE_PACKS_{0}_URL', matrix.language_key)] }}
+      LOOM_LANGUAGE_PACKS_SHA256: ${{ vars[format('LOOM_LANGUAGE_PACKS_{0}_SHA256', matrix.language_key)] }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: Linux x64
             os: ubuntu-24.04
+            language_key: LINUX_X86_64
             target_name: linux-x86_64
             extension: tar.gz
           - label: Windows x64
             os: windows-2025
+            language_key: WINDOWS_X86_64
             target_name: windows-x86_64
             extension: zip
           - label: macOS universal
             os: macos-15
+            language_key: MACOS_UNIVERSAL
             target_name: macos-universal
             extension: zip
 
@@ -129,33 +139,46 @@ jobs:
       - name: Run tests
         run: cargo test --locked --workspace
 
+      - name: Fetch prebuilt standard language resources
+        if: env.LOOM_LANGUAGE_PACKS_URL != ''
+        run: node scripts/package/fetch-languages.mjs
+
+      - name: Test prebuilt language runtime
+        if: env.LOOM_LANGUAGE_PACKS_URL != ''
+        run: node tests/language-runtime/run.mjs --packages .packaging/language-artifacts
+
       # macOS packaging compiles both architectures itself.
       - name: Build release binary
         if: runner.os != 'macOS'
         run: cargo build --locked --release
 
+      - name: Build macOS universal host
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          node scripts/package/package.mjs setup --platform macos --expect-version "$LOOM_VERSION"
+          node scripts/package/package.mjs compile --platform macos --expect-version "$LOOM_VERSION"
+
       # Same staged folder and tar.gz as the Linux release; it uses the system Git.
       - name: Package Linux binary
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && env.LOOM_LANGUAGE_PACKS_URL != ''
         shell: bash
         run: |
           node scripts/package/package.mjs package --platform linux --expect-version "$LOOM_VERSION"
           mkdir -p dist
           cp ".packaging/dist/Loom-$LOOM_VERSION-linux-x86_64.tar.gz" dist/
 
-      # Same ad-hoc signed universal Loom.app and .zip as the macOS release.
+      # Release-style packaging uses externally supplied universal language modules.
       - name: Package macOS app
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.LOOM_LANGUAGE_PACKS_URL != ''
         shell: bash
         run: |
-          for step in setup compile package; do
-            node scripts/package/package.mjs "$step" --platform macos --expect-version "$LOOM_VERSION"
-          done
+          node scripts/package/package.mjs package --platform macos --expect-version "$LOOM_VERSION"
           mkdir -p dist
           cp ".packaging/dist/Loom-$LOOM_VERSION-macos-universal.zip" dist/
 
       - name: Package Windows binary
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.LOOM_LANGUAGE_PACKS_URL != ''
         shell: pwsh
         env:
           PACKAGE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}
@@ -164,6 +187,7 @@ jobs:
           $packageDir = Join-Path dist $env:PACKAGE
           New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
           Copy-Item target/release/Loom.exe, README.md, LICENSE-MIT, LICENSE-APACHE, THIRD_PARTY_NOTICES.md $packageDir
+          node scripts/package/stage-languages.mjs (Join-Path $packageDir 'language-packs')
           $gitExe = (Get-Command git).Source
           $gitRoot = Split-Path (Split-Path $gitExe -Parent) -Parent
           $gitVersion = (& $gitExe --version).Split(' ')[2]
@@ -177,9 +201,24 @@ jobs:
           Compress-Archive -Path $packageDir -DestinationPath (Join-Path dist $env:ARCHIVE)
 
       - name: Upload build artifact
+        if: env.LOOM_LANGUAGE_PACKS_URL != ''
         uses: actions/upload-artifact@v7
         with:
           name: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}
           path: dist/Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}.${{ matrix.extension }}
+          if-no-files-found: error
+          retention-days: 14
+
+      # Without an external resource feed, CI still verifies and exports the host.
+      # Release workflows require resources and never silently omit default languages.
+      - name: Upload host without optional language resources
+        if: env.LOOM_LANGUAGE_PACKS_URL == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: Loom-host-${{ matrix.target_name }}
+          path: |
+            target/release/Loom
+            target/release/Loom.exe
+            target/universal-apple-darwin/release/Loom
           if-no-files-found: error
           retention-days: 14

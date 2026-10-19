@@ -1,6 +1,0 @@
-{
-  "name": "plaintext",
-  "display_name": "Plain Text",
-  "badge": "TXT",
-  "variants": [{ "id": "plaintext" }]
-}

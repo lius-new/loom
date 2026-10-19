@@ -39,8 +39,7 @@
   "servers": [],
   "grammars": {
     "json": {
-      "module": "loom_grammar_json",
-      "symbol": "loom_tree_sitter_json"
+      "module": "json"
     }
   }
 }

@@ -38,12 +38,10 @@
   "servers": [],
   "grammars": {
     "markdown": {
-      "module": "loom_grammar_markdown",
-      "symbol": "loom_tree_sitter_markdown"
+      "module": "markdown"
     },
     "markdown_inline": {
-      "module": "loom_grammar_markdown",
-      "symbol": "loom_tree_sitter_markdown_inline"
+      "module": "markdown_inline"
     }
   }
 }

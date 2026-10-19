@@ -1,5 +1,5 @@
 import test from 'node:test';
-import {runtimeGrammarManifestErrors} from './check.mjs';
+import {runtimeGrammarManifestErrors,hostBuildScriptErrors} from './check.mjs';
 import assert from 'node:assert/strict';
 import {dependencies,stateFields,structFields,violations,verificationManifestErrors} from './check.mjs';
 const policy=()=>({exceptions:{},root_state_adapters:[],runtime_bridges:[],state_ownership:{}});
@@ -355,7 +355,7 @@ test('chrome field owners cannot silently disappear or grow',()=>{
  for(const sources of [{},{'src/app/state/chrome.rs':'struct ChromeState {}'},{'src/app/state/chrome.rs':'struct ChromeState {toast:Toast,service:Service}'}])assert.ok(violations(sources,p).some(e=>e.includes('chrome owner')));
 });
 test('only the built-in language table may be included into the domain',()=>{
-  const table='include!(concat!(env!("OUT_DIR"), "/language_assets.rs"));';
+  const table='#[cfg(test)]\ninclude!("../../../tests/fixtures/language_registry.rs");';
   const embedded='src/domain/language/embedded.rs';
   assert.deepEqual(violations({[embedded]:'use crate::domain::language::registry::Registry;\n'+table},policy()),[]);
   for(const [file,source] of [
@@ -373,10 +373,10 @@ test('the language description parser may use serde and no other domain file may
   assert.ok(violations({'src/domain/language/descriptor.rs':'use lgui::prelude::*;'},policy()).length>0);
   assert.ok(violations({'src/domain/language/descriptor.rs':'use std::fs;'},policy()).length>0);
 });
-test('domain verification may share only the language asset scanner through its build script',()=>{
+test('domain verification cannot regain a language-source build script',()=>{
   const file='crates/workspace-tests/build.rs';
   const scanner='#[path = "../../build_support/language_assets.rs"]\nmod language_assets;';
-  assert.deepEqual(violations({[file]:scanner},policy()),[]);
+  assert.ok(violations({[file]:scanner},policy()).length>0);
   for(const source of [
     '#[path = "../../src/app/mod.rs"]\nmod app;',
     scanner+'\n#[path = "../../src/app/mod.rs"]\nmod app;',
@@ -422,12 +422,16 @@ test('language resources stay in infrastructure and test composition cannot ente
     }
   }
   assert.ok(violations({'src/features/syntax/mod.rs':'pub(crate) mod test_support;'},policy()).length>0);
-  assert.deepEqual(violations({'src/features/syntax/mod.rs':'#[cfg(test)]\npub(crate) mod test_support;'},policy()),[]);
+  assert.ok(violations({'src/features/syntax/mod.rs':'#[cfg(all(test, loom_language_pack_tests))]\n#[path = "../../../tests/language-runtime/suites/test_support.rs"]\npub(crate) mod test_support;'},policy()).length>0);
+  assert.deepEqual(violations({'src/features/syntax/mod.rs':'mod grammars;'},policy()),[]);
 });
 
-test('runtime manifest cannot statically link any grammars or package wrappers',()=>{
-  assert.deepEqual(runtimeGrammarManifestErrors('[dependencies]\ntree-sitter = "0.27"\ntree-sitter-language = "0.1"\n[dev-dependencies]\nloom-grammar-rust = { path = "crates/language-packs/rust" }'),[]);
+test('host dependency sections and workspace cannot reference grammar producers',()=>{
+  assert.deepEqual(runtimeGrammarManifestErrors('[dependencies]\ntree-sitter = "0.27"\ntree-sitter-language = "0.1"\n[dev-dependencies]\nloom-editor-core = { path = "crates/editor-core" }'),[]);
   for(const source of [
+    '[dev-dependencies]\nloom-grammar-json = { path = "language-packs/grammars/json" }',
+    '[build-dependencies]\ntree-sitter-json = "0.24"',
+    '[workspace]\nmembers = ["language-packs/*"]',
     '[dependencies]\ntree-sitter-md = "0.5"',
     '[dependencies]\ntree-sitter-json = "0.24"',
     '[dependencies]\ntree-sitter-rust = "0.24"',
@@ -436,4 +440,9 @@ test('runtime manifest cannot statically link any grammars or package wrappers',
     '[target.\'cfg(windows)\'.dependencies]\nloom-grammar-rust = { path = "crates/language-packs/rust" }',
     '[dependencies]\nalias = { path = "crates/language-packs/rust" }',
   ]) assert.ok(runtimeGrammarManifestErrors(source).length>0,source);
+});
+
+test('host build script cannot recover language compilation or resource staging',()=>{
+  assert.deepEqual(hostBuildScriptErrors('fn main() { println!("cargo:rerun-if-changed=icons/app.ico"); }'),[]);
+  for(const source of ['mod language_packages;', 'mod language_assets;', 'stage_packs(root,destination);','read("language-packs/manifests");'])assert.ok(hostBuildScriptErrors(source).length>0,source);
 });

@@ -1,9 +1,0 @@
-{
-  "name": "markdown",
-  "display_name": "Markdown",
-  "badge": "MD",
-  "aliases": ["md"],
-  "comments": { "block": ["<!--", "-->"] },
-  "variants": [{ "id": "markdown", "grammar": "markdown" }],
-  "files": [{ "extensions": ["md", "markdown", "mdown", "mkd"], "variant": "markdown" }]
-}

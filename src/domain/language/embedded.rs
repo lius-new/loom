@@ -2,25 +2,28 @@
 //! bundled metadata fixtures. Grammar/query payloads always stay on disk.
 use crate::domain::language::registry::{Registry, RegistryError};
 
-include!(concat!(env!("OUT_DIR"), "/language_assets.rs"));
+#[cfg(test)]
+include!("../../../tests/fixtures/language_registry.rs");
 
-/// The embedded tables, for tests that compare them with the files on disk.
-pub(crate) fn files() -> (&'static [Row], &'static [Row], &'static [Row]) {
-    (LANGUAGE_FILES, GRAMMAR_FILES, SERVER_FILES)
-}
-
-/// (name, file, path from the repository root, contents)
-pub(crate) type Row = (&'static str, &'static str, &'static str, &'static str);
+#[cfg(not(test))]
+static LANGUAGE_FILES: &[(&str, &str)] = &[(
+    "plaintext",
+    r#"{"name":"plaintext","display_name":"Plain Text","badge":"TXT","variants":[{"id":"plaintext"}]}"#,
+)];
+#[cfg(not(test))]
+static SERVER_FILES: &[(&str, &str)] = &[];
+#[cfg(not(test))]
+static GRAMMAR_NAMES: &[&str] = &[];
 
 /// The registry for the embedded descriptions and grammar directories.
 pub(crate) fn registry() -> Result<Registry, RegistryError> {
     let sources: Vec<(&str, &str)> = LANGUAGE_FILES
         .iter()
-        .map(|(name, _, _, contents)| (*name, *contents))
+        .map(|(name, contents)| (*name, *contents))
         .collect();
     let servers: Vec<(&str, &str)> = SERVER_FILES
         .iter()
-        .map(|(name, _, _, contents)| (*name, *contents))
+        .map(|(name, contents)| (*name, *contents))
         .collect();
     Registry::from_parts(&sources, GRAMMAR_NAMES, &servers)
 }

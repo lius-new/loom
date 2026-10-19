@@ -155,7 +155,7 @@ export function packageApp({ version }) {
   fs.rmSync(path.join(PLATFORM_DIR, 'stage'), { recursive: true, force: true });
   fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
   fs.copyFileSync(exe, path.join(stage, 'Loom.exe'));
-  stageLanguagePacks({ profiles: [path.dirname(exe)], destination: path.join(stage, 'language-packs') });
+  stageLanguagePacks({ destination: path.join(stage, 'language-packs') });
   fs.writeFileSync(path.join(stage, 'bin', 'loom.cmd'), LOOM_CMD);
   for (const file of APP_FILES) {
     fs.copyFileSync(path.join(ROOT, file), path.join(stage, file));

@@ -1,50 +1,38 @@
-// Stage independent packages, including their native grammars.
+// Consume complete prebuilt artifacts. This module never builds language code.
 import fs from 'node:fs';
 import path from 'node:path';
 
 export function moduleFile(module, platform) {
-  if (!/^[a-z][a-z0-9_]*$/.test(module)) throw new Error('Invalid language module name');
-  if (platform === 'win32') return module + '.dll';
-  if (platform === 'darwin') return 'lib' + module + '.dylib';
-  if (platform === 'linux') return 'lib' + module + '.so';
-  throw new Error('Unsupported language module platform: ' + platform);
+  const extensions = {win32: ['dll'], darwin: ['dylib', 'so'], linux: ['so']};
+  const allowed = extensions[platform];
+  if (!allowed) throw new Error('Unsupported language module platform: ' + platform);
+  if (/^[a-z][a-z0-9_]*$/.test(module)) return module + '.' + allowed[0];
+  const match = /^([a-z][a-z0-9_-]*)\.(dll|dylib|so)$/.exec(module);
+  if (!match || !allowed.includes(match[2])) throw new Error('Invalid language module filename for ' + platform);
+  return module;
 }
 
 
-function manifests(profile) {
-  const root = path.join(profile, 'language-packs');
-  return fs.readdirSync(root, { withFileTypes: true })
+export function stageLanguagePacks({ source = process.env.LOOM_LANGUAGE_PACKS, destination, platform = process.platform }) {
+  if (!source) throw new Error('Set LOOM_LANGUAGE_PACKS to a complete prebuilt language package collection');
+  const root = path.resolve(source);
+  const ids = fs.readdirSync(root, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && fs.existsSync(path.join(root, entry.name, 'package.json')))
     .map(entry => entry.name).sort();
-}
-
-export function stageLanguagePacks({ profiles, destination, platform = process.platform, combine }) {
-  if (!profiles.length) throw new Error('No language build profile supplied');
-  const packages = manifests(profiles[0]);
-  if (!packages.length) throw new Error('No independent language packages built');
-  for (const profile of profiles.slice(1)) {
-    if (JSON.stringify(manifests(profile)) !== JSON.stringify(packages)) throw new Error('Language packages differ between target architectures');
-  }
+  if (!ids.length) throw new Error('No prebuilt language packages supplied');
   const binaries = [];
-  for (const id of packages) {
+  for (const id of ids) {
     if (!/^[a-z][a-z0-9_]*$/.test(id)) throw new Error('Invalid language package directory');
-    const source = path.join(profiles[0], 'language-packs', id);
-    const text = fs.readFileSync(path.join(source, 'package.json'), 'utf8');
-    const manifest = JSON.parse(text);
+    const source = path.join(root, id), target = path.join(destination, id);
+    const manifest = JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8'));
     if (manifest.schema !== 1 || manifest.id !== id || !manifest.grammars) throw new Error('Invalid language package manifest');
-    for (const profile of profiles.slice(1)) {
-      if (fs.readFileSync(path.join(profile, 'language-packs', id, 'package.json'), 'utf8') !== text) {
-        throw new Error('Language manifests differ between target architectures');
-      }
-    }
-    const target = path.join(destination, id);
     fs.mkdirSync(target, { recursive: true });
     fs.copyFileSync(path.join(source, 'package.json'), path.join(target, 'package.json'));
     const modules = new Set();
     for (const [grammar, entry] of Object.entries(manifest.grammars)) {
       if (!/^[a-z][a-z0-9_]*$/.test(grammar)) throw new Error('Invalid grammar directory');
       moduleFile(entry.module, platform);
-      if (!/^[a-z][a-z0-9_]*$/.test(entry.symbol)) throw new Error('Invalid grammar entry point');
+      if (entry.symbol !== undefined && !/^[a-z][a-z0-9_]*$/.test(entry.symbol)) throw new Error('Invalid grammar entry point');
       modules.add(entry.module);
       const directory = path.join(target, 'grammars', grammar);
       fs.mkdirSync(directory, { recursive: true });
@@ -56,18 +44,10 @@ export function stageLanguagePacks({ profiles, destination, platform = process.p
     }
     fs.mkdirSync(path.join(target, 'modules'), { recursive: true });
     for (const module of modules) {
-      const file = moduleFile(module, platform);
-      const inputs = profiles.map(profile => path.join(profile, file));
-      for (const input of inputs) {
-        if (!fs.existsSync(input)) throw new Error('Missing language module; build the workspace first: ' + input);
-      }
+      const file = moduleFile(module, platform), input = path.join(source, 'modules', file);
+      if (!fs.existsSync(input)) throw new Error('Missing prebuilt language module: ' + input);
       const output = path.join(target, 'modules', file);
-      if (inputs.length > 1) {
-        if (!combine) throw new Error('Multiple architectures require a module combiner');
-        combine(inputs, output);
-      } else {
-        fs.copyFileSync(inputs[0], output);
-      }
+      fs.copyFileSync(input, output);
       binaries.push(output);
     }
   }

@@ -46,7 +46,7 @@ fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
             // Check the colours against a second, independent parse of the same
             // text, including windows deep inside minified strings and comments.
             if verify {
-                let mut reference = crate::features::syntax::test_support::index();
+                let mut reference = crate::infrastructure::language_packs::index();
                 let expected = reference
                     .prepare(
                         id,
@@ -103,6 +103,10 @@ fn merged(
 #[test]
 #[ignore = "navigation rendering regression; optional local input stays in memory"]
 fn editor_navigation_highlight_continuity() {
+    assert!(
+        std::env::var_os("LOOM_TEST_LANGUAGE_PACKS").is_some(),
+        "provide prebuilt language packages through LOOM_TEST_LANGUAGE_PACKS for this syntax benchmark"
+    );
     use crate::features::syntax::TokenSpan;
     use std::{collections::HashMap, path::PathBuf};
     let mut cases = vec![
@@ -227,6 +231,10 @@ fn editor_navigation_highlight_continuity() {
 #[test]
 #[ignore = "real text layout benchmark; optional LOOM_EDITOR_PROFILE_FILE stays in memory"]
 fn editor_viewport_benchmark() {
+    assert!(
+        std::env::var_os("LOOM_TEST_LANGUAGE_PACKS").is_some(),
+        "provide prebuilt language packages through LOOM_TEST_LANGUAGE_PACKS for this syntax benchmark"
+    );
     let js = "const item={name:\"hello\\\"world\",value:12345};function get(a){return a.value+item.value;}";
     let mut cases = vec![
         ("minified-3k.js", (js.repeat(36) + "\n").repeat(50)),

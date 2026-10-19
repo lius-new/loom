@@ -251,7 +251,7 @@ export function packageApp({ version }) {
   fs.rmSync(path.join(PLATFORM_DIR, 'stage'), { recursive: true, force: true });
   fs.mkdirSync(path.join(stage, 'bin'), { recursive: true });
   fs.copyFileSync(binary, path.join(stage, 'Loom'));
-  stageLanguagePacks({ profiles: [path.dirname(binary)], destination: path.join(stage, 'language-packs') });
+  stageLanguagePacks({ destination: path.join(stage, 'language-packs') });
   fs.chmodSync(path.join(stage, 'Loom'), 0o755);
   writeExecutable(path.join(stage, 'bin', 'loom'), LOOM_COMMAND);
   writeExecutable(path.join(stage, 'install.sh'), INSTALL_SCRIPT);

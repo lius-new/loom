@@ -2,10 +2,6 @@
 use std::sync::Arc;
 use tree_sitter::Language;
 
-/// Grammars no language description uses: they only parse text embedded in
-/// another language (Markdown's inline text).
-pub(crate) const EMBEDDED_ONLY: &[&str] = &["markdown_inline"];
-
 /// Languages must remain usable by parsers, trees and queries after this call.
 /// Native adapters retain module handles for the process. Called by background
 /// syntax work; this port has no filesystem or application dependencies.

@@ -29,7 +29,7 @@ the original.
 ## Tree-sitter and language grammars
 
 Syntax highlighting parses source with Tree-sitter and these grammars. All grammars, including JSON and Markdown,
-ship as separate native modules loaded on demand, together with the highlight queries stored in `assets/grammars/`.
+ship as separate native modules loaded on demand, together with the highlight queries stored in `assets/language-packs/<id>/grammars/`.
 Each query directory has a `SOURCE.md` naming the upstream repository, commit,
 license and any change (the queries of one JavaScript and TypeScript family are
 only concatenated).

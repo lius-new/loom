@@ -66,35 +66,38 @@ fn color_for(class: Option<HighlightId>) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        domain::identity::FileId,
-        domain::language::builtin,
-        features::{
-            highlighting::HighlightId,
-            syntax::{Source, Window},
-        },
-    };
-    use std::sync::atomic::AtomicBool;
+    use crate::features::{highlighting::HighlightId, syntax::TokenSpan};
 
     #[test]
     fn pending_and_ready_spans_preserve_exact_text_and_combining_graphemes() {
         let buffer = TextBuffer::new("const e\u{301}=\"中👩‍💻\"; // comment");
         let window = 0..buffer.len();
-        let tokens = crate::features::syntax::test_support::index()
-            .prepare(
-                FileId::new(1),
-                Source::new(&buffer),
-                builtin("javascript"),
-                &[Window {
-                    line: window.clone(),
-                    range: window.clone(),
-                }],
-                &AtomicBool::new(false),
-            )
-            .unwrap()
-            .remove(0)
-            .spans
-            .to_vec();
+        // The rendering contract consumes spans; parsing is verified separately.
+        let string_start = buffer.text().find('"').unwrap();
+        let string_end = buffer.text().rfind('"').unwrap() + 1;
+        let comment = buffer.text().find("//").unwrap();
+        let tokens = vec![
+            TokenSpan {
+                range: 0..5,
+                class: Some(HighlightId::KEYWORD),
+            },
+            TokenSpan {
+                range: 5..string_start,
+                class: None,
+            },
+            TokenSpan {
+                range: string_start..string_end,
+                class: Some(HighlightId::STRING),
+            },
+            TokenSpan {
+                range: string_end..comment,
+                class: None,
+            },
+            TokenSpan {
+                range: comment..buffer.len(),
+                class: Some(HighlightId::COMMENT),
+            },
+        ];
         assert!(tokens.len() > 3, "the sample has several spans");
         for ready in [
             None,

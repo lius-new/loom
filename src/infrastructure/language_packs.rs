@@ -1,5 +1,5 @@
-//! Discover independent language packages at startup; open native modules and
-//! queries only when the syntax worker requests them. Changes require restart.
+// Discover independent language packages at startup; open native modules and
+// queries only when the syntax worker requests them. Changes require restart.
 use crate::domain::language::Registry;
 use crate::features::syntax::{Resources, TreeIndex};
 use libloading::Library;
@@ -20,13 +20,21 @@ const MAX_QUERY: u64 = 4 * 1024 * 1024;
 const MAX_QUERY_CACHE: usize = 8 * 1024 * 1024;
 const MAX_MODULES: usize = 64;
 const MAX_PACKAGES: usize = 128;
-const PLAIN: &str = include_str!("../../assets/languages/plaintext.json");
+const PLAIN: &str = r#"{"name":"plaintext","display_name":"Plain Text","badge":"TXT","variants":[{"id":"plaintext"}]}"#;
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Module {
     module: String,
-    symbol: String,
+    #[serde(default)]
+    symbol: Option<String>,
+}
+impl Module {
+    fn entry_point(&self, grammar: &str) -> String {
+        self.symbol
+            .clone()
+            .unwrap_or_else(|| format!("tree_sitter_{grammar}"))
+    }
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,6 +57,28 @@ fn name(value: &str) -> bool {
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
+// Accept an unmodified shared library filename (including Neovim's .so files
+// on macOS), or a stem whose platform extension is added without a lib prefix.
+fn module_file(module: &str, platform: &str) -> Result<String, String> {
+    if name(module) {
+        let extension = match platform {
+            "windows" => "dll",
+            "macos" => "dylib",
+            _ => "so",
+        };
+        return Ok(format!("{module}.{extension}"));
+    }
+    if let Some((stem, extension)) = module.rsplit_once('.') {
+        let mut chars = stem.chars();
+        if chars.next().is_some_and(|c| c.is_ascii_lowercase())
+            && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+            && matches!(extension, "dll" | "so" | "dylib")
+        {
+            return Ok(module.to_owned());
+        }
+    }
+    Err(format!("invalid native module filename {module}"))
+}
 fn read_text(path: &Path, limit: u64) -> Result<String, String> {
     let file = fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let mut text = String::new();
@@ -65,8 +95,6 @@ fn read_text(path: &Path, limit: u64) -> Result<String, String> {
 struct Installed {
     manifest: Manifest,
     root: PathBuf,
-    // Development builds alone can find bundled modules in Cargo's profile.
-    cargo_modules: Option<PathBuf>,
 }
 
 fn registry(packages: &BTreeMap<String, Installed>) -> Result<Registry, String> {
@@ -121,7 +149,10 @@ impl Manifest {
             return Err("package directory must match its canonical id".into());
         }
         for (grammar, module) in &self.grammars {
-            if !name(grammar) || !name(&module.module) || !name(&module.symbol) {
+            if !name(grammar)
+                || module_file(&module.module, std::env::consts::OS).is_err()
+                || module.symbol.as_deref().is_some_and(|symbol| !name(symbol))
+            {
                 return Err(format!("invalid language module entry {grammar}"));
             }
         }
@@ -131,7 +162,6 @@ impl Manifest {
             Installed {
                 manifest: self.clone(),
                 root: directory.to_owned(),
-                cargo_modules: None,
             },
         )]))
         .map(|_| ())
@@ -160,24 +190,18 @@ pub(crate) struct Packages {
     loaded: Mutex<Loaded>,
 }
 impl Packages {
-    pub(crate) fn discover(
-        bundled: &Path,
-        user: Option<&Path>,
-        cargo_modules: Option<PathBuf>,
-    ) -> Self {
+    pub(crate) fn discover(bundled: &Path, user: Option<&Path>) -> Self {
         let mut source = Self {
             packages: BTreeMap::new(),
             loaded: Mutex::default(),
         };
-        for (root, development) in [(Some(bundled), cargo_modules), (user, None)] {
-            if let Some(root) = root {
-                source.scan(root, development);
-            }
+        for root in [Some(bundled), user].into_iter().flatten() {
+            source.scan(root);
         }
         source
     }
 
-    fn scan(&mut self, root: &Path, cargo_modules: Option<PathBuf>) {
+    fn scan(&mut self, root: &Path) {
         let entries = match fs::read_dir(root) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
@@ -228,7 +252,6 @@ impl Packages {
                         Installed {
                             manifest,
                             root: directory.clone(),
-                            cargo_modules: cargo_modules.clone(),
                         },
                     );
                 } else {
@@ -270,25 +293,11 @@ impl Packages {
             .find_map(|p| p.manifest.grammars.get(grammar).map(|m| (p, m)))
     }
     fn module_path(package: &Installed, module: &str) -> PathBuf {
-        let file = if cfg!(windows) {
-            format!("{module}.dll")
-        } else if cfg!(target_os = "macos") {
-            format!("lib{module}.dylib")
-        } else {
-            format!("lib{module}.so")
-        };
-        let installed = package.root.join("modules").join(&file);
-        if installed.is_file() {
-            return installed;
-        }
-        if let Some(profile) = &package.cargo_modules {
-            for candidate in [profile.join("deps").join(&file), profile.join(&file)] {
-                if candidate.is_file() {
-                    return candidate;
-                }
-            }
-        }
-        installed
+        // Validated during discovery; never search Cargo or another package.
+        package
+            .root
+            .join("modules")
+            .join(module_file(module, std::env::consts::OS).expect("validated module filename"))
     }
     fn report(loaded: &mut Loaded, error: &str) {
         if loaded.activity.errors.insert(error.to_owned()) {
@@ -316,7 +325,7 @@ fn load_native(path: &Path, symbol: &str) -> Result<Language, String> {
         modules.insert(key.clone(), library);
     }
     let library = &modules[&key];
-    // SAFETY: package builders export this exact C function signature. Keep the
+    // SAFETY: standard Tree-sitter entry points use this C signature. Keep the
     // owning Library in MODULES for the entire lifetime of every Language.
     let function = unsafe { library.get::<unsafe extern "C" fn() -> *const ()>(symbol.as_bytes()) }
         .map_err(|e| format!("{} ({symbol}): {e}", path.display()))?;
@@ -350,7 +359,10 @@ impl Resources for Packages {
         let result = match self.grammar(grammar) {
             Some((package, module)) => {
                 loaded.activity.modules.insert(module.module.clone());
-                load_native(&Self::module_path(package, &module.module), &module.symbol)
+                load_native(
+                    &Self::module_path(package, &module.module),
+                    &module.entry_point(grammar),
+                )
             }
             None => Err(format!("language package {grammar} is not installed")),
         };
@@ -396,37 +408,19 @@ impl Resources for Packages {
         Self::report(&mut self.loaded.lock().unwrap(), error);
     }
 }
-fn locations(executable: &Path) -> (PathBuf, Option<PathBuf>) {
-    locations_for(executable, std::env::consts::OS, cfg!(test))
-}
-
-fn locations_for(
-    executable: &Path,
-    platform: &str,
-    test_binary: bool,
-) -> (PathBuf, Option<PathBuf>) {
+fn locations(executable: &Path) -> PathBuf {
     let parent = executable.parent().expect("executable has a directory");
-    if platform == "macos"
+    if cfg!(target_os = "macos")
         && parent.file_name().is_some_and(|name| name == "MacOS")
         && parent
             .parent()
             .and_then(Path::file_name)
             .is_some_and(|name| name == "Contents")
     {
-        return (
-            parent.parent().unwrap().join("Resources/language-packs"),
-            None,
-        );
-    }
-    let profile = if test_binary && parent.file_name().is_some_and(|name| name == "deps") {
-        parent.parent().unwrap()
+        parent.parent().unwrap().join("Resources/language-packs")
     } else {
-        parent
-    };
-    (
-        profile.join("language-packs"),
-        cfg!(debug_assertions).then(|| profile.to_owned()),
-    )
+        parent.join("language-packs")
+    }
 }
 
 fn user_directory_from(
@@ -457,11 +451,27 @@ pub(crate) fn resources() -> Arc<Packages> {
     static RESOURCES: OnceLock<Arc<Packages>> = OnceLock::new();
     RESOURCES
         .get_or_init(|| {
+            #[cfg(not(test))]
             let executable = std::env::current_exe().expect("locate Loom language resources");
-            let (root, cargo_modules) = locations(&executable);
-            // Cargo tests use isolated bundled fixtures, never a developer's installed packages.
-            let user = if cfg!(test) { None } else { user_directory() };
-            Arc::new(Packages::discover(&root, user.as_deref(), cargo_modules))
+            #[cfg(test)]
+            {
+                let root = std::env::var_os("LOOM_TEST_LANGUAGE_PACKS");
+                let source = match root {
+                    Some(path) => Packages::discover(Path::new(&path), None),
+                    None => Packages {
+                        packages: BTreeMap::new(),
+                        loaded: Mutex::default(),
+                    },
+                };
+                Arc::new(source)
+            }
+            #[cfg(not(test))]
+            {
+                Arc::new(Packages::discover(
+                    &locations(&executable),
+                    user_directory().as_deref(),
+                ))
+            }
         })
         .clone()
 }
@@ -478,5 +488,5 @@ pub(crate) fn index() -> TreeIndex {
 }
 
 #[cfg(test)]
-#[path = "language_packs_tests.rs"]
-mod tests;
+#[path = "language_packs_unit_tests.rs"]
+mod unit_tests;

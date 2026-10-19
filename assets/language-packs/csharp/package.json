@@ -36,8 +36,7 @@
   "servers": [],
   "grammars": {
     "c_sharp": {
-      "module": "loom_grammar_csharp",
-      "symbol": "loom_tree_sitter_c_sharp"
+      "module": "c_sharp"
     }
   }
 }

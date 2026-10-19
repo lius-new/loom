@@ -55,8 +55,7 @@
   ],
   "grammars": {
     "rust": {
-      "module": "loom_grammar_rust",
-      "symbol": "loom_tree_sitter_rust"
+      "module": "rust"
     }
   }
 }

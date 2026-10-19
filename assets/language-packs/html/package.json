@@ -37,8 +37,7 @@
   "servers": [],
   "grammars": {
     "html": {
-      "module": "loom_grammar_html",
-      "symbol": "loom_tree_sitter_html"
+      "module": "html"
     }
   }
 }
