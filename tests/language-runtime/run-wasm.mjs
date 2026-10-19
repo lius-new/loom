@@ -1,3 +1,4 @@
+import {prepareDependencies} from '../../scripts/dependencies/ensure.mjs';
 // A complete WASM-only regression, with no native language artifact collection.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,7 +13,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const option = name => { const index = args.indexOf(name); return index < 0 ? null : args[index + 1]; };
 const packages = await prepareWasmFixture(path.join(root, 'target/wasm-input'), {module: option('--wasm-rust'), offline: args.includes('--offline')});
-const env = {...process.env, LOOM_TEST_WASM_PACKAGES: packages};
+const env = {...(await prepareDependencies({skia:false,offline:args.includes('--offline')})).env, LOOM_TEST_WASM_PACKAGES: packages};
 delete env.LOOM_TEST_LANGUAGE_PACKS;
 const cargo = command => execFileSync('cargo', [...command, '--manifest-path', path.join(root, 'Cargo.toml'), '--locked', ...(args.includes('--offline') ? ['--offline'] : []), '--target-dir', path.join(root, 'target')], {cwd: root, env, stdio: 'inherit'});
 if (!args.includes('--probe-only')) cargo(['test', '--lib', 'infrastructure::language_packs::wasm_tests::']);

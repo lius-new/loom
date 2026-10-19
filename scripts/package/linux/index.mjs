@@ -1,3 +1,4 @@
+import {prepareDependencies} from '../../dependencies/ensure.mjs';
 // Linux packaging: a portable tar.gz with a per-user install script, a .deb
 // and an AppImage, all built from one staged application folder. Linux
 // packages use the system Git (the .deb depends on `git`); Loom falls back to
@@ -228,10 +229,10 @@ function appImageTool() {
 }
 
 /** Build the optimized Loom binary. */
-export function compile() {
+export async function compile() {
   requireLinux();
   step('Compiling Loom (release)');
-  run('cargo', ['build', '--release', '--locked']);
+  run('cargo', ['build', '--release', '--locked'], {env: (await prepareDependencies()).env});
 }
 
 /**

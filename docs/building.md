@@ -2,24 +2,39 @@
 
 ## Toolchain
 
-CMake must be available on PATH to build the Tree-sitter/Wasmtime C API headers.
-On Windows, Visual Studio's CMake component or a standalone CMake installation
-can provide it. Installed Loom users do not need CMake or a compiler.
-
+Install Node.js 20+ (CI selects Node 24), Rust and the platform C/C++ SDK.
 Rust 1.97.1, Clippy and rustfmt are pinned in
 [`rust-toolchain.toml`](../rust-toolchain.toml); CI uses the same compiler.
+Windows needs Visual Studio C++ Build Tools and the Windows SDK; macOS needs
+Xcode Command Line Tools. Linux system libraries are listed below.
+
+Use the shared build entry point:
 
 ```sh
-cargo build --release --locked
-cargo run --release --locked
+node scripts/build/cargo.mjs build --release --locked
+node scripts/build/cargo.mjs run --release --locked
+node scripts/build/cargo.mjs test --locked --workspace
 ```
 
-`lgui` uses Skia for rendering and Winit for the window. The renderer is the
-**software** Skia backend (`renderer-skia-software`), which presents via
-`softbuffer`. `skia-safe` downloads a prebuilt Skia archive automatically at
-build time. Windows builds with an existing Skia archive can use the
-[verified local cache helper](../scripts/build/README.md), including for
-offline builds and baseline checks.
+[`scripts/dependencies`](../scripts/dependencies/README.md) automatically downloads
+pinned CMake and the matching prebuilt Skia archive, verifies SHA-256 and prepares
+only the Cargo child environment. No system CMake, manual Skia download, LLVM
+installation or global PATH change is required. `lgui` renders with the software
+Skia backend (`renderer-skia-software`) and presents through `softbuffer`.
+The managed inputs cover Windows x64, Linux x64 and macOS arm64/x64. CMake is
+chosen by host OS/architecture; Skia is chosen by Rust target and resolved features.
+
+To prime the private cache before an offline build:
+
+```sh
+node scripts/dependencies/ensure.mjs
+node scripts/build/cargo.mjs build --release --locked --offline
+```
+
+Cargo crates/toolchains must also be cached for offline use. Bare `cargo` bypasses
+the dependency preparer; use the Node entry point for full application builds.
+GUI-free core/domain tests and formatting do not prepare these dependencies.
+Installed Loom users need none of these build tools.
 
 The project follows the `main` branch of the lgui repository. `Cargo.lock`
 pins the exact lgui commit used by a build. Run `cargo update -p lgui` when you
@@ -36,7 +51,7 @@ needed. See [Language resources](languages.md) for the format and release inputs
 ## System dependencies (Debian / Ubuntu)
 
 ```sh
-sudo apt install build-essential cmake \
+sudo apt install build-essential \
     libfreetype-dev libfontconfig-dev \
     libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
     libwayland-dev libxkbcommon-dev
@@ -64,7 +79,7 @@ loom/
 The framework-independent editing core lives in
 [`crates/editor-core`](../crates/editor-core/README.md). Run its tests without the
 GUI with `cargo test --locked -p loom-editor-core`; run all application and core
-regressions with `cargo test --locked --workspace`. Workspace domain rules also
+regressions with `node scripts/build/cargo.mjs test --locked --workspace`. Workspace domain rules also
 have a GUI-free verification entry point: `cargo test --locked -p loom-workspace-tests`.
 
 `node scripts/architecture/check.mjs` enforces the module boundaries that CI
@@ -74,7 +89,11 @@ checks.
 
 GitHub Actions checks formatting, Clippy and architecture boundaries on Linux,
 then tests and builds Loom on Linux x64, Windows x64 and macOS (universal).
-Successful runs expose packaged builds as workflow artifacts.
+All host CI and release jobs call the shared dependency preparer before host tests,
+linting or compilation, then expose build artifacts. Managed inputs are cached by
+OS, architecture and dependency manifest/implementation/lock hashes. macOS packaging
+prepares each target separately before merging the binaries. Core-only CI remains
+independent of CMake and Skia.
 
 Each platform has its own release workflow (`release-windows.yml`,
 `release-macos.yml`, `release-linux.yml`). Each validates that the requested

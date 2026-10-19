@@ -56,6 +56,9 @@ jobs:
         with:
           toolchain: 1.97.1
 
+      - name: Prepare build dependencies
+        uses: ./.github/actions/dependencies
+
       - name: Show Node.js version
         run: node --version
 

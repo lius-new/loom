@@ -644,7 +644,7 @@ P3b 增加标签页验收：准备至少 32 个打开文档，使最近视口分
 
 ### 11.4 标准 Tree-sitter WASM（已实施，跨平台待验证）
 
-宿主与独立验证工程统一启用 tree-sitter 0.27 的官方 wasm feature，运行时由 Wasmtime 提供；Cargo.lock 锁定通用引擎依赖，不重新引入具体语法 crate、语言制作工作区或专属 ABI。构建宿主需要 PATH 中的 CMake；终端用户只需已编译的 Loom，不需要 CMake、WASI SDK 或任何语言编译器。
+宿主与独立验证工程统一启用 tree-sitter 0.27 的官方 wasm feature，运行时由 Wasmtime 提供；Cargo.lock 锁定通用引擎依赖，不重新引入具体语法 crate、语言制作工作区或专属 ABI。构建入口通过 scripts/dependencies 准备私有 CMake 和目标平台 Skia（见 R-016），无需系统预装 CMake；终端用户只需已编译的 Loom，不需要 CMake、WASI SDK 或任何语言编译器。
 
 R-014 首先在旧清单/modules/ 布局接入 WASM；R-015 已扩展为直接读取上游 tree-sitter.json，在清单根目录或 grammar.path 目录按标准名发现 WASM。旧格式的 module/symbol 显式选取继续兼容，标准格式从 grammar.name 推导入口，无需编写 Loom 元数据。普通 WASI 程序、组件模型与非 Tree-sitter 字节不能冒充语法模块。
 
@@ -1214,3 +1214,20 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 证据日志：.tmp/upstream-host-tests.log、.tmp/upstream-standalone-final.log、.tmp/upstream-runtime-tests.log、.tmp/upstream-standard-feed-tests.log、.tmp/upstream-wasm-only.log、.tmp/upstream-new-language-probe.log、.tmp/upstream-node-final.log；本地忽略输出不入库。最初受限环境的 tasklist 进程存活断言失败，在正常权限的完整套件和最终无资源快照中均通过。
 产物：target/upstream-language-preview/Loom.exe 来自最终无语言资源快照，附八个标准布局目录和十个标准模块。Rust 只提供上游 WASM，无 DLL、package.json 或 SOURCE.md；上游许可证与可选来源说明保留。
 未完成：Linux/macOS 实机/签名/安装器、固定工具链和冷启动性能；标准 CLI 的内容/首行正则识别、injection-regex、locals 和 tags 尚未接入；应用内下载/管理界面与热更新不属本轮范围。
+
+
+记录编号 / 日期：R-016 / 2026-10-19
+阶段：统一本地与 GitHub Actions 的 CMake / Skia 依赖准备
+状态：实施完成，Windows 验证通过；GitHub 三平台实际运行待推送验收
+实现证据：
+- 新增 scripts/dependencies，manifest.json 固定 CMake 3.31.6 和 Skia 0.99.0 的官方 URL、SHA-256、宿主归档布局和目标特性。CMake 校验和取自 Kitware 官方发布校验文件，Skia 校验和取自官方 GitHub release asset digest。
+- 缓存位于 .packaging/dependencies，下载到唯一临时文件，校验后发布；每次复用核对归档哈希，解压内容按文件/符号链接清单核对，损坏时从归档重建，并串行化并发解压。无需系统预装 CMake，不安装全局工具，不修改父进程 PATH。
+- CMake 按运行 Node 的宿主 OS/架构准备并加入 Cargo 子进程 PATH，同时设置 CMAKE；Skia 按 Rust target、Cargo.lock 版本和 cargo tree 实际特性准备，验证内嵌版本/key，使用上游支持的本地 file:// 路径。缺缓存的离线构建、未知目标/特性、显式坏归档均在编译前失败。
+- Windows x64、Linux x64、macOS arm64/x64 的 Skia 输入已固定；macOS universal 编译为两次独立准备，避免沿用宿主 Skia。上游 FORCE_SKIA_BINARIES_DOWNLOAD 是 Git 源码检出的专用开关，registry 构建不能设置；统一准备器使用正常预编译分支并替换继承的源码构建开关。
+- 新增 node scripts/build/cargo.mjs；原 PowerShell 入口改为薄适配，删除旧 Windows 专用 skia-cache 清单/实现/测试。各平台打包 compile、基线脚本、独立语言运行时与物理移除语言源码验证共用依赖准备。格式检查和只选 editor-core / workspace-tests 的 Cargo 命令不下载这些 GUI/宿主依赖。
+- 新增共享 composite action，CI quality/build 及三个 release 工作流在宿主测试、lint、构建前调用同一个 ensure.mjs，选择 Node 24，并通过 GITHUB_PATH/GITHUB_ENV 导出私有工具；缓存键包含 OS、架构、依赖清单/实现/Cargo.lock 哈希。移除 Linux apt 对 CMake 的显式安装，保留系统 C/C++ SDK 与 GUI 开发库。每个宿主平台执行依赖回归和实际 CMAKE_COMMAND 路径/Actions 环境导出 smoke 检查。
+- Inno Setup/MinGit 仍属于打包工具；语言资源仍是独立运行时输入，没有新增语法制作工程或静态语言依赖。裸 cargo 不负责外部工具引导；完整宿主构建使用 Node 入口或打包入口。
+验证：Windows x86_64，Node 24.19.0、Rust/Cargo 1.98.0。默认 PATH 无 cmake 时，从空私有缓存自动下载并验证 CMake/Skia；清理 release 的 Wasmtime C API 与 Skia 输出后，node scripts/package/package.mjs compile 重新编译成功，Skia 构建日志确认从已校验本地归档安装成功。新的 Node Cargo 入口也通过 --release --locked --offline 构建。CMAKE_COMMAND 探针确认命中的为项目私有 cmake.exe；验证本地子进程和 Actions 环境文件导出。93 项 Node 回归通过（新增 11 项依赖测试），架构门禁通过；官方 actionlint 1.7.12 检查四个工作流通过。无语言源码快照完成 fmt、完整构建、1055 项工作区测试（21 项忽略）。独立 WASM 7 项及同一探针的应用/用户目录、扩展名、移除重启检查通过。PowerShell 包装和基线的成功/准备失败路径均验证父进程环境恢复。
+跨平台输入核验：全部五种 CMake 归档的 SHA-256 和可执行文件路径已逐项验证，四个 Skia 目标归档的 SHA-256、内嵌版本/key 均通过；macOS 归档在 Windows 上仅列目录，实际解压/执行由 macOS runner 验证，不计作 macOS 实机通过。
+证据日志：.tmp/dependency-managed-compile.log、.tmp/dependency-cargo-wrapper.log、.tmp/dependency-platform-inputs.log、.tmp/dependency-node-tests.log、.tmp/dependency-standalone-host.log、.tmp/dependency-wasm-regression.log、.tmp/dependency-actions-lint.log；本地忽略输出不入库。
+未完成：GitHub Actions 远端 Windows/Linux/macOS 全流程，以及 Rust 1.97.1 的实际验证。当前环境未推送或触发发布流程，不能将本地与静态检查等同于远端成功。后续可将其他编译/打包依赖逐项纳入统一清单，本轮只统一 CMake/Skia。

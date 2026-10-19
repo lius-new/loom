@@ -147,13 +147,14 @@ per query kind and 512 file-types.
 ## Builds, packaging and verification
 
 The host contains no concrete grammar dependency or language producer project.
-Its generic Tree-sitter WASM runtime requires CMake on PATH when building Loom.
+Its generic Tree-sitter WASM runtime uses the private CMake prepared by
+[scripts/dependencies](../scripts/dependencies/README.md) when building Loom.
 Users of a compiled application need no compiler. Host commands work without any
 language resource directory:
 
 ~~~sh
-cargo build --locked
-cargo test --locked --workspace
+node scripts/build/cargo.mjs build --locked
+node scripts/build/cargo.mjs test --locked --workspace
 node scripts/architecture/standalone-host.mjs --offline
 ~~~
 

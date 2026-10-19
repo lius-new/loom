@@ -11,7 +11,7 @@ node scripts/package/package.mjs all --platform linux   # explicit
 | Step | Purpose |
 | --- | --- |
 | `setup` | Download and verify the packaging toolchain and inputs into `.packaging/tools` (Windows: Inno Setup, MinGit; Linux: appimagetool and its runtime; macOS: checks the Xcode tools and adds both Rust targets) |
-| `compile` | `cargo build --release --locked` (macOS: both architectures, merged with `lipo`) |
+| `compile` | Prepare verified CMake/Skia using `scripts/dependencies`, then `cargo build --release --locked` (macOS: both architectures, merged with `lipo`) |
 | `package` | Stage the application folder, check it, write the portable archive (Windows zip with the managed Git runtime, Linux tar.gz, macOS signed Loom.app in a zip) |
 | `bundle` | Build the installers from the staged folder (Windows setup, Linux .deb and AppImage, macOS .dmg) and write `SHA256SUMS` |
 | `manifest` | Write the signed update manifest `update-<platform>.json` (see [Update manifests](#update-manifests)); `all` skips it when no signing key is set |
@@ -58,7 +58,8 @@ Rust targets to the toolchain. Inno Setup is installed with its own portable mod
 
 ```
 .packaging/
-  downloads/   verified archives (reused while their SHA-256 matches)
+  dependencies/ verified build inputs and extracted private CMake (shared with CI)
+  downloads/   verified packaging archives (reused while their SHA-256 matches)
   tools/       innosetup-<version>/, mingit-<version>/, appimagetool-<version>/
   windows/     stage/
   linux/       stage/, deb/, appimage/
@@ -88,6 +89,13 @@ and delete the file. A build trusts only the key it was built with: after a
 key change, users of older builds have to update once by hand.
 
 ## Windows
+
+The compile step automatically prepares a pinned private CMake and a verified
+prebuilt Skia archive through [the shared dependency preparer](../dependencies/README.md).
+It requires no system CMake or manual LLVM installation. Downloads and extracted
+tools stay under `.packaging/dependencies`; only Cargo's child environment changes.
+Linux and macOS compilation use the same logic, with separate Skia inputs for the
+two macOS targets. Inno Setup and MinGit remain packaging-specific dependencies.
 
 The installer is built with Inno Setup and modelled on Zed's Windows installer
 (`windows/installer.iss`): modern wizard that follows the system light/dark

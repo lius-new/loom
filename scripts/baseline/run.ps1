@@ -28,7 +28,17 @@ $checks = [Collections.Generic.List[object]]::new()
 $previousLocation = Get-Location
 $previousSkiaUrl = [Environment]::GetEnvironmentVariable('SKIA_BINARIES_URL', 'Process')
 $hadSkiaUrl = Test-Path Env:SKIA_BINARIES_URL
-. (Join-Path $PSScriptRoot '../build/skia-cache.ps1')
+$previousPath = $env:PATH
+$previousCmake = [Environment]::GetEnvironmentVariable('CMAKE', 'Process')
+$hadCmake = Test-Path Env:CMAKE
+$previousForceDownload = [Environment]::GetEnvironmentVariable('FORCE_SKIA_BINARIES_DOWNLOAD', 'Process')
+$hadForceDownload = Test-Path Env:FORCE_SKIA_BINARIES_DOWNLOAD
+$previousForceBuild = [Environment]::GetEnvironmentVariable('FORCE_SKIA_BUILD', 'Process')
+$hadForceBuild = Test-Path Env:FORCE_SKIA_BUILD
+$previousSourceDir = [Environment]::GetEnvironmentVariable('SKIA_SOURCE_DIR', 'Process')
+$hadSourceDir = Test-Path Env:SKIA_SOURCE_DIR
+$previousLibrarySearch = [Environment]::GetEnvironmentVariable('SKIA_LIBRARY_SEARCH_PATH', 'Process')
+$hadLibrarySearch = Test-Path Env:SKIA_LIBRARY_SEARCH_PATH
 
 function Invoke-CargoCheck {
     param([string]$Name, [string[]]$Arguments)
@@ -65,14 +75,20 @@ function Invoke-ArchitectureCheck {
 
 try {
     Set-Location -LiteralPath $repoRoot
-    $skiaCache = $null
-    if ($SkiaArchive -or -not $previousSkiaUrl) {
-        $skiaCache = Resolve-LoomSkiaCache -Repository $repoRoot -ArchivePath $SkiaArchive
-        if ($skiaCache) {
-            $env:SKIA_BINARIES_URL = $skiaCache.url
-            Write-Host "Verified local Skia $($skiaCache.version): $($skiaCache.archive)"
-        }
-    }
+    $dependencyArgs = @((Join-Path $PSScriptRoot '../dependencies/ensure.mjs'), '--json')
+    if ($Offline) { $dependencyArgs += '--offline' }
+    if ($SkiaArchive) { $dependencyArgs += @('--skia-archive', [IO.Path]::GetFullPath($SkiaArchive)) }
+    $prepared = & node @dependencyArgs
+    if ($LASTEXITCODE -ne 0) { throw 'Build dependency preparation failed.' }
+    $dependencies = $prepared | ConvertFrom-Json
+    $env:PATH = $dependencies.env.PATH
+    $env:CMAKE = $dependencies.env.CMAKE
+    $env:SKIA_BINARIES_URL = $dependencies.env.SKIA_BINARIES_URL
+    Remove-Item Env:FORCE_SKIA_BINARIES_DOWNLOAD -ErrorAction SilentlyContinue
+    Remove-Item Env:FORCE_SKIA_BUILD -ErrorAction SilentlyContinue
+    Remove-Item Env:SKIA_SOURCE_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:SKIA_LIBRARY_SEARCH_PATH -ErrorAction SilentlyContinue
+    $skiaCache = $dependencies.skia
     $environment = [ordered]@{
         captured_at = (Get-Date -Format o)
         head = (git rev-parse HEAD)
@@ -188,6 +204,17 @@ eol = lf
     if ($LASTEXITCODE -ne 0) { throw 'Baseline report generation failed.' }
     if (($checks | Where-Object exit_code -NE 0).Count -gt 0) { exit 1 }
 } finally {
+    $env:PATH = $previousPath
+    if ($hadCmake) { $env:CMAKE = $previousCmake }
+    else { Remove-Item Env:CMAKE -ErrorAction SilentlyContinue }
+    if ($hadForceDownload) { $env:FORCE_SKIA_BINARIES_DOWNLOAD = $previousForceDownload }
+    else { Remove-Item Env:FORCE_SKIA_BINARIES_DOWNLOAD -ErrorAction SilentlyContinue }
+    if ($hadForceBuild) { $env:FORCE_SKIA_BUILD = $previousForceBuild }
+    else { Remove-Item Env:FORCE_SKIA_BUILD -ErrorAction SilentlyContinue }
+    if ($hadSourceDir) { $env:SKIA_SOURCE_DIR = $previousSourceDir }
+    else { Remove-Item Env:SKIA_SOURCE_DIR -ErrorAction SilentlyContinue }
+    if ($hadLibrarySearch) { $env:SKIA_LIBRARY_SEARCH_PATH = $previousLibrarySearch }
+    else { Remove-Item Env:SKIA_LIBRARY_SEARCH_PATH -ErrorAction SilentlyContinue }
     if ($hadSkiaUrl) { $env:SKIA_BINARIES_URL = $previousSkiaUrl }
     else { Remove-Item Env:SKIA_BINARIES_URL -ErrorAction SilentlyContinue }
     Set-Location -LiteralPath $previousLocation.Path

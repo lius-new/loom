@@ -1,3 +1,4 @@
+import {prepareDependencies} from '../../dependencies/ensure.mjs';
 // macOS packaging: a universal (arm64 + x86_64) Loom.app, shipped as a .zip
 // and a drag-to-Applications .dmg. Packages use the system Git: Loom falls
 // back to the `git` on PATH when no managed runtime is present.
@@ -127,14 +128,14 @@ export function setup() {
 }
 
 /** Build Loom for both architectures and merge them with lipo. */
-export function compile() {
+export async function compile() {
   requireMacOS();
   // Pin the deployment target so the binary's minimum macOS matches
   // LSMinimumSystemVersion whatever the build machine runs.
   const env = { ...process.env, MACOSX_DEPLOYMENT_TARGET: MINIMUM_SYSTEM_VERSION };
   for (const target of RUST_TARGETS) {
     step(`Compiling Loom (release, ${target})`);
-    run('cargo', ['build', '--release', '--locked', '--target', target], { env });
+    run('cargo', ['build', '--release', '--locked', '--target', target], { env: (await prepareDependencies({target, env})).env });
   }
   step('Creating the universal binary');
   fs.mkdirSync(path.dirname(universalBinary()), { recursive: true });

@@ -76,13 +76,14 @@ what each package installs.
 
 Loom builds with the Rust toolchain pinned in
 [`rust-toolchain.toml`](rust-toolchain.toml) (currently 1.97.1); `rustup`
-installs it automatically.
+installs it automatically. Install Node.js 20+ and the platform C/C++ SDK as
+well; the shared scripts prepare CMake and Skia privately.
 
 ```sh
 git clone https://github.com/lius-new/loom.git
 cd loom
-cargo build --release --locked
-cargo run --release --locked
+node scripts/build/cargo.mjs build --release --locked
+node scripts/build/cargo.mjs run --release --locked
 ```
 
 On Debian or Ubuntu, install the native libraries first:
@@ -94,7 +95,8 @@ sudo apt install build-essential \
     libwayland-dev libxkbcommon-dev
 ```
 
-Skia is downloaded as a prebuilt archive during the first build. See
+Pinned CMake and prebuilt Skia archives are downloaded and SHA-256 verified during
+the first build; no system CMake or manual Skia download is required. See
 [Building Loom](docs/building.md) for offline builds, tests, CI and packaging.
 
 ## Documentation
@@ -116,7 +118,7 @@ request, run the same checks as CI:
 
 ```sh
 cargo fmt --all -- --check
-cargo test --locked --workspace
+node scripts/build/cargo.mjs test --locked --workspace
 node scripts/architecture/check.mjs
 ```
 

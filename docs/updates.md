@@ -77,7 +77,7 @@ its manifest from another place. A loopback feed may use plain HTTP and skips
 the proxy:
 
 ```bash
-LOOM_UPDATE_FEED=http://127.0.0.1:8765 cargo run
+LOOM_UPDATE_FEED=http://127.0.0.1:8765 node scripts/build/cargo.mjs run
 ```
 
 The manifest must still be signed with the release key, and its package URLs
@@ -86,5 +86,5 @@ an `unins000.exe` file sits next to `Loom.exe`; on Linux it counts as a
 `.tar.gz` install of `target/debug`. To check that a published feed verifies:
 
 ```bash
-cargo test live_feed -- --ignored --nocapture
+node scripts/build/cargo.mjs test live_feed -- --ignored --nocapture
 ```

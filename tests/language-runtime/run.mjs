@@ -1,3 +1,4 @@
+import {prepareDependencies} from '../../scripts/dependencies/ensure.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +17,7 @@ const option=name=>{const index=args.indexOf(name);return index<0?null:args[inde
 const extraPackage=option('--new-package'),sample=option('--sample');
 if(Boolean(extraPackage)!==Boolean(sample))throw Error('Use --new-package and --sample together to verify a genuinely new external language');
 const wasmPackages=await prepareWasmFixture(path.join(root,'target/wasm-input'),{module:option('--wasm-rust'),offline:args.includes('--offline')});
-const env={...process.env,LOOM_TEST_LANGUAGE_PACKS:packages,LOOM_TEST_LEGACY_PACKAGES:legacyPackages,LOOM_TEST_WASM_PACKAGES:wasmPackages};
+const env={...(await prepareDependencies({skia:false,offline:args.includes('--offline')})).env,LOOM_TEST_LANGUAGE_PACKS:packages,LOOM_TEST_LEGACY_PACKAGES:legacyPackages,LOOM_TEST_WASM_PACKAGES:wasmPackages};
 const offline=args.includes('--offline')?['--offline']:[];
 const cargo=command=>execFileSync('cargo',[...command,'--manifest-path',path.join(root,'Cargo.toml'),'--locked',...offline,'--target-dir',path.join(root,'target')],{cwd:root,env,stdio:'inherit'});
 if(!args.includes('--probe-only'))cargo(['test','--no-fail-fast']);

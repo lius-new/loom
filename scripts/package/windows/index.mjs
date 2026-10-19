@@ -1,3 +1,4 @@
+import {prepareDependencies} from '../../dependencies/ensure.mjs';
 // Windows packaging: a per-user Inno Setup installer and a portable zip, both
 // carrying Loom.exe, the `loom` shell command and a managed MinGit runtime
 // under `runtime/git`.
@@ -130,10 +131,10 @@ function iscc() {
 }
 
 /** Build the optimized Loom.exe. */
-export function compile() {
+export async function compile() {
   requireWindows();
   step('Compiling Loom (release)');
-  run('cargo', ['build', '--release', '--locked']);
+  run('cargo', ['build', '--release', '--locked'], {env: (await prepareDependencies()).env});
 }
 
 /**
