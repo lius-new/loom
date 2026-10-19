@@ -1,12 +1,12 @@
 # Loom 通用 LSP 设计（临时草案）
 
 - 日期：2026-10-18。
-- 状态：后续 P4 实施草案，未实现。
+- 状态：P4a–P4c 与 P4f 已实现并接入应用，仍有验收项待验证；P4d、P4e 未开始。
 - 公共身份、坐标、语言注册表和高亮模型以 [主设计](LANGUAGE_SERVICES_DESIGN.tmp.md) 第 4–7 节为准；本文件不重复定义。
 - 适用范围：多语言通用客户端。rust-analyzer 是首个真实集成样例，协议核心必须通过不同能力组合和非 Rust 假服务器验证。
 - 默认首期：P4a 通道 → P4b 文档同步 → P4c 可见结果。P4d 同步/delta 优化、P4e 通用 watcher、P4f 完整进度单独交付。
 - P4 不阻塞主设计的 P1–P3；未完成的 watcher/progress 不得提前声明能力。
-- 实施状态：尚未开始；P4 的唯一状态维护入口见 [第 5 节进度跟踪](#5-实施进度跟踪)。
+- 实施状态：文档同步、语义高亮、诊断波浪线/概览标记/悬浮卡及服务器进度面板已接通；跨平台与真实服务器自监视等剩余验收见 [第 5 节进度跟踪](#5-实施进度跟踪)，该节是 P4 的唯一状态维护入口。
 
 ## 1. 通用 LSP 服务设计
 
@@ -72,7 +72,7 @@ Stopped → Starting → Initializing → Ready → Stopping → Stopped
 
 ### 1.5 文档同步
 
-为每个服务器实例中的 URI 建立独立、递增的 LSP version，并保存它到 DocumentStamp 的映射，不直接截断核心 u64。同一实例中关闭再打开同一 URI 时也不复用协议版本，保留版本计数或墓碑，避免旧诊断的版本号碰撞。协议整数接近上限时重建服务器实例并增加实例代次，而非简单将同一连接上的版本号归零。
+每个服务器连接共享一个递增的 LSP version 计数器，向任意 URI 发送新版本时分配下一个值，因此同一 URI 的版本递增但允许跳号；不直接截断核心 u64。该实现既保证关闭再打开或切换语言后不复用协议版本，也无需为已关闭 URI 保存无界墓碑。版本到 DocumentStamp 与正文的历史仅属于当前打开代次，关闭或重开即清除。一个同步批次无法全部分配合法协议版本时，整个批次不提交，由协调器清除实例结果并重建连接、增加运行代次；旧运行的通知与响应因此失效，不在原连接归零。
 
 - didOpen 发送最新完整正文。
 - didChange 按服务器同步类型执行；同步为 None 时不发送修改，并在本地编辑后禁用该文档语义结果，直到有效重开/同步。
@@ -180,7 +180,7 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 
 ## 5. 实施进度跟踪
 
-最近更新：2026-10-18。P4a–P4c 已实现并待验证（假服务器与真实进程已测；真实 rust-analyzer 已验证诊断、语义 token 与未打开文件的创建；Cargo.toml 变化、外部修改与 git 分支切换的自监视仍未实测）；其余子阶段未开始。
+最近更新：2026-10-19。P4a–P4c、P4f 已实现并接入应用，待补充验收（既有记录中真实 rust-analyzer 已验证诊断、语义 token 与未打开文件的创建；Cargo.toml 变化、外部修改与 git 分支切换的自监视仍未实测，Linux/macOS 未运行）。诊断已支持编辑期间保留、波浪线/概览标记/悬浮卡及发布结果计数；本次修复架构登记与文档重开后的旧版本诊断串入，见 R-L5。P4d、P4e 未开始。
 
 状态与证据规则沿用 [主设计第 19 节](LANGUAGE_SERVICES_DESIGN.tmp.md#19-实施进度跟踪)。本节是 P4 状态的唯一维护位置；默认先交付 P4a–P4c，后续子阶段按需求启动，不把未启动的可选项算作首期阻塞。
 
@@ -189,8 +189,8 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 | 阶段 | 当前状态 | 实现/验证证据 | 完成日期 | 下一步或启动条件 |
 | --- | --- | --- | --- | --- |
 | P4a 通道与生命周期 | 待验证 | R-L1 | — | 缺 Linux/macOS 运行（Windows Job Object 已在 R-L2 加入并测试） |
-| P4b 文档同步 | 待验证 | R-L2 | — | 缺 rust-analyzer 自监视实测（P4b-3，随 P4c 的真实 smoke 一起做）；Linux/macOS 未运行 |
-| P4c 可见结果 | 待验证 | R-L3 | — | 缺 Linux/macOS；真实 smoke 为 opt-in 测试（--ignored） |
+| P4b 文档同步 | 待验证 | R-L2、R-L5 | — | 缺 rust-analyzer 自监视实测（P4b-3，随 P4c 的真实 smoke 一起做）；Linux/macOS 未运行 |
+| P4c 可见结果 | 待验证 | R-L3、R-L5 | — | 已接通诊断波浪线/概览标记/悬浮卡；缺 Linux/macOS，真实 smoke 为 opt-in 测试（--ignored） |
 | P4d 同步/delta 优化 | 未开始 | — | — | 首期正确性稳定后按数据决定 |
 | P4e 通用文件监视 | 未开始 | — | — | 第二真实服务器或已知自监视缺口需要时启动 |
 | P4f 完整进度 | 待验证 | R-L4 | — | 缺 Linux/macOS；丢失 end 的有界清理依赖实例重启/退出（未单独加超时） |
@@ -251,7 +251,7 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 - 协调器：诊断带 version 时经同步历史映射到编辑器戳，只在等于当前文档戳时接受，无 version 时按最新状态接受并在下一次编辑后自然失效；语义请求在编辑停顿 75 ms 后发出，每文档至多一个在途，响应按（文档戳、refresh 代次）校验，过期则重新排程；ContentModified 重试；refresh 递增代次并让全部文档重新请求；没有 full 能力的服务器不发请求；实例失败、文档离开时清除结果。结果只对精确的编辑器状态返回。
 - 应用：编辑器在语义 token 与当前文本一致时将其覆盖在语法 span 上；诊断以红/黄/蓝下划线绘制；状态栏右侧显示服务器状态（启动中/重启中/已停止/未找到）以及当前文件的错误与警告数。结果到达时通过与语法 worker 相同的修订号触发重绘。
 - 测试：manager_tests 共 20 个进程级用例（含版本化/无版本诊断、去抖、null 清除、无能力不请求、refresh、结果随文档和服务器消失）；应用级测试验证结果可经桥读取；真实 rust-analyzer 1.97.1（8bab26f4 2026-07-14，Windows，无客户端 watcher 能力）opt-in 测试 real_rust_analyzer_sees_files_changed_outside_the_editor：lib.rs 声明 mod other 时得到 unresolved module 诊断和 2 个语义 span；在编辑器外新建 other.rs 后诊断清除。
-未验证：Cargo.toml 修改、已存在文件的外部修改、git 分支切换；Linux/macOS；诊断的悬停消息入口（目前只有下划线与计数）。
+未验证：Cargo.toml 修改、已存在文件的外部修改、git 分支切换；Linux/macOS。此记录之后已接通编辑器诊断悬浮卡、波浪线与概览标记，当前证据见 R-L5。
 
 记录编号 / 日期：R-L4 / 2026-10-18
 阶段 / 检查点 ID：P4f / P4f-1；P4c-2 补充（状态与面板）
@@ -264,3 +264,20 @@ P4e 的注册、relative patterns、glob、额外根、rename 与 rescan 测试�
 - 诊断：完全相同的诊断去重。
 - 测试：session 的 progress 解析；manager 的任务/日志/命令报告（假服务器 --progress）；真实 rust-analyzer 的 opt-in 测试可打印任务序列（Fetching → Roots Scanned → Building compile-time-deps → Indexing 1%…97% → cargo check）。
 未做：面板内的“停止”和“打开设置”按钮；每个任务的取消；面板内的诊断列表与悬停消息。
+
+记录编号 / 日期：R-L5 / 2026-10-19
+阶段 / 检查点 ID：P4b-2、P4c-1、P4c-2；架构登记补充
+状态：已完成（本次缺陷修复与 Windows 回归；P4b/P4c 阶段的跨平台和真实自监视验收仍待验证）
+实现证据：
+- `DocumentSync` 使用连接级单调版本分配，关闭、重开、切换语言、close_all 或 forget_all 均不复用旧版本。打开代次改变时清除旧版本/正文历史，迟到的旧版本诊断既不能直接显示，也不能通过正文投影进入新文档。
+- 已缓存诊断的编辑跟随也检查 incarnation，遇到新打开代次立即清除，避免同一快照直接替换文档时将旧诊断投影到新文档。
+- 版本耗尽时批次原子拒绝；协调器清除该实例结果，在后台停止旧进程并启动新运行，通过已有 run 代次隔离旧通知和语义响应。
+- `editor_diagnostic_hover` 已登记到 `scripts/architecture/policy.json`，归属应用编辑器状态，由 `ui/editor/view` 绘制诊断悬浮卡。
+- 编辑器已有按严重性绘制的诊断波浪线、概览标记与悬浮卡；服务器面板已有诊断发布/显示/过期/未知/投影计数和丢弃原因日志。原先“悬停消息未实现”的描述已更新。
+- 回归：假服务器新增 `--diag-defer-until-save`，以 didSave 为屏障释放旧/新诊断，无需依赖延迟。进程级测试覆盖先关闭再重开及同次更新更换 incarnation；相同正文、同一服务器进程下旧诊断被丢弃，当前文档诊断正常显示。该用例已在修复前复现旧诊断被显示。
+- 缓存回归：先显示旧诊断，再以相同正文的新 incarnation 替换文档；当前诊断尚未释放前结果必须为空，释放后恢复正常。该用例同样已在修复前复现跨代次投影。
+- 规则测试覆盖重开/切换语言后的版本与正文历史隔离、close_all/forget_all 保留计数、协议版本上限与同步批次原子拒绝。
+- 既有版本诊断测试改为等待新版本发布后检查归属，移除“提交异步更新后旧结果必然仍在”的调度竞态假设。
+验证：`cargo test --locked --offline --workspace --no-fail-fast` 通过：loom 947 项通过、30 项忽略，editor-core 单元测试 73 项与 host_contract 3 项通过，workspace-tests 63 项通过，合计 1086 项通过、无失败。`node scripts/architecture/check.mjs` 与 61 项架构自测通过；`cargo fmt --all -- --check`、`git diff --check`、`cargo clippy --locked --offline --workspace --all-targets`（使用 CI 的 lint 参数）通过。迟到诊断与缓存跨代次投影的两项回归均先复现失败，再在修复后通过。
+环境：Windows x86_64，实际可用的 rustc/cargo 为 1.98.0（仅安装 stable）；仓库固定的 1.97.1 本次未运行。进程生命周期测试在允许 tasklist 查询的权限环境运行，避免沙箱拒绝查询导致前置断言假失败。
+限制：没有 version 的诊断仍按协议既有策略关联当前文档，不能从不携带版本/打开代次的通知中推断其原始生命周期。本次未运行真实 rust-analyzer smoke、Linux/macOS 或自监视验收；P4d、P4e 未启动。

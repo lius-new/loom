@@ -217,7 +217,7 @@ fn edits_and_closes_follow_the_snapshots() {
         change["params"]["contentChanges"],
         json!([{ "text": "one two" }])
     );
-    assert_eq!(change["params"]["textDocument"]["version"], 2);
+    assert_eq!(change["params"]["textDocument"]["version"], 3);
     // Same snapshot again: nothing new is sent.
     f.show(vec![f.doc("a.fk", 4, "one two"), f.doc("b.fk", 0, "bee")]);
     f.show(vec![f.doc("a.fk", 4, "one two")]);
@@ -392,17 +392,96 @@ fn versioned_diagnostics_apply_to_the_state_they_describe() {
     // After an edit the old state's diagnostics no longer apply, and the server's
     // answer for the new version is attached to the new state.
     f.show(vec![f.doc("a.fk", 5, "fn b")]);
-    assert!(
-        f.results_at("a.fk", 0).diagnostics.is_some(),
-        "kept for the old state until replaced"
-    );
-    f.wait_for("diagnostics for the new state", || {
-        f.results_at("a.fk", 5).diagnostics
+    f.wait_for("the new version's publication", || {
+        (f.mgr().infos()[0].diagnostics.published == 2).then_some(())
     });
+    assert!(f.results_at("a.fk", 5).diagnostics.is_some());
+    assert!(f.results_at("a.fk", 0).diagnostics.is_none());
     assert!(
         f.results_at("a.fk", 4).diagnostics.is_none(),
         "never for a state it was not computed for"
     );
+}
+
+#[test]
+fn reopened_documents_discard_diagnostics_from_their_previous_lifetime() {
+    for close_first in [true, false] {
+        let f = Fixture::new(&[
+            "--sync",
+            "object",
+            "--diagnostics",
+            "--diag-defer-until-save",
+        ]);
+        // Keep the server alive throughout, even when the tested document closes.
+        let other = f.doc("keep.fk", 0, "fn keep");
+        let old = f.doc("a.fk", 0, "fn a");
+        f.show(vec![old.clone(), other.clone()]);
+        f.wait_method_count("textDocument/didOpen", 2);
+        let process = f.mgr().infos()[0].process_id;
+        if close_first {
+            f.show(vec![other.clone()]);
+            f.wait_method_count("textDocument/didClose", 1);
+        }
+        let mut reopened = old.clone();
+        reopened.stamp.incarnation += 1;
+        // Identical text must not let a diagnostic cross document lifetimes.
+        f.show(vec![reopened.clone(), other]);
+        f.wait_method_count("textDocument/didOpen", 3);
+        assert_eq!(f.mgr().infos()[0].diagnostics.published, 0);
+        f.mgr().saved(reopened.path.clone(), reopened.text.clone());
+        let counts = f.wait_for("all deferred diagnostics", || {
+            let counts = f.mgr().infos().first()?.diagnostics;
+            (counts.published == 3).then_some(counts)
+        });
+        assert_eq!(counts.outdated, 1, "close_first={close_first}: {counts:?}");
+        assert_eq!(counts.shown, 2, "only the two current documents");
+        assert_eq!(
+            counts.carried, 0,
+            "old text must not be carried into a new life"
+        );
+        assert_eq!(f.mgr().infos()[0].process_id, process);
+        let found = f
+            .mgr()
+            .results(&reopened.path, reopened.stamp)
+            .diagnostics
+            .unwrap();
+        assert_eq!(found.len(), 1, "the current publication still arrives");
+        assert!(f.mgr().results(&old.path, old.stamp).diagnostics.is_none());
+    }
+}
+
+#[test]
+fn reopening_does_not_project_cached_diagnostics_into_the_new_lifetime() {
+    let f = Fixture::new(&[
+        "--sync",
+        "object",
+        "--diagnostics",
+        "--diag-defer-until-save",
+    ]);
+    let old = f.doc("a.fk", 0, "fn a");
+    f.show(vec![old.clone()]);
+    f.wait_method_count("textDocument/didOpen", 1);
+    f.mgr().saved(old.path.clone(), old.text.clone());
+    f.wait_for("the cached diagnostic", || {
+        f.mgr().results(&old.path, old.stamp).diagnostics
+    });
+
+    let mut reopened = old.clone();
+    reopened.stamp.incarnation += 1;
+    // Replacing a lifetime in one snapshot must clear the cached result even
+    // when no closed snapshot was published and the text is exactly the same.
+    f.show(vec![reopened.clone()]);
+    f.wait_method_count("textDocument/didOpen", 2);
+    assert!(
+        f.mgr()
+            .results(&reopened.path, reopened.stamp)
+            .diagnostics
+            .is_none()
+    );
+    f.mgr().saved(reopened.path.clone(), reopened.text.clone());
+    f.wait_for("the new lifetime's diagnostic", || {
+        f.mgr().results(&reopened.path, reopened.stamp).diagnostics
+    });
 }
 
 #[test]

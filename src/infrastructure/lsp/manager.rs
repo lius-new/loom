@@ -585,6 +585,13 @@ impl Coordinator {
                 let Some((stamp, found, text)) = &entry.diagnostics else {
                     continue;
                 };
+                if stamp.incarnation != document.stamp.incarnation {
+                    // Following edits is only valid within one document life.
+                    // Identical text in a reopened file is still a new document.
+                    entry.diagnostics = None;
+                    self.results_changed = true;
+                    continue;
+                }
                 if *stamp == document.stamp {
                     continue;
                 }
@@ -802,7 +809,28 @@ impl Coordinator {
         else {
             return;
         };
-        for Notification { method, params } in ready.sync.reconcile(&instance.documents) {
+        let notes = match ready.sync.reconcile(&instance.documents) {
+            Ok(notes) => notes,
+            Err(_) => {
+                // Never wrap versions in the same connection: a late publication
+                // could otherwise match a new document's version. A new run also
+                // invalidates all old semantic responses and queued events.
+                let instance = &mut self.instances[at];
+                {
+                    let mut store = self.results.lock().unwrap();
+                    for document in &instance.documents {
+                        store.remove(&uri::key(&document.uri));
+                    }
+                    self.results_changed = true;
+                }
+                let old = std::mem::replace(&mut instance.phase, Phase::Failed(String::new()));
+                instance.failures = 0;
+                stop_in_background(old);
+                self.start(at);
+                return;
+            }
+        };
+        for Notification { method, params } in notes {
             client.notify(method, params);
         }
         if ready.wants_semantic_tokens() {

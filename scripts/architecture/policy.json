@@ -87,6 +87,10 @@
       "owner": "app/state/editor",
       "migrated_in": "R3"
     },
+    "editor_diagnostic_hover": {
+      "owner": "app/state/editor: diagnostic hover interaction, rendered by ui/editor/view",
+      "migrated_in": "LSP diagnostic hover cards"
+    },
     "editor_horizontal_scrollbar_drag_offset": {
       "owner": "app/state/editor",
       "migrated_in": "R3"

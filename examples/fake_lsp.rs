@@ -140,6 +140,9 @@ fn main() {
     };
     let mut input = std::io::BufReader::new(std::io::stdin().lock());
     let mut shutdown_seen = false;
+    // Release these on didSave so a test can reopen a document before any old
+    // publication arrives, without relying on sleeps or thread scheduling.
+    let mut deferred_diagnostics = Vec::new();
     while let Some(message) = read_message(&mut input) {
         log(&message);
         let method = message.get("method").and_then(Value::as_str).unwrap_or("");
@@ -237,12 +240,20 @@ fn main() {
                     if !options.flag("--diag-unversioned") {
                         params["version"] = document["version"].clone();
                     }
-                    out.send(&json!({
+                    let publication = json!({
                         "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": params
-                    }));
+                    });
+                    if options.flag("--diag-defer-until-save") {
+                        deferred_diagnostics.push(publication);
+                    } else {
+                        out.send(&publication);
+                    }
                 }
             }
             ("textDocument/didSave", None) => {
+                for publication in deferred_diagnostics.drain(..) {
+                    out.send(&publication);
+                }
                 if options.flag("--progress") {
                     out.send(&json!({
                         "jsonrpc": "2.0", "method": "$/progress",
