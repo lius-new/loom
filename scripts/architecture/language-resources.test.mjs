@@ -23,9 +23,14 @@ test('repository ships language resources without a language producer or Rust wr
     }
   }
   for (const id of ['json', 'markdown']) assert.ok(fs.existsSync(path.join(resources, id, 'package.json')));
+  for (const manifest of ['Cargo.toml', 'tests/language-runtime/Cargo.toml']) {
+    assert.match(fs.readFileSync(path.join(root, manifest), 'utf8'), /tree-sitter\s*=\s*\{[^}]*features\s*=\s*\[[^\]]*"wasm"/);
+  }
   for (const workflow of ['ci.yml', 'release-linux.yml', 'release-macos.yml', 'release-windows.yml']) {
     const text = fs.readFileSync(path.join(root, '.github/workflows', workflow), 'utf8');
     assert.doesNotMatch(text, /language-packs\/build|loom-grammar-/);
     assert.match(text, /fetch-languages\.mjs/);
+    assert.match(text, /run-wasm\.mjs/, 'WASM regressions run even without a native resource feed');
   }
+  assert.match(fs.readFileSync(path.join(root, 'scripts/package/macos/entitlements.plist'), 'utf8'), /com\.apple\.security\.cs\.allow-jit/);
 });

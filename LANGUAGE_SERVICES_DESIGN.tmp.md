@@ -7,7 +7,7 @@
 - 默认顺序：公共基础 → 开放语言注册表 → 通用 Tree-sitter 基础高亮 → 通用 LSP 最小闭环 → 嵌入语言与常用语言扩展。
 - 文件用途：项目根目录临时设计与实施记录；设计稳定后再拆分进入正式文档。
 - 阅读范围：本文件主导公共模型与基础高亮实施；LSP 协议细节见 [LSP_DESIGN.tmp.md](LSP_DESIGN.tmp.md)。
-- 实施状态：P0 部分完成；P1、P2、P3a、P3b、P5 已实现并待跨平台等验证；P4a、P4b、P4c、P4f 已接入应用并待补充验证，P4d、P4e 未开始。按需原生语言包已实现并完成 Windows 验证，Linux/macOS 仍待实机验收（第 11.3 节、R-012）。更新入口见 [第 19 节进度跟踪](#19-实施进度跟踪)。
+- 实施状态：P0 部分完成；P1、P2、P3a、P3b、P5 已实现并待跨平台等验证；P4a、P4b、P4c、P4f 已接入应用并待补充验证，P4d、P4e 未开始。标准 WASM 与原生语言模块均已接入并完成 Windows 功能验证，Linux/macOS 仍待实机验收（第 11.3–11.4 节、R-014）。更新入口见 [第 19 节进度跟踪](#19-实施进度跟踪)。
 
 ## 1. 决策摘要
 
@@ -19,11 +19,11 @@
 4. 先用 Tree-sitter 替换自写 lexer，提供无需服务器的基础高亮、跨行上下文与编辑时的连续显示。Rust 是首个集成样例，必须用第二种语法明显不同的语言检验通用接口。
 5. 再接通用 LSP 客户端，交付文档同步、诊断和语义高亮；rust-analyzer 作为首个真实服务器样例，另用不同能力组合的假服务器验证协议通用性。
 6. 两个服务共享公共模型但互不依赖。事务后全量文档桥接属于 LSP 接入阶段，本地语法初期沿用视口查询提交最新快照，不要求先完成全部语言服务基础设施。
-7. 原始首期未实现外部语言包；2026-10-19 的后续实现已改为全动态独立语言包与用户目录发现，见第 11.3 节。WASM 运行时选型、自动下载服务器、完整第三方主题格式仍需分别设计与验收。
+7. 原始首期未实现外部语言包；2026-10-19 的后续实现已改为全动态独立语言包与用户目录发现，见第 11.3 节。标准 Tree-sitter WASM 已通过官方 Wasmtime 通路接入（R-014）；自动下载服务器与完整第三方主题格式仍需分别设计与验收。
 8. 直接替换旧实现，不提供运行时 legacy 后端开关；基础替换阶段删除旧 lexer 与按行索引。现有主题保持视觉风格，但不长期保留旧颜色结构或会话迁移层。
 9. 所有语言 grammar/query 均属于独立动态包，Markdown/JSON 默认随附并启用。启动扫描应用资源和用户目录的逐包清单，实际显示内容时后台加载；用户新增包无需中央注册或重新编译。坏包与资源失败按包隔离，纯文本始终可用，首版安装/更新/禁用后重启生效。
 
-通用性的验收是“增加兼容语言时，只安装自包含描述、查询与匹配平台/ABI 的动态模块，文档版本、缓存、调度、合成与 LSP 核心无需修改”。不承诺缺失平台二进制或 ABI 不兼容的任意 grammar 可直接运行。
+通用性的验收是“增加兼容语言时，只安装自包含描述、查询与兼容 ABI 的标准 WASM（或匹配平台的原生模块），文档版本、缓存、调度、合成与 LSP 核心无需修改”。不承诺缺失平台二进制或 ABI 不兼容的任意 grammar 可直接运行。
 
 ## 2. 项目现状与保留边界
 
@@ -433,7 +433,7 @@ assets/language-packs/
 
 # 安装成品追加标准模块，源码模板不包含二进制：
 <应用资源>/language-packs/<id>/modules/
-  <grammar>.dll               # Windows；Linux 为 .so；macOS 为 .dylib 或显式 .so
+  tree-sitter-<grammar>.wasm  # 标准上游下载；也可用各平台 .dll/.so/.dylib
 
 ```
 
@@ -635,13 +635,27 @@ P3b 增加标签页验收：准备至少 32 个打开文档，使最近视口分
 
 **加载边界。** 启动与文件识别只读清单。浏览目录、搜索、恢复隐藏标签及仅发现包已安装，均不读取 grammar/query、不加载语言库。默认启用同样不触发加载；显示 Markdown/JSON 才加载其模块。可见 Markdown 围栏或 HTML script/style 才加载其对应嵌入语言；不可见区域不提前编译查询。syntax worker 经 Resources 端口加载，生产 feature 不读取文件或依赖 infrastructure。
 
-**资源与生命周期。** 首版使用标准 DLL/.so/.dylib。symbol 默认 tree_sitter_<grammar>，别名可显式指定标准入口；module 接受原始文件名，省略扩展名则追加平台后缀，不添加 lib 前缀。macOS 显式 .so 可直接使用。加载时校验 Tree-sitter ABI，不需要 Loom 专属导出或 Rust ABI。安装、更新、禁用后的清单通过重启重新发现，运行时注册表不变；不实现热重载与卸载。Tree/Query 可能持有库内指针，因此库句柄保留至进程退出。最多 64 个已加载原生模块，每根目录最多 128 个候选包、最多 128 个活动包；单清单 1 MiB、grammar 128 个、包内语言共 128 个、服务器 64 个；查询单文件 4 MiB、缓存总计 8 MiB。原生包是进程内受信代码，发布方需提供匹配平台/架构的模块。
+**资源与生命周期。** 标准 WASM 和 DLL/.so/.dylib 使用同一资源接口。symbol 默认 tree_sitter_<grammar>，别名可显式指定标准入口；module 接受原始 .wasm/.dll/.so/.dylib 文件名。无后缀的 stem 依次查找 tree-sitter-<stem>.wasm、<stem>.wasm、原生平台文件，不添加 lib 前缀；显式文件名只选择指定格式。WASM 损坏不偷偷回退到同目录原生库。macOS 显式 .so 可直接使用。加载时校验 Tree-sitter ABI，不需要 Loom 专属导出或 Rust ABI。安装、更新、禁用后的清单通过重启重新发现，运行时注册表不变；不实现热重载与卸载。原生 Tree/Query 可能持有库内指针，因此库句柄保留至进程退出。WASM Language 由官方引用计数保活，加载 store 可释放；每个执行 Parser 各自持有 store，均来自同一个惰性 Engine。最多 64 个已加载原生模块、64 个缓存 WASM 语言，WASM 单文件 32 MiB，每根目录最多 128 个候选包、最多 128 个活动包；单清单 1 MiB、grammar 128 个、包内语言共 128 个、服务器 64 个；查询单文件 4 MiB、缓存总计 8 MiB。原生包是进程内受信代码，发布方需提供匹配平台/架构的模块。
 
-**发布。** 仓库没有语言制作命令或语法源码。CI/发布通过按平台配置的外部 URL/SHA256 取得预构建 tar.gz；发布要求启用 Markdown/JSON，缺输入明确失败。普通 CI 未配置资源源时仍构建/测试并导出明确标识的纯宿主产物。macOS universal 模块同样由外部提供。主程序打包仅从 LOOM_LANGUAGE_PACKS 成品目录复制，不编译语言、不查询 Cargo 输出目录；macOS 对成品模块及应用分别签名。定位跟随可执行文件（macOS 为 Contents/Resources），不依赖源码或工作目录。LSP 仍使用独立进程，安装或发现包不得自动启动服务器。
+**发布。** 仓库没有语言制作命令或语法源码。CI/发布通过按平台配置的外部 URL/SHA256 取得预构建 tar.gz；发布要求启用 Markdown/JSON，缺输入明确失败。普通 CI 未配置资源源时仍构建/测试并导出明确标识的纯宿主产物。原生 macOS universal 模块由外部提供；标准 WASM 字节无需按宿主架构重编译。主程序打包仅从 LOOM_LANGUAGE_PACKS 成品目录复制，不编译语言、不查询 Cargo 输出目录；macOS 只对原生模块及应用分别签名，WASM 作为原始资源复制；应用带 allow-jit 供 Wasmtime 使用。定位跟随可执行文件（macOS 为 Contents/Resources），不依赖源码或工作目录。LSP 仍使用独立进程，安装或发现包不得自动启动服务器。
 
 **构建与测试独立。** 仓库不存在语言制作工程或包装 crate；删除全部语言资源后，主工程仍可 cargo build/test --workspace。真实语法套件移至 tests/language-runtime，通过预构建成品运行，缺少输入时报错而非静默跳过。真实测试只消费外部标准语法模块，不生产模块。主工程默认单元测试只用元数据与合成 span；显式 UI 语法基准需要 LOOM_TEST_LANGUAGE_PACKS 指定成品。
 
-**验收。** 覆盖源码物理移除后的完整主构建/测试、所有语法含 Markdown/JSON 的启动零加载、首次使用和缓存、可见注入惰性加载、用户新增包无需重编译、覆盖与禁用、坏清单/冲突/缺模块/坏符号/坏查询隔离，以及重新发现模拟重启生效。冷子进程使用真实发布结构且关闭 Cargo 回退，核验 Windows 模块句柄；另有应用级目录、搜索和隐藏恢复的零加载回归。Windows 结果见 R-013，Linux/macOS 实机加载、实际安装器与新冷加载性能基线仍待验收。
+**验收。** 覆盖源码物理移除后的完整主构建/测试、所有语法含 Markdown/JSON 的启动零加载、首次使用和缓存、可见注入惰性加载、用户新增包无需重编译、覆盖与禁用、坏清单/冲突/缺模块/坏符号/坏查询隔离，以及重新发现模拟重启生效。冷子进程使用真实发布结构且关闭 Cargo 回退，核验 Windows 模块句柄；另有应用级目录、搜索和隐藏恢复的零加载回归。Windows 结果见 R-014，Linux/macOS 实机加载、实际安装器与新冷加载性能基线仍待验收。
+
+### 11.4 标准 Tree-sitter WASM（已实施，跨平台待验证）
+
+宿主与独立验证工程统一启用 tree-sitter 0.27 的官方 wasm feature，运行时由 Wasmtime 提供；Cargo.lock 锁定通用引擎依赖，不重新引入具体语法 crate、语言制作工作区或专属 ABI。构建宿主需要 PATH 中的 CMake；终端用户只需已编译的 Loom，不需要 CMake、WASI SDK 或任何语言编译器。
+
+标准上游 .wasm 放在包的 modules/ 目录，清单与查询仍使用原格式。Rust 模板保持 module: "rust"；直接下载 tree-sitter-rust.wasm 后放入即可，不必改清单或编译 DLL。显式 .wasm 文件名可用于任意语言；不同资源键复用语法时通过 symbol: tree_sitter_<上游名> 指定入口。普通 WASI 程序、组件模型与非 Tree-sitter 字节不能冒充语法模块。
+
+启动、识别、搜索和隐藏恢复只读描述，不打开 WASM、不实例化 Engine。首次后台请求才初始化进程共享的不可变 Engine、读取有界字节并经 WasmStore::load_language 解析/编译；结果与失败按 grammar 缓存。加载 store 释放后 Language/Tree/Query 仍有效。Resources::parser 负责执行后端：原生 Parser 无 WASM store；WASM Parser 各自建立独立 store 并关联同一个 Engine。宿主文档和注入层都通过这个通用入口；feature 层不依赖 Wasmtime、文件系统或基础设施实现。
+
+模块头、大小、导出名和 ABI 错误只让对应语言退回纯文本。Parser/store 设置失败也返回完整纯文本帧，不能 panic 或把失败当作取消无限重试。真正取消仍丢弃本次结果；原生语言路径保持兼容。每份 WASM 输入上限 32 MiB，每个资源集缓存至多 64 个成功加载的 WASM 语言；首版仍重启生效，不热替换或卸载。
+
+发布消费者使用与运行时相同的文件优先级，保持 .wasm 字节不变，不调用语言编译器；macOS 不把 .wasm 当 Mach-O 签名，应用增加 allow-jit。CI 即使没有配置原生语言资源源，也必跑只消费上游 Rust WASM 的独立回归；模块下载有固定 SHA-256，与应用内自动下载无关。
+
+验收包括：冷进程发现时 Engine 未初始化；直接使用上游完整 WASM 和外部 scanner；加载 store/适配器释放后的语言与树有效；多 Parser/多索引隔离；增量结果与重新解析一致；可见注入；后台 Worker 实际发布；坏模块/导出/超限与 store 失败；无 DLL 的应用目录、用户目录安装，新扩展名识别以及禁用后重启；全过程保持同一二进制哈希。Windows 证据见 R-014，WASM 首次 JIT 的冷加载性能与跨平台签名/安装尚待测量。
 
 ## 12. 拟新增/修改文件与依赖方向
 
@@ -698,7 +712,7 @@ tests/fixtures/languages/      # 高亮、编辑与嵌入样例
 
 依赖提案：协议类型优先评估 `lsp-types`，URI 使用经过验证的库进行编码；Tree-sitter runtime 锁定于 Cargo.lock；外部标准模块按平台/架构、ABI 和查询版本验证，不引入具体 grammar crate。本文不指定尚未验证的版本组合。
 
-不直接依赖 VS Code/Monaco，不引入 JS 引擎；首期不引入 WASM 运行时。CLI 命令与参数通过结构化进程参数传递，Windows 路径含空格等情况必须测试。
+不直接依赖 VS Code/Monaco，不引入 JS 引擎；R-014 通过 Tree-sitter 官方 wasm feature 嵌入通用 Wasmtime 运行时，不引入语言源码或包装 crate。CLI 命令与参数通过结构化进程参数传递，Windows 路径含空格等情况必须测试。
 
 ## 13. 实施阶段与完成标准
 
@@ -821,7 +835,7 @@ Clippy 使用 `.github/workflows/ci.yml` 中当时的完整参数。grammar 接�
 - 标准模块放入 modules/ 即可使用；symbol 默认 tree_sitter_<grammar>，语法别名可显式指定。验证无 Loom 导出仍可真实高亮、原始文件名、不添加 lib 前缀与路径穿越拒绝。
 - tests/language-runtime 只消费外部模块，覆盖所有查询编译、固定样例、编辑一致性、注入与 worker 回归。查询谓词/指令兼容性单独检查，不承诺任意 Neovim 查询无需适配。
 - SOURCE.md 记录上游语法与查询版本、提交、许可证和修改；不把外部模块版本误写成主 Cargo 依赖。
-- 生产探针以同一二进制哈希验证无资源纯文本、安装至应用目录、移至隔离用户目录、新扩展名真实高亮，以及禁用后重启。Windows 冷子进程另检查原生模块句柄。
+- 生产探针以同一二进制哈希验证无资源纯文本、安装至应用目录、移至隔离用户目录、新扩展名真实高亮，以及禁用后重启。Windows 冷子进程另检查原生模块句柄，WASM 冷进程检查 Engine 未提前初始化。
 - 物理快照排除语言资源与独立验证工程后，完成格式、依赖、完整构建和宿主测试；发布只复制成品，缺模块/默认资源明确失败，不调用语法编译器或借用 Cargo 输出。
 - Windows/Linux/macOS 分别验收真实加载、签名/安装器和工具链；未执行的平台保持待验证。
 
@@ -928,7 +942,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 | P4a–P4f LSP | [以独立跟踪表为准](LSP_DESIGN.tmp.md#5-实施进度跟踪) | — | — | 默认在 P3b 后开始，按子阶段交付 |
 | P5 嵌入与扩充 | 待验证 | R-009 | — | 缺 Linux/macOS 编译验证（新增 4 个 C grammar）；Markdown 的 YAML/TOML front matter 注入未做（没有对应 grammar） |
 | 结构功能、交互 LSP、主题导入 | 未开始 | — | — | 按需求单列设计和验收，不计入基础迁移完成条件 |
-| 标准 Tree-sitter 资源与动态加载 | 待验证 | R-013（2026-10-19） | — | 制作工程/包装已移除；标准模块、默认入口、原始文件名与同一二进制安装后高亮已验证；跨平台及外部发布资源配置待补 |
+| 标准 Tree-sitter WASM 与动态加载 | 待验证 | R-014（2026-10-19） | — | 官方 WASM/原生通路、Engine 惰性初始化、解析 store 隔离、无 DLL 安装与同一二进制新增语言已验证；跨平台签名/安装与冷加载性能待补 |
 
 ### 19.3 关键检查点
 
@@ -1141,7 +1155,7 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 
 
 记录编号 / 日期：R-013 / 2026-10-19
-阶段：标准 Tree-sitter 模块直接接入，移除语言制作工程与 Rust 包装层
+阶段：标准 Tree-sitter 原生模块直接接入，移除语言制作工程与 Rust 包装层（原生阶段记录，WASM 由 R-014 扩展）
 状态：待验证（Windows 实施、完整回归与真实新语言安装已通过；跨平台发布验收待补）
 实现证据：
 - 删除根 language-packs/ 制作工程及全部 loom-grammar-* 包装，根和独立验证 Cargo 图均只含通用 Tree-sitter 引擎；无语法源码、专属导出包装或制作工程依赖。assets/language-packs/ 只保留随附描述、查询与来源，不包含原生模块或构建工程。
@@ -1155,3 +1169,20 @@ P3b 完成即删除旧 lexer、按行索引、旧主题结构与旧统计字段�
 证据日志：.tmp/standard-host-tests.log、.tmp/standard-standalone-host.log、.tmp/standard-runtime-external-language.log、.tmp/standard-node-final.log；均为本地忽略输出，不入库。
 产物：target/standard-language-preview/Loom.exe 来自无语言资源快照的完整构建；旁置八个资源目录、十个标准原生模块，均经发布消费者复制。当前用户正在运行的旧应用未停止或覆盖。
 未完成：Linux/macOS 实机模块加载、macOS 签名/安装器及实际远端流水线验收，固定 Rust 1.97.1 工具链与性能复测；发行方需配置外部预构建资源源。自动下载、包管理界面、WASM 与热更新不属本次范围。
+
+
+记录编号 / 日期：R-014 / 2026-10-19
+阶段：直接加载标准 Tree-sitter WASM，终端用户无需编译原生语言库
+状态：待验证（Windows 实施、完整回归与无 DLL 安装已通过；跨平台实机及冷加载性能待补）
+实现证据：
+- 宿主与独立验证工程启用 Tree-sitter 0.27 官方 wasm feature，锁定 Wasmtime 48.0.6、Cranelift 0.135.6；只增加通用执行引擎，没有语法源码、语言制作工程或 loom-grammar-* 包装依赖。构建所需 CMake 记入文档和 Linux CI 依赖，终端用户不需要编译工具。
+- 标准 .wasm 可保持上游原始文件名。module 为 stem 时优先 tree-sitter-<stem>.wasm、其次 <stem>.wasm、最后原生平台文件；显式文件名选择唯一格式。Rust 保留原 module: "rust" 描述，直接放入上游 tree-sitter-rust.wasm 即可；无清单改写、无 DLL、无 Loom 重编译。
+- Engine 在首次 WASM 请求才初始化，Language/失败按 grammar 缓存；读取前检查 32 MiB 上限和模块头，经官方 WasmStore 加载并验证 ABI。每个文档/注入 Parser 通过 Resources::parser 获得自己的执行 store，所有 store 使用同一个 Engine。加载 store、适配器和另一个 Parser 被释放后，引用计数 Language、Tree、Query 与剩余 Parser 仍可使用。
+- feature 层仍只有通用 Tree-sitter 类型，不依赖 Wasmtime 或磁盘实现。解析器初始化失败返回完整纯文本帧，避免 panic 或把资源错误当作取消重复排队；真正取消仍丢弃结果。原生模块通路继续工作。
+- 核验原始上游 Rust v0.24.2 WASM，SHA-256 为 24c89bd9252255e4aebbcbd7d2d308bd92c86dd95a130fdc80efa49577b8d738。独立 WASM 套件覆盖冷进程零 Engine/模块加载、外部 scanner、缓存、独立 store、多索引/增量与重新解析一致、可见注入、真实后台 Worker 发布、坏导出/坏模块/超限与执行 store 失败，以及重启禁用。
+- production-mode 探针仅安装描述、查询和原始 .wasm：无资源时为纯文本；放在应用目录或隔离用户目录后 Rust 有 9 个着色片段；再放入新扩展名的独立资源后有 4 个着色片段。两者只请求 tree-sitter-rust.wasm，零错误；禁用后重启回到纯文本，全程可执行文件 SHA-256 不变。
+- 发布复制规则与运行时优先级一致，WASM 字节不变；macOS 不把 .wasm 当 Mach-O 单独签名，应用增加 allow-jit。CI/各发布流程始终运行 WASM-only 套件，未配置原生成品源也可验证真实解析；测试工具从固定 URL/SHA256 获取输入，应用本身没有自动下载行为。Wasmtime/Cranelift 许可补入第三方声明。
+验证：Windows x86_64，Rust/Cargo 1.98.0。主工作区为 loom 907、editor-core 73、host_contract 3、workspace-tests 63，共 1046 项通过、21 项忽略、无失败。物理排除所有语言资源及独立验证工程的快照也完成格式检查、完整依赖图检查、完整 WASM 版 Loom 构建和同一组 1046 项测试。独立完整语法套件 153 项通过、9 项忽略；WASM-only 的 7 项专项回归及无 DLL 安装/新增语言/禁用探针通过。Node 架构、资源边界、发布与基线工具共 76 项通过。两个 Cargo 工作区 Clippy（CI 同允许项）、fmt、架构门禁与 diff 检查通过。
+证据日志：.tmp/wasm-host-tests.log、.tmp/wasm-standalone-host.log、.tmp/wasm-native-final-regression.log、.tmp/wasm-only-final-regression.log、.tmp/wasm-node-tests.log；本地忽略输出不入库。
+产物：target/wasm-language-preview/Loom.exe 来自不含语言资源的完整宿主快照；旁置八个资源目录，Rust 的 modules/ 只有原始 tree-sitter-rust.wasm，其余包兼容已有原生模块。当前用户正在运行的旧应用未停止或覆盖。
+未完成：Linux/macOS 实机加载、macOS hardened runtime/JIT 签名及安装器实际验收，固定 Rust 1.97.1 环境与 WASM 首次 JIT/冷加载性能基线。在线测试入口与下载脚本已接入 CI，但远端流程未在本地执行；完整发行资源源仍需发行配置。应用内自动下载、语言包管理界面与热更新不属本次范围。

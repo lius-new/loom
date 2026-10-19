@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export function moduleFile(module, platform) {
-  const extensions = {win32: ['dll'], darwin: ['dylib', 'so'], linux: ['so']};
+  const extensions = {win32: ['dll', 'wasm'], darwin: ['dylib', 'so', 'wasm'], linux: ['so', 'wasm']};
   const allowed = extensions[platform];
   if (!allowed) throw new Error('Unsupported language module platform: ' + platform);
   if (/^[a-z][a-z0-9_]*$/.test(module)) return module + '.' + allowed[0];
-  const match = /^([a-z][a-z0-9_-]*)\.(dll|dylib|so)$/.exec(module);
+  const match = /^([a-z][a-z0-9_-]*)\.(dll|dylib|so|wasm)$/.exec(module);
   if (!match || !allowed.includes(match[2])) throw new Error('Invalid language module filename for ' + platform);
   return module;
 }
@@ -44,7 +44,11 @@ export function stageLanguagePacks({ source = process.env.LOOM_LANGUAGE_PACKS, d
     }
     fs.mkdirSync(path.join(target, 'modules'), { recursive: true });
     for (const module of modules) {
-      const file = moduleFile(module, platform), input = path.join(source, 'modules', file);
+      const candidates = /^[a-z][a-z0-9_]*$/.test(module)
+        ? ['tree-sitter-' + module + '.wasm', module + '.wasm', moduleFile(module, platform)]
+        : [moduleFile(module, platform)];
+      const file = candidates.find(file => fs.statSync(path.join(source, 'modules', file), {throwIfNoEntry: false})?.isFile()) || candidates.at(-1);
+      const input = path.join(source, 'modules', file);
       if (!fs.existsSync(input)) throw new Error('Missing prebuilt language module: ' + input);
       const output = path.join(target, 'modules', file);
       fs.copyFileSync(input, output);

@@ -45,6 +45,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes \
             build-essential \
+            cmake \
             libfreetype-dev \
             libfontconfig-dev \
             libegl1-mesa-dev \
@@ -118,6 +119,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes \
             build-essential \
+            cmake \
             libfreetype-dev \
             libfontconfig-dev \
             libegl1-mesa-dev \
@@ -138,6 +140,9 @@ jobs:
 
       - name: Run tests
         run: cargo test --locked --workspace
+
+      - name: Test upstream WASM modules without native language binaries
+        run: node tests/language-runtime/run-wasm.mjs
 
       - name: Fetch prebuilt standard language resources
         if: env.LOOM_LANGUAGE_PACKS_URL != ''

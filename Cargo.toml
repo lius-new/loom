@@ -34,7 +34,7 @@ vt100 = "0.16"
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
 regex = "1"
-tree-sitter = "0.27"
+tree-sitter = { version = "0.27", features = ["wasm"] }
 streaming-iterator = "0.1"
 tree-sitter-language = "0.1"
 libloading = "0.8"

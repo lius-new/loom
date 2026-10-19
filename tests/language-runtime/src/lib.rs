@@ -33,6 +33,6 @@ pub fn probe() {
     let activity = infrastructure::language_packs::resources().activity();
     println!(
         "{}",
-        serde_json::json!({"language":language.name(),"colored":frame[0].spans.iter().filter(|s|s.class.is_some()).count(),"modules":activity.modules,"errors":activity.errors})
+        serde_json::json!({"language":language.name(),"colored":frame[0].spans.iter().filter(|s|s.class.is_some()).count(),"modules":activity.modules,"wasm_modules":activity.wasm_modules,"errors":activity.errors})
     );
 }

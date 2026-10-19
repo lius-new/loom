@@ -1,0 +1,323 @@
+use super::*;
+use crate::{
+    domain::{identity::FileId, language},
+    features::{
+        highlighting::HighlightId,
+        syntax::{Source, Window, WindowTokens},
+    },
+};
+use loom_editor_core::text::{EditKind, EditorMut, Selection, TextBuffer};
+use serde_json::json;
+use std::{
+    process::Command,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
+
+static RUN: AtomicUsize = AtomicUsize::new(0);
+struct Fixture(PathBuf);
+impl Fixture {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "loom-wasm-{}-{}",
+            std::process::id(),
+            RUN.fetch_add(1, Ordering::Relaxed)
+        ));
+        let input = PathBuf::from(
+            std::env::var_os("LOOM_TEST_WASM_PACKAGES")
+                .expect("supply the pinned upstream WASM fixture"),
+        );
+        fs::create_dir_all(path.join("rust/modules")).unwrap();
+        fs::create_dir_all(path.join("rust/grammars/rust")).unwrap();
+        for file in [
+            "package.json",
+            "modules/tree-sitter-rust.wasm",
+            "grammars/rust/highlights.scm",
+            "grammars/rust/SOURCE.md",
+        ] {
+            fs::copy(input.join("rust").join(file), path.join("rust").join(file)).unwrap();
+        }
+        Self(path)
+    }
+    fn source(&self) -> Arc<Packages> {
+        Arc::new(Packages::discover(&self.0, None))
+    }
+    fn module(&self) -> PathBuf {
+        self.0.join("rust/modules/tree-sitter-rust.wasm")
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        assert_eq!(self.0.parent(), Some(std::env::temp_dir().as_path()));
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+fn paint(index: &mut TreeIndex, buffer: &TextBuffer) -> Vec<WindowTokens> {
+    index
+        .prepare(
+            FileId::new(1),
+            Source::new(buffer),
+            language::builtin("rust"),
+            &[Window {
+                line: 0..buffer.len(),
+                range: 0..buffer.len(),
+            }],
+            &AtomicBool::new(false),
+        )
+        .expect("resource failure is plain text, not cancellation")
+}
+
+#[test]
+fn cold_discovery_leaves_wasm_engine_uninitialized_then_uses_upstream_bytes() {
+    const CHILD: &str = "LOOM_WASM_COLD_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "infrastructure::language_packs::wasm_tests::cold_discovery_leaves_wasm_engine_uninitialized_then_uses_upstream_bytes", "--nocapture"])
+            .env(CHILD, "1").output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    assert!(WASM_ENGINE.get().is_none());
+    let fixture = Fixture::new();
+    let source = fixture.source();
+    assert_eq!(
+        source
+            .registry()
+            .unwrap()
+            .definition_of(source.registry().unwrap().resolve_path(Path::new("new.rs")))
+            .name
+            .as_ref(),
+        "rust"
+    );
+    assert_eq!(source.activity(), Activity::default());
+    assert!(WASM_ENGINE.get().is_none());
+    let language = source.language("rust").unwrap();
+    assert!(language.is_wasm());
+    assert!(WASM_ENGINE.get().is_some());
+    let loaded = source.activity();
+    assert_eq!(loaded.wasm_loads, 1);
+    assert_eq!(
+        loaded.wasm_modules,
+        BTreeSet::from(["tree-sitter-rust.wasm".to_owned()])
+    );
+    source.language("rust").unwrap();
+    assert_eq!(source.activity(), loaded);
+    assert_eq!(
+        fs::read_dir(fixture.0.join("rust/modules"))
+            .unwrap()
+            .count(),
+        1
+    );
+    // The loading store was dropped already. Each execution store and the
+    // reference-counted language must remain usable after its adapter is gone.
+    let mut first = source.parser("rust").unwrap();
+    let mut second = source.parser("rust").unwrap();
+    drop(source);
+    let text = "fn hello() { let s = r#\"raw string\"#; /* outer /* nested */ */ }";
+    let tree = first.parse(text, None).unwrap();
+    assert!(!tree.root_node().has_error());
+    drop(first);
+    assert!(!second.parse(text, None).unwrap().root_node().has_error());
+    assert!(
+        tree_sitter::Query::new(&language, "(function_item name: (identifier) @function)").is_ok()
+    );
+}
+
+#[test]
+fn wasm_incremental_edits_and_multiple_indexes_match_fresh_parses() {
+    let fixture = Fixture::new();
+    let source = fixture.source();
+    let mut index = TreeIndex::new(source.clone());
+    let mut buffer = TextBuffer::new("fn first() { let s = r#\"hello\"#; /* /* nested */ */ }\n");
+    assert!(
+        paint(&mut index, &buffer)[0]
+            .spans
+            .iter()
+            .any(|s| s.class == Some(HighlightId::KEYWORD))
+    );
+    for text in ["// inserted\n", "fn added() {}\n", "/* unfinished\n"] {
+        EditorMut::new(&mut buffer, &mut Selection::default(), Vec::new())
+            .replace(0..0, text, EditKind::Other)
+            .unwrap();
+        let current = paint(&mut index, &buffer);
+        let fresh = paint(&mut TreeIndex::new(source.clone()), &buffer);
+        assert_eq!(current[0].spans, fresh[0].spans);
+    }
+    assert_eq!(index.stats.incremental_parses, 3);
+    assert_eq!(source.activity().wasm_loads, 1);
+    assert!(source.activity().errors.is_empty());
+}
+
+#[test]
+fn visible_wasm_injections_use_separate_stores_for_host_and_layer() {
+    let fixture = Fixture::new();
+    fs::write(fixture.0.join("rust/grammars/rust/injections.scm"), "((string_literal (string_content) @injection.content) (#set! injection.language \"rust\"))").unwrap();
+    let source = fixture.source();
+    let mut index = TreeIndex::new(source.clone());
+    let text = "fn host() { let snippet = \"fn nested() {}\"; }\n";
+    let buffer = TextBuffer::new(text);
+    let result = paint(&mut index, &buffer);
+    let position = text.find("fn nested").unwrap();
+    assert!(
+        result[0]
+            .spans
+            .iter()
+            .any(|s| s.range.contains(&position) && s.class == Some(HighlightId::KEYWORD))
+    );
+    assert!(index.layer_summary(FileId::new(1)).contains(&("rust", 1)));
+    assert_eq!(source.activity().wasm_loads, 1);
+    assert!(source.activity().errors.is_empty());
+}
+
+#[test]
+fn corrupt_wasm_and_wrong_exports_fail_once_without_poisoning_other_packages() {
+    let fixture = Fixture::new();
+    let manifest_path = fixture.0.join("rust/package.json");
+    let mut manifest: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    manifest["grammars"]["rust"]["symbol"] = json!("tree_sitter_missing");
+    fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let source = fixture.source();
+    let mut index = TreeIndex::new(source.clone());
+    let buffer = TextBuffer::new("fn example() {}");
+    assert!(
+        paint(&mut index, &buffer)[0]
+            .spans
+            .iter()
+            .all(|s| s.class.is_none())
+    );
+    let failed = source.activity();
+    assert_eq!(failed.errors.len(), 1);
+    assert!(
+        paint(&mut index, &buffer)[0]
+            .spans
+            .iter()
+            .all(|s| s.class.is_none())
+    );
+    assert_eq!(source.activity(), failed);
+    manifest["grammars"]["rust"]
+        .as_object_mut()
+        .unwrap()
+        .remove("symbol");
+    fs::write(manifest_path, manifest.to_string()).unwrap();
+    // A valid core header with no Tree-sitter dylink data exercises the official
+    // WASM parser's error path, not just the loader's magic-byte check.
+    fs::write(fixture.module(), b"\0asm\x01\0\0\0").unwrap();
+    let broken = fixture.source();
+    assert!(broken.language("rust").is_err());
+    let failed = broken.activity();
+    assert!(broken.language("rust").is_err());
+    assert_eq!(broken.activity(), failed);
+    let valid = Fixture::new();
+    assert!(valid.source().language("rust").unwrap().is_wasm());
+}
+
+#[test]
+fn parser_store_setup_failure_is_plain_text_instead_of_panicking_or_retrying() {
+    struct WithoutExecutionStore(Arc<Packages>);
+    impl Resources for WithoutExecutionStore {
+        fn language(&self, grammar: &str) -> Result<Language, String> {
+            self.0.language(grammar)
+        }
+        fn text(&self, grammar: &str, file: &str) -> TextResult {
+            self.0.text(grammar, file)
+        }
+        fn report(&self, error: &str) {
+            self.0.report(error);
+        }
+    }
+    let fixture = Fixture::new();
+    let source = fixture.source();
+    let mut index = TreeIndex::new(Arc::new(WithoutExecutionStore(source.clone())));
+    let result = paint(&mut index, &TextBuffer::new("fn example() {}"));
+    assert!(result[0].spans.iter().all(|s| s.class.is_none()));
+    assert_eq!(index.stats.plain_fallbacks, 1);
+    assert_eq!(source.activity().errors.len(), 1);
+}
+
+#[test]
+fn wasm_disable_and_replacement_are_applied_only_after_rediscovery() {
+    let fixture = Fixture::new();
+    let source = fixture.source();
+    assert!(source.language("rust").unwrap().is_wasm());
+    let user = fixture.0.join("user/rust");
+    fs::create_dir_all(&user).unwrap();
+    let mut disabled: Value =
+        serde_json::from_str(&fs::read_to_string(fixture.0.join("rust/package.json")).unwrap())
+            .unwrap();
+    disabled["enabled"] = json!(false);
+    fs::write(user.join("package.json"), disabled.to_string()).unwrap();
+    let restarted = Packages::discover(&fixture.0, Some(&fixture.0.join("user")));
+    assert!(
+        restarted
+            .registry()
+            .unwrap()
+            .language_by_name("rust")
+            .is_none()
+    );
+    assert_eq!(restarted.activity(), Activity::default());
+    assert!(source.language("rust").unwrap().is_wasm());
+}
+
+#[test]
+fn wasm_worker_loads_and_publishes_from_the_background_thread() {
+    const CHILD: &str = "LOOM_WASM_WORKER_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "infrastructure::language_packs::wasm_tests::wasm_worker_loads_and_publishes_from_the_background_thread", "--nocapture"])
+            .env(CHILD, "1")
+            .env("LOOM_TEST_LANGUAGE_PACKS", std::env::var_os("LOOM_TEST_WASM_PACKAGES").unwrap())
+            .output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    use crate::{
+        domain::{document::DocumentStamp, identity::PaneId},
+        infrastructure::syntax_worker::Worker,
+    };
+    use std::{sync::mpsc, time::Duration};
+    let source = resources();
+    assert_eq!(source.activity(), Activity::default());
+    assert!(WASM_ENGINE.get().is_none());
+    let (send, receive) = mpsc::channel();
+    let worker = Worker::new(move |stamp| {
+        let _ = send.send(stamp);
+    });
+    let buffer = TextBuffer::new("fn background() { let raw = r#\"value\"#; }\n");
+    let stamp = DocumentStamp::new(FileId::new(1), 1, 0, &buffer);
+    let query = || {
+        worker.query(
+            PaneId::new(1),
+            stamp,
+            Source::new(&buffer),
+            language::builtin("rust"),
+            vec![Window {
+                line: 0..buffer.len(),
+                range: 0..buffer.len(),
+            }],
+        )
+    };
+    assert!(query().is_empty());
+    assert_eq!(
+        receive.recv_timeout(Duration::from_secs(10)).unwrap(),
+        stamp
+    );
+    assert!(
+        query()[0]
+            .spans
+            .iter()
+            .any(|s| s.class == Some(HighlightId::KEYWORD))
+    );
+    assert_eq!(source.activity().wasm_loads, 1);
+    assert!(source.activity().errors.is_empty());
+    worker.shutdown();
+}

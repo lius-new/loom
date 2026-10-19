@@ -79,3 +79,31 @@ test('standard filenames and default exports need no Loom wrapper or module rena
   assert.equal(fs.readFileSync(binaries[0], 'utf8'), 'native');
   assert.throws(() => moduleFile('python.so', 'win32'), /Invalid/);
 });
+
+test('upstream WASM names take precedence over native modules on every platform', t => {
+  const payload = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    const {root, profile, pack} = fixture(t, platform);
+    fs.writeFileSync(path.join(pack, 'modules/tree-sitter-rust.wasm'), payload);
+    fs.writeFileSync(path.join(pack, 'modules/rust.wasm'), 'alternate');
+    const binaries = stageLanguagePacks({source: profile, destination: path.join(root, 'installed'), platform});
+    assert.equal(path.basename(binaries[0]), 'tree-sitter-rust.wasm');
+    assert.deepEqual(fs.readFileSync(binaries[0]), payload);
+    assert.equal(fs.existsSync(path.join(root, 'installed/rust/modules', moduleFile('rust', platform))), false);
+    assert.equal(moduleFile('tree-sitter-rust.wasm', platform), 'tree-sitter-rust.wasm');
+  }
+});
+
+test('explicit WASM filenames need no native library and remain unmodified', t => {
+  const {root, profile, pack} = fixture(t, 'win32');
+  const manifest = JSON.parse(fs.readFileSync(path.join(pack, 'package.json')));
+  manifest.grammars.rust = {module: 'downloaded.wasm', symbol: 'tree_sitter_rust'};
+  fs.writeFileSync(path.join(pack, 'package.json'), JSON.stringify(manifest));
+  fs.unlinkSync(path.join(pack, 'modules/rust.dll'));
+  fs.writeFileSync(path.join(pack, 'modules/downloaded.wasm'), 'upstream bytes');
+  const binaries = stageLanguagePacks({source: profile, destination: path.join(root, 'installed'), platform: 'win32'});
+  assert.equal(path.basename(binaries[0]), 'downloaded.wasm');
+  assert.equal(fs.readFileSync(binaries[0], 'utf8'), 'upstream bytes');
+  assert.throws(() => moduleFile('../rust.wasm', 'win32'), /Invalid/);
+  assert.throws(() => moduleFile('rust.wasm.dll', 'win32'), /Invalid/);
+});

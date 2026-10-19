@@ -70,6 +70,7 @@ fn standard_native_filenames_are_used_without_renaming_or_path_escape() {
             "python.so",
             "python.dylib",
             "libtree-sitter-python.so",
+            "tree-sitter-python.wasm",
         ] {
             assert_eq!(module_file(file, platform).unwrap(), file);
         }
@@ -82,10 +83,77 @@ fn standard_native_filenames_are_used_without_renaming_or_path_escape() {
         "python..so",
         "python.so.exe",
         "python.json",
+        "../python.wasm",
+        "python.wasm.dll",
         "",
     ] {
         assert!(module_file(invalid, "windows").is_err(), "{invalid}");
     }
+}
+
+#[test]
+fn wasm_downloads_are_preferred_for_stems_and_explicit_filenames_select_one_format() {
+    let temp = Temp::new();
+    let mut value = manifest();
+    value["grammars"]["sample"] = json!({"module":"sample"});
+    temp.write("sample", &value);
+    let modules = temp.0.join("sample/modules");
+    fs::create_dir_all(&modules).unwrap();
+    for file in module_candidates("sample", std::env::consts::OS) {
+        fs::write(modules.join(file), "unloaded payload").unwrap();
+    }
+    let source = Packages::discover(&temp.0, None);
+    let (package, _) = source.grammar("sample").unwrap();
+    assert_eq!(
+        Packages::module_path(package, "sample"),
+        modules.join("tree-sitter-sample.wasm")
+    );
+    assert_eq!(
+        Packages::module_path(package, "sample.wasm"),
+        modules.join("sample.wasm")
+    );
+    assert_eq!(
+        Packages::module_path(package, "sample.dll"),
+        modules.join("sample.dll")
+    );
+    assert_eq!(source.activity(), Activity::default());
+}
+
+#[test]
+fn invalid_and_oversized_wasm_are_isolated_and_failures_are_cached() {
+    let temp = Temp::new();
+    let mut value = manifest();
+    value["grammars"]["sample"] = json!({"module":"tree-sitter-sample.wasm"});
+    temp.write("sample", &value);
+    let modules = temp.0.join("sample/modules");
+    fs::create_dir_all(&modules).unwrap();
+    let path = modules.join("tree-sitter-sample.wasm");
+    fs::write(&path, "not WASM").unwrap();
+    let source = Packages::discover(&temp.0, None);
+    assert_eq!(source.activity(), Activity::default());
+    assert!(
+        source
+            .language("sample")
+            .unwrap_err()
+            .contains("WebAssembly module header")
+    );
+    let failed = source.activity();
+    assert_eq!(failed.wasm_loads, 1);
+    assert!(source.language("sample").is_err());
+    assert_eq!(source.activity(), failed);
+    fs::File::create(path)
+        .unwrap()
+        .set_len(MAX_WASM_BYTES + 1)
+        .unwrap();
+    let source = Packages::discover(&temp.0, None);
+    assert!(source.language("sample").unwrap_err().contains("exceeds"));
+    let alias: Module =
+        serde_json::from_value(json!({"module":"sample.wasm","symbol":"tree_sitter_rust"}))
+            .unwrap();
+    assert_eq!(alias.wasm_name("custom").unwrap(), "rust");
+    let invalid: Module =
+        serde_json::from_value(json!({"module":"sample.wasm","symbol":"other"})).unwrap();
+    assert!(invalid.wasm_name("sample").is_err());
 }
 
 #[test]

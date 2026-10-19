@@ -27,7 +27,10 @@ use crate::domain::language::Registry;
 use std::{
     collections::HashMap,
     ops::Range,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
 use tree_sitter::{Parser, Range as SitterRange, Tree};
@@ -160,17 +163,18 @@ impl Tools<'_> {
         ranges: &[SitterRange],
         text: &str,
     ) -> Result<Tree, bool> {
-        let language = self.resources.language(grammar).map_err(|_| false)?;
-        let parser = self.parsers.entry(grammar).or_insert_with(|| {
-            let mut parser = Parser::new();
-            parser
-                .set_language(&language)
-                .expect("a built-in grammar matches the linked Tree-sitter version");
-            parser
-        });
+        if let std::collections::hash_map::Entry::Vacant(entry) = self.parsers.entry(grammar) {
+            let parser = self.resources.parser(grammar).map_err(|error| {
+                self.resources.report(&error);
+                false
+            })?;
+            entry.insert(parser);
+        }
+        let parser = self.parsers.get_mut(grammar).expect("initialized parser");
         parser.set_included_ranges(ranges).map_err(|_| false)?;
         let started = Instant::now();
-        let tree = parse(parser, text, None, self.cancel).ok_or(true)?;
+        let tree = parse(parser, text, None, self.cancel)
+            .ok_or_else(|| self.cancel.load(Ordering::Relaxed))?;
         self.stats.layer_parses += 1;
         self.stats.parse_time += started.elapsed();
         Ok(tree)

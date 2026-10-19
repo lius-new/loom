@@ -7,7 +7,7 @@ Supply a complete prebuilt collection (the regression fixtures expect the eight
 bundled packages); this suite never builds grammar modules:
 
 ~~~sh
-node run.mjs --packages /path/to/prebuilt-packages
+node run.mjs --packages /path/to/prebuilt-packages --wasm-rust /path/to/tree-sitter-rust.wasm
 ~~~
 
 Use --offline for cached Rust dependencies, or --probe-only to run just the
@@ -30,3 +30,20 @@ node run.mjs --packages /path/to/baseline --new-package /path/to/python --sample
 The same production-mode executable must show the sample as plain text before
 installation, then recognize and highlight it after copying only those resource
 files into the user directory. No host source, dependency or binary changes.
+
+The WASM-only suite has no native grammar input:
+
+~~~sh
+node run-wasm.mjs
+node run-wasm.mjs --wasm-rust /path/to/tree-sitter-rust.wasm --offline
+~~~
+
+Both runners use the unchanged Rust v0.24.2 upstream WASM asset, verified by its
+pinned SHA-256 in wasm-fixture.mjs. Online runs cache it under .packaging/downloads/;
+offline runs require that cache or an explicit --wasm-rust path. CMake must be on
+PATH when compiling the generic runtime. No grammar source or language compiler
+is invoked. WASM tests include cold engine initialization, independent parser
+stores, incremental edits, scanner state, injections, invalid modules/exports and
+store failure fallback. The production probe installs only a .wasm file and
+metadata/queries, verifies both resource locations and a new extension, then
+disables on restart while the executable hash remains unchanged.

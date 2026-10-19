@@ -174,7 +174,9 @@ export function packageApp({ version }) {
     destination: path.join(resources, 'language-packs'),
     platform: 'darwin',
   });
-  for (const module of modules) sign(module, identity);
+  for (const module of modules) {
+    if (path.extname(module) !== '.wasm') sign(module, identity);
+  }
 
   sign(app, identity, path.join(ROOT, 'scripts/package/macos/entitlements.plist'));
   checkApp(app);

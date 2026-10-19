@@ -12,13 +12,14 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
-use tree_sitter::Language;
+use tree_sitter::{Language, Parser, WasmStore, wasmtime};
 use tree_sitter_language::LanguageFn;
 
 const MAX_MANIFEST: u64 = 1024 * 1024;
 const MAX_QUERY: u64 = 4 * 1024 * 1024;
 const MAX_QUERY_CACHE: usize = 8 * 1024 * 1024;
 const MAX_MODULES: usize = 64;
+const MAX_WASM_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PACKAGES: usize = 128;
 const PLAIN: &str = r#"{"name":"plaintext","display_name":"Plain Text","badge":"TXT","variants":[{"id":"plaintext"}]}"#;
 
@@ -34,6 +35,13 @@ impl Module {
         self.symbol
             .clone()
             .unwrap_or_else(|| format!("tree_sitter_{grammar}"))
+    }
+    fn wasm_name(&self, grammar: &str) -> Result<String, String> {
+        self.entry_point(grammar)
+            .strip_prefix("tree_sitter_")
+            .filter(|value| name(value))
+            .map(str::to_owned)
+            .ok_or_else(|| "WASM entry point must be tree_sitter_<name>".to_owned())
     }
 }
 #[derive(Clone, Deserialize)]
@@ -57,8 +65,8 @@ fn name(value: &str) -> bool {
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
-// Accept an unmodified shared library filename (including Neovim's .so files
-// on macOS), or a stem whose platform extension is added without a lib prefix.
+// Preserve standard WASM/native filenames, including Neovim's .so on macOS.
+// For a stem, the native fallback gains its platform extension without lib.
 fn module_file(module: &str, platform: &str) -> Result<String, String> {
     if name(module) {
         let extension = match platform {
@@ -72,12 +80,24 @@ fn module_file(module: &str, platform: &str) -> Result<String, String> {
         let mut chars = stem.chars();
         if chars.next().is_some_and(|c| c.is_ascii_lowercase())
             && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
-            && matches!(extension, "dll" | "so" | "dylib")
+            && matches!(extension, "dll" | "so" | "dylib" | "wasm")
         {
             return Ok(module.to_owned());
         }
     }
-    Err(format!("invalid native module filename {module}"))
+    Err(format!("invalid language module filename {module}"))
+}
+fn module_candidates(module: &str, platform: &str) -> Vec<String> {
+    let file = module_file(module, platform).expect("validated module filename");
+    if name(module) {
+        vec![
+            format!("tree-sitter-{module}.wasm"),
+            format!("{module}.wasm"),
+            file,
+        ]
+    } else {
+        vec![file]
+    }
 }
 fn read_text(path: &Path, limit: u64) -> Result<String, String> {
     let file = fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -173,6 +193,8 @@ pub(crate) struct Activity {
     pub language_loads: usize,
     pub query_reads: usize,
     pub modules: BTreeSet<String>,
+    pub wasm_loads: usize,
+    pub wasm_modules: BTreeSet<String>,
     pub queries: BTreeSet<(String, String)>,
     pub errors: BTreeSet<String>,
 }
@@ -293,17 +315,68 @@ impl Packages {
             .find_map(|p| p.manifest.grammars.get(grammar).map(|m| (p, m)))
     }
     fn module_path(package: &Installed, module: &str) -> PathBuf {
-        // Validated during discovery; never search Cargo or another package.
-        package
-            .root
-            .join("modules")
-            .join(module_file(module, std::env::consts::OS).expect("validated module filename"))
+        // A stem accepts an upstream WASM download without renaming. Explicit
+        // filenames select exactly one format; never borrow another package.
+        let root = package.root.join("modules");
+        let candidates = module_candidates(module, std::env::consts::OS);
+        candidates
+            .iter()
+            .map(|file| root.join(file))
+            .find(|file| file.is_file())
+            .unwrap_or_else(|| root.join(candidates.last().unwrap()))
     }
     fn report(loaded: &mut Loaded, error: &str) {
         if loaded.activity.errors.insert(error.to_owned()) {
             eprintln!("language package: {error}");
         }
     }
+}
+// One lazy, immutable engine; every parser owns a separate mutable WASM store.
+// A loaded Tree-sitter Language is reference-counted and independent of the
+// temporary store that compiled it. All execution stores use this same engine.
+static WASM_ENGINE: OnceLock<Result<wasmtime::Engine, String>> = OnceLock::new();
+fn wasm_engine() -> Result<&'static wasmtime::Engine, String> {
+    WASM_ENGINE
+        .get_or_init(|| wasmtime::Engine::new(&wasmtime::Config::new()).map_err(|e| e.to_string()))
+        .as_ref()
+        .map_err(Clone::clone)
+}
+fn load_wasm(path: &Path, name: &str) -> Result<Language, String> {
+    let file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if file.metadata().map_err(|e| e.to_string())?.len() > MAX_WASM_BYTES {
+        return Err(format!("{} exceeds {MAX_WASM_BYTES} bytes", path.display()));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_WASM_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MAX_WASM_BYTES {
+        return Err(format!("{} exceeds {MAX_WASM_BYTES} bytes", path.display()));
+    }
+    if !bytes.starts_with(b"\0asm\x01\0\0\0") {
+        return Err(format!(
+            "{}: invalid WebAssembly module header",
+            path.display()
+        ));
+    }
+    let mut store = WasmStore::new(wasm_engine()?).map_err(|e| e.to_string())?;
+    let language = store
+        .load_language(name, &bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    validate_abi(path, &language)?;
+    Ok(language)
+}
+fn validate_abi(path: &Path, language: &Language) -> Result<(), String> {
+    let version = language.abi_version();
+    if !(tree_sitter::MIN_COMPATIBLE_LANGUAGE_VERSION..=tree_sitter::LANGUAGE_VERSION)
+        .contains(&version)
+    {
+        return Err(format!(
+            "{} uses unsupported Tree-sitter ABI {version}",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 // Tree-sitter's Language, Tree and Query all contain pointers into native
 // modules. Keep handles until process exit, including after a worker is dropped.
@@ -337,15 +410,7 @@ fn load_native(path: &Path, symbol: &str) -> Result<Language, String> {
         ));
     }
     let language = Language::new(unsafe { LanguageFn::from_raw(*function) });
-    let version = language.abi_version();
-    if !(tree_sitter::MIN_COMPATIBLE_LANGUAGE_VERSION..=tree_sitter::LANGUAGE_VERSION)
-        .contains(&version)
-    {
-        return Err(format!(
-            "{} uses unsupported Tree-sitter ABI {version}",
-            path.display()
-        ));
-    }
+    validate_abi(path, &language)?;
     Ok(language)
 }
 
@@ -359,10 +424,33 @@ impl Resources for Packages {
         let result = match self.grammar(grammar) {
             Some((package, module)) => {
                 loaded.activity.modules.insert(module.module.clone());
-                load_native(
-                    &Self::module_path(package, &module.module),
-                    &module.entry_point(grammar),
-                )
+                let path = Self::module_path(package, &module.module);
+                if path
+                    .extension()
+                    .is_some_and(|extension| extension == "wasm")
+                {
+                    loaded.activity.wasm_loads += 1;
+                    loaded
+                        .activity
+                        .wasm_modules
+                        .insert(path.file_name().unwrap().to_string_lossy().into_owned());
+                    if loaded
+                        .languages
+                        .values()
+                        .filter_map(|language| language.as_ref().ok())
+                        .filter(|language| language.is_wasm())
+                        .count()
+                        >= MAX_MODULES
+                    {
+                        Err("WASM language limit reached; restart to release modules".into())
+                    } else {
+                        module
+                            .wasm_name(grammar)
+                            .and_then(|name| load_wasm(&path, &name))
+                    }
+                } else {
+                    load_native(&path, &module.entry_point(grammar))
+                }
             }
             None => Err(format!("language package {grammar} is not installed")),
         };
@@ -371,6 +459,16 @@ impl Resources for Packages {
         }
         loaded.languages.insert(grammar.to_owned(), result.clone());
         result
+    }
+    fn parser(&self, grammar: &str) -> Result<Parser, String> {
+        let language = self.language(grammar)?;
+        let mut parser = Parser::new();
+        if language.is_wasm() {
+            let store = WasmStore::new(wasm_engine()?).map_err(|e| e.to_string())?;
+            parser.set_wasm_store(store).map_err(|e| e.to_string())?;
+        }
+        parser.set_language(&language).map_err(|e| e.to_string())?;
+        Ok(parser)
     }
     fn text(&self, grammar: &str, file: &str) -> TextResult {
         let Some((package, _)) = self.grammar(grammar) else {

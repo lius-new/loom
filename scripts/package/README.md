@@ -38,8 +38,12 @@ Markdown are required for releases. An external resource feed must be supplied;
 no provider is built into this repository. CI without a feed exports the tested
 host alone, clearly labelled without language resources.
 
-For macOS, supply universal modules. Packaging signs the supplied modules before
-signing the app. Missing or platform-incompatible native files stop assembly.
+A package may contain standard .wasm files or native modules. Stems prefer the
+upstream tree-sitter-<stem>.wasm download, then <stem>.wasm, then the native
+platform filename, matching runtime discovery. WASM bytes are copied unchanged
+on every platform. For macOS, supply universal native modules; only native
+modules are individually signed. The app carries allow-jit for Wasmtime. Missing
+or platform-incompatible native files stop assembly.
 No Cargo profile or grammar source directory is consulted. Consumer tests:
 
 ~~~sh

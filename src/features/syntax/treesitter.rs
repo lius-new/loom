@@ -140,8 +140,16 @@ impl TreeIndex {
             .docs
             .get(&id)
             .is_some_and(|doc| doc.grammar == grammar && doc.source.same(&source));
-        if !current && !self.reparse(id, &source, grammar, cancel) {
-            return None;
+        if !current {
+            match self.reparse(id, &source, grammar, cancel) {
+                Ok(()) => {}
+                Err(true) => return None,
+                Err(false) => {
+                    self.docs.remove(&id);
+                    self.stats.plain_fallbacks += 1;
+                    return Some(windows.iter().map(plain).collect());
+                }
+            }
         }
         // Parse the embedded languages the windows reach.
         {
@@ -215,25 +223,24 @@ impl TreeIndex {
             .clone()
     }
 
-    /// Brings the stored tree up to date with `source`. False when cancelled.
+    /// Brings the tree up to date. Err(true) is cancellation; Err(false) means
+    /// resources cannot execute and the document should be shown as plain text.
     fn reparse(
         &mut self,
         id: FileId,
         source: &Source,
         grammar: GrammarId,
         cancel: &AtomicBool,
-    ) -> bool {
+    ) -> Result<(), bool> {
         let name = Registry::builtin().grammar_name(grammar);
-        let Ok(language) = self.resources.language(name) else {
-            return false;
-        };
-        let parser = self.parsers.entry(grammar).or_insert_with(|| {
-            let mut parser = Parser::new();
-            parser
-                .set_language(&language)
-                .expect("the resource adapter validated the Tree-sitter grammar ABI");
-            parser
-        });
+        if let std::collections::hash_map::Entry::Vacant(entry) = self.parsers.entry(grammar) {
+            let parser = self.resources.parser(name).map_err(|error| {
+                self.resources.report(&error);
+                false
+            })?;
+            entry.insert(parser);
+        }
+        let parser = self.parsers.get_mut(&grammar).expect("initialized parser");
         let started = Instant::now();
         let previous = self.docs.get(&id).filter(|doc| doc.grammar == grammar);
         let edited = previous.and_then(|doc| {
@@ -250,7 +257,7 @@ impl TreeIndex {
         });
         let incremental = edited.is_some();
         let Some(tree) = parse(parser, &source.text, edited.as_ref(), cancel) else {
-            return false;
+            return Err(cancel.load(Ordering::Relaxed));
         };
         let mut tools = Tools {
             resources: self.resources.as_ref(),
@@ -266,7 +273,7 @@ impl TreeIndex {
             &tree,
             &source.text,
         ) else {
-            return false;
+            return Err(true);
         };
         self.stats.parse_time += started.elapsed();
         self.stats.parsed_bytes += source.text.len();
@@ -285,7 +292,7 @@ impl TreeIndex {
                 used: self.clock,
             },
         );
-        true
+        Ok(())
     }
 
     /// The embedded languages parsed so far and how deep each is, for tests.

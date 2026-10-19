@@ -2,6 +2,10 @@
 
 ## Toolchain
 
+CMake must be available on PATH to build the Tree-sitter/Wasmtime C API headers.
+On Windows, Visual Studio's CMake component or a standalone CMake installation
+can provide it. Installed Loom users do not need CMake or a compiler.
+
 Rust 1.97.1, Clippy and rustfmt are pinned in
 [`rust-toolchain.toml`](../rust-toolchain.toml); CI uses the same compiler.
 
@@ -23,7 +27,8 @@ want to update that pinned commit.
 
 The host build and default tests require no language resources or grammar sources.
 Loom includes the generic Tree-sitter engine and dynamically loads compatible
-standard language modules when used. There is no language producer workspace or
+standard WASM or native language modules when used. WASM does not require
+a platform-specific language library. There is no language producer workspace or
 Rust grammar wrapper. Place complete prebuilt language resources beside the
 executable or in the user data directory and restart; no editor rebuild is
 needed. See [Language resources](languages.md) for the format and release inputs.
@@ -31,7 +36,7 @@ needed. See [Language resources](languages.md) for the format and release inputs
 ## System dependencies (Debian / Ubuntu)
 
 ```sh
-sudo apt install build-essential \
+sudo apt install build-essential cmake \
     libfreetype-dev libfontconfig-dev \
     libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
     libwayland-dev libxkbcommon-dev
