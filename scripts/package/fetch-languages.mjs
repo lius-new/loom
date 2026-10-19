@@ -22,10 +22,18 @@ export function extractLanguageArtifacts(archive, destination, platform = proces
     run('tar', ['-xf', archive, '-C', temporary]);
     // Official distributions keep Markdown and JSON enabled, using the same
     // external resource contract as every other language.
-    for (const id of ['json', 'markdown']) {
-      const manifest = JSON.parse(fs.readFileSync(path.join(temporary, id, 'package.json'), 'utf8'));
-      if (manifest.enabled === false) throw new Error('Default language must be enabled: ' + id);
+    const available = new Set();
+    for (const entry of fs.readdirSync(temporary, {withFileTypes: true}).filter(entry => entry.isDirectory())) {
+      const root = path.join(temporary, entry.name);
+      if (fs.existsSync(path.join(root, 'tree-sitter.json'))) {
+        const manifest = JSON.parse(fs.readFileSync(path.join(root, 'tree-sitter.json'), 'utf8'));
+        for (const grammar of manifest.grammars ?? []) available.add(grammar.name);
+      } else if (fs.existsSync(path.join(root, 'package.json'))) {
+        const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+        if (manifest.enabled !== false) for (const grammar of Object.keys(manifest.grammars ?? {})) available.add(grammar);
+      }
     }
+    for (const id of ['json', 'markdown']) if (!available.has(id)) throw new Error('Default language must be enabled: ' + id);
     stageLanguagePacks({source: temporary, destination, platform});
   } catch (error) {
     fs.rmSync(destination, {recursive: true, force: true});

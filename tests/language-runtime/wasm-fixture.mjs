@@ -19,10 +19,12 @@ export async function prepareWasmFixture(destination, {module, offline = false} 
   if (sha256File(module) !== RUST_WASM.sha256) throw new Error('Rust WASM regression input does not match the pinned upstream SHA-256');
   const root = path.dirname(fileURLToPath(import.meta.url));
   const target = path.join(destination, 'rust');
-  fs.cpSync(path.join(root, '../../assets/language-packs/rust'), target, {recursive: true});
-  fs.mkdirSync(path.join(target, 'modules'), {recursive: true});
-  // Keep both the standard download name and the existing module: "rust"
-  // metadata. Installing the download requires no configuration rewrite.
-  fs.copyFileSync(module, path.join(target, 'modules/tree-sitter-rust.wasm'));
+  fs.rmSync(target, {recursive: true, force: true});
+  fs.mkdirSync(path.join(target, 'queries'), {recursive: true});
+  for (const file of ['tree-sitter.json', 'queries/highlights.scm', 'queries/injections.scm']) {
+    fs.copyFileSync(path.join(root, '../../assets/language-packs/rust', file), path.join(target, file));
+  }
+  // Preserve the upstream names and directory layout without editor metadata.
+  fs.copyFileSync(module, path.join(target, 'tree-sitter-rust.wasm'));
   return path.resolve(destination);
 }

@@ -1,23 +1,18 @@
-# Bundled language resource templates
+# Standard language resource templates
 
-These folders contain only language metadata, highlighter queries and
-provenance. There is no language build project or Rust grammar wrapper here.
-The generic loader reads the same format for bundled and user-added languages.
+Each child directory contains tree-sitter.json and the query paths it declares.
+No language source, build project or prebuilt module is stored here. These files
+are resource templates; cargo build does not stage them automatically.
 
-To install a language, obtain a standard prebuilt Tree-sitter module for your
-platform (or a platform-independent standard WASM download) and place it in
-that language's modules/ directory alongside the
-package.json and grammars/ resources. The default module stem gains .dll, .so
-or .dylib for Windows, Linux or macOS. An explicit filename is also accepted,
-without renaming. A module stem first checks tree-sitter-<stem>.wasm and
-<stem>.wasm, then its native platform filename. For Rust, dropping the upstream
-tree-sitter-rust.wasm beside the unchanged metadata is sufficient. Entry points
-default to tree_sitter_<grammar>.
+For Rust, download the upstream v0.24.2 tree-sitter-rust.wasm into rust/ beside
+its tree-sitter.json. Copy that complete directory under language-packs/ beside
+Loom or in the platform user directory, then restart. Keep the upstream queries/
+layout. No Loom package.json or SOURCE.md is needed. Rust's configuration and
+queries are unmodified upstream resources; LICENSE accompanies them.
 
-Markdown block and inline use separate modules, as do TypeScript and TSX.
-All provided manifests are enabled by default; discovery does not load modules
-or queries. Restart after adding or changing resources.
+Other directories retain existing supported query content in standard layouts.
+PROVENANCE.md is optional distribution documentation, not part of discovery or
+runtime loading. Application editing/LSP defaults are separate from these files.
 
-These templates are not automatically copied by cargo build. The application
-packager consumes complete externally supplied resources via LOOM_LANGUAGE_PACKS.
-See ../../docs/languages.md for installation, format and verification.
+See [installation and format](../../docs/languages.md) for download links,
+platform paths, resource resolution, compatibility and regression commands.

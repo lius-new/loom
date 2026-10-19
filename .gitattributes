@@ -5,3 +5,6 @@
 *.toml text eol=lf
 *.ico binary
 *.png binary
+assets/language-packs/**/tree-sitter.json text eol=lf
+assets/language-packs/**/*.scm text eol=lf
+assets/language-packs/rust/LICENSE text eol=lf

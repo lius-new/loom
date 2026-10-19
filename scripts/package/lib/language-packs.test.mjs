@@ -107,3 +107,58 @@ test('explicit WASM filenames need no native library and remain unmodified', t =
   assert.throws(() => moduleFile('../rust.wasm', 'win32'), /Invalid/);
   assert.throws(() => moduleFile('rust.wasm.dll', 'win32'), /Invalid/);
 });
+
+function standardFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-upstream-resources-'));
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const source = path.join(root, 'input'), pack = path.join(source, 'tree-sitter-rust');
+  fs.mkdirSync(path.join(pack, 'queries'), {recursive: true});
+  const manifest = {grammars: [{name: 'rust', path: '.', 'file-types': ['rs'], highlights: ['queries/base.scm', 'queries/highlights.scm']}], metadata: {license: 'MIT'}, bindings: {rust: true}};
+  fs.writeFileSync(path.join(pack, 'tree-sitter.json'), JSON.stringify(manifest, null, 2));
+  fs.writeFileSync(path.join(pack, 'tree-sitter-rust.wasm'), 'unchanged upstream WASM');
+  for (const file of ['base.scm', 'highlights.scm']) fs.writeFileSync(path.join(pack, 'queries', file), file);
+  return {root, source, pack, manifest};
+}
+
+test('standard manifests and resource layouts stage on all platforms without Loom files', t => {
+  const {root, source, pack} = standardFixture(t);
+  fs.writeFileSync(path.join(pack, 'LICENSE'), 'upstream license');
+  fs.writeFileSync(path.join(pack, 'package.json'), 'invalid legacy manifest must not be read');
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    const destination = path.join(root, platform);
+    const files = stageLanguagePacks({source, destination, platform});
+    assert.equal(files.length, 1);
+    assert.equal(fs.readFileSync(files[0], 'utf8'), 'unchanged upstream WASM');
+    for (const file of ['tree-sitter.json', 'queries/base.scm', 'queries/highlights.scm', 'LICENSE']) assert.deepEqual(fs.readFileSync(path.join(destination, 'tree-sitter-rust', file)), fs.readFileSync(path.join(pack, file)));
+    for (const file of ['package.json', 'SOURCE.md', 'modules', 'grammars']) assert.equal(fs.existsSync(path.join(destination, 'tree-sitter-rust', file)), false);
+  }
+});
+
+test('standard multi-grammar resources preserve root-relative query arrays and nested modules', t => {
+  const {root, source, pack, manifest} = standardFixture(t);
+  manifest.grammars.push({name: 'inline', path: 'nested/inline', 'file-types': null, highlights: 'queries/base.scm'});
+  fs.mkdirSync(path.join(pack, 'nested/inline'), {recursive: true});
+  fs.writeFileSync(path.join(pack, 'nested/inline/tree-sitter-inline.wasm'), 'inline');
+  fs.writeFileSync(path.join(pack, 'tree-sitter.json'), JSON.stringify(manifest));
+  assert.equal(stageLanguagePacks({source, destination: path.join(root, 'out')}).length, 2);
+  assert.equal(fs.readFileSync(path.join(root, 'out/tree-sitter-rust/nested/inline/tree-sitter-inline.wasm'), 'utf8'), 'inline');
+});
+
+test('invalid standard paths never fall back to a legacy manifest', t => {
+  const {root, source, pack, manifest} = standardFixture(t);
+  fs.writeFileSync(path.join(pack, 'package.json'), '{}');
+  for (const invalid of ['../escape.scm', '/absolute.scm', 'C:/absolute.scm', 'a\\bad.scm']) {
+    manifest.grammars[0].highlights = invalid;
+    fs.writeFileSync(path.join(pack, 'tree-sitter.json'), JSON.stringify(manifest));
+    assert.throws(() => stageLanguagePacks({source, destination: path.join(root, 'invalid')}), /Invalid standard resource path/);
+  }
+});
+
+test('standard packaging requires every declared highlight and a prebuilt module', t => {
+  const {root, source, pack} = standardFixture(t);
+  fs.unlinkSync(path.join(pack, 'queries/base.scm'));
+  assert.throws(() => stageLanguagePacks({source, destination: path.join(root, 'missing-query')}), /ENOENT/);
+  fs.writeFileSync(path.join(pack, 'queries/base.scm'), 'base');
+  fs.unlinkSync(path.join(pack, 'tree-sitter-rust.wasm'));
+  assert.throws(() => stageLanguagePacks({source, destination: path.join(root, 'missing-module')}), /Missing prebuilt language module/);
+});

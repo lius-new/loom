@@ -120,20 +120,14 @@ fn grammar_table_resources_and_descriptions_agree() {
     for name in &table {
         let language =
             super::test_support::language(name).unwrap_or_else(|| panic!("no factory for {name}"));
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&language)
+        let _parser = super::test_support::resources()
+            .parser(name)
             .unwrap_or_else(|error| panic!("{name}: {error}"));
-        for file in ["highlights.scm", "SOURCE.md"] {
-            assert!(
-                grammar_file(name, file).is_some_and(|text| !text.trim().is_empty()),
-                "{name}/{file}"
-            );
-        }
-        let source = grammar_file(name, "SOURCE.md").unwrap();
-        for needed in ["Grammar crate", "Upstream", "License", "Query", "Modified"] {
-            assert!(source.contains(needed), "{name}/SOURCE.md lacks `{needed}`");
-        }
+        assert!(language.abi_version() <= tree_sitter::LANGUAGE_VERSION);
+        assert!(
+            grammar_file(name, "highlights.scm").is_some_and(|text| !text.trim().is_empty()),
+            "{name}/highlights.scm"
+        );
     }
     assert!(super::test_support::language("brainfuck").is_none());
 }

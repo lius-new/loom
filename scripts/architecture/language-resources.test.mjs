@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
 import {runtimeGrammarManifestErrors} from './check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -13,16 +14,15 @@ test('repository ships language resources without a language producer or Rust wr
   }
   const resources = path.join(root, 'assets/language-packs');
   for (const id of fs.readdirSync(resources).filter(id => fs.statSync(path.join(resources, id)).isDirectory())) {
-    const manifest = JSON.parse(fs.readFileSync(path.join(resources, id, 'package.json')));
-    assert.equal(manifest.id, id);
-    assert.notEqual(manifest.enabled, false);
-    for (const [grammar, module] of Object.entries(manifest.grammars)) {
-      assert.equal(module.symbol, undefined, 'bundled resources use standard inferred exports');
-      assert.equal(module.module, grammar);
-      for (const file of ['highlights.scm', 'SOURCE.md']) assert.ok(fs.statSync(path.join(resources, id, 'grammars', grammar, file)).size > 0);
+    const manifest = JSON.parse(fs.readFileSync(path.join(resources, id, 'tree-sitter.json')));
+    assert.equal(fs.existsSync(path.join(resources, id, 'package.json')), false);
+    assert.ok(Array.isArray(manifest.grammars));
+    for (const grammar of manifest.grammars) {
+      assert.match(grammar.name, /^[a-z][a-z0-9_]*$/);
+      for (const file of [grammar.highlights].flat()) assert.ok(fs.statSync(path.join(resources, id, file)).size > 0);
     }
   }
-  for (const id of ['json', 'markdown']) assert.ok(fs.existsSync(path.join(resources, id, 'package.json')));
+  for (const id of ['json', 'markdown']) assert.ok(fs.existsSync(path.join(resources, id, 'tree-sitter.json')));
   for (const manifest of ['Cargo.toml', 'tests/language-runtime/Cargo.toml']) {
     assert.match(fs.readFileSync(path.join(root, manifest), 'utf8'), /tree-sitter\s*=\s*\{[^}]*features\s*=\s*\[[^\]]*"wasm"/);
   }
@@ -33,4 +33,12 @@ test('repository ships language resources without a language producer or Rust wr
     assert.match(text, /run-wasm\.mjs/, 'WASM regressions run even without a native resource feed');
   }
   assert.match(fs.readFileSync(path.join(root, 'scripts/package/macos/entitlements.plist'), 'utf8'), /com\.apple\.security\.cs\.allow-jit/);
+});
+
+test('Rust regression metadata and queries are the unmodified v0.24.2 upstream resources', () => {
+  for (const [file, digest] of Object.entries({
+    'tree-sitter.json': '1ff4c338e5f9a8ff725f2f37b2e125dceac46a139cd572064d8dcfbbef9c0aaf',
+    'queries/highlights.scm': '0f0343107f14a7690157f51090a979eb8f8bfe4eada7c61763ddb4c54b1311d1',
+    'queries/injections.scm': '723146f179bc0edfba2f51731c99afce8bed3b677dfb4435c303859fae299ba5',
+  })) assert.equal(createHash('sha256').update(fs.readFileSync(path.join(root, 'assets/language-packs/rust', file))).digest('hex'), digest, file);
 });

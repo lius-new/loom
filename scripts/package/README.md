@@ -183,3 +183,14 @@ repository secrets.
 Loom.app declares no document types: opening a file from Finder sends an
 Apple Event that Loom does not handle yet, so "Open With" would start Loom
 without the file.
+
+### Standard upstream language resources
+
+Language staging accepts collections with tree-sitter.json and the standard
+module/query layout described in [docs/languages.md](../../docs/languages.md).
+Directory names may retain upstream hyphenated names. It preserves manifests,
+modules and declared query paths, including arrays and grammar subdirectories;
+no Loom package.json or SOURCE.md is required or generated. Standard LICENSE
+files and optional PROVENANCE.md are copied when present. JSON/Markdown release
+requirements are checked by grammar name rather than folder name. Legacy
+package.json collections remain accepted for migration; SOURCE.md is optional.

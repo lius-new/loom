@@ -1,0 +1,13 @@
+{
+  "grammars": [
+    {
+      "name": "c_sharp",
+      "scope": "source.c_sharp",
+      "path": ".",
+      "file-types": [
+        "cs"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ]
+}

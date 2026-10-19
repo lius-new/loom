@@ -15,6 +15,9 @@ use std::{
 use tree_sitter::{Language, Parser, WasmStore, wasmtime};
 use tree_sitter_language::LanguageFn;
 
+#[path = "language_standard.rs"]
+mod standard;
+
 const MAX_MANIFEST: u64 = 1024 * 1024;
 const MAX_QUERY: u64 = 4 * 1024 * 1024;
 const MAX_QUERY_CACHE: usize = 8 * 1024 * 1024;
@@ -115,6 +118,7 @@ fn read_text(path: &Path, limit: u64) -> Result<String, String> {
 struct Installed {
     manifest: Manifest,
     root: PathBuf,
+    standard: Option<BTreeMap<String, standard::Grammar>>,
 }
 
 fn registry(packages: &BTreeMap<String, Installed>) -> Result<Registry, String> {
@@ -182,6 +186,7 @@ impl Manifest {
             Installed {
                 manifest: self.clone(),
                 root: directory.to_owned(),
+                standard: None,
             },
         )]))
         .map(|_| ())
@@ -217,13 +222,15 @@ impl Packages {
             packages: BTreeMap::new(),
             loaded: Mutex::default(),
         };
-        for root in [Some(bundled), user].into_iter().flatten() {
-            source.scan(root);
+        for (root, replace) in [(Some(bundled), false), (user, true)] {
+            if let Some(root) = root {
+                source.scan(root, replace);
+            }
         }
         source
     }
 
-    fn scan(&mut self, root: &Path) {
+    fn scan(&mut self, root: &Path, replace: bool) {
         let entries = match fs::read_dir(root) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
@@ -259,23 +266,38 @@ impl Packages {
         directories.sort();
         for directory in directories {
             // Ignore unrelated folders and partially downloaded packages.
-            if !directory.join("package.json").is_file() {
+            if !directory.join("tree-sitter.json").is_file()
+                && !directory.join("package.json").is_file()
+            {
                 continue;
             }
             let result = (|| {
-                let path = directory.join("package.json");
-                let manifest: Manifest = serde_json::from_str(&read_text(&path, MAX_MANIFEST)?)
-                    .map_err(|e| format!("{}: {e}", path.display()))?;
-                manifest.validate(&directory)?;
+                let installed = if directory.join("tree-sitter.json").is_file() {
+                    standard::read(&directory)?
+                } else {
+                    let path = directory.join("package.json");
+                    let manifest: Manifest = serde_json::from_str(&read_text(&path, MAX_MANIFEST)?)
+                        .map_err(|e| format!("{}: {e}", path.display()))?;
+                    manifest.validate(&directory)?;
+                    Installed {
+                        manifest,
+                        root: directory.clone(),
+                        standard: None,
+                    }
+                };
+                let manifest = &installed.manifest;
                 let mut candidate = self.packages.clone();
+                if replace && installed.standard.is_some() {
+                    // A user copy replaces the same complete grammar collection,
+                    // even when the upstream directory name is different.
+                    candidate.retain(|_, old| {
+                        !old.manifest.grammars.keys().eq(manifest.grammars.keys())
+                    });
+                } else if !replace && candidate.contains_key(&manifest.id) {
+                    return Err(format!("duplicate language collection {}", manifest.id));
+                }
                 if manifest.enabled {
-                    candidate.insert(
-                        manifest.id.clone(),
-                        Installed {
-                            manifest,
-                            root: directory.clone(),
-                        },
-                    );
+                    candidate.insert(manifest.id.clone(), installed);
                 } else {
                     candidate.remove(&manifest.id);
                 }
@@ -315,6 +337,9 @@ impl Packages {
             .find_map(|p| p.manifest.grammars.get(grammar).map(|m| (p, m)))
     }
     fn module_path(package: &Installed, module: &str) -> PathBuf {
+        if let Some(grammars) = &package.standard {
+            return standard::module_path(&package.root, module, grammars[module].directory());
+        }
         // A stem accepts an upstream WASM download without renaming. Explicit
         // filenames select exactly one format; never borrow another package.
         let root = package.root.join("modules");
@@ -425,6 +450,13 @@ impl Resources for Packages {
             Some((package, module)) => {
                 loaded.activity.modules.insert(module.module.clone());
                 let path = Self::module_path(package, &module.module);
+                if let Err(error) = standard::contained(&package.root, &path) {
+                    Self::report(&mut loaded, &error);
+                    loaded
+                        .languages
+                        .insert(grammar.to_owned(), Err(error.clone()));
+                    return Err(error);
+                }
                 if path
                     .extension()
                     .is_some_and(|extension| extension == "wasm")
@@ -474,7 +506,7 @@ impl Resources for Packages {
         let Some((package, _)) = self.grammar(grammar) else {
             return Err(format!("unknown language resource {grammar}/{file}"));
         };
-        if !["highlights.scm", "injections.scm", "SOURCE.md"].contains(&file) {
+        if !["highlights.scm", "injections.scm"].contains(&file) {
             return Err(format!("unknown language resource {grammar}/{file}"));
         }
         let mut loaded = self.loaded.lock().unwrap();
@@ -484,18 +516,36 @@ impl Resources for Packages {
         }
         loaded.activity.queries.insert(key.clone());
         loaded.activity.query_reads += 1;
-        let path = package.root.join("grammars").join(grammar).join(file);
-        let result = if file == "injections.scm" && !path.is_file() {
-            Ok(None)
+        let paths = if let Some(grammars) = &package.standard {
+            grammars[grammar].queries(file)
         } else {
-            read_text(&path, MAX_QUERY).and_then(|text| {
-                if loaded.text_bytes + text.len() > MAX_QUERY_CACHE {
-                    return Err("language query cache budget exceeded".to_owned());
-                }
-                loaded.text_bytes += text.len();
-                Ok(Some(Arc::from(text)))
-            })
+            vec![format!("grammars/{grammar}/{file}")]
         };
+        let optional = file == "injections.scm";
+        let result = (|| {
+            let mut combined = String::new();
+            for relative in paths {
+                let path = package.root.join(relative);
+                if optional && !path.exists() {
+                    continue;
+                }
+                standard::contained(&package.root, &path)?;
+                let text = read_text(&path, MAX_QUERY)?;
+                if combined.len() + text.len() + 1 > MAX_QUERY as usize {
+                    return Err("combined query exceeds byte limit".to_owned());
+                }
+                combined.push_str(&text);
+                combined.push('\n');
+            }
+            if optional && combined.is_empty() {
+                return Ok(None);
+            }
+            if loaded.text_bytes + combined.len() > MAX_QUERY_CACHE {
+                return Err("language query cache budget exceeded".to_owned());
+            }
+            loaded.text_bytes += combined.len();
+            Ok(Some(Arc::from(combined)))
+        })();
         if let Err(error) = &result {
             Self::report(&mut loaded, error);
         }

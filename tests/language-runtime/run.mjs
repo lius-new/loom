@@ -6,15 +6,17 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {prepareWasmFixture} from './wasm-fixture.mjs';
+import {legacyFixture} from './legacy-fixture.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 const args=process.argv.slice(2),i=args.indexOf('--packages');
 if(i<0||!args[i+1])throw Error('Supply --packages with complete prebuilt artifacts; tests do not build grammar sources');
 const packages=path.resolve(args[i+1]);
+const {root:legacyPackages,collections}=legacyFixture(packages,path.join(root,'target/legacy-input'));
 const option=name=>{const index=args.indexOf(name);return index<0?null:args[index+1];};
 const extraPackage=option('--new-package'),sample=option('--sample');
 if(Boolean(extraPackage)!==Boolean(sample))throw Error('Use --new-package and --sample together to verify a genuinely new external language');
 const wasmPackages=await prepareWasmFixture(path.join(root,'target/wasm-input'),{module:option('--wasm-rust'),offline:args.includes('--offline')});
-const env={...process.env,LOOM_TEST_LANGUAGE_PACKS:packages,LOOM_TEST_WASM_PACKAGES:wasmPackages};
+const env={...process.env,LOOM_TEST_LANGUAGE_PACKS:packages,LOOM_TEST_LEGACY_PACKAGES:legacyPackages,LOOM_TEST_WASM_PACKAGES:wasmPackages};
 const offline=args.includes('--offline')?['--offline']:[];
 const cargo=command=>execFileSync('cargo',[...command,'--manifest-path',path.join(root,'Cargo.toml'),'--locked',...offline,'--target-dir',path.join(root,'target')],{cwd:root,env,stdio:'inherit'});
 if(!args.includes('--probe-only'))cargo(['test','--no-fail-fast']);
@@ -34,9 +36,9 @@ try {
   for(const name of ['new.json','new.md','new.downloaded'])assert.deepEqual(probe(name),{language:'plaintext',colored:0,modules:[],wasm_modules:[],errors:[]});
   const portable=path.join(temp,'language-packs');
   fs.mkdirSync(portable,{recursive:true});
-  for(const id of ['json','markdown'])fs.cpSync(path.join(packages,id),path.join(portable,id),{recursive:true});
+  for(const id of ['json','markdown'])fs.cpSync(collections[id],path.join(portable,id),{recursive:true});
   const custom=path.join(portable,'downloaded');
-  fs.cpSync(path.join(packages,'rust'),custom,{recursive:true});
+  fs.cpSync(path.join(legacyPackages,'rust'),custom,{recursive:true});
   const original=JSON.parse(fs.readFileSync(path.join(custom,'package.json'),'utf8'));
   fs.renameSync(path.join(custom,'grammars/rust'),path.join(custom,'grammars/downloaded'));
   fs.writeFileSync(path.join(custom,'package.json'),JSON.stringify({schema:1,id:'downloaded',languages:[{
@@ -54,19 +56,24 @@ try {
   }
   let extra=null;
   if(extraPackage){
-    const manifest=JSON.parse(fs.readFileSync(path.join(extraPackage,'package.json'),'utf8'));
-    assert.match(manifest.id,/^[a-z][a-z0-9_]*$/);
+    const standardPath=path.join(extraPackage,'tree-sitter.json');
+    const isStandard=fs.existsSync(standardPath);
+    const manifest=JSON.parse(fs.readFileSync(isStandard?standardPath:path.join(extraPackage,'package.json'),'utf8'));
+    const id=isStandard?manifest.grammars[0].name:manifest.id;
+    const language=isStandard?manifest.grammars[0].name:manifest.languages[0].name;
+    assert.match(id,/^[a-z][a-z0-9_]*$/);
     const name='unseen'+path.extname(sample);
     fs.copyFileSync(sample,path.join(temp,name));
     assert.deepEqual(probe(name),{language:'plaintext',colored:0,modules:[],wasm_modules:[],errors:[]});
-    assert.equal(fs.existsSync(path.join(user,manifest.id)),false);
-    fs.cpSync(extraPackage,path.join(user,manifest.id),{recursive:true});
+    assert.equal(fs.existsSync(path.join(user,id)),false);
+    fs.cpSync(extraPackage,path.join(user,id),{recursive:true});
     extra=probe(name);
-    assert.equal(extra.language,manifest.languages[0].name);
+    assert.equal(extra.language,language);
     assert.ok(extra.colored>0);assert.ok(extra.modules.length>0);assert.deepEqual(extra.errors,[]);
   }
   assert.equal(digest(),originalDigest); // Same executable before and after resource installation.
-  const jsonPath=path.join(user,'json/package.json'),disabled=JSON.parse(fs.readFileSync(jsonPath));disabled.enabled=false;fs.writeFileSync(jsonPath,JSON.stringify(disabled));
+  if(fs.existsSync(path.join(user,'json/tree-sitter.json'))) fs.renameSync(path.join(user,'json'),path.join(base,'removed-json'));
+  else { const jsonPath=path.join(user,'json/package.json'),disabled=JSON.parse(fs.readFileSync(jsonPath));disabled.enabled=false;fs.writeFileSync(jsonPath,JSON.stringify(disabled)); }
   assert.equal(probe('new.json').language,'plaintext');
   console.log(JSON.stringify({noPackages:'plaintext',installed,extra,portableAndUser:true,unchangedExecutable:true,restartDisable:'plaintext'}));
 } finally {

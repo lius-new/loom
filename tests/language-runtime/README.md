@@ -4,7 +4,11 @@ This Cargo workspace compiles production domain, syntax, loader and worker
 sources directly. It has no concrete grammar crate, Rust wrapper or language
 build project dependency. Use standard upstream native modules.
 Supply a complete prebuilt collection (the regression fixtures expect the eight
-bundled packages); this suite never builds grammar modules:
+bundled packages), using either standard or legacy manifests. Standard input
+directory names may retain the upstream names. The main tests exercise the
+production loader against that input. legacy-fixture.mjs makes a separate test-only
+view for old-manifest mutation/migration cases; it copies prebuilt modules and
+queries, never builds grammar code, and is not shipped to users:
 
 ~~~sh
 node run.mjs --packages /path/to/prebuilt-packages --wasm-rust /path/to/tree-sitter-rust.wasm
@@ -45,5 +49,7 @@ PATH when compiling the generic runtime. No grammar source or language compiler
 is invoked. WASM tests include cold engine initialization, independent parser
 stores, incremental edits, scanner state, injections, invalid modules/exports and
 store failure fallback. The production probe installs only a .wasm file and
-metadata/queries, verifies both resource locations and a new extension, then
-disables on restart while the executable hash remains unchanged.
+upstream tree-sitter.json and queries/ files, with no package.json or SOURCE.md.
+It verifies both resource locations, a metadata-declared new extension and removal
+on restart while the executable hash remains unchanged. The native baseline
+continues to verify migration compatibility with existing legacy collections.

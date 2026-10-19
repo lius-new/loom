@@ -1,0 +1,24 @@
+{
+  "grammars": [
+    {
+      "name": "markdown",
+      "scope": "source.markdown",
+      "path": "tree-sitter-markdown",
+      "file-types": [
+        "md",
+        "markdown",
+        "mdown",
+        "mkd"
+      ],
+      "highlights": "tree-sitter-markdown/queries/highlights.scm",
+      "injections": "tree-sitter-markdown/queries/injections.scm"
+    },
+    {
+      "name": "markdown_inline",
+      "scope": "source.markdown_inline",
+      "path": "tree-sitter-markdown-inline",
+      "file-types": [],
+      "highlights": "tree-sitter-markdown-inline/queries/highlights.scm"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 //! Built from descriptions, never from per-language code.
 use crate::domain::language::descriptor::{
     Comments, Descriptor, RootFallback, RootStrategy, ServerDescriptor, normalize_extension,
-    normalize_file_name,
+    normalize_file_name, normalize_suffix,
 };
 use crate::domain::language::{
     GrammarId, LanguageId, ResolvedLanguage, ServerDefinitionId, VariantId,
@@ -90,6 +90,7 @@ pub struct Registry {
     variants: Vec<(LanguageId, usize)>,
     by_extension: HashMap<Box<str>, (LanguageId, usize)>,
     by_file_name: HashMap<Box<str>, (LanguageId, usize)>,
+    by_suffix: HashMap<Box<str>, (LanguageId, usize)>,
     plain_text: LanguageId,
     servers: Vec<ServerDefinition>,
     server_by_name: HashMap<Box<str>, ServerDefinitionId>,
@@ -238,6 +239,7 @@ impl Registry {
 
         let mut by_extension: HashMap<Box<str>, (LanguageId, usize)> = HashMap::new();
         let mut by_file_name: HashMap<Box<str>, (LanguageId, usize)> = HashMap::new();
+        let mut by_suffix = HashMap::new();
         for (index, descriptor) in parsed.iter().enumerate() {
             let language = LanguageId(index as u32);
             for rule in &descriptor.files {
@@ -246,6 +248,18 @@ impl Registry {
                     .iter()
                     .position(|v| v.id == rule.variant)
                     .expect("validated: the rule's variant exists");
+                for suffix in &rule.suffixes {
+                    let key = normalize_suffix(suffix).map_err(RegistryError)?;
+                    let claim = (language, position);
+                    if by_suffix
+                        .insert(key.clone(), claim)
+                        .is_some_and(|old| old != claim)
+                    {
+                        return fail(format!(
+                            "file suffix `{key}` is claimed by multiple languages"
+                        ));
+                    }
+                }
                 let claims = rule
                     .extensions
                     .iter()
@@ -285,6 +299,17 @@ impl Registry {
         let Some(&plain_text) = by_name.get(PLAIN_TEXT) else {
             return fail(format!("the `{PLAIN_TEXT}` language is required"));
         };
+        for (suffix, claim) in &by_suffix {
+            if by_extension
+                .get(suffix.as_str())
+                .or_else(|| by_file_name.get(suffix.as_str()))
+                .is_some_and(|old| old != claim)
+            {
+                return fail(format!(
+                    "file suffix `{suffix}` conflicts with an existing file rule"
+                ));
+            }
+        }
         let server_by_name = parsed_servers
             .iter()
             .enumerate()
@@ -317,6 +342,10 @@ impl Registry {
                 initialization_options: server.options_json().map(String::into_boxed_str),
             })
             .collect();
+        let by_suffix = by_suffix
+            .into_iter()
+            .map(|(key, value)| (key.into_boxed_str(), value))
+            .collect();
         Ok(Self {
             languages,
             by_name,
@@ -324,6 +353,7 @@ impl Registry {
             variants,
             by_extension,
             by_file_name,
+            by_suffix,
             plain_text,
             servers,
             server_by_name,
@@ -409,7 +439,7 @@ impl Registry {
         self.default_resolved(self.plain_text)
     }
 
-    /// Exact file name first, then extension, then plain text. Matching ignores
+    /// Exact names, longest standard dotted suffix, extension, then plain text. Matching ignores
     /// ASCII case, as the previous extension lookup did.
     pub fn resolve_path(&self, path: &Path) -> ResolvedLanguage {
         let by_name = path
@@ -424,7 +454,25 @@ impl Registry {
                         .get(extension.to_ascii_lowercase().as_str())
                 })
         };
-        match by_name.or_else(by_extension) {
+        let by_suffix = || {
+            let filename = path.file_name()?.to_str()?.to_ascii_lowercase();
+            if let Some(claim) = self.by_suffix.get(filename.as_str()) {
+                return Some(claim);
+            }
+            // Match Tree-sitter's whole filename / longest dotted extension
+            // suffix rules. Arbitrary trailing letters ("notes" vs "ts") do
+            // not make a file TypeScript. Dotfiles match by their full name.
+            let mut stem = Path::new(&filename);
+            let mut extensions = Vec::new();
+            while let Some(extension) = stem.extension() {
+                extensions.push(extension.to_str()?);
+                stem = Path::new(stem.file_stem()?);
+            }
+            extensions.reverse();
+            (0..extensions.len())
+                .find_map(|start| self.by_suffix.get(extensions[start..].join(".").as_str()))
+        };
+        match by_name.or_else(by_suffix).or_else(by_extension) {
             Some(&(language, position)) => self.resolved(language, position),
             None => self.plain_text(),
         }

@@ -22,6 +22,11 @@ fn bundled() -> PathBuf {
 fn disk() -> Packages {
     Packages::discover(&bundled(), None)
 }
+fn legacy() -> PathBuf {
+    std::env::var_os("LOOM_TEST_LEGACY_PACKAGES")
+        .map(PathBuf::from)
+        .unwrap_or_else(bundled)
+}
 fn paint(
     index: &mut TreeIndex,
     buffer: &TextBuffer,
@@ -55,7 +60,7 @@ impl Temp {
         Self(path)
     }
     fn package(&self, id: &str) {
-        let src = bundled().join(id);
+        let src = legacy().join(id);
         let dst = self.0.join(id);
         fs::create_dir_all(&dst).unwrap();
         fs::copy(src.join("package.json"), dst.join("package.json")).unwrap();
@@ -91,7 +96,7 @@ impl Temp {
         fs::write(dir.join("highlights.scm"), query).unwrap();
     }
     fn native(&self, id: &str, grammar: &str) {
-        let source = disk();
+        let source = Packages::discover(&legacy(), None);
         let (package, _) = source.grammar(grammar).unwrap();
         let to = self.0.join(id).join("modules");
         fs::create_dir_all(&to).unwrap();
@@ -631,7 +636,9 @@ fn bundled_packages_are_self_contained_and_enabled() {
     assert_eq!(source.packages.len(), 8);
     for package in source.packages.values() {
         assert!(package.manifest.enabled);
-        package.manifest.validate(&package.root).unwrap();
+        if package.standard.is_none() {
+            package.manifest.validate(&package.root).unwrap();
+        }
     }
 }
 
@@ -658,4 +665,98 @@ fn discovery_enforces_manifest_budget_and_ignores_unfinished_downloads() {
     assert_eq!(source.activity().query_reads, 0);
     assert_eq!(source.activity().language_loads, 0);
     assert_eq!(source.grammar_names(), ["json"]);
+}
+
+#[test]
+fn standard_templates_highlight_every_bundled_language_without_legacy_files() {
+    fn copy_resources(source: &Path, target: &Path) {
+        fs::create_dir_all(target).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                copy_resources(&path, &target.join(entry.file_name()));
+            } else if path.file_name().unwrap() == "tree-sitter.json"
+                || path.extension().is_some_and(|e| e == "scm")
+            {
+                fs::copy(path, target.join(entry.file_name())).unwrap();
+            }
+        }
+    }
+    let temp = Temp::new();
+    let native = disk();
+    for id in [
+        "rust",
+        "json",
+        "markdown",
+        "typescript",
+        "javascript",
+        "csharp",
+        "css",
+        "html",
+    ] {
+        let target = temp.0.join(format!("tree-sitter-{id}"));
+        copy_resources(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../assets/language-packs")
+                .join(id),
+            &target,
+        );
+        let document: Value =
+            serde_json::from_str(&fs::read_to_string(target.join("tree-sitter.json")).unwrap())
+                .unwrap();
+        for grammar in document["grammars"].as_array().unwrap() {
+            let name = grammar["name"].as_str().unwrap();
+            let (package, module) = native.grammar(name).unwrap();
+            let from = Packages::module_path(package, &module.module);
+            fs::copy(
+                &from,
+                target.join(format!(
+                    "{name}.{}",
+                    from.extension().unwrap().to_str().unwrap()
+                )),
+            )
+            .unwrap();
+        }
+        assert!(!target.join("package.json").exists());
+        assert!(!target.join("SOURCE.md").exists());
+    }
+    let source = Arc::new(Packages::discover(&temp.0, None));
+    assert_eq!(source.activity(), Activity::default());
+    let registry = source.registry().unwrap();
+    assert_eq!(registry.languages().len(), 9);
+    let mut index = TreeIndex::new(source.clone());
+    for (file, lang, text) in [
+        ("a.rs", "rust", "fn hello() {}"),
+        ("a.json", "json", "{\"a\":true}"),
+        ("a.md", "markdown", "# Title\n\n*emphasis*\n"),
+        ("a.ts", "typescript", "const value: string = 'hi';"),
+        ("a.tsx", "typescript", "const node = <div />;"),
+        ("a.js", "javascript", "const value = 1;"),
+        ("a.cs", "csharp", "class Hello {}"),
+        ("a.css", "css", "body { color: red; }"),
+        ("a.html", "html", "<div>Hello</div>"),
+    ] {
+        let resolved = registry.resolve_path(Path::new(file));
+        assert_eq!(registry.definition_of(resolved).name.as_ref(), lang);
+        let buffer = TextBuffer::new(text);
+        let frame = index
+            .prepare(
+                FileId::new(1),
+                Source::new(&buffer),
+                resolved,
+                &[Window {
+                    line: 0..buffer.len(),
+                    range: 0..buffer.len(),
+                }],
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert!(frame[0].spans.iter().any(|s| s.class.is_some()), "{file}");
+    }
+    assert!(
+        source.activity().errors.is_empty(),
+        "{:?}",
+        source.activity()
+    );
 }

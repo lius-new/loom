@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "json",
+      "scope": "source.json",
+      "path": ".",
+      "file-types": [
+        "json",
+        "jsonc",
+        "geojson",
+        "webmanifest"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ]
+}

@@ -283,3 +283,231 @@ fn platform_paths_are_absolute_and_portable_directories_are_not_cargo_profiles()
         PathBuf::from("/portable/deps/language-packs")
     );
 }
+
+fn standard_manifest() -> Value {
+    json!({"grammars":[{"name":"sample","scope":"source.sample","path":".","file-types":["sample","special.test"],"highlights":["queries/base.scm","queries/highlights.scm"]}],"metadata":{"version":"1.2.3"},"bindings":{"rust":true},"future-upstream-field":{}})
+}
+fn write_standard(temp: &Temp, directory: &str, value: &Value) -> PathBuf {
+    let root = temp.0.join(directory);
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("tree-sitter.json"), value.to_string()).unwrap();
+    root
+}
+
+#[test]
+fn upstream_manifest_alone_registers_suffixes_without_loading_any_payload() {
+    let temp = Temp::new();
+    write_standard(&temp, "tree-sitter-sample-main", &standard_manifest());
+    let source = Packages::discover(&temp.0, None);
+    let registry = source.registry().unwrap();
+    for path in ["hello.sample", "my.special.test", "special.test"] {
+        assert_eq!(
+            registry
+                .definition_of(registry.resolve_path(Path::new(path)))
+                .name
+                .as_ref(),
+            "sample"
+        );
+    }
+    assert_eq!(
+        registry
+            .definition_of(registry.resolve_path(Path::new("hello.test")))
+            .name
+            .as_ref(),
+        "plaintext"
+    );
+    assert_eq!(source.activity(), Activity::default());
+}
+
+#[test]
+fn standard_suffixes_include_dotfiles_and_longest_suffix_wins() {
+    let temp = Temp::new();
+    write_standard(
+        &temp,
+        "standard",
+        &json!({"grammars":[
+        {"name":"generic","path":null,"file-types":["test"]},
+            {"name":"specific","file-types":["special.test",".sample"]}
+        ]}),
+    );
+    let registry = Packages::discover(&temp.0, None).registry().unwrap();
+    for (file, expected) in [
+        ("file.test", "generic"),
+        ("file.special.test", "specific"),
+        (".sample", "specific"),
+        ("protest", "plaintext"),
+        ("file.not-special.test", "generic"),
+        ("file.sample", "plaintext"),
+    ] {
+        assert_eq!(
+            registry
+                .definition_of(registry.resolve_path(Path::new(file)))
+                .name
+                .as_ref(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn standard_required_query_errors_are_cached_and_bad_user_manifests_preserve_bundled_metadata() {
+    let app = Temp::new();
+    let user = Temp::new();
+    write_standard(&app, "upstream", &standard_manifest());
+    write_standard(
+        &user,
+        "user-copy",
+        &json!({"grammars":[{"name":"sample","highlights":"../outside"}]}),
+    );
+    let source = Packages::discover(&app.0, Some(&user.0));
+    assert_eq!(source.grammar_names(), ["sample"]);
+    assert_eq!(source.activity().errors.len(), 1);
+    assert!(source.text("sample", "highlights.scm").is_err());
+    let failed = source.activity();
+    assert!(source.text("sample", "highlights.scm").is_err());
+    assert_eq!(source.activity(), failed);
+}
+
+#[test]
+fn standard_queries_preserve_declared_order_and_do_not_require_source_metadata() {
+    let temp = Temp::new();
+    let root = write_standard(&temp, "sample", &standard_manifest());
+    fs::create_dir_all(root.join("queries")).unwrap();
+    fs::write(root.join("queries/base.scm"), "; first").unwrap();
+    fs::write(root.join("queries/highlights.scm"), "; second").unwrap();
+    let source = Packages::discover(&temp.0, None);
+    assert_eq!(source.activity(), Activity::default());
+    assert_eq!(
+        source
+            .text("sample", "highlights.scm")
+            .unwrap()
+            .unwrap()
+            .as_ref(),
+        "; first\n; second\n"
+    );
+    assert!(source.text("sample", "injections.scm").unwrap().is_none());
+    assert_eq!(source.activity().language_loads, 0);
+    assert!(!root.join("package.json").exists());
+    assert!(!root.join("SOURCE.md").exists());
+    let loaded = source.activity();
+    source.text("sample", "highlights.scm").unwrap();
+    assert_eq!(source.activity(), loaded);
+}
+
+#[test]
+fn standard_multi_grammar_paths_are_root_relative_and_modules_can_be_in_subdirectories() {
+    let temp = Temp::new();
+    let value = json!({"grammars":[
+        {"name":"first","path":"grammar/first","file-types":["first"],"highlights":"shared/base.scm"},
+        {"name":"second","path":"grammar/second","file-types":null,"highlights":["shared/base.scm"]}
+    ]});
+    let root = write_standard(&temp, "tree-sitter-multi", &value);
+    fs::create_dir_all(root.join("grammar/second")).unwrap();
+    fs::create_dir_all(root.join("shared")).unwrap();
+    fs::write(root.join("shared/base.scm"), "; shared").unwrap();
+    fs::write(
+        root.join("grammar/second/tree-sitter-second.wasm"),
+        "unopened",
+    )
+    .unwrap();
+    let source = Packages::discover(&temp.0, None);
+    assert_eq!(source.grammar_names(), ["first", "second"]);
+    let (package, module) = source.grammar("second").unwrap();
+    assert_eq!(
+        Packages::module_path(package, &module.module),
+        root.join("grammar/second/tree-sitter-second.wasm")
+    );
+    assert_eq!(
+        source
+            .text("second", "highlights.scm")
+            .unwrap()
+            .unwrap()
+            .as_ref(),
+        "; shared\n"
+    );
+    assert_eq!(source.activity().language_loads, 0);
+}
+
+#[test]
+fn standard_user_override_is_independent_of_directory_name_and_never_borrows_queries() {
+    let app = Temp::new();
+    let user = Temp::new();
+    let root = write_standard(&app, "tree-sitter-sample", &standard_manifest());
+    fs::create_dir_all(root.join("queries")).unwrap();
+    fs::write(root.join("queries/base.scm"), "; app").unwrap();
+    fs::write(root.join("queries/highlights.scm"), "; app").unwrap();
+    let first = Packages::discover(&app.0, Some(&user.0));
+    write_standard(&user, "downloaded-version", &standard_manifest());
+    let next = Packages::discover(&app.0, Some(&user.0));
+    assert_eq!(next.activity(), Activity::default());
+    assert!(next.text("sample", "highlights.scm").is_err());
+    assert!(first.text("sample", "highlights.scm").is_ok());
+}
+
+#[test]
+fn invalid_standard_paths_duplicates_and_conflicts_leave_valid_packages_available() {
+    let temp = Temp::new();
+    write_standard(&temp, "a-valid", &standard_manifest());
+    for (directory, field, value) in [
+        ("bad-query", "highlights", json!("../outside.scm")),
+        ("bad-path", "path", json!("C:/outside")),
+        ("backslash", "highlights", json!("queries\\outside.scm")),
+    ] {
+        let mut document = standard_manifest();
+        document["grammars"][0][field] = value;
+        write_standard(&temp, directory, &document);
+    }
+    let mut duplicate = standard_manifest();
+    let repeated = duplicate["grammars"][0].clone();
+    duplicate["grammars"].as_array_mut().unwrap().push(repeated);
+    write_standard(&temp, "duplicate", &duplicate);
+    let mut conflict = standard_manifest();
+    conflict["grammars"][0]["name"] = json!("other");
+    write_standard(&temp, "z-conflict", &conflict);
+    let source = Packages::discover(&temp.0, None);
+    assert_eq!(source.grammar_names(), ["sample"]);
+    assert_eq!(source.activity().errors.len(), 5);
+    assert_eq!(source.activity().query_reads, 0);
+}
+
+#[test]
+fn standard_manifest_is_authoritative_and_malformed_input_does_not_fall_back_to_legacy() {
+    let temp = Temp::new();
+    temp.write("sample", &manifest());
+    let root = write_standard(&temp, "sample", &json!({"grammars":[]}));
+    let source = Packages::discover(&temp.0, None);
+    assert!(source.grammar_names().is_empty());
+    assert_eq!(source.activity().errors.len(), 1);
+    fs::write(
+        root.join("tree-sitter.json"),
+        vec![b' '; MAX_MANIFEST as usize + 1],
+    )
+    .unwrap();
+    assert!(
+        Packages::discover(&temp.0, None)
+            .activity()
+            .errors
+            .iter()
+            .any(|e| e.contains("exceeds"))
+    );
+}
+
+#[test]
+fn standard_rust_keeps_application_lsp_defaults_without_external_editor_metadata() {
+    let temp = Temp::new();
+    write_standard(
+        &temp,
+        "upstream-rust",
+        &json!({"grammars":[{"name":"rust","file-types":["rs"]}]}),
+    );
+    let registry = Packages::discover(&temp.0, None).registry().unwrap();
+    let rust = registry.resolve_path(Path::new("new.rs"));
+    assert_eq!(
+        registry.server_for(rust).unwrap().0.name.as_ref(),
+        "rust-analyzer"
+    );
+    assert_eq!(
+        registry.definition_of(rust).comments.line.as_deref(),
+        Some("//")
+    );
+}

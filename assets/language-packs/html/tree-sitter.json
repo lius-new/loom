@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "html",
+      "scope": "source.html",
+      "path": ".",
+      "file-types": [
+        "html",
+        "htm",
+        "xhtml"
+      ],
+      "highlights": "queries/highlights.scm",
+      "injections": "queries/injections.scm"
+    }
+  ]
+}

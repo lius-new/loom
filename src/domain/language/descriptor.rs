@@ -163,6 +163,9 @@ pub(crate) struct FileRuleDescriptor {
     pub extensions: Vec<String>,
     #[serde(default)]
     pub names: Vec<String>,
+    /// Tree-sitter file-types are filename suffixes, including compound ones.
+    #[serde(default)]
+    pub suffixes: Vec<String>,
     pub variant: String,
 }
 
@@ -195,6 +198,13 @@ pub(crate) fn normalize_file_name(name: &str) -> Result<String, String> {
         return Err(format!("invalid file name {name:?}"));
     }
     Ok(name.to_ascii_lowercase())
+}
+
+pub(crate) fn normalize_suffix(suffix: &str) -> Result<String, String> {
+    if suffix.contains(['*', '?', ':']) {
+        return Err(format!("invalid file suffix {suffix:?}"));
+    }
+    normalize_file_name(suffix)
 }
 
 impl Descriptor {
@@ -277,7 +287,7 @@ impl Descriptor {
             }
         }
         for rule in &self.files {
-            if rule.extensions.is_empty() && rule.names.is_empty() {
+            if rule.extensions.is_empty() && rule.names.is_empty() && rule.suffixes.is_empty() {
                 return Err("a file rule needs at least one extension or name".into());
             }
             if !self.variants.iter().any(|v| v.id == rule.variant) {
@@ -291,6 +301,9 @@ impl Descriptor {
             }
             for name in &rule.names {
                 normalize_file_name(name)?;
+            }
+            for suffix in &rule.suffixes {
+                normalize_suffix(suffix)?;
             }
         }
         Ok(())

@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "javascript",
+      "scope": "source.javascript",
+      "path": ".",
+      "file-types": [
+        "js",
+        "jsx",
+        "mjs",
+        "cjs"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ]
+}
