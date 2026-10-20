@@ -212,7 +212,7 @@ fn language_notes(
         return notes;
     };
     let registry = crate::domain::language::Registry::builtin();
-    let servers = crate::features::language_service::server_set::ServerSet::builtin();
+    let servers = crate::features::language_service::server_set::ServerSet::current();
     let infos = services.infos();
     // One note for each server the language is bound to, in the servers' order.
     for (definition, _) in servers.for_language(registry, document.meta.lang) {

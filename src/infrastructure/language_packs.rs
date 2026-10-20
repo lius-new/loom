@@ -650,7 +650,9 @@ impl Resources for Packages {
         Self::report(&mut self.loaded.lock().unwrap(), error);
     }
 }
-fn locations(executable: &Path) -> PathBuf {
+/// Where the application keeps its bundled resource directory `name`: beside the
+/// executable, or in the bundle's `Resources` on macOS.
+pub(crate) fn bundled_directory(executable: &Path, name: &str) -> PathBuf {
     let parent = executable.parent().expect("executable has a directory");
     if cfg!(target_os = "macos")
         && parent.file_name().is_some_and(|name| name == "MacOS")
@@ -659,10 +661,14 @@ fn locations(executable: &Path) -> PathBuf {
             .and_then(Path::file_name)
             .is_some_and(|name| name == "Contents")
     {
-        parent.parent().unwrap().join("Resources/language-packs")
+        parent.parent().unwrap().join("Resources").join(name)
     } else {
-        parent.join("language-packs")
+        parent.join(name)
     }
+}
+
+fn locations(executable: &Path) -> PathBuf {
+    bundled_directory(executable, "language-packs")
 }
 
 fn user_directory_from(

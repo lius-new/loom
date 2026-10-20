@@ -76,6 +76,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             },
         );
         loading_runtime.install_language_services(super::language_services::LanguageServices::new(
+            crate::features::language_service::server_set::ServerSet::current(),
             move || results_ready.send(()),
         ));
         loading_runtime.install_highlighter(super::syntax::Highlighter::new(

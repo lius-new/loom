@@ -164,7 +164,12 @@ pub type Overrides = Map<String, Value>;
 /// reported and skipped, so one mistake never resets the other settings.
 /// `Err` means the file is not a JSONC object at all.
 pub fn parse(source: &str) -> Result<LoadOutcome, String> {
-    let (overrides, errors) = parse_overrides(source, Scope::User)?;
+    parse_with(source, &ServerSet::current())
+}
+
+/// Like `parse`, checking server names against `servers`.
+pub fn parse_with(source: &str, servers: &ServerSet) -> Result<LoadOutcome, String> {
+    let (overrides, errors) = parse_overrides_with(source, Scope::User, servers)?;
     Ok(LoadOutcome {
         settings: overlay(&Settings::default(), &overrides),
         errors,
@@ -174,6 +179,14 @@ pub fn parse(source: &str) -> Result<LoadOutcome, String> {
 /// The valid values of a settings file for `scope`, plus messages for the
 /// ones that were skipped.
 pub fn parse_overrides(source: &str, scope: Scope) -> Result<(Overrides, Vec<String>), String> {
+    parse_overrides_with(source, scope, &ServerSet::current())
+}
+
+fn parse_overrides_with(
+    source: &str,
+    scope: Scope,
+    servers: &ServerSet,
+) -> Result<(Overrides, Vec<String>), String> {
     let stripped = jsonc::strip(source);
     if stripped.trim().is_empty() {
         return Ok(Default::default());
@@ -222,7 +235,7 @@ pub fn parse_overrides(source: &str, scope: Scope) -> Result<(Overrides, Vec<Str
         // A bad rule is dropped with a message; the rules around it still apply.
         let value = match key.as_str() {
             "file_associations" => valid_associations(value, &mut errors),
-            "language_servers" => valid_servers(value, &mut errors),
+            "language_servers" => valid_servers(value, &mut errors, servers),
             _ => value,
         };
         let mut candidate = accepted.clone();
@@ -261,16 +274,15 @@ fn valid_associations(value: Value, errors: &mut Vec<String>) -> Value {
 
 /// The entries of a `language_servers` array that are well formed and name a
 /// known server.
-fn valid_servers(value: Value, errors: &mut Vec<String>) -> Value {
+fn valid_servers(value: Value, errors: &mut Vec<String>, servers: &ServerSet) -> Value {
     let Value::Array(items) = value else {
         return value;
     };
-    let servers = ServerSet::builtin();
     let mut kept = Vec::new();
     for (index, item) in items.into_iter().enumerate() {
         let checked = serde_json::from_value::<LanguageServerSetting>(item.clone())
             .map_err(|error| error.to_string())
-            .and_then(|entry| entry.validate(&servers));
+            .and_then(|entry| entry.validate(servers));
         match checked {
             Ok(()) => kept.push(item),
             Err(error) => errors.push(format!("language_servers[{index}]: {error}")),
@@ -483,13 +495,14 @@ mod tests {
 
     #[test]
     fn language_servers_keep_good_entries_and_report_each_bad_one() {
-        let outcome = parse(
+        let outcome = parse_with(
             r#"{ "language_servers": [
                 { "server": "rust-analyzer", "command": "ra" },
                 { "server": "nope" },
                 { "server": "rust-analyzer", "initialization_options": 3 },
                 { "server": "rust-analyzer", "surprise": true }
             ] }"#,
+            &crate::features::language_service::server_set::rust_analyzer_for_tests(),
         )
         .unwrap();
         assert_eq!(outcome.settings.language_servers.len(), 1);

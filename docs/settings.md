@@ -71,27 +71,34 @@ reported; the other rules still apply.
 
 ## Language servers
 
-Loom talks to language servers (rust-analyzer for Rust) for the files you open.
-A server that is not installed is skipped quietly; nothing else changes. To
-change how a server runs, or to turn it off, add entries to `settings.json`:
+Loom ships no language servers and does not look for them on your PATH. The
+servers it can run are the ones in the catalog published with each release
+(`lsp-servers/lsp-servers.toml` beside the application), which describes how to
+start each server and which languages it serves. A language can have several
+servers; they all run for a file, and their diagnostics are shown together. A
+language that no installed server serves just has no language-server features.
+
+To change how a catalogued server runs, or to turn it off, add entries to
+`settings.json`. An entry that names a server the catalog does not list is
+reported and ignored.
 
 ```jsonc
 "language_servers": [
   {
-    "server": "rust-analyzer",
-    "command": "C:\tools\rust-analyzer.exe",   // another program
+    "server": "some-server",
+    "command": "C:\tools\some-server.exe",      // another program
     "args": [],                                   // replaces the default arguments
-    "initialization_options": { "checkOnSave": false },
+    "initialization_options": { "key": false },
     "enabled": true
   }
 ]
 ```
 
-Only `server` is required; everything else keeps the built-in value. The last
-entry for a server wins. A server runs once per project folder: the folder
-holding the nearest (or, for Rust, outermost) project file such as
-`Cargo.toml`, never above the open workspace folder. It stops a minute after
-its last file is closed, and a crashed server is restarted after 1, 2 and 4
+Only `server` is required; everything else keeps the catalog's value. The last
+entry for a server wins. A server runs once per project folder, found with the
+project files the catalog names for it (the nearest or the outermost one, as the
+server's entry says), never above the open workspace folder. It stops a minute
+after its last file is closed, and a crashed server is restarted after 1, 2 and 4
 seconds before being reported as failed.
 
 This setting is only read from your own `settings.json`: a project's

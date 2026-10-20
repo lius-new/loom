@@ -324,6 +324,8 @@ impl Descriptor {
     }
 }
 
+static INSTALLED: OnceLock<Arc<ServerSet>> = OnceLock::new();
+
 #[derive(Debug, Default)]
 pub struct ServerSet {
     /// In listing order: priority descending, then name.
@@ -331,16 +333,17 @@ pub struct ServerSet {
 }
 
 impl ServerSet {
-    /// The servers Loom ships definitions for.
-    pub fn builtin() -> Arc<ServerSet> {
-        static BUILTIN: OnceLock<Arc<ServerSet>> = OnceLock::new();
-        BUILTIN
-            .get_or_init(|| {
-                let set = Self::from_json_array(include_str!("builtin_servers.json"))
-                    .unwrap_or_else(|error| panic!("invalid built-in language servers: {error}"));
-                Arc::new(set)
-            })
-            .clone()
+    /// The process's servers: what `install` set at startup, or none. Loom ships no
+    /// server definitions; they come from the published catalog.
+    pub fn current() -> Arc<ServerSet> {
+        INSTALLED.get().cloned().unwrap_or_default()
+    }
+
+    /// Sets the process's servers. Only the first call counts.
+    pub fn install(set: ServerSet) -> Result<(), &'static str> {
+        INSTALLED
+            .set(Arc::new(set))
+            .map_err(|_| "the language servers are already in use")
     }
 
     /// `sources` are `(name, definition JSON)` pairs. Parsing is strict: an
@@ -353,18 +356,6 @@ impl ServerSet {
             let descriptor =
                 Descriptor::parse(&value).map_err(|error| format!("server `{stem}`: {error}"))?;
             parsed.push(((*stem).to_owned(), descriptor));
-        }
-        Self::assemble(parsed)
-    }
-
-    /// A JSON array of definitions, each named by its own `name`.
-    pub fn from_json_array(json: &str) -> Result<Self, String> {
-        let value: Value = serde_json::from_str(json).map_err(|error| error.to_string())?;
-        let items = value.as_array().ok_or("the server list must be an array")?;
-        let mut parsed = Vec::with_capacity(items.len());
-        for item in items {
-            let descriptor = Descriptor::parse(item)?;
-            parsed.push((descriptor.name.clone(), descriptor));
         }
         Self::assemble(parsed)
     }
@@ -432,6 +423,23 @@ impl ServerSet {
             })
             .collect()
     }
+}
+
+/// A server like rust-analyzer, for tests that need one. Loom ships no definitions,
+/// so tests supply their own.
+#[cfg(test)]
+pub(crate) fn rust_analyzer_for_tests() -> Arc<ServerSet> {
+    static SET: OnceLock<Arc<ServerSet>> = OnceLock::new();
+    SET.get_or_init(|| {
+        let definition = r#"{
+            "name": "rust-analyzer", "display_name": "rust-analyzer",
+            "command": "rust-analyzer",
+            "root": { "markers": ["Cargo.toml", "rust-project.json"],
+                      "strategy": "outermost", "fallback": "file_directory" },
+            "languages": [{ "language": "rust", "language_id": "rust" }] }"#;
+        Arc::new(ServerSet::from_sources(&[("rust-analyzer", definition)]).unwrap())
+    })
+    .clone()
 }
 
 #[cfg(test)]
@@ -586,8 +594,16 @@ mod tests {
     }
 
     #[test]
-    fn rust_is_served_by_rust_analyzer_and_its_root_policy_is_data() {
-        let set = ServerSet::builtin();
+    fn loom_ships_no_server_definitions() {
+        assert!(ServerSet::current().all().is_empty());
+        let registry = Registry::builtin();
+        let rust = registry.resolve_path(Path::new("a.rs"));
+        assert!(ServerSet::current().for_language(registry, rust).is_empty());
+    }
+
+    #[test]
+    fn a_rust_server_and_its_root_policy_are_data() {
+        let set = rust_analyzer_for_tests();
         assert_eq!(
             names(&set, "a.rs"),
             [("rust-analyzer".into(), "rust".into())]

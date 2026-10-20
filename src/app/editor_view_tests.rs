@@ -1404,12 +1404,15 @@ fn diagnostics_from_a_server_are_underlined_in_the_editor() {
             ));
             let results_state = state.clone();
             view_runtime.install_language_services(
-                crate::app::language_services::LanguageServices::new(move || {
-                    results_state.try_update(|app| {
-                        app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
-                        true
-                    });
-                }),
+                crate::app::language_services::LanguageServices::new(
+                    crate::features::language_service::server_set::rust_analyzer_for_tests(),
+                    move || {
+                        results_state.try_update(|app| {
+                            app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
+                            true
+                        });
+                    },
+                ),
             );
         }
         let git = cx.state_with(GitStoreSnapshot::default);

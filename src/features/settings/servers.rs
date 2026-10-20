@@ -96,7 +96,7 @@ mod tests {
     use super::*;
 
     fn servers() -> std::sync::Arc<ServerSet> {
-        ServerSet::builtin()
+        crate::features::language_service::server_set::rust_analyzer_for_tests()
     }
 
     fn run(settings: &[LanguageServerSetting]) -> Option<ServerLaunch> {

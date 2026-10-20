@@ -96,7 +96,7 @@ mod tests {
         entries: &[&str],
     ) -> Option<Assignment> {
         let found = assign(
-            &ServerSet::builtin(),
+            &crate::features::language_service::server_set::rust_analyzer_for_tests(),
             Registry::builtin(),
             language,
             Path::new(path),

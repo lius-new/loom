@@ -1,0 +1,7 @@
+# Generated from verified language server artifacts.
+# Loom ships no server definitions of its own: entries appear here only when the
+# publication workflow has built, verified and published a server.
+schema = 1
+
+[distribution]
+repository = "lius-new/loom"

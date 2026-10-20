@@ -11,6 +11,7 @@ import {prepareDependencies} from '../../dependencies/ensure.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { stageLanguagePacks } from '../lib/language-packs.mjs';
+import { stageLspServers } from '../lib/lsp-servers.mjs';
 
 import {
   DIST_DIR,
@@ -178,6 +179,7 @@ export function packageApp({ version }) {
   for (const module of modules) {
     if (path.extname(module) !== '.wasm') sign(module, identity);
   }
+  stageLspServers({ destination: path.join(resources, 'lsp-servers') });
 
   sign(app, identity, path.join(ROOT, 'scripts/package/macos/entitlements.plist'));
   checkApp(app);

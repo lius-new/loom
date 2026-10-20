@@ -762,7 +762,7 @@ fn real_rust_analyzer_sees_files_changed_outside_the_editor() {
 
     let manager = Manager::start(
         Registry::builtin(),
-        ServerSet::builtin(),
+        crate::features::language_service::server_set::rust_analyzer_for_tests(),
         Options::default(),
         || {},
     );
@@ -852,7 +852,7 @@ fn real_rust_analyzer_reports_a_syntax_error() {
     let sent = text.clone();
     let manager = Manager::start(
         Registry::builtin(),
-        ServerSet::builtin(),
+        crate::features::language_service::server_set::rust_analyzer_for_tests(),
         Options::default(),
         || {},
     );

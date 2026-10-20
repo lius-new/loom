@@ -28,14 +28,9 @@ pub(crate) struct LanguageServices {
 }
 
 impl LanguageServices {
-    pub fn new(on_change: impl Fn() + Send + 'static) -> Self {
+    pub fn new(servers: Arc<ServerSet>, on_change: impl Fn() + Send + 'static) -> Self {
         Self {
-            manager: Manager::start(
-                Registry::builtin(),
-                ServerSet::builtin(),
-                Options::default(),
-                on_change,
-            ),
+            manager: Manager::start(Registry::builtin(), servers, Options::default(), on_change),
             sent: Mutex::new(None),
         }
     }
@@ -139,6 +134,7 @@ fn snapshot(app: &AppState) -> Snapshot {
 mod tests {
     use super::*;
     use crate::app::{runtime::AppRuntime, test_support::live};
+    use crate::features::language_service::server_set::rust_analyzer_for_tests;
     use crate::features::settings::servers::LanguageServerSetting;
     use serde_json::Value;
     use std::time::{Duration, Instant};
@@ -200,7 +196,7 @@ mod tests {
             initialization_options: None,
         }];
         let runtime = Arc::new(AppRuntime::default());
-        runtime.install_language_services(LanguageServices::new(|| {}));
+        runtime.install_language_services(LanguageServices::new(rust_analyzer_for_tests(), || {}));
         let state = live(app).with_runtime(&runtime);
 
         // Opening a file reaches the server without any language-service call.
@@ -304,7 +300,7 @@ mod tests {
             initialization_options: None,
         }];
         let runtime = Arc::new(AppRuntime::default());
-        runtime.install_language_services(LanguageServices::new(|| {}));
+        runtime.install_language_services(LanguageServices::new(rust_analyzer_for_tests(), || {}));
         let state = live(app).with_runtime(&runtime);
         state.update(|app| {
             app.workspace.open_path(file.clone(), original.clone());

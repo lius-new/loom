@@ -21,14 +21,15 @@
 | ID | 决策 |
 | --- | --- |
 | D1 | 一个语言可绑定多个服务器，首版即支持；数据模型、实例、结果存储和路由一次到位。 |
-| D2 | 服务器的注册只有两个来源：Loom 内置目录，以及用户在 Loom 设置里的完整定义。任何情况下都不搜索 PATH、不解析裸命令名。 |
+| D2 | 服务器的注册只有两个来源：Loom 维护的目录，以及用户在 Loom 设置里的完整定义。任何情况下都不搜索 PATH、不解析裸命令名。 |
 | D3 | 内置服务器按语法包的方式分发：固定仓库、固定 release、固定 SHA-256，按需安装。 |
 | D4 | 依赖 Node 的服务器在第一阶段交付，由 Loom 维护的运行时包解决；运行时不调用 npm 等包管理器。 |
 | D5 | 安装策略默认 `ask`，可设为 `auto` 或 `never`。 |
 | D6 | 交互式能力全部纳入计划（见第 8 节），按依赖分四期交付。 |
 | D7 | 体验以 VS Code、JetBrains、Zed 的共同做法为参照。 |
 | D8 | 早期版本不保留兼容层：删除 `LanguageVariant.server`，`language_servers` 设置改格式，不迁移旧设置与会话。 |
-| D9 | 服务器定义移出进程级 `Registry`，由可热重建的 `ServerSet` 持有（5.1），使用户注册的服务器无需重启即可生效。 |
+| D9 | 服务器定义移出进程级 `Registry`，由 `ServerSet` 持有（5.1）。 |
+| D10 | 应用的源码和打包目录里**没有任何手写的服务器定义**，也默认不安装任何服务器。定义只存在于由发布工作流生成的目录 `assets/lsp-servers/lsp-servers.toml` 中，目标在 `scripts/lsp-servers/` 维护（与语言包同一模式）。目录在第一个服务器发布之前不含任何服务器。 |
 
 待确认：
 
@@ -68,7 +69,7 @@ linked editing、document color、document link、notebook、远程或 TCP 服�
 ```mermaid
 flowchart TD
     D[文档快照与戳] --> M[LSP 管理器]
-    SS[ServerSet: 内置目录 + 用户注册] --> M
+    SS[ServerSet: 目录 + 用户注册] --> M
     CAT[服务器目录与安装器] --> SS
     M --> I1[实例: 服务器A/根1]
     M --> I2[实例: 服务器B/根1]
@@ -88,7 +89,7 @@ flowchart TD
 | --- | --- |
 | `features/language_service` | 纯规则：协议模型、能力表、同步规划、结果解码、合并策略、补全过滤排序、片段解析。不启动进程、不读盘。 |
 | `domain/language` | 语言身份与注册表；**不再包含服务器**。 |
-| `features/language_service/server_set.rs`（新） | `ServerSet`：由内置目录、用户注册、语言覆盖合成的服务器定义集合与反向绑定。纯数据。 |
+| `features/language_service/server_set.rs`（新） | `ServerSet`：由目录、用户注册、语言覆盖合成的服务器定义集合与反向绑定。纯数据。 |
 | `infrastructure/lsp` | 进程、传输、协调器、请求通道。 |
 | `infrastructure/lsp_servers`（新） | 服务器目录读取、下载、校验、解包、冒烟、缓存、运行时包；复用 `language_catalog.rs` 的归档与校验代码。 |
 | `app/language_services.rs` | 文档桥、设置桥、安装提示桥、结果投递到 UI 调度器。 |
@@ -101,7 +102,7 @@ flowchart TD
 
 ### 4.1 两种来源
 
-- **内置**：随应用发布的目录 `assets/lsp-servers/lsp-servers.toml`，条目指向 Loom 自己 release 里的归档，由 Loom 维护版本与哈希。
+- **目录**（Loom 维护）：随应用发布的目录 `assets/lsp-servers/lsp-servers.toml`。它是**生成物**，不手写、不手改：由 `scripts/lsp-servers/` 的目标定义经发布工作流生成并回写（4.6）。每个条目含启动方式、服务的语言、根目录规则，以及指向 Loom 自己 release 里归档的固定版本与哈希。应用的源码里没有任何服务器定义；目录里没有条目时就没有服务器。
 - **用户注册**：用户级 `settings.json` 的完整定义（第 9 节）。项目级 `.loom/settings.json` 不能注册服务器、不能改命令与参数（沿用第一代安全边界）。
 
 两者进入 `ServerSet` 后是同一种定义，差别只有 `origin` 与是否由 Loom 下载。
@@ -185,6 +186,7 @@ NotInstalled → Prompted → Queued → Downloading → Verifying → Ready
 
 新增 `.github/workflows/lsp-servers.yml` 和 `scripts/lsp-servers/`，结构仿 `scripts/language-packs`：
 
+0. `scripts/lsp-servers/` 是服务器目标的唯一维护位置，目标的启动命令模板、服务的语言、根目录规则、初始化选项等定义都写在这里（不在应用源码里）；目录文件 `assets/lsp-servers/lsp-servers.toml` 由流水线从已发布并验证的归档生成，和 `assets/language-packs/language-packs.toml` 一样不手改。
 1. `build.toml` 声明上游来源与版本。
 2. 下载并校验上游自己的校验和（二进制）或锁定 lockfile（Node 包，离线打包，lockfile 附进 `PROVENANCE.md` 作为依赖清单）。
 3. 重新打包，写入 `LICENSE` 与 `PROVENANCE.md`。
@@ -219,7 +221,7 @@ P6a 落地 rust-analyzer、typescript-language-server、biome、ruff、pyright�
 ### 5.1 `ServerSet`（D9）
 
 - `Registry` 删除服务器定义、`ServerBinding`、`ServerDefinitionId` 与 `from_parts` 的服务器参数；`LanguageVariant.server` 删除。`Registry` 只保留语言、变体、grammar 与文件规则。
-- `ServerSet` 由三部分合成：内置目录、用户注册、语言级覆盖（`languages.<name>.language_servers`）。它是纯数据，随设置变化重建，通过快照交给协调器（快照已携带设置）。
+- `ServerSet` 由三部分合成：目录里的服务器、用户注册、语言级覆盖（`languages.<name>.language_servers`）。它是纯数据。启动时由 `infrastructure/lsp_catalog.rs` 读取目录并安装为进程级集合（`ServerSet::current()`，没有安装时为空）；已实现的只有目录部分，用户注册与语言级覆盖随后加入，届时随设置变化重建并经快照交给协调器。
 - 服务器定义声明自己服务的语言，方向与 VS Code、Zed、Helix 一致：
 
   ```text
@@ -617,7 +619,7 @@ P6a 的关键验收：
 | P4d 增量同步与 semantic delta | 并入第二代 | — | 增量同步在 P6a，delta 在 P6d |
 | P4e 通用文件监视 | 并入第二代 | — | P6d，漏报暴露时提前 |
 | P4f 完整进度 | 待验证 | R-L4 | 缺 Linux/macOS；丢失 `end` 的有界清理、任务取消 |
-| P6a 基础 | 进行中 | UI 勘查已完成（12.1）；P6a-1 数据模型与多实例已实现（R-L6） | 下一步：服务器目录与安装器（P6a-2）、请求通道与增量同步；UI 基础按 12.2 的顺序，验证 S1、S3 随其做 |
+| P6a 基础 | 进行中 | UI 勘查已完成（12.1）；P6a-1 数据模型与多实例已实现（R-L6）；P6a-2 的目录读取与打包已实现（R-L7） | 下一步：`scripts/lsp-servers/` 与发布工作流、占位符与路径校验、下载与安装（P6a-2 其余）、请求通道与增量同步；UI 基础按 12.2 的顺序，验证 S1、S3 随其做 |
 | P6b 只读导航 | 未开始 | — | 依赖 P6a |
 | P6c 编辑 | 未开始 | — | 依赖 P6a、P6b |
 | P6d 扩展 | 未开始 | — | 依赖 P6a |
@@ -699,7 +701,7 @@ P6a 的关键验收：
 
 **R-L6 · 2026-10-20 · P6a-1 · 已完成（Windows）**
 
-- `ServerSet`（`features/language_service/server_set.rs`）：服务器定义由服务器声明自己服务的语言（`languages` 里的语言名、可选变体、该服务器自己的 `language_id`）和 `priority`；按优先级降序、再按名称排序；变体绑定优先于整个语言的绑定；绑定到未知语言的条目被忽略而不报错；名称、根规则、初始化选项、绑定逐项校验，未知字段报错。协议核心目录只依赖 `serde_json`，所以解析是手写的严格解析（门禁 `src/features/language_service/` 的依赖约束未改）。内置数据在 `builtin_servers.json`，目前只有 rust-analyzer。
+- `ServerSet`（`features/language_service/server_set.rs`）：服务器定义由服务器声明自己服务的语言（`languages` 里的语言名、可选变体、该服务器自己的 `language_id`）和 `priority`；按优先级降序、再按名称排序；变体绑定优先于整个语言的绑定；绑定到未知语言的条目被忽略而不报错；名称、根规则、初始化选项、绑定逐项校验，未知字段报错。协议核心目录只依赖 `serde_json`，所以解析是手写的严格解析（门禁 `src/features/language_service/` 的依赖约束未改）。（当时的内置数据 `builtin_servers.json` 已在 R-L7 删除。）
 - 领域层剥离：`Registry` 删除服务器定义、`ServerBinding`、`ServerDefinitionId`、`from_parts`、`server_for` 等；`LanguageVariant.server` 与语言描述里的服务器字段删除；`language_defaults.json` 不再含服务器；包清单里的旧 `servers` 字段仍可读取但被忽略。
 - 实例分配（`plan.rs`）：`assign` 返回有序的分配列表，每个服务器各自解析根目录；实例键为 `(服务器名, 根目录, 启动参数)`。
 - 协调器（`manager.rs`）：一个文档对应多个实例；结果按实例保存（`Entry` 的诊断与语义 token 以实例为键），读取时合并诊断（按文本位置排序，相同位置保持服务器顺序），语义 token 取列表序最靠前且戳匹配者；实例失败、文档离开或服务器被关闭时只清除该实例的结果；状态栏为语言绑定的每个服务器各显示一条。
@@ -707,11 +709,24 @@ P6a 的关键验收：
 - 已知：CI 同参数的 clippy 在本机（rustc 1.98，CI 固定 1.97.1）报 `language_catalog_tests.rs:245` 的 `clone` 提示，该文件本次未改，在改动前的基线上同样出现；本次引入的 clippy 问题已修。
 - 未做（属 P6a 其余项）：用户注册服务器与设置新格式、服务器目录与安装、请求通道；设置里 `language_servers` 仍是数组且 `server` 必须引用内置定义；语言级服务器排序设置；诊断的来源标注显示。
 
+**R-L7 · 2026-10-20 · P6a-2（目录读取部分）· 已完成（Windows）**
+
+- 起因：应用源码里不应有手写的服务器定义，默认也不安装任何服务器（D10）。R-L6 里嵌在 `src` 的 `builtin_servers.json` 删除。
+- `ServerSet::builtin()` 删除；改为进程级 `ServerSet::current()` 与 `ServerSet::install()`（没有安装时为空），像 `Registry` 一样在启动时安装。`LanguageServices::new` 显式接收服务器集合；设置解析新增 `parse_with`，服务器名按传入的集合校验，生产路径用 `current()`。测试需要服务器时用 `rust_analyzer_for_tests()` 夹具（仅测试编译），不依赖任何随应用发布的数据。
+- 目录读取（`infrastructure/lsp_catalog.rs`）：读取 `lsp-servers/lsp-servers.toml`（与语言包同样放在可执行文件旁，macOS 在 `Resources` 里；`language_packs::bundled_directory` 抽出共用）。条目严格校验：schema、仓库名、服务器 id、名称/版本/许可证、平台键（`windows/macos/linux` × `x86_64/aarch64`）、归档名 `<id>-<平台>.tar.gz`、发布标签前缀 `lsp-servers-`、SHA-256、大小上限（256 MiB）。条目转成 `ServerSet`，其定义再经 `ServerSet` 自己的校验。文件不存在或没有条目都得到空集合；读取失败在 stderr 报告并同样得到空集合。
+- 提交的目录 `assets/lsp-servers/lsp-servers.toml` 只有 schema 与仓库名，不含任何服务器；有测试保证它始终可解析。
+- 打包：`scripts/package/lib/lsp-servers.mjs` 在 Windows、Linux、macOS 的暂存步骤里只复制这个目录文件（`lsp-servers/lsp-servers.toml`），不复制任何其他内容；有测试，并加入 CI 的打包库检查。
+- 架构门禁为 `lsp_catalog.rs` 登记依赖（`serde`、`serde_json`、`toml`、`std::fs`）。
+- 测试：目录 7 项（条目成为完整服务器定义、空目录、提交的目录有效、文件缺失、暂存位置、11 种无效目录、语言服务拒绝的定义）；`cargo test --locked --offline --workspace`：loom 949 项通过、21 项忽略，editor-core 73、host_contract 3、workspace-tests 59；架构门禁与 67 项自测、打包库 13 项、`cargo fmt --check` 通过。CI 同参数的 clippy 仍只有改动前就存在的 `language_catalog_tests.rs:245`。
+- 文档：`docs/settings.md` 与 `docs/languages.md` 改为“Loom 不自带服务器，也不查找 PATH”。
+- 未做：`scripts/lsp-servers/` 目标定义与发布工作流（目录因此还没有任何条目）；`${pack}`、`${runtime.node}` 占位符的展开与“命令必须是绝对路径或占位符”的校验；下载、校验、解包、冒烟与安装状态（4.5）；用户注册服务器；设置新格式。
+
 | 日期 | 变更记录 | 实施影响 |
 | --- | --- | --- |
 | 2026-10-18 | 建立 P4 子阶段与关键验收跟踪；实施 P4a 至 P4c、P4f | 见 R-L1 至 R-L5 |
 | 2026-10-20 | 重写本文件：确定第二代方向（多服务器、Loom 维护的服务器包与 Node 运行时包、按需安装、全部交互式功能），阶段改为 P6a–P6d | 设计稿；无实现。需同步主设计中的冲突描述（第 12 节） |
 | 2026-10-20 | UI 层勘查（12.1）：核对 13 项假设；修正快速打开不存在（改为新建选择器）、无导航历史（新建）、内嵌提示只需改渲染层、片段不依赖多光标、跨文档撤销需事务 | 更新 6.9、8.1、8.4、8.6、第 10 节与检查点；新增 P6a-10 与验证 S1–S3 |
+| 2026-10-20 | 决策 D10：应用源码与打包目录不含手写服务器定义，定义只来自生成的目录；实现 P6a-1（R-L6）与目录读取、打包（R-L7） | 删除 `builtin_servers.json`；`ServerSet::current()` 取代内置集合；修正 4.1、4.6、5.1 |
 
 ## 14. 官方参考资料
 

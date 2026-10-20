@@ -66,7 +66,7 @@ jobs:
         run: |
           node --test scripts/architecture/check.test.mjs scripts/architecture/standalone-host.test.mjs scripts/architecture/language-resources.test.mjs
           node --test scripts/baseline/test-results.test.mjs
-          node --test scripts/package/lib/language-packs.test.mjs
+          node --test scripts/package/lib/language-packs.test.mjs scripts/package/lib/lsp-servers.test.mjs
           node scripts/architecture/check.mjs
 
       - name: Check language-package tooling
