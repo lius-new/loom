@@ -258,6 +258,11 @@ fn server_note(
         Status::Restarting { .. } => (format!("{name}: restarting…"), NoteLevel::Warning),
         Status::Failed(_) => (format!("{name}: stopped"), NoteLevel::Error),
         Status::Unavailable(_) => (format!("{name}: not found"), NoteLevel::Quiet),
+        Status::NotInstalled => (format!("{name}: not installed"), NoteLevel::Warning),
+        Status::Installing(progress) => {
+            (format!("{name}: installing, {progress}"), NoteLevel::Quiet)
+        }
+        Status::InstallFailed(_) => (format!("{name}: install failed"), NoteLevel::Error),
     };
     StatusNote { text, level }
 }
@@ -306,10 +311,15 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 }
                 Status::Failed(_) => ("stopped".to_owned(), Level::Error),
                 Status::Unavailable(_) => ("not available".to_owned(), Level::Quiet),
+                Status::NotInstalled => ("not installed".to_owned(), Level::Warning),
+                Status::Installing(progress) => (format!("installing, {progress}"), Level::Quiet),
+                Status::InstallFailed(_) => ("install failed".to_owned(), Level::Error),
             };
             let mut lines = vec![line(info.root.display().to_string(), Level::Quiet)];
             match &info.status {
-                Status::Restarting { reason, .. } | Status::Failed(reason) => {
+                Status::Restarting { reason, .. }
+                | Status::Failed(reason)
+                | Status::InstallFailed(reason) => {
                     lines.push(line(reason.clone(), Level::Error));
                 }
                 Status::Unavailable(reason) => {

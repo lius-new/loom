@@ -675,6 +675,19 @@ fn user_directory_from(
     platform: &str,
     get: impl Fn(&str) -> Option<std::ffi::OsString>,
 ) -> Option<PathBuf> {
+    user_resource_directory_from(platform, get, "language-packs")
+}
+
+/// The directory `name` in Loom's per-user data location.
+pub(crate) fn user_resource_directory(name: &str) -> Option<PathBuf> {
+    user_resource_directory_from(std::env::consts::OS, |key| std::env::var_os(key), name)
+}
+
+fn user_resource_directory_from(
+    platform: &str,
+    get: impl Fn(&str) -> Option<std::ffi::OsString>,
+    name: &str,
+) -> Option<PathBuf> {
     let home = || get("HOME").map(PathBuf::from);
     let base = match platform {
         "windows" => super::user_paths::windows_root(&get),
@@ -686,8 +699,7 @@ fn user_directory_from(
             .or_else(|| home().map(|p| p.join(".local/share")))
             .map(|p| p.join("loom")),
     };
-    base.filter(|p| p.is_absolute())
-        .map(|p| p.join("language-packs"))
+    base.filter(|p| p.is_absolute()).map(|p| p.join(name))
 }
 fn user_directory() -> Option<PathBuf> {
     user_directory_from(std::env::consts::OS, |name| std::env::var_os(name))

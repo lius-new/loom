@@ -15,6 +15,7 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
+    sync::{Arc, OnceLock},
 };
 
 const MAX_CATALOG: u64 = 4 * 1024 * 1024;
@@ -102,6 +103,34 @@ struct Binding {
     #[serde(default)]
     variant: Option<String>,
     language_id: String,
+}
+
+/// One pinned archive of a pack.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PackArchive {
+    pub version: String,
+    pub url: String,
+    pub sha256: String,
+    pub size: u64,
+}
+
+/// How one server of a pack is started.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Launching {
+    pub server: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub options: Option<Value>,
+}
+
+/// The catalog's name for the platform this process runs on.
+pub(crate) fn platform() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        _ => "linux",
+    };
+    format!("{os}-{}", std::env::consts::ARCH)
 }
 
 fn read_text(path: &Path, limit: u64) -> Result<String, String> {
@@ -238,6 +267,60 @@ impl Catalog {
         Ok(())
     }
 
+    /// The packs a pack needs installed, by id.
+    pub(crate) fn requires(&self, pack: &str) -> Vec<String> {
+        self.packs.get(pack).map_or_else(Vec::new, |pack| {
+            pack.requires
+                .iter()
+                .filter_map(|requirement| requirement.split('@').next())
+                .map(str::to_owned)
+                .collect()
+        })
+    }
+
+    /// The pinned archive of `pack` for `platform`, or why there is none.
+    pub(crate) fn archive(&self, pack: &str, platform: &str) -> Result<PackArchive, String> {
+        let entry = self
+            .packs
+            .get(pack)
+            .ok_or_else(|| format!("the catalog has no pack {pack}"))?;
+        let archive = entry
+            .platforms
+            .get(platform)
+            .or_else(|| entry.platforms.get("any"))
+            .ok_or_else(|| format!("{pack} is not available for {platform}"))?;
+        Ok(PackArchive {
+            version: entry.version.clone(),
+            url: format!(
+                "https://github.com/{}/releases/download/{}/{}",
+                self.distribution.repository, archive.release, archive.asset
+            ),
+            sha256: archive.sha256.clone(),
+            size: archive.size,
+        })
+    }
+
+    /// How each server of `pack` is started, with placeholders still in place.
+    pub(crate) fn launches(&self, pack: &str) -> Vec<Launching> {
+        self.servers
+            .iter()
+            .filter(|(_, entry)| entry.pack == pack)
+            .map(|(id, entry)| Launching {
+                server: id.clone(),
+                command: entry.command.clone(),
+                args: entry.args.clone(),
+                options: entry
+                    .initialization_options
+                    .as_ref()
+                    .and_then(|options| serde_json::to_value(options).ok()),
+            })
+            .collect()
+    }
+
+    pub(crate) fn pack_ids(&self) -> impl Iterator<Item = &str> {
+        self.packs.keys().map(String::as_str)
+    }
+
     /// The servers the language service runs, as it reads them.
     pub(crate) fn servers(&self) -> Result<ServerSet, String> {
         let sources = self
@@ -271,6 +354,7 @@ impl Catalog {
                     "command": entry.command,
                     "args": entry.args,
                     "priority": entry.priority,
+                    "pack": entry.pack,
                     "root": root,
                     "languages": languages,
                 });
@@ -303,19 +387,39 @@ fn catalog_file(executable: &Path) -> PathBuf {
     super::language_packs::bundled_directory(executable, "lsp-servers").join("lsp-servers.toml")
 }
 
+static INSTALLER: OnceLock<Option<Arc<super::lsp_install::Installer>>> = OnceLock::new();
+
+/// The installer for the catalog's packs; `None` before `initialize`, when the
+/// catalog holds no packs, or when there is nowhere to install to.
+pub(crate) fn installer() -> Option<Arc<super::lsp_install::Installer>> {
+    INSTALLER.get().cloned().flatten()
+}
+
 /// Reads the catalog beside the executable and installs its servers for the
 /// process. A catalog that cannot be read is reported and leaves no servers.
 pub(crate) fn initialize() {
     #[cfg(not(test))]
-    let set = {
+    let catalog = {
         let executable = std::env::current_exe().expect("locate Loom language server catalog");
-        load(&catalog_file(&executable)).unwrap_or_else(|error| {
-            eprintln!("language servers: {error}");
-            ServerSet::default()
-        })
+        let file = catalog_file(&executable);
+        match fs::metadata(&file) {
+            Ok(_) => Catalog::read(&file)
+                .and_then(|catalog| catalog.servers().map(|set| (catalog, set)))
+                .map_err(|error| eprintln!("language servers: {error}"))
+                .ok(),
+            Err(_) => None,
+        }
     };
     #[cfg(test)]
-    let set = ServerSet::default();
+    let catalog: Option<(Catalog, ServerSet)> = None;
+    let (set, installer) = match catalog {
+        Some((catalog, set)) => (
+            set,
+            super::lsp_install::Installer::production(Arc::new(catalog)),
+        ),
+        None => (ServerSet::default(), None),
+    };
+    let _ = INSTALLER.set(installer);
     if let Err(error) = ServerSet::install(set) {
         eprintln!("language servers: {error}");
     }

@@ -1385,6 +1385,7 @@ fn diagnostics_from_a_server_are_underlined_in_the_editor() {
             command: Some(fake.display().to_string()),
             args: Some(vec!["--sync".into(), "full".into(), "--diagnostics".into()]),
             initialization_options: None,
+            install: None,
         }];
     let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
     let initial = Arc::new(Mutex::new(Some(app)));

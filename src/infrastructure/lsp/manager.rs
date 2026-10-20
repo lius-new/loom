@@ -17,6 +17,7 @@ use crate::domain::language::{Registry, ResolvedLanguage};
 use crate::features::language_service::{
     capabilities::ServerCapabilities,
     diagnostics::{self, Diagnostic},
+    expand::{self, Installed},
     plan::{self, Assignment, InstanceKey},
     semantic,
     server_set::ServerSet,
@@ -24,8 +25,9 @@ use crate::features::language_service::{
     sync::{DesiredDocument, DocumentSync, Notification, Stamp},
     uri,
 };
-use crate::features::settings::servers::LanguageServerSetting;
+use crate::features::settings::servers::{InstallPolicy, LanguageServerSetting, install_policy};
 use crate::features::syntax::TokenSpan;
+use crate::infrastructure::lsp_install::{Installer, PackStatus};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -99,11 +101,20 @@ pub(crate) enum Status {
     Failed(String),
     /// The program could not be started at all.
     Unavailable(String),
+    /// The server's pack is not installed and nothing is installing it.
+    NotInstalled,
+    /// Its pack is being installed; the text says how far.
+    Installing(String),
+    /// Installing its pack failed.
+    InstallFailed(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InstanceInfo {
+    /// The server's name as people see it.
     pub server: String,
+    /// The server definition's own name, as settings and commands name it.
+    pub server_id: String,
     pub root: PathBuf,
     pub status: Status,
     pub documents: usize,
@@ -206,6 +217,11 @@ enum Msg {
         text: Arc<String>,
     },
     Restart,
+    /// Install the pack of the named server.
+    Install(String),
+    RetryInstalls,
+    /// Some pack's installation moved on.
+    InstallChanged,
     Event {
         instance: u64,
         run: u64,
@@ -227,15 +243,28 @@ impl Manager {
     pub fn start(
         registry: &'static Registry,
         servers: Arc<ServerSet>,
+        installer: Option<Arc<Installer>>,
         options: Options,
         on_change: impl Fn() + Send + 'static,
     ) -> Self {
         let (tx, inbox) = mpsc::channel();
+        // The installer holds the listener weakly; the coordinator keeps it alive.
+        let install_listener: Option<Arc<dyn Fn() + Send + Sync>> =
+            installer.as_ref().map(|installer| {
+                let wake = tx.clone();
+                let listener: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                    let _ = wake.send(Msg::InstallChanged);
+                });
+                installer.subscribe(listener.clone());
+                listener
+            });
         let infos = Arc::new(Mutex::new(Vec::new()));
         let results: Store = Arc::default();
         let coordinator = Coordinator {
             registry,
             servers,
+            installer,
+            _install_listener: install_listener,
             options,
             tx: tx.clone(),
             inbox,
@@ -273,6 +302,16 @@ impl Manager {
     /// Starts again every server that is down, and restarts the running ones.
     pub fn restart(&self) {
         let _ = self.tx.send(Msg::Restart);
+    }
+
+    /// Installs the pack of the named server, now, whatever its install setting says.
+    pub fn install(&self, server: &str) {
+        let _ = self.tx.send(Msg::Install(server.to_owned()));
+    }
+
+    /// Asks again for every pack whose installation failed.
+    pub fn retry_installs(&self) {
+        let _ = self.tx.send(Msg::RetryInstalls);
     }
 
     pub fn infos(&self) -> Vec<InstanceInfo> {
@@ -370,9 +409,14 @@ impl Ready {
 
 enum Phase {
     Running(Running),
-    Waiting { retry_at: Instant, reason: String },
+    Waiting {
+        retry_at: Instant,
+        reason: String,
+    },
     Failed(String),
     Unavailable(String),
+    /// Waiting for the server's pack to be installed.
+    NotInstalled,
 }
 
 struct Instance {
@@ -391,6 +435,8 @@ struct Instance {
 struct Coordinator {
     registry: &'static Registry,
     servers: Arc<ServerSet>,
+    installer: Option<Arc<Installer>>,
+    _install_listener: Option<Arc<dyn Fn() + Send + Sync>>,
     options: Options,
     tx: Sender<Msg>,
     inbox: Receiver<Msg>,
@@ -464,6 +510,18 @@ impl Coordinator {
             }
             Msg::Saved { path, text } => self.saved(&path, &text),
             Msg::Restart => self.restart(),
+            Msg::Install(server) => {
+                let pack = self.servers.get(&server).and_then(|d| d.pack.clone());
+                if let (Some(installer), Some(pack)) = (&self.installer, pack) {
+                    let _ = installer.request(&pack);
+                }
+            }
+            Msg::RetryInstalls => {
+                if let Some(installer) = &self.installer {
+                    installer.retry();
+                }
+            }
+            Msg::InstallChanged => self.install_changed(),
             Msg::Event {
                 instance,
                 run,
@@ -619,9 +677,56 @@ impl Coordinator {
         for at in created {
             self.start(at);
         }
+        self.install_changed();
         self.follow_edits();
         for at in 0..self.instances.len() {
             self.sync(at);
+        }
+    }
+
+    /// Looks again at the servers waiting for their pack: starts those whose pack is
+    /// now installed, and asks for the packs of those set to install on demand.
+    fn install_changed(&mut self) {
+        let Some(installer) = self.installer.clone() else {
+            return;
+        };
+        for at in 0..self.instances.len() {
+            if !matches!(self.instances[at].phase, Phase::NotInstalled) {
+                continue;
+            }
+            let server = self.instances[at].key.server.clone();
+            let Some(pack) = self.servers.get(&server).and_then(|d| d.pack.clone()) else {
+                continue;
+            };
+            if installer.installed_dir(&pack).is_some() {
+                self.start(at);
+            } else if install_policy(&self.snapshot.servers, &server) == InstallPolicy::Auto {
+                let _ = installer.request(&pack);
+            }
+        }
+    }
+
+    /// The status of a server whose pack is not there yet.
+    fn install_status(&self, server: &str) -> Status {
+        let status = self
+            .servers
+            .get(server)
+            .and_then(|d| d.pack.as_deref())
+            .zip(self.installer.as_ref())
+            .map(|(pack, installer)| installer.status(pack));
+        match status {
+            None | Some(PackStatus::NotInstalled) => Status::NotInstalled,
+            Some(PackStatus::Unavailable(reason)) => Status::Unavailable(reason),
+            Some(PackStatus::Queued) => Status::Installing("queued".to_owned()),
+            Some(PackStatus::Downloading { received, total }) => Status::Installing(format!(
+                "downloading {}%",
+                received.saturating_mul(100).checked_div(total).unwrap_or(0)
+            )),
+            Some(PackStatus::Verifying) => Status::Installing("verifying".to_owned()),
+            Some(PackStatus::Starting) => Status::Installing("starting".to_owned()),
+            // Installed a moment ago: the instance starts as soon as the message arrives.
+            Some(PackStatus::Installed(_)) => Status::Starting,
+            Some(PackStatus::Failed(error)) => Status::InstallFailed(error),
         }
     }
 
@@ -660,26 +765,95 @@ impl Coordinator {
 
     fn start(&mut self, at: usize) {
         let servers = self.servers.clone();
+        let installer = self.installer.clone();
         let timeouts = self.options.timeouts.clone();
         let tx = self.tx.clone();
+        let server = self.instances[at].key.server.clone();
+        let auto = install_policy(&self.snapshot.servers, &server) == InstallPolicy::Auto;
         let instance = &mut self.instances[at];
         instance.run += 1;
         instance.log.clear();
         instance.diagnostics = DiagnosticCounts::default();
         let (id, run) = (instance.id, instance.run);
         let key = &instance.key;
+        let name = servers
+            .get(&key.server)
+            .map_or_else(|| key.server.to_string(), |d| d.display_name.to_string());
         let Some(root_uri) = uri::file_uri(&key.root) else {
             instance.phase = Phase::Unavailable("the project folder has no usable path".into());
             return;
         };
-        let options = key
+        let mut command = key.launch.command.clone();
+        let mut args = key.launch.args.clone();
+        let mut options = key
             .launch
             .initialization_options
             .as_deref()
             .and_then(|text| serde_json::from_str::<Value>(text).ok());
+        // A catalog server starts from files in its installed pack: expand the
+        // placeholders, or wait for the pack to be installed.
+        let templated = command.contains("${")
+            || args.iter().any(|arg| arg.contains("${"))
+            || key
+                .launch
+                .initialization_options
+                .as_deref()
+                .is_some_and(|text| text.contains("${"));
+        if templated {
+            let pack = servers.get(&key.server).and_then(|d| d.pack.clone());
+            let (Some(installer), Some(pack)) = (installer, pack) else {
+                instance.phase = Phase::Unavailable(format!("{name}: is not installed"));
+                return;
+            };
+            let waiting = |instance: &mut Instance| {
+                if auto {
+                    let _ = installer.request(&pack);
+                }
+                instance.phase = Phase::NotInstalled;
+            };
+            let Some(directory) = installer.installed_dir(&pack) else {
+                waiting(instance);
+                return;
+            };
+            let runtime = |id: &str| installer.installed_dir(id);
+            let installed = Installed {
+                pack: &directory,
+                runtime: &runtime,
+            };
+            let expanded = (|| -> Result<_, String> {
+                let command = expand::expand(&command, &installed)?;
+                let args = args
+                    .iter()
+                    .map(|arg| expand::expand(arg, &installed))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let options = options
+                    .as_ref()
+                    .map(|options| expand::expand_json(options, &installed))
+                    .transpose()?;
+                Ok((command, args, options))
+            })();
+            match expanded {
+                Ok((expanded_command, expanded_args, expanded_options)) => {
+                    command = expand::program(&expanded_command, cfg!(windows))
+                        .to_string_lossy()
+                        .into_owned();
+                    args = expanded_args;
+                    options = expanded_options;
+                }
+                // A runtime the pack needs is gone: install it along with the pack.
+                Err(error) if error.contains("is not installed") => {
+                    waiting(instance);
+                    return;
+                }
+                Err(error) => {
+                    instance.phase = Phase::Unavailable(format!("{name}: {error}"));
+                    return;
+                }
+            }
+        }
         let launch = Launch {
-            command: key.launch.command.clone(),
-            args: key.launch.args.clone(),
+            command: command.clone(),
+            args,
             cwd: key.root.clone(),
             session: SessionOptions {
                 root_uri,
@@ -696,16 +870,6 @@ impl Coordinator {
             timeouts,
             max_message: MAX_MESSAGE,
         };
-        let name = servers
-            .get(&key.server)
-            .map_or_else(|| key.server.to_string(), |d| d.display_name.to_string());
-        let command = key.launch.command.clone();
-        // A catalog command starts from the server's installed pack, which this
-        // process has none of until the server is installed.
-        if command.contains("${") {
-            instance.phase = Phase::Unavailable(format!("{name}: is not installed"));
-            return;
-        }
         instance.phase = match Client::spawn(launch, move |event| {
             let _ = tx.send(Msg::Event {
                 instance: id,
@@ -1179,6 +1343,7 @@ impl Coordinator {
                     || instance.key.server.to_string(),
                     |definition| definition.display_name.to_string(),
                 ),
+                server_id: instance.key.server.to_string(),
                 root: instance.key.root.clone(),
                 documents: instance.documents.len(),
                 command: std::iter::once(instance.key.launch.command.as_str())
@@ -1205,6 +1370,7 @@ impl Coordinator {
                     _ => Vec::new(),
                 },
                 status: match &instance.phase {
+                    Phase::NotInstalled => self.install_status(&instance.key.server),
                     Phase::Running(Running { ready: Some(_), .. }) => Status::Ready,
                     Phase::Running(_) => Status::Starting,
                     Phase::Waiting { reason, .. } if reason.is_empty() => Status::Starting,

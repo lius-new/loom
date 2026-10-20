@@ -449,6 +449,7 @@ mod tests {
                 command: Some("ra".into()),
                 args: Some(vec!["-v".into()]),
                 initialization_options: Some(serde_json::json!({ "a": 1 })),
+                install: None,
             }],
         };
 

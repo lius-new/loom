@@ -89,6 +89,7 @@ reported and ignored.
     "command": "C:\tools\some-server.exe",      // another program
     "args": [],                                   // replaces the default arguments
     "initialization_options": { "key": false },
+    "install": "ask",                            // ask | auto | never
     "enabled": true
   }
 ]
@@ -100,6 +101,13 @@ project files the catalog names for it (the nearest or the outermost one, as the
 server's entry says), never above the open workspace folder. It stops a minute
 after its last file is closed, and a crashed server is restarted after 1, 2 and 4
 seconds before being reported as failed.
+
+`install` says what Loom does when a file needs a catalogued server whose files are
+not on this computer yet: `ask` (the default) reports the server as not installed
+and waits until you install it, `auto` downloads and installs it right away, and
+`never` leaves it alone. A server you point at your own program with `command`
+needs no installation. Downloads are checked against the catalog's SHA-256 and the
+server is started once before it is activated.
 
 This setting is only read from your own `settings.json`: a project's
 `.loom/settings.json` cannot choose which program Loom runs.

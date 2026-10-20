@@ -93,7 +93,7 @@ export function allowed(file, dependency) {
   if(own==='app'||file==='src/main.rs')return true;
   if(own==='domain')return root==='domain'||(['src/domain/workspace_session.rs','src/domain/window_geometry.rs','src/domain/language/descriptor.rs'].includes(file)&&['serde','serde_json'].includes(root));
   if(file.startsWith('src/features/keymap/'))return ['features','domain','serde_json','input','Movement'].includes(root);
-  if(file.startsWith('src/infrastructure/lsp/'))return ['infrastructure','features','domain','serde_json','std::process','std::thread'].includes(root)||((file==='src/infrastructure/lsp/client_tests.rs'||file==='src/infrastructure/lsp/manager_tests.rs')&&root==='std::fs')||(file==='src/infrastructure/lsp/job.rs'&&root==='windows_sys');
+  if(file.startsWith('src/infrastructure/lsp/'))return ['infrastructure','features','domain','serde_json','std::process','std::thread'].includes(root)||((file==='src/infrastructure/lsp/client_tests.rs'||file==='src/infrastructure/lsp/manager_tests.rs')&&['std::fs','ring','tar','flate2'].includes(root))||(file==='src/infrastructure/lsp/job.rs'&&root==='windows_sys');
   if(file==='src/infrastructure/window_geometry.rs')return ['infrastructure','domain','lgui','windows_sys','std::process'].includes(root);
   if(file==='src/infrastructure/document_filesystem.rs')return ['infrastructure','std::fs'].includes(root);
   if(file==='src/infrastructure/file_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
@@ -101,6 +101,7 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/syntax_worker.rs'||file==='src/infrastructure/syntax_worker_tests.rs'||file==='src/infrastructure/syntax_worker_bench.rs'||file==='src/infrastructure/syntax_worker_retained.rs')return ['infrastructure','features','domain','std::thread'].includes(root);
   if(file==='src/infrastructure/language_packs.rs'||file==='src/infrastructure/language_packs_unit_tests.rs'||file==='src/infrastructure/language_standard.rs')return ['infrastructure','features','domain','libloading','serde','serde_json','tree_sitter','tree_sitter_language','std::fs'].includes(root)||(file.endsWith('_tests.rs')&&root==='std::process');
   if(file==='src/infrastructure/language_catalog.rs'||file==='src/infrastructure/language_catalog_tests.rs')return ['infrastructure','features','domain','ring','serde','serde_json','toml','tar','flate2','ureq','std::fs','std::thread','std::process','loom_editor_core'].includes(root);
+  if(file==='src/infrastructure/lsp_install.rs'||file==='src/infrastructure/lsp_install_tests.rs')return ['infrastructure','features','domain','serde_json','ring','tar','flate2','ureq','std::fs','std::thread','std::process'].includes(root);
   if(file==='src/infrastructure/lsp_catalog.rs'||file==='src/infrastructure/lsp_catalog_tests.rs')return ['infrastructure','features','domain','serde','serde_json','toml','std::fs'].includes(root);
   if(file==='src/infrastructure/keymap_filesystem.rs')return ['infrastructure','features','std::fs'].includes(root);
   if(file.startsWith('src/features/settings/'))return ['features','domain','serde','serde_json'].includes(root);

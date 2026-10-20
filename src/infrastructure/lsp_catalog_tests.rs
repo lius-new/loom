@@ -85,6 +85,7 @@ fn a_catalog_entry_becomes_a_server_definition_that_starts_from_its_packs() {
         ]
     );
     assert_eq!(server.priority, 10);
+    assert_eq!(server.pack.as_deref(), Some("pyright"));
     assert_eq!(
         server.initialization_options.as_deref(),
         Some(r#"{"key":false}"#)

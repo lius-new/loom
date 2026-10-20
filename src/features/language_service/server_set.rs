@@ -65,6 +65,9 @@ pub struct ServerDefinition {
     pub languages: Vec<LanguageBinding>,
     /// Higher is listed and preferred first.
     pub priority: i32,
+    /// The installable pack the command starts from, for a catalog server. A
+    /// server registered with a path of its own has none.
+    pub pack: Option<Arc<str>>,
 }
 
 struct RootDescriptor {
@@ -88,6 +91,7 @@ struct Descriptor {
     initialization_options: Option<Value>,
     languages: Vec<BindingDescriptor>,
     priority: i32,
+    pack: Option<String>,
 }
 
 /// The fields of a JSON object, rejecting any field not in `allowed` so that a
@@ -156,6 +160,7 @@ impl Descriptor {
                 "initialization_options",
                 "languages",
                 "priority",
+                "pack",
             ],
         )?;
         let root_value = object.get("root").ok_or("missing field `root`")?;
@@ -196,6 +201,7 @@ impl Descriptor {
                 .and_then(|priority| i32::try_from(priority).ok())
                 .ok_or("`priority` must be a whole number")?,
         };
+        let pack = optional_text(object, "pack", "a server")?;
         Ok(Self {
             name: text(object, "name", "a server")?,
             display_name: text(object, "display_name", "a server")?,
@@ -209,6 +215,7 @@ impl Descriptor {
             initialization_options: object.get("initialization_options").cloned(),
             languages,
             priority,
+            pack,
         })
     }
 }
@@ -236,6 +243,11 @@ impl Descriptor {
         }
         if self.command.trim().is_empty() || self.command.chars().any(char::is_control) {
             return Err("command must be a program name or path".into());
+        }
+        if let Some(pack) = &self.pack
+            && !is_server_name(pack)
+        {
+            return Err(format!("`{pack}` is not a pack name"));
         }
         if self
             .args
@@ -320,6 +332,7 @@ impl Descriptor {
                 })
                 .collect(),
             priority: self.priority,
+            pack: self.pack.map(|pack| Arc::from(pack.as_str())),
         }
     }
 }

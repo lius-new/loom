@@ -7,6 +7,19 @@ use crate::features::language_service::server_set::{ServerDefinition, ServerSet}
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Whether Loom installs a catalog server's pack when a file needs it.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstallPolicy {
+    /// Say the server is missing and wait for the person to install it.
+    #[default]
+    Ask,
+    /// Install it as soon as a file needs it.
+    Auto,
+    /// Never install it on its own.
+    Never,
+}
+
 /// One server's overrides. A server with no entry runs as its definition says.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -24,6 +37,9 @@ pub struct LanguageServerSetting {
     /// Replaces the definition's `initializationOptions`; must be an object.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initialization_options: Option<Value>,
+    /// Whether to install the server's pack on demand; asking is the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install: Option<InstallPolicy>,
 }
 
 fn enabled() -> bool {
@@ -55,6 +71,16 @@ impl LanguageServerSetting {
         }
         Ok(())
     }
+}
+
+/// The install policy for `server`: the last entry that sets one, else asking.
+pub fn install_policy(settings: &[LanguageServerSetting], server: &str) -> InstallPolicy {
+    settings
+        .iter()
+        .rev()
+        .filter(|entry| entry.server == server)
+        .find_map(|entry| entry.install)
+        .unwrap_or_default()
 }
 
 /// What actually runs for one server once the definition and the user's override

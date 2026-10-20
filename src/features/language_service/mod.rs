@@ -3,6 +3,7 @@
 //! processes and moving bytes belongs to `infrastructure::lsp`.
 pub(crate) mod capabilities;
 pub(crate) mod diagnostics;
+pub(crate) mod expand;
 pub(crate) mod framing;
 pub(crate) mod message;
 pub(crate) mod plan;

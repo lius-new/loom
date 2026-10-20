@@ -30,7 +30,13 @@ pub(crate) struct LanguageServices {
 impl LanguageServices {
     pub fn new(servers: Arc<ServerSet>, on_change: impl Fn() + Send + 'static) -> Self {
         Self {
-            manager: Manager::start(Registry::builtin(), servers, Options::default(), on_change),
+            manager: Manager::start(
+                Registry::builtin(),
+                servers,
+                crate::infrastructure::lsp_catalog::installer(),
+                Options::default(),
+                on_change,
+            ),
             sent: Mutex::new(None),
         }
     }
@@ -194,6 +200,7 @@ mod tests {
                 log.display().to_string(),
             ]),
             initialization_options: None,
+            install: None,
         }];
         let runtime = Arc::new(AppRuntime::default());
         runtime.install_language_services(LanguageServices::new(rust_analyzer_for_tests(), || {}));
@@ -298,6 +305,7 @@ mod tests {
             command: std::env::var("LOOM_RUST_ANALYZER").ok(),
             args: None,
             initialization_options: None,
+            install: None,
         }];
         let runtime = Arc::new(AppRuntime::default());
         runtime.install_language_services(LanguageServices::new(rust_analyzer_for_tests(), || {}));
