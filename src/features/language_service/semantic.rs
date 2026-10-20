@@ -53,6 +53,77 @@ pub fn class_for(token_type: &str, modifiers: &[&str]) -> Option<HighlightId> {
     })
 }
 
+/// One edit of a delta response: it replaces `delete_count` integers of the
+/// previous `data` array, starting at integer index `start`, by `data`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeltaEdit {
+    pub start: usize,
+    pub delete_count: usize,
+    pub data: Vec<u32>,
+}
+
+/// The integers of a `data` array, or `None` if it is not an array of
+/// non-negative integers that fit.
+pub fn integers(value: &Value) -> Option<Vec<u32>> {
+    value
+        .as_array()?
+        .iter()
+        .map(|n| n.as_u64().and_then(|n| u32::try_from(n).ok()))
+        .collect()
+}
+
+/// The edits of a `semanticTokens/full/delta` response, if it is one.
+pub fn parse_delta(value: &Value) -> Option<Vec<DeltaEdit>> {
+    value
+        .get("edits")?
+        .as_array()?
+        .iter()
+        .map(|edit| {
+            Some(DeltaEdit {
+                start: usize::try_from(edit.get("start")?.as_u64()?).ok()?,
+                delete_count: usize::try_from(edit.get("deleteCount")?.as_u64()?).ok()?,
+                data: match edit.get("data") {
+                    Some(data) => integers(data)?,
+                    None => Vec::new(),
+                },
+            })
+        })
+        .collect()
+}
+
+/// The new `data` array after applying `edits` to `old`. All edits describe the
+/// old array, so they are checked to be in range and not to overlap, then applied
+/// from the last to the first. An answer that breaks these rules, or leaves a length
+/// that is not a whole number of tokens, is refused and the caller asks for a
+/// full result instead.
+pub fn apply_delta(old: &[u32], edits: &[DeltaEdit]) -> Result<Vec<u32>, Malformed> {
+    let mut order: Vec<&DeltaEdit> = edits.iter().collect();
+    order.sort_by_key(|edit| edit.start);
+    let mut end_of_previous = 0;
+    for edit in &order {
+        let end = edit
+            .start
+            .checked_add(edit.delete_count)
+            .filter(|end| *end <= old.len())
+            .ok_or_else(|| Malformed("a delta edit reaches past the previous tokens".into()))?;
+        if edit.start < end_of_previous {
+            return Err(Malformed("delta edits overlap".into()));
+        }
+        end_of_previous = end;
+    }
+    let mut data = old.to_vec();
+    for edit in order.iter().rev() {
+        data.splice(
+            edit.start..edit.start + edit.delete_count,
+            edit.data.iter().copied(),
+        );
+    }
+    if !data.len().is_multiple_of(5) {
+        return Err(Malformed("the delta leaves a partial token".into()));
+    }
+    Ok(data)
+}
+
 /// Decodes a `data` array against the text it was computed for. Tokens whose type
 /// the legend names but the editor does not draw are skipped. A token that
 /// reaches past its line is cut at the line end, and one that overlaps the
@@ -198,6 +269,69 @@ pub fn compose(base: &[TokenSpan], overlay: &[TokenSpan], window: Range<usize>) 
         }
     }
     out
+}
+
+#[cfg(test)]
+mod delta_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn edit(start: usize, delete_count: usize, data: &[u32]) -> DeltaEdit {
+        DeltaEdit {
+            start,
+            delete_count,
+            data: data.to_vec(),
+        }
+    }
+
+    const OLD: [u32; 10] = [0, 0, 3, 1, 0, 0, 4, 2, 2, 0];
+
+    #[test]
+    fn edits_replace_ranges_of_integers_of_the_old_array() {
+        let new = apply_delta(&OLD, &[edit(5, 5, &[1, 1, 1, 3, 0, 0, 2, 2, 4, 0])]).unwrap();
+        assert_eq!(new, [0, 0, 3, 1, 0, 1, 1, 1, 3, 0, 0, 2, 2, 4, 0]);
+        // Several edits all describe the old array, whatever order they come in.
+        let new = apply_delta(&OLD, &[edit(5, 0, &[9, 9, 9, 9, 9]), edit(0, 5, &[])]).unwrap();
+        assert_eq!(new, [9, 9, 9, 9, 9, 0, 4, 2, 2, 0]);
+        assert_eq!(apply_delta(&OLD, &[]).unwrap(), OLD);
+        assert_eq!(
+            apply_delta(&OLD, &[edit(0, 10, &[])]).unwrap(),
+            Vec::<u32>::new()
+        );
+    }
+
+    #[test]
+    fn answers_that_break_the_rules_are_refused() {
+        // Past the end.
+        assert!(apply_delta(&OLD, &[edit(8, 5, &[])]).is_err());
+        assert!(apply_delta(&OLD, &[edit(11, 0, &[])]).is_err());
+        // Overlapping.
+        assert!(apply_delta(&OLD, &[edit(0, 6, &[]), edit(5, 2, &[])]).is_err());
+        // A partial token left over.
+        assert!(apply_delta(&OLD, &[edit(0, 3, &[])]).is_err());
+        assert!(apply_delta(&OLD, &[edit(0, 0, &[1, 2])]).is_err());
+        // Overflowing arithmetic does not panic.
+        assert!(apply_delta(&OLD, &[edit(usize::MAX, 2, &[])]).is_err());
+    }
+
+    #[test]
+    fn the_integers_and_edits_of_responses_are_read_strictly() {
+        assert_eq!(integers(&json!([1, 2, 3])), Some(vec![1, 2, 3]));
+        assert_eq!(integers(&json!([1, -2])), None);
+        assert_eq!(integers(&json!([1.5])), None);
+        assert_eq!(integers(&json!([4294967296u64])), None);
+        let edits = parse_delta(&json!({ "resultId": "x",
+            "edits": [{ "start": 5, "deleteCount": 5, "data": [1, 2, 3, 4, 5] }, { "start": 0, "deleteCount": 0 }] }))
+        .unwrap();
+        assert_eq!(edits[0], edit(5, 5, &[1, 2, 3, 4, 5]));
+        assert_eq!(edits[1], edit(0, 0, &[]));
+        assert_eq!(
+            parse_delta(&json!({ "data": [] })),
+            None,
+            "a full result is not a delta"
+        );
+        assert_eq!(parse_delta(&json!({ "edits": [{ "start": "a" }] })), None);
+    }
 }
 
 #[cfg(test)]

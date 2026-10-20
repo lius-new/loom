@@ -1663,3 +1663,50 @@ mod file_operations {
         assert!(!f.methods().iter().any(|m| m.starts_with("workspace/did")));
     }
 }
+
+#[test]
+fn a_server_that_offers_deltas_is_asked_for_differences_after_the_first_result() {
+    let f = Fixture::new(&["--semantic", "delta"]);
+    f.show(vec![f.doc("a.fk", 0, "hello world")]);
+    let first = f.wait_for("the first tokens", || f.results_at("a.fk", 0).semantic);
+    assert_eq!(first[0].range, 0..2);
+    f.show(vec![f.doc("a.fk", 1, "hello brave world")]);
+    // The second answer is a difference to the first, and it is applied.
+    let second = f.wait_for("the tokens of the new text", || {
+        f.results_at("a.fk", 1).semantic
+    });
+    assert_eq!(second[0].range, 0..3);
+    let methods = f.methods();
+    assert!(methods.contains(&"textDocument/semanticTokens/full".to_owned()));
+    assert!(methods.contains(&"textDocument/semanticTokens/full/delta".to_owned()));
+    let delta = f
+        .log()
+        .into_iter()
+        .find(|m| m["method"] == "textDocument/semanticTokens/full/delta")
+        .unwrap();
+    assert_eq!(delta["params"]["previousResultId"], "r1");
+}
+
+#[test]
+fn a_server_that_answers_pull_requests_is_asked_for_problems_after_edits() {
+    let f = Fixture::new(&["--features", "pull", "--pull-diagnostic", "pulled warning"]);
+    f.show(vec![f.doc("a.fk", 0, "one")]);
+    let found = f.wait_for("the pulled problems", || {
+        f.results_at("a.fk", 0).diagnostics
+    });
+    assert_eq!(found[0].message, "pulled warning");
+    // After an edit it asks again with the last result id; "unchanged" keeps them.
+    f.show(vec![f.doc("a.fk", 1, "one two")]);
+    f.wait_method_count("textDocument/diagnostic", 2);
+    let found = f.wait_for("the problems of the new text", || {
+        f.results_at("a.fk", 1).diagnostics
+    });
+    assert_eq!(found[0].message, "pulled warning");
+    let asked: Vec<_> = f
+        .log()
+        .into_iter()
+        .filter(|m| m["method"] == "textDocument/diagnostic")
+        .collect();
+    assert!(asked.len() >= 2, "{asked:?}");
+    assert_eq!(asked[1]["params"]["previousResultId"], "d1");
+}

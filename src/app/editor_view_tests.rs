@@ -1846,6 +1846,7 @@ fn references_open_a_list_whose_rows_go_to_their_places() {
     h.until_ready();
     h.act(Action::FindAllReferences);
     h.until_popup("the references");
+    h.render();
     assert_eq!(h.popup_labels().len(), 2);
     assert!(h.has_text("2 references"));
     h.act(Action::MenuSelectNext);

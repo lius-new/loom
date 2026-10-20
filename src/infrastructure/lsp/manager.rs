@@ -178,6 +178,24 @@ pub(crate) struct TaskInfo {
 const MAX_LOG: usize = 100;
 const MAX_TASKS: usize = 32;
 
+/// Tags from here up to the request channel's belong to pull diagnostics.
+const PULL_BASE: u64 = 1 << 32;
+/// How long after the last edit a document's diagnostics are pulled.
+const PULL_DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// Pull diagnostics (`textDocument/diagnostic`) of one instance.
+#[derive(Default)]
+struct PullState {
+    noted: HashMap<String, Stamp>,
+    due: HashMap<String, Instant>,
+    /// Requests sent: tag to (document key, the state asked about, the protocol
+    /// version that state was sent as).
+    in_flight: HashMap<u64, (String, Stamp, i32)>,
+    next_tag: u64,
+    /// The last `resultId` and findings of each document.
+    last: HashMap<String, (String, Value)>,
+}
+
 /// How long after the last edit a document's semantic tokens are asked for.
 const SEMANTIC_DEBOUNCE: Duration = Duration::from_millis(75);
 
@@ -428,6 +446,7 @@ struct Ready {
     since: Instant,
     capabilities: ServerCapabilities,
     semantic: SemanticState,
+    pull: PullState,
     /// Work-done progress tokens in the order they began.
     tasks: Vec<(String, TaskInfo)>,
 }
@@ -442,9 +461,12 @@ struct SemanticState {
     noted: HashMap<String, Stamp>,
     /// Documents to ask about, and when.
     due: HashMap<String, Instant>,
-    /// Requests sent: tag to (document key, state asked about, epoch).
-    in_flight: HashMap<u64, (String, Stamp, u64)>,
+    /// Requests sent: tag to (document key, state asked about, epoch, whether
+    /// only the difference from the previous result was asked for).
+    in_flight: HashMap<u64, (String, Stamp, u64, bool)>,
     next_tag: u64,
+    /// The last result for each document, to ask for differences from.
+    previous: HashMap<String, (String, Vec<u32>)>,
 }
 
 impl Ready {
@@ -633,13 +655,16 @@ impl Coordinator {
                     Phase::Waiting { retry_at, .. } => Some(*retry_at),
                     _ => None,
                 };
-                let semantic = match &instance.phase {
+                let (semantic, pull) = match &instance.phase {
                     Phase::Running(Running {
                         ready: Some(ready), ..
-                    }) => ready.semantic.due.values().min().copied(),
-                    _ => None,
+                    }) => (
+                        ready.semantic.due.values().min().copied(),
+                        ready.pull.due.values().min().copied(),
+                    ),
+                    _ => (None, None),
                 };
-                [idle, retry, semantic].into_iter().flatten().min()
+                [idle, retry, semantic, pull].into_iter().flatten().min()
             })
             .chain(self.book.deadline())
             .min()
@@ -649,6 +674,7 @@ impl Coordinator {
         let now = Instant::now();
         self.expire_requests(now);
         self.request_semantic_tokens(now);
+        self.request_pulls(now);
         let idle_stop = self.options.idle_stop;
         let mut stopping = Vec::new();
         let mut lost = Vec::new();
@@ -1079,6 +1105,7 @@ impl Coordinator {
                         since: Instant::now(),
                         capabilities,
                         semantic: SemanticState::default(),
+                        pull: PullState::default(),
                         tasks: Vec::new(),
                     }));
                 }
@@ -1096,6 +1123,7 @@ impl Coordinator {
                 }) = &mut instance.phase
                 {
                     ready.semantic.epoch += 1;
+                    ready.semantic.previous.clear();
                     let now = Instant::now();
                     for document in &instance.documents {
                         ready.semantic.due.insert(uri::key(&document.uri), now);
@@ -1104,6 +1132,9 @@ impl Coordinator {
             }
             Event::Response { tag, outcome, .. } if tag >= requests::TAG_BASE => {
                 self.request_response(at, tag, outcome)
+            }
+            Event::Response { tag, outcome, .. } if tag >= PULL_BASE => {
+                self.pull_response(at, tag, outcome)
             }
             Event::Response { tag, outcome, .. } => self.semantic_response(at, tag, outcome),
             Event::Progress { token, update } => self.progress(at, token, update),
@@ -1245,6 +1276,16 @@ impl Coordinator {
         };
         for Notification { method, params } in notes {
             client.notify(method, params);
+        }
+        if ready.capabilities.providers.pull_diagnostics {
+            let due = Instant::now() + PULL_DEBOUNCE;
+            for document in &instance.documents {
+                let key = uri::key(&document.uri);
+                if ready.pull.noted.get(&key) != Some(&document.stamp) {
+                    ready.pull.noted.insert(key.clone(), document.stamp);
+                    ready.pull.due.insert(key, due);
+                }
+            }
         }
         if ready.wants_semantic_tokens() {
             let due = Instant::now() + SEMANTIC_DEBOUNCE;
@@ -1392,7 +1433,7 @@ impl Coordinator {
         else {
             return;
         };
-        let Some((key, stamp, epoch)) = ready.semantic.in_flight.remove(&tag) else {
+        let Some((key, stamp, epoch, was_delta)) = ready.semantic.in_flight.remove(&tag) else {
             return;
         };
         let document = instance.documents.iter().find(|d| uri::key(&d.uri) == key);
@@ -1406,6 +1447,37 @@ impl Coordinator {
             }
             Ok(value) => {
                 let Some(document) = document else { return };
+                // The integers of the result: given whole, or a difference to apply
+                // to the last result. Anything unusable drops what was remembered
+                // and asks again for everything.
+                let data = if value.is_null() {
+                    Some(Vec::new())
+                } else if let Some(edits) = semantic::parse_delta(&value) {
+                    ready
+                        .semantic
+                        .previous
+                        .get(&key)
+                        .filter(|_| was_delta)
+                        .and_then(|(_, old)| semantic::apply_delta(old, &edits).ok())
+                } else {
+                    value.get("data").and_then(semantic::integers)
+                };
+                let Some(data) = data else {
+                    ready.semantic.previous.remove(&key);
+                    ready.semantic.due.insert(key, now);
+                    return;
+                };
+                match value.get("resultId").and_then(Value::as_str) {
+                    Some(id) if !value.is_null() => {
+                        ready
+                            .semantic
+                            .previous
+                            .insert(key.clone(), (id.to_owned(), data.clone()));
+                    }
+                    _ => {
+                        ready.semantic.previous.remove(&key);
+                    }
+                }
                 let legend = ready
                     .capabilities
                     .semantic_tokens
@@ -1417,7 +1489,7 @@ impl Coordinator {
                     Ok(Vec::new())
                 } else {
                     semantic::decode(
-                        value.get("data").unwrap_or(&Value::Null),
+                        &Value::Array(data.iter().map(|n| Value::from(*n)).collect()),
                         &legend,
                         &document.text,
                         ready.capabilities.position_encoding,
@@ -1442,6 +1514,120 @@ impl Coordinator {
         }
     }
 
+    /// Asks the servers that answer pull requests for the problems of documents
+    /// whose wait is over.
+    fn request_pulls(&mut self, now: Instant) {
+        for instance in &mut self.instances {
+            let Phase::Running(Running {
+                client,
+                ready: Some(ready),
+            }) = &mut instance.phase
+            else {
+                continue;
+            };
+            let due: Vec<String> = ready
+                .pull
+                .due
+                .iter()
+                .filter(|(_, when)| **when <= now)
+                .map(|(key, _)| key.clone())
+                .collect();
+            for key in due {
+                if ready.pull.in_flight.values().any(|(k, ..)| *k == key) {
+                    continue;
+                }
+                ready.pull.due.remove(&key);
+                let Some(document) = instance.documents.iter().find(|d| uri::key(&d.uri) == key)
+                else {
+                    continue;
+                };
+                let Some(version) = ready.sync.version_of(&document.uri) else {
+                    // Not sent yet: asked again when it has been.
+                    ready.pull.due.insert(key, now + PULL_DEBOUNCE);
+                    continue;
+                };
+                ready.pull.next_tag += 1;
+                let tag = PULL_BASE + ready.pull.next_tag;
+                let mut params = json!({ "textDocument": { "uri": document.uri } });
+                if let Some((id, _)) = ready.pull.last.get(&key) {
+                    params["previousResultId"] = json!(id);
+                }
+                if client.request("textDocument/diagnostic", params, tag) {
+                    ready
+                        .pull
+                        .in_flight
+                        .insert(tag, (key, document.stamp, version));
+                }
+            }
+        }
+    }
+
+    /// The findings a pull request returned, stored like pushed ones.
+    fn pull_response(
+        &mut self,
+        at: usize,
+        tag: u64,
+        outcome: Result<Value, crate::features::language_service::message::ResponseError>,
+    ) {
+        let Phase::Running(Running {
+            ready: Some(ready), ..
+        }) = &mut self.instances[at].phase
+        else {
+            return;
+        };
+        let Some((key, _stamp, version)) = ready.pull.in_flight.remove(&tag) else {
+            return;
+        };
+        let instance = &self.instances[at];
+        let Some(document) = instance.documents.iter().find(|d| uri::key(&d.uri) == key) else {
+            return;
+        };
+        let uri = document.uri.clone();
+        let Ok(value) = outcome else {
+            // The server could not say now; try again after the next edit.
+            return;
+        };
+        let (items, id) = match value.get("kind").and_then(Value::as_str) {
+            Some("unchanged") => {
+                let Phase::Running(Running {
+                    ready: Some(ready), ..
+                }) = &self.instances[at].phase
+                else {
+                    return;
+                };
+                match ready.pull.last.get(&key) {
+                    Some((id, items)) => (items.clone(), id.clone()),
+                    None => return,
+                }
+            }
+            Some("full") => (
+                value.get("items").cloned().unwrap_or_else(|| json!([])),
+                value
+                    .get("resultId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            _ => return,
+        };
+        if let Phase::Running(Running {
+            ready: Some(ready), ..
+        }) = &mut self.instances[at].phase
+        {
+            if id.is_empty() {
+                ready.pull.last.remove(&key);
+            } else {
+                ready.pull.last.insert(key, (id, items.clone()));
+            }
+        }
+        // Handled like a publication for the state the request was sent for.
+        self.diagnostics(
+            at,
+            &json!({ "uri": uri, "version": version, "diagnostics": items }),
+        );
+        self.results_changed = true;
+    }
+
     /// Asks for the semantic tokens of documents whose wait is over.
     fn request_semantic_tokens(&mut self, now: Instant) {
         for instance in &mut self.instances {
@@ -1461,7 +1647,7 @@ impl Coordinator {
                 .collect();
             for key in due {
                 // One request per document at a time.
-                if ready.semantic.in_flight.values().any(|(k, _, _)| *k == key) {
+                if ready.semantic.in_flight.values().any(|(k, ..)| *k == key) {
                     continue;
                 }
                 ready.semantic.due.remove(&key);
@@ -1471,12 +1657,37 @@ impl Coordinator {
                 };
                 ready.semantic.next_tag += 1;
                 let tag = ready.semantic.next_tag;
-                let params = json!({ "textDocument": { "uri": document.uri } });
-                if client.request("textDocument/semanticTokens/full", params, tag) {
-                    ready
-                        .semantic
-                        .in_flight
-                        .insert(tag, (key, document.stamp, ready.semantic.epoch));
+                let delta_ok = ready
+                    .capabilities
+                    .semantic_tokens
+                    .as_ref()
+                    .is_some_and(|tokens| tokens.delta);
+                let previous = ready
+                    .semantic
+                    .previous
+                    .get(&key)
+                    .filter(|_| delta_ok)
+                    .map(|(id, _)| id.clone());
+                let (method, params) = match &previous {
+                    Some(id) => (
+                        "textDocument/semanticTokens/full/delta",
+                        json!({ "textDocument": { "uri": document.uri }, "previousResultId": id }),
+                    ),
+                    None => (
+                        "textDocument/semanticTokens/full",
+                        json!({ "textDocument": { "uri": document.uri } }),
+                    ),
+                };
+                if client.request(method, params, tag) {
+                    ready.semantic.in_flight.insert(
+                        tag,
+                        (
+                            key,
+                            document.stamp,
+                            ready.semantic.epoch,
+                            previous.is_some(),
+                        ),
+                    );
                 }
             }
         }

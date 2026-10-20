@@ -290,6 +290,7 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
             "typeHierarchy": { "dynamicRegistration": false },
             "codeLens": { "dynamicRegistration": false },
             "selectionRange": { "dynamicRegistration": false },
+            "diagnostic": { "dynamicRegistration": false, "relatedDocumentSupport": false },
             "definition": { "dynamicRegistration": false, "linkSupport": true },
             "declaration": { "dynamicRegistration": false, "linkSupport": true },
             "typeDefinition": { "dynamicRegistration": false, "linkSupport": true },
@@ -302,7 +303,7 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
             },
             "semanticTokens": {
                 "dynamicRegistration": false,
-                "requests": { "range": false, "full": { "delta": false } },
+                "requests": { "range": false, "full": { "delta": true } },
                 "tokenTypes": token_types,
                 "tokenModifiers": token_modifiers,
                 "formats": ["relative"],
@@ -458,7 +459,7 @@ mod tests {
         );
         assert_eq!(
             caps["textDocument"]["semanticTokens"]["requests"]["full"]["delta"],
-            json!(false)
+            json!(true)
         );
         assert_eq!(
             caps["textDocument"]["semanticTokens"]["requests"]["range"],

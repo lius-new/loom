@@ -221,6 +221,9 @@ pub fn words(app: &mut AppState) {
     let typed = t.text[start..t.cursor].to_owned();
     if let Some(session) = app.editor.language.completion.as_mut() {
         refilter(session, &typed);
+        if session.shown.is_empty() {
+            app.editor.language.completion = None;
+        }
     }
 }
 

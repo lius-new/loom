@@ -191,6 +191,10 @@ fn feature_capabilities(options: &Options, caps: &mut serde_json::Map<String, Va
                     "didRename": { "filters": [{ "pattern": { "glob": "**/*.rs" } }] },
                     "didDelete": { "filters": [{ "pattern": { "glob": "**/*.rs" } }] } } }),
             ),
+            "pull" => caps.insert(
+                "diagnosticProvider".into(),
+                json!({ "interFileDependencies": false, "workspaceDiagnostics": false }),
+            ),
             "execute" => caps.insert(
                 "executeCommandProvider".into(),
                 json!({ "commands": ["fake.run"] }),
@@ -525,6 +529,26 @@ fn main() {
                     }));
                 }
             }
+            ("textDocument/diagnostic", Some(id)) => {
+                // --pull-diagnostic TEXT: one error over the first character, the
+                // same resultId every time so "unchanged" can be answered.
+                let previous = message["params"]["previousResultId"].as_str();
+                if previous == Some("d1") && !options.flag("--pull-always-full") {
+                    out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": {
+                        "kind": "unchanged", "resultId": "d1" } }));
+                } else {
+                    out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": {
+                        "kind": "full", "resultId": "d1", "items": [{
+                            "range": span(0, 0, 1), "severity": 2,
+                            "message": options.value("--pull-diagnostic").unwrap_or("pulled") }] } }));
+                }
+            }
+            ("textDocument/semanticTokens/full/delta", Some(id)) => {
+                // Replaces the one token of the previous result by a longer one.
+                out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": {
+                    "resultId": "r2",
+                    "edits": [{ "start": 0, "deleteCount": 5, "data": [0, 0, 3, 0, 0] }] } }));
+            }
             ("textDocument/semanticTokens/full", Some(id)) => {
                 std::thread::sleep(Duration::from_millis(options.number("--slow-ms")));
                 // The first characters (two, or --semantic-length) are a keyword.
@@ -535,7 +559,7 @@ fn main() {
                         0 => 2,
                         length => length,
                     };
-                    json!({ "data": [0, 0, length, 0, 0] })
+                    json!({ "resultId": "r1", "data": [0, 0, length, 0, 0] })
                 };
                 out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
             }
