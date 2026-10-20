@@ -165,7 +165,9 @@ impl Tools<'_> {
     ) -> Result<Tree, bool> {
         if let std::collections::hash_map::Entry::Vacant(entry) = self.parsers.entry(grammar) {
             let parser = self.resources.parser(grammar).map_err(|error| {
-                self.resources.report(&error);
+                if !self.resources.pending(grammar) {
+                    self.resources.report(&error);
+                }
                 false
             })?;
             entry.insert(parser);

@@ -1,5 +1,5 @@
 // Discover independent language packages at startup; open native modules and
-// queries only when the syntax worker requests them. Changes require restart.
+// queries only when the syntax worker requests them. Catalog resources install on demand.
 use crate::domain::language::Registry;
 use crate::features::syntax::{Resources, TreeIndex};
 use libloading::Library;
@@ -15,6 +15,8 @@ use std::{
 use tree_sitter::{Language, Parser, WasmStore, wasmtime};
 use tree_sitter_language::LanguageFn;
 
+#[path = "language_catalog.rs"]
+mod catalog;
 #[path = "language_standard.rs"]
 mod standard;
 
@@ -215,12 +217,16 @@ struct Loaded {
 pub(crate) struct Packages {
     packages: BTreeMap<String, Installed>,
     loaded: Mutex<Loaded>,
+    catalog: Option<Arc<catalog::Manager>>,
+    disabled: BTreeSet<String>,
 }
 impl Packages {
     pub(crate) fn discover(bundled: &Path, user: Option<&Path>) -> Self {
         let mut source = Self {
             packages: BTreeMap::new(),
             loaded: Mutex::default(),
+            catalog: None,
+            disabled: BTreeSet::new(),
         };
         for (root, replace) in [(Some(bundled), false), (user, true)] {
             if let Some(root) = root {
@@ -246,6 +252,9 @@ impl Packages {
         for entry in entries {
             match entry {
                 Ok(entry) => {
+                    if entry.file_name() == ".managed" {
+                        continue;
+                    }
                     if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
                         directories.push(entry.path());
                         if directories.len() > MAX_PACKAGES {
@@ -286,6 +295,8 @@ impl Packages {
                     }
                 };
                 let manifest = &installed.manifest;
+                let enabled = manifest.enabled;
+                let affected: Vec<_> = manifest.grammars.keys().cloned().collect();
                 let mut candidate = self.packages.clone();
                 if replace && installed.standard.is_some() {
                     // A user copy replaces the same complete grammar collection,
@@ -305,6 +316,13 @@ impl Packages {
                     return Err("too many installed language packages".into());
                 }
                 registry(&candidate)?;
+                for grammar in affected {
+                    if enabled {
+                        self.disabled.remove(&grammar);
+                    } else {
+                        self.disabled.insert(grammar);
+                    }
+                }
                 self.packages = candidate;
                 Ok::<_, String>(())
             })();
@@ -318,7 +336,79 @@ impl Packages {
     }
 
     pub(crate) fn registry(&self) -> Result<Registry, String> {
-        registry(&self.packages)
+        let mut packages = self.packages.clone();
+        if let Some(catalog) = &self.catalog {
+            for (id, description) in &catalog.descriptions {
+                packages.insert(format!("catalog:{id}"), description.clone());
+            }
+        }
+        registry(&packages)
+    }
+    fn enable_catalog(&mut self, file: &Path, cache: Option<PathBuf>) -> Result<(), String> {
+        if !file.exists() {
+            return Ok(());
+        }
+        let catalog = catalog::Catalog::read(file)?;
+        let mut descriptions = BTreeMap::new();
+        let mut combined = self.packages.clone();
+        for (id, description) in catalog.descriptions()? {
+            if description
+                .manifest
+                .grammars
+                .keys()
+                .any(|g| self.disabled.contains(g))
+            {
+                continue;
+            }
+            // Complete installed collections, including user overrides, stay authoritative.
+            if self.packages.values().any(|p| {
+                p.manifest
+                    .grammars
+                    .keys()
+                    .any(|g| description.manifest.grammars.contains_key(g))
+            }) {
+                continue;
+            }
+            let mut candidate = combined.clone();
+            candidate.insert(format!("catalog:{id}"), description.clone());
+            match registry(&candidate) {
+                Ok(_) => {
+                    combined = candidate;
+                    descriptions.insert(id, description);
+                }
+                Err(error) => Self::report(
+                    self.loaded.get_mut().unwrap(),
+                    &format!("catalog {id}: {error}"),
+                ),
+            }
+        }
+        self.catalog = Some(catalog::Manager::new(catalog, descriptions, cache));
+        Ok(())
+    }
+    fn available(&self, grammar: &str) -> Result<(Installed, Module), String> {
+        if let Some((installed, module)) = self.grammar(grammar) {
+            return Ok((installed.clone(), module.clone()));
+        }
+        let installed = self
+            .catalog
+            .as_ref()
+            .ok_or_else(|| format!("language package {grammar} is not installed"))?
+            .request(grammar)?;
+        let module = installed
+            .manifest
+            .grammars
+            .get(grammar)
+            .ok_or("downloaded grammar is missing")?
+            .clone();
+        Ok((installed, module))
+    }
+    pub(crate) fn download_infos(&self) -> Vec<catalog::Info> {
+        self.catalog.as_ref().map(|c| c.infos()).unwrap_or_default()
+    }
+    pub(crate) fn retry_downloads(&self) {
+        if let Some(catalog) = &self.catalog {
+            catalog.retry();
+        }
     }
     pub(crate) fn activity(&self) -> Activity {
         self.loaded.lock().unwrap().activity.clone()
@@ -440,51 +530,61 @@ fn load_native(path: &Path, symbol: &str) -> Result<Language, String> {
 }
 
 impl Resources for Packages {
+    fn generation(&self) -> u64 {
+        self.catalog.as_ref().map_or(0, |c| c.generation())
+    }
+    fn pending(&self, grammar: &str) -> bool {
+        self.catalog.as_ref().is_some_and(|c| c.pending(grammar))
+    }
+    fn subscribe(&self, changed: Arc<dyn Fn() + Send + Sync>) {
+        if let Some(catalog) = &self.catalog {
+            catalog.subscribe(changed);
+        }
+    }
     fn language(&self, grammar: &str) -> Result<Language, String> {
+        // Waiting for an installation is temporary, never a cached module failure.
+        let (package, module) = self.available(grammar)?;
         let mut loaded = self.loaded.lock().unwrap();
         if let Some(language) = loaded.languages.get(grammar) {
             return language.clone();
         }
         loaded.activity.language_loads += 1;
-        let result = match self.grammar(grammar) {
-            Some((package, module)) => {
-                loaded.activity.modules.insert(module.module.clone());
-                let path = Self::module_path(package, &module.module);
-                if let Err(error) = standard::contained(&package.root, &path) {
-                    Self::report(&mut loaded, &error);
-                    loaded
-                        .languages
-                        .insert(grammar.to_owned(), Err(error.clone()));
-                    return Err(error);
-                }
-                if path
-                    .extension()
-                    .is_some_and(|extension| extension == "wasm")
-                {
-                    loaded.activity.wasm_loads += 1;
-                    loaded
-                        .activity
-                        .wasm_modules
-                        .insert(path.file_name().unwrap().to_string_lossy().into_owned());
-                    if loaded
-                        .languages
-                        .values()
-                        .filter_map(|language| language.as_ref().ok())
-                        .filter(|language| language.is_wasm())
-                        .count()
-                        >= MAX_MODULES
-                    {
-                        Err("WASM language limit reached; restart to release modules".into())
-                    } else {
-                        module
-                            .wasm_name(grammar)
-                            .and_then(|name| load_wasm(&path, &name))
-                    }
-                } else {
-                    load_native(&path, &module.entry_point(grammar))
-                }
+        let result = {
+            loaded.activity.modules.insert(module.module.clone());
+            let path = Self::module_path(&package, &module.module);
+            if let Err(error) = standard::contained(&package.root, &path) {
+                Self::report(&mut loaded, &error);
+                loaded
+                    .languages
+                    .insert(grammar.to_owned(), Err(error.clone()));
+                return Err(error);
             }
-            None => Err(format!("language package {grammar} is not installed")),
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "wasm")
+            {
+                loaded.activity.wasm_loads += 1;
+                loaded
+                    .activity
+                    .wasm_modules
+                    .insert(path.file_name().unwrap().to_string_lossy().into_owned());
+                if loaded
+                    .languages
+                    .values()
+                    .filter_map(|language| language.as_ref().ok())
+                    .filter(|language| language.is_wasm())
+                    .count()
+                    >= MAX_MODULES
+                {
+                    Err("WASM language limit reached; restart to release modules".into())
+                } else {
+                    module
+                        .wasm_name(grammar)
+                        .and_then(|name| load_wasm(&path, &name))
+                }
+            } else {
+                load_native(&path, &module.entry_point(grammar))
+            }
         };
         if let Err(error) = &result {
             Self::report(&mut loaded, error);
@@ -503,9 +603,7 @@ impl Resources for Packages {
         Ok(parser)
     }
     fn text(&self, grammar: &str, file: &str) -> TextResult {
-        let Some((package, _)) = self.grammar(grammar) else {
-            return Err(format!("unknown language resource {grammar}/{file}"));
-        };
+        let (package, _) = self.available(grammar)?;
         if !["highlights.scm", "injections.scm"].contains(&file) {
             return Err(format!("unknown language resource {grammar}/{file}"));
         }
@@ -577,9 +675,7 @@ fn user_directory_from(
 ) -> Option<PathBuf> {
     let home = || get("HOME").map(PathBuf::from);
     let base = match platform {
-        "windows" => get("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .map(|p| p.join("Loom")),
+        "windows" => super::user_paths::windows_root(&get),
         "macos" => home().map(|p| p.join("Library/Application Support/Loom")),
         _ => get("XDG_DATA_HOME")
             .filter(|p| !p.is_empty())
@@ -609,16 +705,24 @@ pub(crate) fn resources() -> Arc<Packages> {
                     None => Packages {
                         packages: BTreeMap::new(),
                         loaded: Mutex::default(),
+                        catalog: None,
+                        disabled: BTreeSet::new(),
                     },
                 };
                 Arc::new(source)
             }
             #[cfg(not(test))]
             {
-                Arc::new(Packages::discover(
-                    &locations(&executable),
-                    user_directory().as_deref(),
-                ))
+                let bundled = locations(&executable);
+                let user = user_directory();
+                let mut source = Packages::discover(&bundled, user.as_deref());
+                if let Err(error) = source.enable_catalog(
+                    &bundled.join("language-packs.toml"),
+                    user.map(|p| p.join(".managed")),
+                ) {
+                    Packages::report(source.loaded.get_mut().unwrap(), &error);
+                }
+                Arc::new(source)
             }
         })
         .clone()

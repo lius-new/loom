@@ -1,6 +1,4 @@
-//! The language server panel: opened from the status bar, it lists every running
-//! server with its state, what it is busy with and what it last said. It shows
-//! values it is given and reports two commands; it knows nothing about servers.
+//! Language resources and servers, presented from supplied state and commands.
 use lgui::core::{CursorIcon, EventPolicy, UiEventContext};
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 use std::sync::Arc;
@@ -32,11 +30,13 @@ pub struct Section {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Frame {
     pub sections: Vec<Section>,
+    pub retry_downloads: bool,
 }
 
 pub enum Event {
     Close,
     Restart,
+    RetryDownloads,
 }
 pub type Commands = Arc<dyn Fn(Event) + Send + Sync>;
 
@@ -49,7 +49,7 @@ const FOOTER_H: f32 = 38.0;
 const MARGIN: f32 = 8.0;
 /// Approximate advance of the small monospace face.
 const MONO_W: f32 = 6.4;
-const EMPTY: &str = "No language server is running for the open files.";
+const EMPTY: &str = "No language downloads or servers are active.";
 
 fn colour(level: Level) -> lgui::prelude::Color {
     let c = theme::c();
@@ -131,7 +131,7 @@ pub fn render(viewport: UiRect, frame: &Frame, commands: Commands) -> Element {
         card.right - PAD,
         card.bottom - 8.0,
     );
-    let restart = commands;
+    let restart = commands.clone();
     body = body.child(
         panel(
             button,
@@ -149,6 +149,32 @@ pub fn render(viewport: UiRect, frame: &Frame, commands: Commands) -> Element {
             theme::sans(theme::c().text_soft, theme::SMALL),
         )),
     );
+    if frame.retry_downloads {
+        let label = "Retry downloads";
+        let button = UiRect::new(
+            card.left + PAD,
+            button.top,
+            card.left + PAD + measure(label, theme::SMALL, 400) + 24.0,
+            button.bottom,
+        );
+        body = body.child(
+            panel(
+                button,
+                VisualStyle::filled(theme::c().active_line).radius(4.0),
+            )
+            .event_policy(policy)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move |cx: &mut UiEventContext| {
+                commands(Event::RetryDownloads);
+                cx.stop_propagation();
+            })
+            .child(text(
+                UiRect::new(button.left + 12.0, button.top, button.right, button.bottom),
+                label,
+                theme::sans(theme::c().text_soft, theme::SMALL),
+            )),
+        );
+    }
     overlay.child(body)
 }
 
@@ -179,6 +205,7 @@ mod tests {
             level: Level::Quiet,
         };
         let one = Frame {
+            retry_downloads: false,
             sections: vec![Section {
                 title: "a".into(),
                 level: Level::Quiet,
@@ -186,6 +213,7 @@ mod tests {
             }],
         };
         let two = Frame {
+            retry_downloads: false,
             sections: vec![Section {
                 title: "a".into(),
                 level: Level::Quiet,

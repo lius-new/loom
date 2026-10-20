@@ -85,8 +85,11 @@ pub(super) fn contained(root: &Path, path: &Path) -> Result<(), String> {
 pub(super) fn read(root: &Path) -> Result<Installed, String> {
     let path = root.join("tree-sitter.json");
     contained(root, &path)?;
-    let document: Document = serde_json::from_str(&read_text(&path, MAX_MANIFEST)?)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    from_json(root, &read_text(&path, MAX_MANIFEST)?)
+}
+
+pub(super) fn from_json(root: &Path, json: &str) -> Result<Installed, String> {
+    let document: Document = serde_json::from_str(json).map_err(|e| e.to_string())?;
     if document.grammars.is_empty() || document.grammars.len() > 128 {
         return Err("tree-sitter.json needs 1..128 grammars".into());
     }

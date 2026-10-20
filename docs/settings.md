@@ -11,6 +11,10 @@ session (`workspace.json`) live in the user configuration folder:
 | macOS | `~/Library/Application Support/Loom` |
 | Linux | `$XDG_CONFIG_HOME/loom`, or `~/.config/loom` |
 
+On Windows, all persistent user data uses `%APPDATA%\Loom` (Roaming), including
+downloaded language resources under `language-packs\.managed`. Loom does not split
+user data between the Roaming and Local AppData folders.
+
 A workspace folder can override settings in `.loom/settings.json`; the
 `workspace::OpenProjectSettingsFile` action creates and opens it. Appearance
 preferences, such as the theme and the interface scale, can only be set in the

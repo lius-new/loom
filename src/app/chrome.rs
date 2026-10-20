@@ -181,7 +181,7 @@ pub fn status_binding(
         },
     )
 }
-/// The language server's state and the active file's diagnostic counts.
+/// Pending syntax resources, server state and the active file's diagnostics.
 fn language_notes(
     state: &AppContext,
     app: &crate::app::state::AppState,
@@ -190,6 +190,20 @@ fn language_notes(
     use crate::infrastructure::lsp::manager::Status;
     use crate::ui::chrome::{NoteLevel, StatusNote};
     let mut notes = Vec::new();
+    if let Some(info) = crate::infrastructure::language_packs::resources()
+        .download_infos()
+        .into_iter()
+        .find(|i| i.status != "ready")
+    {
+        notes.push(StatusNote {
+            text: format!("{} syntax: {}", info.name, info.status),
+            level: if info.error.is_some() {
+                NoteLevel::Warning
+            } else {
+                NoteLevel::Quiet
+            },
+        });
+    }
     let Some(id) = app.workspace.active() else {
         return notes;
     };
@@ -252,16 +266,15 @@ fn language_notes(
     notes
 }
 
-/// What the language server panel shows: every server that is running.
+/// Syntax installation status and running language servers.
 pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Frame {
     use crate::infrastructure::lsp::manager::Status;
     use crate::ui::language_panel::{Frame, Level, Line, Section};
-    let Some(services) = state.services().and_then(|r| r.language_services()) else {
-        return Frame::default();
-    };
+    let services = state.services().and_then(|r| r.language_services());
     let line = |text: String, level| Line { text, level };
-    let sections = services
-        .infos()
+    let mut sections: Vec<Section> = services
+        .map(|s| s.infos())
+        .unwrap_or_default()
         .into_iter()
         .map(|info| {
             let (state_text, level) = match &info.status {
@@ -334,7 +347,31 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
             }
         })
         .collect();
-    Frame { sections }
+    let downloads: Vec<_> = crate::infrastructure::language_packs::resources()
+        .download_infos()
+        .into_iter()
+        .filter(|i| i.status != "ready")
+        .collect();
+    let retry_downloads = downloads.iter().any(|i| i.error.is_some());
+    sections.extend(downloads.into_iter().map(|info| {
+        Section {
+            title: format!("{} syntax — {}", info.name, info.status),
+            level: if info.error.is_some() {
+                Level::Warning
+            } else {
+                Level::Quiet
+            },
+            lines: info
+                .error
+                .into_iter()
+                .map(|error| line(error, Level::Warning))
+                .collect(),
+        }
+    }));
+    Frame {
+        sections,
+        retry_downloads,
+    }
 }
 
 pub fn status(

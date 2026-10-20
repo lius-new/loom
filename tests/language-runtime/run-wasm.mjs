@@ -16,7 +16,10 @@ const packages = await prepareWasmFixture(path.join(root, 'target/wasm-input'), 
 const env = {...(await prepareDependencies({skia:false,offline:args.includes('--offline')})).env, LOOM_TEST_WASM_PACKAGES: packages};
 delete env.LOOM_TEST_LANGUAGE_PACKS;
 const cargo = command => execFileSync('cargo', [...command, '--manifest-path', path.join(root, 'Cargo.toml'), '--locked', ...(args.includes('--offline') ? ['--offline'] : []), '--target-dir', path.join(root, 'target')], {cwd: root, env, stdio: 'inherit'});
-if (!args.includes('--probe-only')) cargo(['test', '--lib', 'infrastructure::language_packs::wasm_tests::']);
+if (!args.includes('--probe-only')) {
+  cargo(['test', '--lib', 'infrastructure::language_packs::catalog::tests::']);
+  cargo(['test', '--lib', 'infrastructure::language_packs::wasm_tests::']);
+}
 cargo(['build', '--bin', 'language-runtime-probe']);
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-wasm-installed-'));
 try {
@@ -26,7 +29,8 @@ try {
   const digest = () => createHash('sha256').update(fs.readFileSync(binary)).digest('hex');
   const original = digest();
   const home = path.join(temp, 'user');
-  const probeEnv = {...process.env, LOCALAPPDATA: home, HOME: home, XDG_DATA_HOME: home};
+  const unusedLocal = path.join(temp, 'unused-local');
+  const probeEnv = {...process.env, APPDATA: home, LOCALAPPDATA: unusedLocal, HOME: home, XDG_DATA_HOME: home};
   const user = path.join(home, ...(process.platform === 'win32' ? ['Loom'] : process.platform === 'darwin' ? ['Library', 'Application Support', 'Loom'] : ['loom']), 'language-packs');
   fs.writeFileSync(path.join(temp, 'sample.rs'), 'fn hello() { let value = r#"raw"#; /* /* nested */ */ }\n');
   fs.writeFileSync(path.join(temp, 'sample.downloaded'), 'fn downloaded() {}\n');
@@ -41,6 +45,7 @@ try {
   assert.deepEqual(fs.readdirSync(path.join(portable, 'rust')).sort(), ['queries', 'tree-sitter-rust.wasm', 'tree-sitter.json'].sort());
   fs.mkdirSync(path.dirname(user), {recursive: true}); fs.renameSync(portable, user);
   assert.deepEqual(probe('sample.rs'), installed);
+  assert.equal(fs.existsSync(unusedLocal), false);
   assert.deepEqual(probe('sample.downloaded'), plain);
   const manifest = path.join(user, 'rust/tree-sitter.json');
   const upstream = JSON.parse(fs.readFileSync(manifest));

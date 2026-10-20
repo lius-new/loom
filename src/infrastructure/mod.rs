@@ -5,6 +5,7 @@ pub(crate) mod explorer_filesystem;
 pub(crate) mod git;
 pub(crate) mod search_filesystem;
 pub(crate) mod session_filesystem;
+pub(crate) mod user_paths;
 pub(crate) mod workspace_filesystem;
 
 pub(crate) mod terminal;

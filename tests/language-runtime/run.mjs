@@ -30,7 +30,7 @@ try {
   const digest=()=>createHash('sha256').update(fs.readFileSync(binary)).digest('hex');
   const originalDigest=digest();
   const base=path.join(temp,'user');
-  const probeEnv={...process.env,LOCALAPPDATA:base,HOME:base,XDG_DATA_HOME:base};
+  const probeEnv={...process.env,APPDATA:base,LOCALAPPDATA:path.join(temp,'unused-local'),HOME:base,XDG_DATA_HOME:base};
   const user=path.join(base,...(process.platform==='win32'?['Loom']:process.platform==='darwin'?['Library','Application Support','Loom']:['loom']),'language-packs');
   for(const [name,text] of [['new.json','{"a": true}'],['new.md','# Heading\n\n*emphasis*\n'],['new.downloaded','fn hello() {}'],['new.rs','fn normal() {}']])fs.writeFileSync(path.join(temp,name),text);
   const probe=name=>JSON.parse(execFileSync(binary,[path.join(temp,name)],{env:probeEnv,cwd:temp,encoding:'utf8'}));

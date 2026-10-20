@@ -51,9 +51,7 @@ pub(crate) fn session_path() -> Option<PathBuf> {
 pub(crate) fn config_path(file_name: &str) -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
-        env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .map(|path| path.join("Loom").join(file_name))
+        super::user_paths::windows_root(|key| env::var_os(key)).map(|path| path.join(file_name))
     }
 
     #[cfg(target_os = "macos")]

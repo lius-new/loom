@@ -551,7 +551,7 @@ fn downloaded_user_package_is_discovered_and_parsed_without_recompiling() {
     let output=Command::new(std::env::current_exe().unwrap())
         .args(["--exact","infrastructure::language_packs::tests::downloaded_user_package_is_discovered_and_parsed_without_recompiling","--nocapture"])
         .env(CHILD,&temp.0)
-        .env("LOCALAPPDATA", &user_base).env("HOME", &user_base).env("XDG_DATA_HOME", &user_base)
+        .env("APPDATA", &user_base).env("LOCALAPPDATA", temp.0.join("unused-local")).env("HOME", &user_base).env("XDG_DATA_HOME", &user_base)
         .current_dir(&temp.0).output().unwrap();
     assert!(
         output.status.success(),
@@ -565,16 +565,18 @@ fn downloaded_user_package_is_discovered_and_parsed_without_recompiling() {
 fn platform_user_data_locations_are_absolute_and_do_not_follow_the_working_directory() {
     let home = std::env::temp_dir().join("loom-home");
     let local = std::env::temp_dir().join("loom-local");
+    let roaming = std::env::temp_dir().join("loom-roaming");
     let xdg = std::env::temp_dir().join("loom-data");
     let get = |key: &str| match key {
         "HOME" => Some(home.clone().into_os_string()),
         "LOCALAPPDATA" => Some(local.clone().into_os_string()),
+        "APPDATA" => Some(roaming.clone().into_os_string()),
         "XDG_DATA_HOME" => Some(xdg.clone().into_os_string()),
         _ => None,
     };
     assert_eq!(
         user_directory_from("windows", get),
-        Some(local.join("Loom/language-packs"))
+        Some(roaming.join("Loom/language-packs"))
     );
     assert_eq!(
         user_directory_from("macos", get),

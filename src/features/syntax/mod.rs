@@ -18,6 +18,13 @@ pub(crate) use self::window::{Freshness, Source, Window, WindowTokens};
 use crate::features::highlighting::HighlightId;
 use std::ops::Range;
 
+/// Check downloaded resources with the same query compilers used by the worker.
+pub(crate) fn validate_resources(resources: &dyn Resources, grammar: &str) -> Result<(), String> {
+    queries::compile(resources, grammar)?;
+    injections::compile(resources, grammar)?;
+    Ok(())
+}
+
 /// A run of text and the highlight class it is drawn with; `None` is plain text.
 /// Every source of highlighting produces these, so the display does not care
 /// which one made them.

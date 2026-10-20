@@ -7,6 +7,14 @@ use tree_sitter::{Language, Parser};
 /// Called by background
 /// syntax work; this port has no filesystem or application dependencies.
 pub(crate) trait Resources: Send + Sync {
+    /// Identity stays fixed; a generation changes when resource bytes become available.
+    fn generation(&self) -> u64 {
+        0
+    }
+    fn pending(&self, _grammar: &str) -> bool {
+        false
+    }
+    fn subscribe(&self, _changed: Arc<dyn Fn() + Send + Sync>) {}
     fn language(&self, grammar: &str) -> Result<Language, String>;
     /// The adapter supplies any execution store needed by this language. Each
     /// parser owns its mutable store; trees and queries can share the language.

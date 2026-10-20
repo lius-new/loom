@@ -156,5 +156,6 @@ before uploading resources because there is no target branch to synchronize.
 node --test scripts/language-packs/pipeline.test.mjs scripts/language-packs/catalog-sync.test.mjs
 ```
 
-The catalog is ready for a later downloader to consume. This producer change
-does not add runtime downloads or update polling to Loom.
+The application consumes the shipped catalog for on-demand, verified WASM
+installation; see [runtime behavior](../../docs/languages.md#automatic-installation-from-the-bundled-catalog).
+Catalog refresh and remote update polling are not part of that consumer.

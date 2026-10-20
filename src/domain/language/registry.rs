@@ -374,7 +374,8 @@ impl Registry {
     }
 
     /// Install the discovered package snapshot before documents are created.
-    /// IDs remain stable for this process; package changes require restart.
+    /// IDs remain stable for this process. Catalog payloads can arrive later;
+    /// changes to the set of known identities require restart.
     pub fn install(registry: Registry) -> Result<(), &'static str> {
         CURRENT
             .set(registry)

@@ -15,15 +15,50 @@ At startup Loom scans immediate child directories in these locations:
 | --- | --- |
 | Application, Windows/Linux | language-packs/ beside the executable |
 | Application, macOS | Loom.app/Contents/Resources/language-packs/ |
-| User, Windows | %LOCALAPPDATA%/Loom/language-packs/ |
+| User, Windows | %APPDATA%/Loom/language-packs/ |
 | User, macOS | ~/Library/Application Support/Loom/language-packs/ |
 | User, Linux | $XDG_DATA_HOME/loom/language-packs/, otherwise ~/.local/share/loom/language-packs/ |
 
 XDG_DATA_HOME must be absolute. Locations do not depend on the working directory.
+On Windows, user language resources share `%APPDATA%/Loom` (Roaming) with settings
+and sessions. `%LOCALAPPDATA%/Loom` is not used for user data.
 Missing directories are valid and discovery does not create them. Directory names
 may retain upstream names, such as tree-sitter-rust; they need not equal a grammar
-name. Directory symlinks and unrelated folders are ignored. Restart after installing,
-removing or updating resources. There is no hot reload or application downloader.
+name. Directory symlinks and unrelated folders are ignored. Restart after manually
+installing, removing or updating resources. Catalog downloads activate without restart.
+
+## Automatic installation from the bundled catalog
+
+At startup Loom reads `language-packs.toml` beside the bundled collections once.
+It registers the catalog's language identities and file associations without
+downloading modules. Installed application/user collections remain authoritative;
+the catalog supplies languages that do not overlap installed collections.
+Explicitly disabled legacy user collections stay disabled.
+
+When visible content first needs a missing grammar, an independent background
+queue installs its package. Requests for the same package are deduplicated and at
+most two downloads run at once. Embedded languages use the same queue when their
+regions become visible. Editing remains available with plain text highlighting
+while resources are pending. The language status panel shows progress/failures and
+offers **Retry downloads**. A failed request has a 30-second retry cooldown;
+explicit retry bypasses it. Missing resources are never cached as permanent module
+failures. Installation completion invalidates syntax caches and reparses the
+current visible documents without an edit, reopening a tab or restarting Loom.
+
+Archives use the fixed GitHub repository, release tag and asset in the shipped
+catalog. Size and SHA-256 must match. Extraction rejects traversal, links, special
+files, duplicate paths and oversized payloads. The package's grammars and file
+associations must match the catalog; only WASM modules are accepted for automatic
+installation, and Loom validates them with its real loader and query compilers
+before activating the complete package. Manual native collections remain supported.
+
+Verified archives and complete collections are kept under `.managed/` in the user
+language-packs directory, keyed by archive hash. They do not modify application
+files or user-installed collections. Cached archives work offline and are verified
+again when requested in a new process. An absent catalog leaves installed-resource
+loading available; an invalid catalog is reported and ignored. The application
+does not poll or download a newer catalog or upgrade existing user/application
+collections. A new application release supplies the next catalog snapshot.
 
 ## Install Rust using upstream downloads
 
@@ -129,7 +164,8 @@ store. Languages, queries and failures are cached. Off-screen embedded languages
 remain unloaded. A bad module, export, ABI or query degrades that language to plain
 text while other collections continue working. Native handles remain alive until
 process exit; WASM languages are reference-counted. Removing the installed
-collection and restarting removes its support, unless an application copy remains.
+collection and restarting removes its installed copy; a catalog entry may still
+offer that language for automatic installation.
 
 Existing installed Loom package.json collections remain readable as a migration
 fallback. When tree-sitter.json exists it is authoritative, even if invalid; Loom
@@ -164,7 +200,7 @@ publication catalog. Both packages remain in scripts/language-packs/build.toml
 and use the same [batch producer](../scripts/language-packs/README.md) as other
 languages. Their validated WASM files were manually placed in the bundled
 packages; producer runs do not rewrite these checked-in resources.
-The catalog contains only successfully published artifacts and is initially empty.
+The catalog contains only successfully published artifacts.
 Rust's unchanged upstream regression resources live under
 tests/language-runtime/fixtures/rust. Cargo does not build or install grammars.
 
@@ -178,8 +214,8 @@ The consumer preserves tree-sitter.json, module bytes and declared query paths,
 and copies the publication catalog. No language resource feed, archive download
 or grammar compilation is part of application packaging. macOS signs native
 modules and the application, preserves WASM bytes and enables Wasmtime JIT with
-allow-jit. Automatic application downloading is a separate integration;
-installed-resource loading continues to work offline.
+allow-jit. Runtime on-demand installation uses the shipped catalog as described
+above; installed resources and verified cached archives continue to work offline.
 
 The independent runtime workspace compiles production loader, syntax and worker
 sources against supplied modules. Its default WASM-only regression installs the

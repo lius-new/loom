@@ -146,7 +146,7 @@ struct Shared {
     wake: Condvar,
     stopped: AtomicBool,
 }
-struct Owner(Arc<Shared>);
+struct Owner(Arc<Shared>, #[allow(dead_code)] Arc<dyn Fn() + Send + Sync>);
 impl Drop for Owner {
     fn drop(&mut self) {
         stop(&self.0);
@@ -172,6 +172,18 @@ pub(crate) struct Stats {
     pub evictions: usize,
 }
 impl Worker {
+    #[cfg(test)]
+    pub(crate) fn with_resources(
+        resources: Arc<dyn crate::features::syntax::Resources>,
+        ready: impl Fn(DocumentStamp) + Send + Sync + 'static,
+    ) -> Self {
+        let shared = Arc::new(Shared {
+            state: Mutex::default(),
+            wake: Condvar::new(),
+            stopped: AtomicBool::new(false),
+        });
+        Self::start_resources(shared, resources, ready, || {})
+    }
     pub fn new(ready: impl Fn(DocumentStamp) + Send + Sync + 'static) -> Self {
         Self::start(ready, || {})
     }
@@ -184,11 +196,45 @@ impl Worker {
             wake: Condvar::new(),
             stopped: AtomicBool::new(false),
         });
+        let resources = crate::infrastructure::language_packs::resources();
+        Self::start_resources(shared, resources, ready, before_prepare)
+    }
+    fn start_resources(
+        shared: Arc<Shared>,
+        resources: Arc<dyn crate::features::syntax::Resources>,
+        ready: impl Fn(DocumentStamp) + Send + Sync + 'static,
+        before_prepare: impl Fn() + Send + 'static,
+    ) -> Self {
+        let weak = Arc::downgrade(&shared);
+        let changed: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let Some(shared) = weak.upgrade() else {
+                return;
+            };
+            if shared.stopped.load(Ordering::Acquire) {
+                return;
+            }
+            let mut state = shared.state.lock().unwrap();
+            state.ready.clear();
+            state.bytes = 0;
+            state.retained = RetainedSet::default();
+            for epoch in state.epochs.values_mut() {
+                epoch.cancel.store(true, Ordering::Release);
+                epoch.cancel = Arc::new(AtomicBool::new(false));
+            }
+            let documents: Vec<_> = state.targets.values().map(|r| r.document).collect();
+            for document in documents {
+                if !state.pending.contains(&document) {
+                    state.pending.push_back(document);
+                }
+            }
+            shared.wake.notify_all();
+        });
+        resources.subscribe(changed.clone());
         let background = shared.clone();
         thread::Builder::new()
             .name("loom-syntax".into())
             .spawn(move || {
-                let mut trees = crate::infrastructure::language_packs::index();
+                let mut trees = crate::features::syntax::TreeIndex::new(resources);
                 loop {
                     let job = {
                         let mut state = background.state.lock().unwrap();
@@ -300,7 +346,7 @@ impl Worker {
                 }
             })
             .expect("could not start syntax worker");
-        Self(Arc::new(Owner(shared)))
+        Self(Arc::new(Owner(shared, changed)))
     }
     pub fn shutdown(&self) {
         stop(&self.0.0);

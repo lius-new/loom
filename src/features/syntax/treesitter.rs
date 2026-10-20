@@ -79,6 +79,7 @@ pub(crate) struct TreeIndex {
     clock: u64,
     pub stats: TreeStats,
     resources: Arc<dyn super::Resources>,
+    resource_generation: u64,
 }
 
 impl Default for TreeIndex {
@@ -89,6 +90,7 @@ impl Default for TreeIndex {
 
 impl TreeIndex {
     pub(crate) fn new(resources: Arc<dyn super::Resources>) -> Self {
+        let resource_generation = resources.generation();
         Self {
             parsers: HashMap::new(),
             layer_parsers: HashMap::new(),
@@ -98,6 +100,7 @@ impl TreeIndex {
             clock: 0,
             stats: TreeStats::default(),
             resources,
+            resource_generation,
         }
     }
     pub(crate) fn retain(&mut self, open: &[FileId]) {
@@ -115,6 +118,16 @@ impl TreeIndex {
         windows: &[Window],
         cancel: &AtomicBool,
     ) -> Option<Vec<WindowTokens>> {
+        let generation = self.resources.generation();
+        if generation != self.resource_generation {
+            self.parsers.clear();
+            self.layer_parsers.clear();
+            self.queries.clear();
+            self.injection_queries.clear();
+            self.docs.clear();
+            self.stats.trees = 0;
+            self.resource_generation = generation;
+        }
         self.clock += 1;
         if windows
             .iter()
@@ -213,7 +226,9 @@ impl TreeIndex {
             .or_insert_with(|| {
                 let started = Instant::now();
                 let compiled = queries::compile(self.resources.as_ref(), name);
-                if let Err(error) = &compiled {
+                if let Err(error) = &compiled
+                    && !self.resources.pending(name)
+                {
                     self.resources.report(error);
                 }
                 stats.queries_compiled += 1;
