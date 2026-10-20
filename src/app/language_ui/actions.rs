@@ -254,7 +254,7 @@ fn flatten(symbols: &[Symbol], depth: usize, current: &std::path::Path, out: &mu
 pub fn symbol_badge(kind: u32) -> &'static str {
     match kind {
         1 => "F",
-        2 | 3 | 4 => "{}",
+        2..=4 => "{}",
         5 => "C",
         6 => "m",
         7 | 8 => "p",
@@ -264,7 +264,7 @@ pub fn symbol_badge(kind: u32) -> &'static str {
         12 => "fn",
         13 => "v",
         14 => "k",
-        15 | 16 | 17 | 18 | 19 | 20 | 21 => "·",
+        15..=21 => "·",
         22 => "e",
         23 => "S",
         24 => "ev",

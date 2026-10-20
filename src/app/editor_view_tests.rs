@@ -1922,3 +1922,152 @@ fn problems_are_visited_in_order_and_wrap() {
     h.act(Action::GoToPreviousDiagnostic);
     assert_eq!(h.cursor(), 0);
 }
+
+impl LanguageHarness {
+    fn type_text(&mut self, text: &str) {
+        let rect = self.rect;
+        for ch in text.chars() {
+            self.state.update(|app| {
+                crate::app::editor::insert_text(app, &ch.to_string(), rect);
+            });
+            self.render();
+        }
+    }
+
+    fn document_text(&self) -> String {
+        self.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .text()
+            .to_owned()
+    }
+
+    fn completion_labels(&self) -> Vec<String> {
+        let app = self.state.get();
+        app.editor
+            .language
+            .completion
+            .as_ref()
+            .map(|s| {
+                s.shown
+                    .iter()
+                    .map(|shown| s.data.entries[shown.entry].item.label.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+#[test]
+fn typing_opens_a_completion_list_that_narrows_with_more_typing() {
+    let mut h = LanguageHarness::new("\n", &["--features", "completion"]);
+    h.until_ready();
+    h.type_text("a");
+    h.until("the list", |h| h.completion_labels().len() == 2);
+    h.render();
+    assert!(h.has_text("alpha-fake"));
+    // More typing narrows it without another round trip.
+    h.type_text("l");
+    assert_eq!(h.completion_labels(), ["alpha-fake"]);
+    // Typing something that matches nothing ends it.
+    h.type_text("zz");
+    assert!(h.completion_labels().is_empty());
+    assert!(h.state.get().editor.language.completion.is_none());
+}
+
+#[test]
+fn enter_accepts_the_highlighted_item_in_place_of_the_typed_word() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("x = \n", &["--features", "completion"]);
+    h.until_ready();
+    h.set_cursor(4);
+    h.type_text("al");
+    h.until("the list", |h| h.completion_labels() == ["alpha-fake"]);
+    h.act(Action::MenuConfirm);
+    assert_eq!(h.document_text(), "x = alpha-fake\n");
+    assert!(h.state.get().editor.language.completion.is_none());
+    assert_eq!(h.cursor(), 14);
+}
+
+#[test]
+fn a_snippet_item_leaves_its_stops_to_fill_in() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("\n", &["--features", "completion"]);
+    h.until_ready();
+    h.type_text("be");
+    h.until("the list", |h| h.completion_labels() == ["beta"]);
+    h.act(Action::MenuConfirm);
+    assert_eq!(h.document_text(), "beta()\n");
+    assert_eq!(
+        h.cursor(),
+        5,
+        "the caret is on the first stop, between the brackets"
+    );
+    assert!(h.state.get().editor.language.snippet.is_some());
+    h.type_text("1, 2");
+    assert_eq!(h.document_text(), "beta(1, 2)\n");
+    h.act(Action::NextSnippetTabstop);
+    assert_eq!(
+        h.cursor(),
+        10,
+        "the final stop is after the closing bracket"
+    );
+    assert!(h.state.get().editor.language.snippet.is_none());
+}
+
+#[test]
+fn escape_closes_the_list_and_leaves_the_text_alone() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("\n", &["--features", "completion"]);
+    h.until_ready();
+    h.type_text("a");
+    h.until("the list", |h| !h.completion_labels().is_empty());
+    h.act(Action::MenuCancel);
+    assert!(h.completion_labels().is_empty());
+    assert_eq!(h.document_text(), "a\n");
+}
+
+#[test]
+fn the_completion_key_asks_even_with_nothing_typed() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("\n", &["--features", "completion"]);
+    h.until_ready();
+    h.act(Action::ShowCompletions);
+    h.until("the list", |h| h.completion_labels().len() == 2);
+}
+
+#[test]
+fn a_trigger_character_opens_the_list_without_a_word() {
+    let mut h = LanguageHarness::new("x\n", &["--features", "completion"]);
+    h.until_ready();
+    h.set_cursor(1);
+    h.type_text(".");
+    h.until("the list", |h| h.completion_labels().len() == 2);
+    // Typing a letter narrows it, as for any list.
+    h.type_text("b");
+    assert_eq!(h.completion_labels(), ["beta"]);
+}
+
+#[test]
+fn the_highlighted_item_shows_its_documentation_once_the_server_resolves_it() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("\n", &["--features", "completion"]);
+    h.until_ready();
+    h.type_text("a");
+    h.until("the list", |h| h.completion_labels().len() == 2);
+    // Down to "beta", whose documentation the server only gives on request.
+    h.act(Action::MenuSelectNext);
+    h.until("the documentation", |h| h.has_text("resolved"));
+}
+
+#[test]
+fn a_server_without_completion_never_opens_a_list() {
+    let mut h = LanguageHarness::new("\n", &["--features", "hover"]);
+    h.until_ready();
+    h.type_text("abc");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    h.render();
+    assert!(h.state.get().editor.language.completion.is_none());
+}

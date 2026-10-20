@@ -2,7 +2,7 @@
 //! takes for itself.
 use super::actions::{self, Wanted};
 use super::popup::{Item, Kind, Payload, Popup, VISIBLE};
-use super::{AppContext, hover, navigate};
+use super::{AppContext, completion, hover, navigate, snippet_session};
 use crate::app::key_actions::KeyEnv;
 use crate::features::keymap::action::Action;
 use crate::features::language_service::request::Feature;
@@ -24,6 +24,17 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
         Action::FindAllReferences => {
             actions::begin(state, Wanted::References, rect, None);
             Some(true)
+        }
+        Action::ShowCompletions => {
+            state.update(|app| completion::request(state, app, true, None));
+            Some(true)
+        }
+        Action::NextSnippetTabstop | Action::PreviousSnippetTabstop => {
+            let mut moved = false;
+            state.update(|app| {
+                moved = snippet_session::step(app, action == Action::NextSnippetTabstop);
+            });
+            Some(moved)
         }
         Action::ShowHover => {
             hover::show_at_cursor(state);
@@ -76,12 +87,64 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
     }
 }
 
+/// A language command typed in Vim's normal mode.
+pub(crate) fn vim_command(
+    state: &AppContext,
+    command: loom_editor_core::vim::LanguageCommand,
+    rect: UiRect,
+) {
+    use loom_editor_core::vim::LanguageCommand as C;
+    let action = match command {
+        C::Hover => Action::ShowHover,
+        C::Definition => Action::GoToDefinition,
+        C::Declaration => Action::GoToDeclaration,
+        C::TypeDefinition => Action::GoToTypeDefinition,
+        C::Implementation => Action::GoToImplementation,
+        C::References => Action::FindAllReferences,
+    };
+    perform_with(state, rect, action);
+}
+
 fn goto(state: &AppContext, feature: Feature, rect: UiRect) -> Option<bool> {
     actions::begin(state, Wanted::Goto(feature), rect, None);
     Some(true)
 }
 
+/// The completion list takes the same keys as any popup.
+fn completion_key(state: &AppContext, action: Action, rect: UiRect) -> Option<bool> {
+    let mut visible = false;
+    state.try_update(|app| {
+        visible = super::completion_visible(app);
+        false
+    });
+    if !visible {
+        return None;
+    }
+    match action {
+        Action::MenuConfirm => state.update(|app| {
+            let rect = app.editor.language.rect.unwrap_or(rect);
+            if completion::accept(app, None) {
+                crate::app::editor::reveal_cursor(app, rect);
+            }
+        }),
+        Action::MenuCancel => state.update(completion::close),
+        _ => {
+            state.update(|app| match action {
+                Action::MenuSelectNext => completion::move_selection(app, 1),
+                Action::MenuSelectPrevious => completion::move_selection(app, -1),
+                Action::MenuPageDown => completion::page(app, VISIBLE as isize),
+                _ => completion::page(app, -(VISIBLE as isize)),
+            });
+            state.update(|app| completion::resolve_selected(state, app));
+        }
+    }
+    Some(true)
+}
+
 fn popup_key(state: &AppContext, action: Action, rect: UiRect) -> Option<bool> {
+    if let Some(done) = completion_key(state, action, rect) {
+        return Some(done);
+    }
     let mut open = false;
     state.update(|app| {
         let Some(popup) = app.editor.language.popup.as_mut() else {

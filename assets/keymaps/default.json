@@ -102,6 +102,7 @@
       "shift-enter": "editor::Newline",
       "tab": "editor::Tab",
       "shift-tab": "editor::Backtab",
+      "ctrl-space": "editor::ShowCompletions",
       "f12": "editor::GoToDefinition",
       "secondary-f12": "editor::GoToImplementation",
       "secondary-shift-f12": "editor::GoToTypeDefinition",
@@ -110,6 +111,14 @@
       "secondary-k secondary-i": "editor::Hover",
       "f8": "editor::GoToDiagnostic",
       "shift-f8": "editor::GoToPreviousDiagnostic"
+    }
+  },
+  {
+    // Filling in a snippet.
+    "context": "Snippet",
+    "bindings": {
+      "tab": "editor::NextSnippetTabstop",
+      "shift-tab": "editor::PreviousSnippetTabstop"
     }
   },
   {

@@ -5,6 +5,7 @@
 //! stop, where it sits in that text. Tab stops with the same index are mirrors:
 //! typing into the first is copied into the others. Stop `0` is where the caret
 //! ends; a snippet without one ends at its end.
+#![allow(clippy::single_range_in_vec_init)]
 use std::ops::Range;
 
 /// Where one tab stop (and its mirrors) are in the inserted text.
@@ -322,6 +323,35 @@ pub fn parse(source: &str, resolve: &dyn Fn(&str) -> Option<String>) -> Snippet 
     Snippet { text, stops }
 }
 
+/// Indents every line after the first by `indent`, so a snippet inserted in an
+/// indented place lines up; the stops move with the text.
+pub fn indent_lines(snippet: &mut Snippet, indent: &str) {
+    if indent.is_empty() || !snippet.text.contains('\n') {
+        return;
+    }
+    let shift = |at: usize, text: &str| at + indent.len() * text[..at].matches('\n').count();
+    let old = snippet.text.clone();
+    for stop in &mut snippet.stops {
+        for range in &mut stop.ranges {
+            // A stop that starts right after a break starts after the indent too.
+            let start = shift(range.start, &old)
+                + if range.start > 0 && old.as_bytes()[range.start - 1] == b'\n' {
+                    indent.len()
+                } else {
+                    0
+                };
+            let end = shift(range.end, &old)
+                + if range.end > 0 && old.as_bytes()[range.end - 1] == b'\n' {
+                    indent.len()
+                } else {
+                    0
+                };
+            *range = start..end.max(start);
+        }
+    }
+    snippet.text = old.replace('\n', &format!("\n{indent}"));
+}
+
 /// The variables every editor offers that Loom can answer for a document.
 pub fn document_variables(
     path: &std::path::Path,
@@ -455,6 +485,20 @@ mod tests {
     fn unicode_text_keeps_byte_ranges_correct() {
         let s = snippet("变量 ${1:名字} é");
         assert_eq!(&s.text[s.stops[0].ranges[0].clone()], "名字");
+    }
+
+    #[test]
+    fn indenting_moves_the_stops_with_their_text() {
+        let mut s = snippet("if $1 {\n\t$0\n}");
+        indent_lines(&mut s, "  ");
+        assert_eq!(s.text, "if  {\n  \t\n  }");
+        assert_eq!(s.stops[0].ranges[0], 3..3);
+        // The final stop sits after the new indent and the tab.
+        assert_eq!(s.stops[1].ranges[0], 9..9);
+        assert_eq!(&s.text[..9], "if  {\n  \t");
+        let mut flat = snippet("one");
+        indent_lines(&mut flat, "    ");
+        assert_eq!(flat.text, "one");
     }
 
     #[test]

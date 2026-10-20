@@ -1,7 +1,7 @@
 //! Vim's command grammar: `["x][count]operator[count]motion`, motions, text
 //! objects and single commands, parsed from the keys typed so far.
 
-use super::VisualKind;
+use super::{LanguageCommand, VisualKind};
 use super::key::Key;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -199,6 +199,8 @@ pub enum Simple {
     PlayLastMacro,
     JumpOlder,
     JumpNewer,
+    /// A language-server command for the application.
+    Language(LanguageCommand),
     Increment(i64),
 }
 
@@ -615,9 +617,15 @@ fn normal_simple(cursor: &mut Cursor<'_>, key: Key, recording: bool) -> Step<Act
             Key::Char('b' | '-') => Simple::ScrollCursor(ScrollTo::Bottom),
             _ => return Err(Stop::Invalid),
         },
+        Key::Char('K') => Simple::Language(LanguageCommand::Hover),
         Key::Char('g') => match cursor.next()? {
             Key::Char('J') => Simple::Join { spaces: false },
             Key::Char('v') => Simple::ReselectVisual,
+            Key::Char('d') => Simple::Language(LanguageCommand::Definition),
+            Key::Char('D') => Simple::Language(LanguageCommand::Declaration),
+            Key::Char('y') => Simple::Language(LanguageCommand::TypeDefinition),
+            Key::Char('i') => Simple::Language(LanguageCommand::Implementation),
+            Key::Char('r') => Simple::Language(LanguageCommand::References),
             _ => return Err(Stop::Invalid),
         },
         _ => return Err(Stop::Invalid),
@@ -687,6 +695,25 @@ mod tests {
             count,
             action,
         })
+    }
+
+    #[test]
+    fn language_keys_ask_the_application() {
+        for (keys, wanted) in [
+            ("K", LanguageCommand::Hover),
+            ("gd", LanguageCommand::Definition),
+            ("gD", LanguageCommand::Declaration),
+            ("gy", LanguageCommand::TypeDefinition),
+            ("gi", LanguageCommand::Implementation),
+            ("gr", LanguageCommand::References),
+        ] {
+            assert_eq!(
+                normal(keys),
+                command(None, None, Action::Simple(Simple::Language(wanted))),
+                "{keys}"
+            );
+        }
+        assert_eq!(normal("g"), Parsed::Incomplete);
     }
 
     #[test]

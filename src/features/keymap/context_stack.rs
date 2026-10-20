@@ -21,6 +21,8 @@ pub struct ContextFacts {
     pub menu: bool,
     /// A list is open over the code (completion, definitions, symbols).
     pub popup: bool,
+    /// A snippet is being filled in.
+    pub snippet: bool,
 }
 
 pub const WORKSPACE: &str = "Workspace";
@@ -37,6 +39,7 @@ pub const GIT_CONFIRM: &str = "GitConfirm";
 pub const COMMIT_MESSAGE: &str = "CommitMessage";
 pub const VIM: &str = "Vim";
 pub const POPUP: &str = "Popup";
+pub const SNIPPET: &str = "Snippet";
 
 pub fn os_name() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -125,6 +128,9 @@ pub fn context_stack(app: &ContextFacts) -> Vec<KeyContext> {
         stack.push(editor_context(app));
         if app.vim_active {
             stack.push(vim_context(app));
+        }
+        if app.snippet {
+            stack.push(KeyContext::new(SNIPPET));
         }
         if app.popup {
             stack.push(KeyContext::new(POPUP));

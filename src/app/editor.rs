@@ -381,6 +381,10 @@ pub(crate) fn update_composition(app: &mut AppState, text: &str, cursor: Option<
 }
 
 pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
+    app.editor.language.rect = Some(rect);
+    if !input.is_empty() && (!vim_input::is_active(app) || app.editor.vim.is_inserting()) {
+        super::language_ui::completion::note_typed(app, input);
+    }
     app.editor.drag = None;
     app.editor.menu = None;
     let session = app.editor.ime.take();

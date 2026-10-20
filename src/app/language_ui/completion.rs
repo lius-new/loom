@@ -1,0 +1,626 @@
+//! Completion: asking the servers as the person types, keeping the list while
+//! typing continues, and turning the chosen item into an edit.
+use super::snippet_session;
+use super::{AppContext, AppState, Target, services, target};
+use crate::app::ui_timer;
+use crate::domain::identity::{FileId, PaneId};
+use crate::features::language_service::completion::{
+    Completion, Entry, Shown, commits, filter, insertion, word_start,
+};
+use crate::features::language_service::reply;
+use crate::features::language_service::request::Feature;
+use crate::features::language_service::snippet;
+use crate::features::markdown::{self, Block};
+use crate::infrastructure::lsp::manager::{RequestHandle, RequestSpec};
+use crate::model::text::{Assoc, Edit, EditKind, Selection};
+use serde_json::json;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// Typing waits this long before the servers are asked, so a burst is one request.
+const DEBOUNCE: Duration = Duration::from_millis(30);
+
+#[derive(Clone)]
+pub struct Session {
+    pub pane: PaneId,
+    pub document: FileId,
+    pub incarnation: u64,
+    /// The text the servers were asked about, to read their ranges in.
+    pub requested: Arc<String>,
+    pub manual: bool,
+    /// Started by a trigger character (so an empty word is expected).
+    triggered: bool,
+    handle: Option<Arc<RequestHandle>>,
+    pub data: Completion,
+    pub shown: Vec<Shown>,
+    pub selected: usize,
+    pub scroll: usize,
+    resolving: Option<(usize, Arc<RequestHandle>)>,
+    last_cursor: usize,
+    last_version: u64,
+}
+
+impl Session {
+    pub fn set_selected(&mut self, index: usize) {
+        if !self.shown.is_empty() {
+            self.selected = index.min(self.shown.len() - 1);
+            keep_visible(self);
+        }
+    }
+
+    pub fn scroll_by(&mut self, rows: isize) {
+        let max = self.shown.len().saturating_sub(super::popup::VISIBLE) as isize;
+        self.scroll = (self.scroll as isize + rows).clamp(0, max) as usize;
+    }
+
+    pub fn visible(&self) -> bool {
+        !self.shown.is_empty()
+    }
+
+    fn selected_entry(&self) -> Option<&Entry> {
+        self.shown
+            .get(self.selected)
+            .map(|shown| &self.data.entries[shown.entry])
+    }
+}
+
+/// Whether the character continues an identifier.
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// A key was typed into the document (not pasted, not an undo).
+pub fn note_typed(app: &mut AppState, input: &str) {
+    app.editor.language.typed = input.chars().last();
+}
+
+/// Looks at what changed in the document since the last update and starts,
+/// follows or ends a completion accordingly. Runs after every state update, so
+/// it is cheap when nothing relevant changed.
+pub fn observe(ctx: &AppContext, app: &mut AppState) {
+    let typed = app.editor.language.typed.take();
+    let pane = app.workspace.active_pane();
+    let Some(t) = target(app, pane) else {
+        app.editor.language.completion = None;
+        return;
+    };
+    let mut ended = false;
+    if let Some(session) = &app.editor.language.completion {
+        if session.document != t.document || session.incarnation != t.stamp.incarnation {
+            ended = true;
+        } else if session.last_version != t.stamp.version || session.last_cursor != t.cursor {
+            ended = !follow(app, &t);
+        }
+    }
+    if ended {
+        app.editor.language.completion = None;
+    }
+    let Some(c) = typed else { return };
+    // A commit character accepts the highlighted item and is then kept.
+    let commit = app
+        .editor
+        .language
+        .completion
+        .as_ref()
+        .and_then(|s| s.selected_entry())
+        .is_some_and(|entry| commits(entry, c));
+    if commit {
+        accept(app, Some(c));
+        return;
+    }
+    if !is_word(c) && app.editor.language.completion.is_some() {
+        app.editor.language.completion = None;
+    }
+    let triggers = trigger_characters(ctx);
+    let is_trigger = triggers.iter().any(|trigger| trigger.chars().eq([c]));
+    if is_word(c) || is_trigger {
+        schedule(ctx, app, is_trigger.then_some(c));
+    }
+}
+
+/// The characters any running server wants completion after.
+fn trigger_characters(ctx: &AppContext) -> Vec<String> {
+    services(ctx)
+        .map(|s| {
+            s.infos()
+                .iter()
+                .filter_map(|info| info.providers.as_ref()?.completion.as_ref())
+                .flat_map(|options| options.trigger_characters.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn offers_completion(ctx: &AppContext) -> bool {
+    services(ctx).is_some_and(|s| {
+        s.infos().iter().any(|info| {
+            info.providers
+                .as_ref()
+                .is_some_and(|p| p.completion.is_some())
+        })
+    })
+}
+
+/// Asks for completions soon, unless more typing comes first.
+fn schedule(ctx: &AppContext, app: &mut AppState, trigger: Option<char>) {
+    if !offers_completion(ctx) {
+        return;
+    }
+    let Some(application) = ctx.services().and_then(|r| r.application()) else {
+        return;
+    };
+    let timed = ctx.clone();
+    app.editor.language.completion_timer = Some(Arc::new(ui_timer::after(
+        application,
+        DEBOUNCE,
+        move || {
+            timed.update(|app| request(&timed, app, false, trigger));
+        },
+    )));
+}
+
+/// Asks the servers now. `manual` is the person pressing the key.
+pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Option<char>) {
+    app.editor.language.completion_timer = None;
+    let pane = app.workspace.active_pane();
+    let Some(t) = target(app, pane) else { return };
+    let Some(services) = services(ctx) else {
+        return;
+    };
+    // The servers must have the text this question is about.
+    services.sync(app);
+    let start = if trigger.is_some() {
+        t.cursor
+    } else {
+        word_start(&t.text, t.cursor)
+    };
+    let context = match trigger {
+        Some(c) => json!({ "triggerKind": 2, "triggerCharacter": c.to_string() }),
+        None if manual => json!({ "triggerKind": 1 }),
+        None => json!({ "triggerKind": 1 }),
+    };
+    let handle = Arc::new(
+        services.request(
+            RequestSpec::new(Feature::Completion, t.path.clone(), t.lsp_stamp(), t.cursor)
+                .extra(json!({ "context": context })),
+        ),
+    );
+    let same = app
+        .editor
+        .language
+        .completion
+        .as_ref()
+        .is_some_and(|s| s.document == t.document && s.data.word_start == start);
+    if same {
+        if let Some(session) = app.editor.language.completion.as_mut() {
+            session.handle = Some(handle);
+            session.requested = t.text.clone();
+            session.data.cursor = t.cursor;
+        }
+        return;
+    }
+    app.editor.language.completion = Some(Session {
+        pane,
+        document: t.document,
+        incarnation: t.stamp.incarnation,
+        requested: t.text.clone(),
+        manual,
+        triggered: trigger.is_some(),
+        handle: Some(handle),
+        data: Completion {
+            word_start: start,
+            cursor: t.cursor,
+            ..Completion::default()
+        },
+        shown: Vec::new(),
+        selected: 0,
+        scroll: 0,
+        resolving: None,
+        last_cursor: t.cursor,
+        last_version: t.stamp.version,
+    });
+}
+
+/// Keeps the list in step with the text. Returns false when the list should go.
+fn follow(app: &mut AppState, t: &Target) -> bool {
+    let Some(session) = app.editor.language.completion.as_mut() else {
+        return false;
+    };
+    let start = session.data.word_start;
+    // The text before the word is what the list was asked about; the cursor must
+    // still be in the word.
+    let prefix_same = t.text.len() >= start
+        && session.requested.len() >= start
+        && t.text.is_char_boundary(start)
+        && t.text.as_bytes()[..start] == session.requested.as_bytes()[..start];
+    if !prefix_same || t.cursor < start || !t.text.is_char_boundary(t.cursor) {
+        return false;
+    }
+    let typed = &t.text[start..t.cursor];
+    if !typed.chars().all(is_word) {
+        return false;
+    }
+    if typed.is_empty() && !session.manual && !session.triggered {
+        return false;
+    }
+    session.last_cursor = t.cursor;
+    let version_changed = session.last_version != t.stamp.version;
+    session.last_version = t.stamp.version;
+    refilter(session, typed);
+    // Typing past the start of a list the servers called incomplete asks again.
+    if version_changed && session.data.incomplete && !typed.is_empty() {
+        session.data.cursor = t.cursor;
+    }
+    !(session.shown.is_empty() && session.handle.is_none() && !session.data.incomplete)
+}
+
+fn refilter(session: &mut Session, typed: &str) {
+    let before = session
+        .selected_entry()
+        .map(|entry| (entry.item.label.clone(), entry.item.kind));
+    session.shown = filter(&session.data, typed);
+    session.selected = before
+        .and_then(|(label, kind)| {
+            session.shown.iter().position(|s| {
+                let item = &session.data.entries[s.entry].item;
+                item.label == label && item.kind == kind
+            })
+        })
+        .unwrap_or(0);
+    session.scroll = 0;
+    keep_visible(session);
+}
+
+fn keep_visible(session: &mut Session) {
+    let rows = super::popup::VISIBLE;
+    if session.selected < session.scroll {
+        session.scroll = session.selected;
+    } else if session.selected >= session.scroll + rows {
+        session.scroll = session.selected + 1 - rows;
+    }
+}
+
+/// Folds in what the servers answered so far.
+pub fn tick(app: &mut AppState) -> bool {
+    let text = app_text(app);
+    let Some(session) = app.editor.language.completion.as_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    if let Some(handle) = session.handle.clone() {
+        let progress = handle.poll();
+        let sources: Vec<(u64, usize, reply::CompletionList)> = progress
+            .parts
+            .iter()
+            .map(|part| {
+                (
+                    part.instance,
+                    part.rank,
+                    reply::completion(&part.value, part.encoding),
+                )
+            })
+            .collect();
+        if !sources.is_empty() || progress.finished {
+            let word_start = session.data.word_start;
+            let cursor = session.data.cursor;
+            let selected = session
+                .selected_entry()
+                .map(|e| (e.item.label.clone(), e.item.kind));
+            let merged = Completion::merge(word_start, cursor, sources);
+            let resolved: std::collections::HashMap<_, _> = session
+                .data
+                .entries
+                .iter()
+                .filter(|e| e.resolved)
+                .map(|e| ((e.item.label.clone(), e.item.kind), e.item.clone()))
+                .collect();
+            session.data = merged;
+            for entry in &mut session.data.entries {
+                if let Some(item) = resolved.get(&(entry.item.label.clone(), entry.item.kind)) {
+                    entry.item = item.clone();
+                    entry.resolved = true;
+                }
+            }
+            if progress.finished {
+                session.handle = None;
+            }
+            let typed = typed_prefix(text, session);
+            refilter(session, &typed);
+            if let Some((label, kind)) = selected
+                && let Some(at) = session.shown.iter().position(|s| {
+                    let item = &session.data.entries[s.entry].item;
+                    item.label == label && item.kind == kind
+                })
+            {
+                session.selected = at;
+                keep_visible(session);
+            }
+            if session.shown.is_empty() && session.handle.is_none() && !session.data.incomplete {
+                app.editor.language.completion = None;
+            }
+            changed = true;
+        }
+    }
+    changed |= tick_resolve(app);
+    changed
+}
+
+fn app_text(app: &AppState) -> Option<(Arc<String>, usize)> {
+    let pane = app.workspace.active_pane();
+    target(app, pane).map(|t| (t.text, t.cursor))
+}
+
+fn typed_prefix(text: Option<(Arc<String>, usize)>, session: &Session) -> String {
+    text.and_then(|(text, cursor)| {
+        let start = session.data.word_start;
+        (start <= cursor && text.is_char_boundary(start) && text.is_char_boundary(cursor))
+            .then(|| text[start..cursor].to_owned())
+    })
+    .unwrap_or_default()
+}
+
+fn tick_resolve(app: &mut AppState) -> bool {
+    let Some(session) = app.editor.language.completion.as_mut() else {
+        return false;
+    };
+    let Some((index, handle)) = session.resolving.clone() else {
+        return false;
+    };
+    let progress = handle.poll();
+    if !progress.finished {
+        return false;
+    }
+    session.resolving = None;
+    if let Some(part) = progress.parts.first()
+        && let Some(item) = reply::completion_item(&part.value, part.encoding)
+        && let Some(entry) = session.data.entries.get_mut(index)
+    {
+        entry.item = item;
+        entry.resolved = true;
+    }
+    true
+}
+
+/// Moves the highlight by `delta` rows, wrapping.
+pub fn move_selection(app: &mut AppState, delta: isize) {
+    if let Some(session) = app.editor.language.completion.as_mut() {
+        let len = session.shown.len() as isize;
+        if len > 0 {
+            session.selected = (session.selected as isize + delta).rem_euclid(len) as usize;
+            keep_visible(session);
+        }
+    }
+}
+
+pub fn page(app: &mut AppState, delta: isize) {
+    if let Some(session) = app.editor.language.completion.as_mut() {
+        let len = session.shown.len() as isize;
+        if len > 0 {
+            session.selected = (session.selected as isize + delta).clamp(0, len - 1) as usize;
+            keep_visible(session);
+        }
+    }
+}
+
+/// Asks the server of the highlighted item for its documentation, once.
+pub fn resolve_selected(ctx: &AppContext, app: &mut AppState) {
+    let pane = app.workspace.active_pane();
+    let Some(t) = target(app, pane) else { return };
+    let Some(session) = app.editor.language.completion.as_mut() else {
+        return;
+    };
+    if session.resolving.is_some() {
+        return;
+    }
+    let Some(shown) = session.shown.get(session.selected) else {
+        return;
+    };
+    let index = shown.entry;
+    let entry = &session.data.entries[index];
+    if entry.resolved || entry.item.documentation.is_some() {
+        return;
+    }
+    let Some(services) = services(ctx) else {
+        return;
+    };
+    let handle = Arc::new(
+        services.request(
+            RequestSpec::new(Feature::CompletionResolve, t.path.clone(), t.lsp_stamp(), 0)
+                .extra(entry.item.raw.clone())
+                .target(entry.instance),
+        ),
+    );
+    session.resolving = Some((index, handle));
+}
+
+/// How the list is drawn.
+pub fn view(session: &Session) -> crate::ui::editor::popup::View {
+    use crate::ui::editor::popup::{Row, View};
+    let rows: Vec<Row> = session
+        .shown
+        .iter()
+        .map(|shown| {
+            let item = &session.data.entries[shown.entry].item;
+            Row {
+                label: item.label.clone(),
+                detail: item
+                    .label_detail
+                    .clone()
+                    .or_else(|| item.detail.clone())
+                    .unwrap_or_default()
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned(),
+                badge: kind_badge(item.kind),
+                matches: shown.positions.clone(),
+                faint: item.deprecated,
+            }
+        })
+        .collect();
+    let docs: Option<Arc<[Block]>> = session.selected_entry().and_then(|entry| {
+        let mut source = String::new();
+        if let Some(detail) = &entry.item.detail {
+            source.push_str(&format!("```\n{detail}\n```\n\n"));
+        }
+        if let Some(documentation) = &entry.item.documentation {
+            source.push_str(documentation);
+        }
+        (!source.trim().is_empty()).then(|| markdown::parse(&source).into())
+    });
+    View {
+        rows: rows.into(),
+        selected: session.selected,
+        scroll: session.scroll,
+        visible: super::popup::VISIBLE,
+        query: None,
+        title: None,
+        empty: String::new(),
+        anchor: Some(session.data.word_start),
+        docs,
+    }
+}
+
+/// A short name for a `CompletionItemKind`.
+pub fn kind_badge(kind: Option<u32>) -> &'static str {
+    match kind {
+        Some(1) => "t",
+        Some(2) => "m",
+        Some(3) => "fn",
+        Some(4) => "c",
+        Some(5) => "f",
+        Some(6) => "v",
+        Some(7) => "C",
+        Some(8) => "I",
+        Some(9) => "{}",
+        Some(10) => "p",
+        Some(11) => "u",
+        Some(12) => "V",
+        Some(13) => "E",
+        Some(14) => "k",
+        Some(15) => "sn",
+        Some(17) => "F",
+        Some(19) => "D",
+        Some(20) => "e",
+        Some(21) => "k",
+        Some(22) => "S",
+        Some(23) => "ev",
+        Some(24) => "op",
+        Some(25) => "T",
+        _ => "",
+    }
+}
+
+/// Accepts the highlighted item. `then` is a character typed to commit it; it is
+/// inserted after the item.
+pub fn accept(app: &mut AppState, then: Option<char>) -> bool {
+    let Some(session) = app.editor.language.completion.take() else {
+        return false;
+    };
+    let Some(entry) = session.selected_entry().cloned() else {
+        return false;
+    };
+    let pane = session.pane;
+    let Some(t) = target(app, pane) else {
+        return false;
+    };
+    // A committing character is already in the text; the item replaces the word
+    // before it and the character goes back after.
+    let cursor = match then {
+        Some(c) => t.cursor.saturating_sub(c.len_utf8()),
+        None => t.cursor,
+    };
+    let plan = insertion(
+        &session.data,
+        &entry,
+        &session.requested,
+        &t.text,
+        cursor,
+        false,
+    );
+    let indent = line_indent(&t.text, plan.range.start);
+    let mut snippet = plan.snippet.then(|| {
+        let resolve = snippet::document_variables(
+            &t.path,
+            t.selection
+                .as_ref()
+                .map_or("", |range| &t.text[range.clone()]),
+        );
+        let mut parsed = snippet::parse(&plan.text, &resolve);
+        if !entry.item.as_is {
+            snippet::indent_lines(&mut parsed, &indent);
+        }
+        parsed
+    });
+    let text = snippet
+        .as_ref()
+        .map_or_else(|| plan.text.clone(), |s| s.text.clone());
+    let mut edits: Vec<Edit> = plan
+        .additional
+        .iter()
+        .map(|(range, new_text)| Edit::replace(range.clone(), new_text.clone()))
+        .collect();
+    edits.push(Edit::replace(plan.range.clone(), text.clone()));
+    if let Some(c) = then {
+        // Put the committing character back where it was typed.
+        edits.push(Edit::replace(cursor..t.cursor, c.to_string()));
+    }
+    let start = plan.range.start;
+    let Some(mut editor) = app.workspace.editor_mut(pane) else {
+        return false;
+    };
+    let mut origin = 0;
+    let applied = editor.edit(EditKind::Other, edits, |changes, _| {
+        origin = changes.map(start, Assoc::Before);
+        let end = origin + text.len();
+        Selection::caret(if then.is_some() {
+            changes.map(cursor, Assoc::After) + 1
+        } else {
+            end
+        })
+    });
+    if applied.is_err() {
+        return false;
+    }
+    let version = editor.version();
+    drop(editor);
+    if let Some(snippet) = snippet.take() {
+        snippet_session::begin(app, pane, origin, &snippet, version);
+    }
+    true
+}
+
+/// The whitespace at the start of the line holding `offset`.
+fn line_indent(text: &str, offset: usize) -> String {
+    let start = text[..offset.min(text.len())]
+        .rfind('\n')
+        .map_or(0, |at| at + 1);
+    text[start..]
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect()
+}
+
+pub fn close(app: &mut AppState) {
+    app.editor.language.completion = None;
+    app.editor.language.completion_timer = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indentation_is_the_leading_whitespace_of_the_line() {
+        assert_eq!(line_indent("  \tfoo bar", 6), "  \t");
+        assert_eq!(line_indent("a\n    b", 7), "    ");
+        assert_eq!(line_indent("x", 0), "");
+    }
+
+    #[test]
+    fn kinds_have_badges() {
+        assert_eq!(kind_badge(Some(3)), "fn");
+        assert_eq!(kind_badge(Some(15)), "sn");
+        assert_eq!(kind_badge(None), "");
+    }
+}

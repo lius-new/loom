@@ -142,7 +142,15 @@ pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
     let app = state.get();
     let origin = here(&app);
     if app.workspace.file_id_for_path(&place.path).is_some() {
-        state.update(|app| arrive(app, &place, None, rect, remember.then(|| origin).flatten()));
+        state.update(|app| {
+            arrive(
+                app,
+                &place,
+                None,
+                rect,
+                remember.then_some(origin).flatten(),
+            )
+        });
         return;
     }
     let size_ok = std::fs::metadata(&place.path)
@@ -173,7 +181,7 @@ pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
                         &place,
                         Some(text),
                         rect,
-                        remember.then(|| origin).flatten(),
+                        remember.then_some(origin).flatten(),
                     )
                 }),
                 Err(error) => worker_state.update(|app| {

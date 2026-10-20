@@ -90,10 +90,30 @@ pub enum CursorShape {
 /// Application operations Vim asks the host to perform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
+    /// A language-server command (`K`, `gd` and the like); the application
+    /// decides what it does.
+    Language(LanguageCommand),
     Save,
     Quit { force: bool },
     SaveAndQuit,
     Scroll(ScrollPosition),
+}
+
+/// The language-server commands Vim has keys for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanguageCommand {
+    /// `K`
+    Hover,
+    /// `gd`
+    Definition,
+    /// `gD`
+    Declaration,
+    /// `gy`
+    TypeDefinition,
+    /// `gi`
+    Implementation,
+    /// `gr`
+    References,
 }
 
 /// Where `zz`, `zt` and `zb` put the cursor line.

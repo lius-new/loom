@@ -1227,6 +1227,7 @@ impl Vim {
                 }
             }
             Simple::ScrollCursor(to) => host.request(Request::Scroll((*to).into())),
+            Simple::Language(command) => host.request(Request::Language(*command)),
             Simple::SwapVisualEnds => {
                 let selection = editor.selection_state();
                 if let Some(anchor) = selection.anchor {

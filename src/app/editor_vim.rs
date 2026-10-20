@@ -172,7 +172,7 @@ pub fn handle_key(
             }
         }
     });
-    perform(state, requests);
+    perform(state, requests, rect);
     consumed
 }
 
@@ -198,7 +198,7 @@ pub fn feed_keys(
             requests = asked;
         }
     });
-    perform(state, requests);
+    perform(state, requests, rect);
     fed
 }
 
@@ -312,7 +312,7 @@ fn scroll_cursor(app: &mut AppState, rect: UiRect, position: ScrollPosition) {
 }
 
 /// Carry out what Vim asked of the application.
-fn perform(state: &AppContext, requests: Vec<Request>) {
+fn perform(state: &AppContext, requests: Vec<Request>, rect: UiRect) {
     for request in requests {
         match request {
             Request::Save => {
@@ -325,6 +325,9 @@ fn perform(state: &AppContext, requests: Vec<Request>) {
                 }
             }
             Request::Scroll(_) => {}
+            Request::Language(command) => {
+                crate::app::language_ui::keys::vim_command(state, command, rect)
+            }
         }
     }
 }

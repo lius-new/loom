@@ -3,10 +3,12 @@
 //! [`LanguageUi`], asks the servers through the request channel, and is advanced
 //! on the UI thread by [`tick`] when answers arrive.
 pub(crate) mod actions;
+pub(crate) mod completion;
 pub(crate) mod hover;
 pub(crate) mod keys;
 pub(crate) mod navigate;
 pub(crate) mod popup;
+pub(crate) mod snippet_session;
 
 use super::context::AppContext;
 use super::state::AppState;
@@ -26,6 +28,15 @@ pub struct LanguageUi {
     pub popup: Option<popup::Popup>,
     /// A question whose answer the person is waiting for.
     pub pending: Option<actions::Pending>,
+    /// The completion list, once asked for.
+    pub completion: Option<completion::Session>,
+    pub completion_timer: Option<Arc<crate::app::ui_timer::Timer>>,
+    /// The last character typed into the document, until the next update looks.
+    pub typed: Option<char>,
+    /// A snippet whose tab stops are being filled in.
+    pub snippet: Option<snippet_session::Session>,
+    /// The editor's rectangle as last seen, for revealing the caret.
+    pub rect: Option<lgui::prelude::UiRect>,
 }
 
 impl LanguageUi {
@@ -33,6 +44,7 @@ impl LanguageUi {
     pub fn close_popups(&mut self) {
         self.popup = None;
         self.pending = None;
+        self.completion = None;
     }
 }
 
@@ -87,6 +99,113 @@ pub(crate) fn services(
         .and_then(|runtime| runtime.language_services())
 }
 
+/// Runs after every state update: starts, follows or ends the features that
+/// watch the document. It must stay cheap when nothing relevant happened.
+pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
+    completion::observe(ctx, app);
+    snippet_session::observe(app);
+}
+
+/// Whether the list over the code is the completion list.
+pub(crate) fn completion_visible(app: &AppState) -> bool {
+    app.editor
+        .language
+        .completion
+        .as_ref()
+        .is_some_and(|session| session.visible())
+}
+
+/// The list to draw over the code in `pane`, if any.
+pub(crate) fn popup_view(
+    app: &AppState,
+    pane: PaneId,
+    stamp: &DocumentStamp,
+) -> Option<crate::ui::editor::popup::View> {
+    if let Some(session) = app
+        .editor
+        .language
+        .completion
+        .as_ref()
+        .filter(|s| s.pane == pane && s.visible())
+    {
+        return Some(completion::view(session));
+    }
+    app.editor
+        .language
+        .popup
+        .as_ref()
+        .filter(|popup| popup.pane == pane && popup.stamp == *stamp)
+        .map(popup::Popup::view)
+}
+
+/// The mouse did something in the list over the code.
+pub(crate) fn popup_event(
+    state: &AppContext,
+    event: crate::ui::editor::popup::Event,
+    rect: lgui::prelude::UiRect,
+) {
+    use crate::ui::editor::popup::Event;
+    let mut completing = false;
+    state.try_update(|app| {
+        completing = completion_visible(app);
+        false
+    });
+    if completing {
+        match event {
+            Event::Hover(index) => {
+                state.update(|app| {
+                    if let Some(session) = app.editor.language.completion.as_mut() {
+                        session.set_selected(index);
+                    }
+                });
+                state.update(|app| completion::resolve_selected(state, app));
+            }
+            Event::Scroll(rows) => state.update(|app| {
+                if let Some(session) = app.editor.language.completion.as_mut() {
+                    session.scroll_by(rows);
+                }
+            }),
+            Event::Pick(index) => state.update(|app| {
+                if let Some(session) = app.editor.language.completion.as_mut() {
+                    session.set_selected(index);
+                }
+                if completion::accept(app, None) {
+                    crate::app::editor::reveal_cursor(app, rect);
+                }
+            }),
+            Event::Dismiss => state.update(completion::close),
+        }
+        return;
+    }
+    match event {
+        Event::Hover(index) => {
+            state.try_update(|app| {
+                app.editor.language.popup.as_mut().is_some_and(|p| {
+                    p.select(index);
+                    true
+                })
+            });
+        }
+        Event::Scroll(rows) => {
+            state.try_update(|app| {
+                app.editor.language.popup.as_mut().is_some_and(|p| {
+                    p.scroll_by(rows);
+                    true
+                })
+            });
+        }
+        Event::Pick(index) => {
+            state.update(|app| {
+                if let Some(popup) = app.editor.language.popup.as_mut() {
+                    popup.select(index);
+                }
+            });
+            keys::choose(state, rect);
+        }
+        Event::Dismiss => state.update(|app| app.editor.language.close_popups()),
+    }
+}
+
 /// Does what a popup row that is not a place stands for.
 pub(crate) fn run_payload(
     _state: &AppContext,
@@ -102,6 +221,7 @@ pub(crate) fn tick(state: &AppContext) {
     state.try_update(|app| {
         app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
         hover::tick(app);
+        completion::tick(app);
         effects = actions::tick(app);
         true
     });

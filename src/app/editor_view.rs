@@ -230,14 +230,7 @@ pub(crate) fn binding(
                     });
             }
             if let Some(document) = &view.document {
-                view.popup = reader
-                    .get()
-                    .editor
-                    .language
-                    .popup
-                    .as_ref()
-                    .filter(|popup| popup.pane == pane && popup.stamp == document.stamp)
-                    .map(super::language_ui::popup::Popup::view);
+                view.popup = super::language_ui::popup_view(&reader.get(), pane, &document.stamp);
             }
             if let Some(document) = &view.document
                 && let Some(services) = reader.services().and_then(|r| r.language_services())
@@ -293,36 +286,7 @@ pub(crate) fn binding(
                 return;
             }
             if let Event::Popup(popup_event) = event {
-                use crate::ui::editor::popup::Event as Popup;
-                match popup_event {
-                    Popup::Hover(index) => {
-                        dispatcher.try_update(|app| {
-                            app.editor.language.popup.as_mut().is_some_and(|p| {
-                                p.select(index);
-                                true
-                            })
-                        });
-                    }
-                    Popup::Scroll(rows) => {
-                        dispatcher.try_update(|app| {
-                            app.editor.language.popup.as_mut().is_some_and(|p| {
-                                p.scroll_by(rows);
-                                true
-                            })
-                        });
-                    }
-                    Popup::Pick(index) => {
-                        dispatcher.update(|app| {
-                            if let Some(popup) = app.editor.language.popup.as_mut() {
-                                popup.select(index);
-                            }
-                        });
-                        super::language_ui::keys::choose(&dispatcher, rect);
-                    }
-                    Popup::Dismiss => {
-                        dispatcher.update(|app| app.editor.language.close_popups());
-                    }
-                }
+                super::language_ui::popup_event(&dispatcher, popup_event, rect);
                 return;
             }
             if let Event::Text(text) = &event
@@ -332,7 +296,7 @@ pub(crate) fn binding(
                 return;
             }
             if matches!(event, Event::HoverLeave) {
-                dispatcher.try_update(|app| super::language_ui::hover::clear(app));
+                dispatcher.try_update(super::language_ui::hover::clear);
                 return;
             }
             dispatcher.try_update(|app| dispatch(app, pane, rect, event));

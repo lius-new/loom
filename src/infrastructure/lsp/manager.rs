@@ -132,6 +132,8 @@ pub(crate) struct InstanceInfo {
     /// The last lines the server wrote to its error output.
     pub stderr: Vec<String>,
     pub diagnostics: DiagnosticCounts,
+    /// What the server offers, once it has said.
+    pub providers: Option<crate::features::language_service::providers::Providers>,
 }
 
 /// What became of the diagnostics a server published, so a missing underline can
@@ -1390,6 +1392,12 @@ impl Coordinator {
                     |definition| definition.display_name.to_string(),
                 ),
                 server_id: instance.key.server.to_string(),
+                providers: match &instance.phase {
+                    Phase::Running(Running {
+                        ready: Some(ready), ..
+                    }) => Some(ready.capabilities.providers.clone()),
+                    _ => None,
+                },
                 root: instance.key.root.clone(),
                 documents: instance.documents.len(),
                 command: std::iter::once(instance.key.launch.command.as_str())

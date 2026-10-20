@@ -39,6 +39,7 @@ impl AppContext {
             change(app);
             self.invalidate_cancelled(before, app);
             self.sync_language_services(app);
+            super::language_ui::observe(self, app);
         });
     }
     pub(crate) fn try_update(&self, change: impl FnOnce(&mut AppState) -> bool) -> bool {
@@ -47,6 +48,7 @@ impl AppContext {
             let changed = change(app);
             self.invalidate_cancelled(before, app);
             self.sync_language_services(app);
+            super::language_ui::observe(self, app);
             changed
         })
     }

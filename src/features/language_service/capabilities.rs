@@ -232,6 +232,29 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
                 "dynamicRegistration": false,
                 "contentFormat": ["markdown", "plaintext"]
             },
+            "completion": {
+                "dynamicRegistration": false,
+                "contextSupport": true,
+                "completionItem": {
+                    "snippetSupport": true,
+                    "commitCharactersSupport": true,
+                    "documentationFormat": ["markdown", "plaintext"],
+                    "deprecatedSupport": true,
+                    "preselectSupport": true,
+                    "insertReplaceSupport": true,
+                    "labelDetailsSupport": true,
+                    "tagSupport": { "valueSet": [1] },
+                    "insertTextModeSupport": { "valueSet": [1, 2] },
+                    "resolveSupport": {
+                        "properties": ["documentation", "detail", "additionalTextEdits"]
+                    }
+                },
+                "completionItemKind": { "valueSet": (1..=25).collect::<Vec<u32>>() },
+                "insertTextMode": 2,
+                "completionList": {
+                    "itemDefaults": ["commitCharacters", "editRange", "insertTextFormat", "insertTextMode"]
+                }
+            },
             "definition": { "dynamicRegistration": false, "linkSupport": true },
             "declaration": { "dynamicRegistration": false, "linkSupport": true },
             "typeDefinition": { "dynamicRegistration": false, "linkSupport": true },
