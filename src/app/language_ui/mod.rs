@@ -5,11 +5,14 @@
 pub(crate) mod actions;
 pub(crate) mod completion;
 pub(crate) mod edit;
+pub(crate) mod expand;
+pub(crate) mod highlight;
 pub(crate) mod hover;
 pub(crate) mod keys;
 pub(crate) mod navigate;
 pub(crate) mod popup;
 pub(crate) mod refactor;
+pub(crate) mod signature;
 pub(crate) mod snippet_session;
 
 use super::context::AppContext;
@@ -30,6 +33,10 @@ pub struct LanguageUi {
     pub popup: Option<popup::Popup>,
     /// A question whose answer the person is waiting for.
     pub pending: Option<actions::Pending>,
+    pub signature: Option<signature::Session>,
+    pub signature_timer: Option<Arc<crate::app::ui_timer::Timer>>,
+    pub highlights: highlight::Highlights,
+    pub expansion: expand::Expansion,
     /// A rename, code action or formatting request in flight.
     pub refactor: Option<refactor::Pending>,
     /// The completion list, once asked for.
@@ -111,8 +118,47 @@ pub(crate) fn services(
 /// Runs after every state update: starts, follows or ends the features that
 /// watch the document. It must stay cheap when nothing relevant happened.
 pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
-    completion::observe(ctx, app);
+    let typed = app.editor.language.typed.take();
+    completion::observe(ctx, app, typed);
+    signature::observe(ctx, app, typed);
     snippet_session::observe(app);
+    highlight::observe(ctx, app);
+}
+
+/// Ends what Escape ends: the hover card, the signature, a grown selection.
+/// Returns whether anything was open.
+pub(crate) fn dismiss(app: &mut AppState) -> bool {
+    let open = !app.editor.language.hover.is_idle()
+        || app.editor.language.signature.is_some()
+        || app.editor.language.popup.is_some()
+        || app.editor.language.completion.is_some();
+    hover::clear(app);
+    signature::close(app);
+    app.editor.language.close_popups();
+    open
+}
+
+/// The signature card to draw in `pane`: where the call opened, and its text.
+pub(crate) fn signature_view(
+    app: &AppState,
+    pane: PaneId,
+) -> Option<(usize, crate::ui::editor::signature::View)> {
+    let session = app
+        .editor
+        .language
+        .signature
+        .as_ref()
+        .filter(|s| s.pane == pane)?;
+    let view = signature::view(session)?;
+    Some((
+        view.anchor,
+        crate::ui::editor::signature::View {
+            label: view.label,
+            active: view.active,
+            docs: view.docs,
+            position: view.position,
+        },
+    ))
 }
 
 /// Whether the list over the code is the completion list.
@@ -241,6 +287,9 @@ pub(crate) fn tick(state: &AppContext) {
         app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
         hover::tick(app);
         completion::tick(app);
+        signature::tick(app);
+        highlight::tick(app);
+        expand::tick(app);
         effects = actions::tick(app);
         changes = refactor::tick(app);
         true

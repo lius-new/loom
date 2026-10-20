@@ -326,6 +326,11 @@ pub(crate) fn render(
                     }
                 }
             }
+            for found in s.symbol_highlights.iter() {
+                if let Some(r) = line_rect(found) {
+                    code = code.child(panel(r, VisualStyle::filled(theme::c().accent).alpha(38)));
+                }
+            }
             for found in matches {
                 if let Some(r) = line_rect(found) {
                     code = code.child(panel(r, VisualStyle::filled(theme::c().warning).alpha(45)));
@@ -520,6 +525,16 @@ pub(crate) fn render(
                 std::sync::Arc::new(move |event| send.send(Event::Popup(event))),
             )
         });
+        let signature = s.signature.as_ref().and_then(|(anchor, view)| {
+            let rect = anchor_rect(
+                &buffer,
+                &(*anchor..*anchor),
+                (code_left, code_top, layout_right),
+                (scroll_x, scroll_y),
+                metrics.viewport_w,
+            )?;
+            Some(super::signature::render(view, rect, hover_area))
+        });
         let popup_rect = popup.as_ref().map(|(rect, _)| *rect);
         let card_rect = card
             .as_ref()
@@ -626,6 +641,9 @@ pub(crate) fn render(
             && popup.is_none()
         {
             root = root.child(card);
+        }
+        if let Some((_, signature)) = signature {
+            root = root.child(signature);
         }
         if let Some((_, popup)) = popup {
             root = root.child(popup);

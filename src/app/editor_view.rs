@@ -200,6 +200,8 @@ pub(crate) fn snapshot(
         peek_visible,
         hover: None,
         popup: None,
+        signature: None,
+        symbol_highlights: Arc::from(Vec::new()),
     }
 }
 
@@ -230,7 +232,15 @@ pub(crate) fn binding(
                     });
             }
             if let Some(document) = &view.document {
-                view.popup = super::language_ui::popup_view(&reader.get(), pane, &document.stamp);
+                let app = reader.get();
+                view.popup = super::language_ui::popup_view(&app, pane, &document.stamp);
+                view.signature = super::language_ui::signature_view(&app, pane);
+                view.symbol_highlights = app
+                    .editor
+                    .language
+                    .highlights
+                    .for_view(pane, &document.stamp)
+                    .unwrap_or_else(|| Arc::from(Vec::new()));
             }
             if let Some(document) = &view.document
                 && let Some(services) = reader.services().and_then(|r| r.language_services())

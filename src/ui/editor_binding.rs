@@ -66,6 +66,10 @@ pub(crate) struct ViewState {
     pub hover: Option<HoverView>,
     /// The list open over the code, if any.
     pub popup: Option<crate::ui::editor::popup::View>,
+    /// The signature of the call being typed, with where it opened.
+    pub signature: Option<(usize, crate::ui::editor::signature::View)>,
+    /// Other occurrences of the symbol under the caret.
+    pub symbol_highlights: Arc<[Range<usize>]>,
 }
 
 /// A server hover text, anchored to the text it describes.

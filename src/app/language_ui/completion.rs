@@ -77,8 +77,7 @@ pub fn note_typed(app: &mut AppState, input: &str) {
 /// Looks at what changed in the document since the last update and starts,
 /// follows or ends a completion accordingly. Runs after every state update, so
 /// it is cheap when nothing relevant changed.
-pub fn observe(ctx: &AppContext, app: &mut AppState) {
-    let typed = app.editor.language.typed.take();
+pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else {
         app.editor.language.completion = None;

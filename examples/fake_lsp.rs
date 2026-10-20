@@ -227,7 +227,9 @@ fn feature_result(method: &str, params: &Value, options: &Options) -> Option<Val
         | "textDocument/typeDefinition"
         | "textDocument/implementation" => json!([location(uri, 0, 0, 1)]),
         "textDocument/references" => json!([location(uri, 0, 0, 1), location(uri, 1, 2, 4)]),
-        "textDocument/documentHighlight" => json!([{ "range": span(0, 0, 2), "kind": 2 }]),
+        "textDocument/documentHighlight" => {
+            json!([{ "range": span(0, 0, 2), "kind": 2 }, { "range": span(1, 0, 2), "kind": 3 }])
+        }
         "textDocument/documentSymbol" => json!([{
             "name": "main", "kind": 12,
             "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 2, "character": 1 } },

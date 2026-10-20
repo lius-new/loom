@@ -2171,3 +2171,103 @@ fn formatting_applies_the_servers_edits_and_undo_takes_them_back() {
     });
     assert_eq!(h.document_text(), "fn alpha() {}\n");
 }
+
+#[test]
+fn typing_an_opening_bracket_shows_the_signature_and_closing_it_hides_it() {
+    let mut h = LanguageHarness::new("f\n", &["--features", "signature"]);
+    h.until_ready();
+    h.set_cursor(1);
+    h.type_text("(");
+    h.until("the signature", |h| {
+        h.state
+            .get()
+            .editor
+            .language
+            .signature
+            .as_ref()
+            .is_some_and(|s| s.help.is_some())
+    });
+    h.render();
+    // The active parameter (the second) is drawn on its own.
+    assert!(h.has_text("b: i32"));
+    h.type_text("1, 2)");
+    assert!(h.state.get().editor.language.signature.is_none());
+}
+
+#[test]
+fn escape_closes_the_signature_help() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("f\n", &["--features", "signature"]);
+    h.until_ready();
+    h.set_cursor(1);
+    h.act(Action::ShowSignatureHelp);
+    h.until("the signature", |h| {
+        h.state
+            .get()
+            .editor
+            .language
+            .signature
+            .as_ref()
+            .is_some_and(|s| s.help.is_some())
+    });
+    let rect = h.rect;
+    h.state.update(|app| {
+        assert!(crate::app::language_ui::dismiss(app));
+        let _ = rect;
+    });
+    assert!(h.state.get().editor.language.signature.is_none());
+}
+
+#[test]
+fn the_other_occurrences_of_a_symbol_are_tinted_once_the_caret_rests() {
+    let mut h = LanguageHarness::new("ab\nab\n", &["--features", "highlight"]);
+    h.until_ready();
+    h.set_cursor(1);
+    h.until("the tint", |h| {
+        h.state.get().editor.language.highlights.shown.is_some()
+    });
+    let ranges = h
+        .state
+        .get()
+        .editor
+        .language
+        .highlights
+        .shown
+        .as_ref()
+        .unwrap()
+        .ranges
+        .to_vec();
+    assert_eq!(ranges, [0..2, 3..5]);
+    // Typing makes the old tint stale.
+    h.type_text("x");
+    h.render();
+    let pane = h.state.get().workspace.active_pane();
+    let app = h.state.get();
+    let id = app.workspace.active().unwrap();
+    let stamp = app.workspace.documents[&id].stamp(id);
+    assert!(
+        app.editor
+            .language
+            .highlights
+            .for_view(pane, &stamp)
+            .is_none()
+    );
+}
+
+#[test]
+fn growing_the_selection_walks_out_through_the_servers_ranges_and_shrinking_walks_back() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("abcdefghij\n", &["--features", "selection"]);
+    h.until_ready();
+    h.set_cursor(1);
+    h.act(Action::SelectLargerSyntaxNode);
+    h.until("the first growth", |h| h.selection() == Some(1..2));
+    h.act(Action::SelectLargerSyntaxNode);
+    assert_eq!(h.selection(), Some(0..9));
+    h.act(Action::SelectLargerSyntaxNode);
+    assert_eq!(h.selection(), Some(0..9), "nothing larger");
+    h.act(Action::SelectSmallerSyntaxNode);
+    assert_eq!(h.selection(), Some(1..2));
+    h.act(Action::SelectSmallerSyntaxNode);
+    assert_eq!(h.selection(), None, "back to the caret");
+}

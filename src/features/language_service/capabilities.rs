@@ -276,6 +276,17 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
             },
             "formatting": { "dynamicRegistration": false },
             "rangeFormatting": { "dynamicRegistration": false },
+            "signatureHelp": {
+                "dynamicRegistration": false,
+                "contextSupport": true,
+                "signatureInformation": {
+                    "documentationFormat": ["markdown", "plaintext"],
+                    "activeParameterSupport": true,
+                    "parameterInformation": { "labelOffsetSupport": true }
+                }
+            },
+            "documentHighlight": { "dynamicRegistration": false },
+            "selectionRange": { "dynamicRegistration": false },
             "definition": { "dynamicRegistration": false, "linkSupport": true },
             "declaration": { "dynamicRegistration": false, "linkSupport": true },
             "typeDefinition": { "dynamicRegistration": false, "linkSupport": true },

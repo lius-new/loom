@@ -2,7 +2,9 @@
 //! takes for itself.
 use super::actions::{self, Wanted};
 use super::popup::{Item, Kind, Payload, Popup, VISIBLE};
-use super::{AppContext, completion, hover, navigate, refactor, snippet_session};
+use super::{
+    AppContext, completion, expand, hover, navigate, refactor, signature, snippet_session,
+};
 use crate::app::key_actions::KeyEnv;
 use crate::features::keymap::action::Action;
 use crate::features::language_service::request::Feature;
@@ -23,6 +25,18 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
         Action::GoToImplementation => goto(state, Feature::Implementation, rect),
         Action::FindAllReferences => {
             actions::begin(state, Wanted::References, rect, None);
+            Some(true)
+        }
+        Action::ShowSignatureHelp => {
+            state.update(|app| signature::request(state, app, None, true));
+            Some(true)
+        }
+        Action::SelectLargerSyntaxNode => {
+            state.update(|app| expand::grow(state, app));
+            Some(true)
+        }
+        Action::SelectSmallerSyntaxNode => {
+            state.update(expand::shrink);
             Some(true)
         }
         Action::Rename => {

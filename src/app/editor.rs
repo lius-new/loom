@@ -144,7 +144,9 @@ pub fn execute_command(
 ) {
     state.update(|app| {
         if command == Command::Escape
-            && (app.editor.menu.take().is_some() || app.editor.editor_hunk_peek.take().is_some())
+            && (app.editor.menu.take().is_some()
+                || app.editor.editor_hunk_peek.take().is_some()
+                || super::language_ui::dismiss(app))
         {
             return;
         }

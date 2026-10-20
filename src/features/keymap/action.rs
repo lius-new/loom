@@ -156,6 +156,9 @@ actions! {
     ShowCompletions => "editor::ShowCompletions", "Show the completion list";
     NextSnippetTabstop => "editor::NextSnippetTabstop", "Move to the next place to fill in a snippet";
     PreviousSnippetTabstop => "editor::PreviousSnippetTabstop", "Move to the previous place to fill in a snippet";
+    ShowSignatureHelp => "editor::ShowSignatureHelp", "Show the parameters of the call being typed";
+    SelectLargerSyntaxNode => "editor::SelectLargerSyntaxNode", "Grow the selection to the enclosing syntax";
+    SelectSmallerSyntaxNode => "editor::SelectSmallerSyntaxNode", "Shrink the selection back";
     Rename => "editor::Rename", "Rename the symbol at the cursor";
     ToggleCodeActions => "editor::ToggleCodeActions", "Show the fixes and refactorings offered here";
     Format => "editor::Format", "Format the file";
