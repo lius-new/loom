@@ -56,6 +56,11 @@ impl LanguageServices {
         self.manager.saved(path, text);
     }
 
+    /// Files were created, renamed or deleted by the application.
+    pub fn files_changed(&self, change: crate::infrastructure::lsp::manager::FileChange) {
+        self.manager.files_changed(change);
+    }
+
     pub fn install(&self, server: &str) {
         self.manager.install(server);
     }

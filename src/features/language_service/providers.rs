@@ -28,6 +28,42 @@ pub struct OnTypeFormatting {
     pub more: Vec<String>,
 }
 
+/// One file-operation filter: a glob and what it may match.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileFilter {
+    pub glob: String,
+    /// `Some(true)` only folders, `Some(false)` only files.
+    pub folder: Option<bool>,
+    pub ignore_case: bool,
+}
+
+/// The files a server wants to hear about, per kind of change. An empty filter
+/// list never matches; a kind the server did not mention is `None`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileOperations {
+    pub created: Option<Vec<FileFilter>>,
+    pub renamed: Option<Vec<FileFilter>>,
+    pub deleted: Option<Vec<FileFilter>>,
+}
+
+impl FileFilter {
+    /// Whether the filter accepts `path`.
+    pub fn accepts(&self, path: &std::path::Path, is_folder: bool) -> bool {
+        if self.folder.is_some_and(|only| only != is_folder) {
+            return false;
+        }
+        let Ok(glob) = globset::GlobBuilder::new(&self.glob)
+            .case_insensitive(self.ignore_case)
+            .literal_separator(false)
+            .build()
+        else {
+            return false;
+        };
+        glob.compile_matcher()
+            .is_match(path.to_string_lossy().replace('\\', "/"))
+    }
+}
+
 /// What the server can answer. Every field is false or `None` for a server that
 /// does not say.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -58,6 +94,7 @@ pub struct Providers {
     pub execute_command: Vec<String>,
     /// The server answers `textDocument/diagnostic` (pull diagnostics).
     pub pull_diagnostics: bool,
+    pub file_operations: FileOperations,
 }
 
 impl Providers {
@@ -118,7 +155,41 @@ impl Providers {
                 .map(|options| strings(options.get("commands")))
                 .unwrap_or_default(),
             pull_diagnostics: get("diagnosticProvider").is_some_and(Value::is_object),
+            file_operations: file_operations(
+                get("workspace").and_then(|w| w.get("fileOperations")),
+            ),
         }
+    }
+}
+
+fn file_operations(value: Option<&Value>) -> FileOperations {
+    let filters = |key: &str| -> Option<Vec<FileFilter>> {
+        let list = value?.get(key)?.get("filters")?.as_array()?;
+        Some(
+            list.iter()
+                .filter_map(|filter| {
+                    let pattern = filter.get("pattern")?;
+                    Some(FileFilter {
+                        glob: pattern.get("glob")?.as_str()?.to_owned(),
+                        folder: match filter.get("matches").and_then(Value::as_str) {
+                            Some("folder") => Some(true),
+                            Some("file") => Some(false),
+                            _ => None,
+                        },
+                        ignore_case: pattern
+                            .get("options")
+                            .and_then(|o| o.get("ignoreCase"))
+                            .and_then(Value::as_bool)
+                            == Some(true),
+                    })
+                })
+                .collect(),
+        )
+    };
+    FileOperations {
+        created: filters("didCreate"),
+        renamed: filters("didRename"),
+        deleted: filters("didDelete"),
     }
 }
 
@@ -179,6 +250,28 @@ mod tests {
         assert_eq!(p.on_type_formatting.unwrap().first, "}");
         assert_eq!(p.execute_command, ["a.b", "c.d"]);
         assert!(p.pull_diagnostics && p.code_lens);
+    }
+
+    #[test]
+    fn file_operation_filters_pick_the_files_a_server_cares_about() {
+        let p = Providers::parse(&json!({ "workspace": { "fileOperations": {
+            "didRename": { "filters": [
+                { "pattern": { "glob": "**/*.RS", "options": { "ignoreCase": true } } },
+                { "scheme": "file", "matches": "folder", "pattern": { "glob": "**/src" } } ] },
+            "didCreate": { "filters": [] },
+        } } }));
+        let renamed = p.file_operations.renamed.unwrap();
+        let any = |path: &str, folder: bool| {
+            renamed
+                .iter()
+                .any(|f| f.accepts(std::path::Path::new(path), folder))
+        };
+        assert!(any("/w/a.rs", false));
+        assert!(!any("/w/a.txt", false));
+        assert!(any("/w/src", true));
+        assert!(!any("/w/src", false), "that filter is for folders");
+        assert_eq!(p.file_operations.created, Some(Vec::new()));
+        assert_eq!(p.file_operations.deleted, None);
     }
 
     #[test]

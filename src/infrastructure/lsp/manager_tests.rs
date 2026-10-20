@@ -1595,3 +1595,71 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
         );
     }
 }
+
+mod file_operations {
+    use super::*;
+    use crate::infrastructure::lsp::manager::FileChange;
+
+    #[test]
+    fn servers_hear_about_the_files_their_filters_accept() {
+        let f = Fixture::new(&["--features", "fileOps"]);
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        f.wait_status("ready", |s| matches!(s, Status::Ready));
+        f.wait_method_count("textDocument/didOpen", 1);
+        let a = f.dir.join("one.rs");
+        let b = f.dir.join("two.rs");
+        f.mgr().files_changed(FileChange::Created(a.clone()));
+        f.mgr().files_changed(FileChange::Renamed {
+            from: a.clone(),
+            to: b.clone(),
+        });
+        f.mgr().files_changed(FileChange::Deleted(b));
+        // A file the filters do not cover is not announced.
+        f.mgr()
+            .files_changed(FileChange::Created(f.dir.join("notes.txt")));
+        f.wait_method_count("workspace/didDeleteFiles", 1);
+        let methods = f.methods();
+        assert_eq!(
+            methods
+                .iter()
+                .filter(|m| *m == "workspace/didCreateFiles")
+                .count(),
+            1
+        );
+        assert_eq!(
+            methods
+                .iter()
+                .filter(|m| *m == "workspace/didRenameFiles")
+                .count(),
+            1
+        );
+        let rename = f
+            .log()
+            .into_iter()
+            .find(|m| m["method"] == "workspace/didRenameFiles")
+            .unwrap();
+        assert!(
+            rename["params"]["files"][0]["oldUri"]
+                .as_str()
+                .unwrap()
+                .ends_with("one.rs")
+        );
+        assert!(
+            rename["params"]["files"][0]["newUri"]
+                .as_str()
+                .unwrap()
+                .ends_with("two.rs")
+        );
+    }
+
+    #[test]
+    fn a_server_that_did_not_ask_hears_nothing() {
+        let f = Fixture::new(&[]);
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        f.wait_status("ready", |s| matches!(s, Status::Ready));
+        f.mgr()
+            .files_changed(FileChange::Created(f.dir.join("x.rs")));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!f.methods().iter().any(|m| m.starts_with("workspace/did")));
+    }
+}

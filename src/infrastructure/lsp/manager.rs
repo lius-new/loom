@@ -49,6 +49,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// A change to files the application made on disk.
+#[derive(Clone, Debug)]
+pub(crate) enum FileChange {
+    Created(PathBuf),
+    Renamed { from: PathBuf, to: PathBuf },
+    Deleted(PathBuf),
+}
+
 /// Largest message accepted from a server.
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
 
@@ -241,6 +249,8 @@ enum Msg {
         shared: Arc<Mutex<Progress>>,
     },
     Cancel(u64),
+    /// Files were created, renamed or deleted on disk by the application.
+    Files(FileChange),
     /// The application answers a request a server made.
     Respond {
         instance: u64,
@@ -336,6 +346,11 @@ impl Manager {
     /// Starts again every server that is down, and restarts the running ones.
     pub fn restart(&self) {
         let _ = self.tx.send(Msg::Restart);
+    }
+
+    /// Tells the servers that want to know that files changed on disk.
+    pub fn files_changed(&self, change: FileChange) {
+        let _ = self.tx.send(Msg::Files(change));
     }
 
     /// Installs the pack of the named server, now, whatever its install setting says.
@@ -582,6 +597,7 @@ impl Coordinator {
                 self.results_changed = true;
             }
             Msg::Cancel(id) => self.cancel_request(id),
+            Msg::Files(change) => self.files_changed(&change),
             Msg::Respond {
                 instance,
                 run,
@@ -772,6 +788,50 @@ impl Coordinator {
         self.follow_edits();
         for at in 0..self.instances.len() {
             self.sync(at);
+        }
+    }
+
+    /// Sends `workspace/didCreateFiles` and its relatives to the servers whose
+    /// filters accept the files.
+    fn files_changed(&mut self, change: &FileChange) {
+        let (path, is_folder) = match change {
+            FileChange::Created(path) | FileChange::Deleted(path) => (path, path.is_dir()),
+            FileChange::Renamed { to, .. } => (to, to.is_dir()),
+        };
+        for instance in &self.instances {
+            let Phase::Running(Running {
+                client,
+                ready: Some(ready),
+            }) = &instance.phase
+            else {
+                continue;
+            };
+            let operations = &ready.capabilities.providers.file_operations;
+            let (method, filters, params) = match change {
+                FileChange::Created(path) => (
+                    "workspace/didCreateFiles",
+                    &operations.created,
+                    uri::file_uri(path).map(|uri| json!({ "files": [{ "uri": uri }] })),
+                ),
+                FileChange::Deleted(path) => (
+                    "workspace/didDeleteFiles",
+                    &operations.deleted,
+                    uri::file_uri(path).map(|uri| json!({ "files": [{ "uri": uri }] })),
+                ),
+                FileChange::Renamed { from, to } => (
+                    "workspace/didRenameFiles",
+                    &operations.renamed,
+                    uri::file_uri(from)
+                        .zip(uri::file_uri(to))
+                        .map(|(old, new)| json!({ "files": [{ "oldUri": old, "newUri": new }] })),
+                ),
+            };
+            let (Some(filters), Some(params)) = (filters, params) else {
+                continue;
+            };
+            if filters.iter().any(|f| f.accepts(path, is_folder)) {
+                client.notify(method, params);
+            }
         }
     }
 

@@ -321,6 +321,12 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
             "workspaceFolders": false,
             "didChangeConfiguration": { "dynamicRegistration": false },
             "didChangeWatchedFiles": { "dynamicRegistration": false },
+            "fileOperations": {
+                "dynamicRegistration": false,
+                "didCreate": true,
+                "didRename": true,
+                "didDelete": true
+            },
             "applyEdit": true,
             "workspaceEdit": {
                 "documentChanges": true,

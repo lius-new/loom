@@ -184,6 +184,13 @@ fn feature_capabilities(options: &Options, caps: &mut serde_json::Map<String, Va
                 "codeLensProvider".into(),
                 json!({ "resolveProvider": false }),
             ),
+            "fileOps" => caps.insert(
+                "workspace".into(),
+                json!({ "fileOperations": {
+                    "didCreate": { "filters": [{ "pattern": { "glob": "**/*.rs" } }] },
+                    "didRename": { "filters": [{ "pattern": { "glob": "**/*.rs" } }] },
+                    "didDelete": { "filters": [{ "pattern": { "glob": "**/*.rs" } }] } } }),
+            ),
             "execute" => caps.insert(
                 "executeCommandProvider".into(),
                 json!({ "commands": ["fake.run"] }),
