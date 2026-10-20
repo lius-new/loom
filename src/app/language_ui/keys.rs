@@ -1,6 +1,7 @@
 //! Keyboard commands for the language features, and the keys the open popup
 //! takes for itself.
 use super::actions::{self, Wanted};
+use super::lists;
 use super::popup::{Item, Kind, Payload, Popup, VISIBLE};
 use super::save;
 use super::{
@@ -28,6 +29,18 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
                     crate::app::workspace_commands::save_active_document(state);
                 }),
             );
+            Some(true)
+        }
+        Action::ShowCallHierarchy => relation(state, lists::Relation::Callers),
+        Action::ShowOutgoingCalls => relation(state, lists::Relation::Callees),
+        Action::ShowSupertypes => relation(state, lists::Relation::Supertypes),
+        Action::ShowSubtypes => relation(state, lists::Relation::Subtypes),
+        Action::ShowCodeLenses => {
+            lists::lenses(state);
+            Some(true)
+        }
+        Action::ToggleProblems => {
+            lists::problems(state);
             Some(true)
         }
         Action::GoToDefinition => goto(state, Feature::Definition, rect),
@@ -141,6 +154,11 @@ pub(crate) fn vim_command(
         C::References => Action::FindAllReferences,
     };
     perform_with(state, rect, action);
+}
+
+fn relation(state: &AppContext, relation: lists::Relation) -> Option<bool> {
+    lists::hierarchy(state, relation);
+    Some(true)
 }
 
 fn goto(state: &AppContext, feature: Feature, rect: UiRect) -> Option<bool> {

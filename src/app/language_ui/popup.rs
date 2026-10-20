@@ -48,6 +48,7 @@ pub enum Kind {
     CodeActions,
     Rename,
     Hierarchy,
+    CodeLenses,
     Problems,
 }
 

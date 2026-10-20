@@ -2463,3 +2463,84 @@ fn enter_alone_can_be_the_key_that_accepts() {
     h.act(Action::MenuConfirm);
     assert_eq!(h.document_text(), "alpha-fake\n");
 }
+
+#[test]
+fn callers_are_listed_and_choosing_one_goes_to_the_call() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("fn f() {\n    f();\n}\n", &["--features", "callHierarchy"]);
+    h.until_ready();
+    h.set_cursor(3);
+    h.act(Action::ShowCallHierarchy);
+    h.until_popup("the callers");
+    assert_eq!(h.popup_labels(), ["f"]);
+    h.act(Action::MenuConfirm);
+    // The server says the call is at line 1, column 0 to 1.
+    h.until("the jump", |h| h.selection() == Some(9..10));
+}
+
+#[test]
+fn supertypes_and_outgoing_calls_use_their_own_requests() {
+    use crate::features::keymap::action::Action;
+    let log = std::env::temp_dir().join(format!("loom-hier-{}.log", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let log_arg = log.display().to_string();
+    let mut h = LanguageHarness::new(
+        "fn f() {}\n",
+        &[
+            "--features",
+            "callHierarchy,typeHierarchy",
+            "--log",
+            &log_arg,
+        ],
+    );
+    h.until_ready();
+    h.act(Action::ShowSupertypes);
+    h.until_popup("the supertypes");
+    h.act(Action::MenuCancel);
+    h.act(Action::ShowOutgoingCalls);
+    h.until_popup("the callees");
+    let methods = server_log(&h, &log);
+    assert!(methods.contains(&"typeHierarchy/supertypes".to_owned()));
+    assert!(methods.contains(&"callHierarchy/outgoingCalls".to_owned()));
+}
+
+#[test]
+fn code_lenses_with_commands_are_listed_and_run() {
+    use crate::features::keymap::action::Action;
+    let log = std::env::temp_dir().join(format!("loom-lens-{}.log", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let log_arg = log.display().to_string();
+    let mut h = LanguageHarness::new(
+        "fn f() {}\n",
+        &["--features", "codeLens,execute", "--log", &log_arg],
+    );
+    h.until_ready();
+    h.act(Action::ShowCodeLenses);
+    h.until_popup("the lenses");
+    assert_eq!(h.popup_labels(), ["Run test"]);
+    h.act(Action::MenuConfirm);
+    h.until("the command", |h| {
+        server_log(h, &log).contains(&"workspace/executeCommand".to_owned())
+    });
+}
+
+#[test]
+fn the_problems_of_the_open_files_are_listed_with_the_worst_first() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("fn f() {}\nsecond\n", &["--diagnostics"]);
+    h.until_ready();
+    h.until("diagnostics", |h| {
+        let app = h.state.get();
+        let id = *app.workspace.documents.keys().next().unwrap();
+        let doc = &app.workspace.documents[&id];
+        h.runtime
+            .language_services()
+            .and_then(|s| s.results(&doc.meta.path, &doc.stamp(id)).diagnostics)
+            .is_some()
+    });
+    h.act(Action::ToggleProblems);
+    h.until_popup("the problems");
+    assert_eq!(h.popup_labels(), ["fake error"]);
+    h.act(Action::MenuConfirm);
+    h.until("the jump", |h| h.selection() == Some(0..2));
+}

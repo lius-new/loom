@@ -9,6 +9,7 @@ pub(crate) mod expand;
 pub(crate) mod highlight;
 pub(crate) mod hover;
 pub(crate) mod keys;
+pub(crate) mod lists;
 pub(crate) mod navigate;
 pub(crate) mod popup;
 pub(crate) mod refactor;
@@ -38,6 +39,8 @@ pub struct LanguageUi {
     pub signature_timer: Option<Arc<crate::app::ui_timer::Timer>>,
     pub highlights: highlight::Highlights,
     pub expansion: expand::Expansion,
+    /// A hierarchy or code lens request in flight.
+    pub lists: Option<lists::Pending>,
     /// Steps taken before a file is written.
     pub save: Option<save::Run>,
     pub save_counter: u64,
@@ -64,6 +67,7 @@ impl LanguageUi {
         self.popup = None;
         self.pending = None;
         self.refactor = None;
+        self.lists = None;
         self.completion = None;
     }
 }
@@ -335,6 +339,7 @@ pub(crate) fn tick(state: &AppContext) {
         expand::tick(app);
         effects = actions::tick(app);
         changes = refactor::tick(app);
+        lists::tick(state, app);
         proceed = save::tick(state, app);
         true
     });

@@ -49,6 +49,8 @@
       "alt-left": "pane::GoBack",
       "alt-right": "pane::GoForward",
       "secondary-shift-o": "outline::Toggle",
+      "secondary-shift-m": "workspace::ToggleProblems",
+      "shift-alt-h": "editor::ShowCallHierarchy",
       "secondary-t": "project_symbols::Toggle",
       "secondary-k secondary-left": "workspace::ActivatePaneLeft",
       "secondary-k secondary-right": "workspace::ActivatePaneRight",

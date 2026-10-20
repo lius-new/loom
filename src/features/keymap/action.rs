@@ -163,6 +163,12 @@ actions! {
     ToggleCodeActions => "editor::ToggleCodeActions", "Show the fixes and refactorings offered here";
     Format => "editor::Format", "Format the file";
     FormatSelections => "editor::FormatSelections", "Format the selection";
+    ShowCallHierarchy => "editor::ShowCallHierarchy", "List the callers of the function at the cursor";
+    ShowOutgoingCalls => "editor::ShowOutgoingCalls", "List what the function at the cursor calls";
+    ShowSupertypes => "editor::ShowSupertypes", "List the supertypes of the type at the cursor";
+    ShowSubtypes => "editor::ShowSubtypes", "List the subtypes of the type at the cursor";
+    ShowCodeLenses => "editor::ShowCodeLenses", "List the code lenses of the file";
+    ToggleProblems => "workspace::ToggleProblems", "List the problems of the open files";
     GoToDefinition => "editor::GoToDefinition", "Go to the definition of the symbol at the cursor";
     GoToDeclaration => "editor::GoToDeclaration", "Go to the declaration of the symbol at the cursor";
     GoToTypeDefinition => "editor::GoToTypeDefinition", "Go to the type of the symbol at the cursor";

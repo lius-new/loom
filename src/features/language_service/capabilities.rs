@@ -286,6 +286,9 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
                 }
             },
             "documentHighlight": { "dynamicRegistration": false },
+            "callHierarchy": { "dynamicRegistration": false },
+            "typeHierarchy": { "dynamicRegistration": false },
+            "codeLens": { "dynamicRegistration": false },
             "selectionRange": { "dynamicRegistration": false },
             "definition": { "dynamicRegistration": false, "linkSupport": true },
             "declaration": { "dynamicRegistration": false, "linkSupport": true },
