@@ -109,10 +109,13 @@ file-types are filename suffixes, as in Tree-sitter, including compound suffixes
 whole filenames and dotfiles. Matching keeps Loom's ASCII-insensitive behavior;
 whole filenames match first, then the longest dot-separated suffix; trailing
 letters alone never identify a language (notes does not match ts). Conflicting identical suffix claims are rejected.
-The standard file-types remain authoritative; application presentation, aliases,
-comment editing markers and existing LSP defaults live separately in
+The standard file-types remain authoritative; application presentation, aliases
+and comment editing markers live separately in
 src/infrastructure/language_defaults.json. A new grammar works without an entry
 in that optional defaults table. These defaults contain no parser or query code.
+Language servers are not part of a language or its package: each server definition
+names the languages it serves (src/features/language_service/builtin_servers.json),
+so a language can have several servers.
 
 highlights and injections accept a string or ordered array of relative paths.
 Paths are relative to the directory containing tree-sitter.json, including when

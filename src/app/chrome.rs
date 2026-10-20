@@ -186,8 +186,6 @@ fn language_notes(
     state: &AppContext,
     app: &crate::app::state::AppState,
 ) -> Vec<crate::ui::chrome::StatusNote> {
-    use crate::features::language_service::diagnostics::Severity;
-    use crate::infrastructure::lsp::manager::Status;
     use crate::ui::chrome::{NoteLevel, StatusNote};
     let mut notes = Vec::new();
     if let Some(info) = crate::infrastructure::language_packs::resources()
@@ -214,18 +212,36 @@ fn language_notes(
         return notes;
     };
     let registry = crate::domain::language::Registry::builtin();
-    let Some((definition, _)) = registry.server_for(document.meta.lang) else {
-        return notes;
-    };
-    let name = definition.display_name.to_string();
+    let servers = crate::features::language_service::server_set::ServerSet::builtin();
     let infos = services.infos();
-    let info = infos
-        .iter()
-        .filter(|i| i.server == name && document.meta.path.starts_with(&i.root))
-        .max_by_key(|i| i.root.components().count());
-    let Some(info) = info else {
-        return notes;
-    };
+    // One note for each server the language is bound to, in the servers' order.
+    for (definition, _) in servers.for_language(registry, document.meta.lang) {
+        let name = definition.display_name.to_string();
+        let info = infos
+            .iter()
+            .filter(|i| i.server == name && document.meta.path.starts_with(&i.root))
+            .max_by_key(|i| i.root.components().count());
+        let Some(info) = info else {
+            continue;
+        };
+        notes.push(server_note(&name, info));
+    }
+    if let Some(found) = services
+        .results(&document.meta.path, &document.stamp(id))
+        .diagnostics
+    {
+        notes.extend(diagnostic_notes(&found));
+    }
+    notes
+}
+
+/// The status-bar note for one server instance.
+fn server_note(
+    name: &str,
+    info: &crate::infrastructure::lsp::manager::InstanceInfo,
+) -> crate::ui::chrome::StatusNote {
+    use crate::infrastructure::lsp::manager::Status;
+    use crate::ui::chrome::{NoteLevel, StatusNote};
     let (text, level) = match &info.status {
         Status::Starting => (format!("{name}: starting…"), NoteLevel::Quiet),
         Status::Ready => match info.tasks.first() {
@@ -237,31 +253,35 @@ fn language_notes(
                 },
                 NoteLevel::Quiet,
             ),
-            None => (name.clone(), NoteLevel::Quiet),
+            None => (name.to_owned(), NoteLevel::Quiet),
         },
         Status::Restarting { .. } => (format!("{name}: restarting…"), NoteLevel::Warning),
         Status::Failed(_) => (format!("{name}: stopped"), NoteLevel::Error),
         Status::Unavailable(_) => (format!("{name}: not found"), NoteLevel::Quiet),
     };
-    notes.push(StatusNote { text, level });
-    if let Some(found) = services
-        .results(&document.meta.path, &document.stamp(id))
-        .diagnostics
-    {
-        let count = |severity| found.iter().filter(|d| d.severity == severity).count();
-        let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
-        if errors > 0 {
-            notes.push(StatusNote {
-                text: format!("{errors} error{}", if errors == 1 { "" } else { "s" }),
-                level: NoteLevel::Error,
-            });
-        }
-        if warnings > 0 {
-            notes.push(StatusNote {
-                text: format!("{warnings} warning{}", if warnings == 1 { "" } else { "s" }),
-                level: NoteLevel::Warning,
-            });
-        }
+    StatusNote { text, level }
+}
+
+/// Error and warning counts of the active file's diagnostics.
+fn diagnostic_notes(
+    found: &[crate::features::language_service::diagnostics::Diagnostic],
+) -> Vec<crate::ui::chrome::StatusNote> {
+    use crate::features::language_service::diagnostics::Severity;
+    use crate::ui::chrome::{NoteLevel, StatusNote};
+    let mut notes = Vec::new();
+    let count = |severity| found.iter().filter(|d| d.severity == severity).count();
+    let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
+    if errors > 0 {
+        notes.push(StatusNote {
+            text: format!("{errors} error{}", if errors == 1 { "" } else { "s" }),
+            level: NoteLevel::Error,
+        });
+    }
+    if warnings > 0 {
+        notes.push(StatusNote {
+            text: format!("{warnings} warning{}", if warnings == 1 { "" } else { "s" }),
+            level: NoteLevel::Warning,
+        });
     }
     notes
 }

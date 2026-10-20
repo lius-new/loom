@@ -9,6 +9,7 @@ pub(crate) mod plan;
 pub(crate) mod position;
 pub(crate) mod root;
 pub(crate) mod semantic;
+pub(crate) mod server_set;
 pub(crate) mod session;
 #[cfg(test)]
 mod session_tests;

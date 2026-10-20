@@ -502,8 +502,9 @@ fn standard_rust_keeps_application_lsp_defaults_without_external_editor_metadata
     );
     let registry = Packages::discover(&temp.0, None).registry().unwrap();
     let rust = registry.resolve_path(Path::new("new.rs"));
+    let servers = crate::features::language_service::server_set::ServerSet::builtin();
     assert_eq!(
-        registry.server_for(rust).unwrap().0.name.as_ref(),
+        servers.for_language(&registry, rust)[0].0.name.as_ref(),
         "rust-analyzer"
     );
     assert_eq!(

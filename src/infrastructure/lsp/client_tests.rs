@@ -633,29 +633,27 @@ fn process_exists(pid: u32) -> bool {
 #[test]
 fn a_server_defined_only_as_data_runs_without_any_language_specific_code() {
     use crate::domain::language::Registry;
+    use crate::features::language_service::server_set::ServerSet;
     let command = fake_server().display().to_string().replace('\\', "\\\\");
     let server = format!(
         r#"{{ "name": "fake-lsp", "display_name": "Fake", "command": "{command}",
              "args": ["--sync", "incremental"],
-             "root": {{ "markers": ["fake.toml"], "fallback": "workspace" }} }}"#
+             "root": {{ "markers": ["fake.toml"], "fallback": "workspace" }},
+             "languages": [{{ "language": "fakelang", "language_id": "fake-dialect" }}] }}"#
     );
     let language = r#"{ "name": "fakelang", "display_name": "Fake", "badge": "FK",
-        "variants": [{ "id": "fakelang",
-            "server": { "definition": "fake-lsp", "language_id": "fake-dialect" } }],
+        "variants": [{ "id": "fakelang" }],
         "files": [{ "extensions": ["fake"], "variant": "fakelang" }] }"#;
     let plain = r#"{ "name": "plaintext", "display_name": "Plain", "badge": "T",
         "variants": [{ "id": "plaintext" }] }"#;
-    let registry = Registry::from_parts(
-        &[("fakelang", language), ("plaintext", plain)],
-        &[],
-        &[("fake-lsp", server.as_str())],
-    )
-    .unwrap();
+    let registry =
+        Registry::from_sources(&[("fakelang", language), ("plaintext", plain)], &[]).unwrap();
+    let servers = ServerSet::from_sources(&[("fake-lsp", server.as_str())]).unwrap();
 
     let resolved = registry.resolve_path(std::path::Path::new("/work/thing.fake"));
-    let (definition, language_id) = registry
-        .server_for(resolved)
-        .expect("the language has a server");
+    let bound = servers.for_language(&registry, resolved);
+    assert_eq!(bound.len(), 1, "the language has a server");
+    let (definition, language_id) = bound[0];
     assert_eq!(
         language_id, "fake-dialect",
         "the server's own word for the language"

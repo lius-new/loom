@@ -9,6 +9,7 @@
 //! be missed.
 use super::state::AppState;
 use crate::domain::language::Registry;
+use crate::features::language_service::server_set::ServerSet;
 use crate::features::language_service::sync::Stamp;
 use crate::infrastructure::lsp::manager::{
     InstanceInfo, Manager, Options, Snapshot, SnapshotDocument,
@@ -29,7 +30,12 @@ pub(crate) struct LanguageServices {
 impl LanguageServices {
     pub fn new(on_change: impl Fn() + Send + 'static) -> Self {
         Self {
-            manager: Manager::start(Registry::builtin(), Options::default(), on_change),
+            manager: Manager::start(
+                Registry::builtin(),
+                ServerSet::builtin(),
+                Options::default(),
+                on_change,
+            ),
             sent: Mutex::new(None),
         }
     }

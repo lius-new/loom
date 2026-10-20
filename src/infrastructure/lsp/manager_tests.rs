@@ -1,6 +1,7 @@
 //! The coordinator against real fake-server processes (`examples/fake_lsp.rs`).
 use super::manager::{Manager, Options, Snapshot, SnapshotDocument, Status};
 use crate::domain::language::Registry;
+use crate::features::language_service::server_set::ServerSet;
 use crate::features::language_service::sync::Stamp;
 use crate::features::settings::servers::LanguageServerSetting;
 use serde_json::{Value, json};
@@ -19,18 +20,34 @@ fn registry() -> &'static Registry {
         let plain = r#"{ "name": "plaintext", "display_name": "Plain", "badge": "T",
             "variants": [{ "id": "plaintext" }] }"#;
         let fake = r#"{ "name": "fakelang", "display_name": "Fake", "badge": "F",
-            "variants": [{ "id": "fakelang",
-              "server": { "definition": "fake-server", "language_id": "fake" } }],
+            "variants": [{ "id": "fakelang" }],
             "files": [{ "extensions": ["fk"], "variant": "fakelang" }] }"#;
-        let server = r#"{ "name": "fake-server", "display_name": "Fake server", "command": "unused",
-            "root": { "markers": ["fake.toml"], "strategy": "nearest", "fallback": "file_directory" } }"#;
-        Registry::from_parts(
-            &[("plaintext", plain), ("fakelang", fake)],
-            &[],
-            &[("fake-server", server)],
-        )
-        .expect("test registry")
+        Registry::from_sources(&[("plaintext", plain), ("fakelang", fake)], &[])
+            .expect("test registry")
     })
+}
+
+/// A server for `fakelang`; `priority` decides which of several is preferred.
+fn fake_definition(name: &str, language_id: &str, priority: i32) -> String {
+    format!(
+        r#"{{ "name": "{name}", "display_name": "{name}", "command": "unused",
+            "priority": {priority},
+            "root": {{ "markers": ["fake.toml"], "strategy": "nearest",
+                      "fallback": "file_directory" }},
+            "languages": [{{ "language": "fakelang", "language_id": "{language_id}" }}] }}"#
+    )
+}
+
+fn servers(definitions: &[(&str, &str, i32)]) -> Arc<ServerSet> {
+    let sources: Vec<(String, String)> = definitions
+        .iter()
+        .map(|(name, id, priority)| (name.to_string(), fake_definition(name, id, *priority)))
+        .collect();
+    let borrowed: Vec<(&str, &str)> = sources
+        .iter()
+        .map(|(name, json)| (name.as_str(), json.as_str()))
+        .collect();
+    Arc::new(ServerSet::from_sources(&borrowed).expect("test servers"))
 }
 
 fn fake_server() -> PathBuf {
@@ -49,7 +66,9 @@ static RUNS: AtomicUsize = AtomicUsize::new(0);
 struct Fixture {
     manager: Option<Manager>,
     dir: PathBuf,
+    /// The first server's log; `logs` has one for each server, in order.
     log: PathBuf,
+    logs: Vec<PathBuf>,
     settings: Vec<LanguageServerSetting>,
     changes: Arc<AtomicUsize>,
 }
@@ -73,33 +92,47 @@ impl Fixture {
     }
 
     fn new(extra_args: &[&str]) -> Self {
+        Self::with_servers(
+            servers(&[("fake-server", "fake", 0)]),
+            &[("fake-server", extra_args)],
+        )
+    }
+
+    /// Runs the given servers, each with its own arguments and its own log.
+    fn with_servers(servers: Arc<ServerSet>, runs: &[(&str, &[&str])]) -> Self {
         let n = RUNS.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("loom-mgr-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let log = dir.join("server.log");
-        let mut args: Vec<String> = if extra_args.contains(&"--sync") {
-            Vec::new()
-        } else {
-            ["--sync", "full"].map(String::from).into()
-        };
-        args.extend(extra_args.iter().map(|a| a.to_string()));
-        args.extend(["--log".into(), log.display().to_string()]);
-        let settings = vec![LanguageServerSetting {
-            server: "fake-server".into(),
-            enabled: true,
-            command: Some(fake_server().display().to_string()),
-            args: Some(args),
-            initialization_options: None,
-        }];
+        let mut logs = Vec::new();
+        let mut settings = Vec::new();
+        for (name, extra_args) in runs {
+            let log = dir.join(format!("{name}.log"));
+            let mut args: Vec<String> = if extra_args.contains(&"--sync") {
+                Vec::new()
+            } else {
+                ["--sync", "full"].map(String::from).into()
+            };
+            args.extend(extra_args.iter().map(|a| a.to_string()));
+            args.extend(["--log".into(), log.display().to_string()]);
+            settings.push(LanguageServerSetting {
+                server: (*name).into(),
+                enabled: true,
+                command: Some(fake_server().display().to_string()),
+                args: Some(args),
+                initialization_options: None,
+            });
+            logs.push(log);
+        }
         let changes = Arc::new(AtomicUsize::new(0));
         let counter = changes.clone();
-        let manager = Manager::start(registry(), options(), move || {
+        let manager = Manager::start(registry(), servers, options(), move || {
             counter.fetch_add(1, Ordering::Relaxed);
         });
         Self {
             manager: Some(manager),
             dir,
-            log,
+            log: logs[0].clone(),
+            logs,
             settings,
             changes,
         }
@@ -576,6 +609,129 @@ fn results_vanish_with_the_document_and_the_server() {
     });
 }
 
+impl Fixture {
+    /// The messages a server logged, by its position in the run list.
+    fn methods_of(&self, server: usize) -> Vec<Value> {
+        std::fs::read_to_string(&self.logs[server])
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect()
+    }
+
+    fn wait_ready(&self, count: usize) {
+        self.wait_for(&format!("{count} ready instances"), || {
+            let infos = self.mgr().infos();
+            (infos.iter().filter(|i| i.status == Status::Ready).count() == count).then_some(())
+        });
+    }
+}
+
+fn two_servers() -> Arc<ServerSet> {
+    servers(&[("alpha", "alpha-id", 10), ("beta", "beta-id", 0)])
+}
+
+#[test]
+fn a_document_is_held_by_every_server_of_its_language_with_its_own_language_id() {
+    let f = Fixture::with_servers(two_servers(), &[("alpha", &[]), ("beta", &[])]);
+    f.show(vec![f.doc("a.fk", 0, "hello")]);
+    f.wait_ready(2);
+    f.wait_for("both servers to open the document", || {
+        (0..2)
+            .all(|n| {
+                f.methods_of(n)
+                    .iter()
+                    .any(|m| m["method"] == "textDocument/didOpen")
+            })
+            .then_some(())
+    });
+    for (n, id) in [(0, "alpha-id"), (1, "beta-id")] {
+        let open = f
+            .methods_of(n)
+            .into_iter()
+            .find(|m| m["method"] == "textDocument/didOpen")
+            .unwrap();
+        assert_eq!(open["params"]["textDocument"]["languageId"], id);
+        assert_eq!(open["params"]["textDocument"]["text"], "hello");
+    }
+    let infos = f.mgr().infos();
+    assert_eq!(infos.len(), 2);
+    assert!(infos.iter().all(|i| i.documents == 1));
+}
+
+#[test]
+fn diagnostics_of_every_server_are_merged_and_cleared_independently() {
+    let mut f = Fixture::with_servers(
+        two_servers(),
+        &[
+            ("alpha", &["--diagnostics", "--diag-message", "alpha says"]),
+            ("beta", &["--diagnostics", "--diag-message", "beta says"]),
+        ],
+    );
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    let found = f.wait_for("both servers' diagnostics", || {
+        f.results_at("a.fk", 0)
+            .diagnostics
+            .filter(|found| found.len() == 2)
+    });
+    let messages: Vec<_> = found.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(messages, ["alpha says", "beta says"], "the servers' order");
+
+    // Turning one server off takes only its findings away.
+    f.settings[1].enabled = false;
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    let found = f.wait_for("only alpha's diagnostics", || {
+        f.results_at("a.fk", 0)
+            .diagnostics
+            .filter(|found| found.len() == 1)
+    });
+    assert_eq!(found[0].message, "alpha says");
+}
+
+#[test]
+fn a_server_that_keeps_crashing_does_not_take_the_other_down() {
+    let f = Fixture::with_servers(
+        two_servers(),
+        &[
+            ("alpha", &["--crash-after-init"]),
+            ("beta", &["--diagnostics", "--diag-message", "beta says"]),
+        ],
+    );
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    f.wait_status("alpha to give up", |s| matches!(s, Status::Failed(_)));
+    let found = f.wait_for("beta's diagnostics", || f.results_at("a.fk", 0).diagnostics);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].message, "beta says");
+    assert!(
+        f.mgr()
+            .infos()
+            .iter()
+            .any(|i| i.server == "beta" && i.status == Status::Ready)
+    );
+}
+
+#[test]
+fn semantic_tokens_come_from_the_preferred_server_and_fall_back_when_it_goes() {
+    let mut f = Fixture::with_servers(
+        two_servers(),
+        &[
+            ("alpha", &["--semantic", "full", "--semantic-length", "3"]),
+            ("beta", &["--semantic", "full", "--semantic-length", "2"]),
+        ],
+    );
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    f.wait_for("alpha's tokens to win", || {
+        let spans = f.results_at("a.fk", 0).semantic?;
+        (spans.len() == 1 && spans[0].range == (0..3)).then_some(())
+    });
+    f.settings[0].enabled = false;
+    f.show(vec![f.doc("a.fk", 0, "fn a")]);
+    f.wait_for("beta's tokens once alpha is gone", || {
+        let spans = f.results_at("a.fk", 0).semantic?;
+        (spans.len() == 1 && spans[0].range == (0..2)).then_some(())
+    });
+}
+
 /// Needs a real rust-analyzer (set `LOOM_RUST_ANALYZER` to its path, or have it on
 /// PATH) and cargo. Run with `cargo test --bin Loom real_rust_analyzer -- --ignored --nocapture`.
 ///
@@ -604,7 +760,12 @@ fn real_rust_analyzer_sees_files_changed_outside_the_editor() {
     let lib = "mod other;\npub fn f() {}\n";
     std::fs::write(dir.join("src/lib.rs"), lib).unwrap();
 
-    let manager = Manager::start(Registry::builtin(), Options::default(), || {});
+    let manager = Manager::start(
+        Registry::builtin(),
+        ServerSet::builtin(),
+        Options::default(),
+        || {},
+    );
     let path = dir.join("src/lib.rs");
     let document = SnapshotDocument {
         language: Registry::builtin().resolve_path(&path),
@@ -689,7 +850,12 @@ fn real_rust_analyzer_reports_a_syntax_error() {
         text = text.replacen("fn main() {\n", "fn main() {\n    s\n", 1);
     }
     let sent = text.clone();
-    let manager = Manager::start(Registry::builtin(), Options::default(), || {});
+    let manager = Manager::start(
+        Registry::builtin(),
+        ServerSet::builtin(),
+        Options::default(),
+        || {},
+    );
     let stamp = Stamp {
         incarnation: 1,
         version: 0,

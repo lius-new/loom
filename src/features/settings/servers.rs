@@ -1,9 +1,9 @@
 //! The `language_servers` setting: per-server overrides of the built-in
-//! definitions (`assets/servers`).
+//! definitions.
 //!
 //! Only the user's `settings.json` may hold it. A project file that could choose
 //! which program Loom runs would turn opening a folder into running its code.
-use crate::domain::language::{Registry, ServerDefinitionId};
+use crate::features::language_service::server_set::{ServerDefinition, ServerSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,8 +32,8 @@ fn enabled() -> bool {
 
 impl LanguageServerSetting {
     /// Why this entry cannot be used, if it cannot.
-    pub fn validate(&self, registry: &Registry) -> Result<(), String> {
-        if registry.server_by_name(&self.server).is_none() {
+    pub fn validate(&self, servers: &ServerSet) -> Result<(), String> {
+        if servers.get(&self.server).is_none() {
             return Err(format!("unknown language server \"{}\"", self.server));
         }
         if self.command.as_deref().is_some_and(|c| c.trim().is_empty()) {
@@ -61,27 +61,23 @@ impl LanguageServerSetting {
 /// are combined. Two equal values start the same process the same way.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServerLaunch {
-    pub definition: ServerDefinitionId,
     pub command: String,
     pub args: Vec<String>,
     /// Compact JSON object text.
     pub initialization_options: Option<String>,
 }
 
-/// The launch for `definition`, or `None` when the user turned it off.
+/// The launch for `base`, or `None` when the user turned it off.
 pub fn launch_for(
-    registry: &Registry,
-    definition: ServerDefinitionId,
+    base: &ServerDefinition,
     settings: &[LanguageServerSetting],
 ) -> Option<ServerLaunch> {
-    let base = registry.server(definition);
     // The last entry for a server wins, like a later key in a settings file.
     let over = settings.iter().rev().find(|s| s.server == *base.name);
     if over.is_some_and(|s| !s.enabled) {
         return None;
     }
     Some(ServerLaunch {
-        definition,
         command: over
             .and_then(|s| s.command.clone())
             .unwrap_or_else(|| base.command.to_string()),
@@ -99,12 +95,12 @@ pub fn launch_for(
 mod tests {
     use super::*;
 
-    fn registry() -> &'static Registry {
-        Registry::builtin()
+    fn servers() -> std::sync::Arc<ServerSet> {
+        ServerSet::builtin()
     }
 
-    fn rust_analyzer() -> ServerDefinitionId {
-        registry().server_by_name("rust-analyzer").unwrap()
+    fn run(settings: &[LanguageServerSetting]) -> Option<ServerLaunch> {
+        launch_for(servers().get("rust-analyzer").unwrap(), settings)
     }
 
     fn setting(json: &str) -> LanguageServerSetting {
@@ -113,7 +109,7 @@ mod tests {
 
     #[test]
     fn no_entry_runs_the_definition_as_written() {
-        let launch = launch_for(registry(), rust_analyzer(), &[]).unwrap();
+        let launch = run(&[]).unwrap();
         assert_eq!(launch.command, "rust-analyzer");
         assert!(launch.args.is_empty());
         assert_eq!(launch.initialization_options, None);
@@ -124,7 +120,7 @@ mod tests {
         let entries = [setting(
             r#"{ "server": "rust-analyzer", "command": "C:\\tools\\ra.exe" }"#,
         )];
-        let launch = launch_for(registry(), rust_analyzer(), &entries).unwrap();
+        let launch = run(&entries).unwrap();
         assert_eq!(launch.command, "C:\\tools\\ra.exe");
         assert!(launch.args.is_empty());
 
@@ -132,7 +128,7 @@ mod tests {
             r#"{ "server": "rust-analyzer", "args": ["--log-file", "x"],
                  "initialization_options": { "checkOnSave": false } }"#,
         )];
-        let launch = launch_for(registry(), rust_analyzer(), &entries).unwrap();
+        let launch = run(&entries).unwrap();
         assert_eq!(launch.command, "rust-analyzer");
         assert_eq!(launch.args, ["--log-file", "x"]);
         assert_eq!(
@@ -146,37 +142,27 @@ mod tests {
         let off = [setting(
             r#"{ "server": "rust-analyzer", "enabled": false }"#,
         )];
-        assert_eq!(launch_for(registry(), rust_analyzer(), &off), None);
+        assert_eq!(run(&off), None);
         let on_again = [
             setting(r#"{ "server": "rust-analyzer", "enabled": false }"#),
             setting(r#"{ "server": "rust-analyzer", "command": "ra" }"#),
         ];
-        assert_eq!(
-            launch_for(registry(), rust_analyzer(), &on_again)
-                .unwrap()
-                .command,
-            "ra"
-        );
+        assert_eq!(run(&on_again).unwrap().command, "ra");
     }
 
     #[test]
     fn empty_args_replace_the_default_args() {
         let entries = [setting(r#"{ "server": "rust-analyzer", "args": [] }"#)];
-        assert!(
-            launch_for(registry(), rust_analyzer(), &entries)
-                .unwrap()
-                .args
-                .is_empty()
-        );
+        assert!(run(&entries).unwrap().args.is_empty());
     }
 
     #[test]
     fn bad_entries_are_explained() {
-        let reg = registry();
+        let set = servers();
         let check = |json: &str| {
             serde_json::from_str::<LanguageServerSetting>(json)
                 .unwrap()
-                .validate(reg)
+                .validate(&set)
         };
         assert!(check(r#"{ "server": "rust-analyzer" }"#).is_ok());
         assert!(

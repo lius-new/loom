@@ -29,7 +29,7 @@ export function legacyFixture(input, destination) {
       language.files = document.grammars.filter(g => language.variants.some(v => v.grammar === g.name) && g['file-types']?.length)
         .map(g => ({extensions: g['file-types'], variant: language.variants.find(v => v.grammar === g.name).id}));
     }
-    const servers = defaults.servers.filter(s => languages.some(d => d.variants.some(v => v.server?.definition === s.name)));
+    const servers = [];
     fs.mkdirSync(path.join(target, 'modules'), {recursive: true});
     for (const grammar of document.grammars) {
       const name = grammar.name, extension = {win32: 'dll', darwin: 'dylib', linux: 'so'}[process.platform];

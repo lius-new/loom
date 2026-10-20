@@ -138,11 +138,7 @@
       "variants": [
         {
           "id": "rust",
-          "grammar": "rust",
-          "server": {
-            "definition": "rust-analyzer",
-            "language_id": "rust"
-          }
+          "grammar": "rust"
         }
       ]
     },
@@ -170,22 +166,6 @@
           "grammar": "tsx"
         }
       ]
-    }
-  ],
-  "servers": [
-    {
-      "name": "rust-analyzer",
-      "display_name": "rust-analyzer",
-      "command": "rust-analyzer",
-      "args": [],
-      "root": {
-        "markers": [
-          "Cargo.toml",
-          "rust-project.json"
-        ],
-        "strategy": "outermost",
-        "fallback": "file_directory"
-      }
     }
   ],
   "embedded": [

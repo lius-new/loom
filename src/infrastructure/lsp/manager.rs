@@ -19,6 +19,7 @@ use crate::features::language_service::{
     diagnostics::{self, Diagnostic},
     plan::{self, Assignment, InstanceKey},
     semantic,
+    server_set::ServerSet,
     session::{Event, ProgressUpdate, SessionOptions, State},
     sync::{DesiredDocument, DocumentSync, Notification, Stamp},
     uri,
@@ -149,16 +150,47 @@ const MAX_TASKS: usize = 32;
 const SEMANTIC_DEBOUNCE: Duration = Duration::from_millis(75);
 
 /// What the servers said about one document, each part with the editor state it
-/// describes. A part is only meant to be shown for exactly that state.
+/// describes. A part is only meant to be shown for exactly that state. Each
+/// server instance keeps its own part, so one server's findings are replaced or
+/// cleared without touching another's.
 #[derive(Default)]
 struct Entry {
-    /// The state they describe, and the text of that state so they can be moved
-    /// along later edits.
-    diagnostics: Option<(Stamp, Arc<[Diagnostic]>, Arc<String>)>,
-    semantic: Option<(Stamp, Arc<[TokenSpan]>)>,
+    /// By instance.
+    diagnostics: BTreeMap<u64, Findings>,
+    /// By instance. Only the preferred matching one is shown.
+    semantic: BTreeMap<u64, Tokens>,
 }
 
-type Store = Arc<Mutex<HashMap<String, Entry>>>;
+/// The state some diagnostics describe, the diagnostics, and the text of that
+/// state so they can be moved along later edits.
+type Findings = (Stamp, Arc<[Diagnostic]>, Arc<String>);
+/// The server's listing rank (lower is preferred), the state the tokens describe,
+/// and the tokens.
+type Tokens = (usize, Stamp, Arc<[TokenSpan]>);
+
+impl Entry {
+    fn is_empty(&self) -> bool {
+        self.diagnostics.is_empty() && self.semantic.is_empty()
+    }
+
+    fn parts(&self) -> usize {
+        self.diagnostics.len() + self.semantic.len()
+    }
+}
+
+type Results = HashMap<String, Entry>;
+type Store = Arc<Mutex<Results>>;
+
+/// Drops what `instance` said about the document `key`.
+fn forget(store: &mut Results, key: &str, instance: u64) {
+    if let Some(entry) = store.get_mut(key) {
+        entry.diagnostics.remove(&instance);
+        entry.semantic.remove(&instance);
+        if entry.is_empty() {
+            store.remove(key);
+        }
+    }
+}
 
 /// The server results that apply to a document in a given state.
 #[derive(Clone, Debug, Default)]
@@ -194,6 +226,7 @@ impl Manager {
     /// changes; it should only request a repaint.
     pub fn start(
         registry: &'static Registry,
+        servers: Arc<ServerSet>,
         options: Options,
         on_change: impl Fn() + Send + 'static,
     ) -> Self {
@@ -202,6 +235,7 @@ impl Manager {
         let results: Store = Arc::default();
         let coordinator = Coordinator {
             registry,
+            servers,
             options,
             tx: tx.clone(),
             inbox,
@@ -255,17 +289,33 @@ impl Manager {
         let Some(entry) = store.get(&uri::key(&uri)) else {
             return DocumentResults::default();
         };
+        let mut matching = entry
+            .diagnostics
+            .values()
+            .filter(|(at, ..)| *at == stamp)
+            .map(|(_, found, _)| found);
+        let diagnostics = match (matching.next(), matching.next()) {
+            (None, _) => None,
+            (Some(only), None) => Some(only.clone()),
+            (Some(first), Some(second)) => {
+                // Every server's findings, in text order; equal positions keep the
+                // servers' order.
+                let mut all: Vec<Diagnostic> = first.iter().chain(second.iter()).cloned().collect();
+                for more in matching {
+                    all.extend(more.iter().cloned());
+                }
+                all.sort_by_key(|d| (d.range.start, d.range.end));
+                Some(all.into())
+            }
+        };
         DocumentResults {
-            diagnostics: entry
-                .diagnostics
-                .as_ref()
-                .filter(|(at, ..)| *at == stamp)
-                .map(|(_, v, _)| v.clone()),
+            diagnostics,
             semantic: entry
                 .semantic
-                .as_ref()
-                .filter(|(at, _)| *at == stamp)
-                .map(|(_, v)| v.clone()),
+                .values()
+                .filter(|(_, at, _)| *at == stamp)
+                .min_by_key(|(rank, ..)| *rank)
+                .map(|(_, _, spans)| spans.clone()),
         }
     }
 }
@@ -340,6 +390,7 @@ struct Instance {
 
 struct Coordinator {
     registry: &'static Registry,
+    servers: Arc<ServerSet>,
     options: Options,
     tx: Sender<Msg>,
     inbox: Receiver<Msg>,
@@ -353,7 +404,7 @@ struct Coordinator {
     snapshot: Snapshot,
     /// Where each document went last time. Text-only edits reuse it, so typing
     /// never touches the disk to look for project markers.
-    assignments: HashMap<PathBuf, (ResolvedLanguage, Option<Assignment>)>,
+    assignments: HashMap<PathBuf, (ResolvedLanguage, Vec<Assignment>)>,
     published: Vec<InstanceInfo>,
 }
 
@@ -476,13 +527,16 @@ impl Coordinator {
         }
     }
 
-    fn assign(&mut self, document: &SnapshotDocument) -> Option<Assignment> {
-        if let Some((language, assignment)) = self.assignments.get(&document.path)
+    /// The instances a document belongs to, one for each server its language is
+    /// bound to.
+    fn assign(&mut self, document: &SnapshotDocument) -> Vec<Assignment> {
+        if let Some((language, assignments)) = self.assignments.get(&document.path)
             && *language == document.language
         {
-            return assignment.clone();
+            return assignments.clone();
         }
-        let assignment = plan::assign(
+        let assignments = plan::assign(
+            &self.servers,
             self.registry,
             document.language,
             &document.path,
@@ -492,9 +546,9 @@ impl Coordinator {
         );
         self.assignments.insert(
             document.path.clone(),
-            (document.language, assignment.clone()),
+            (document.language, assignments.clone()),
         );
-        assignment
+        assignments
     }
 
     fn apply_snapshot(&mut self, snapshot: Snapshot) {
@@ -512,21 +566,20 @@ impl Coordinator {
 
         let mut wanted: Vec<(InstanceKey, Vec<DesiredDocument>)> = Vec::new();
         for document in &documents {
-            let Some(assignment) = self.assign(document) else {
-                continue;
-            };
             let Some(uri) = uri::file_uri(&document.path) else {
                 continue;
             };
-            let desired = DesiredDocument {
-                uri,
-                language_id: assignment.language_id,
-                stamp: document.stamp,
-                text: document.text.clone(),
-            };
-            match wanted.iter_mut().find(|(key, _)| *key == assignment.key) {
-                Some((_, list)) => list.push(desired),
-                None => wanted.push((assignment.key, vec![desired])),
+            for assignment in self.assign(document) {
+                let desired = DesiredDocument {
+                    uri: uri.clone(),
+                    language_id: assignment.language_id,
+                    stamp: document.stamp,
+                    text: document.text.clone(),
+                };
+                match wanted.iter_mut().find(|(key, _)| *key == assignment.key) {
+                    Some((_, list)) => list.push(desired),
+                    None => wanted.push((assignment.key, vec![desired])),
+                }
             }
         }
 
@@ -582,13 +635,13 @@ impl Coordinator {
                 let Some(entry) = store.get_mut(&uri::key(&document.uri)) else {
                     continue;
                 };
-                let Some((stamp, found, text)) = &entry.diagnostics else {
+                let Some((stamp, found, text)) = entry.diagnostics.get(&instance.id) else {
                     continue;
                 };
                 if stamp.incarnation != document.stamp.incarnation {
                     // Following edits is only valid within one document life.
                     // Identical text in a reopened file is still a new document.
-                    entry.diagnostics = None;
+                    entry.diagnostics.remove(&instance.id);
                     self.results_changed = true;
                     continue;
                 }
@@ -596,14 +649,17 @@ impl Coordinator {
                     continue;
                 }
                 let carried = diagnostics::carry(text, &document.text, found.to_vec());
-                entry.diagnostics = Some((document.stamp, carried.into(), document.text.clone()));
+                entry.diagnostics.insert(
+                    instance.id,
+                    (document.stamp, carried.into(), document.text.clone()),
+                );
                 self.results_changed = true;
             }
         }
     }
 
     fn start(&mut self, at: usize) {
-        let registry = self.registry;
+        let servers = self.servers.clone();
         let timeouts = self.options.timeouts.clone();
         let tx = self.tx.clone();
         let instance = &mut self.instances[at];
@@ -640,7 +696,9 @@ impl Coordinator {
             timeouts,
             max_message: MAX_MESSAGE,
         };
-        let name = registry.server(key.definition).display_name.to_string();
+        let name = servers
+            .get(&key.server)
+            .map_or_else(|| key.server.to_string(), |d| d.display_name.to_string());
         let command = key.launch.command.clone();
         instance.phase = match Client::spawn(launch, move |event| {
             let _ = tx.send(Msg::Event {
@@ -776,7 +834,7 @@ impl Coordinator {
         {
             let mut store = self.results.lock().unwrap();
             for document in &instance.documents {
-                store.remove(&uri::key(&document.uri));
+                forget(&mut store, &uri::key(&document.uri), instance.id);
             }
             self.results_changed = true;
         }
@@ -819,7 +877,7 @@ impl Coordinator {
                 {
                     let mut store = self.results.lock().unwrap();
                     for document in &instance.documents {
-                        store.remove(&uri::key(&document.uri));
+                        forget(&mut store, &uri::key(&document.uri), instance.id);
                     }
                     self.results_changed = true;
                 }
@@ -933,6 +991,7 @@ impl Coordinator {
         if let Some(why) = why {
             self.remember(at, 3, &why);
         }
+        let instance_id = self.instances[at].id;
         let counts = &mut self.instances[at].diagnostics;
         counts.published += 1;
         match outcome {
@@ -940,13 +999,21 @@ impl Coordinator {
             Outcome::Carried(key, stamp, carried, text) => {
                 counts.carried += 1;
                 let mut store = self.results.lock().unwrap();
-                store.entry(key).or_default().diagnostics = Some((stamp, carried.into(), text));
+                store
+                    .entry(key)
+                    .or_default()
+                    .diagnostics
+                    .insert(instance_id, (stamp, carried.into(), text));
             }
             Outcome::Outdated => counts.outdated += 1,
             Outcome::Shown(key, stamp, resolved, text) => {
                 counts.shown += 1;
                 let mut store = self.results.lock().unwrap();
-                store.entry(key).or_default().diagnostics = Some((stamp, resolved.into(), text));
+                store
+                    .entry(key)
+                    .or_default()
+                    .diagnostics
+                    .insert(instance_id, (stamp, resolved.into(), text));
             }
         }
         self.results_changed = true;
@@ -958,7 +1025,12 @@ impl Coordinator {
         tag: u64,
         outcome: Result<Value, crate::features::language_service::message::ResponseError>,
     ) {
+        let rank = self
+            .servers
+            .rank(&self.instances[at].key.server)
+            .unwrap_or(usize::MAX);
         let instance = &mut self.instances[at];
+        let instance_id = instance.id;
         let Phase::Running(Running {
             ready: Some(ready), ..
         }) = &mut instance.phase
@@ -998,7 +1070,11 @@ impl Coordinator {
                 };
                 if let Ok(spans) = decoded {
                     let mut store = self.results.lock().unwrap();
-                    store.entry(key).or_default().semantic = Some((stamp, spans.into()));
+                    store
+                        .entry(key)
+                        .or_default()
+                        .semantic
+                        .insert(instance_id, (rank, stamp, spans.into()));
                     self.results_changed = true;
                 }
             }
@@ -1093,11 +1169,10 @@ impl Coordinator {
             .instances
             .iter()
             .map(|instance| InstanceInfo {
-                server: self
-                    .registry
-                    .server(instance.key.definition)
-                    .display_name
-                    .to_string(),
+                server: self.servers.get(&instance.key.server).map_or_else(
+                    || instance.key.server.to_string(),
+                    |definition| definition.display_name.to_string(),
+                ),
                 root: instance.key.root.clone(),
                 documents: instance.documents.len(),
                 command: std::iter::once(instance.key.launch.command.as_str())
@@ -1137,16 +1212,28 @@ impl Coordinator {
             })
             .collect();
         {
-            // Forget results of documents no server holds any more.
-            let held: std::collections::HashSet<String> = self
-                .instances
-                .iter()
-                .flat_map(|i| i.documents.iter().map(|d| uri::key(&d.uri)))
-                .collect();
+            // Forget what an instance said about documents it does not hold any
+            // more, and results of documents no server holds at all.
+            let mut held: HashMap<String, Vec<u64>> = HashMap::new();
+            for instance in &self.instances {
+                for document in &instance.documents {
+                    held.entry(uri::key(&document.uri))
+                        .or_default()
+                        .push(instance.id);
+                }
+            }
             let mut store = self.results.lock().unwrap();
-            let before = store.len();
-            store.retain(|key, _| held.contains(key));
-            self.results_changed |= store.len() != before;
+            let before: usize = store.values().map(Entry::parts).sum();
+            store.retain(|key, entry| {
+                let Some(holders) = held.get(key) else {
+                    return false;
+                };
+                entry.diagnostics.retain(|id, _| holders.contains(id));
+                entry.semantic.retain(|id, _| holders.contains(id));
+                !entry.is_empty()
+            });
+            let after: usize = store.values().map(Entry::parts).sum();
+            self.results_changed |= after != before;
         }
         if std::mem::take(&mut self.results_changed) {
             (self.on_change)();

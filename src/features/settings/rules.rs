@@ -12,6 +12,7 @@ use super::jsonc;
 use super::servers::LanguageServerSetting;
 use super::theme_id::ThemeId;
 use crate::domain::language::{AssociationSpec, Registry, validate_association};
+use crate::features::language_service::server_set::ServerSet;
 use crate::features::terminal::ShellKind;
 
 pub const FILE_NAME: &str = "settings.json";
@@ -264,12 +265,12 @@ fn valid_servers(value: Value, errors: &mut Vec<String>) -> Value {
     let Value::Array(items) = value else {
         return value;
     };
-    let registry = Registry::builtin();
+    let servers = ServerSet::builtin();
     let mut kept = Vec::new();
     for (index, item) in items.into_iter().enumerate() {
         let checked = serde_json::from_value::<LanguageServerSetting>(item.clone())
             .map_err(|error| error.to_string())
-            .and_then(|entry| entry.validate(registry));
+            .and_then(|entry| entry.validate(&servers));
         match checked {
             Ok(()) => kept.push(item),
             Err(error) => errors.push(format!("language_servers[{index}]: {error}")),

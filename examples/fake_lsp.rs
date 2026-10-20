@@ -240,7 +240,8 @@ fn main() {
                         "diagnostics": [{
                             "range": { "start": { "line": 0, "character": 0 },
                                        "end": { "line": 0, "character": 2 } },
-                            "severity": 1, "message": "fake error", "source": "fake"
+                            "severity": 1, "source": "fake",
+                            "message": options.value("--diag-message").unwrap_or("fake error")
                         }]
                     });
                     if !options.flag("--diag-unversioned") {
@@ -274,11 +275,15 @@ fn main() {
             }
             ("textDocument/semanticTokens/full", Some(id)) => {
                 std::thread::sleep(Duration::from_millis(options.number("--slow-ms")));
-                // The first two characters are a keyword.
+                // The first characters (two, or --semantic-length) are a keyword.
                 let result = if options.flag("--semantic-null") {
                     Value::Null
                 } else {
-                    json!({ "data": [0, 0, 2, 0, 0] })
+                    let length = match options.number("--semantic-length") {
+                        0 => 2,
+                        length => length,
+                    };
+                    json!({ "data": [0, 0, length, 0, 0] })
                 };
                 out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
             }

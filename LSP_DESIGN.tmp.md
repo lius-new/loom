@@ -617,7 +617,7 @@ P6a 的关键验收：
 | P4d 增量同步与 semantic delta | 并入第二代 | — | 增量同步在 P6a，delta 在 P6d |
 | P4e 通用文件监视 | 并入第二代 | — | P6d，漏报暴露时提前 |
 | P4f 完整进度 | 待验证 | R-L4 | 缺 Linux/macOS；丢失 `end` 的有界清理、任务取消 |
-| P6a 基础 | 未开始 | UI 勘查已完成（12.1） | 按 12.2 的顺序开始；验证 S1、S3 随 UI 基础做 |
+| P6a 基础 | 进行中 | UI 勘查已完成（12.1）；P6a-1 数据模型与多实例已实现（R-L6） | 下一步：服务器目录与安装器（P6a-2）、请求通道与增量同步；UI 基础按 12.2 的顺序，验证 S1、S3 随其做 |
 | P6b 只读导航 | 未开始 | — | 依赖 P6a |
 | P6c 编辑 | 未开始 | — | 依赖 P6a、P6b |
 | P6d 扩展 | 未开始 | — | 依赖 P6a |
@@ -638,7 +638,8 @@ P6a 的关键验收：
 
 第二代：
 
-- [ ] **P6a-1 至 P6a-10** 见第 10 节。
+- [x] **P6a-1** 多服务器：`ServerSet` 取代 `Registry` 里的服务器定义；同一语言的多个服务器各有实例；诊断按来源合并并独立清除；语义 token 取优先级最高者；一个崩溃不影响另一个（R-L6）。
+- [ ] **P6a-2 至 P6a-10** 见第 10 节。
 - [ ] **S1 至 S3** 小验证：`Popup` 渲染阶段的裁剪与命中测试；Markdown 解析方案；`UiTimer` 与悬停停留手感。结论记入 13.3。
 - [ ] **P6b-1** 悬停、定义族、文档高亮、引用、符号的假服务器与真实服务器用例。
 - [ ] **P6b-2** 统一悬停卡片：诊断与服务器内容同卡片，失效规则正确。
@@ -695,6 +696,16 @@ P6a 的关键验收：
 - 回归：假服务器 `--diag-defer-until-save`；先关闭再重开、同次更新更换 incarnation 的用例，修复前复现旧诊断被显示；缓存回归用例同样先失败后通过。
 - 验证：`cargo test --locked --offline --workspace --no-fail-fast` 通过（loom 947 项通过、30 项忽略，editor-core 单元 73 项与 host_contract 3 项，workspace-tests 63 项）；架构检查与 61 项自测、fmt、clippy 通过。环境：Windows x86_64，rustc/cargo 1.98.0。
 - 限制：没有 version 的诊断仍按既有策略关联当前文档；未运行真实 rust-analyzer smoke、Linux/macOS 或自监视验收。
+
+**R-L6 · 2026-10-20 · P6a-1 · 已完成（Windows）**
+
+- `ServerSet`（`features/language_service/server_set.rs`）：服务器定义由服务器声明自己服务的语言（`languages` 里的语言名、可选变体、该服务器自己的 `language_id`）和 `priority`；按优先级降序、再按名称排序；变体绑定优先于整个语言的绑定；绑定到未知语言的条目被忽略而不报错；名称、根规则、初始化选项、绑定逐项校验，未知字段报错。协议核心目录只依赖 `serde_json`，所以解析是手写的严格解析（门禁 `src/features/language_service/` 的依赖约束未改）。内置数据在 `builtin_servers.json`，目前只有 rust-analyzer。
+- 领域层剥离：`Registry` 删除服务器定义、`ServerBinding`、`ServerDefinitionId`、`from_parts`、`server_for` 等；`LanguageVariant.server` 与语言描述里的服务器字段删除；`language_defaults.json` 不再含服务器；包清单里的旧 `servers` 字段仍可读取但被忽略。
+- 实例分配（`plan.rs`）：`assign` 返回有序的分配列表，每个服务器各自解析根目录；实例键为 `(服务器名, 根目录, 启动参数)`。
+- 协调器（`manager.rs`）：一个文档对应多个实例；结果按实例保存（`Entry` 的诊断与语义 token 以实例为键），读取时合并诊断（按文本位置排序，相同位置保持服务器顺序），语义 token 取列表序最靠前且戳匹配者；实例失败、文档离开或服务器被关闭时只清除该实例的结果；状态栏为语言绑定的每个服务器各显示一条。
+- 测试：`server_set` 8 项（排序、变体优先、变体专属绑定、多服务器与多语言、未知语言、定义数据、内置 rust-analyzer、校验）；`plan` 新增两服务器的根目录与语言 id 用例；`manager_tests` 新增 4 项进程级用例（双服务器各自 `didOpen` 且 `languageId` 不同、诊断合并与单独清除、一个崩溃另一个正常、语义 token 的优先与回退）；假服务器新增 `--diag-message`、`--semantic-length`。`cargo test --locked --offline --workspace`：loom 941 项通过、21 项忽略，editor-core 73 项、host_contract 3 项、workspace-tests 59 项；架构门禁与 67 项自测、`cargo fmt --check` 通过。
+- 已知：CI 同参数的 clippy 在本机（rustc 1.98，CI 固定 1.97.1）报 `language_catalog_tests.rs:245` 的 `clone` 提示，该文件本次未改，在改动前的基线上同样出现；本次引入的 clippy 问题已修。
+- 未做（属 P6a 其余项）：用户注册服务器与设置新格式、服务器目录与安装、请求通道；设置里 `language_servers` 仍是数组且 `server` 必须引用内置定义；语言级服务器排序设置；诊断的来源标注显示。
 
 | 日期 | 变更记录 | 实施影响 |
 | --- | --- | --- |

@@ -4,7 +4,7 @@
 //! and what to do when none is found). Looking at the disk is a closure the caller
 //! supplies, so the rule is testable and the caller decides which thread does the
 //! reading.
-use crate::domain::language::{RootFallback, RootPolicy, RootStrategy};
+use super::server_set::{RootFallback, RootPolicy, RootStrategy};
 use std::path::{Path, PathBuf};
 
 /// The project root for `file`, or `None` when the definition says such files get

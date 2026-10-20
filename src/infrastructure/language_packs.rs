@@ -57,7 +57,10 @@ struct Manifest {
     #[serde(default = "enabled")]
     enabled: bool,
     languages: Vec<Value>,
+    /// Older packages may still list servers. They are read and ignored: servers
+    /// are defined by the language service, not by language packages.
     #[serde(default)]
+    #[allow(dead_code)]
     servers: Vec<Value>,
     grammars: BTreeMap<String, Module>,
 }
@@ -125,7 +128,6 @@ struct Installed {
 
 fn registry(packages: &BTreeMap<String, Installed>) -> Result<Registry, String> {
     let mut languages = BTreeMap::from([("plaintext".to_owned(), PLAIN.to_owned())]);
-    let mut servers = BTreeMap::new();
     let mut grammars = BTreeSet::new();
     for package in packages.values() {
         for grammar in package.manifest.grammars.keys() {
@@ -133,34 +135,28 @@ fn registry(packages: &BTreeMap<String, Installed>) -> Result<Registry, String> 
                 return Err(format!("grammar {grammar} is defined by multiple packages"));
             }
         }
-        for (values, target) in [
-            (&package.manifest.languages, &mut languages),
-            (&package.manifest.servers, &mut servers),
-        ] {
-            for value in values {
-                let key = value
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "package descriptor has no name".to_owned())?;
-                if target.insert(key.to_owned(), value.to_string()).is_some() {
-                    return Err(format!("descriptor {key} is defined by multiple packages"));
-                }
+        for value in &package.manifest.languages {
+            let key = value
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "package descriptor has no name".to_owned())?;
+            if languages
+                .insert(key.to_owned(), value.to_string())
+                .is_some()
+            {
+                return Err(format!("descriptor {key} is defined by multiple packages"));
             }
         }
     }
-    if grammars.len() > 128 || languages.len() > 129 || servers.len() > 64 {
+    if grammars.len() > 128 || languages.len() > 129 {
         return Err("too many installed language descriptors".into());
     }
     let sources: Vec<_> = languages
         .iter()
         .map(|(n, j)| (n.as_str(), j.as_str()))
         .collect();
-    let servers: Vec<_> = servers
-        .iter()
-        .map(|(n, j)| (n.as_str(), j.as_str()))
-        .collect();
     let grammars: Vec<_> = grammars.into_iter().collect();
-    Registry::from_parts(&sources, &grammars, &servers).map_err(|e| e.to_string())
+    Registry::from_sources(&sources, &grammars).map_err(|e| e.to_string())
 }
 
 impl Manifest {

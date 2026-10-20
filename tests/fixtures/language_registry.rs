@@ -7,10 +7,7 @@ pub(crate) static LANGUAGE_FILES: &[(&str,&str)] = &[
     ("json", r#"{"name":"json","display_name":"JSON","badge":"JSON","aliases":["jsonc"],"comments":{"line":"//","block":["/*","*/"]},"variants":[{"id":"json","grammar":"json"}],"files":[{"extensions":["json","jsonc","geojson","webmanifest"],"variant":"json"}]}"#),
     ("markdown", r#"{"name":"markdown","display_name":"Markdown","badge":"MD","aliases":["md"],"comments":{"block":["<!--","-->"]},"variants":[{"id":"markdown","grammar":"markdown"}],"files":[{"extensions":["md","markdown","mdown","mkd"],"variant":"markdown"}]}"#),
     ("plaintext", r#"{"name":"plaintext","display_name":"Plain Text","badge":"TXT","variants":[{"id":"plaintext"}]}"#),
-    ("rust", r#"{"name":"rust","display_name":"Rust","badge":"RS","aliases":["rs"],"comments":{"line":"//","block":["/*","*/"]},"variants":[{"id":"rust","grammar":"rust","server":{"definition":"rust-analyzer","language_id":"rust"}}],"files":[{"extensions":["rs"],"variant":"rust"}]}"#),
+    ("rust", r#"{"name":"rust","display_name":"Rust","badge":"RS","aliases":["rs"],"comments":{"line":"//","block":["/*","*/"]},"variants":[{"id":"rust","grammar":"rust"}],"files":[{"extensions":["rs"],"variant":"rust"}]}"#),
     ("typescript", r#"{"name":"typescript","display_name":"TypeScript","badge":"TS","aliases":["ts"],"comments":{"line":"//","block":["/*","*/"]},"variants":[{"id":"typescript","grammar":"typescript"},{"id":"tsx","grammar":"tsx"}],"files":[{"extensions":["ts","mts","cts"],"variant":"typescript"},{"extensions":["tsx"],"variant":"tsx"}]}"#),
-];
-pub(crate) static SERVER_FILES: &[(&str,&str)] = &[
-    ("rust-analyzer", r#"{"name":"rust-analyzer","display_name":"rust-analyzer","command":"rust-analyzer","args":[],"root":{"markers":["Cargo.toml","rust-project.json"],"strategy":"outermost","fallback":"file_directory"}}"#),
 ];
 pub(crate) static GRAMMAR_NAMES: &[&str] = &["c_sharp","css","html","javascript","json","markdown","markdown_inline","rust","tsx","typescript"];

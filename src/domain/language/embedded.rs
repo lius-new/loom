@@ -11,8 +11,6 @@ static LANGUAGE_FILES: &[(&str, &str)] = &[(
     r#"{"name":"plaintext","display_name":"Plain Text","badge":"TXT","variants":[{"id":"plaintext"}]}"#,
 )];
 #[cfg(not(test))]
-static SERVER_FILES: &[(&str, &str)] = &[];
-#[cfg(not(test))]
 static GRAMMAR_NAMES: &[&str] = &[];
 
 /// The registry for the embedded descriptions and grammar directories.
@@ -21,16 +19,11 @@ pub(crate) fn registry() -> Result<Registry, RegistryError> {
         .iter()
         .map(|(name, contents)| (*name, *contents))
         .collect();
-    let servers: Vec<(&str, &str)> = SERVER_FILES
-        .iter()
-        .map(|(name, contents)| (*name, *contents))
-        .collect();
-    Registry::from_parts(&sources, GRAMMAR_NAMES, &servers)
+    Registry::from_sources(&sources, GRAMMAR_NAMES)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::language::descriptor::{RootFallback as Fallback, RootStrategy as Strategy};
     use crate::domain::language::embedded::*;
     use std::path::Path;
 
@@ -76,21 +69,5 @@ mod tests {
             registry.language_by_name("ts"),
             registry.language_by_name("typescript")
         );
-    }
-    #[test]
-    fn rust_is_served_by_rust_analyzer_and_its_root_policy_is_data() {
-        let registry = Registry::builtin();
-        let rust = registry.default_resolved(registry.language_by_name("rust").unwrap());
-        let (server, language_id) = registry.server_for(rust).expect("rust has a server");
-        assert_eq!((&*server.name, language_id), ("rust-analyzer", "rust"));
-        assert_eq!(&*server.command, "rust-analyzer");
-        let markers: Vec<_> = server.root.markers.iter().map(|m| &**m).collect();
-        assert_eq!(markers, ["Cargo.toml", "rust-project.json"]);
-        assert_eq!(server.root.strategy, Strategy::Outermost);
-        assert_eq!(server.root.fallback, Fallback::FileDirectory);
-        for other in ["plaintext", "csharp", "javascript", "typescript"] {
-            let resolved = registry.default_resolved(registry.language_by_name(other).unwrap());
-            assert!(registry.server_for(resolved).is_none(), "{other}");
-        }
     }
 }

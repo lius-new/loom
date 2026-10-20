@@ -170,24 +170,12 @@ pub(super) fn from_json(root: &Path, json: &str) -> Result<Installed, String> {
         }
     }
     let languages: Vec<Value> = languages.into_values().collect();
-    let used: BTreeSet<_> = languages
-        .iter()
-        .flat_map(|d| d["variants"].as_array().unwrap())
-        .filter_map(|v| v["server"]["definition"].as_str())
-        .collect();
-    let servers = defaults["servers"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|s| used.contains(s["name"].as_str().unwrap()))
-        .cloned()
-        .collect();
     let manifest = Manifest {
         schema: 1,
         id: id.clone(),
         enabled: true,
         languages,
-        servers,
+        servers: Vec::new(),
         grammars: grammars
             .keys()
             .map(|name| {
