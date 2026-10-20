@@ -70,6 +70,8 @@ pub(crate) struct ViewState {
     pub signature: Option<(usize, crate::ui::editor::signature::View)>,
     /// Other occurrences of the symbol under the caret.
     pub symbol_highlights: Arc<[Range<usize>]>,
+    /// Hints the servers want shown inside lines, sorted by offset.
+    pub inlay_hints: Arc<[crate::ui::editor::hints::Hint]>,
 }
 
 /// A server hover text, anchored to the text it describes.

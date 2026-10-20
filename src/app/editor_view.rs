@@ -202,6 +202,7 @@ pub(crate) fn snapshot(
         popup: None,
         signature: None,
         symbol_highlights: Arc::from(Vec::new()),
+        inlay_hints: Arc::from(Vec::new()),
     }
 }
 
@@ -235,6 +236,12 @@ pub(crate) fn binding(
                 let app = reader.get();
                 view.popup = super::language_ui::popup_view(&app, pane, &document.stamp);
                 view.signature = super::language_ui::signature_view(&app, pane);
+                view.inlay_hints = app
+                    .editor
+                    .language
+                    .inlay
+                    .for_view(pane, &document.stamp)
+                    .unwrap_or_else(|| Arc::from(Vec::new()));
                 view.symbol_highlights = app
                     .editor
                     .language

@@ -2545,3 +2545,75 @@ fn the_problems_of_the_open_files_are_listed_with_the_worst_first() {
     h.act(Action::MenuConfirm);
     h.until("the jump", |h| h.selection() == Some(0..2));
 }
+
+#[test]
+fn a_hint_moves_what_follows_it_and_clicks_still_find_the_source_character() {
+    let context = lgui::application::ApplicationContext::empty(Default::default());
+    let _fonts = lgui::backend::install_text_environment(
+        &context,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    fonts::set(&fonts::FontSettings::EDITOR, &fonts::FontSettings::TERMINAL);
+    let plain = layout_line_at_column("abcd", 0.0, 0.0, 800.0, 0).unwrap();
+    let hinted =
+        crate::ui::editor::view::layout_line_hinted("abcd", &[(2, "XXX")], 0.0, 0.0, 800.0, 0)
+            .unwrap();
+    let width = fonts::editor().char_w;
+    let x = |layout: &crate::ui::editor::view::LineLayout, i| caret_x(Some(layout), i).unwrap();
+    // Before the hint nothing moves; from the character it belongs to on, it
+    // moves by the hint's width.
+    for i in 0..2 {
+        assert!((x(&hinted, i) - x(&plain, i)).abs() < 0.5, "{i}");
+    }
+    for i in 2..=4 {
+        assert!(
+            (x(&hinted, i) - x(&plain, i) - 3.0 * width).abs() < 1.0,
+            "{i}"
+        );
+    }
+    // The hint's own place is between 'b' and 'c'.
+    let hint_x = hinted.hint_x(0).unwrap();
+    assert!((hint_x - x(&plain, 2)).abs() < 1.0);
+    // A click on the hint lands next to it, on a character boundary of the source.
+    let on_hint = crate::ui::editor::view::hit_column(&hinted, hint_x + width, 5.0);
+    assert!(on_hint == 1 || on_hint == 2, "{on_hint}");
+    // A click on the characters after it finds them where they now are.
+    assert_eq!(
+        crate::ui::editor::view::hit_column(&hinted, x(&hinted, 3) + 0.01, 5.0),
+        3
+    );
+}
+
+#[test]
+fn inlay_hints_are_requested_after_the_text_settles_and_shown_inside_the_line() {
+    let mut h = LanguageHarness::configured("let x = 1;\n", &["--features", "inlay"], |app| {
+        app.preferences.values_mut().lsp.inlay_hints = true
+    });
+    h.until_ready();
+    h.until("the hints", |h| {
+        h.state
+            .get()
+            .editor
+            .language
+            .inlay
+            .shown
+            .as_ref()
+            .is_some_and(|shown| !shown.hints.is_empty())
+    });
+    h.render();
+    assert!(h.has_text(": i32"));
+    // Typing makes the old hints stale at once.
+    h.type_text("y");
+    h.render();
+    assert!(!h.has_text(": i32"));
+}
+
+#[test]
+fn hints_are_off_unless_asked_for() {
+    let mut h = LanguageHarness::new("let x = 1;\n", &["--features", "inlay"]);
+    h.until_ready();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    h.render();
+    assert!(h.state.get().editor.language.inlay.shown.is_none());
+    assert!(!h.has_text(": i32"));
+}

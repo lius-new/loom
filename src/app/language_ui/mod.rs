@@ -8,6 +8,7 @@ pub(crate) mod edit;
 pub(crate) mod expand;
 pub(crate) mod highlight;
 pub(crate) mod hover;
+pub(crate) mod inlay;
 pub(crate) mod keys;
 pub(crate) mod lists;
 pub(crate) mod navigate;
@@ -38,6 +39,7 @@ pub struct LanguageUi {
     pub signature: Option<signature::Session>,
     pub signature_timer: Option<Arc<crate::app::ui_timer::Timer>>,
     pub highlights: highlight::Highlights,
+    pub inlay: inlay::Inlay,
     pub expansion: expand::Expansion,
     /// A hierarchy or code lens request in flight.
     pub lists: Option<lists::Pending>,
@@ -131,6 +133,7 @@ pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
     signature::observe(ctx, app, typed);
     snippet_session::observe(app);
     highlight::observe(ctx, app);
+    inlay::observe(ctx, app);
 }
 
 /// Ends what Escape ends: the hover card, the signature, a grown selection.
@@ -336,6 +339,7 @@ pub(crate) fn tick(state: &AppContext) {
         completion::tick(app);
         signature::tick(app);
         highlight::tick(app);
+        inlay::tick(app);
         expand::tick(app);
         effects = actions::tick(app);
         changes = refactor::tick(app);

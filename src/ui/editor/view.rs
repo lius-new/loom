@@ -122,6 +122,7 @@ pub(crate) fn render(
         let has_vertical = metrics.max_y > 0.0;
         let has_horizontal = metrics.max_x > 0.0;
 
+        super::hints::publish(document.buffer.snapshot_identity(), &s.inlay_hints);
         let st_pointer = state.clone();
         let pointer_focus = editor_focus.clone();
         root = root.on_pointer_down_with_button(move |cx, pointer, button| {
@@ -281,7 +282,15 @@ pub(crate) fn render(
             let line = &buffer.text()[window.clone()];
             let initial_column = buffer.display_column(window.start);
             let line_left = code_left + initial_column as f32 * fonts::editor().char_w;
-            let layout = layout_line_at_column(line, line_left, y, layout_right, initial_column);
+            let line_hints = super::hints::in_window(&s.inlay_hints, buffer.text(), window.clone());
+            let layout = layout_line_hinted(
+                line,
+                &line_hints,
+                line_left,
+                y,
+                layout_right,
+                initial_column,
+            );
             let (start, end) = (window.start, window.end);
             let next = buffer.line_range_with_break(line_index).end;
             // The part of `range` on this line, as a highlight rectangle.
@@ -341,16 +350,31 @@ pub(crate) fn render(
                     code = code.child(panel(r, VisualStyle::filled(theme::c().accent).alpha(55)));
                 }
             }
-            let mut x = line_left;
+            // Hints are drawn in the room the layout left for them.
+            for (n, (_, hint)) in line_hints.iter().enumerate() {
+                if let Some(hint_x) = layout.as_ref().and_then(|l| l.hint_x(n)) {
+                    let width = hint.chars().count() as f32 * fonts::editor().char_w;
+                    code = code.child(text(
+                        UiRect::new(hint_x, y, hint_x + width + 4.0, y + fonts::editor().line_h),
+                        (*hint).to_owned(),
+                        fonts::editor().style(theme::c().text_faint),
+                    ));
+                }
+            }
+            let mut x = caret_x(layout.as_ref(), 0).unwrap_or(line_left);
             let mut char_offset = 0;
             let mut display_column = initial_column;
-            let spans = syntax::highlight_window(
-                &buffer,
-                window.clone(),
-                ready
-                    .iter()
-                    .find(|tokens| tokens.range == window)
-                    .map(|tokens| tokens.spans.as_ref()),
+            let hint_positions: Vec<usize> = line_hints.iter().map(|(at, _)| *at).collect();
+            let spans = super::hints::split_spans(
+                syntax::highlight_window(
+                    &buffer,
+                    window.clone(),
+                    ready
+                        .iter()
+                        .find(|tokens| tokens.range == window)
+                        .map(|tokens| tokens.spans.as_ref()),
+                ),
+                &hint_positions,
             );
             for (span, color) in spans {
                 char_offset += span.chars().count();
@@ -1282,7 +1306,19 @@ pub(crate) fn document_caret(
     }
     let initial = buffer.display_column(range.start);
     let origin = left + initial as f32 * fonts::editor().char_w;
-    let layout = layout_line_at_column(&buffer.text()[range.clone()], origin, top, right, initial);
+    let drawn = super::hints::drawn(buffer.snapshot_identity());
+    let line_hints = drawn
+        .as_ref()
+        .map(|hints| super::hints::in_window(hints, buffer.text(), range.clone()))
+        .unwrap_or_default();
+    let layout = layout_line_hinted(
+        &buffer.text()[range.clone()],
+        &line_hints,
+        origin,
+        top,
+        right,
+        initial,
+    );
     caret_x(
         layout.as_ref(),
         buffer.text()[range.start..offset].chars().count(),
@@ -1379,6 +1415,18 @@ pub(crate) struct LineLayout {
     pub(crate) source_to_display: std::sync::Arc<[usize]>,
     pub(crate) width: f32,
     origin: (f32, f32),
+    /// Where inlay hints sit in the layout: display index and length.
+    pub(crate) hints: std::sync::Arc<[(usize, usize)]>,
+}
+
+impl LineLayout {
+    /// The x position where the `n`th hint of the line starts.
+    pub(crate) fn hint_x(&self, n: usize) -> Option<f32> {
+        let (start, _) = *self.hints.get(n)?;
+        self.layout
+            .caret_rect(start)
+            .map(|rect| rect.left + self.origin.0)
+    }
 }
 
 type LayoutKey = (u32, usize, u32, usize);
@@ -1477,9 +1525,35 @@ pub(crate) fn layout_line_at_column(
     line: &str,
     left: f32,
     top: f32,
+    right: f32,
+    column: usize,
+) -> Option<LineLayout> {
+    layout_line_hinted(line, &[], left, top, right, column)
+}
+
+/// Like `layout_line_at_column`, with inlay hints (character index in `line`, text)
+/// laid out in the line: what follows each hint moves right by its width.
+pub(crate) fn layout_line_hinted(
+    line: &str,
+    hints: &[(usize, &str)],
+    left: f32,
+    top: f32,
     _right: f32,
     column: usize,
 ) -> Option<LineLayout> {
+    let decorated = (!hints.is_empty()).then(|| super::hints::decorate(line, hints));
+    // A line with hints is a different line: the cache tells them apart.
+    let cache_text: std::borrow::Cow<str> = match &decorated {
+        None => std::borrow::Cow::Borrowed(line),
+        Some(made) => {
+            let signature: String = hints
+                .iter()
+                .map(|(at, text)| format!("{at}:{};", text.chars().count()))
+                .collect();
+            std::borrow::Cow::Owned(format!("\u{1}{signature}\u{1}{}", made.text))
+        }
+    };
+    let line = cache_text.as_ref();
     let font = fonts::editor();
     let key = (
         font.size.to_bits(),
@@ -1509,7 +1583,22 @@ pub(crate) fn layout_line_at_column(
         layout.origin = (left, top);
         return Some(layout);
     }
-    let (display, source_to_display, _) = expand_tabs(line, column);
+    let (display, source_to_display, hint_ranges) = match &decorated {
+        None => {
+            let (display, mapping, _) = expand_tabs(line, column);
+            (display, mapping, Vec::new())
+        }
+        Some(made) => {
+            let (display, mapping, _) = expand_tabs(&made.text, column);
+            let source: Vec<usize> = made.positions.iter().map(|at| mapping[*at]).collect();
+            let ranges = made
+                .hints
+                .iter()
+                .map(|(start, length)| (mapping[*start], mapping[start + length] - mapping[*start]))
+                .collect();
+            (display, source, ranges)
+        }
+    };
     let bounds = UiRect::new(0.0, 0.0, 16_777_216.0, fonts::editor().line_h);
     let mut request = TextLayoutRequest::single_line(&display, bounds, fonts::editor().size, 400);
     request.font_families = fonts::editor().families;
@@ -1518,6 +1607,7 @@ pub(crate) fn layout_line_at_column(
         layout: std::sync::Arc::new(layout),
         source_to_display: source_to_display.into(),
         origin: (0.0, 0.0),
+        hints: hint_ranges.into(),
     });
     if line.len() <= 8192
         && let Some(layout) = &layout
@@ -1610,8 +1700,14 @@ pub(crate) fn cursor_offset_from_point(
     let line_text = &buffer.text()[range.clone()];
     let content_y = point_y + scroll_y;
     let line_top = rect.top + line as f32 * fonts::editor().line_h;
-    let char_index = layout_line_at_column(
+    let drawn = super::hints::drawn(buffer.snapshot_identity());
+    let line_hints = drawn
+        .as_ref()
+        .map(|hints| super::hints::in_window(hints, buffer.text(), range.clone()))
+        .unwrap_or_default();
+    let char_index = layout_line_hinted(
         line_text,
+        &line_hints,
         left,
         line_top,
         code_left + metrics.content_w,
