@@ -114,9 +114,9 @@ flowchart TD
 - 用户注册的路径不存在或不可执行时，实例状态为 `unavailable`，面板显示路径与原因。
 - 说明：这只约束 Loom **如何找到服务器**。服务器进程继承用户环境（含 PATH），因为服务器自己可能调用 cargo、go 等工具链。
 
-### 4.3 内置服务器目录
+### 4.3 服务器目录
 
-格式与 `language-packs.toml` 同构，按平台给出归档：
+目录是**生成物**（4.6），格式与 `language-packs.toml` 同构，分成**包**（可安装的归档，按平台给出）和**服务器**（怎么启动包里的东西）两张表，多个服务器可以共享一个包：
 
 ```toml
 schema = 1
@@ -124,36 +124,50 @@ schema = 1
 [distribution]
 repository = "lius-new/loom"
 
-[servers.rust-analyzer]
-name = "rust-analyzer"
-version = "2026-10-12"
-license = "MIT OR Apache-2.0"
-languages = [{ language = "rust", language_id = "rust" }]
-command = "${pack}/rust-analyzer"       # Windows 由加载器补 .exe
-args = []
-priority = 100
-root = { markers = ["Cargo.toml", "rust-project.json"], strategy = "outermost", fallback = "file_directory" }
+[packs.pyright]
+version = "1.1.414"
+license = "MIT"
+requires = ["node@22"]
 
-[servers.rust-analyzer.platforms.windows-x86_64]
-asset = "rust-analyzer-windows-x86_64.tar.gz"
+[packs.pyright.platforms.any]
+asset = "pyright-any.tar.gz"
 release = "lsp-servers-2026.10.21.1"
 sha256 = "…"
 size = 12345678
+
+[servers.pyright]
+name = "Pyright"
+pack = "pyright"
+command = "${runtime.node}/node"
+args = ["${pack}/node_modules/pyright/langserver.index.js", "--stdio"]
+priority = 10
+
+[servers.pyright.root]
+markers = ["pyrightconfig.json", "pyproject.toml"]
+strategy = "nearest"
+fallback = "workspace"
+
+[[servers.pyright.languages]]
+language = "python"
+language_id = "python"
 ```
 
-规则：
+规则（流水线生成时与应用读取时各校验一遍）：
 
-- 平台键为 `<os>-<arch>`，os 取 `windows`、`macos`、`linux`，arch 取 `x86_64`、`aarch64`。当前平台没有条目时状态为 `unavailable`，面板写明原因。
-- 目录里的 `languages` 引用语言规范名。该语言既不在已装语法包也不在语法 catalog 中时，忽略此绑定并记录一次，不当作错误。
-- 可选字段：`runtime`（见 4.4）、`initialization_options`、`settings`（`workspace/configuration` 的默认值）、`env`。
-- 归档根目录为 `<id>/`，必须含 `LICENSE` 与 `PROVENANCE.md`。解包沿用语法包的安全规则（拒绝穿越、链接、特殊文件、重复路径、超限）。
-- 服务器归档的大小上限与解包上限单独配置，不沿用语法包的 64 MiB 与 128 MiB（clangd 等会超过）。具体值按首批实测定。
+- 平台键为 `<os>-<arch>`（os 取 `windows`、`macos`、`linux`，arch 取 `x86_64`、`aarch64`），或 `any`；`any` 与具体平台互斥。当前平台没有条目时状态为 `unavailable`，面板写明原因。
+- 归档名是 `<包>-<平台>.tar.gz`，发布标签以 `lsp-servers-` 开头，单个归档上限 256 MiB。
+- **命令必须以 `${pack}/` 或所需包的 `${runtime.<id>}/` 开头**，裸命令名与绝对路径都被拒绝，目录里不存在“靠 PATH 找程序”的条目。
+- `requires` 写成 `id@主版本`，必须由目录里的另一个包提供。服务器引用的包必须存在。
+- 目录里的 `languages` 引用语言规范名。该语言既不在已装语法包也不在语法 catalog 中时，忽略此绑定，不当作错误。
+- 归档根目录为 `<包>/`，含 `licenses/` 与 `PROVENANCE.md`。解包沿用语法包的安全规则（拒绝穿越、链接、特殊文件、重复路径、超限）。
+- 应用目前只读取服务器部分（R-L7、R-L8）；包的下载、校验、解包、`${pack}` 与 `${runtime.*}` 的展开属于安装器，尚未实现。在此之前，命令里还带占位符的服务器显示为“未安装”，不会被启动。
+- 设计里的可选字段 `settings`、`env` 尚未加入目录格式。
 
 ### 4.4 运行时包与 Node 系服务器
 
-- **运行时包**是目录里的另一类条目 `[runtimes.node]`：归档含官方 Node 二进制与许可证。Loom 的发布流水线校验上游 SHASUMS 后重新打包。每个运行时 ID 固定一个 LTS 大版本，随应用发布升级。
-- **Node 系服务器包**包含服务器代码及其 `node_modules`，由流水线在发布时按锁定版本离线打包，**用户机器上不会运行 npm**。条目声明 `runtime = "node@22"`，`command = "${runtime.node}/node"`，`args = ["${pack}/server.js", "--stdio"]`。
-- 多个服务器共享同一运行时包，按版本去重。安装 Node 系服务器时若运行时缺失，一并入队，提示里合计大小。
+- **运行时包**就是目录里的普通包 `node`：归档只放官方 Node 可执行文件（根目录的 `node` 或 `node.exe`）和许可证，不含 npm。流水线用 nodejs.org 公布的 `SHASUMS256.txt` 固定每个平台的归档。每个运行时固定一个 LTS 大版本，随应用发布升级。
+- **Node 系服务器包**（`npm` 类）含服务器代码及其 `node_modules`，由流水线按锁文件在 CI 里用 `npm ci --ignore-scripts` 打包，**用户机器上不会运行 npm**，只构建一次（平台 `any`）。包声明 `requires = ["node@22"]`，服务器的命令是 `${runtime.node}/node`，参数是 `${pack}/node_modules/…`。
+- 多个服务器共享同一个包（例如 vscode-langservers-extracted 的四个服务器），也共享同一个运行时包，按版本去重。安装 Node 系服务器时若运行时缺失，一并入队，提示里合计大小。
 - 用户注册的服务器可以写 `runtime = "node@22"` 并在 `command` 中使用 `${runtime.node}`，即复用 Loom 管理的 Node；`${pack}` 对用户注册服务器不可用。
 - Node 系服务器与原生二进制的信任依据相同：固定哈希、来源是 Loom 的 release、目录随应用签名发布。
 
@@ -182,39 +196,49 @@ NotInstalled → Prompted → Queued → Downloading → Verifying → Ready
 
 服务器身份（名字、语言、命令模板）在启动时就进入 `ServerSet`，安装只改变可用性，所以不依赖 `Registry` 的不可变性。
 
-### 4.6 发布流水线
+### 4.6 发布流水线（已实现，待 GitHub 首次运行验证）
 
-新增 `.github/workflows/lsp-servers.yml` 和 `scripts/lsp-servers/`，结构仿 `scripts/language-packs`：
+`scripts/lsp-servers/` 与 `.github/workflows/lsp-servers.yml`，结构仿语法包流水线并复用其下载、归档与发布助手；说明见 `scripts/lsp-servers/README.md`。
 
-0. `scripts/lsp-servers/` 是服务器目标的唯一维护位置，目标的启动命令模板、服务的语言、根目录规则、初始化选项等定义都写在这里（不在应用源码里）；目录文件 `assets/lsp-servers/lsp-servers.toml` 由流水线从已发布并验证的归档生成，和 `assets/language-packs/language-packs.toml` 一样不手改。
-1. `build.toml` 声明上游来源与版本。
-2. 下载并校验上游自己的校验和（二进制）或锁定 lockfile（Node 包，离线打包，lockfile 附进 `PROVENANCE.md` 作为依赖清单）。
-3. 重新打包，写入 `LICENSE` 与 `PROVENANCE.md`。
-4. 发布到 Loom 的 release，把 SHA-256 写回目录，并有与语言包相同的目录同步测试和同步回工作流分支的机制。
-5. 更新 `THIRD_PARTY_NOTICES.md`。
+- `build.toml`：服务器目标的唯一维护位置。包有三种：`archive`（上游归档，格式 zip、tar.gz、tar.xz、gz、raw）、`npm`（精确版本加锁文件）、`go`（固定版本的模块与固定的 Go 工具链）。服务器的命令模板、服务的语言、根目录规则、初始化选项都写在这里，不在应用源码里。
+- `pins.toml`（`pin.mjs` 生成）：每个上游归档与许可证文件的 SHA-256 与大小，优先取发布方公布的校验和，没有才下载计算。未固定的下载不会发生。`npm/<包>/` 的 `package-lock.json` 以完整性哈希锁定每个依赖，安装使用 `npm ci --ignore-scripts`。
+- `check.mjs`：离线检查配方、固定与锁文件一致；`pipeline.test.mjs`：用假归档和假发布端测试解包、组装、目录生成与发布，不联网。`fixtures/catalog.toml` 是流水线为生产配方生成的目录，应用的目录读取器在自己的测试里读取它，两边共用同一份格式约定。
+- `build.mjs`：每个包与平台生成 `<包>-<平台>.tar.gz`（根目录 `<包>/`，含 `licenses/` 与 `PROVENANCE.md`）、`SHA256SUMS` 与 `build-report.json`；归档顺序与时间戳固定，可复现。只有每个平台都构建成功的批次才算完整，局部构建不能进入发布。
+- `validate.mjs`：在 Linux、Windows、macOS 三种 runner 上解包本平台的包，展开占位符，真正启动每个服务器并完成 LSP `initialize`/`shutdown`。
+- `publish.mjs`：`prepare` 由配方与构建报告生成候选目录，`verify` 核对每个归档，`publish` 创建草稿、上传、在服务端核对、发布，确认公开后才把目录提升到 `assets/lsp-servers/lsp-servers.toml`，由工作流提交回分支。同一标签下已有的资产永不覆盖；内容变了就必须换标签。标签以 `lsp-servers-` 开头，不标为 latest。
+- 工作流手动触发，默认只构建与验证；`publish` 只能在分支上选，并复用语法包的“提交并推送目录”步骤（同一套同步测试）。
 
-升级只随应用发布；应用不轮询新版本，也不升级已安装的服务器。
+升级只随应用发布；应用不轮询新版本，也不升级已安装的服务器。第三方许可证与来源列在 `THIRD_PARTY_NOTICES.md`。
 
-### 4.7 首批服务器（候选）
+### 4.7 已落配方的服务器
 
-名单是常见选择，二进制可得性、许可证、体积需逐个核对后才能定稿。
+配方在 `scripts/lsp-servers/build.toml`，共 15 个包、17 个服务器，覆盖第一代设计列出的全部名单。版本是 2026-10-20 当天各上游的最新稳定版，哈希与锁文件已固定。
 
-| 语言 | 服务器 | 类型 |
-| --- | --- | --- |
-| Rust | rust-analyzer | 原生 |
-| C / C++ / Objective-C | clangd | 原生 |
-| Go | gopls | 原生（完整分析需要用户机器有 Go 工具链） |
-| Zig | zls | 原生 |
-| TOML | taplo | 原生 |
-| Markdown | marksman | 原生 |
-| Lua | lua-language-server | 原生 |
-| Python | ruff、pyright | 原生、Node（多服务器示例） |
-| TypeScript / JavaScript | typescript-language-server、biome | Node、原生（多服务器示例） |
-| HTML / CSS / JSON / ESLint | vscode-langservers-extracted | Node |
-| YAML | yaml-language-server | Node |
-| Bash | bash-language-server | Node |
+| 语言 | 服务器（包） | 类型与版本 | 平台 |
+| --- | --- | --- | --- |
+| Rust | rust-analyzer | 上游归档，2026-10-19 | 六个 |
+| C / C++ / Objective-C | clangd | 上游归档，23.1.0 | windows-x86_64、macos 两个、linux-x86_64 |
+| Go | gopls | 从源码按平台交叉编译，v0.24.0，Go 1.27.0 | 六个 |
+| Zig | zls | 上游归档，0.17.0 | 六个 |
+| TOML | taplo | 上游归档，0.10.0 | 六个 |
+| Markdown | marksman | 上游单文件，2026-02-08 | 除 windows-aarch64 |
+| Lua | lua-language-server | 上游归档，3.19.2 | 除 windows-aarch64 |
+| Python | ruff | 上游归档，0.17.1 | 六个 |
+| Python | pyright | npm，1.1.414 | any |
+| JS / TS / JSON / CSS | biome | 上游单文件，2.5.15 | 六个 |
+| JS / TS | typescript-language-server（含 typescript 5.9.3） | npm，6.0.2 | any |
+| HTML / CSS / SCSS / JSON / ESLint | vscode-langservers-extracted（四个服务器共用一个包） | npm，4.10.0 | any |
+| YAML | yaml-language-server | npm，2.0.0 | any |
+| Bash | bash-language-server | npm，5.8.1 | any |
+| （运行时） | node | 上游归档，22.23.3 | 六个 |
 
-P6a 落地 rust-analyzer、typescript-language-server、biome、ruff、pyright，用来验证协议、多服务器路由、Node 运行时与安装流程；其余按需增加，加入时不需要改核心代码。
+说明：
+
+- 没有某平台归档的包在该平台不可用（面板写明原因），例如 clangd 没有 Linux aarch64 构建。
+- clangd 的 macOS 归档同时用于 x86_64 与 aarch64，其内容是否同时含两种架构尚未核对。
+- typescript-language-server 通过初始化选项 `tsserver.path` 指向包内的 typescript；该选项名与 `${pack}` 在初始化选项里的展开都待安装器实现后实测。
+- ESLint 服务器优先级最低，且需要工程里有 ESLint 配置；它按设计列入，是否默认启用留给安装与设置阶段决定。
+- 这些配方在 GitHub 上首次运行之前没有经过完整构建验证（见 R-L8）。
 
 ## 5. 语言绑定与多服务器
 
@@ -619,7 +643,7 @@ P6a 的关键验收：
 | P4d 增量同步与 semantic delta | 并入第二代 | — | 增量同步在 P6a，delta 在 P6d |
 | P4e 通用文件监视 | 并入第二代 | — | P6d，漏报暴露时提前 |
 | P4f 完整进度 | 待验证 | R-L4 | 缺 Linux/macOS；丢失 `end` 的有界清理、任务取消 |
-| P6a 基础 | 进行中 | UI 勘查已完成（12.1）；P6a-1 数据模型与多实例已实现（R-L6）；P6a-2 的目录读取与打包已实现（R-L7） | 下一步：`scripts/lsp-servers/` 与发布工作流、占位符与路径校验、下载与安装（P6a-2 其余）、请求通道与增量同步；UI 基础按 12.2 的顺序，验证 S1、S3 随其做 |
+| P6a 基础 | 进行中 | UI 勘查已完成（12.1）；P6a-1 数据模型与多实例已实现（R-L6）；P6a-2 的目录读取与打包已实现（R-L7），发布流水线与全部配方已实现（R-L8），待在 GitHub 上首次运行 | 下一步：首次运行工作流并修正（P6a-2）；下载、校验、解包、占位符展开与安装状态（P6a-2 其余）；请求通道与增量同步；UI 基础按 12.2 的顺序，验证 S1、S3 随其做 |
 | P6b 只读导航 | 未开始 | — | 依赖 P6a |
 | P6c 编辑 | 未开始 | — | 依赖 P6a、P6b |
 | P6d 扩展 | 未开始 | — | 依赖 P6a |
@@ -641,7 +665,7 @@ P6a 的关键验收：
 第二代：
 
 - [x] **P6a-1** 多服务器：`ServerSet` 取代 `Registry` 里的服务器定义；同一语言的多个服务器各有实例；诊断按来源合并并独立清除；语义 token 取优先级最高者；一个崩溃不影响另一个（R-L6）。
-- [ ] **P6a-2 至 P6a-10** 见第 10 节。
+- [ ] **P6a-2 至 P6a-10** 见第 10 节。P6a-2 的流水线部分已写成并通过离线测试（R-L8），但还没有在 GitHub 上完整运行过：六种平台的归档版式假设（剥离单层目录、可执行文件路径）、Go 交叉编译、npm 打包和三平台冒烟都以首次运行为准。
 - [ ] **S1 至 S3** 小验证：`Popup` 渲染阶段的裁剪与命中测试；Markdown 解析方案；`UiTimer` 与悬停停留手感。结论记入 13.3。
 - [ ] **P6b-1** 悬停、定义族、文档高亮、引用、符号的假服务器与真实服务器用例。
 - [ ] **P6b-2** 统一悬停卡片：诊断与服务器内容同卡片，失效规则正确。
@@ -721,12 +745,22 @@ P6a 的关键验收：
 - 文档：`docs/settings.md` 与 `docs/languages.md` 改为“Loom 不自带服务器，也不查找 PATH”。
 - 未做：`scripts/lsp-servers/` 目标定义与发布工作流（目录因此还没有任何条目）；`${pack}`、`${runtime.node}` 占位符的展开与“命令必须是绝对路径或占位符”的校验；下载、校验、解包、冒烟与安装状态（4.5）；用户注册服务器；设置新格式。
 
+**R-L8 · 2026-10-20 · P6a-2（发布流水线）· 已实现，待 GitHub 首次运行**
+
+- 范围：`scripts/lsp-servers/`（`build.toml`、`pins.toml`、`npm/`、`lib.mjs`、`pin.mjs`、`build.mjs`、`check.mjs`、`validate.mjs`、`publish.mjs`、测试与说明）、`.github/workflows/lsp-servers.yml`、CI 的离线检查步骤、`scripts/package/lib/lsp-servers.mjs` 的打包、`THIRD_PARTY_NOTICES.md` 的服务器一节。设计见 4.3 至 4.7。
+- 目录格式改为“包 + 服务器”（R-L7 的“每个服务器带平台”作废）：服务器引用包，多个服务器共享一个包；平台键可为 `any`；包可 `requires` 其他包的主版本；命令必须以 `${pack}/` 或所需包的 `${runtime.<id>}/` 开头。应用侧读取器（`infrastructure/lsp_catalog.rs`）与流水线的校验规则一一对应。
+- 配方：15 个包、17 个服务器（4.7）。哈希由 `pin.mjs` 向 GitHub、nodejs.org 取公布的校验和得到，taplo 因发布方没有校验和而下载计算；npm 包的锁文件由 `npm install --package-lock-only` 生成，所有依赖都有完整性哈希。
+- 测试：流水线 21 项（假归档、假发布端、zip 读取与逃逸拒绝、各格式组装、可复现归档、目录生成与拒绝、发布准备与核对与恢复、不覆盖已有资产、重复标签、握手冒烟）加上与语法包同源的目录同步 4 项；应用侧 9 项目录测试，其中读取流水线为生产配方生成的黄金目录（`fixtures/catalog.toml`）并检查多服务器排序与语言 id；管理器 1 项（命令里还带占位符的服务器显示未安装、不启动）。测试写出的 bug：空目录没有 `packs` 键时 `prepare` 会崩，已修；冒烟握手在失败路径没有等进程退出，Windows 上会占着目录，已修。
+- 本机只做过：`pin.mjs`（联网取校验和、生成锁文件）和一次 Windows x86_64 的局部构建（node、rust-analyzer、taplo、marksman、ruff、biome 六个包均成功）。之后按要求不再在本机运行真实构建（占用约 690 MB，已清理），其余全部留给 GitHub Actions；因此 tar.gz、tar.xz 归档的版式假设（zls、lua-language-server、node 的 Unix 包）、clangd、gopls 的交叉编译、npm 包的实际打包与三平台冒烟都还没有被真实运行验证。
+- 未做：下载、校验、解包、`${pack}` 与 `${runtime.*}` 展开与安装状态（4.5）；`.exe` 的补全；用户注册服务器与设置新格式；目录的 `settings`、`env` 字段。
+
 | 日期 | 变更记录 | 实施影响 |
 | --- | --- | --- |
 | 2026-10-18 | 建立 P4 子阶段与关键验收跟踪；实施 P4a 至 P4c、P4f | 见 R-L1 至 R-L5 |
 | 2026-10-20 | 重写本文件：确定第二代方向（多服务器、Loom 维护的服务器包与 Node 运行时包、按需安装、全部交互式功能），阶段改为 P6a–P6d | 设计稿；无实现。需同步主设计中的冲突描述（第 12 节） |
 | 2026-10-20 | UI 层勘查（12.1）：核对 13 项假设；修正快速打开不存在（改为新建选择器）、无导航历史（新建）、内嵌提示只需改渲染层、片段不依赖多光标、跨文档撤销需事务 | 更新 6.9、8.1、8.4、8.6、第 10 节与检查点；新增 P6a-10 与验证 S1–S3 |
 | 2026-10-20 | 决策 D10：应用源码与打包目录不含手写服务器定义，定义只来自生成的目录；实现 P6a-1（R-L6）与目录读取、打包（R-L7） | 删除 `builtin_servers.json`；`ServerSet::current()` 取代内置集合；修正 4.1、4.6、5.1 |
+| 2026-10-20 | 实现发布流水线与全部服务器配方（R-L8）；目录格式改为包加服务器 | 重写 4.3 至 4.7；新增工作流与 `scripts/lsp-servers`；未在 GitHub 上运行过 |
 
 ## 14. 官方参考资料
 

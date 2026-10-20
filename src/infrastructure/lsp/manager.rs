@@ -700,6 +700,12 @@ impl Coordinator {
             .get(&key.server)
             .map_or_else(|| key.server.to_string(), |d| d.display_name.to_string());
         let command = key.launch.command.clone();
+        // A catalog command starts from the server's installed pack, which this
+        // process has none of until the server is installed.
+        if command.contains("${") {
+            instance.phase = Phase::Unavailable(format!("{name}: is not installed"));
+            return;
+        }
         instance.phase = match Client::spawn(launch, move |event| {
             let _ = tx.send(Msg::Event {
                 instance: id,

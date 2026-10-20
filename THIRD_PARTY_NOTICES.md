@@ -89,3 +89,36 @@ conflicts with the conditions of the GPLv2, you may retroactively and
 prospectively choose to deem waived or otherwise exclude such Section(s) of
 the License, but only in their entirety and only with respect to the Combined
 Software.
+
+## Language servers
+
+Loom's source and installers contain no language server. Servers are separate
+programs that Loom downloads on demand from its own releases, each pinned by
+SHA-256 in `assets/lsp-servers/lsp-servers.toml`, and runs as separate processes
+that it talks to over the Language Server Protocol; Loom does not link them.
+
+Each pack Loom publishes repackages an upstream release unchanged (or, for Go and
+npm servers, builds it from a pinned module or lockfile) and carries the upstream
+license texts in its `licenses/` directory and its provenance in `PROVENANCE.md`.
+The recipes are in `scripts/lsp-servers/build.toml`.
+
+| Pack | License | Upstream |
+| --- | --- | --- |
+| rust-analyzer | MIT OR Apache-2.0 | https://github.com/rust-lang/rust-analyzer |
+| clangd | Apache-2.0 WITH LLVM-exception | https://github.com/clangd/clangd |
+| gopls | BSD-3-Clause | https://go.googlesource.com/tools |
+| zls | MIT | https://github.com/zigtools/zls |
+| taplo | MIT | https://github.com/tamasfe/taplo |
+| marksman | MIT | https://github.com/artempyanykh/marksman |
+| lua-language-server | MIT | https://github.com/LuaLS/lua-language-server |
+| ruff | MIT | https://github.com/astral-sh/ruff |
+| biome | MIT OR Apache-2.0 | https://github.com/biomejs/biome |
+| Node.js | MIT (its bundled components keep their own licenses) | https://nodejs.org |
+| pyright | MIT | https://github.com/microsoft/pyright |
+| typescript-language-server, typescript | Apache-2.0 | https://github.com/typescript-language-server/typescript-language-server |
+| vscode-langservers-extracted | MIT | https://github.com/hrsh7th/vscode-langservers-extracted |
+| yaml-language-server | MIT | https://github.com/redhat-developer/yaml-language-server |
+| bash-language-server | MIT | https://github.com/bash-lsp/bash-language-server |
+
+The npm packs also contain the packages those servers depend on; each keeps its own
+license inside `node_modules`, and the lockfile in `scripts/lsp-servers/npm` lists them.

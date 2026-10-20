@@ -75,6 +75,11 @@ jobs:
           node scripts/language-packs/check.mjs --all
           node --test scripts/language-packs/pipeline.test.mjs scripts/language-packs/catalog-sync.test.mjs
 
+      - name: Check language-server tooling
+        run: |
+          node scripts/lsp-servers/check.mjs
+          node --test scripts/lsp-servers/pipeline.test.mjs scripts/lsp-servers/catalog-sync.test.mjs
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

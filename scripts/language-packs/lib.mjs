@@ -9,6 +9,10 @@ import {gunzipSync} from 'node:zlib';
 import {parse, stringify} from 'smol-toml';
 import * as tar from 'tar';
 
+// The language server pipeline (scripts/lsp-servers) shares this module's pinned
+// download, archive and TOML helpers instead of repeating them.
+export {parse as parseToml, stringify as stringifyToml, tar};
+
 export const ROOT = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
 export const RECIPES = path.join(ROOT, 'scripts/language-packs/build.toml');
 export const CATALOG = path.join(ROOT, 'assets/language-packs/language-packs.toml');

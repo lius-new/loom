@@ -298,6 +298,19 @@ fn a_missing_program_is_unavailable_and_not_retried() {
 }
 
 #[test]
+fn a_command_from_an_uninstalled_pack_is_reported_and_never_started() {
+    let mut f = Fixture::new(&[]);
+    f.settings[0].command = Some("${pack}/tool".into());
+    f.show(vec![f.doc("a.fk", 0, "x")]);
+    f.wait_status(
+        "not installed",
+        |s| matches!(s, Status::Unavailable(m) if m.contains("not installed")),
+    );
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(f.methods().is_empty(), "nothing was started");
+}
+
+#[test]
 fn a_crashing_server_is_restarted_then_given_up_on() {
     let f = Fixture::new(&["--crash-after-init"]);
     f.show(vec![f.doc("a.fk", 0, "x")]);

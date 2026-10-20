@@ -3,8 +3,11 @@ use crate::domain::language::Registry;
 use std::path::Path;
 
 const DIGEST: &str = "dc55afb7a43c70aebc75031186146de9cbb487eeddc0375143793696b6fb3695";
+/// What the publication pipeline generates for its production recipes; its own
+/// tests keep this file in step with the recipes.
+const GOLDEN: &str = include_str!("../../scripts/lsp-servers/fixtures/catalog.toml");
 
-fn catalog(entry_extra: &str, platform_extra: &str) -> String {
+fn catalog(server_extra: &str, pack_extra: &str) -> String {
     format!(
         r#"
 schema = 1
@@ -12,23 +15,44 @@ schema = 1
 [distribution]
 repository = "lius-new/loom"
 
-[servers.rust-analyzer]
-name = "rust-analyzer"
-version = "2026-10-12"
-license = "MIT OR Apache-2.0"
-command = "${{pack}}/rust-analyzer"
-args = ["--stdio"]
-priority = 5
-root = {{ markers = ["Cargo.toml", "rust-project.json"], strategy = "outermost", fallback = "file_directory" }}
-languages = [{{ language = "rust", language_id = "rust" }}]
-{entry_extra}
+[packs.node]
+version = "22.23.3"
+license = "MIT"
 
-[servers.rust-analyzer.platforms.windows-x86_64]
-asset = "rust-analyzer-windows-x86_64.tar.gz"
+[packs.node.platforms.windows-x86_64]
+asset = "node-windows-x86_64.tar.gz"
+release = "lsp-servers-2026.10.21.1"
+sha256 = "{DIGEST}"
+size = 35000000
+
+[packs.pyright]
+version = "1.1.414"
+license = "MIT"
+requires = ["node@22"]
+{pack_extra}
+
+[packs.pyright.platforms.any]
+asset = "pyright-any.tar.gz"
 release = "lsp-servers-2026.10.21.1"
 sha256 = "{DIGEST}"
 size = 12345678
-{platform_extra}
+
+[servers.pyright]
+name = "Pyright"
+pack = "pyright"
+command = "${{runtime.node}}/node"
+args = ["${{pack}}/node_modules/pyright/langserver.index.js", "--stdio"]
+priority = 10
+{server_extra}
+
+[servers.pyright.root]
+markers = ["pyrightconfig.json", "pyproject.toml"]
+strategy = "nearest"
+fallback = "workspace"
+
+[[servers.pyright.languages]]
+language = "python"
+language_id = "python"
 "#
     )
 }
@@ -40,34 +64,102 @@ fn error_of(text: &str) -> String {
     }
 }
 
+fn python() -> Registry {
+    let python = r#"{"name":"python","display_name":"Python","badge":"PY","variants":[{"id":"python","grammar":"python"}],"files":[{"extensions":["py"],"variant":"python"}]}"#;
+    let plain = r#"{"name":"plaintext","display_name":"Plain","badge":"T","variants":[{"id":"plaintext"}]}"#;
+    Registry::from_sources(&[("python", python), ("plaintext", plain)], &["python"]).unwrap()
+}
+
 #[test]
-fn a_catalog_entry_becomes_a_complete_server_definition() {
-    let parsed = Catalog::parse(&catalog(
-        "initialization_options = { checkOnSave = false }",
-        "",
-    ))
-    .unwrap();
+fn a_catalog_entry_becomes_a_server_definition_that_starts_from_its_packs() {
+    let parsed = Catalog::parse(&catalog("initialization_options = { key = false }", "")).unwrap();
     let set = parsed.servers().unwrap();
-    let server = set.get("rust-analyzer").expect("the entry's server");
-    assert_eq!(&*server.display_name, "rust-analyzer");
-    assert_eq!(&*server.command, "${pack}/rust-analyzer");
+    let server = set.get("pyright").expect("the entry's server");
+    assert_eq!(&*server.display_name, "Pyright");
+    assert_eq!(&*server.command, "${runtime.node}/node");
     assert_eq!(
         server.args.iter().map(|a| &**a).collect::<Vec<_>>(),
-        ["--stdio"]
+        [
+            "${pack}/node_modules/pyright/langserver.index.js",
+            "--stdio"
+        ]
     );
-    assert_eq!(server.priority, 5);
+    assert_eq!(server.priority, 10);
     assert_eq!(
         server.initialization_options.as_deref(),
-        Some(r#"{"checkOnSave":false}"#)
+        Some(r#"{"key":false}"#)
     );
-    let markers: Vec<_> = server.root.markers.iter().map(|m| &**m).collect();
-    assert_eq!(markers, ["Cargo.toml", "rust-project.json"]);
-
-    let registry = Registry::builtin();
-    let rust = registry.resolve_path(Path::new("lib.rs"));
-    let bound = set.for_language(registry, rust);
+    let registry = python();
+    let file = registry.resolve_path(Path::new("main.py"));
+    let bound = set.for_language(&registry, file);
     assert_eq!(bound.len(), 1);
-    assert_eq!((&*bound[0].0.name, bound[0].1), ("rust-analyzer", "rust"));
+    assert_eq!((&*bound[0].0.name, bound[0].1), ("pyright", "python"));
+}
+
+#[test]
+fn the_catalog_the_pipeline_generates_is_readable_and_orders_servers_for_a_language() {
+    let parsed = Catalog::parse(GOLDEN).expect("the pipeline's catalog format");
+    let set = parsed.servers().expect("every generated server is valid");
+    assert_eq!(set.all().len(), 17);
+
+    // Several servers for one language come out in priority order, each with the
+    // language id it expects.
+    let registry = Registry::builtin();
+    let bound = |path: &str| -> Vec<(String, String)> {
+        let resolved = registry.resolve_path(Path::new(path));
+        set.for_language(registry, resolved)
+            .into_iter()
+            .map(|(server, id)| (server.name.to_string(), id.to_owned()))
+            .collect()
+    };
+    assert_eq!(bound("lib.rs"), [("rust-analyzer".into(), "rust".into())]);
+    assert_eq!(
+        bound("a.ts"),
+        [
+            ("typescript-language-server".into(), "typescript".into()),
+            ("biome".into(), "typescript".into()),
+            ("vscode-eslint-language-server".into(), "typescript".into()),
+        ]
+    );
+    assert_eq!(
+        bound("a.tsx"),
+        [
+            (
+                "typescript-language-server".into(),
+                "typescriptreact".into()
+            ),
+            ("biome".into(), "typescriptreact".into()),
+            (
+                "vscode-eslint-language-server".into(),
+                "typescriptreact".into()
+            ),
+        ]
+    );
+    assert_eq!(
+        bound("a.css")
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["biome", "vscode-css-language-server"]
+    );
+    assert_eq!(bound("README.md"), [("marksman".into(), "markdown".into())]);
+
+    // Every generated command starts from a pack, never from PATH.
+    for server in set.all() {
+        assert!(
+            server.command.starts_with("${pack}/") || server.command.starts_with("${runtime."),
+            "{}",
+            server.name
+        );
+    }
+    let registry = python();
+    let resolved = registry.resolve_path(Path::new("main.py"));
+    let python: Vec<_> = set
+        .for_language(&registry, resolved)
+        .into_iter()
+        .map(|(server, _)| server.name.to_string())
+        .collect();
+    assert_eq!(python, ["pyright", "ruff"]);
 }
 
 #[test]
@@ -82,11 +174,7 @@ fn the_shipped_catalog_is_valid() {
     let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/lsp-servers/lsp-servers.toml");
     let set = load(&file).expect("the catalog that ships with Loom");
     for server in set.all() {
-        assert!(
-            !server.command.starts_with('/') || Path::new(&*server.command).is_absolute(),
-            "{}",
-            server.name
-        );
+        assert!(server.command.starts_with("${"), "{}", server.name);
     }
 }
 
@@ -111,60 +199,90 @@ fn the_catalog_is_staged_beside_the_executable() {
 }
 
 #[test]
-fn bad_catalogs_are_rejected_with_a_reason() {
-    let cases: Vec<(&str, String)> = vec![
+fn a_server_never_starts_a_program_found_on_path() {
+    let base = catalog("", "");
+    let cases = [
         (
-            "invalid language server catalog",
-            catalog("", "").replace("schema = 1", "schema = 2"),
+            "command must start with",
+            base.replace("command = \"${runtime.node}/node\"", "command = \"node\""),
         ),
         (
+            "command must start with",
+            base.replace(
+                "command = \"${runtime.node}/node\"",
+                "command = \"/usr/bin/node\"",
+            ),
+        ),
+        (
+            "command must start with",
+            base.replace("${runtime.node}", "${runtime.python}"),
+        ),
+        (
+            "command must start with",
+            base.replace("requires = [\"node@22\"]", "requires = []"),
+        ),
+    ];
+    for (expected, text) in cases {
+        let error = error_of(&text);
+        assert!(error.contains(expected), "expected {expected:?}: {error}");
+    }
+    // A pack's own program is fine.
+    let own = base.replace("${runtime.node}/node", "${pack}/pyright");
+    assert!(Catalog::parse(&own).is_ok());
+}
+
+#[test]
+fn bad_catalogs_are_rejected_with_a_reason() {
+    let base = catalog("", "");
+    let cases: Vec<(&str, String)> = vec![
+        ("invalid language server catalog", base.replace("schema = 1", "schema = 2")),
+        (
             "invalid language server catalog",
-            catalog("", "").replace("lius-new/loom", "lius-new/../loom"),
+            base.replace("lius-new/loom", "lius-new/../loom"),
         ),
         (
             "unknown platform",
-            catalog("", "").replace("windows-x86_64", "plan9-mips"),
+            base.replace("platforms.windows-x86_64", "platforms.plan9-mips"),
         ),
         (
             "unexpected name",
-            catalog("", "").replace("rust-analyzer-windows-x86_64.tar.gz", "ra.tar.gz"),
+            base.replace("node-windows-x86_64.tar.gz", "node.tar.gz"),
         ),
         (
             "release tag",
-            catalog("", "").replace("lsp-servers-2026.10.21.1", "2026.10.21.1"),
+            base.replace("lsp-servers-2026.10.21.1", "2026.10.21.1"),
         ),
-        ("SHA-256", catalog("", "").replace(DIGEST, "abc")),
-        (
-            "size",
-            catalog("", "").replace("size = 12345678", "size = 0"),
-        ),
-        (
-            "size",
-            catalog("", "").replace("size = 12345678", "size = 999999999999"),
-        ),
+        ("SHA-256", base.replace(DIGEST, "abc")),
+        ("size", base.replace("size = 12345678", "size = 0")),
+        ("size", base.replace("size = 12345678", "size = 999999999999")),
         (
             "not a server name",
-            catalog("", "").replace("[servers.rust-analyzer", "[servers.Rust_Analyzer"),
+            base.replace("[servers.pyright", "[servers.Py_Right"),
         ),
         (
-            "name, version and license",
-            catalog("", "").replace("license = \"MIT OR Apache-2.0\"", "license = \"\""),
+            "version and license",
+            base.replace("license = \"MIT\"\nrequires", "license = \"\"\nrequires"),
         ),
         (
-            "no platform",
-            catalog("", "").replace(
-                "[servers.rust-analyzer.platforms.windows-x86_64]",
-                "[servers.rust-analyzer.unused]",
+            "not provided by the catalog",
+            base.replace("node@22", "node@18"),
+        ),
+        (
+            "not in the catalog",
+            base.replace("pack = \"pyright\"", "pack = \"missing\""),
+        ),
+        (
+            "either the platform any or specific platforms",
+            base.replace(
+                "[packs.pyright.platforms.any]",
+                "[packs.pyright.platforms.linux-x86_64]\nasset = \"pyright-linux-x86_64.tar.gz\"\nrelease = \"lsp-servers-1\"\nsha256 = \"0000000000000000000000000000000000000000000000000000000000000000\"\nsize = 1\n\n[packs.pyright.platforms.any]",
             ),
         ),
     ];
     for (expected, text) in cases {
-        // Malformed shape fails to parse; bad values fail validation.
         let error = error_of(&text);
         assert!(
-            error.contains(expected)
-                || expected == "no platform"
-                || expected == "not a server name",
+            error.contains(expected),
             "expected {expected:?} in {error:?}"
         );
     }
@@ -174,10 +292,10 @@ fn bad_catalogs_are_rejected_with_a_reason() {
 
 #[test]
 fn a_definition_the_language_service_rejects_fails_the_catalog() {
-    let catalog = Catalog::parse(&catalog("", "").replace(
-        r#"languages = [{ language = "rust", language_id = "rust" }]"#,
-        r#"languages = [{ language = "Rust", language_id = "rust" }]"#,
+    let parsed = Catalog::parse(&catalog("", "").replace(
+        "language = \"python\"\nlanguage_id = \"python\"",
+        "language = \"Python\"\nlanguage_id = \"python\"",
     ))
     .unwrap();
-    assert!(catalog.servers().unwrap_err().contains("canonical"));
+    assert!(parsed.servers().unwrap_err().contains("canonical"));
 }
