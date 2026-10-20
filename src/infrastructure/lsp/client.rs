@@ -356,12 +356,16 @@ impl Driver {
             Input::BadFrame(error) => self.session.fail(format!("protocol error: {error}")),
             Input::Eof => {
                 self.eof = true;
-                let reason = self.exit_reason();
+                let reason = self.exit_reason("the server closed the connection".into());
                 self.session.transport_closed(Some(reason))
             }
-            Input::WriteFailed(error) => self
-                .session
-                .transport_closed(Some(format!("could not write to the server: {error}"))),
+            Input::WriteFailed(error) => {
+                // A crash can reach the writer before the reader reports EOF.
+                // Prefer the process status in either order, retaining the I/O
+                // error if the process is still running.
+                let reason = self.exit_reason(format!("could not write to the server: {error}"));
+                self.session.transport_closed(Some(reason))
+            }
             Input::Command(command) => self.command(command),
         }
     }
@@ -497,7 +501,7 @@ impl Driver {
     }
 
     /// Describes how the process ended, once it has had a moment to.
-    fn exit_reason(&mut self) -> String {
+    fn exit_reason(&mut self, fallback: String) -> String {
         let until = Instant::now() + Duration::from_millis(500);
         while Instant::now() < until {
             match self.child.try_wait() {
@@ -511,7 +515,7 @@ impl Driver {
                 Err(_) => break,
             }
         }
-        "the server closed the connection".to_owned()
+        fallback
     }
 }
 
@@ -519,4 +523,74 @@ fn merge(into: &mut Output, more: Output) {
     into.send.extend(more.send);
     into.events.extend(more.events);
     into.terminate |= more.terminate;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::client_tests::{fake_server, options};
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn write_failure_before_eof_reports_the_crash_and_fails_pending_requests() {
+        let mut process = Process::new(fake_server());
+        process
+            .args(["--crash-on", "custom/boom"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            process.creation_flags(0x0800_0000);
+        }
+        let mut child = process.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&framing::encode(
+                &serde_json::to_vec(&json!({"jsonrpc":"2.0", "method":"custom/boom"})).unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(4));
+
+        let (mut session, _) = Session::start(options());
+        session.receive(
+            Message::parse(br#"{"jsonrpc":"2.0","id":0,"result":{"capabilities":{}}}"#).unwrap(),
+        );
+        assert_eq!(session.state(), &State::Ready);
+        for tag in [1, 2] {
+            session.request("custom/pending", json!({}), tag).unwrap();
+        }
+        let (_, inbox) = mpsc::channel();
+        let (outbox, _) = mpsc::channel();
+        let mut driver = Driver {
+            session,
+            inbox,
+            outbox,
+            child,
+            _job: None,
+            timeouts: Timeouts::default(),
+            on_event: Box::new(|_| {}),
+            state: Arc::new(Mutex::new(State::Ready)),
+            requests: VecDeque::new(),
+            initialize_deadline: None,
+            exit_deadline: None,
+            bad_messages: 0,
+            eof: false,
+        };
+        // Deliver no EOF: the writer's notification must retain the exit code.
+        let output = driver.input(Input::WriteFailed("broken pipe".into()));
+        let reason = "the server exited with code 4";
+        assert!(output.terminate);
+        assert_eq!(driver.session.state(), &State::Failed(reason.into()));
+        for tag in [1, 2] {
+            assert!(output.events.iter().any(|event| matches!(event,
+                Event::Response { tag: actual, outcome: Err(error), .. }
+                    if *actual == tag && error.message == reason)));
+        }
+        assert!(driver.input(Input::Eof).events.is_empty());
+        driver.finish();
+    }
 }

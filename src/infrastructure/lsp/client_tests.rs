@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn fake_server() -> PathBuf {
+pub(super) fn fake_server() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
     let dir = exe.parent().and_then(|deps| deps.parent()).unwrap();
     let name = if cfg!(windows) {
@@ -61,7 +61,7 @@ impl Drop for Cleanup {
 
 static RUNS: AtomicUsize = AtomicUsize::new(0);
 
-fn options() -> SessionOptions {
+pub(super) fn options() -> SessionOptions {
     SessionOptions {
         root_uri: "file:///fake/root".into(),
         root_name: "root".into(),
