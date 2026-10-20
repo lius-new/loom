@@ -90,6 +90,13 @@ pub enum Event {
     Refused {
         method: String,
     },
+    /// A request only the application can answer (apply an edit, show a document).
+    /// The server waits until [`Session::respond`] is called with this id.
+    ServerRequest {
+        id: Id,
+        method: String,
+        params: Value,
+    },
 }
 
 /// One report of a work-done progress token.
@@ -451,14 +458,20 @@ impl Session {
                 });
                 Ok(Value::Null)
             }
-            "window/showDocument" => Ok(json!({ "success": false })),
+            "window/showDocument" | "workspace/applyEdit" => {
+                // Answered later, by whoever carries it out.
+                return Output {
+                    events: vec![Event::ServerRequest {
+                        id,
+                        method: method.to_owned(),
+                        params: params.clone(),
+                    }],
+                    ..Output::default()
+                };
+            }
             "workspace/workspaceFolders" => Ok(json!([
                 { "uri": self.options.root_uri, "name": self.options.root_name }
             ])),
-            "workspace/applyEdit" => Ok(json!({
-                "applied": false,
-                "failureReason": "Loom does not apply edits requested by a language server"
-            })),
             "client/registerCapability" | "client/unregisterCapability" => {
                 events.push(Event::Refused {
                     method: method.to_owned(),
@@ -482,6 +495,18 @@ impl Session {
             send: vec![Message::Response { id, outcome }],
             events,
             terminate: false,
+        }
+    }
+
+    /// Answers a request the server made that was handed to the application
+    /// ([`Event::ServerRequest`]).
+    pub fn respond(&mut self, id: Id, outcome: Result<Value, ResponseError>) -> Output {
+        if self.state.is_closed() {
+            return Output::default();
+        }
+        Output {
+            send: vec![Message::Response { id, outcome }],
+            ..Output::default()
         }
     }
 

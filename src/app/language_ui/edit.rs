@@ -26,6 +26,8 @@ pub struct Request {
     pub rect: UiRect,
     /// What the edit was for, for messages ("Rename", "Quick fix").
     pub title: String,
+    /// A server waiting to hear whether the edit was made.
+    pub reply: Option<crate::infrastructure::lsp::manager::Reply>,
 }
 
 /// The stamps of every open text document now.
@@ -93,14 +95,14 @@ pub fn apply(state: &AppContext, request: Request) {
     let missing = match unopened(&app, &request.edit) {
         Ok(missing) => missing,
         Err(error) => {
-            state.update(|app| app.show_error(format!("{}: {error}", request.title)));
+            report(state, &request, Err(error));
             return;
         }
     };
     if missing.is_empty() {
         let mut result = Ok(0);
         state.update(|app| result = apply_now(app, &request, HashMap::new()));
-        report(state, &request.title, result);
+        report(state, &request, result);
         return;
     }
     let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
@@ -142,7 +144,7 @@ pub fn apply(state: &AppContext, request: Request) {
                 None => {
                     let mut result = Ok(0);
                     worker_state.update(|app| result = apply_now(app, &request, loaded));
-                    report(&worker_state, &request.title, result);
+                    report(&worker_state, &request, result);
                 }
             });
         });
@@ -151,7 +153,14 @@ pub fn apply(state: &AppContext, request: Request) {
     }
 }
 
-fn report(state: &AppContext, title: &str, result: Result<usize, String>) {
+fn report(state: &AppContext, request: &Request, result: Result<usize, String>) {
+    if let Some(reply) = &request.reply {
+        reply.send(Ok(match &result {
+            Ok(_) => serde_json::json!({ "applied": true }),
+            Err(error) => serde_json::json!({ "applied": false, "failureReason": error }),
+        }));
+    }
+    let title = request.title.as_str();
     state.update(|app| match result {
         Ok(0) => app.show_toast(format!("{title}: nothing to change")),
         Ok(files) if files == 1 => {}
@@ -171,7 +180,7 @@ pub fn apply_now(
     // Everything that can fail on the text is tried on copies first.
     for step in &plan.steps {
         if let Step::Text(planned) = step {
-            let mut copy = match app.workspace.file_id_for_path(&planned.path) {
+            let copy = match app.workspace.file_id_for_path(&planned.path) {
                 Some(id) => app
                     .workspace
                     .documents
@@ -451,6 +460,7 @@ mod tests {
             stamps: stamps(app),
             rect: UiRect::new(0.0, 0.0, 400.0, 300.0),
             title: "Test".into(),
+            reply: None,
         }
     }
 

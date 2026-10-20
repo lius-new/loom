@@ -14,7 +14,9 @@
 //! - reports a program that cannot be started as unavailable, once, quietly.
 #[path = "manager_requests.rs"]
 mod requests;
-pub(crate) use requests::{Failure, Part, Progress, RequestHandle, RequestSpec};
+pub(crate) use requests::{
+    Failure, Part, Progress, Reply, RequestHandle, RequestSpec, ServerAction,
+};
 
 use super::client::{Client, Launch, Timeouts};
 use crate::domain::language::{Registry, ResolvedLanguage};
@@ -234,6 +236,13 @@ enum Msg {
         shared: Arc<Mutex<Progress>>,
     },
     Cancel(u64),
+    /// The application answers a request a server made.
+    Respond {
+        instance: u64,
+        run: u64,
+        id: crate::features::language_service::message::Id,
+        outcome: Result<Value, crate::features::language_service::message::ResponseError>,
+    },
     Event {
         instance: u64,
         run: u64,
@@ -244,6 +253,7 @@ enum Msg {
 
 pub(crate) struct Manager {
     tx: Sender<Msg>,
+    actions: Arc<Mutex<Vec<ServerAction>>>,
     next_request: std::sync::atomic::AtomicU64,
     infos: Arc<Mutex<Vec<InstanceInfo>>>,
     results: Store,
@@ -272,6 +282,7 @@ impl Manager {
                 listener
             });
         let infos = Arc::new(Mutex::new(Vec::new()));
+        let actions: Arc<Mutex<Vec<ServerAction>>> = Arc::default();
         let results: Store = Arc::default();
         let coordinator = Coordinator {
             registry,
@@ -285,6 +296,7 @@ impl Manager {
             results: results.clone(),
             results_changed: false,
             book: requests::Book::default(),
+            actions: actions.clone(),
             on_change: Box::new(on_change),
             instances: Vec::new(),
             next_id: 1,
@@ -298,6 +310,7 @@ impl Manager {
             .expect("the coordinator thread starts");
         Self {
             tx,
+            actions,
             next_request: std::sync::atomic::AtomicU64::new(1),
             infos,
             results,
@@ -461,6 +474,8 @@ struct Coordinator {
     results_changed: bool,
     /// Requests the application is waiting on.
     book: requests::Book,
+    /// What servers asked of the application, until it takes it.
+    actions: Arc<Mutex<Vec<ServerAction>>>,
     on_change: Box<dyn Fn() + Send>,
     instances: Vec<Instance>,
     next_id: u64,
@@ -548,6 +563,21 @@ impl Coordinator {
                 self.results_changed = true;
             }
             Msg::Cancel(id) => self.cancel_request(id),
+            Msg::Respond {
+                instance,
+                run,
+                id,
+                outcome,
+            } => {
+                if let Some(Phase::Running(Running { client, .. })) = self
+                    .instances
+                    .iter()
+                    .find(|i| i.id == instance && i.run == run)
+                    .map(|i| &i.phase)
+                {
+                    client.respond(id, outcome);
+                }
+            }
             Msg::Event {
                 instance,
                 run,
@@ -968,6 +998,9 @@ impl Coordinator {
             }
             Event::Response { tag, outcome, .. } => self.semantic_response(at, tag, outcome),
             Event::Progress { token, update } => self.progress(at, token, update),
+            Event::ServerRequest { id, method, params } => {
+                self.server_request(at, id, &method, &params)
+            }
             Event::Log { level, message } => self.remember(at, level, &message),
             Event::ShowMessage { level, message } => self.remember(at, level, &message),
             Event::StateChanged(State::Failed(reason)) => self.failed(at, reason),

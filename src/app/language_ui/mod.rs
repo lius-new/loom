@@ -261,6 +261,44 @@ pub(crate) fn popup_event(
     }
 }
 
+/// Does what a server asked of the application.
+fn server_action(state: &AppContext, action: crate::infrastructure::lsp::manager::ServerAction) {
+    use crate::infrastructure::lsp::manager::ServerAction;
+    let mut rect = lgui::prelude::UiRect::new(0.0, 0.0, 800.0, 600.0);
+    let mut stamps = Vec::new();
+    state.try_update(|app| {
+        rect = app.editor.language.rect.unwrap_or(rect);
+        stamps = edit::stamps(app);
+        false
+    });
+    match action {
+        ServerAction::ApplyEdit { label, edit, reply } => edit::apply(
+            state,
+            edit::Request {
+                edit,
+                stamps,
+                rect,
+                title: label.unwrap_or_else(|| "Language server edit".to_owned()),
+                reply: Some(reply),
+            },
+        ),
+        ServerAction::ShowDocument {
+            uri,
+            selection,
+            reply,
+        } => {
+            let ok = crate::features::language_service::uri::file_path(&uri).map(|path| {
+                let target = match selection {
+                    Some(span) => navigate::Place::span(path, span),
+                    None => navigate::Place::bytes(path, 0..0),
+                };
+                navigate::go(state, target, rect, true);
+            });
+            reply.send(Ok(serde_json::json!({ "success": ok.is_some() })));
+        }
+    }
+}
+
 /// Does what a popup row that is not a place stands for.
 pub(crate) fn run_payload(
     state: &AppContext,
@@ -297,6 +335,11 @@ pub(crate) fn tick(state: &AppContext) {
     for effect in effects {
         match effect {
             actions::Effect::Go(place, rect) => navigate::go(state, place, rect, true),
+        }
+    }
+    if let Some(services) = services(state) {
+        for action in services.take_actions() {
+            server_action(state, action);
         }
     }
     for effect in changes {

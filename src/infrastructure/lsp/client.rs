@@ -83,6 +83,11 @@ enum Command {
     },
     /// Give up on the request made with this tag.
     Cancel(u64),
+    /// Answer a request the server made.
+    Respond {
+        id: Id,
+        outcome: Result<Value, crate::features::language_service::message::ResponseError>,
+    },
     Shutdown,
 }
 
@@ -191,6 +196,15 @@ impl Client {
             tag,
             timeout: Some(timeout),
         })
+    }
+
+    /// Answers a request the server made of us (see `Event::ServerRequest`).
+    pub fn respond(
+        &self,
+        id: Id,
+        outcome: Result<Value, crate::features::language_service::message::ResponseError>,
+    ) -> bool {
+        self.command(Command::Respond { id, outcome })
     }
 
     /// Tells the server the answer to the request made with `tag` is no longer
@@ -419,6 +433,7 @@ impl Driver {
             Command::Notify { method, params } => {
                 self.session.notify(&method, params).unwrap_or_default()
             }
+            Command::Respond { id, outcome } => self.session.respond(id, outcome),
             Command::Cancel(tag) => match self.session.pending_id(tag) {
                 Some(id) => {
                     self.requests.retain(|(_, known)| *known != id);

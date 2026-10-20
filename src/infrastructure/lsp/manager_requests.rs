@@ -8,6 +8,8 @@
 //! request of the same kind for the same document replaces an older one, and
 //! dropping the handle cancels the request.
 use super::{Coordinator, Msg, Phase, Running};
+use crate::features::language_service::message::Id;
+use crate::features::language_service::reply::{Span, WorkspaceEdit};
 use crate::features::language_service::{
     capabilities::PositionEncoding,
     message::{CONTENT_MODIFIED, REQUEST_CANCELLED, ResponseError},
@@ -23,6 +25,42 @@ use std::{
     sync::{Arc, Mutex, mpsc::Sender},
     time::{Duration, Instant},
 };
+
+/// The way to answer a request the server made of the application.
+#[derive(Clone)]
+pub(crate) struct Reply {
+    tx: Sender<Msg>,
+    instance: u64,
+    run: u64,
+    id: Id,
+}
+
+impl Reply {
+    pub fn send(&self, outcome: Result<Value, ResponseError>) {
+        let _ = self.tx.send(Msg::Respond {
+            instance: self.instance,
+            run: self.run,
+            id: self.id.clone(),
+            outcome,
+        });
+    }
+}
+
+/// Something a server asked the application to do.
+pub(crate) enum ServerAction {
+    /// `workspace/applyEdit`; answer with `{ "applied": bool }`.
+    ApplyEdit {
+        label: Option<String>,
+        edit: WorkspaceEdit,
+        reply: Reply,
+    },
+    /// `window/showDocument`; answer with `{ "success": bool }`.
+    ShowDocument {
+        uri: String,
+        selection: Option<Span>,
+        reply: Reply,
+    },
+}
 
 /// Tags at or above this belong to requests made through this channel; lower
 /// ones are the coordinator's own (semantic tokens).
@@ -154,6 +192,11 @@ impl Drop for RequestHandle {
 }
 
 impl super::Manager {
+    /// What servers have asked of the application since the last call.
+    pub fn take_actions(&self) -> Vec<ServerAction> {
+        std::mem::take(&mut *self.actions.lock().unwrap())
+    }
+
     /// Starts a request. `on_change` runs when the first and each later answer
     /// arrives.
     pub fn request(&self, spec: RequestSpec) -> RequestHandle {
@@ -396,6 +439,72 @@ impl Coordinator {
             })
             .map(|d| d.to_protocol(text, encoding))
             .collect()
+    }
+
+    /// A request only the application can answer.
+    pub(super) fn server_request(&mut self, at: usize, id: Id, method: &str, params: &Value) {
+        let instance = &self.instances[at];
+        let Phase::Running(Running {
+            client,
+            ready: Some(ready),
+        }) = &instance.phase
+        else {
+            return;
+        };
+        let encoding = ready.capabilities.position_encoding;
+        let reply = Reply {
+            tx: self.tx.clone(),
+            instance: instance.id,
+            run: instance.run,
+            id: id.clone(),
+        };
+        let refuse = |why: &str| {
+            let answer = if method == "workspace/applyEdit" {
+                serde_json::json!({ "applied": false, "failureReason": why })
+            } else {
+                serde_json::json!({ "success": false })
+            };
+            client.respond(id.clone(), Ok(answer));
+        };
+        match method {
+            "workspace/applyEdit" => {
+                match crate::features::language_service::reply::workspace_edit(
+                    params.get("edit").unwrap_or(&Value::Null),
+                    encoding,
+                ) {
+                    Ok(edit) => self.actions.lock().unwrap().push(ServerAction::ApplyEdit {
+                        label: params
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        edit,
+                        reply,
+                    }),
+                    Err(error) => refuse(&format!("the edit cannot be read: {error}")),
+                }
+            }
+            "window/showDocument" => {
+                let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                    return refuse("no document");
+                };
+                // A page in a browser is not for the editor to show.
+                if params.get("external").and_then(Value::as_bool) == Some(true) {
+                    return refuse("external documents are not opened");
+                }
+                self.actions
+                    .lock()
+                    .unwrap()
+                    .push(ServerAction::ShowDocument {
+                        uri: uri.to_owned(),
+                        selection: params.get("selection").and_then(|s| {
+                            crate::features::language_service::reply::span(s, encoding)
+                        }),
+                        reply,
+                    });
+            }
+            _ => {}
+        }
+        self.results_changed = true;
     }
 
     /// Gives up on a request: tells the servers and drops what was waiting.

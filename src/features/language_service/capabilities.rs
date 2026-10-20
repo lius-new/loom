@@ -318,11 +318,18 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
             "workspaceFolders": false,
             "didChangeConfiguration": { "dynamicRegistration": false },
             "didChangeWatchedFiles": { "dynamicRegistration": false },
-            "applyEdit": false,
+            "applyEdit": true,
+            "workspaceEdit": {
+                "documentChanges": true,
+                "resourceOperations": ["create", "rename", "delete"],
+                "failureHandling": "abort",
+                "normalizesLineEndings": false
+            },
             "semanticTokens": { "refreshSupport": true }
         },
         "window": {
             "workDoneProgress": true,
+            "showDocument": { "support": true },
             "showMessage": { "messageActionItem": { "additionalPropertiesSupport": false } }
         }
     })
@@ -464,7 +471,7 @@ mod tests {
             caps["workspace"]["didChangeWatchedFiles"]["dynamicRegistration"],
             json!(false)
         );
-        assert_eq!(caps["workspace"]["applyEdit"], json!(false));
+        assert_eq!(caps["workspace"]["applyEdit"], json!(true));
         assert_eq!(caps["window"]["workDoneProgress"], json!(true));
         assert_eq!(
             caps["workspace"]["semanticTokens"]["refreshSupport"],

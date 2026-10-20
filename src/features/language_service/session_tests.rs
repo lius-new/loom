@@ -286,24 +286,17 @@ fn every_server_request_gets_an_answer() {
         )),
         Ok(json!([{ "uri": "file:///work/project", "name": "project" }]))
     );
-    let applied = result(&ask(
-        &mut session,
-        6,
-        "workspace/applyEdit",
-        json!({ "edit": {} }),
-    ))
-    .unwrap();
-    assert_eq!(applied["applied"], json!(false));
-    assert!(
-        applied["failureReason"]
-            .as_str()
-            .unwrap()
-            .contains("does not apply")
-    );
-    assert_eq!(
-        result(&ask(&mut session, 7, "window/showDocument", json!({}))),
-        Ok(json!({ "success": false }))
-    );
+    // These two are for the application to answer: nothing is sent until it does.
+    for (n, method) in [(6, "workspace/applyEdit"), (7, "window/showDocument")] {
+        let out = ask(&mut session, n, method, json!({ "edit": {} }));
+        assert!(out.send.is_empty(), "{method}");
+        assert!(matches!(
+            out.events.as_slice(),
+            [Event::ServerRequest { method: asked, .. }] if asked == method
+        ));
+        let answered = session.respond(Id::Number(n), Ok(json!({ "applied": true })));
+        assert_eq!(result(&answered), Ok(json!({ "applied": true })));
+    }
     let out = ask(
         &mut session,
         8,

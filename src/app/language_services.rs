@@ -90,6 +90,11 @@ impl LanguageServices {
         self.manager.request(spec)
     }
 
+    /// What servers asked of the application since the last call.
+    pub fn take_actions(&self) -> Vec<crate::infrastructure::lsp::manager::ServerAction> {
+        self.manager.take_actions()
+    }
+
     pub fn infos(&self) -> Vec<InstanceInfo> {
         self.manager.infos()
     }

@@ -224,6 +224,7 @@ pub fn run_action(state: &AppContext, instance: u64, action: Arc<CodeAction>, re
                 stamps,
                 rect,
                 title: action.title.clone(),
+                reply: None,
             },
         );
     }
@@ -373,6 +374,7 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
                     stamps: pending.stamps.clone(),
                     rect: pending.rect,
                     title: "Rename".to_owned(),
+                    reply: None,
                 })),
                 None => app.show_toast(failure_text("rename this", progress.failure.as_ref())),
             }
@@ -440,6 +442,7 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
                     stamps: pending.stamps.clone(),
                     rect: pending.rect,
                     title: "Format".to_owned(),
+                    reply: None,
                 }));
             }
         }
@@ -460,6 +463,7 @@ fn action_effects(instance: u64, action: &CodeAction, pending: &Pending) -> Vec<
             stamps: pending.stamps.clone(),
             rect: pending.rect,
             title: action.title.clone(),
+            reply: None,
         }));
     }
     if let Some(command) = &action.command {

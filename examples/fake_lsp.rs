@@ -363,6 +363,7 @@ fn main() {
     // Release these on didSave so a test can reopen a document before any old
     // publication arrives, without relying on sleeps or thread scheduling.
     let mut deferred_diagnostics = Vec::new();
+    let mut last_uri = Value::Null;
     // --mirror FILE: the text of every open document as this server understood the
     // changes it was sent, rewritten after each one.
     let mut mirror: std::collections::BTreeMap<String, String> = Default::default();
@@ -453,6 +454,7 @@ fn main() {
                 {
                     let document = &message["params"]["textDocument"];
                     let uri = document["uri"].as_str().unwrap_or_default().to_owned();
+                    last_uri = document["uri"].clone();
                     if first {
                         mirror.insert(
                             uri,
@@ -554,6 +556,17 @@ fn main() {
                     out.send(&json!({ "jsonrpc": "2.0", "id": id,
                         "error": { "code": -32801, "message": "content modified" } }));
                     continue;
+                }
+                if method == "workspace/executeCommand" && options.flag("--exec-edit") {
+                    out.send(&json!({ "jsonrpc": "2.0", "id": 9300, "method": "workspace/applyEdit",
+                        "params": { "label": "by the server", "edit": { "changes": { last_uri.as_str().unwrap_or(""): [{
+                            "range": span(0, 0, 0), "newText": "// by server\n" }] } } } }));
+                }
+                if method == "workspace/executeCommand" && options.flag("--exec-show") {
+                    out.send(
+                        &json!({ "jsonrpc": "2.0", "id": 9301, "method": "window/showDocument",
+                        "params": { "uri": last_uri, "selection": span(1, 0, 3) } }),
+                    );
                 }
                 let result = feature_result(method, &params, &options).unwrap_or(Value::Null);
                 out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));

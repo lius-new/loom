@@ -2271,3 +2271,74 @@ fn growing_the_selection_walks_out_through_the_servers_ranges_and_shrinking_walk
     h.act(Action::SelectSmallerSyntaxNode);
     assert_eq!(h.selection(), None, "back to the caret");
 }
+
+fn server_responses(path: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|message| message.get("method").is_none() && message.get("result").is_some())
+        .collect()
+}
+
+#[test]
+fn a_server_can_edit_the_document_and_hear_that_it_was_done() {
+    use crate::features::keymap::action::Action;
+    let log = std::env::temp_dir().join(format!("loom-apply-{}.log", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let log_arg = log.display().to_string();
+    let mut h = LanguageHarness::new(
+        "fn alpha() {}\n",
+        &[
+            "--features",
+            "codeAction,execute",
+            "--exec-edit",
+            "--log",
+            &log_arg,
+        ],
+    );
+    h.until_ready();
+    h.act(Action::ToggleCodeActions);
+    h.until_popup("the actions");
+    // The second action resolves to a command; running it makes the server edit.
+    h.act(Action::MenuSelectNext);
+    h.act(Action::MenuConfirm);
+    h.until("the server's edit", |h| {
+        h.document_text().starts_with("// by server\n")
+    });
+    h.until("the server to hear back", |_| {
+        server_responses(&log)
+            .iter()
+            .any(|r| r["id"] == 9300 && r["result"]["applied"] == true)
+    });
+}
+
+#[test]
+fn a_server_can_ask_for_a_document_to_be_shown() {
+    use crate::features::keymap::action::Action;
+    let log = std::env::temp_dir().join(format!("loom-show-{}.log", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let log_arg = log.display().to_string();
+    let mut h = LanguageHarness::new(
+        "fn alpha() {}\nsecond\n",
+        &[
+            "--features",
+            "codeAction,execute",
+            "--exec-show",
+            "--log",
+            &log_arg,
+        ],
+    );
+    h.until_ready();
+    h.act(Action::ToggleCodeActions);
+    h.until_popup("the actions");
+    h.act(Action::MenuSelectNext);
+    h.act(Action::MenuConfirm);
+    // The server selects the first three characters of the second line.
+    h.until("the selection", |h| h.selection() == Some(14..17));
+    h.until("the answer", |_| {
+        server_responses(&log)
+            .iter()
+            .any(|r| r["id"] == 9301 && r["result"]["success"] == true)
+    });
+}
