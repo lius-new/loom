@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {stringify} from 'smol-toml';
 import {ROOT, WORK, loadRecipes, validateRecipes, validateCatalog, hash, fileHash, inputDigest, toml,
-  createArchive, extractArchive, fetchPinned, rewriteCaptures, applyQueryPatch, downloadUrl} from './lib.mjs';
+  createArchive, extractArchive, fetchPinned, rewriteCaptures, applyQueryPatch, downloadUrl, run} from './lib.mjs';
 import {preparePublication, verifyPublication, publishPrepared} from './publish.mjs';
 
 function fixture(t) {
@@ -82,6 +82,16 @@ test('upload or publish failure leaves the application manifest untouched',async
     const f=fixture(t),before=fileHash(f.catalog),{plan}=preparePublication(f.args),github=githubFor(plan,failure);
     await assert.rejects(publishPrepared(f.args,github,{requireClean:false,commit:'a'.repeat(40)}),/failed/);assert.equal(fileHash(f.catalog),before);
   }
+});
+test('publication reads the concrete commit from real Git output without its trailing newline',async t=>{
+  const f=fixture(t),{plan}=preparePublication(f.args),github=githubFor(plan);
+  const expected=run('git',['rev-parse','HEAD']).trim();
+  const create=github.create;let target;
+  github.create=(tag,commit,notes)=>{target=commit;return create(tag,commit,notes);};
+  const result=await publishPrepared(f.args,github,{requireClean:false});
+  assert.equal(result.published,true);assert.equal(target,expected);
+  assert.match(target,/^[a-f0-9]{40}$/);
+  assert.ok(fs.readFileSync(path.join(f.dist,'release-notes.md'),'utf8').includes(`Source commit: ${expected}\n`));
 });
 test('draft publication is resumable and promotion happens only after confirmation',async t=>{
   const f=fixture(t),before=fileHash(f.catalog),{plan}=preparePublication(f.args),github=githubFor(plan);

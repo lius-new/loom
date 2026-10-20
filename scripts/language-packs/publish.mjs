@@ -97,7 +97,7 @@ export async function publishPrepared(args, github, {commit, requireClean = true
   const {dist,plan,catalog}=verifyPublication(args), catalogFile=args.catalog || CATALOG;
   assert(fileHash(catalogFile) === plan.base || fileHash(catalogFile) === plan.assets['language-packs.toml'], 'Installed publication manifest changed since preparation');
   if(requireClean) assert(run('git',['status','--porcelain']).length === 0,'Commit the recipes, tools and local resources before publishing');
-  commit ||= run('git',['rev-parse','HEAD']);
+  commit ||= run('git',['rev-parse','HEAD']).trim();
   assert(/^[a-f0-9]{40}$/.test(commit),'Pin publication to a concrete repository commit');
   github ||= new GitHubReleases(plan.repository);
   const notes=path.join(dist,'release-notes.md');
