@@ -62,6 +62,7 @@ pub struct ServerCapabilities {
     pub position_encoding: PositionEncoding,
     pub text_sync: TextSync,
     pub semantic_tokens: Option<SemanticTokens>,
+    pub providers: super::providers::Providers,
 }
 
 /// The server cannot be used as it answered.
@@ -91,6 +92,7 @@ impl ServerCapabilities {
             position_encoding,
             text_sync: text_sync(capabilities.get("textDocumentSync")),
             semantic_tokens: semantic_tokens(capabilities.get("semanticTokensProvider")),
+            providers: super::providers::Providers::parse(capabilities),
         })
     }
 }

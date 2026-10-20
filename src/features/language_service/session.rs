@@ -221,6 +221,14 @@ impl Session {
         self.capabilities.as_ref()
     }
 
+    /// The id of the pending request made with `tag`, if it is still pending.
+    pub fn pending_id(&self, tag: u64) -> Option<Id> {
+        self.pending
+            .iter()
+            .find(|(_, pending)| pending.tag == tag)
+            .map(|(id, _)| id.clone())
+    }
+
     pub fn pending_requests(&self) -> usize {
         self.pending.len()
     }

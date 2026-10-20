@@ -89,6 +89,217 @@ impl Output<'_> {
     }
 }
 
+/// Where a protocol position falls in `text`, counting columns in UTF-8 bytes or
+/// UTF-16 units: an independent reading of the protocol, so the client's ranges
+/// are checked against something other than its own position code.
+fn offset_of(text: &str, position: &Value, utf8: bool) -> usize {
+    let line = position["line"].as_u64().unwrap_or(0) as usize;
+    let column = position["character"].as_u64().unwrap_or(0) as usize;
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    let mut at = 0;
+    let mut current = 0;
+    while current < line {
+        match bytes.get(at) {
+            None => return text.len(),
+            Some(b'\n') => {
+                at += 1;
+                start = at;
+                current += 1;
+            }
+            Some(b'\r') => {
+                at += 1;
+                if bytes.get(at) == Some(&b'\n') {
+                    at += 1;
+                }
+                start = at;
+                current += 1;
+            }
+            Some(_) => at += 1,
+        }
+    }
+    let mut units = 0;
+    let mut offset = start;
+    for ch in text[start..].chars() {
+        if ch == '\n' || ch == '\r' || units >= column {
+            break;
+        }
+        units += if utf8 { ch.len_utf8() } else { ch.len_utf16() };
+        offset += ch.len_utf8();
+    }
+    offset
+}
+
+fn apply_changes(text: &mut String, changes: &Value, utf8: bool) {
+    for change in changes.as_array().into_iter().flatten() {
+        let new_text = change["text"].as_str().unwrap_or_default();
+        match change.get("range") {
+            None => *text = new_text.to_owned(),
+            Some(range) => {
+                let start = offset_of(text, &range["start"], utf8);
+                let end = offset_of(text, &range["end"], utf8);
+                text.replace_range(start..end.max(start), new_text);
+            }
+        }
+    }
+}
+
+/// Provider capabilities for `--features a,b,c`.
+fn feature_capabilities(options: &Options, caps: &mut serde_json::Map<String, Value>) {
+    let Some(list) = options.value("--features") else {
+        return;
+    };
+    for feature in list.split(',') {
+        match feature {
+            "hover" => caps.insert("hoverProvider".into(), json!(true)),
+            "definition" => caps.insert("definitionProvider".into(), json!(true)),
+            "declaration" => caps.insert("declarationProvider".into(), json!(true)),
+            "typeDefinition" => caps.insert("typeDefinitionProvider".into(), json!(true)),
+            "implementation" => caps.insert("implementationProvider".into(), json!(true)),
+            "references" => caps.insert("referencesProvider".into(), json!(true)),
+            "highlight" => caps.insert("documentHighlightProvider".into(), json!(true)),
+            "symbols" => caps.insert("documentSymbolProvider".into(), json!(true)),
+            "workspaceSymbols" => caps.insert("workspaceSymbolProvider".into(), json!(true)),
+            "completion" => caps.insert(
+                "completionProvider".into(),
+                json!({ "triggerCharacters": ["."], "resolveProvider": true }),
+            ),
+            "signature" => caps.insert(
+                "signatureHelpProvider".into(),
+                json!({ "triggerCharacters": ["("], "retriggerCharacters": [","] }),
+            ),
+            "rename" => caps.insert("renameProvider".into(), json!({ "prepareProvider": true })),
+            "codeAction" => caps.insert(
+                "codeActionProvider".into(),
+                json!({ "resolveProvider": true }),
+            ),
+            "formatting" => caps.insert("documentFormattingProvider".into(), json!(true)),
+            "rangeFormatting" => caps.insert("documentRangeFormattingProvider".into(), json!(true)),
+            "inlay" => caps.insert("inlayHintProvider".into(), json!(true)),
+            "folding" => caps.insert("foldingRangeProvider".into(), json!(true)),
+            "selection" => caps.insert("selectionRangeProvider".into(), json!(true)),
+            "callHierarchy" => caps.insert("callHierarchyProvider".into(), json!(true)),
+            "typeHierarchy" => caps.insert("typeHierarchyProvider".into(), json!(true)),
+            "codeLens" => caps.insert(
+                "codeLensProvider".into(),
+                json!({ "resolveProvider": false }),
+            ),
+            "execute" => caps.insert(
+                "executeCommandProvider".into(),
+                json!({ "commands": ["fake.run"] }),
+            ),
+            _ => None,
+        };
+    }
+}
+
+fn location(uri: &Value, line: u32, from: u32, to: u32) -> Value {
+    json!({ "uri": uri, "range": {
+        "start": { "line": line, "character": from },
+        "end": { "line": line, "character": to } } })
+}
+
+fn span(line: u32, from: u32, to: u32) -> Value {
+    json!({ "start": { "line": line, "character": from },
+            "end": { "line": line, "character": to } })
+}
+
+/// The canned answer to an interactive request, so tests can tell what was asked
+/// from what came back. `None` for methods the fake does not know.
+fn feature_result(method: &str, params: &Value, options: &Options) -> Option<Value> {
+    let uri = &params["textDocument"]["uri"];
+    let uri_text = uri.as_str().unwrap_or("");
+    let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
+    let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
+    let tag = options.value("--tag").unwrap_or("fake");
+    Some(match method {
+        "textDocument/hover" => {
+            if options.flag("--hover-null") {
+                Value::Null
+            } else {
+                json!({ "contents": { "kind": "markdown",
+                    "value": format!("hover {line}:{character} from {tag}") },
+                    "range": span(line, character, character + 1) })
+            }
+        }
+        "textDocument/definition"
+        | "textDocument/declaration"
+        | "textDocument/typeDefinition"
+        | "textDocument/implementation" => json!([location(uri, 0, 0, 1)]),
+        "textDocument/references" => json!([location(uri, 0, 0, 1), location(uri, 1, 2, 4)]),
+        "textDocument/documentHighlight" => json!([{ "range": span(0, 0, 2), "kind": 2 }]),
+        "textDocument/documentSymbol" => json!([{
+            "name": "main", "kind": 12,
+            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 2, "character": 1 } },
+            "selectionRange": span(0, 3, 7),
+            "children": []
+        }]),
+        "workspace/symbol" => json!([{
+            "name": format!("sym-{}", params["query"].as_str().unwrap_or("")),
+            "kind": 12, "location": { "uri": "file:///elsewhere.rs" }
+        }]),
+        "textDocument/completion" => json!({
+            "isIncomplete": options.flag("--completion-incomplete"),
+            "items": [
+                { "label": format!("alpha-{tag}"), "kind": 3, "sortText": "1" },
+                { "label": "beta", "kind": 6, "insertText": "beta($1)$0",
+                  "insertTextFormat": 2, "data": { "n": 2 } },
+            ]
+        }),
+        "completionItem/resolve" => {
+            let mut item = params.clone();
+            item["documentation"] = json!({ "kind": "markdown", "value": "resolved docs" });
+            item
+        }
+        "textDocument/signatureHelp" => json!({
+            "signatures": [{ "label": "fn f(a: i32, b: i32)",
+                "parameters": [{ "label": "a: i32" }, { "label": "b: i32" }] }],
+            "activeSignature": 0, "activeParameter": 1
+        }),
+        "textDocument/prepareRename" => json!({
+            "range": span(line, character, character + 1),
+            "placeholder": "name"
+        }),
+        "textDocument/rename" => json!({ "changes": { uri_text: [{
+            "range": span(0, 0, 1), "newText": params["newName"] }] } }),
+        "textDocument/codeAction" => json!([
+            { "title": "Fix it", "kind": "quickfix", "isPreferred": true,
+              "edit": { "changes": { uri_text: [{
+                  "range": span(0, 0, 0), "newText": "// fixed\n" }] } } },
+            { "title": "Lazy", "kind": "refactor", "data": 7 }
+        ]),
+        "codeAction/resolve" => {
+            let mut action = params.clone();
+            action["command"] = json!({ "title": "Run", "command": "fake.run" });
+            action
+        }
+        "textDocument/formatting" | "textDocument/rangeFormatting" => {
+            json!([{ "range": span(0, 0, 0), "newText": "// formatted\n" }])
+        }
+        "textDocument/inlayHint" => json!([{
+            "position": { "line": 0, "character": 3 }, "label": ": i32", "kind": 1 }]),
+        "textDocument/foldingRange" => json!([{ "startLine": 0, "endLine": 2 }]),
+        "textDocument/selectionRange" => json!([{
+            "range": span(0, 1, 2),
+            "parent": { "range": span(0, 0, 9) } }]),
+        "textDocument/prepareCallHierarchy" | "textDocument/prepareTypeHierarchy" => json!([{
+            "name": "f", "kind": 12, "uri": uri,
+            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 2, "character": 1 } },
+            "selectionRange": span(0, 3, 4),
+            "data": "item" }]),
+        "callHierarchy/incomingCalls" => json!([{
+            "from": params["item"], "fromRanges": [span(1, 0, 1)] }]),
+        "callHierarchy/outgoingCalls" => json!([{
+            "to": params["item"], "fromRanges": [span(1, 0, 1)] }]),
+        "typeHierarchy/supertypes" | "typeHierarchy/subtypes" => json!([params["item"]]),
+        "textDocument/codeLens" => json!([{
+            "range": span(0, 0, 4),
+            "command": { "title": "Run test", "command": "fake.run", "arguments": [1] } }]),
+        "workspace/executeCommand" => json!({ "ran": params["command"] }),
+        _ => return None,
+    })
+}
+
 fn capabilities(options: &Options) -> Value {
     let mut caps = serde_json::Map::new();
     match options.value("--encoding") {
@@ -123,6 +334,7 @@ fn capabilities(options: &Options) -> Value {
         ),
         _ => None,
     };
+    feature_capabilities(options, &mut caps);
     Value::Object(caps)
 }
 
@@ -149,6 +361,10 @@ fn main() {
     // Release these on didSave so a test can reopen a document before any old
     // publication arrives, without relying on sleeps or thread scheduling.
     let mut deferred_diagnostics = Vec::new();
+    // --mirror FILE: the text of every open document as this server understood the
+    // changes it was sent, rewritten after each one.
+    let mut mirror: std::collections::BTreeMap<String, String> = Default::default();
+    let utf8 = options.value("--encoding") == Some("utf-8");
     while let Some(message) = read_message(&mut input) {
         log(&message);
         let method = message.get("method").and_then(Value::as_str).unwrap_or("");
@@ -232,6 +448,21 @@ fn main() {
                 // --diag-once: only the first publication, like a server that sees no
                 // change in its findings; --diag-delay-ms: publish late.
                 let first = method == "textDocument/didOpen";
+                {
+                    let document = &message["params"]["textDocument"];
+                    let uri = document["uri"].as_str().unwrap_or_default().to_owned();
+                    if first {
+                        mirror.insert(
+                            uri,
+                            document["text"].as_str().unwrap_or_default().to_owned(),
+                        );
+                    } else if let Some(text) = mirror.get_mut(&uri) {
+                        apply_changes(text, &message["params"]["contentChanges"], utf8);
+                    }
+                    if let Some(path) = options.value("--mirror") {
+                        let _ = std::fs::write(path, serde_json::to_vec(&mirror).unwrap());
+                    }
+                }
                 if options.flag("--diagnostics") && (first || !options.flag("--diag-once")) {
                     std::thread::sleep(Duration::from_millis(options.number("--diag-delay-ms")));
                     let document = &message["params"]["textDocument"];
@@ -255,6 +486,16 @@ fn main() {
                     } else {
                         out.send(&publication);
                     }
+                }
+            }
+            ("textDocument/didClose", None) => {
+                mirror.remove(
+                    message["params"]["textDocument"]["uri"]
+                        .as_str()
+                        .unwrap_or_default(),
+                );
+                if let Some(path) = options.value("--mirror") {
+                    let _ = std::fs::write(path, serde_json::to_vec(&mirror).unwrap());
                 }
             }
             ("textDocument/didSave", None) => {
@@ -299,6 +540,21 @@ fn main() {
                     std::thread::sleep(Duration::from_secs(60));
                 }
                 std::process::exit(if shutdown_seen { 0 } else { 1 });
+            }
+            (_, Some(id))
+                if options.value("--features").is_some()
+                    && feature_result(method, &Value::Null, &options).is_some()
+                    && !options.flag("--ignore-requests") =>
+            {
+                std::thread::sleep(Duration::from_millis(options.number("--slow-ms")));
+                let params = message.get("params").cloned().unwrap_or(Value::Null);
+                if options.flag("--feature-error") {
+                    out.send(&json!({ "jsonrpc": "2.0", "id": id,
+                        "error": { "code": -32801, "message": "content modified" } }));
+                    continue;
+                }
+                let result = feature_result(method, &params, &options).unwrap_or(Value::Null);
+                out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
             }
             (_, Some(id)) if !method.is_empty() => {
                 if options.flag("--ignore-requests") {

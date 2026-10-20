@@ -1260,3 +1260,305 @@ language_id = "fakelang"
         assert_eq!(w.downloads.load(Ordering::SeqCst), 0);
     }
 }
+
+mod requests {
+    use super::*;
+    use crate::features::language_service::reply;
+    use crate::features::language_service::request::Feature;
+    use crate::infrastructure::lsp::manager::{Failure, RequestHandle, RequestSpec};
+
+    const FEATURES: &str = "hover,definition,references,highlight,symbols,workspaceSymbols,completion,\
+signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,codeLens,execute";
+
+    fn stamp(version: u64) -> Stamp {
+        Stamp {
+            incarnation: 1,
+            version,
+        }
+    }
+
+    fn featured(extra: &[&str]) -> Fixture {
+        let mut args = vec!["--features", FEATURES];
+        args.extend(extra);
+        Fixture::new(&args)
+    }
+
+    impl Fixture {
+        fn ask(&self, feature: Feature, version: u64, offset: usize) -> RequestHandle {
+            self.mgr().request(RequestSpec::new(
+                feature,
+                self.dir.join("a.fk"),
+                stamp(version),
+                offset,
+            ))
+        }
+
+        fn finish(&self, handle: &RequestHandle) -> crate::infrastructure::lsp::manager::Progress {
+            self.wait_for("the request to finish", || {
+                let progress = handle.poll();
+                progress.finished.then_some(progress)
+            })
+        }
+
+        /// Asks once the server is ready; a request made earlier would find nobody.
+        fn ready_then_ask(&self, feature: Feature, version: u64, offset: usize) -> RequestHandle {
+            self.wait_status("ready", |s| matches!(s, Status::Ready));
+            self.wait_method_count("textDocument/didOpen", 1);
+            self.ask(feature, version, offset)
+        }
+    }
+
+    #[test]
+    fn hover_asks_for_the_position_of_the_offset_and_hears_back() {
+        let f = featured(&[]);
+        f.show(vec![f.doc("a.fk", 0, "ab\ncd😀ef")]);
+        // Byte 9 is the e after the emoji: line 1, UTF-16 column 4.
+        let handle = f.ready_then_ask(Feature::Hover, 0, 9);
+        let progress = f.finish(&handle);
+        assert_eq!(progress.failure, None);
+        assert_eq!(progress.parts.len(), 1);
+        let hover = reply::hover(&progress.parts[0].value, progress.parts[0].encoding).unwrap();
+        assert_eq!(hover.markdown, "hover 1:4 from fake");
+        let sent = f
+            .log()
+            .into_iter()
+            .find(|m| m["method"] == "textDocument/hover")
+            .unwrap();
+        assert_eq!(
+            sent["params"]["position"],
+            json!({ "line": 1, "character": 4 })
+        );
+        assert_eq!(progress.parts[0].server.as_ref(), "fake-server");
+    }
+
+    #[test]
+    fn a_request_for_an_old_state_is_stale_and_sends_nothing() {
+        let f = featured(&[]);
+        f.show(vec![f.doc("a.fk", 0, "one")]);
+        f.wait_status("ready", |s| matches!(s, Status::Ready));
+        f.show(vec![f.doc("a.fk", 1, "one two")]);
+        let handle = f.ask(Feature::Hover, 0, 1);
+        let progress = f.finish(&handle);
+        assert_eq!(progress.failure, Some(Failure::Stale));
+        assert!(progress.parts.is_empty());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!f.methods().contains(&"textDocument/hover".to_owned()));
+    }
+
+    #[test]
+    fn a_server_without_the_feature_is_not_asked() {
+        let f = Fixture::new(&["--features", "definition"]);
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        let handle = f.ready_then_ask(Feature::Hover, 0, 0);
+        assert_eq!(f.finish(&handle).failure, Some(Failure::Unsupported));
+        let handle = f.ask(Feature::Definition, 0, 0);
+        assert_eq!(f.finish(&handle).parts.len(), 1);
+    }
+
+    #[test]
+    fn a_server_that_is_not_ready_yet_cannot_answer() {
+        let f = featured(&["--init-delay-ms", "400"]);
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        let handle = f.ask(Feature::Hover, 0, 0);
+        assert_eq!(f.finish(&handle).failure, Some(Failure::Unsupported));
+    }
+
+    #[test]
+    fn dropping_the_handle_cancels_the_request_at_the_server() {
+        let f = featured(&["--slow-ms", "800"]);
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        let handle = f.ready_then_ask(Feature::Hover, 0, 0);
+        f.wait_method_count("textDocument/hover", 1);
+        drop(handle);
+        f.wait_method_count("$/cancelRequest", 1);
+    }
+
+    #[test]
+    fn a_newer_request_of_the_same_kind_replaces_the_older() {
+        let f = featured(&["--slow-ms", "400"]);
+        f.show(vec![f.doc("a.fk", 0, "abcdef")]);
+        let first = f.ready_then_ask(Feature::Hover, 0, 1);
+        let second = f.ask(Feature::Hover, 0, 4);
+        let old = f.finish(&first);
+        assert!(old.parts.is_empty(), "the older request was given up on");
+        let new = f.finish(&second);
+        let hover = reply::hover(&new.parts[0].value, new.parts[0].encoding).unwrap();
+        assert_eq!(hover.markdown, "hover 0:4 from fake");
+        f.wait_method_count("$/cancelRequest", 1);
+    }
+
+    #[test]
+    fn content_modified_means_stale_not_failed() {
+        let f = featured(&["--feature-error"]);
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        let handle = f.ready_then_ask(Feature::Hover, 0, 0);
+        assert_eq!(f.finish(&handle).failure, Some(Failure::Stale));
+    }
+
+    #[test]
+    fn a_server_that_dies_mid_request_fails_it_rather_than_hanging() {
+        let f = featured(&["--crash-on", "textDocument/hover"]);
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        let handle = f.ready_then_ask(Feature::Hover, 0, 0);
+        let progress = f.finish(&handle);
+        assert!(
+            matches!(progress.failure, Some(Failure::Failed(_))),
+            "{progress:?}"
+        );
+    }
+
+    #[test]
+    fn every_server_answers_and_the_first_non_empty_one_wins_where_that_is_the_rule() {
+        let f = Fixture::with_servers(
+            two_servers(),
+            &[
+                (
+                    "alpha",
+                    &[
+                        "--features",
+                        "hover,highlight",
+                        "--tag",
+                        "alpha",
+                        "--hover-null",
+                    ],
+                ),
+                ("beta", &["--features", "hover,highlight", "--tag", "beta"]),
+            ],
+        );
+        f.show(vec![f.doc("a.fk", 0, "abc")]);
+        f.wait_ready(2);
+        f.wait_for("both servers to open the document", || {
+            (0..2)
+                .all(|n| {
+                    f.methods_of(n)
+                        .iter()
+                        .any(|m| m["method"] == "textDocument/didOpen")
+                })
+                .then_some(())
+        });
+        // Hover merges: alpha has nothing to say (null is not a part), beta does.
+        let handle = f.ask(Feature::Hover, 0, 1);
+        let progress = f.finish(&handle);
+        assert_eq!(progress.parts.len(), 1);
+        assert_eq!(progress.parts[0].server.as_ref(), "beta");
+        // Highlights: first non-empty in listing order (beta has the lower priority number? both answer).
+        let handle = f.ask(Feature::DocumentHighlight, 0, 1);
+        let progress = f.finish(&handle);
+        assert_eq!(progress.parts.len(), 2);
+        let usable = progress.usable(Feature::DocumentHighlight);
+        assert_eq!(usable.len(), 1);
+        assert_eq!(
+            usable[0].rank, progress.parts[0].rank,
+            "the preferred server"
+        );
+    }
+
+    #[test]
+    fn a_follow_up_goes_only_to_the_server_that_produced_the_item() {
+        let f = Fixture::with_servers(
+            two_servers(),
+            &[
+                ("alpha", &["--features", "completion", "--tag", "alpha"]),
+                ("beta", &["--features", "completion", "--tag", "beta"]),
+            ],
+        );
+        f.show(vec![f.doc("a.fk", 0, "abc")]);
+        f.wait_ready(2);
+        f.wait_for("both servers to open the document", || {
+            (0..2)
+                .all(|n| {
+                    f.methods_of(n)
+                        .iter()
+                        .any(|m| m["method"] == "textDocument/didOpen")
+                })
+                .then_some(())
+        });
+        let handle = f.ask(Feature::Completion, 0, 3);
+        let progress = f.finish(&handle);
+        assert_eq!(progress.parts.len(), 2);
+        let beta = progress
+            .parts
+            .iter()
+            .find(|p| p.server.as_ref() == "beta")
+            .unwrap();
+        let list = reply::completion(&beta.value, beta.encoding);
+        let item = list.items.iter().find(|i| i.label == "beta").unwrap();
+        let resolve = f.mgr().request(
+            RequestSpec::new(Feature::CompletionResolve, f.dir.join("a.fk"), stamp(0), 0)
+                .extra(item.raw.clone())
+                .target(beta.instance),
+        );
+        let answer = f.finish(&resolve);
+        assert_eq!(answer.parts.len(), 1);
+        assert_eq!(answer.parts[0].instance, beta.instance);
+        let resolved =
+            reply::completion_item(&answer.parts[0].value, answer.parts[0].encoding).unwrap();
+        assert_eq!(resolved.documentation.as_deref(), Some("resolved docs"));
+        let alpha_resolves = f
+            .methods_of(0)
+            .iter()
+            .filter(|m| m["method"] == "completionItem/resolve")
+            .count();
+        assert_eq!(alpha_resolves, 0, "alpha was not asked");
+    }
+
+    #[test]
+    fn workspace_requests_need_no_document() {
+        let f = featured(&[]);
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        f.wait_status("ready", |s| matches!(s, Status::Ready));
+        let handle = f.mgr().request(
+            RequestSpec::new(Feature::WorkspaceSymbol, f.dir.join("a.fk"), stamp(0), 0)
+                .extra(json!({ "query": "ab" })),
+        );
+        let progress = f.finish(&handle);
+        let found = reply::symbols(&progress.parts[0].value, progress.parts[0].encoding);
+        assert_eq!(found[0].name, "sym-ab");
+    }
+
+    #[test]
+    fn typing_reaches_a_server_that_wants_ranges_as_ranges_and_leaves_its_copy_identical() {
+        let dir_mirror = |f: &Fixture| f.dir.join("mirror.json");
+        let mut f = Fixture::new(&["--sync", "incremental", "--features", "hover"]);
+        let mirror = dir_mirror(&f).display().to_string();
+        f.settings[0]
+            .args
+            .as_mut()
+            .unwrap()
+            .extend(["--mirror".to_owned(), mirror]);
+        f.show(vec![f.doc(
+            "a.fk",
+            0,
+            "fn main() {\r\n    let é = 1;\r\n}\r\n",
+        )]);
+        f.wait_method_count("textDocument/didOpen", 1);
+        let texts = [
+            "fn main() {\r\n    let é = 1;\r\n}\r\n!",
+            "fn main() {\r\n    let éé = 12;\r\n}\r\n!",
+            "fn main() {\r\n    let éé = 12;\r\n\r\n}\r\n!",
+            "fn mn() {\r\n    let éé = 12;\r\n\r\n}\r\n!",
+        ];
+        for (n, text) in texts.iter().enumerate() {
+            f.show(vec![f.doc("a.fk", n as u64 + 1, text)]);
+            f.wait_method_count("textDocument/didChange", n + 1);
+            let want = text.to_string();
+            f.wait_for("the server's copy to match", || {
+                std::fs::read_to_string(dir_mirror(&f))
+                    .ok()
+                    .and_then(|m| serde_json::from_str::<Value>(&m).ok())
+                    .and_then(|m| m.as_object()?.values().next()?.as_str().map(str::to_owned))
+                    .filter(|mirrored| *mirrored == want)
+            });
+        }
+        let changes: Vec<Value> = f
+            .log()
+            .into_iter()
+            .filter(|m| m["method"] == "textDocument/didChange")
+            .collect();
+        assert!(
+            changes
+                .iter()
+                .all(|c| c["params"]["contentChanges"][0]["range"].is_object())
+        );
+    }
+}

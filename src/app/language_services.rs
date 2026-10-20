@@ -202,6 +202,8 @@ mod tests {
                 "full".into(),
                 "--log".into(),
                 log.display().to_string(),
+                "--mirror".into(),
+                dir.join("mirror.json").display().to_string(),
             ]),
             initialization_options: None,
             install: None,
@@ -261,7 +263,25 @@ mod tests {
             .into_iter()
             .find(|(m, _)| m == "textDocument/didChange")
             .unwrap();
-        assert_eq!(changed.1["contentChanges"][0]["text"], "fn a() { 1 }");
+        // The server was sent a range, and its copy is the editor's text.
+        assert!(changed.1["contentChanges"][0]["range"].is_object());
+        let mirrored = || {
+            std::fs::read_to_string(dir.join("mirror.json"))
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .and_then(|map| {
+                    map.as_object()?
+                        .values()
+                        .next()?
+                        .as_str()
+                        .map(str::to_owned)
+                })
+        };
+        let limit = Instant::now() + Duration::from_secs(5);
+        while mirrored().as_deref() != Some("fn a() { 1 }") {
+            assert!(Instant::now() < limit, "mirror is {:?}", mirrored());
+            std::thread::sleep(Duration::from_millis(20));
+        }
 
         // An update that changes nothing about documents sends nothing.
         for _ in 0..5 {

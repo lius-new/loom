@@ -81,6 +81,8 @@ enum Command {
         method: String,
         params: Value,
     },
+    /// Give up on the request made with this tag.
+    Cancel(u64),
     Shutdown,
 }
 
@@ -179,6 +181,22 @@ impl Client {
             tag,
             timeout: None,
         })
+    }
+
+    /// Like [`request`](Self::request), with its own time limit.
+    pub fn request_within(&self, method: &str, params: Value, tag: u64, timeout: Duration) -> bool {
+        self.command(Command::Request {
+            method: method.to_owned(),
+            params,
+            tag,
+            timeout: Some(timeout),
+        })
+    }
+
+    /// Tells the server the answer to the request made with `tag` is no longer
+    /// wanted. Its late answer, if it sends one, is dropped.
+    pub fn cancel(&self, tag: u64) -> bool {
+        self.command(Command::Cancel(tag))
     }
 
     pub fn notify(&self, method: &str, params: Value) -> bool {
@@ -401,6 +419,13 @@ impl Driver {
             Command::Notify { method, params } => {
                 self.session.notify(&method, params).unwrap_or_default()
             }
+            Command::Cancel(tag) => match self.session.pending_id(tag) {
+                Some(id) => {
+                    self.requests.retain(|(_, known)| *known != id);
+                    self.session.cancel(&id)
+                }
+                None => Output::default(),
+            },
             Command::Shutdown => {
                 let output = self.session.begin_shutdown();
                 if self.exit_deadline.is_none() && self.session.state() != &State::Initializing {

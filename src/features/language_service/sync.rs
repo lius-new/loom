@@ -6,10 +6,13 @@
 //! buffer (typing, undo, replace-all, reload from disk, a rename), the next
 //! reconcile sees the new version and sends it, so no write entry can be missed.
 //!
-//! The text is always sent whole. A change event without a range is valid for
-//! servers that asked for incremental updates too, and it makes the server's copy
-//! correct by construction; sending ranges is an optimisation for later.
-use super::capabilities::{SyncKind, TextSync};
+//! A server that asked for incremental updates gets one ranged replacement per
+//! change: the span between the longest common prefix and suffix of the text last
+//! sent and the text now. A server that asked for whole texts, or a change that
+//! leaves the text as it was, gets the whole text, which is correct by
+//! construction.
+use super::capabilities::{PositionEncoding, SyncKind, TextSync};
+use super::position::LineIndex;
 use super::uri;
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -70,6 +73,7 @@ impl Open {
 
 pub struct DocumentSync {
     sync: TextSync,
+    encoding: PositionEncoding,
     open: HashMap<String, Open>,
     // One counter per connection avoids both version reuse on reopen and an
     // unbounded table of closed URI tombstones. Versions may skip for a URI.
@@ -99,10 +103,62 @@ fn did_close(uri: &str) -> Notification {
     }
 }
 
+/// The one ranged replacement that turns `before` into `after`, or `None` when
+/// they are equal (the caller then sends the whole text). The span is trimmed to
+/// character boundaries and never splits a CR LF pair, so both of its ends are
+/// positions the protocol can name.
+pub fn incremental_change(before: &str, after: &str, encoding: PositionEncoding) -> Option<Value> {
+    if before == after {
+        return None;
+    }
+    let (old, new) = (before.as_bytes(), after.as_bytes());
+    // A position between the CR and the LF of a line break does not exist.
+    let splits_pair = |at: usize| at > 0 && old.get(at) == Some(&b'\n') && old[at - 1] == b'\r';
+    let mut prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    while prefix > 0
+        && (!before.is_char_boundary(prefix)
+            || !after.is_char_boundary(prefix)
+            || splits_pair(prefix))
+    {
+        prefix -= 1;
+    }
+    let limit = old.len().min(new.len()) - prefix;
+    let mut suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(limit)
+        .take_while(|(a, b)| a == b)
+        .count();
+    while suffix > 0
+        && (!before.is_char_boundary(old.len() - suffix)
+            || !after.is_char_boundary(new.len() - suffix)
+            || splits_pair(old.len() - suffix))
+    {
+        suffix -= 1;
+    }
+    let index = LineIndex::new(before);
+    let (start, end) = (prefix, old.len() - suffix);
+    let position = |at| {
+        let p = index.position(at, encoding);
+        json!({ "line": p.line, "character": p.character })
+    };
+    Some(json!({
+        "range": { "start": position(start), "end": position(end) },
+        "text": &after[prefix..new.len() - suffix],
+    }))
+}
+
 impl DocumentSync {
     pub fn new(sync: TextSync) -> Self {
+        Self::with_encoding(sync, PositionEncoding::Utf16)
+    }
+
+    /// Ranges in change events count in `encoding`.
+    pub fn with_encoding(sync: TextSync, encoding: PositionEncoding) -> Self {
         Self {
             sync,
+            encoding,
             open: HashMap::new(),
             last_version: 0,
         }
@@ -214,13 +270,20 @@ impl DocumentSync {
                     self.last_version += 1;
                     open.version = self.last_version;
                     open.sent = document.stamp;
+                    let change = match (self.sync.change, open.texts.back()) {
+                        (SyncKind::Incremental, Some((_, before))) => {
+                            incremental_change(before, &document.text, self.encoding)
+                        }
+                        _ => None,
+                    }
+                    .unwrap_or_else(|| json!({ "text": &*document.text }));
                     open.remember(&document.text);
                     if self.sync.change != SyncKind::None {
                         changes.push(Notification {
                             method: "textDocument/didChange",
                             params: json!({
                                 "textDocument": { "uri": open.uri, "version": open.version },
-                                "contentChanges": [{ "text": &*document.text }],
+                                "contentChanges": [change],
                             }),
                         });
                     }
@@ -584,5 +647,133 @@ mod tests {
             ["textDocument/didClose", "textDocument/didOpen"]
         );
         assert_eq!(notes[1].params["textDocument"]["version"], i32::MAX);
+    }
+
+    /// Applies a ranged change to `before` the way a server would.
+    fn apply(before: &str, change: &Value, encoding: PositionEncoding) -> String {
+        let index = LineIndex::new(before);
+        let at = |p: &Value| {
+            index.offset(
+                crate::features::language_service::position::Position {
+                    line: p["line"].as_u64().unwrap() as u32,
+                    character: p["character"].as_u64().unwrap() as u32,
+                },
+                encoding,
+            )
+        };
+        let (start, end) = (at(&change["range"]["start"]), at(&change["range"]["end"]));
+        format!(
+            "{}{}{}",
+            &before[..start],
+            change["text"].as_str().unwrap(),
+            &before[end..]
+        )
+    }
+
+    #[test]
+    fn random_edits_keep_the_servers_copy_identical() {
+        // A small deterministic generator keeps the test reproducible.
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let alphabet = ["a", "b", "\n", "\r\n", "\r", "é", "中", "😀", " ", "fn "];
+        let mut text = String::from("fn main() {\r\n    let x = 1;\n}\n😀");
+        for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+            for _ in 0..3000 {
+                let mut after = text.clone();
+                for _ in 0..1 + next(3) {
+                    let marks: Vec<usize> = after
+                        .char_indices()
+                        .map(|(i, _)| i)
+                        .chain([after.len()])
+                        .collect();
+                    let a = marks[next(marks.len())];
+                    let b = marks[next(marks.len())];
+                    let (a, b) = (a.min(b), a.max(b));
+                    let insert: String = (0..next(4))
+                        .map(|_| alphabet[next(alphabet.len())])
+                        .collect();
+                    after.replace_range(a..b, &insert);
+                }
+                match incremental_change(&text, &after, encoding) {
+                    None => assert_eq!(text, after),
+                    Some(change) => assert_eq!(
+                        apply(&text, &change, encoding),
+                        after,
+                        "{text:?} -> {after:?}"
+                    ),
+                }
+                text = after;
+                if text.len() > 200 {
+                    let cut = text
+                        .char_indices()
+                        .map(|(i, _)| i)
+                        .take_while(|i| *i <= 120)
+                        .last();
+                    text.truncate(cut.unwrap());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_incremental_server_gets_a_range_and_the_same_text_gets_the_whole_text() {
+        let mut sync = DocumentSync::with_encoding(
+            TextSync {
+                open_close: true,
+                change: SyncKind::Incremental,
+                save: None,
+            },
+            PositionEncoding::Utf16,
+        );
+        sync.reconcile(&[doc("a.rs", 1, 0, "hello world")]).unwrap();
+        let notes = sync
+            .reconcile(&[doc("a.rs", 1, 1, "hello brave world")])
+            .unwrap();
+        assert_eq!(
+            notes[0].params["contentChanges"],
+            json!([{ "range": {
+                "start": { "line": 0, "character": 6 },
+                "end": { "line": 0, "character": 6 } }, "text": "brave " }])
+        );
+        // Same text under a new version: the whole text moves the version on.
+        let notes = sync
+            .reconcile(&[doc("a.rs", 1, 2, "hello brave world")])
+            .unwrap();
+        assert_eq!(
+            notes[0].params["contentChanges"],
+            json!([{ "text": "hello brave world" }])
+        );
+        assert_eq!(notes[0].params["textDocument"]["version"], 3);
+    }
+
+    #[test]
+    fn a_crlf_pair_is_never_split_by_a_range() {
+        for (before, after) in [
+            ("a\r\nb", "a\r\n\r\nb"),
+            ("a\r\nb", "a\nb"),
+            ("a\r\nb", "a\rb"),
+        ] {
+            let change = incremental_change(before, after, PositionEncoding::Utf16).unwrap();
+            assert_eq!(apply(before, &change, PositionEncoding::Utf16), after);
+        }
+    }
+
+    #[test]
+    fn planning_an_edit_in_a_big_document_is_fast() {
+        let big = "let value = compute(1, 2, 3);\n".repeat(280_000);
+        assert!(big.len() > 8_000_000);
+        let mut edited = big.clone();
+        edited.insert(big.len() / 2, 'x');
+        let started = std::time::Instant::now();
+        let change = incremental_change(&big, &edited, PositionEncoding::Utf16).unwrap();
+        let took = started.elapsed();
+        assert_eq!(change["text"], "x");
+        // Generous in debug builds; the release figure is a few milliseconds.
+        assert!(took < std::time::Duration::from_millis(1500), "{took:?}");
     }
 }

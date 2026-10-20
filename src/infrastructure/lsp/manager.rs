@@ -12,6 +12,10 @@
 //! - restarts a crashed server after 1, 2 and 4 seconds, then reports it failed
 //!   until the user restarts it;
 //! - reports a program that cannot be started as unavailable, once, quietly.
+#[path = "manager_requests.rs"]
+mod requests;
+pub(crate) use requests::{Failure, Part, Progress, RequestHandle, RequestSpec};
+
 use super::client::{Client, Launch, Timeouts};
 use crate::domain::language::{Registry, ResolvedLanguage};
 use crate::features::language_service::{
@@ -222,16 +226,23 @@ enum Msg {
     RetryInstalls,
     /// Some pack's installation moved on.
     InstallChanged,
+    Request {
+        id: u64,
+        spec: Box<RequestSpec>,
+        shared: Arc<Mutex<Progress>>,
+    },
+    Cancel(u64),
     Event {
         instance: u64,
         run: u64,
-        event: Event,
+        event: Box<Event>,
     },
     Stop,
 }
 
 pub(crate) struct Manager {
     tx: Sender<Msg>,
+    next_request: std::sync::atomic::AtomicU64,
     infos: Arc<Mutex<Vec<InstanceInfo>>>,
     results: Store,
     thread: Option<JoinHandle<()>>,
@@ -271,6 +282,7 @@ impl Manager {
             infos: infos.clone(),
             results: results.clone(),
             results_changed: false,
+            book: requests::Book::default(),
             on_change: Box::new(on_change),
             instances: Vec::new(),
             next_id: 1,
@@ -284,6 +296,7 @@ impl Manager {
             .expect("the coordinator thread starts");
         Self {
             tx,
+            next_request: std::sync::atomic::AtomicU64::new(1),
             infos,
             results,
             thread: Some(thread),
@@ -444,6 +457,8 @@ struct Coordinator {
     results: Store,
     /// Results were stored since the last announcement.
     results_changed: bool,
+    /// Requests the application is waiting on.
+    book: requests::Book,
     on_change: Box<dyn Fn() + Send>,
     instances: Vec<Instance>,
     next_id: u64,
@@ -526,11 +541,16 @@ impl Coordinator {
                 }
             }
             Msg::InstallChanged => self.install_changed(),
+            Msg::Request { id, spec, shared } => {
+                self.request(id, *spec, shared);
+                self.results_changed = true;
+            }
+            Msg::Cancel(id) => self.cancel_request(id),
             Msg::Event {
                 instance,
                 run,
                 event,
-            } => self.event(instance, run, event),
+            } => self.event(instance, run, *event),
         }
         true
     }
@@ -554,16 +574,20 @@ impl Coordinator {
                 };
                 [idle, retry, semantic].into_iter().flatten().min()
             })
+            .chain(self.book.deadline())
             .min()
     }
 
     fn timers(&mut self) {
         let now = Instant::now();
+        self.expire_requests(now);
         self.request_semantic_tokens(now);
         let idle_stop = self.options.idle_stop;
         let mut stopping = Vec::new();
+        let mut lost = Vec::new();
         self.instances.retain_mut(|instance| {
             if instance.idle_since.is_some_and(|s| now >= s + idle_stop) {
+                lost.push(instance.id);
                 stopping.push(std::mem::replace(
                     &mut instance.phase,
                     Phase::Failed(String::new()),
@@ -574,6 +598,9 @@ impl Coordinator {
         });
         for phase in stopping {
             stop_in_background(phase);
+        }
+        for id in lost {
+            self.requests_lost(id);
         }
         let due: Vec<usize> = self
             .instances
@@ -878,7 +905,7 @@ impl Coordinator {
             let _ = tx.send(Msg::Event {
                 instance: id,
                 run,
-                event,
+                event: Box::new(event),
             });
         }) {
             Ok(client) => Phase::Running(Running {
@@ -904,7 +931,10 @@ impl Coordinator {
             Event::Ready(capabilities) => {
                 if let Phase::Running(running) = &mut self.instances[at].phase {
                     running.ready = Some(Box::new(Ready {
-                        sync: DocumentSync::new(capabilities.text_sync),
+                        sync: DocumentSync::with_encoding(
+                            capabilities.text_sync,
+                            capabilities.position_encoding,
+                        ),
                         since: Instant::now(),
                         capabilities,
                         semantic: SemanticState::default(),
@@ -930,6 +960,9 @@ impl Coordinator {
                         ready.semantic.due.insert(uri::key(&document.uri), now);
                     }
                 }
+            }
+            Event::Response { tag, outcome, .. } if tag >= requests::TAG_BASE => {
+                self.request_response(at, tag, outcome)
             }
             Event::Response { tag, outcome, .. } => self.semantic_response(at, tag, outcome),
             Event::Progress { token, update } => self.progress(at, token, update),
@@ -1004,6 +1037,8 @@ impl Coordinator {
     fn failed(&mut self, at: usize, reason: String) {
         let stable_after = self.options.stable_after;
         let backoff = self.options.backoff.clone();
+        let lost = self.instances[at].id;
+        self.requests_lost(lost);
         let instance = &mut self.instances[at];
         {
             let mut store = self.results.lock().unwrap();
@@ -1058,6 +1093,8 @@ impl Coordinator {
                 let old = std::mem::replace(&mut instance.phase, Phase::Failed(String::new()));
                 instance.failures = 0;
                 stop_in_background(old);
+                let lost = self.instances[at].id;
+                self.requests_lost(lost);
                 self.start(at);
                 return;
             }
@@ -1321,7 +1358,9 @@ impl Coordinator {
         // An instance with no documents has nothing to restart for; it is simply
         // dropped and comes back when a document needs it.
         let mut stopping = Vec::new();
+        let mut lost = Vec::new();
         self.instances.retain_mut(|instance| {
+            lost.push(instance.id);
             stopping.push(std::mem::replace(
                 &mut instance.phase,
                 Phase::Failed(String::new()),
@@ -1329,6 +1368,9 @@ impl Coordinator {
             instance.failures = 0;
             !instance.documents.is_empty()
         });
+        for id in lost {
+            self.requests_lost(id);
+        }
         for phase in stopping {
             stop_in_background(phase);
         }

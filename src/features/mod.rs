@@ -4,6 +4,7 @@ pub(crate) mod git;
 pub(crate) mod highlighting;
 pub(crate) mod keymap;
 pub(crate) mod language_service;
+pub(crate) mod markdown;
 
 pub(crate) mod search;
 

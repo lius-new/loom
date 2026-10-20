@@ -93,7 +93,7 @@ export function allowed(file, dependency) {
   if(own==='app'||file==='src/main.rs')return true;
   if(own==='domain')return root==='domain'||(['src/domain/workspace_session.rs','src/domain/window_geometry.rs','src/domain/language/descriptor.rs'].includes(file)&&['serde','serde_json'].includes(root));
   if(file.startsWith('src/features/keymap/'))return ['features','domain','serde_json','input','Movement'].includes(root);
-  if(file.startsWith('src/infrastructure/lsp/'))return ['infrastructure','features','domain','serde_json','std::process','std::thread'].includes(root)||((file==='src/infrastructure/lsp/client_tests.rs'||file==='src/infrastructure/lsp/manager_tests.rs')&&['std::fs','ring','tar','flate2'].includes(root))||(file==='src/infrastructure/lsp/job.rs'&&root==='windows_sys');
+  if(file.startsWith('src/infrastructure/lsp/'))return ['infrastructure','features','domain','serde_json','std::process','std::thread','requests'].includes(root)||((file==='src/infrastructure/lsp/client_tests.rs'||file==='src/infrastructure/lsp/manager_tests.rs')&&['std::fs','ring','tar','flate2'].includes(root))||(file==='src/infrastructure/lsp/job.rs'&&root==='windows_sys');
   if(file==='src/infrastructure/window_geometry.rs')return ['infrastructure','domain','lgui','windows_sys','std::process'].includes(root);
   if(file==='src/infrastructure/document_filesystem.rs')return ['infrastructure','std::fs'].includes(root);
   if(file==='src/infrastructure/file_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
