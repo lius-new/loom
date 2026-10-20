@@ -2071,3 +2071,103 @@ fn a_server_without_completion_never_opens_a_list() {
     h.render();
     assert!(h.state.get().editor.language.completion.is_none());
 }
+
+fn server_log(h: &LanguageHarness, path: &std::path::Path) -> Vec<String> {
+    let _ = h;
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|message| message["method"].as_str().map(str::to_owned))
+        .collect()
+}
+
+#[test]
+fn renaming_asks_for_a_name_and_applies_the_servers_edit() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("fn alpha() {}\n", &["--features", "rename"]);
+    h.until_ready();
+    h.set_cursor(4);
+    h.act(Action::Rename);
+    h.until_popup("the rename box");
+    let query = |h: &LanguageHarness| {
+        h.state
+            .get()
+            .editor
+            .language
+            .popup
+            .as_ref()
+            .and_then(|p| p.query.clone())
+    };
+    // The server's placeholder is what the box starts with.
+    assert_eq!(query(&h).as_deref(), Some("name"));
+    for _ in 0..4 {
+        h.act(Action::Backspace);
+    }
+    assert!(crate::app::language_ui::keys::type_text(
+        &h.state, "renamed", h.rect
+    ));
+    h.act(Action::MenuConfirm);
+    h.until("the rename", |h| h.document_text().starts_with("renamed"));
+    assert!(h.state.get().editor.language.popup.is_none());
+}
+
+#[test]
+fn a_position_that_cannot_be_renamed_says_so() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("fn alpha() {}\n", &["--features", "hover"]);
+    h.until_ready();
+    h.act(Action::Rename);
+    h.until("the message", |h| h.state.get().chrome.toast.is_some());
+    assert!(h.state.get().editor.language.popup.is_none());
+}
+
+#[test]
+fn code_actions_are_listed_and_the_chosen_ones_edit_or_resolve_first() {
+    use crate::features::keymap::action::Action;
+    let log = std::env::temp_dir().join(format!("loom-actions-{}.log", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let log_arg = log.display().to_string();
+    let mut h = LanguageHarness::new(
+        "fn alpha() {}\n",
+        &["--features", "codeAction,execute", "--log", &log_arg],
+    );
+    h.until_ready();
+    h.act(Action::ToggleCodeActions);
+    h.until_popup("the actions");
+    let labels = h.popup_labels();
+    assert_eq!(labels.len(), 2);
+    assert!(
+        labels[0].contains("Fix it"),
+        "the preferred fix first: {labels:?}"
+    );
+    // The second needs resolving, which brings a command to run.
+    h.act(Action::MenuSelectNext);
+    h.act(Action::MenuConfirm);
+    h.until("the command", |h| {
+        server_log(h, &log).contains(&"workspace/executeCommand".to_owned())
+    });
+    assert!(server_log(&h, &log).contains(&"codeAction/resolve".to_owned()));
+    // The first has its edit with it.
+    h.act(Action::ToggleCodeActions);
+    h.until_popup("the actions again");
+    h.act(Action::MenuConfirm);
+    h.until("the fix", |h| h.document_text().starts_with("// fixed\n"));
+}
+
+#[test]
+fn formatting_applies_the_servers_edits_and_undo_takes_them_back() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("fn alpha() {}\n", &["--features", "formatting"]);
+    h.until_ready();
+    h.act(Action::Format);
+    h.until("the formatting", |h| {
+        h.document_text().starts_with("// formatted\n")
+    });
+    h.state.update(|app| {
+        let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
+        let _ = rect;
+        app.workspace.active_editor_mut().unwrap().undo();
+    });
+    assert_eq!(h.document_text(), "fn alpha() {}\n");
+}

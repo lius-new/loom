@@ -14,6 +14,16 @@ pub enum Severity {
 }
 
 impl Severity {
+    /// The protocol number: 1 error to 4 hint.
+    pub fn number(self) -> u64 {
+        match self {
+            Self::Error => 1,
+            Self::Warning => 2,
+            Self::Information => 3,
+            Self::Hint => 4,
+        }
+    }
+
     fn from_protocol(value: Option<i64>) -> Self {
         match value {
             Some(2) => Self::Warning,
@@ -23,6 +33,26 @@ impl Severity {
             // the safest thing to show.
             _ => Self::Error,
         }
+    }
+}
+
+impl Diagnostic {
+    /// The diagnostic as a server sent it, for the `context` of a code action
+    /// request.
+    pub fn to_protocol(&self, text: &str, encoding: PositionEncoding) -> Value {
+        let span = super::reply::Span::of(text, self.range.clone(), encoding);
+        let mut object = serde_json::json!({
+            "range": span.json(),
+            "severity": self.severity.number(),
+            "message": self.message,
+        });
+        if let Some(source) = &self.source {
+            object["source"] = source.clone().into();
+        }
+        if let Some(code) = &self.code {
+            object["code"] = code.clone().into();
+        }
+        object
     }
 }
 

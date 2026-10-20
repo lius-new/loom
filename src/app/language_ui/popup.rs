@@ -46,6 +46,7 @@ pub enum Kind {
     DocumentSymbols,
     WorkspaceSymbols,
     CodeActions,
+    Rename,
     Hierarchy,
     Problems,
 }
@@ -66,6 +67,8 @@ pub struct Popup {
     pub selected: usize,
     pub scroll: usize,
     pub empty: String,
+    /// The caret offset the popup was opened from (what a rename is about).
+    pub origin: usize,
     /// Whether typing narrows the rows here; a server that searches itself
     /// (workspace symbols) is trusted to have done so.
     pub local_filter: bool,
@@ -94,10 +97,25 @@ impl Popup {
             selected: 0,
             scroll: 0,
             empty: "No results".to_owned(),
+            origin: 0,
             local_filter: true,
         };
         popup.refilter();
         popup
+    }
+
+    pub fn with_origin(mut self, origin: usize) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    /// A popup that is only a text field holding `text` (a rename box).
+    pub fn with_text(mut self, text: String) -> Self {
+        self.query = Some(text);
+        self.local_filter = false;
+        self.empty = "Type the new name, then press Enter".to_owned();
+        self.refilter();
+        self
     }
 
     pub fn with_field(mut self) -> Self {

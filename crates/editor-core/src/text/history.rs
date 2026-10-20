@@ -33,6 +33,9 @@ pub(super) struct Entry {
     pub before: Selection,
     /// Selection of the editing view after the step's last edit.
     pub after: Selection,
+    /// The application-level change this step belongs to, if it was made as part
+    /// of one spanning several documents.
+    pub transaction: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -45,6 +48,8 @@ pub(super) struct History {
     group_started: bool,
     /// Kind, time and resulting caret of the last edit outside a group.
     last_typing: Option<(EditKind, Instant, usize)>,
+    /// Edits made while this is set are one step tagged with it.
+    transaction: Option<u64>,
 }
 
 impl History {
@@ -97,6 +102,28 @@ impl History {
         after: Selection,
     ) {
         self.redo.clear();
+        if let Some(id) = self.transaction {
+            // A transaction is one step of its own, however many edits it makes.
+            self.last_typing = None;
+            match self.undo.last_mut() {
+                Some(entry) if entry.transaction == Some(id) => {
+                    entry.changes.push(changes);
+                    entry.after = after;
+                }
+                _ => {
+                    if self.undo.len() >= MAX_ENTRIES {
+                        self.undo.remove(0);
+                    }
+                    self.undo.push(Entry {
+                        changes: vec![changes],
+                        before,
+                        after,
+                        transaction: Some(id),
+                    });
+                }
+            }
+            return;
+        }
         let joins = if self.group_depth > 0 {
             std::mem::replace(&mut self.group_started, true)
         } else {
@@ -112,7 +139,7 @@ impl History {
             joins
         };
         match self.undo.last_mut() {
-            Some(entry) if joins => {
+            Some(entry) if joins && entry.transaction.is_none() => {
                 entry.changes.push(changes);
                 entry.after = after;
             }
@@ -124,9 +151,23 @@ impl History {
                     changes: vec![changes],
                     before,
                     after,
+                    transaction: None,
                 });
             }
         }
+    }
+
+    pub fn set_transaction(&mut self, id: Option<u64>) {
+        self.transaction = id;
+        self.last_typing = None;
+    }
+
+    pub fn top_undo_transaction(&self) -> Option<u64> {
+        self.undo.last().and_then(|entry| entry.transaction)
+    }
+
+    pub fn top_redo_transaction(&self) -> Option<u64> {
+        self.redo.last().and_then(|entry| entry.transaction)
     }
 
     pub fn pop_undo(&mut self) -> Option<Entry> {

@@ -214,6 +214,27 @@ impl TextBuffer {
         Arc::make_mut(&mut self.history)
     }
 
+    /// Whether `edits` could be applied to the text now, without applying them.
+    pub fn check_edits(&self, edits: Vec<Edit>) -> Result<(), EditError> {
+        super::change::validate(self.text(), edits).map(|_| ())
+    }
+
+    /// Edits made until `set_transaction(None)` form one undo step tagged `id`,
+    /// for a change that spans several documents.
+    pub fn set_transaction(&mut self, id: Option<u64>) {
+        self.history_mut().set_transaction(id);
+    }
+
+    /// The transaction the next undo would undo, if it belongs to one.
+    pub fn undo_transaction(&self) -> Option<u64> {
+        self.history.top_undo_transaction()
+    }
+
+    /// The transaction the next redo would redo, if it belongs to one.
+    pub fn redo_transaction(&self) -> Option<u64> {
+        self.history.top_redo_transaction()
+    }
+
     pub fn can_undo(&self) -> bool {
         self.history.can_undo()
     }

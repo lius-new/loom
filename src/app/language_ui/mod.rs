@@ -4,10 +4,12 @@
 //! on the UI thread by [`tick`] when answers arrive.
 pub(crate) mod actions;
 pub(crate) mod completion;
+pub(crate) mod edit;
 pub(crate) mod hover;
 pub(crate) mod keys;
 pub(crate) mod navigate;
 pub(crate) mod popup;
+pub(crate) mod refactor;
 pub(crate) mod snippet_session;
 
 use super::context::AppContext;
@@ -28,6 +30,8 @@ pub struct LanguageUi {
     pub popup: Option<popup::Popup>,
     /// A question whose answer the person is waiting for.
     pub pending: Option<actions::Pending>,
+    /// A rename, code action or formatting request in flight.
+    pub refactor: Option<refactor::Pending>,
     /// The completion list, once asked for.
     pub completion: Option<completion::Session>,
     pub completion_timer: Option<Arc<crate::app::ui_timer::Timer>>,
@@ -37,6 +41,10 @@ pub struct LanguageUi {
     pub snippet: Option<snippet_session::Session>,
     /// The editor's rectangle as last seen, for revealing the caret.
     pub rect: Option<lgui::prelude::UiRect>,
+    /// Changes that span several documents, by transaction, for undoing them
+    /// together.
+    pub transactions: std::collections::HashMap<u64, Vec<FileId>>,
+    pub next_transaction: u64,
 }
 
 impl LanguageUi {
@@ -44,6 +52,7 @@ impl LanguageUi {
     pub fn close_popups(&mut self) {
         self.popup = None;
         self.pending = None;
+        self.refactor = None;
         self.completion = None;
     }
 }
@@ -208,26 +217,47 @@ pub(crate) fn popup_event(
 
 /// Does what a popup row that is not a place stands for.
 pub(crate) fn run_payload(
-    _state: &AppContext,
-    _payload: popup::Payload,
-    _rect: lgui::prelude::UiRect,
+    state: &AppContext,
+    payload: popup::Payload,
+    rect: lgui::prelude::UiRect,
 ) {
+    match payload {
+        popup::Payload::Action { instance, action } => {
+            refactor::run_action(state, instance, action, rect)
+        }
+        popup::Payload::Command { instance, command } => {
+            refactor::execute(state, instance, command, rect)
+        }
+        popup::Payload::Place(_) | popup::Payload::Hierarchy { .. } | popup::Payload::Nothing => {}
+    }
 }
 
 /// Advances every feature that is waiting for a server's answer. Runs on the UI
 /// thread whenever the servers report something new.
 pub(crate) fn tick(state: &AppContext) {
     let mut effects = Vec::new();
+    let mut changes = Vec::new();
     state.try_update(|app| {
         app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
         hover::tick(app);
         completion::tick(app);
         effects = actions::tick(app);
+        changes = refactor::tick(app);
         true
     });
     for effect in effects {
         match effect {
             actions::Effect::Go(place, rect) => navigate::go(state, place, rect, true),
+        }
+    }
+    for effect in changes {
+        match effect {
+            refactor::Effect::Apply(request) => edit::apply(state, request),
+            refactor::Effect::Execute {
+                instance,
+                command,
+                rect,
+            } => refactor::execute(state, instance, command, rect),
         }
     }
 }

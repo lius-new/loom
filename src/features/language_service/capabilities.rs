@@ -255,6 +255,27 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
                     "itemDefaults": ["commitCharacters", "editRange", "insertTextFormat", "insertTextMode"]
                 }
             },
+            "rename": {
+                "dynamicRegistration": false,
+                "prepareSupport": true,
+                "prepareSupportDefaultBehavior": 1
+            },
+            "codeAction": {
+                "dynamicRegistration": false,
+                "isPreferredSupport": true,
+                "disabledSupport": true,
+                "dataSupport": true,
+                "resolveSupport": { "properties": ["edit"] },
+                "codeActionLiteralSupport": {
+                    "codeActionKind": {
+                        "valueSet": ["", "quickfix", "refactor", "refactor.extract",
+                            "refactor.inline", "refactor.rewrite", "source",
+                            "source.organizeImports", "source.fixAll"]
+                    }
+                }
+            },
+            "formatting": { "dynamicRegistration": false },
+            "rangeFormatting": { "dynamicRegistration": false },
             "definition": { "dynamicRegistration": false, "linkSupport": true },
             "declaration": { "dynamicRegistration": false, "linkSupport": true },
             "typeDefinition": { "dynamicRegistration": false, "linkSupport": true },

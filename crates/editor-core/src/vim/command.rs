@@ -1,8 +1,8 @@
 //! Vim's command grammar: `["x][count]operator[count]motion`, motions, text
 //! objects and single commands, parsed from the keys typed so far.
 
-use super::{LanguageCommand, VisualKind};
 use super::key::Key;
+use super::{LanguageCommand, VisualKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operator {

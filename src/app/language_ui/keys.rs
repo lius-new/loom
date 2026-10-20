@@ -2,7 +2,7 @@
 //! takes for itself.
 use super::actions::{self, Wanted};
 use super::popup::{Item, Kind, Payload, Popup, VISIBLE};
-use super::{AppContext, completion, hover, navigate, snippet_session};
+use super::{AppContext, completion, hover, navigate, refactor, snippet_session};
 use crate::app::key_actions::KeyEnv;
 use crate::features::keymap::action::Action;
 use crate::features::language_service::request::Feature;
@@ -23,6 +23,18 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
         Action::GoToImplementation => goto(state, Feature::Implementation, rect),
         Action::FindAllReferences => {
             actions::begin(state, Wanted::References, rect, None);
+            Some(true)
+        }
+        Action::Rename => {
+            refactor::begin_rename(state, rect);
+            Some(true)
+        }
+        Action::ToggleCodeActions => {
+            refactor::code_actions(state, rect);
+            Some(true)
+        }
+        Action::Format | Action::FormatSelections => {
+            refactor::format(state, rect, action == Action::FormatSelections);
             Some(true)
         }
         Action::ShowCompletions => {
@@ -163,7 +175,23 @@ fn popup_key(state: &AppContext, action: Action, rect: UiRect) -> Option<bool> {
         return None;
     }
     match action {
-        Action::MenuConfirm => choose(state, rect),
+        Action::MenuConfirm => {
+            let mut renaming = false;
+            state.try_update(|app| {
+                renaming = app
+                    .editor
+                    .language
+                    .popup
+                    .as_ref()
+                    .is_some_and(|p| p.kind == Kind::Rename);
+                false
+            });
+            if renaming {
+                refactor::commit_rename(state, rect);
+            } else {
+                choose(state, rect);
+            }
+        }
         Action::MenuCancel => state.update(|app| app.editor.language.close_popups()),
         _ => {}
     }

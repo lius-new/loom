@@ -156,6 +156,10 @@ actions! {
     ShowCompletions => "editor::ShowCompletions", "Show the completion list";
     NextSnippetTabstop => "editor::NextSnippetTabstop", "Move to the next place to fill in a snippet";
     PreviousSnippetTabstop => "editor::PreviousSnippetTabstop", "Move to the previous place to fill in a snippet";
+    Rename => "editor::Rename", "Rename the symbol at the cursor";
+    ToggleCodeActions => "editor::ToggleCodeActions", "Show the fixes and refactorings offered here";
+    Format => "editor::Format", "Format the file";
+    FormatSelections => "editor::FormatSelections", "Format the selection";
     GoToDefinition => "editor::GoToDefinition", "Go to the definition of the symbol at the cursor";
     GoToDeclaration => "editor::GoToDeclaration", "Go to the declaration of the symbol at the cursor";
     GoToTypeDefinition => "editor::GoToTypeDefinition", "Go to the type of the symbol at the cursor";

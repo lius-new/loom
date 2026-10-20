@@ -156,6 +156,16 @@ pub fn execute_command(
         {
             return;
         }
+        if matches!(command, Command::Undo | Command::Redo)
+            && let Some(outcome) =
+                super::language_ui::edit::undo_redo(app, command == Command::Undo)
+        {
+            if let Err(error) = outcome {
+                app.show_toast(error);
+            }
+            reveal_cursor(app, rect);
+            return;
+        }
         match apply_command(app, command, clipboard.as_ref()) {
             Ok(pasted) => vim_input::record_insert(app, insert_event(command, pasted)),
             Err(error) => app.show_error(format!("Clipboard: {error}")),

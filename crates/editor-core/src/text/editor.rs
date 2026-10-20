@@ -220,6 +220,15 @@ impl<'a> EditorMut<'a> {
 
     // ---- History -------------------------------------------------------------
 
+    /// Edits until `end_transaction` are one undo step tagged `id`.
+    pub fn begin_transaction(&mut self, id: u64) {
+        self.buffer.set_transaction(Some(id));
+    }
+
+    pub fn end_transaction(&mut self) {
+        self.buffer.set_transaction(None);
+    }
+
     /// Join every edit until the matching `end_group` into one undo step.
     /// Groups nest; the outermost one decides the step.
     pub fn begin_group(&mut self) {
@@ -290,6 +299,32 @@ impl<'a> EditorMut<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_transaction_is_one_tagged_step_that_never_joins_typing() {
+        use super::*;
+        let mut buffer = TextBuffer::new("abc");
+        let mut selection = Selection::caret(3);
+        let mut editor = EditorMut::new(&mut buffer, &mut selection, Vec::new());
+        crate::normal::insert(&mut editor, "x");
+        editor.begin_transaction(7);
+        editor.replace(0..1, "A", EditKind::Typing).unwrap();
+        editor.replace(1..2, "B", EditKind::Typing).unwrap();
+        editor.end_transaction();
+        crate::normal::insert(&mut editor, "y");
+        assert_eq!(editor.buffer().undo_transaction(), None);
+        editor.undo();
+        assert_eq!(editor.buffer().undo_transaction(), Some(7));
+        editor.undo();
+        assert_eq!(
+            editor.text(),
+            "abcx",
+            "both edits of the transaction went at once"
+        );
+        assert_eq!(editor.buffer().redo_transaction(), Some(7));
+        editor.redo();
+        assert_eq!(editor.text(), "ABcx");
+    }
+
     use super::*;
 
     fn caret_after(changes: &ChangeSet, _: &TextBuffer) -> Selection {

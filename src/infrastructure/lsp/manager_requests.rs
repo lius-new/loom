@@ -314,12 +314,20 @@ impl Coordinator {
             let Phase::Running(Running { client, .. }) = &instance.phase else {
                 continue;
             };
+            let mut extra = spec.extra.clone();
+            if spec.feature == Feature::CodeAction
+                && extra.pointer("/context/diagnostics").is_none()
+            {
+                extra["context"] = serde_json::json!({
+                    "diagnostics": self.diagnostics_in(instance, &document_key, &spec),
+                });
+            }
             let params = request::params(
                 spec.feature,
                 document_uri.as_deref().unwrap_or_default(),
                 target.start,
                 target.end,
-                &spec.extra,
+                &extra,
             );
             self.book.next_tag += 1;
             let tag = TAG_BASE + self.book.next_tag;
@@ -350,6 +358,44 @@ impl Coordinator {
                 deadline: Instant::now() + timeout + GRACE,
             },
         );
+    }
+
+    /// The problems this instance reported that touch the range a code action
+    /// request is about, in the protocol's terms.
+    fn diagnostics_in(
+        &self,
+        instance: &super::Instance,
+        key: &Option<String>,
+        spec: &RequestSpec,
+    ) -> Vec<Value> {
+        let (
+            Some(key),
+            Phase::Running(Running {
+                ready: Some(ready), ..
+            }),
+        ) = (key, &instance.phase)
+        else {
+            return Vec::new();
+        };
+        let store = self.results.lock().unwrap();
+        let Some((stamp, found, text)) = store
+            .get(key)
+            .and_then(|entry| entry.diagnostics.get(&instance.id))
+        else {
+            return Vec::new();
+        };
+        if *stamp != spec.stamp {
+            return Vec::new();
+        }
+        let encoding = ready.capabilities.position_encoding;
+        found
+            .iter()
+            .filter(|d| {
+                d.range.start <= spec.end.max(spec.start)
+                    && spec.start <= d.range.end.max(d.range.start)
+            })
+            .map(|d| d.to_protocol(text, encoding))
+            .collect()
     }
 
     /// Gives up on a request: tells the servers and drops what was waiting.

@@ -94,7 +94,9 @@ pub enum Request {
     /// decides what it does.
     Language(LanguageCommand),
     Save,
-    Quit { force: bool },
+    Quit {
+        force: bool,
+    },
     SaveAndQuit,
     Scroll(ScrollPosition),
 }
