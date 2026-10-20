@@ -1884,7 +1884,7 @@ impl Vim {
         }
     }
 
-    fn push_jump(&mut self, offset: usize) {
+    pub(crate) fn push_jump(&mut self, offset: usize) {
         let Some((_, document)) = self.view else {
             return;
         };

@@ -198,6 +198,8 @@ pub(crate) fn snapshot(
         overview_marks,
         has_repository,
         peek_visible,
+        hover: None,
+        popup: None,
     }
 }
 
@@ -215,6 +217,28 @@ pub(crate) fn binding(
     Binding::new(
         move || {
             let mut view = snapshot(reader.get(), read_git.get(), pane, rect);
+            if let Some(document) = &view.document {
+                view.hover = reader
+                    .get()
+                    .editor
+                    .language
+                    .hover
+                    .card_for(pane, &document.stamp)
+                    .map(|card| crate::ui::editor_binding::HoverView {
+                        anchor: card.anchor.clone(),
+                        blocks: card.blocks.clone(),
+                    });
+            }
+            if let Some(document) = &view.document {
+                view.popup = reader
+                    .get()
+                    .editor
+                    .language
+                    .popup
+                    .as_ref()
+                    .filter(|popup| popup.pane == pane && popup.stamp == document.stamp)
+                    .map(super::language_ui::popup::Popup::view);
+            }
             if let Some(document) = &view.document
                 && let Some(services) = reader.services().and_then(|r| r.language_services())
                 && let Some(found) = services
@@ -248,6 +272,67 @@ pub(crate) fn binding(
                         );
                     }
                 }
+                return;
+            }
+            if let Event::HoverMove {
+                point,
+                code_left,
+                metrics,
+            } = event
+            {
+                let mut armed = None;
+                dispatcher.try_update(|app| {
+                    let offset = hover_offset(app, pane, rect, code_left, metrics, point);
+                    let had = !app.editor.language.hover.is_idle();
+                    armed = super::language_ui::hover::pointer_over(app, pane, offset);
+                    had != !app.editor.language.hover.is_idle() || armed.is_some()
+                });
+                if let Some(rest) = armed {
+                    super::language_ui::hover::arm(&dispatcher, rest);
+                }
+                return;
+            }
+            if let Event::Popup(popup_event) = event {
+                use crate::ui::editor::popup::Event as Popup;
+                match popup_event {
+                    Popup::Hover(index) => {
+                        dispatcher.try_update(|app| {
+                            app.editor.language.popup.as_mut().is_some_and(|p| {
+                                p.select(index);
+                                true
+                            })
+                        });
+                    }
+                    Popup::Scroll(rows) => {
+                        dispatcher.try_update(|app| {
+                            app.editor.language.popup.as_mut().is_some_and(|p| {
+                                p.scroll_by(rows);
+                                true
+                            })
+                        });
+                    }
+                    Popup::Pick(index) => {
+                        dispatcher.update(|app| {
+                            if let Some(popup) = app.editor.language.popup.as_mut() {
+                                popup.select(index);
+                            }
+                        });
+                        super::language_ui::keys::choose(&dispatcher, rect);
+                    }
+                    Popup::Dismiss => {
+                        dispatcher.update(|app| app.editor.language.close_popups());
+                    }
+                }
+                return;
+            }
+            if let Event::Text(text) = &event
+                && super::language_ui::keys::takes_text(&dispatcher.get())
+            {
+                super::language_ui::keys::type_text(&dispatcher, text, rect);
+                return;
+            }
+            if matches!(event, Event::HoverLeave) {
+                dispatcher.try_update(|app| super::language_ui::hover::clear(app));
                 return;
             }
             dispatcher.try_update(|app| dispatch(app, pane, rect, event));
@@ -353,6 +438,7 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
         Event::Wheel { x, y, metrics } => {
             // The card belongs to where the pointer was; scrolling moves the text.
             app.editor.editor_diagnostic_hover = None;
+            super::language_ui::hover::clear(app);
             let (x, y) = if app.editor.modifiers.shift() {
                 (x + y, 0.0)
             } else {
@@ -377,6 +463,7 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
         }
         Event::Text(text) => {
             app.editor.editor_diagnostic_hover = None;
+            super::language_ui::hover::clear(app);
             editor::insert_text(app, &text, rect)
         }
         Event::Composition { text, cursor } => editor::update_composition(app, &text, cursor),
@@ -443,9 +530,53 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
                 app.editor.editor_horizontal_scrollbar_dragging = false;
             }
         }
-        Event::Peek { .. } => return false,
+        Event::Peek { .. } | Event::HoverMove { .. } | Event::HoverLeave | Event::Popup(_) => {
+            return false;
+        }
     }
     true
+}
+
+/// The text offset under the pointer, if it is over the text of a line and not
+/// the empty space beyond its end.
+fn hover_offset(
+    app: &AppState,
+    pane: PaneId,
+    rect: UiRect,
+    code_left: f32,
+    metrics: crate::ui::editor::view::ScrollMetrics,
+    point: (f32, f32),
+) -> Option<usize> {
+    use crate::ui::editor::view::{
+        cursor_offset_from_point, document_caret, line_index_from_point,
+    };
+    if point.0 < code_left {
+        return None;
+    }
+    let (scroll_x, scroll_y) = app.workspace.scroll(pane);
+    let buffer = app.workspace.editor(pane)?;
+    let offset = cursor_offset_from_point(
+        &buffer, rect, code_left, metrics, scroll_x, scroll_y, point.0, point.1,
+    );
+    let line = line_index_from_point(point.1, rect.top, scroll_y, buffer.line_count());
+    let end = buffer.line_end(line);
+    if offset >= end {
+        let text: &loom_editor_core::text::TextBuffer = &buffer;
+        let (_, column) = text.line_col(end);
+        let edge = document_caret(
+            &buffer,
+            line,
+            column,
+            code_left,
+            rect.top,
+            code_left + metrics.content_w,
+            (scroll_x, metrics.viewport_w),
+        ) - scroll_x;
+        if point.0 > edge + 1.0 {
+            return None;
+        }
+    }
+    Some(offset)
 }
 
 #[cfg(test)]

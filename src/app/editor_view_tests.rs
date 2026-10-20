@@ -1518,3 +1518,407 @@ fn diagnostics_from_a_server_are_underlined_in_the_editor() {
         "the card stays after the pointer left"
     );
 }
+
+use std::sync::Arc;
+
+/// What a language-server feature test needs: the real editor view over a real
+/// fake-server process, with a way to pump the UI and move the pointer.
+struct LanguageHarness {
+    session: lgui::session::UiSession,
+    view: lgui::application::AppView,
+    context: lgui::application::ApplicationContext,
+    state: AppContext,
+    tasks: crate::app::test_support::UiTasks,
+    runtime: Arc<crate::app::runtime::AppRuntime>,
+    rect: UiRect,
+}
+
+impl LanguageHarness {
+    fn new(source: &str, server_args: &[&str]) -> Self {
+        use lgui::{
+            application::{AppView, ApplicationContext},
+            core::UiScale,
+            session::UiSession,
+        };
+        let context = ApplicationContext::empty(Default::default());
+        let fonts_handle = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        std::mem::forget(fonts_handle);
+        fonts::set(&fonts::FontSettings::EDITOR, &fonts::FontSettings::TERMINAL);
+        let exe = std::env::current_exe().unwrap();
+        let fake = exe
+            .parent()
+            .and_then(|deps| deps.parent())
+            .unwrap()
+            .join("examples")
+            .join(if cfg!(windows) {
+                "fake_lsp.exe"
+            } else {
+                "fake_lsp"
+            });
+        let mut app = AppState::new();
+        let name = format!(
+            "loom-language-ui-{}-{}.rs",
+            std::process::id(),
+            LANGUAGE_CASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        app.workspace
+            .open_path(std::env::temp_dir().join(name), source.into());
+        app.editor.focused = true;
+        let mut args: Vec<String> = ["--sync", "incremental"].map(String::from).into();
+        args.extend(server_args.iter().map(|a| a.to_string()));
+        app.preferences.values_mut().language_servers =
+            vec![crate::features::settings::servers::LanguageServerSetting {
+                server: "rust-analyzer".into(),
+                enabled: true,
+                command: Some(fake.display().to_string()),
+                args: Some(args),
+                initialization_options: None,
+                install: None,
+            }];
+        let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
+        let initial = Arc::new(Mutex::new(Some(app)));
+        let exposed = Arc::new(Mutex::new(None));
+        let output = exposed.clone();
+        let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
+        let view_runtime = runtime.clone();
+        let tasks = crate::app::test_support::UiTasks::default();
+        let application = tasks.application();
+        runtime.set_application(application.clone());
+        let view: AppView = Arc::new(move |cx| {
+            let state =
+                AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()))
+                    .with_runtime(&view_runtime);
+            if view_runtime.highlighter().is_none() {
+                view_runtime.install_highlighter(crate::app::syntax::Highlighter::new(
+                    state.clone(),
+                    application.clone(),
+                ));
+                let results_state = state.clone();
+                view_runtime.install_language_services(
+                    crate::app::language_services::LanguageServices::new(
+                        crate::features::language_service::server_set::rust_analyzer_for_tests(),
+                        move || {
+                            crate::app::language_ui::tick(&results_state);
+                        },
+                    ),
+                );
+            }
+            let git = cx.state_with(GitStoreSnapshot::default);
+            *output.lock().unwrap() = Some(state.clone());
+            let id = UiId::new("language-ui-test");
+            let focus = cx.focus_handle(id.clone());
+            render(PaneId::new(1), rect, state, git, id, focus)
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, rect, UiScale::ONE);
+        let state: AppContext = exposed.lock().unwrap().clone().unwrap();
+        state.update(|app| app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1));
+        Self {
+            session,
+            view,
+            context,
+            state,
+            tasks,
+            runtime,
+            rect,
+        }
+    }
+
+    fn render(&mut self) {
+        self.tasks.run_all();
+        self.session
+            .render_view(&self.view, self.rect, lgui::core::UiScale::ONE);
+    }
+
+    fn send(&mut self, input: lgui::core::InputEvent) {
+        let events = self.session.handle_input(input);
+        lgui::core::dispatch_runtime_output(
+            events,
+            &self.context,
+            &lgui::window::WindowId::new("language-ui-test"),
+            |action| self.session.handle_default_action(action),
+            |_| {},
+        );
+        self.render();
+    }
+
+    fn move_to(&mut self, x: f32, y: f32) {
+        use lgui::core::{InputEvent, Point, PointerData};
+        self.send(InputEvent::PointerMove(PointerData::mouse(Point::new(
+            x, y,
+        ))));
+    }
+
+    fn has_text(&self, wanted: &str) -> bool {
+        self.session
+            .tree()
+            .nodes()
+            .iter()
+            .any(|node| node.text.as_deref() == Some(wanted))
+    }
+
+    /// Keeps rendering until `check` passes, or fails with `what`.
+    fn until(&mut self, what: &str, mut check: impl FnMut(&mut Self) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            self.render();
+            if check(self) {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for {what}; infos {:?}",
+                self.runtime.language_services().map(|s| s.infos())
+            );
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+    }
+
+    /// Waits until a server is ready and holds the document.
+    fn until_ready(&mut self) {
+        self.until("the server to be ready", |h| {
+            h.runtime.language_services().is_some_and(|s| {
+                s.infos()
+                    .iter()
+                    .any(|i| i.status == crate::infrastructure::lsp::manager::Status::Ready)
+            })
+        });
+    }
+
+    /// The screen position of the character at `column` of `line`.
+    fn point_at(&self, line: usize, column: usize) -> (f32, f32) {
+        let code_left = self.rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+        (
+            code_left + (column as f32 + 0.5) * fonts::editor().char_w,
+            self.rect.top + (line as f32 + 0.5) * fonts::editor().line_h,
+        )
+    }
+}
+
+static LANGUAGE_CASES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[test]
+fn resting_the_pointer_on_a_word_shows_what_the_server_says_about_it() {
+    let mut h = LanguageHarness::new(
+        "fn alpha() {}
+
+
+
+last line
+",
+        &["--features", "hover", "--diagnostics"],
+    );
+    h.until_ready();
+    let (x, y) = h.point_at(0, 1);
+    h.move_to(x, y);
+    assert!(!h.has_text("0:1"), "nothing before the pointer has rested");
+    // The middle of "fn" is column 1 of line 0.
+    h.until("the hover card", |h| h.has_text("0:1"));
+    assert!(h.has_text("fake"), "the server's text is on the card");
+    // Moving to another word replaces the card; leaving the text removes it.
+    let (x, y) = h.point_at(4, 2);
+    h.move_to(x, y);
+    assert!(!h.has_text("0:1"), "the old card went with the pointer");
+    h.until("the new hover card", |h| h.has_text("4:2"));
+    h.move_to(790.0, 390.0);
+    assert!(!h.has_text("4:2"), "the card stays after the pointer left");
+    // Typing hides the card too.
+    let (x, y) = h.point_at(0, 1);
+    h.move_to(x, y);
+    h.until("the card again", |h| h.has_text("0:1"));
+    h.state.update(|app| {
+        crate::app::editor::insert_text(app, "x", UiRect::new(0.0, 0.0, 800.0, 400.0));
+    });
+    h.render();
+    assert!(!h.has_text("0:1"), "typing hides the card");
+}
+
+#[test]
+fn a_server_without_hover_leaves_the_pointer_alone() {
+    let mut h = LanguageHarness::new("fn alpha() {}\n", &["--features", "definition"]);
+    h.until_ready();
+    let (x, y) = h.point_at(0, 1);
+    h.move_to(x, y);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    h.render();
+    assert!(!h.has_text("0:1"));
+    assert!(h.state.get().editor.language.hover.card.is_none());
+}
+
+impl LanguageHarness {
+    /// Performs a keymap action the way the key handler does.
+    fn act(&mut self, action: crate::features::keymap::action::Action) {
+        crate::app::language_ui::keys::perform_with(&self.state, self.rect, action);
+        self.render();
+    }
+
+    fn set_cursor(&mut self, offset: usize) {
+        self.state.update(|app| {
+            app.workspace
+                .active_editor_mut()
+                .unwrap()
+                .set_cursor(offset)
+        });
+        self.render();
+    }
+
+    fn selection(&self) -> Option<std::ops::Range<usize>> {
+        self.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selection()
+    }
+
+    fn cursor(&self) -> usize {
+        self.state.get().workspace.active_editor().unwrap().cursor()
+    }
+
+    fn popup_labels(&self) -> Vec<String> {
+        self.state
+            .get()
+            .editor
+            .language
+            .popup
+            .as_ref()
+            .map(|p| {
+                p.shown
+                    .iter()
+                    .map(|(at, _)| p.items[*at].label.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn until_popup(&mut self, what: &str) {
+        self.until(what, |h| h.state.get().editor.language.popup.is_some());
+    }
+}
+
+const NAV_SOURCE: &str = "fn alpha() {}\nsecond line\nthird\n";
+
+#[test]
+fn go_to_definition_jumps_selects_and_goes_back() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "definition"]);
+    h.until_ready();
+    h.set_cursor(15);
+    h.act(Action::GoToDefinition);
+    h.until("the jump", |h| h.selection() == Some(0..1));
+    h.act(Action::GoBack);
+    h.until("coming back", |h| h.cursor() == 15);
+    h.act(Action::GoForward);
+    h.until("going forward again", |h| h.cursor() == 1);
+}
+
+#[test]
+fn a_server_without_definitions_says_so() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "hover"]);
+    h.until_ready();
+    h.act(Action::GoToDefinition);
+    h.until("the message", |h| {
+        h.state
+            .get()
+            .chrome
+            .toast
+            .as_ref()
+            .is_some_and(|toast| toast.message.contains("No language server"))
+    });
+    assert!(h.state.get().editor.language.popup.is_none());
+}
+
+#[test]
+fn references_open_a_list_whose_rows_go_to_their_places() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "references"]);
+    h.until_ready();
+    h.act(Action::FindAllReferences);
+    h.until_popup("the references");
+    assert_eq!(h.popup_labels().len(), 2);
+    assert!(h.has_text("2 references"));
+    h.act(Action::MenuSelectNext);
+    h.act(Action::MenuConfirm);
+    // The second reference is line 1, columns 2 to 4.
+    h.until("the jump", |h| h.selection() == Some(16..18));
+    assert!(h.state.get().editor.language.popup.is_none());
+}
+
+#[test]
+fn escape_closes_the_list_without_going_anywhere() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "references"]);
+    h.until_ready();
+    h.set_cursor(15);
+    h.act(Action::FindAllReferences);
+    h.until_popup("the references");
+    h.act(Action::MenuCancel);
+    assert!(h.state.get().editor.language.popup.is_none());
+    assert_eq!(h.cursor(), 15);
+}
+
+#[test]
+fn the_outline_filters_as_you_type_and_goes_to_the_symbol() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "symbols"]);
+    h.until_ready();
+    h.act(Action::ToggleOutline);
+    h.until_popup("the outline");
+    assert_eq!(h.popup_labels(), ["main"]);
+    assert!(crate::app::language_ui::keys::type_text(
+        &h.state, "zz", h.rect
+    ));
+    assert!(h.popup_labels().is_empty(), "nothing matches zz");
+    h.act(Action::Backspace);
+    h.act(Action::Backspace);
+    assert!(crate::app::language_ui::keys::type_text(
+        &h.state, "ma", h.rect
+    ));
+    assert_eq!(h.popup_labels(), ["main"]);
+    h.act(Action::MenuConfirm);
+    h.until("the jump", |h| h.selection() == Some(3..7));
+}
+
+#[test]
+fn the_workspace_symbol_search_asks_again_as_the_text_changes() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "workspaceSymbols"]);
+    h.until_ready();
+    h.act(Action::ToggleProjectSymbols);
+    h.until("the first answer", |h| h.popup_labels() == ["sym-"]);
+    assert!(crate::app::language_ui::keys::type_text(
+        &h.state, "ab", h.rect
+    ));
+    h.until("the answer for ab", |h| h.popup_labels() == ["sym-ab"]);
+}
+
+#[test]
+fn problems_are_visited_in_order_and_wrap() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--diagnostics"]);
+    h.until_ready();
+    h.until("diagnostics", |h| {
+        let app = h.state.get();
+        let doc = app
+            .workspace
+            .documents
+            .values()
+            .find(|d| d.is_text())
+            .unwrap();
+        let id = *app.workspace.documents.keys().next().unwrap();
+        h.runtime
+            .language_services()
+            .and_then(|s| s.results(&doc.meta.path, &doc.stamp(id)).diagnostics)
+            .is_some()
+    });
+    h.set_cursor(10);
+    h.act(Action::GoToDiagnostic);
+    assert_eq!(h.cursor(), 0, "after the last problem comes the first");
+    h.set_cursor(10);
+    h.act(Action::GoToPreviousDiagnostic);
+    assert_eq!(h.cursor(), 0);
+}

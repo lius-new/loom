@@ -6,7 +6,7 @@
 use super::capabilities::PositionEncoding;
 
 /// A zero-based protocol position.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Position {
     pub line: u32,
     pub character: u32,

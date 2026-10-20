@@ -236,7 +236,7 @@ fn feature_result(method: &str, params: &Value, options: &Options) -> Option<Val
         }]),
         "workspace/symbol" => json!([{
             "name": format!("sym-{}", params["query"].as_str().unwrap_or("")),
-            "kind": 12, "location": { "uri": "file:///elsewhere.rs" }
+            "kind": 12, "location": { "uri": "file:///C:/elsewhere.rs" }
         }]),
         "textDocument/completion" => json!({
             "isIncomplete": options.flag("--completion-incomplete"),

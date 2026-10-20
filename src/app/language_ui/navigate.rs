@@ -1,0 +1,332 @@
+//! Going to a place in a file, and back: the position history behind
+//! "go to definition" and the back and forward keys.
+use super::{AppContext, AppState};
+use crate::features::language_service::reply::Span;
+use lgui::prelude::UiRect;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+
+/// Positions kept for going back.
+const MAX_HISTORY: usize = 100;
+/// Files larger than this are not opened by a jump.
+const MAX_FILE: u64 = 16 * 1024 * 1024;
+
+/// Where to go: a file, and what to select there.
+#[derive(Clone, Debug)]
+pub struct Place {
+    pub path: PathBuf,
+    pub target: Target,
+}
+
+#[derive(Clone, Debug)]
+pub enum Target {
+    /// A span in the server's terms, read in the text of the target file.
+    Span(Span),
+    /// Bytes of the file as it is open now.
+    Bytes(Range<usize>),
+}
+
+impl Place {
+    pub fn bytes(path: PathBuf, range: Range<usize>) -> Self {
+        Self {
+            path,
+            target: Target::Bytes(range),
+        }
+    }
+
+    pub fn span(path: PathBuf, span: Span) -> Self {
+        Self {
+            path,
+            target: Target::Span(span),
+        }
+    }
+
+    fn range(&self, text: &str) -> Range<usize> {
+        match &self.target {
+            Target::Span(span) => span.bytes(text),
+            Target::Bytes(range) => {
+                let end = range.end.min(text.len());
+                range.start.min(end)..end
+            }
+        }
+    }
+}
+
+/// A place visited, remembered by line and column so an edit elsewhere in the
+/// file does not leave it pointing into the middle of something.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    pub path: PathBuf,
+    pub offset: usize,
+}
+
+#[derive(Clone, Default)]
+pub struct History {
+    back: Vec<Mark>,
+    forward: Vec<Mark>,
+}
+
+impl History {
+    /// Remembers `mark` as a place to come back to. Going somewhere new forgets
+    /// what was ahead.
+    pub fn visit(&mut self, mark: Mark) {
+        self.forward.clear();
+        if self.back.last() != Some(&mark) {
+            self.back.push(mark);
+            if self.back.len() > MAX_HISTORY {
+                self.back.remove(0);
+            }
+        }
+    }
+
+    /// The place to go back to, given where the person is now.
+    pub fn go_back(&mut self, here: Mark) -> Option<Mark> {
+        let mark = loop {
+            let mark = self.back.pop()?;
+            if mark != here {
+                break mark;
+            }
+        };
+        if self.forward.last() != Some(&here) {
+            self.forward.push(here);
+        }
+        Some(mark)
+    }
+
+    pub fn go_forward(&mut self, here: Mark) -> Option<Mark> {
+        let mark = loop {
+            let mark = self.forward.pop()?;
+            if mark != here {
+                break mark;
+            }
+        };
+        if self.back.last() != Some(&here) {
+            self.back.push(here);
+        }
+        Some(mark)
+    }
+
+    pub fn can_go_back(&self) -> bool {
+        !self.back.is_empty()
+    }
+
+    pub fn can_go_forward(&self) -> bool {
+        !self.forward.is_empty()
+    }
+}
+
+fn here(app: &AppState) -> Option<Mark> {
+    let path = app.workspace.active_path()?.to_path_buf();
+    let editor = app.workspace.active_editor()?;
+    Some(Mark {
+        path,
+        offset: editor.cursor(),
+    })
+}
+
+/// Selects `range` of the active document and brings it into view.
+fn select(app: &mut AppState, range: Range<usize>, rect: UiRect) {
+    if let Some(mut editor) = app.workspace.active_editor_mut() {
+        if range.is_empty() {
+            editor.set_cursor(range.start);
+        } else {
+            editor.select_range(range);
+        }
+    }
+    crate::app::editor::reveal_cursor(app, rect);
+}
+
+/// Opens `place` (reading the file if it is not open), selects its target, and
+/// remembers where the person was. `remember` is false when going back or forward.
+pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
+    let app = state.get();
+    let origin = here(&app);
+    if app.workspace.file_id_for_path(&place.path).is_some() {
+        state.update(|app| arrive(app, &place, None, rect, remember.then(|| origin).flatten()));
+        return;
+    }
+    let size_ok = std::fs::metadata(&place.path)
+        .map(|meta| meta.len() <= MAX_FILE)
+        .unwrap_or(false);
+    if !size_ok {
+        let name = place.path.display().to_string();
+        state.update(move |app| app.show_error(format!("Could not open {name}")));
+        return;
+    }
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
+        return;
+    };
+    let worker_state = state.clone();
+    let path = place.path.clone();
+    let spawned = std::thread::Builder::new()
+        .name("loom-goto-open".to_owned())
+        .spawn(move || {
+            let read = std::fs::read(&path)
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| {
+                    String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_owned())
+                });
+            application.post(move || match read {
+                Ok(text) => worker_state.update(|app| {
+                    arrive(
+                        app,
+                        &place,
+                        Some(text),
+                        rect,
+                        remember.then(|| origin).flatten(),
+                    )
+                }),
+                Err(error) => worker_state.update(|app| {
+                    app.show_error(format!("Could not open {}: {error}", place.path.display()))
+                }),
+            });
+        });
+    if spawned.is_err() {
+        state.update(|app| app.show_error("Could not start reading the file"));
+    }
+}
+
+fn arrive(
+    app: &mut AppState,
+    place: &Place,
+    text: Option<String>,
+    rect: UiRect,
+    origin: Option<Mark>,
+) {
+    if let Some(origin) = origin {
+        app.editor.vim.record_jump(origin.offset);
+        app.editor.language.history.visit(origin);
+    }
+    match (app.workspace.file_id_for_path(&place.path), text) {
+        (Some(id), _) => {
+            app.workspace.reveal(id);
+        }
+        (None, Some(text)) => {
+            app.workspace.open_path(place.path.clone(), text);
+        }
+        (None, None) => return,
+    }
+    let Some(range) = app
+        .workspace
+        .active_editor()
+        .map(|editor| place.range(editor.text()))
+    else {
+        return;
+    };
+    app.editor.language.close_popups();
+    select(app, range, rect);
+}
+
+/// Back to the previous place visited by a jump.
+pub fn back(state: &AppContext, rect: UiRect) {
+    let app = state.get();
+    let Some(here) = here(&app) else { return };
+    let mut target = None;
+    state.update(|app| target = app.editor.language.history.go_back(here));
+    if let Some(mark) = target {
+        go(
+            state,
+            Place::bytes(mark.path, mark.offset..mark.offset),
+            rect,
+            false,
+        );
+    }
+}
+
+/// Forward again after going back.
+pub fn forward(state: &AppContext, rect: UiRect) {
+    let app = state.get();
+    let Some(here) = here(&app) else { return };
+    let mut target = None;
+    state.update(|app| target = app.editor.language.history.go_forward(here));
+    if let Some(mark) = target {
+        go(
+            state,
+            Place::bytes(mark.path, mark.offset..mark.offset),
+            rect,
+            false,
+        );
+    }
+}
+
+/// A path as the person reads it: relative to the first workspace folder.
+pub fn display_path(app: &AppState, path: &Path) -> String {
+    app.explorer
+        .model
+        .roots()
+        .iter()
+        .find_map(|root| path.strip_prefix(root).ok())
+        .unwrap_or(path)
+        .display()
+        .to_string()
+        .replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mark(path: &str, offset: usize) -> Mark {
+        Mark {
+            path: path.into(),
+            offset,
+        }
+    }
+
+    #[test]
+    fn going_back_and_forward_walks_the_places_visited() {
+        let mut history = History::default();
+        history.visit(mark("a", 1));
+        history.visit(mark("b", 2));
+        // The person is now at c.
+        let back = history.go_back(mark("c", 3)).unwrap();
+        assert_eq!(back, mark("b", 2));
+        let back = history.go_back(mark("b", 2)).unwrap();
+        assert_eq!(back, mark("a", 1));
+        assert!(history.go_back(mark("a", 1)).is_none());
+        let ahead = history.go_forward(mark("a", 1)).unwrap();
+        assert_eq!(ahead, mark("b", 2));
+        let ahead = history.go_forward(mark("b", 2)).unwrap();
+        assert_eq!(ahead, mark("c", 3));
+        assert!(!history.can_go_forward());
+    }
+
+    #[test]
+    fn a_new_place_forgets_what_was_ahead() {
+        let mut history = History::default();
+        history.visit(mark("a", 1));
+        history.go_back(mark("b", 2));
+        assert!(history.can_go_forward());
+        history.visit(mark("x", 9));
+        assert!(!history.can_go_forward());
+    }
+
+    #[test]
+    fn the_same_place_twice_is_one_entry_and_the_history_is_bounded() {
+        let mut history = History::default();
+        history.visit(mark("a", 1));
+        history.visit(mark("a", 1));
+        assert_eq!(history.back.len(), 1);
+        for n in 0..300 {
+            history.visit(mark("f", n));
+        }
+        assert_eq!(history.back.len(), MAX_HISTORY);
+    }
+
+    #[test]
+    fn going_back_skips_the_place_the_person_is_already_at() {
+        let mut history = History::default();
+        history.visit(mark("a", 1));
+        history.visit(mark("b", 2));
+        let back = history.go_back(mark("b", 2)).unwrap();
+        assert_eq!(back, mark("a", 1));
+    }
+
+    #[test]
+    fn a_places_range_is_clamped_to_the_text() {
+        let place = Place::bytes("f".into(), 5..99);
+        assert_eq!(place.range("abcdefgh"), 5..8);
+        let place = Place::bytes("f".into(), 40..99);
+        assert_eq!(place.range("abc"), 3..3);
+    }
+}

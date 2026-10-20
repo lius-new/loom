@@ -228,6 +228,20 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
                 "codeDescriptionSupport": false,
                 "dataSupport": false
             },
+            "hover": {
+                "dynamicRegistration": false,
+                "contentFormat": ["markdown", "plaintext"]
+            },
+            "definition": { "dynamicRegistration": false, "linkSupport": true },
+            "declaration": { "dynamicRegistration": false, "linkSupport": true },
+            "typeDefinition": { "dynamicRegistration": false, "linkSupport": true },
+            "implementation": { "dynamicRegistration": false, "linkSupport": true },
+            "references": { "dynamicRegistration": false },
+            "documentSymbol": {
+                "dynamicRegistration": false,
+                "hierarchicalDocumentSymbolSupport": true,
+                "symbolKind": { "valueSet": (1..=26).collect::<Vec<u32>>() }
+            },
             "semanticTokens": {
                 "dynamicRegistration": false,
                 "requests": { "range": false, "full": { "delta": false } },
@@ -241,6 +255,10 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
             }
         },
         "workspace": {
+            "symbol": {
+                "dynamicRegistration": false,
+                "symbolKind": { "valueSet": (1..=26).collect::<Vec<u32>>() }
+            },
             "configuration": true,
             "workspaceFolders": false,
             "didChangeConfiguration": { "dynamicRegistration": false },

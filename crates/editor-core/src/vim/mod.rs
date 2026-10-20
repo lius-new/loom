@@ -504,6 +504,12 @@ impl Vim {
         }
     }
 
+    /// Remembers `offset` of the current document as a place to jump back to
+    /// (`<C-o>`), for movements the application makes on Vim's behalf.
+    pub fn record_jump(&mut self, offset: usize) {
+        self.push_jump(offset);
+    }
+
     pub fn record_insert(&mut self, event: Option<InsertEvent>) {
         let Some(session) = self.insert.as_mut() else {
             return;

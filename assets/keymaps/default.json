@@ -46,6 +46,10 @@
       "secondary-k right": "pane::SplitRight",
       "secondary-k up": "pane::SplitUp",
       "secondary-k down": "pane::SplitDown",
+      "alt-left": "pane::GoBack",
+      "alt-right": "pane::GoForward",
+      "secondary-shift-o": "outline::Toggle",
+      "secondary-t": "project_symbols::Toggle",
       "secondary-k secondary-left": "workspace::ActivatePaneLeft",
       "secondary-k secondary-right": "workspace::ActivatePaneRight",
       "secondary-k secondary-up": "workspace::ActivatePaneUp",
@@ -97,7 +101,31 @@
       "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
       "tab": "editor::Tab",
-      "shift-tab": "editor::Backtab"
+      "shift-tab": "editor::Backtab",
+      "f12": "editor::GoToDefinition",
+      "secondary-f12": "editor::GoToImplementation",
+      "secondary-shift-f12": "editor::GoToTypeDefinition",
+      "alt-f12": "editor::GoToDeclaration",
+      "shift-f12": "editor::FindAllReferences",
+      "secondary-k secondary-i": "editor::Hover",
+      "f8": "editor::GoToDiagnostic",
+      "shift-f8": "editor::GoToPreviousDiagnostic"
+    }
+  },
+  {
+    // A list over the code takes the keys that move through it. Everything
+    // else (typing, deleting) still reaches the editor, or the list's own field.
+    "context": "Popup",
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext",
+      "ctrl-p": "menu::SelectPrevious",
+      "ctrl-n": "menu::SelectNext",
+      "pageup": "menu::PageUp",
+      "pagedown": "menu::PageDown",
+      "enter": "menu::Confirm",
+      "tab": "menu::Confirm",
+      "escape": "menu::Cancel"
     }
   },
   {

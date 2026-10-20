@@ -41,6 +41,7 @@ pub fn facts(app: &AppState) -> ContextFacts {
         terminal: app.terminal.ui.terminal_focused,
         editor: app.editor.focused && app.main_surface() == MainSurface::Editor,
         vim_active: crate::app::editor_vim::is_active(app),
+        popup: app.editor.language.popup.is_some(),
         menu: app.editor.menu.is_some()
             || app.explorer.ui.menu.is_some()
             || app.editor.tabs.tab_context_menu.is_some()

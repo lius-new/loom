@@ -232,6 +232,9 @@ fn run_replay(env: &KeyEnv, stack: &[KeyContext], replay: Replay) {
 /// Perform one action. Returns `false` when it does not apply right now, so
 /// the next binding for the keystroke gets a chance.
 pub fn perform(env: &KeyEnv, action: Action) -> bool {
+    if let Some(done) = crate::app::language_ui::keys::perform(env, action) {
+        return done;
+    }
     match action {
         Action::NoAction => false,
         Action::SearchToggleCase

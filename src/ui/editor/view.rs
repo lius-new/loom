@@ -476,11 +476,75 @@ pub(crate) fn render(
             .filter(|(hovered_pane, _)| *hovered_pane == pane)
             .and_then(|(_, range)| diagnostic_hits.iter().rev().find(|(_, r)| r == range))
             .cloned();
+        // The card: a server hover text with the diagnostics under it, or just the
+        // diagnostic the pointer is on.
+        let card = if let Some(hover) = &s.hover {
+            let anchor = anchor_rect(
+                &buffer,
+                &hover.anchor,
+                (code_left, code_top, layout_right),
+                (scroll_x, scroll_y),
+                metrics.viewport_w,
+            );
+            let found: Vec<&Diagnostic> = s
+                .diagnostics
+                .iter()
+                .filter(|d| {
+                    d.range.start < hover.anchor.end
+                        && hover.anchor.start < d.range.end.max(d.range.start + 1)
+                })
+                .collect();
+            anchor.and_then(|anchor| info_card(&found, Some(&hover.blocks), anchor, hover_area))
+        } else if let Some((anchor, range)) = &hovered_diagnostic {
+            let found: Vec<_> = s.diagnostics.iter().filter(|d| d.range == *range).collect();
+            info_card(&found, None, *anchor, hover_area)
+        } else {
+            None
+        };
+        // The popup list, drawn over the code; the pointer on it leaves hover alone.
+        let popup = s.popup.as_ref().map(|view| {
+            let anchor = view.anchor.and_then(|offset| {
+                anchor_rect(
+                    &buffer,
+                    &(offset..offset),
+                    (code_left, code_top, layout_right),
+                    (scroll_x, scroll_y),
+                    metrics.viewport_w,
+                )
+            });
+            let send = state.clone();
+            super::popup::render(
+                view,
+                anchor,
+                hover_area,
+                std::sync::Arc::new(move |event| send.send(Event::Popup(event))),
+            )
+        });
+        let popup_rect = popup.as_ref().map(|(rect, _)| *rect);
+        let card_rect = card
+            .as_ref()
+            .map(|(rect, _)| *rect)
+            .filter(|_| popup_rect.is_none());
         let st_diagnostic_hover = state.clone();
         let dragging = s.dragging;
         root = root.on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
             if let UiEventPayload::PointerMove { pointer } = payload {
                 let point = pointer.point;
+                // On the card itself nothing changes: it must stay to be read.
+                if card_rect.is_some_and(|rect| rect.contains(point))
+                    || popup_rect.is_some_and(|rect| rect.contains(point))
+                {
+                    return;
+                }
+                if !dragging && hover_area.contains(point) {
+                    st_diagnostic_hover.send(Event::HoverMove {
+                        point: (point.x, point.y),
+                        code_left,
+                        metrics,
+                    });
+                } else {
+                    st_diagnostic_hover.send(Event::HoverLeave);
+                }
                 let hovered = (!dragging && hover_area.contains(point))
                     .then(|| {
                         diagnostic_hits
@@ -558,11 +622,13 @@ pub(crate) fn render(
         if has_vertical && has_horizontal {
             root = root.child(scrollbar_corner(pane, rect));
         }
-        if let Some((anchor, range)) = hovered_diagnostic {
-            let found: Vec<_> = s.diagnostics.iter().filter(|d| d.range == range).collect();
-            if let Some(card) = diagnostic_card(&found, anchor, hover_area) {
-                root = root.child(card);
-            }
+        if let Some((_, card)) = card
+            && popup.is_none()
+        {
+            root = root.child(card);
+        }
+        if let Some((_, popup)) = popup {
+            root = root.child(popup);
         }
     }
 
@@ -695,6 +761,49 @@ fn squiggle(r: UiRect, colour: Color) -> Element {
     )
 }
 
+/// Where the text `range` starts, on screen: the part of it on its first line.
+pub(crate) fn anchor_rect(
+    buffer: &TextBuffer,
+    range: &Range<usize>,
+    (code_left, code_top, layout_right): (f32, f32, f32),
+    (scroll_x, scroll_y): (f32, f32),
+    viewport_w: f32,
+) -> Option<UiRect> {
+    if range.start > buffer.len() {
+        return None;
+    }
+    let line = buffer.line_of(range.start);
+    let end = range.end.min(buffer.line_end(line)).max(range.start);
+    let (_, from) = buffer.line_col(range.start);
+    let (_, to) = buffer.line_col(end);
+    let y = code_top + line as f32 * fonts::editor().line_h;
+    let x0 = document_caret(
+        buffer,
+        line,
+        from,
+        code_left,
+        y,
+        layout_right,
+        (scroll_x, viewport_w),
+    );
+    let x1 = document_caret(
+        buffer,
+        line,
+        to,
+        code_left,
+        y,
+        layout_right,
+        (scroll_x, viewport_w),
+    );
+    let (left, top) = (x0 - scroll_x, y - scroll_y);
+    Some(UiRect::new(
+        left,
+        top,
+        (x1 - scroll_x).max(left + 2.0),
+        top + fonts::editor().line_h,
+    ))
+}
+
 /// Diagnostic marks along the editor's right edge, beside the Git lane, so
 /// problems off screen can be found from the scrollbar. A line's most serious
 /// problem is drawn last, over the others.
@@ -739,7 +848,7 @@ const CARD_GAP: f32 = 4.0;
 /// underline, or above it when the space below is too short; starting at the
 /// underline's left edge, or ending at its right edge when the space to the
 /// right is too narrow. It stays inside `area` either way.
-fn card_origin(anchor: UiRect, area: UiRect, width: f32, height: f32) -> (f32, f32) {
+pub(crate) fn card_origin(anchor: UiRect, area: UiRect, width: f32, height: f32) -> (f32, f32) {
     let below = anchor.bottom + CARD_GAP;
     let above = anchor.top - CARD_GAP - height;
     let top = if below + height <= area.bottom || above < area.top {
@@ -759,11 +868,19 @@ fn card_origin(anchor: UiRect, area: UiRect, width: f32, height: f32) -> (f32, f
     (left, top)
 }
 
-/// The hover card of the diagnostics at `anchor`: each one's message beside a
-/// mark of its severity, with the reporting tool and code faint after it, as
-/// VS Code shows `rustc(E0425)`. It is placed by [`card_origin`].
-fn diagnostic_card(found: &[&Diagnostic], anchor: UiRect, area: UiRect) -> Option<Element> {
-    if found.is_empty() {
+/// The hover card at `anchor`: the diagnostics there (each one's message beside
+/// a mark of its severity, with the reporting tool and code faint after it, as
+/// VS Code shows `rustc(E0425)`), then what the language servers say about the
+/// text, as Markdown. It is placed by [`card_origin`]. `None` when there is
+/// nothing to show.
+pub(crate) fn info_card(
+    found: &[&Diagnostic],
+    docs: Option<&[crate::features::markdown::Block]>,
+    anchor: UiRect,
+    area: UiRect,
+) -> Option<(UiRect, Element)> {
+    let docs = docs.filter(|blocks| !blocks.is_empty());
+    if found.is_empty() && docs.is_none() {
         return None;
     }
     let mut found = found.to_vec();
@@ -799,10 +916,40 @@ fn diagnostic_card(found: &[&Diagnostic], anchor: UiRect, area: UiRect) -> Optio
         }
         rows += lines.len().max(1);
     }
-    let width = (natural + mark_w + 2.0 * CARD_PAD)
-        .min(CARD_MAX_W)
-        .min((area.width() - 8.0).max(80.0));
-    let height = rows as f32 * CARD_ROW + 2.0 * CARD_PAD + (entries.len() - 1) as f32 * 9.0;
+    let diagnostics_w = if entries.is_empty() {
+        0.0
+    } else {
+        natural + mark_w
+    };
+    let max_width = CARD_MAX_W.min((area.width() - 8.0).max(80.0));
+    let documentation = docs.map(|blocks| {
+        crate::ui::markdown::layout(
+            blocks,
+            (max_width - 2.0 * CARD_PAD).max(40.0),
+            &crate::ui::markdown::Metrics {
+                measure: &|text, style| crate::ui::markdown::measure(text, style, size),
+                line_h: CARD_ROW,
+                gap: 6.0,
+                indent: 16.0,
+            },
+        )
+    });
+    let width = (diagnostics_w.max(documentation.as_ref().map_or(0.0, |l| l.width))
+        + 2.0 * CARD_PAD)
+        .min(max_width);
+    let diagnostics_h = if entries.is_empty() {
+        0.0
+    } else {
+        rows as f32 * CARD_ROW + (entries.len() - 1) as f32 * 9.0
+    };
+    let separator = if entries.is_empty() || documentation.is_none() {
+        0.0
+    } else {
+        9.0
+    };
+    let docs_h = documentation.as_ref().map_or(0.0, |l| l.height);
+    let height = (diagnostics_h + separator + docs_h + 2.0 * CARD_PAD)
+        .min((area.height() * 0.7).max(CARD_ROW * 3.0));
     let (left, top) = card_origin(anchor, area, width, height);
     let card_rect = UiRect::new(left, top, left + width, top + height);
     let body = UiRect::new(
@@ -850,7 +997,24 @@ fn diagnostic_card(found: &[&Diagnostic], anchor: UiRect, area: UiRect) -> Optio
             y += CARD_ROW;
         }
     }
-    Some(theme::bordered(card_rect, theme::c().surface, theme::c().border, 4.0, 1.0).child(content))
+    if let Some(layout) = &documentation {
+        if separator > 0.0 {
+            content = content.child(panel(
+                UiRect::new(body.left, y + 4.0, body.right, y + 5.0),
+                VisualStyle::filled(theme::c().border),
+            ));
+            y += separator;
+        }
+        content = content.child(crate::ui::markdown::render(
+            layout, body.left, y, size, CARD_ROW,
+        ));
+    }
+    Some((
+        card_rect,
+        theme::bordered(card_rect, theme::c().surface, theme::c().border, 4.0, 1.0)
+            .key("language-hover-card")
+            .child(content),
+    ))
 }
 
 pub(crate) fn vertical_scrollbar(

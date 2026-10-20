@@ -18,6 +18,7 @@ mod git_tasks;
 #[cfg(test)]
 mod language_packages_tests;
 pub(crate) mod language_services;
+pub(crate) mod language_ui;
 #[cfg(test)]
 mod phase0_baseline;
 mod presentation;
@@ -27,6 +28,7 @@ pub(crate) mod state;
 pub(crate) mod syntax;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub(crate) mod ui_timer;
 
 pub(crate) use bootstrap::run;
 

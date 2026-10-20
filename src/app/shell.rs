@@ -69,10 +69,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let results_ready = crate::infrastructure::ui_dispatch::LatestNotification::new(
             loading_application.clone(),
             move |()| {
-                results_state.try_update(|app| {
-                    app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
-                    true
-                });
+                super::language_ui::tick(&results_state);
             },
         );
         loading_runtime.install_language_services(super::language_services::LanguageServices::new(

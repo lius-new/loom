@@ -62,6 +62,17 @@ pub(crate) struct ViewState {
     pub overview_marks: Vec<OverviewMark>,
     pub has_repository: bool,
     pub peek_visible: bool,
+    /// What the language servers said about the word the pointer rests on.
+    pub hover: Option<HoverView>,
+    /// The list open over the code, if any.
+    pub popup: Option<crate::ui::editor::popup::View>,
+}
+
+/// A server hover text, anchored to the text it describes.
+#[derive(Clone)]
+pub(crate) struct HoverView {
+    pub anchor: Range<usize>,
+    pub blocks: Arc<[crate::features::markdown::Block]>,
 }
 /// One adjacent run of changes in the overview ruler, with a zero-based first line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +119,16 @@ pub(crate) enum Event {
     Peek {
         line: usize,
     },
+    /// The pointer moved over the code area.
+    HoverMove {
+        point: (f32, f32),
+        code_left: f32,
+        metrics: Metrics,
+    },
+    /// The pointer left the code area.
+    HoverLeave,
+    /// The mouse did something in the popup list.
+    Popup(crate::ui::editor::popup::Event),
     Text(String),
     Composition {
         text: String,

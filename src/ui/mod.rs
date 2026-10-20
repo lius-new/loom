@@ -14,6 +14,7 @@ pub mod explorer;
 pub mod git;
 pub mod keymap_page;
 pub mod language_panel;
+pub(crate) mod markdown;
 pub mod pane_sash;
 pub mod search;
 pub mod settings;

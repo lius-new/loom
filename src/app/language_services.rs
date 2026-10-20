@@ -82,6 +82,14 @@ impl LanguageServices {
         )
     }
 
+    /// Asks the running servers; see `Manager::request`.
+    pub fn request(
+        &self,
+        spec: crate::infrastructure::lsp::manager::RequestSpec,
+    ) -> crate::infrastructure::lsp::manager::RequestHandle {
+        self.manager.request(spec)
+    }
+
     pub fn infos(&self) -> Vec<InstanceInfo> {
         self.manager.infos()
     }

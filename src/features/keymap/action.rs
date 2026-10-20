@@ -153,6 +153,18 @@ actions! {
     Newline => "editor::Newline", "Insert a line break";
     Tab => "editor::Tab", "Indent";
     Backtab => "editor::Backtab", "Outdent";
+    GoToDefinition => "editor::GoToDefinition", "Go to the definition of the symbol at the cursor";
+    GoToDeclaration => "editor::GoToDeclaration", "Go to the declaration of the symbol at the cursor";
+    GoToTypeDefinition => "editor::GoToTypeDefinition", "Go to the type of the symbol at the cursor";
+    GoToImplementation => "editor::GoToImplementation", "Go to the implementations of the symbol at the cursor";
+    FindAllReferences => "editor::FindAllReferences", "List the references to the symbol at the cursor";
+    ShowHover => "editor::Hover", "Show what the language servers say about the symbol at the cursor";
+    GoToDiagnostic => "editor::GoToDiagnostic", "Go to the next problem in the file";
+    GoToPreviousDiagnostic => "editor::GoToPreviousDiagnostic", "Go to the previous problem in the file";
+    GoBack => "pane::GoBack", "Go back to the previous place";
+    GoForward => "pane::GoForward", "Go forward to the next place";
+    ToggleOutline => "outline::Toggle", "Go to a symbol in this file";
+    ToggleProjectSymbols => "project_symbols::Toggle", "Go to a symbol in the workspace";
 
     TerminalCopy => "terminal::Copy", "Copy the terminal selection";
     TerminalCopyOrInterrupt => "terminal::CopyOrInterrupt", "Copy the selection, or send Ctrl+C without one";
@@ -162,6 +174,8 @@ actions! {
     MenuSelectNext => "menu::SelectNext", "Select the next menu item";
     MenuSelectPrevious => "menu::SelectPrevious", "Select the previous menu item";
     MenuConfirm => "menu::Confirm", "Choose the selected menu item";
+    MenuPageUp => "menu::PageUp", "Move the selection up one page";
+    MenuPageDown => "menu::PageDown", "Move the selection down one page";
 
     GitCommit => "git::Commit", "Commit the staged changes";
 

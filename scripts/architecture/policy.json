@@ -91,6 +91,10 @@
       "owner": "app/state/editor: diagnostic hover interaction, rendered by ui/editor/view",
       "migrated_in": "LSP diagnostic hover cards"
     },
+    "language": {
+      "owner": "app/state/editor: language-server interaction state (hover, completion, ...), driven by app/language_ui",
+      "migrated_in": "LSP interactive features"
+    },
     "editor_horizontal_scrollbar_drag_offset": {
       "owner": "app/state/editor",
       "migrated_in": "R3"
