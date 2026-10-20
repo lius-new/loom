@@ -20,3 +20,8 @@ ring = "0.17"
 name = "language-runtime-probe"
 path = "src/main.rs"
 test = false
+
+[[bin]]
+name = "language-pack-validator"
+path = "src/validate.rs"
+test = false

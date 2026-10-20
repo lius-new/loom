@@ -5,6 +5,13 @@
 *.toml text eol=lf
 *.ico binary
 *.png binary
+*.wasm binary
 assets/language-packs/**/tree-sitter.json text eol=lf
 assets/language-packs/**/*.scm text eol=lf
-assets/language-packs/rust/LICENSE text eol=lf
+assets/language-packs/**/LICENSE text eol=lf
+scripts/language-packs/**/*.scm text eol=lf
+scripts/language-packs/fixtures/*.txt text eol=lf
+scripts/language-packs/queries/LICENSE text eol=lf
+scripts/language-packs/patches/*.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+scripts/language-packs/support/* text eol=lf
+tests/language-runtime/fixtures/** text eol=lf

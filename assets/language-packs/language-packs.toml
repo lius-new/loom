@@ -1,0 +1,8 @@
+# Released language packages consumed by Loom. No build recipes belong here.
+# The producer prepares a candidate; publish promotes it only after release succeeds.
+schema = 1
+
+[distribution]
+repository = "lius-new/loom"
+
+[packages]

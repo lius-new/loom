@@ -1,6 +1,7 @@
 // Consume complete prebuilt artifacts. This module never builds language code.
 import fs from 'node:fs';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 function relative(file) {
   if (typeof file !== 'string' || !file || file.startsWith('/') || /[\\:\0]/.test(file) || file.split('/').includes('..')) throw new Error('Invalid standard resource path: ' + file);
@@ -53,6 +54,18 @@ function stageStandard({source, target, platform}) {
   for (const file of ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'COPYING', 'PROVENANCE.md']) {
     if (fs.statSync(path.join(source, file), {throwIfNoEntry: false})?.isFile()) copy(file);
   }
+  const licenseRoot=path.join(source,'licenses');
+  if(fs.statSync(licenseRoot,{throwIfNoEntry:false})?.isDirectory()) {
+    const walk=directory=>{
+      for(const entry of fs.readdirSync(directory,{withFileTypes:true})) {
+        const file=path.join(directory,entry.name);
+        if(entry.isDirectory())walk(file);
+        else if(entry.isFile())copy(path.relative(source,file).split(path.sep).join('/'));
+        else throw new Error('Language license directory may contain only files and directories');
+      }
+    };
+    walk(licenseRoot);
+  }
   return binaries;
 }
 
@@ -67,8 +80,9 @@ export function moduleFile(module, platform) {
 }
 
 
-export function stageLanguagePacks({ source = process.env.LOOM_LANGUAGE_PACKS, destination, platform = process.platform }) {
-  if (!source) throw new Error('Set LOOM_LANGUAGE_PACKS to a complete prebuilt language package collection');
+export function stageLanguagePacks({ source = fileURLToPath(new URL('../../../assets/language-packs',import.meta.url)), destination, platform = process.platform,
+  catalog = fileURLToPath(new URL('../../../assets/language-packs/language-packs.toml',import.meta.url)) }) {
+  if (!source) throw new Error('Supply a complete prebuilt language package collection');
   const root = path.resolve(source);
   const ids = fs.readdirSync(root, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && ['tree-sitter.json', 'package.json'].some(file => fs.existsSync(path.join(root, entry.name, file))))
@@ -113,5 +127,6 @@ export function stageLanguagePacks({ source = process.env.LOOM_LANGUAGE_PACKS, d
       binaries.push(output);
     }
   }
+  if(catalog)fs.copyFileSync(catalog,path.join(destination,'language-packs.toml'));
   return binaries;
 }

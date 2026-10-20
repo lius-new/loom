@@ -146,7 +146,7 @@ per query kind and 512 file-types.
 
 ## Builds, packaging and verification
 
-The host contains no concrete grammar dependency or language producer project.
+The host contains no concrete grammar dependency or linked language producer.
 Its generic Tree-sitter WASM runtime uses the private CMake prepared by
 [scripts/dependencies](../scripts/dependencies/README.md) when building Loom.
 Users of a compiled application need no compiler. Host commands work without any
@@ -158,25 +158,28 @@ node scripts/build/cargo.mjs test --locked --workspace
 node scripts/architecture/standalone-host.mjs --offline
 ~~~
 
-assets/language-packs contains metadata/query templates and optional provenance,
-not modules or a grammar build project. Rust's metadata and queries are unchanged
-upstream v0.24.2 files. Other bundled templates use standard metadata with the
-existing supported queries; optional PROVENANCE.md documents their origins/edits.
-Cargo build does not automatically install templates. Official distributions keep
-Markdown and JSON resources enabled and demand-loaded.
+assets/language-packs contains complete Markdown and JSON packages, including
+WASM modules, standard metadata, queries, licenses and provenance, plus the
+publication catalog. Both packages remain in scripts/language-packs/build.toml
+and use the same [batch producer](../scripts/language-packs/README.md) as other
+languages. Their validated WASM files were manually placed in the bundled
+packages; producer runs do not rewrite these checked-in resources.
+The catalog contains only successfully published artifacts and is initially empty.
+Rust's unchanged upstream regression resources live under
+tests/language-runtime/fixtures/rust. Cargo does not build or install grammars.
 
-Packaging consumes complete prebuilt collections through LOOM_LANGUAGE_PACKS:
+Application packaging consumes assets/language-packs directly on all platforms:
 
 ~~~sh
 node scripts/package/stage-languages.mjs /path/to/app/language-packs
 ~~~
 
-The consumer preserves tree-sitter.json, module bytes and declared query paths;
-it does not synthesize a Loom manifest or compile a grammar. Standard licenses
-and optional provenance are copied when present. macOS signs native modules and
-the application, preserves WASM bytes and enables Wasmtime JIT with allow-jit.
-Release feeds use pinned archive URL/SHA256 variables described in
-scripts/package/README.md; the feed must provide JSON and Markdown grammars.
+The consumer preserves tree-sitter.json, module bytes and declared query paths,
+and copies the publication catalog. No language resource feed, archive download
+or grammar compilation is part of application packaging. macOS signs native
+modules and the application, preserves WASM bytes and enables Wasmtime JIT with
+allow-jit. Automatic application downloading is a separate integration;
+installed-resource loading continues to work offline.
 
 The independent runtime workspace compiles production loader, syntax and worker
 sources against supplied modules. Its default WASM-only regression installs the
@@ -190,8 +193,8 @@ node tests/language-runtime/run.mjs --packages /path/to/prebuilt-packages --wasm
 
 Online test tooling caches a pinned upstream WASM input under .packaging/downloads;
 offline runs need that cache or an explicit file. Every CI platform runs the
-WASM-only suite, even without a native artifact feed. Installation probes keep
-the executable hash unchanged while testing application/user discovery,
+WASM-only suite, including the complete checked-in JSON and Markdown packages.
+Installation probes keep the executable hash unchanged while testing application/user discovery,
 resource removal and restart, highlighting, lazy loading and failure isolation.
 The native baseline accepts both standard and legacy collection layouts and also
 covers legacy collection compatibility with an isolated test-only metadata view.

@@ -1,0 +1,1 @@
+const node: JSX.Element = <div>Hello</div>;

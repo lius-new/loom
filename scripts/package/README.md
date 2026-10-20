@@ -23,20 +23,17 @@ which turns on update checks; a plain `cargo build` has them off.
 
 ## Layout
 
-Application assembly copies complete prebuilt standard Tree-sitter resources
-from LOOM_LANGUAGE_PACKS. Neither compile nor package builds grammar code. Obtain
-compatible modules from an external provider and combine them with metadata and
-queries following [the resource format](../../docs/languages.md). There is no
-language producer project or Loom-specific Rust wrapper.
+Application assembly copies the complete Markdown and JSON packages directly
+from assets/language-packs, including their WASM modules, metadata, queries and
+licenses. It copies language-packs.toml alongside them. Local, CI and release
+packaging all consume these same checked-in files; no language archive download,
+feed variables or grammar compilation is required.
 
-For local packaging, set LOOM_LANGUAGE_PACKS to the complete collection. For
-CI/releases, configure repository variables LOOM_LANGUAGE_PACKS_<TARGET>_URL and
-LOOM_LANGUAGE_PACKS_<TARGET>_SHA256 (WINDOWS_X86_64, LINUX_X86_64,
-MACOS_UNIVERSAL). fetch-languages.mjs verifies a pinned tar.gz with package folders
-at its root, then stages the unmodified modules and queries. Enabled JSON and
-Markdown are required for releases. An external resource feed must be supplied;
-no provider is built into this repository. CI without a feed exports the tested
-host alone, clearly labelled without language resources.
+Markdown and JSON are still produced by the separate
+[language-package producer](../language-packs/README.md). Their complete bundled
+packages are maintained manually in assets/language-packs. The producer and
+publisher do not automatically replace them. Cargo does not link a grammar
+producer or any language-specific wrapper.
 
 A package may contain standard .wasm files or native modules. Stems prefer the
 upstream tree-sitter-<stem>.wasm download, then <stem>.wasm, then the native
@@ -47,7 +44,7 @@ or platform-incompatible native files stop assembly.
 No Cargo profile or grammar source directory is consulted. Consumer tests:
 
 ~~~sh
-node --test scripts/package/lib/language-packs.test.mjs scripts/package/fetch-languages.test.mjs
+node --test scripts/package/lib/language-packs.test.mjs
 ~~~
 
 All downloads, tools, staging folders and artifacts live in the git-ignored

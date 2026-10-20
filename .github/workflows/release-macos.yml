@@ -32,9 +32,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  LOOM_LANGUAGE_PACKS: .packaging/language-artifacts
-  LOOM_LANGUAGE_PACKS_URL: ${{ vars.LOOM_LANGUAGE_PACKS_MACOS_UNIVERSAL_URL }}
-  LOOM_LANGUAGE_PACKS_SHA256: ${{ vars.LOOM_LANGUAGE_PACKS_MACOS_UNIVERSAL_SHA256 }}
 
 jobs:
   package:
@@ -111,12 +108,6 @@ jobs:
 
       - name: Test upstream WASM modules without native language binaries
         run: node tests/language-runtime/run-wasm.mjs
-
-      - name: Fetch prebuilt standard language resources
-        run: node scripts/package/fetch-languages.mjs
-
-      - name: Test prebuilt language runtime
-        run: node tests/language-runtime/run.mjs --packages .packaging/language-artifacts
 
       - name: Compile
         run: node scripts/package/package.mjs compile --platform macos --expect-version ${{ steps.version.outputs.version }}

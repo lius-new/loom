@@ -60,5 +60,6 @@ and calls `ensure.mjs --github` before any host test/lint/build in CI and releas
 workflows. That mode writes the verified bin path and Skia URL to GitHub's
 environment files for subsequent steps. Cache keys include OS, architecture and
 manifest/implementation/Cargo.lock hashes. All matrix platforms run the regression
-tests and a real private-CMake/Actions-export smoke check. Inno Setup/MinGit and language resource feeds retain their separate
-packaging/runtime roles; this directory does not build grammar resources.
+tests and a real private-CMake/Actions-export smoke check. Inno Setup/MinGit retain their separate packaging roles; bundled language
+resources are copied from assets/language-packs. This directory does not build
+grammar resources.

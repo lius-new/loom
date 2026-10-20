@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import { moduleFile, stageLanguagePacks } from './language-packs.mjs';
 
 function fixture(t, platform) {
@@ -59,6 +60,23 @@ test('packaging requires prebuilt input and copies shared modules once', t => {
   const binaries=stageLanguagePacks({source:profile,destination:path.join(root,'installed'),platform:'win32'});
   assert.equal(binaries.length,1);
   assert.equal(fs.existsSync(path.join(root,'installed/rust/grammars/inline/highlights.scm')),true);
+});
+
+test('application assembly directly consumes the complete checked-in Markdown/JSON packages on every platform', t => {
+  const {root}=fixture(t,'win32');
+  const source=fileURLToPath(new URL('../../../assets/language-packs',import.meta.url));
+  for(const platform of ['win32','linux','darwin']) {
+    const destination=path.join(root,platform);
+    const binaries=stageLanguagePacks({destination,platform});
+    assert.equal(binaries.length,3);
+    assert.deepEqual(fs.readdirSync(destination).sort(),['json','language-packs.toml','markdown']);
+    for(const id of ['json','markdown']) {
+      for(const file of fs.readdirSync(path.join(source,id),{recursive:true}).filter(file=>fs.statSync(path.join(source,id,file)).isFile())) {
+        assert.deepEqual(fs.readFileSync(path.join(destination,id,file)),fs.readFileSync(path.join(source,id,file)),`${platform}/${id}/${file}`);
+      }
+    }
+    assert.deepEqual(fs.readFileSync(path.join(destination,'language-packs.toml')),fs.readFileSync(path.join(source,'language-packs.toml')));
+  }
 });
 
 test('standard filenames and default exports need no Loom wrapper or module rename', t => {

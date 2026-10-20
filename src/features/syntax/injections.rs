@@ -4,6 +4,8 @@
 //! another grammar (`@injection.content`) and the language, either with
 //! `#set! injection.language "html"` or by capturing the node whose text names it
 //! (`@injection.language`, such as a code fence's info string).
+//! Helper captures beginning with `_` may be used by text predicates; they do
+//! not contribute a language or an injected range.
 //!
 //! Supported properties, all others are errors:
 //!
@@ -66,6 +68,7 @@ pub(crate) fn compile_source(
         match *name {
             "injection.content" => content = Some(index as u32),
             "injection.language" => language_capture = Some(index as u32),
+            helper if helper.starts_with('_') => {}
             other => return Err(format!("the capture @{other} is not supported")),
         }
     }

@@ -67,6 +67,29 @@ fn paint(index: &mut TreeIndex, buffer: &TextBuffer) -> Vec<WindowTokens> {
 }
 
 #[test]
+fn checked_in_json_and_markdown_are_complete_loadable_wasm_packages() {
+    use crate::features::syntax::{Resources, validate_producer_grammar};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/language-packs");
+    let source = Packages::discover(&root, None);
+    assert!(
+        source.activity().errors.is_empty(),
+        "{:?}",
+        source.activity()
+    );
+    source.registry().unwrap();
+    for (name, text) in [
+        ("json", "{\"value\": true}"),
+        ("markdown", "# Heading\n\n**bold**\n"),
+        ("markdown_inline", "**bold** `code`"),
+    ] {
+        let parser = source.parser(name).unwrap();
+        assert!(validate_producer_grammar(&source, name, parser, text).unwrap() > 0);
+    }
+    assert_eq!(source.activity().wasm_loads, 3);
+    assert!(source.activity().errors.is_empty());
+}
+
+#[test]
 fn cold_discovery_leaves_wasm_engine_uninitialized_then_uses_upstream_bytes() {
     const CHILD: &str = "LOOM_WASM_COLD_CHILD";
     if std::env::var_os(CHILD).is_none() {
@@ -151,7 +174,13 @@ fn wasm_incremental_edits_and_multiple_indexes_match_fresh_parses() {
 #[test]
 fn visible_wasm_injections_use_separate_stores_for_host_and_layer() {
     let fixture = Fixture::new();
-    fs::write(fixture.0.join("rust/queries/injections.scm"), "((string_literal (string_content) @injection.content) (#set! injection.language \"rust\"))").unwrap();
+    fs::write(
+        fixture.0.join("rust/queries/injections.scm"),
+        r#"((string_literal (string_content) @injection.content) @_literal
+          (#match? @_literal "^\"fn ")
+          (#set! injection.language "rust"))"#,
+    )
+    .unwrap();
     let source = fixture.source();
     let mut index = TreeIndex::new(source.clone());
     let text = "fn host() { let snippet = \"fn nested() {}\"; }\n";

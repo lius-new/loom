@@ -22,7 +22,7 @@ export async function prepareWasmFixture(destination, {module, offline = false} 
   fs.rmSync(target, {recursive: true, force: true});
   fs.mkdirSync(path.join(target, 'queries'), {recursive: true});
   for (const file of ['tree-sitter.json', 'queries/highlights.scm', 'queries/injections.scm']) {
-    fs.copyFileSync(path.join(root, '../../assets/language-packs/rust', file), path.join(target, file));
+    fs.copyFileSync(path.join(root, 'fixtures/rust', file), path.join(target, file));
   }
   // Preserve the upstream names and directory layout without editor metadata.
   fs.copyFileSync(module, path.join(target, 'tree-sitter-rust.wasm'));

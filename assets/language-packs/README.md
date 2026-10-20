@@ -1,18 +1,17 @@
-# Standard language resource templates
+# Installed language resources
 
-Each child directory contains tree-sitter.json and the query paths it declares.
-No language source, build project or prebuilt module is stored here. These files
-are resource templates; cargo build does not stage them automatically.
+This directory contains the complete Markdown and JSON packages shipped with
+Loom: standard metadata, WASM modules, queries, licenses and provenance.
+Application packaging copies these packages and language-packs.toml directly
+from this checkout. It does not build or download language packages.
 
-For Rust, download the upstream v0.24.2 tree-sitter-rust.wasm into rust/ beside
-its tree-sitter.json. Copy that complete directory under language-packs/ beside
-Loom or in the platform user directory, then restart. Keep the upstream queries/
-layout. No Loom package.json or SOURCE.md is needed. Rust's configuration and
-queries are unmodified upstream resources; LICENSE accompanies them.
+language-packs.toml is the released package catalog; producer recipes live in
+scripts/language-packs/build.toml. Markdown and JSON remain in that same batch
+producer. Their validated WASM files were manually placed here and committed.
+Running the producer does not rewrite the installed packages in this directory.
 
-Other directories retain existing supported query content in standard layouts.
-PROVENANCE.md is optional distribution documentation, not part of discovery or
-runtime loading. Application editing/LSP defaults are separate from these files.
+The catalog stays empty until publication succeeds. Automatic application
+resource downloads are a separate integration.
 
-See [installation and format](../../docs/languages.md) for download links,
-platform paths, resource resolution, compatibility and regression commands.
+See [producer workflow](../../scripts/language-packs/README.md) and
+[runtime format](../../docs/languages.md).
