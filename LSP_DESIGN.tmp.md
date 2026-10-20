@@ -752,6 +752,8 @@ P6a 的关键验收：
 - 配方：15 个包、17 个服务器（4.7）。哈希由 `pin.mjs` 向 GitHub、nodejs.org 取公布的校验和得到，taplo 因发布方没有校验和而下载计算；npm 包的锁文件由 `npm install --package-lock-only` 生成，所有依赖都有完整性哈希。
 - 测试：流水线 21 项（假归档、假发布端、zip 读取与逃逸拒绝、各格式组装、可复现归档、目录生成与拒绝、发布准备与核对与恢复、不覆盖已有资产、重复标签、握手冒烟）加上与语法包同源的目录同步 4 项；应用侧 9 项目录测试，其中读取流水线为生产配方生成的黄金目录（`fixtures/catalog.toml`）并检查多服务器排序与语言 id；管理器 1 项（命令里还带占位符的服务器显示未安装、不启动）。测试写出的 bug：空目录没有 `packs` 键时 `prepare` 会崩，已修；冒烟握手在失败路径没有等进程退出，Windows 上会占着目录，已修。
 - 本机只做过：`pin.mjs`（联网取校验和、生成锁文件）和一次 Windows x86_64 的局部构建（node、rust-analyzer、taplo、marksman、ruff、biome 六个包均成功）。之后按要求不再在本机运行真实构建（占用约 690 MB，已清理），其余全部留给 GitHub Actions；因此 tar.gz、tar.xz 归档的版式假设（zls、lua-language-server、node 的 Unix 包）、clangd、gopls 的交叉编译、npm 包的实际打包与三平台冒烟都还没有被真实运行验证。
+- 首次运行（2026-10-20，commit f9da146）：build 成功；验证在 macOS（macos-14）与 Windows 成功；Linux 上 bash-language-server、biome、clangd、gopls、lua-language-server 成功，marksman 失败：`spawn … ENOENT`。原因是选了 marksman 的 musl 构建，它是动态链接的，需要 musl 加载器，glibc 的 Ubuntu 上没有；改用 glibc 构建（`marksman-linux-x64`、`marksman-linux-arm64`）并重新固定。验证脚本当时遇到第一个失败就退出，所以 Linux 上字典序在 marksman 之后的服务器（node 系的五个包、ruff、rust-analyzer、taplo、zls）这一轮没有被验证到；脚本已改成跑完全部服务器，并把每个失败作为 Actions 注解输出。
+- 同一次推送触发的 CI 有两处失败，都已修复：独立语言运行时测试 crate 也编译 `language_packs_unit_tests.rs`，而它里面有我加的服务器断言（那个 crate 没有语言服务）；以及 `language_catalog_tests.rs` 里一处 clippy 提示。
 - 未做：下载、校验、解包、`${pack}` 与 `${runtime.*}` 展开与安装状态（4.5）；`.exe` 的补全；用户注册服务器与设置新格式；目录的 `settings`、`env` 字段。
 
 | 日期 | 变更记录 | 实施影响 |

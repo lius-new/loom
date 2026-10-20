@@ -330,13 +330,15 @@ asset = "marksman-macos"
 format = "raw"
 executables = ["marksman"]
 
+# The glibc builds: marksman's musl builds are dynamically linked and need the musl
+# loader, which a glibc system does not have.
 [packs.marksman.platforms.linux-x86_64]
-asset = "marksman-linux-musl-x64"
+asset = "marksman-linux-x64"
 format = "raw"
 executables = ["marksman"]
 
 [packs.marksman.platforms.linux-aarch64]
-asset = "marksman-linux-musl-arm64"
+asset = "marksman-linux-arm64"
 format = "raw"
 executables = ["marksman"]
 

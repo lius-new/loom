@@ -88,11 +88,22 @@ async function unpack(dist, id, platform, destination) {
   return path.join(destination, id);
 }
 
+/** A GitHub Actions annotation, readable without opening the log. */
+export const annotation = (title, message) => {
+  const escape = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  return `::error title=${escape(title).replace(/:/g, '%3A').replace(/,/g, '%2C')}::${escape(message)}`;
+};
+
+/**
+ * Starts every server of this platform. A failing server does not stop the others:
+ * all failures are collected and reported together, once the rest have run.
+ */
 export async function validateServers(args = {}) {
   const recipes = loadRecipes(args.recipes || RECIPES), work = args.work || WORK, dist = path.join(work, 'dist');
   const report = JSON.parse(fs.readFileSync(path.join(dist, 'build-report.json'), 'utf8'));
   const host = hostPlatform(), temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-lsp-validate-'));
-  const results = [];
+  const results = [], failures = [];
+  const fail = (name, error) => { failures.push({name, error: error.message}); console.log(annotation(`${name} failed on ${host}`, error.message)); };
   try {
     for (const id of report.selected) {
       const pack = recipes.packs[id], platforms = Object.keys(report.packs[id].platforms);
@@ -100,24 +111,30 @@ export async function validateServers(args = {}) {
       if (!platforms.includes(platform)) { console.log(`skip ${id}: not built for ${host}`); continue; }
       const servers = Object.entries(recipes.servers).filter(([, server]) => server.pack === id);
       if (!servers.length) { console.log(`skip ${id}: a runtime with no server of its own`); continue; }
-      const directory = await unpack(dist, id, platform, path.join(temporary, id));
+      let directory;
       const runtimes = {};
-      for (const requirement of pack.requires || []) {
-        const runtime = requirement.split('@')[0];
-        assert(report.packs[runtime]?.platforms[host], `${id} needs ${runtime}, which was not built for ${host}`);
-        runtimes[runtime] = await unpack(dist, runtime, host, path.join(temporary, runtime));
-      }
+      try {
+        directory = await unpack(dist, id, platform, path.join(temporary, id));
+        for (const requirement of pack.requires || []) {
+          const runtime = requirement.split('@')[0];
+          assert(report.packs[runtime]?.platforms[host], `${id} needs ${runtime}, which was not built for ${host}`);
+          runtimes[runtime] ||= await unpack(dist, runtime, host, path.join(temporary, runtime));
+        }
+      } catch (error) { fail(id, error); continue; }
       for (const [name, server] of servers) {
-        const context = {pack: directory, runtimes}, root = path.join(temporary, `${name}-project`);
-        fs.mkdirSync(root, {recursive: true});
-        const command = resolveCommand(expand(server.command, context));
-        const capabilities = await handshake({command, args: (server.args || []).map(arg => expand(arg, context)), cwd: root,
-          initializationOptions: server.initialization_options ? expandValue(server.initialization_options, context) : undefined});
-        console.log(`ok ${name} (${host}): ${Object.keys(capabilities).length} capabilities`);
-        results.push(name);
+        try {
+          const context = {pack: directory, runtimes}, root = path.join(temporary, `${name}-project`);
+          fs.mkdirSync(root, {recursive: true});
+          const command = resolveCommand(expand(server.command, context));
+          const capabilities = await handshake({command, args: (server.args || []).map(arg => expand(arg, context)), cwd: root,
+            initializationOptions: server.initialization_options ? expandValue(server.initialization_options, context) : undefined});
+          console.log(`ok ${name} (${host}): ${Object.keys(capabilities).length} capabilities`);
+          results.push(name);
+        } catch (error) { fail(name, error); }
       }
     }
   } finally { fs.rmSync(temporary, {recursive: true, force: true, maxRetries: 20, retryDelay: 200}); }
+  assert(failures.length === 0, `${failures.length} server(s) failed on ${host}: ${failures.map(f => f.name).join(', ')} (${results.length} passed)`);
   assert(results.length > 0, 'Nothing was validated');
   return results;
 }

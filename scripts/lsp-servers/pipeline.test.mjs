@@ -10,7 +10,7 @@ import {tar, stringifyToml} from '../language-packs/lib.mjs';
 import {loadRecipes, validateRecipes, loadPins, validatePins, validateLocks, validateCatalog, makeCatalog, catalogToml, assetUrl,
   assemblePack, extractZip, inputDigest, downloadUrl, fileHash, hash, serverEntry, readToml, packRecord, assetName, createArchive, packPlatforms, PLATFORMS} from './lib.mjs';
 import {preparePublication, verifyPublication, publishPrepared} from './publish.mjs';
-import {expand, expandValue, resolveCommand, handshake} from './validate.mjs';
+import {expand, expandValue, resolveCommand, handshake, annotation} from './validate.mjs';
 
 const temporary = t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'loom-lsp-test-'));
@@ -334,6 +334,10 @@ test('placeholders expand in commands, arguments and options only for known runt
   assert.equal(expand('${pack}/a.js', context), '/p/pack/a.js');
   assert.deepEqual(expandValue({tsserver: {path: '${pack}/ts'}, list: ['${pack}/x', 3]}, context), {tsserver: {path: '/p/pack/ts'}, list: ['/p/pack/x', 3]});
   assert.throws(() => expand('${runtime.python}/python', context), /No installed runtime/);
+});
+
+test('a failure becomes a one-line Actions annotation whatever the message holds', () => {
+  assert.equal(annotation('marksman failed: on linux, x', 'spawn ENOENT\nstderr: 100% bad\r'), '::error title=marksman failed%3A on linux%2C x::spawn ENOENT%0Astderr: 100%25 bad%0D');
 });
 
 test('a program named without an extension is found with .exe on Windows only', t => {

@@ -192,14 +192,14 @@ sha256 = "6a801c17b5ac0dba69787c5282b3b3bd416e66c96253fae098d311c6bbd1833b"
 size = 43856208
 
 [packs.marksman.platforms.linux-x86_64]
-url = "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-musl-x64"
-sha256 = "d33df4544bb1f9f1b93b862ea78375ca8c04cd467ed2bcee354d605fc483ceee"
-size = 22532759
+url = "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-x64"
+sha256 = "be5098e8213219269c47fc0d916a66fa31ce0602ec967475c722260aabf26087"
+size = 22500875
 
 [packs.marksman.platforms.linux-aarch64]
-url = "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-musl-arm64"
-sha256 = "cd3b91b630042cc09b20505583203f875fbb4bf2fdf74dd6d87fddc3238d2798"
-size = 21883423
+url = "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-arm64"
+sha256 = "db8e124527f7f8048e3e6c91821b9c52ef173d92c01e47d221bf1337afd962fb"
+size = 21851058
 
 [packs.marksman.licenses.LICENSE]
 url = "https://raw.githubusercontent.com/artempyanykh/marksman/2026-02-08/LICENSE"
