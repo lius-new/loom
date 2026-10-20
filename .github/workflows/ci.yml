@@ -73,7 +73,7 @@ jobs:
         run: |
           npm ci --ignore-scripts --prefix scripts/language-packs
           node scripts/language-packs/check.mjs --all
-          node --test scripts/language-packs/pipeline.test.mjs
+          node --test scripts/language-packs/pipeline.test.mjs scripts/language-packs/catalog-sync.test.mjs
 
       - name: Check formatting
         run: cargo fmt --all -- --check

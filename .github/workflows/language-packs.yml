@@ -35,7 +35,7 @@ jobs:
         with:
           toolchain: 1.97.1
       - run: npm ci --ignore-scripts --prefix scripts/language-packs
-      - run: node --test scripts/language-packs/pipeline.test.mjs
+      - run: node --test scripts/language-packs/pipeline.test.mjs scripts/language-packs/catalog-sync.test.mjs
       - name: Build selected packages
         env:
           PACKAGES: ${{ inputs.packages }}
@@ -83,6 +83,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Require a branch for catalog synchronization
+        if: github.ref_type != 'branch'
+        run: |
+          echo '::error::Run publication from a branch so the released catalog can be committed back to it.'
+          exit 1
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
@@ -108,5 +113,23 @@ jobs:
           name: released-language-package-catalog
           path: assets/language-packs/language-packs.toml
           if-no-files-found: error
-      - name: Record the next maintenance step
-        run: echo 'Commit the released-language-package-catalog artifact before shipping Loom with this resource batch.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit and push the released catalog
+        env:
+          CATALOG_BRANCH: ${{ github.ref_name }}
+          RESOURCE_TAG: ${{ inputs.release }}
+        run: |
+          catalog=assets/language-packs/language-packs.toml
+          git add -- "$catalog"
+          if git diff --cached --quiet; then
+            echo 'The released catalog is already committed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            producer_commit=$(git rev-parse HEAD)
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m "chore: sync language package catalog for $RESOURCE_TAG"
+            git fetch origin "refs/heads/$CATALOG_BRANCH"
+            git merge-base --is-ancestor "$producer_commit" FETCH_HEAD
+            git rebase FETCH_HEAD
+            git push origin "HEAD:refs/heads/$CATALOG_BRANCH"
+            echo "Committed and pushed the released catalog to $CATALOG_BRANCH." >> "$GITHUB_STEP_SUMMARY"
+          fi

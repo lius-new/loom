@@ -139,12 +139,21 @@ versions that reference them. No scheduled upstream updates or fallback provider
 is involved.
 
 The manually dispatched `.github/workflows/language-packs.yml` defaults to build
-and validation only. Selecting `publish` also publishes and exports the promoted
-catalog as an artifact; download and commit it before the next app release. The
-workflow does not push commits or open pull requests automatically.
+and validation only. Selecting `publish` from a branch also publishes, exports the
+promoted catalog as an artifact, and commits and pushes it back to that branch.
+The resource tag still identifies the producer commit; the catalog follows in a
+separate bot commit. An unchanged catalog needs no new commit.
+
+Before pushing, the workflow rebases the catalog commit onto the latest branch
+tip, preserving unrelated changes. A catalog conflict or a rejected push fails
+the job without force-pushing. The resource release remains published and the
+`released-language-package-catalog` artifact remains available for recovery;
+download and commit it manually if necessary. Branch rules must allow the
+workflow token to push the catalog commit. Publication from a tag is rejected
+before uploading resources because there is no target branch to synchronize.
 
 ```sh
-node --test scripts/language-packs/pipeline.test.mjs
+node --test scripts/language-packs/pipeline.test.mjs scripts/language-packs/catalog-sync.test.mjs
 ```
 
 The catalog is ready for a later downloader to consume. This producer change
