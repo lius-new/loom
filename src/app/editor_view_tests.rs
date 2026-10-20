@@ -1380,12 +1380,8 @@ fn diagnostics_from_a_server_are_underlined_in_the_editor() {
     );
     app.preferences.values_mut().language_servers =
         vec![crate::features::settings::servers::LanguageServerSetting {
-            server: "rust-analyzer".into(),
-            enabled: true,
-            command: Some(fake.display().to_string()),
             args: Some(vec!["--sync".into(), "full".into(), "--diagnostics".into()]),
-            initialization_options: None,
-            install: None,
+            ..crate::features::settings::servers::LanguageServerSetting::named("rust-analyzer")
         }];
     let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
     let initial = Arc::new(Mutex::new(Some(app)));
@@ -1406,7 +1402,9 @@ fn diagnostics_from_a_server_are_underlined_in_the_editor() {
             let results_state = state.clone();
             view_runtime.install_language_services(
                 crate::app::language_services::LanguageServices::new(
-                    crate::features::language_service::server_set::rust_analyzer_for_tests(),
+                    crate::features::language_service::server_set::rust_analyzer_running(
+                        &fake.display().to_string(),
+                    ),
                     move || {
                         results_state.try_update(|app| {
                             app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
@@ -1571,13 +1569,10 @@ impl LanguageHarness {
         args.extend(server_args.iter().map(|a| a.to_string()));
         app.preferences.values_mut().language_servers =
             vec![crate::features::settings::servers::LanguageServerSetting {
-                server: "rust-analyzer".into(),
-                enabled: true,
-                command: Some(fake.display().to_string()),
                 args: Some(args),
-                initialization_options: None,
-                install: None,
+                ..crate::features::settings::servers::LanguageServerSetting::named("rust-analyzer")
             }];
+        let fake_command = fake.display().to_string();
         let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
         let initial = Arc::new(Mutex::new(Some(app)));
         let exposed = Arc::new(Mutex::new(None));
@@ -1599,7 +1594,9 @@ impl LanguageHarness {
                 let results_state = state.clone();
                 view_runtime.install_language_services(
                     crate::app::language_services::LanguageServices::new(
-                        crate::features::language_service::server_set::rust_analyzer_for_tests(),
+                        crate::features::language_service::server_set::rust_analyzer_running(
+                            &fake_command,
+                        ),
                         move || {
                             crate::app::language_ui::tick(&results_state);
                         },

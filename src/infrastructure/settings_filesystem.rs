@@ -4,6 +4,7 @@ use crate::infrastructure::session_filesystem::config_path;
 use std::sync::{Mutex, OnceLock};
 use std::{fs, io};
 /// The result of reading `settings.json`.
+#[allow(clippy::large_enum_variant)]
 pub enum UserSettings {
     Missing,
     Loaded(LoadOutcome),

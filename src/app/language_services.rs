@@ -19,9 +19,6 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-/// Documents larger than this are not sent to servers.
-const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
-
 pub(crate) struct LanguageServices {
     manager: Manager,
     sent: Mutex<Option<u64>>,
@@ -102,11 +99,16 @@ impl LanguageServices {
 
 fn fingerprint(app: &AppState) -> u64 {
     let mut hasher = DefaultHasher::new();
+    let limit = app.preferences.values().lsp.max_document_bytes;
+    limit.hash(&mut hasher);
+    serde_json::to_string(&app.preferences.values().languages)
+        .unwrap_or_default()
+        .hash(&mut hasher);
     let mut ids: Vec<_> = app
         .workspace
         .documents
         .iter()
-        .filter(|(_, d)| d.is_text() && d.buffer.len() <= MAX_DOCUMENT_BYTES)
+        .filter(|(_, d)| d.is_text() && d.buffer.len() <= limit)
         .map(|(_, d)| {
             (
                 &d.meta.path,
@@ -130,11 +132,13 @@ fn fingerprint(app: &AppState) -> u64 {
 }
 
 fn snapshot(app: &AppState) -> Snapshot {
+    // Documents larger than this are not sent to servers.
+    let limit = app.preferences.values().lsp.max_document_bytes;
     let mut documents: Vec<SnapshotDocument> = app
         .workspace
         .documents
         .iter()
-        .filter(|(_, d)| d.is_text() && d.buffer.len() <= MAX_DOCUMENT_BYTES)
+        .filter(|(_, d)| d.is_text() && d.buffer.len() <= limit)
         .map(|(_, d)| SnapshotDocument {
             path: d.meta.path.clone(),
             language: d.meta.lang,
@@ -150,6 +154,7 @@ fn snapshot(app: &AppState) -> Snapshot {
         documents,
         workspace_roots: app.explorer.model.roots().to_vec(),
         servers: app.preferences.values().language_servers.clone(),
+        languages: app.preferences.values().languages.clone(),
     }
 }
 
@@ -157,7 +162,7 @@ fn snapshot(app: &AppState) -> Snapshot {
 mod tests {
     use super::*;
     use crate::app::{runtime::AppRuntime, test_support::live};
-    use crate::features::language_service::server_set::rust_analyzer_for_tests;
+    use crate::features::language_service::server_set::rust_analyzer_running;
     use crate::features::settings::servers::LanguageServerSetting;
     use serde_json::Value;
     use std::time::{Duration, Instant};
@@ -204,9 +209,6 @@ mod tests {
 
         let mut app = AppState::new();
         app.preferences.values_mut().language_servers = vec![LanguageServerSetting {
-            server: "rust-analyzer".into(),
-            enabled: true,
-            command: Some(fake_server().display().to_string()),
             args: Some(vec![
                 "--sync".into(),
                 "object".into(),
@@ -218,11 +220,13 @@ mod tests {
                 "--mirror".into(),
                 dir.join("mirror.json").display().to_string(),
             ]),
-            initialization_options: None,
-            install: None,
+            ..LanguageServerSetting::named("rust-analyzer")
         }];
         let runtime = Arc::new(AppRuntime::default());
-        runtime.install_language_services(LanguageServices::new(rust_analyzer_for_tests(), || {}));
+        runtime.install_language_services(LanguageServices::new(
+            rust_analyzer_running(&fake_server().display().to_string()),
+            || {},
+        ));
         let state = live(app).with_runtime(&runtime);
 
         // Opening a file reaches the server without any language-service call.
@@ -336,16 +340,15 @@ mod tests {
         let original = std::fs::read_to_string(&file).unwrap();
         let mut app = AppState::new();
         app.explorer.model.restore(vec![root], Vec::new());
-        app.preferences.values_mut().language_servers = vec![LanguageServerSetting {
-            server: "rust-analyzer".into(),
-            enabled: true,
-            command: std::env::var("LOOM_RUST_ANALYZER").ok(),
-            args: None,
-            initialization_options: None,
-            install: None,
-        }];
+        app.preferences.values_mut().language_servers =
+            vec![LanguageServerSetting::named("rust-analyzer")];
         let runtime = Arc::new(AppRuntime::default());
-        runtime.install_language_services(LanguageServices::new(rust_analyzer_for_tests(), || {}));
+        runtime.install_language_services(LanguageServices::new(
+            rust_analyzer_running(
+                &std::env::var("LOOM_RUST_ANALYZER").unwrap_or_else(|_| "rust-analyzer".into()),
+            ),
+            || {},
+        ));
         let state = live(app).with_runtime(&runtime);
         state.update(|app| {
             app.workspace.open_path(file.clone(), original.clone());

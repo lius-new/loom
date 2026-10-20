@@ -17,6 +17,8 @@ pub struct Values {
     pub terminal_font: super::font::FontSettings,
     pub file_associations: Vec<super::rules::FileAssociation>,
     pub language_servers: Vec<super::servers::LanguageServerSetting>,
+    pub languages: std::collections::BTreeMap<String, super::servers::LanguageSetting>,
+    pub lsp: super::servers::LspSettings,
     pub project_settings: Vec<(PathBuf, super::project::ProjectSettings)>,
 }
 #[derive(Clone)]

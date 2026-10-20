@@ -5,6 +5,8 @@ pub mod project;
 pub mod rules;
 pub mod scale;
 pub mod servers;
+#[cfg(test)]
+mod servers_tests;
 pub mod theme_id;
 
 pub mod model;

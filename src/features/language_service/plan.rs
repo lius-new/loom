@@ -9,7 +9,10 @@
 use super::root;
 use super::server_set::ServerSet;
 use crate::domain::language::{Registry, ResolvedLanguage};
-use crate::features::settings::servers::{LanguageServerSetting, ServerLaunch, launch_for};
+use crate::features::settings::servers::{
+    LanguageServerSetting, LanguageSetting, ServerLaunch, launch_for,
+};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -38,6 +41,7 @@ pub fn assign(
     path: &Path,
     workspace_roots: &[PathBuf],
     settings: &[LanguageServerSetting],
+    languages: &BTreeMap<String, LanguageSetting>,
     has_entry: impl Fn(&Path, &str) -> bool,
 ) -> Vec<Assignment> {
     // The innermost open folder that holds the file bounds the root search.
@@ -45,8 +49,19 @@ pub fn assign(
         .iter()
         .filter(|root| path.starts_with(root))
         .max_by_key(|root| root.components().count());
-    servers
-        .for_language(registry, language)
+    let usual = servers.for_language(registry, language);
+    // The person may choose which servers a language uses and in what order.
+    let ordered: Vec<_> = match languages.get(&*registry.definition_of(language).name) {
+        Some(choice) => {
+            let names = choice.arrange(usual.iter().map(|(d, _)| &*d.name).collect());
+            names
+                .into_iter()
+                .filter_map(|name| usual.iter().find(|(d, _)| &*d.name == name).copied())
+                .collect()
+        }
+        None => usual,
+    };
+    ordered
         .into_iter()
         .filter_map(|(definition, language_id)| {
             let launch = launch_for(definition, settings)?;
@@ -83,8 +98,17 @@ mod tests {
         registry.resolve_path(Path::new("a.rs"))
     }
 
+    /// An entry written the old way round, with its server inside.
     fn setting(json: &str) -> LanguageServerSetting {
-        serde_json::from_str(json).unwrap()
+        let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let server = value
+            .as_object_mut()
+            .and_then(|o| o.remove("server"))
+            .and_then(|s| s.as_str().map(str::to_owned))
+            .unwrap();
+        let mut entry: LanguageServerSetting = serde_json::from_value(value).unwrap();
+        entry.server = server;
+        entry
     }
 
     /// The single assignment of a one-server language.
@@ -102,6 +126,7 @@ mod tests {
             Path::new(path),
             roots,
             settings,
+            &BTreeMap::new(),
             disk(entries),
         );
         assert!(found.len() <= 1, "{found:?}");
@@ -159,7 +184,7 @@ mod tests {
     fn changing_the_launch_changes_the_key() {
         let plain = only(rust(), "/w/a.rs", &[], &[], &[]).unwrap();
         let other = [setting(
-            r#"{ "server": "rust-analyzer", "command": "ra2" }"#,
+            r#"{ "server": "rust-analyzer", "args": ["--other"] }"#,
         )];
         let changed = only(rust(), "/w/a.rs", &[], &other, &[]).unwrap();
         assert_ne!(plain.key, changed.key);
@@ -210,6 +235,7 @@ mod tests {
             Path::new("/w/crates/a/src/lib.rs"),
             &roots,
             settings,
+            &BTreeMap::new(),
             disk(&["/w|Cargo.toml", "/w/crates/a|checker.toml"]),
         )
     }

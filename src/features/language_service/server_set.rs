@@ -33,7 +33,7 @@ pub enum RootFallback {
     None,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootPolicy {
     /// File names that mark a project folder, such as `Cargo.toml`.
     pub markers: Vec<Box<str>>,
@@ -42,7 +42,7 @@ pub struct RootPolicy {
 }
 
 /// A language, or one variant of it, that a server serves.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageBinding {
     /// The canonical language name.
     pub language: Box<str>,
@@ -53,7 +53,7 @@ pub struct LanguageBinding {
     pub language_id: Box<str>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ServerDefinition {
     pub name: Arc<str>,
     pub display_name: Box<str>,
@@ -339,7 +339,7 @@ impl Descriptor {
 
 static INSTALLED: OnceLock<Arc<ServerSet>> = OnceLock::new();
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ServerSet {
     /// In listing order: priority descending, then name.
     servers: Vec<ServerDefinition>,
@@ -392,6 +392,33 @@ impl ServerSet {
         Ok(Self { servers })
     }
 
+    /// This set with the servers of `extra` (name and definition JSON) added.
+    /// A definition that is not valid, or has the name of one already here, is
+    /// left out and reported as `(name, reason)`.
+    pub fn extended(&self, extra: &[(String, Value)]) -> (ServerSet, Vec<(String, String)>) {
+        let mut combined = self.clone();
+        let mut problems = Vec::new();
+        for (name, json) in extra {
+            if combined.get(name).is_some() {
+                problems.push((name.clone(), "a server of that name exists".to_owned()));
+                continue;
+            }
+            match Descriptor::parse(json).and_then(|descriptor| {
+                descriptor.validate(name)?;
+                Ok(descriptor.into_definition())
+            }) {
+                Ok(definition) => combined.servers.push(definition),
+                Err(error) => problems.push((name.clone(), error)),
+            }
+        }
+        combined.servers.sort_by(|a, b| {
+            b.priority
+                .cmp(&a.priority)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        (combined, problems)
+    }
+
     /// Every server, in listing order.
     pub fn all(&self) -> &[ServerDefinition] {
         &self.servers
@@ -436,6 +463,19 @@ impl ServerSet {
             })
             .collect()
     }
+}
+
+/// A `rust-analyzer` server that runs `command`, for tests that start a stand-in.
+#[cfg(test)]
+pub(crate) fn rust_analyzer_running(command: &str) -> Arc<ServerSet> {
+    let definition = serde_json::json!({
+        "name": "rust-analyzer", "display_name": "rust-analyzer",
+        "command": command,
+        "root": { "markers": ["Cargo.toml", "rust-project.json"],
+                  "strategy": "outermost", "fallback": "file_directory" },
+        "languages": [{ "language": "rust", "language_id": "rust" }] })
+    .to_string();
+    Arc::new(ServerSet::from_sources(&[("rust-analyzer", &definition)]).unwrap())
 }
 
 /// A server like rust-analyzer, for tests that need one. Loom ships no definitions,

@@ -69,10 +69,17 @@ pub struct Settings {
     /// recognition by name and extension.
     #[serde(default)]
     pub file_associations: Vec<FileAssociation>,
-    /// Per-server overrides of the built-in language server definitions. User
-    /// settings only.
-    #[serde(default)]
+    /// The language servers: how catalogued ones behave, and servers of your
+    /// own. An object keyed by server name. User settings only.
+    #[serde(default, with = "super::servers::as_object")]
     pub language_servers: Vec<LanguageServerSetting>,
+    /// Per-language choices of servers, formatter and what happens on save.
+    /// User settings only.
+    #[serde(default)]
+    pub languages: std::collections::BTreeMap<String, super::servers::LanguageSetting>,
+    /// Behaviour common to all language servers. User settings only.
+    #[serde(default)]
+    pub lsp: super::servers::LspSettings,
 }
 
 /// Preferences for Vim editing (`"vim"` in `settings.json`).
@@ -126,6 +133,8 @@ impl Default for Settings {
             terminal_font: FontSettings::TERMINAL,
             file_associations: Vec::new(),
             language_servers: Vec::new(),
+            languages: Default::default(),
+            lsp: Default::default(),
         }
     }
 }
@@ -209,7 +218,10 @@ fn parse_overrides_with(
             ));
             continue;
         }
-        if let (Value::Object(default_fields), Value::Object(fields)) = (default, &value) {
+        let keyed = matches!(key.as_str(), "language_servers" | "languages");
+        if let (Value::Object(default_fields), Value::Object(fields)) = (default, &value)
+            && !keyed
+        {
             for (field, value) in fields {
                 let name = format!("{key}.{field}");
                 if !default_fields.contains_key(field) {
@@ -236,6 +248,7 @@ fn parse_overrides_with(
         let value = match key.as_str() {
             "file_associations" => valid_associations(value, &mut errors),
             "language_servers" => valid_servers(value, &mut errors, servers),
+            "languages" => valid_languages(value, &mut errors),
             _ => value,
         };
         let mut candidate = accepted.clone();
@@ -272,23 +285,45 @@ fn valid_associations(value: Value, errors: &mut Vec<String>) -> Value {
     Value::Array(kept)
 }
 
-/// The entries of a `language_servers` array that are well formed and name a
-/// known server.
+/// The entries of the `language_servers` object that are well formed: the
+/// catalogued ones with allowed fields, and valid registrations of your own.
 fn valid_servers(value: Value, errors: &mut Vec<String>, servers: &ServerSet) -> Value {
-    let Value::Array(items) = value else {
+    let Value::Object(entries) = value else {
         return value;
     };
-    let mut kept = Vec::new();
-    for (index, item) in items.into_iter().enumerate() {
+    let mut kept = Map::new();
+    for (name, item) in entries {
         let checked = serde_json::from_value::<LanguageServerSetting>(item.clone())
             .map_err(|error| error.to_string())
-            .and_then(|entry| entry.validate(servers));
+            .and_then(|mut entry| {
+                entry.server = name.clone();
+                entry.validate(servers)
+            });
         match checked {
-            Ok(()) => kept.push(item),
-            Err(error) => errors.push(format!("language_servers[{index}]: {error}")),
+            Ok(()) => {
+                kept.insert(name, item);
+            }
+            Err(error) => errors.push(format!("language_servers.{name}: {error}")),
         }
     }
-    Value::Array(kept)
+    Value::Object(kept)
+}
+
+/// The entries of the `languages` object that are well formed.
+fn valid_languages(value: Value, errors: &mut Vec<String>) -> Value {
+    let Value::Object(entries) = value else {
+        return value;
+    };
+    let mut kept = Map::new();
+    for (name, item) in entries {
+        match serde_json::from_value::<super::servers::LanguageSetting>(item.clone()) {
+            Ok(_) => {
+                kept.insert(name, item);
+            }
+            Err(error) => errors.push(format!("languages.{name}: {error}")),
+        }
+    }
+    Value::Object(kept)
 }
 
 /// Keep `candidate` when it still deserializes, otherwise report why.
@@ -311,7 +346,10 @@ fn accept(
     let mut merged = defaults.clone();
     overlay_map(&mut merged, &candidate);
     match serde_json::from_value::<Settings>(Value::Object(merged)) {
-        Ok(_) => *accepted = candidate,
+        Ok(settings) => match settings.lsp.validate() {
+            Ok(()) => *accepted = candidate,
+            Err(error) => errors.push(error),
+        },
         Err(error) => errors.push(format!("{name}: {error}")),
     }
 }
@@ -444,13 +482,13 @@ mod tests {
                 language: "rust".into(),
             }],
             language_servers: vec![LanguageServerSetting {
-                server: "rust-analyzer".into(),
                 enabled: false,
-                command: Some("ra".into()),
                 args: Some(vec!["-v".into()]),
                 initialization_options: Some(serde_json::json!({ "a": 1 })),
-                install: None,
+                ..LanguageServerSetting::named("rust-analyzer")
             }],
+            languages: Default::default(),
+            lsp: Default::default(),
         };
 
         let json = serde_json::to_string(&settings).unwrap();
@@ -497,30 +535,102 @@ mod tests {
     #[test]
     fn language_servers_keep_good_entries_and_report_each_bad_one() {
         let outcome = parse_with(
-            r#"{ "language_servers": [
-                { "server": "rust-analyzer", "command": "ra" },
-                { "server": "nope" },
-                { "server": "rust-analyzer", "initialization_options": 3 },
-                { "server": "rust-analyzer", "surprise": true }
-            ] }"#,
+            r#"{ "language_servers": {
+                "rust-analyzer": { "args": ["-v"], "install": "auto" },
+                "nope": { "enabled": false },
+                "bad": { "initialization_options": 3 },
+                "worse": { "surprise": true }
+            } }"#,
             &crate::features::language_service::server_set::rust_analyzer_for_tests(),
         )
         .unwrap();
         assert_eq!(outcome.settings.language_servers.len(), 1);
-        assert_eq!(
-            outcome.settings.language_servers[0].command.as_deref(),
-            Some("ra")
-        );
+        let kept = &outcome.settings.language_servers[0];
+        assert_eq!(kept.server, "rust-analyzer");
+        assert_eq!(kept.args.as_deref(), Some(&["-v".to_owned()][..]));
         assert_eq!(outcome.errors.len(), 3, "{:?}", outcome.errors);
-        assert!(outcome.errors[0].contains("language_servers[1]"));
-        assert!(outcome.errors[1].contains("language_servers[2]"));
-        assert!(outcome.errors[2].contains("language_servers[3]"));
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|e| e.contains("language_servers.nope"))
+        );
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|e| e.contains("language_servers.bad"))
+        );
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|e| e.contains("language_servers.worse"))
+        );
+    }
+
+    #[test]
+    fn the_program_of_a_catalogued_server_cannot_be_set() {
+        let outcome = parse_with(
+            r#"{ "language_servers": { "rust-analyzer": { "command": "/bin/evil" } } }"#,
+            &crate::features::language_service::server_set::rust_analyzer_for_tests(),
+        )
+        .unwrap();
+        assert!(outcome.settings.language_servers.is_empty());
+        assert!(outcome.errors[0].contains("cannot be changed"));
+    }
+
+    #[test]
+    fn a_server_of_your_own_needs_an_absolute_program() {
+        let own = |command: &str| {
+            format!(
+                r#"{{ "language_servers": {{ "mine": {{ "command": {command:?},
+                    "languages": [{{ "language": "rust", "language_id": "rust" }}],
+                    "root": {{ "markers": ["Cargo.toml"] }} }} }} }}"#
+            )
+        };
+        let servers = crate::features::language_service::server_set::rust_analyzer_for_tests();
+        let relative = parse_with(&own("mine"), &servers).unwrap();
+        assert!(relative.settings.language_servers.is_empty());
+        assert!(relative.errors[0].contains("absolute"));
+        let absolute = if cfg!(windows) {
+            "C:\\tools\\mine.exe"
+        } else {
+            "/opt/mine"
+        };
+        let good = parse_with(&own(absolute), &servers).unwrap();
+        assert!(good.errors.is_empty(), "{:?}", good.errors);
+        assert_eq!(good.settings.language_servers[0].server, "mine");
+    }
+
+    #[test]
+    fn languages_and_lsp_are_checked_entry_by_entry() {
+        let outcome = parse_with(
+            r#"{ "languages": {
+                    "rust": { "language_servers": ["a", "..."], "format_on_save": true },
+                    "bad": { "surprise": 1 } },
+                 "lsp": { "completion": { "auto": false }, "hover_delay_ms": 100 } }"#,
+            &crate::features::language_service::server_set::rust_analyzer_for_tests(),
+        )
+        .unwrap();
+        assert_eq!(outcome.settings.languages.len(), 1);
+        assert!(outcome.settings.languages["rust"].format_on_save);
+        assert!(outcome.errors.iter().any(|e| e.contains("languages.bad")));
+        assert!(!outcome.settings.lsp.completion.auto);
+        assert_eq!(outcome.settings.lsp.hover_delay_ms, 100);
+        let bad = parse_with(
+            r#"{ "lsp": { "semantic_highlighting": "loud" } }"#,
+            &crate::features::language_service::server_set::rust_analyzer_for_tests(),
+        )
+        .unwrap();
+        assert_eq!(bad.settings.lsp.semantic_highlighting, "combined");
+        assert!(bad.errors[0].contains("semantic_highlighting"));
     }
 
     #[test]
     fn projects_cannot_choose_which_program_runs() {
         let (overrides, errors) = parse_overrides(
-            r#"{ "language_servers": [{ "server": "rust-analyzer", "command": "evil" }] }"#,
+            r#"{ "language_servers": { "rust-analyzer": { "args": ["--evil"] } } }"#,
             Scope::Project,
         )
         .unwrap();

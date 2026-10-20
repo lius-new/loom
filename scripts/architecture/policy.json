@@ -785,6 +785,14 @@
       "owner": "features/settings/model: Values DTO",
       "migrated_in": "P4b"
     },
+    "languages": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "LSP interactive features"
+    },
+    "lsp": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "LSP interactive features"
+    },
     "project_settings": {
       "owner": "features/settings/model: Values DTO",
       "migrated_in": "R8.2"

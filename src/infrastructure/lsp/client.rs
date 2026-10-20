@@ -51,6 +51,8 @@ impl Default for Timeouts {
 pub(crate) struct Launch {
     pub command: String,
     pub args: Vec<String>,
+    /// Added to the environment the server starts with.
+    pub env: std::collections::BTreeMap<String, String>,
     pub cwd: PathBuf,
     pub session: SessionOptions,
     pub timeouts: Timeouts,
@@ -83,6 +85,8 @@ enum Command {
     },
     /// Give up on the request made with this tag.
     Cancel(u64),
+    /// New configuration for the server to see.
+    Configure(std::collections::BTreeMap<String, Value>),
     /// Answer a request the server made.
     Respond {
         id: Id,
@@ -110,6 +114,7 @@ impl Client {
         let mut process = Process::new(&launch.command);
         process
             .args(&launch.args)
+            .envs(&launch.env)
             .current_dir(&launch.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -196,6 +201,12 @@ impl Client {
             tag,
             timeout: Some(timeout),
         })
+    }
+
+    /// Tells the server its configuration changed (`workspace/didChangeConfiguration`)
+    /// and keeps answering `workspace/configuration` with the new values.
+    pub fn configure(&self, configuration: std::collections::BTreeMap<String, Value>) -> bool {
+        self.command(Command::Configure(configuration))
     }
 
     /// Answers a request the server made of us (see `Event::ServerRequest`).
@@ -434,6 +445,7 @@ impl Driver {
                 self.session.notify(&method, params).unwrap_or_default()
             }
             Command::Respond { id, outcome } => self.session.respond(id, outcome),
+            Command::Configure(configuration) => self.session.configure(configuration),
             Command::Cancel(tag) => match self.session.pending_id(tag) {
                 Some(id) => {
                     self.requests.retain(|(_, known)| *known != id);

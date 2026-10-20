@@ -29,13 +29,41 @@ fn registry() -> &'static Registry {
 
 /// A server for `fakelang`; `priority` decides which of several is preferred.
 fn fake_definition(name: &str, language_id: &str, priority: i32) -> String {
+    definition_running(
+        &fake_server().display().to_string(),
+        name,
+        language_id,
+        priority,
+    )
+}
+
+fn definition_running(command: &str, name: &str, language_id: &str, priority: i32) -> String {
+    let command = serde_json::to_string(command).unwrap();
     format!(
-        r#"{{ "name": "{name}", "display_name": "{name}", "command": "unused",
+        r#"{{ "name": "{name}", "display_name": "{name}", "command": {command},
             "priority": {priority},
             "root": {{ "markers": ["fake.toml"], "strategy": "nearest",
                       "fallback": "file_directory" }},
             "languages": [{{ "language": "fakelang", "language_id": "{language_id}" }}] }}"#
     )
+}
+
+/// Servers like `servers`, whose program is `command`.
+fn servers_running(command: &str, definitions: &[(&str, &str, i32)]) -> Arc<ServerSet> {
+    let sources: Vec<(String, String)> = definitions
+        .iter()
+        .map(|(name, id, priority)| {
+            (
+                name.to_string(),
+                definition_running(command, name, id, *priority),
+            )
+        })
+        .collect();
+    let borrowed: Vec<(&str, &str)> = sources
+        .iter()
+        .map(|(name, json)| (name.as_str(), json.as_str()))
+        .collect();
+    Arc::new(ServerSet::from_sources(&borrowed).expect("test servers"))
 }
 
 fn servers(definitions: &[(&str, &str, i32)]) -> Arc<ServerSet> {
@@ -115,12 +143,8 @@ impl Fixture {
             args.extend(extra_args.iter().map(|a| a.to_string()));
             args.extend(["--log".into(), log.display().to_string()]);
             settings.push(LanguageServerSetting {
-                server: (*name).into(),
-                enabled: true,
-                command: Some(fake_server().display().to_string()),
                 args: Some(args),
-                initialization_options: None,
-                install: None,
+                ..LanguageServerSetting::named(name)
             });
             logs.push(log);
         }
@@ -154,6 +178,7 @@ impl Fixture {
 
     fn show(&self, documents: Vec<SnapshotDocument>) {
         self.mgr().update(Snapshot {
+            languages: Default::default(),
             documents,
             workspace_roots: vec![self.dir.clone()],
             servers: self.settings.clone(),
@@ -287,8 +312,14 @@ fn a_marker_file_chooses_the_project_root() {
 
 #[test]
 fn a_missing_program_is_unavailable_and_not_retried() {
-    let mut f = Fixture::new(&[]);
-    f.settings[0].command = Some(f.dir.join("no-such-server").display().to_string());
+    let missing = std::env::temp_dir().join("loom-no-such-server");
+    let f = Fixture::with_servers(
+        servers_running(
+            &missing.display().to_string(),
+            &[("fake-server", "fake", 0)],
+        ),
+        &[("fake-server", &[])],
+    );
     f.show(vec![f.doc("a.fk", 0, "x")]);
     f.wait_status(
         "unavailable",
@@ -300,8 +331,10 @@ fn a_missing_program_is_unavailable_and_not_retried() {
 
 #[test]
 fn a_command_from_an_uninstalled_pack_is_reported_and_never_started() {
-    let mut f = Fixture::new(&[]);
-    f.settings[0].command = Some("${pack}/tool".into());
+    let f = Fixture::with_servers(
+        servers_running("${pack}/tool", &[("fake-server", "fake", 0)]),
+        &[("fake-server", &[])],
+    );
     f.show(vec![f.doc("a.fk", 0, "x")]);
     f.wait_status(
         "not installed",
@@ -776,7 +809,7 @@ fn real_rust_analyzer_sees_files_changed_outside_the_editor() {
 
     let manager = Manager::start(
         Registry::builtin(),
-        crate::features::language_service::server_set::rust_analyzer_for_tests(),
+        crate::features::language_service::server_set::rust_analyzer_running(&program),
         None,
         Options::default(),
         || {},
@@ -791,15 +824,9 @@ fn real_rust_analyzer_sees_files_changed_outside_the_editor() {
         },
         text: Arc::new(lib.to_owned()),
     };
-    let servers = vec![LanguageServerSetting {
-        server: "rust-analyzer".into(),
-        enabled: true,
-        command: Some(program),
-        args: None,
-        initialization_options: None,
-        install: None,
-    }];
+    let servers = vec![LanguageServerSetting::named("rust-analyzer")];
     manager.update(Snapshot {
+        languages: Default::default(),
         documents: vec![document],
         workspace_roots: vec![dir.clone()],
         servers,
@@ -868,7 +895,9 @@ fn real_rust_analyzer_reports_a_syntax_error() {
     let sent = text.clone();
     let manager = Manager::start(
         Registry::builtin(),
-        crate::features::language_service::server_set::rust_analyzer_for_tests(),
+        crate::features::language_service::server_set::rust_analyzer_running(
+            &std::env::var("LOOM_RUST_ANALYZER").unwrap_or_else(|_| "rust-analyzer".into()),
+        ),
         None,
         Options::default(),
         || {},
@@ -878,6 +907,7 @@ fn real_rust_analyzer_reports_a_syntax_error() {
         version: 0,
     };
     manager.update(Snapshot {
+        languages: Default::default(),
         documents: vec![SnapshotDocument {
             language: Registry::builtin().resolve_path(&file),
             path: file.clone(),
@@ -885,14 +915,7 @@ fn real_rust_analyzer_reports_a_syntax_error() {
             text: Arc::new(text),
         }],
         workspace_roots: vec![root],
-        servers: vec![LanguageServerSetting {
-            server: "rust-analyzer".into(),
-            enabled: true,
-            command: std::env::var("LOOM_RUST_ANALYZER").ok(),
-            args: None,
-            initialization_options: None,
-            install: None,
-        }],
+        servers: vec![LanguageServerSetting::named("rust-analyzer")],
     });
     let started = Instant::now();
     let mut printed = 0;
@@ -1152,6 +1175,7 @@ language_id = "fakelang"
         fn show(&self) {
             let path = self.dir.join("a.fk");
             self.manager.update(Snapshot {
+                languages: Default::default(),
                 documents: vec![SnapshotDocument {
                     language: registry().resolve_path(&path),
                     path,
@@ -1214,12 +1238,8 @@ language_id = "fakelang"
     fn auto_installs_and_starts_without_being_asked() {
         let mut w = world();
         w.servers.push(LanguageServerSetting {
-            server: "demo".into(),
-            enabled: true,
-            command: None,
-            args: None,
-            initialization_options: None,
             install: Some(InstallPolicy::Auto),
+            ..LanguageServerSetting::named("demo")
         });
         w.show();
         w.wait("ready", |s| matches!(s, Status::Ready));
@@ -1229,12 +1249,8 @@ language_id = "fakelang"
     fn a_failed_install_is_reported_and_retry_recovers() {
         let mut w = world();
         w.servers.push(LanguageServerSetting {
-            server: "demo".into(),
-            enabled: true,
-            command: None,
-            args: None,
-            initialization_options: None,
             install: Some(InstallPolicy::Auto),
+            ..LanguageServerSetting::named("demo")
         });
         let good = w.served.lock().unwrap().take();
         w.show();
@@ -1245,19 +1261,36 @@ language_id = "fakelang"
     }
 
     #[test]
-    fn a_program_the_person_named_needs_no_install() {
+    fn a_server_the_person_registered_needs_no_install_and_runs_from_its_path() {
         let mut w = world();
+        let program = fake_server().display().to_string();
+        let own: LanguageServerSetting = serde_json::from_value(serde_json::json!({
+            "command": program,
+            "args": ["--sync", "full"],
+            "languages": [{ "language": "fakelang", "language_id": "fakelang" }],
+            "root": { "markers": ["fake.toml"], "fallback": "file_directory" },
+            "priority": 100,
+        }))
+        .unwrap();
         w.servers.push(LanguageServerSetting {
-            server: "demo".into(),
-            enabled: true,
-            command: Some(fake_server().display().to_string()),
-            args: Some(vec!["--sync".into(), "full".into()]),
-            initialization_options: None,
-            install: None,
+            server: "mine".into(),
+            ..own
+        });
+        // Turn the catalogued server off, so only the registered one serves the file.
+        w.servers.push(LanguageServerSetting {
+            enabled: false,
+            ..LanguageServerSetting::named("demo")
         });
         w.show();
         w.wait("ready", |s| matches!(s, Status::Ready));
-        assert_eq!(w.downloads.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            w.downloads.load(Ordering::SeqCst),
+            0,
+            "nothing is installed"
+        );
+        let infos = w.manager.infos();
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].server_id, "mine");
     }
 }
 

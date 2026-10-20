@@ -250,7 +250,11 @@ fn every_server_request_gets_an_answer() {
     );
     assert_eq!(
         result(&out),
-        Ok(json!([{ "check": { "command": "clippy" } }, null, null]))
+        Ok(json!([
+            { "check": { "command": "clippy" } },
+            null,
+            { "rust-analyzer": { "check": { "command": "clippy" } } }
+        ]))
     );
     assert_eq!(
         result(&ask(&mut session, 2, "workspace/configuration", json!({}))),

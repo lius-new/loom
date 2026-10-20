@@ -655,6 +655,7 @@ fn http_download(url: &str) -> Result<Box<dyn Read + Send>, String> {
 fn start_and_initialize(request: &SmokeRequest) -> Result<(), String> {
     let root_uri = uri::file_uri(&request.cwd).ok_or("the pack directory has no usable path")?;
     let launch = Launch {
+        env: Default::default(),
         command: request.program.to_string_lossy().into_owned(),
         args: request.args.clone(),
         cwd: request.cwd.clone(),

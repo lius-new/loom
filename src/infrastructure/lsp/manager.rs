@@ -31,7 +31,10 @@ use crate::features::language_service::{
     sync::{DesiredDocument, DocumentSync, Notification, Stamp},
     uri,
 };
-use crate::features::settings::servers::{InstallPolicy, LanguageServerSetting, install_policy};
+use crate::features::settings::servers::{
+    InstallPolicy, LanguageServerSetting, LanguageSetting, install_policy, registered,
+    server_settings,
+};
 use crate::features::syntax::TokenSpan;
 use crate::infrastructure::lsp_install::{Installer, PackStatus};
 use serde_json::{Value, json};
@@ -91,6 +94,8 @@ pub(crate) struct Snapshot {
     pub documents: Vec<SnapshotDocument>,
     pub workspace_roots: Vec<PathBuf>,
     pub servers: Vec<LanguageServerSetting>,
+    /// Which servers each language uses, and in what order.
+    pub languages: BTreeMap<String, LanguageSetting>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -286,6 +291,7 @@ impl Manager {
         let results: Store = Arc::default();
         let coordinator = Coordinator {
             registry,
+            base_servers: servers.clone(),
             servers,
             installer,
             _install_listener: install_listener,
@@ -455,6 +461,8 @@ struct Instance {
     failures: usize,
     documents: Vec<DesiredDocument>,
     idle_since: Option<Instant>,
+    /// What the server was told its settings are.
+    configuration: BTreeMap<String, Value>,
     /// What the server said recently, for the status panel.
     log: std::collections::VecDeque<String>,
     diagnostics: DiagnosticCounts,
@@ -462,6 +470,9 @@ struct Instance {
 
 struct Coordinator {
     registry: &'static Registry,
+    /// The catalogued servers.
+    base_servers: Arc<ServerSet>,
+    /// The catalogued servers and those the person registered.
     servers: Arc<ServerSet>,
     installer: Option<Arc<Installer>>,
     _install_listener: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -484,6 +495,14 @@ struct Coordinator {
     /// never touches the disk to look for project markers.
     assignments: HashMap<PathBuf, (ResolvedLanguage, Vec<Assignment>)>,
     published: Vec<InstanceInfo>,
+}
+
+/// The settings the person gave `server`, by their top-level names.
+fn configuration_of(servers: &[LanguageServerSetting], server: &str) -> BTreeMap<String, Value> {
+    match server_settings(servers, server) {
+        Value::Object(map) => map.into_iter().collect(),
+        _ => BTreeMap::new(),
+    }
 }
 
 fn has_entry(dir: &Path, name: &str) -> bool {
@@ -663,6 +682,7 @@ impl Coordinator {
             &document.path,
             &self.snapshot.workspace_roots,
             &self.snapshot.servers,
+            &self.snapshot.languages,
             has_entry,
         );
         self.assignments.insert(
@@ -674,8 +694,14 @@ impl Coordinator {
 
     fn apply_snapshot(&mut self, snapshot: Snapshot) {
         // New roots or settings may move every document, so look again.
+        if snapshot.servers != self.snapshot.servers {
+            // Servers the person registered join the catalogued ones.
+            let (extra, _) = registered(&snapshot.servers, &self.base_servers);
+            self.servers = Arc::new(self.base_servers.extended(&extra).0);
+        }
         if snapshot.workspace_roots != self.snapshot.workspace_roots
             || snapshot.servers != self.snapshot.servers
+            || snapshot.languages != self.snapshot.languages
         {
             self.assignments.clear();
         }
@@ -730,6 +756,7 @@ impl Coordinator {
                 key,
                 phase: Phase::Failed(String::new()),
                 failures: 0,
+                configuration: BTreeMap::new(),
                 log: Default::default(),
                 diagnostics: DiagnosticCounts::default(),
                 documents,
@@ -741,9 +768,28 @@ impl Coordinator {
             self.start(at);
         }
         self.install_changed();
+        self.reconfigure();
         self.follow_edits();
         for at in 0..self.instances.len() {
             self.sync(at);
+        }
+    }
+
+    /// Tells running servers whose settings changed; they are not restarted.
+    fn reconfigure(&mut self) {
+        for instance in &mut self.instances {
+            let wanted = configuration_of(&self.snapshot.servers, &instance.key.server);
+            if wanted == instance.configuration {
+                continue;
+            }
+            if let Phase::Running(Running {
+                client,
+                ready: Some(_),
+            }) = &instance.phase
+            {
+                client.configure(wanted.clone());
+                instance.configuration = wanted;
+            }
         }
     }
 
@@ -833,6 +879,7 @@ impl Coordinator {
         let tx = self.tx.clone();
         let server = self.instances[at].key.server.clone();
         let auto = install_policy(&self.snapshot.servers, &server) == InstallPolicy::Auto;
+        let configuration = configuration_of(&self.snapshot.servers, &server);
         let instance = &mut self.instances[at];
         instance.run += 1;
         instance.log.clear();
@@ -914,9 +961,11 @@ impl Coordinator {
                 }
             }
         }
+        instance.configuration = configuration.clone();
         let launch = Launch {
             command: command.clone(),
             args,
+            env: key.launch.env.clone(),
             cwd: key.root.clone(),
             session: SessionOptions {
                 root_uri,
@@ -928,7 +977,7 @@ impl Coordinator {
                 process_id: Some(std::process::id()),
                 client_version: env!("CARGO_PKG_VERSION").to_owned(),
                 initialization_options: options,
-                configuration: BTreeMap::new(),
+                configuration,
             },
             timeouts,
             max_message: MAX_MESSAGE,

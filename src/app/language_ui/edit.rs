@@ -163,7 +163,7 @@ fn report(state: &AppContext, request: &Request, result: Result<usize, String>) 
     let title = request.title.as_str();
     state.update(|app| match result {
         Ok(0) => app.show_toast(format!("{title}: nothing to change")),
-        Ok(files) if files == 1 => {}
+        Ok(1) => {}
         Ok(files) => app.show_toast(format!("{title}: changed {files} files")),
         Err(error) => app.show_error(format!("{title}: {error}")),
     });
@@ -435,7 +435,9 @@ mod tests {
         (app, paths)
     }
 
-    fn edit_json(entries: &[(&std::path::Path, (u32, u32), (u32, u32), &str)]) -> WorkspaceEdit {
+    type Replace<'a> = (&'a std::path::Path, (u32, u32), (u32, u32), &'a str);
+
+    fn edit_json(entries: &[Replace]) -> WorkspaceEdit {
         let changes: Vec<_> = entries
             .iter()
             .map(|(path, from, to, text)| {

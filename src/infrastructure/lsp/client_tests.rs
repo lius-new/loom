@@ -84,6 +84,7 @@ fn launch(args: &[&str], timeouts: Timeouts) -> Harness {
     let (send, events) = mpsc::channel();
     let client = Client::spawn(
         Launch {
+            env: Default::default(),
             command: fake_server().display().to_string(),
             args: arguments,
             cwd: std::env::temp_dir(),
@@ -503,6 +504,7 @@ fn dropping_the_client_ends_the_process() {
 fn a_program_that_does_not_exist_is_a_start_error() {
     let result = Client::spawn(
         Launch {
+            env: Default::default(),
             command: "loom-no-such-language-server".into(),
             args: Vec::new(),
             cwd: std::env::temp_dir(),
@@ -662,6 +664,7 @@ fn a_server_defined_only_as_data_runs_without_any_language_specific_code() {
     let (send, events) = mpsc::channel();
     let client = Client::spawn(
         Launch {
+            env: Default::default(),
             command: definition.command.to_string(),
             args: definition.args.iter().map(|a| a.to_string()).collect(),
             cwd: std::env::temp_dir(),

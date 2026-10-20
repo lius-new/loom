@@ -428,12 +428,18 @@ impl Session {
                         .map(|items| {
                             items
                                 .iter()
-                                .map(|item| {
-                                    item.get("section")
-                                        .and_then(Value::as_str)
-                                        .and_then(|section| self.options.configuration.get(section))
-                                        .cloned()
-                                        .unwrap_or(Value::Null)
+                                .map(|item| match item.get("section").and_then(Value::as_str) {
+                                    Some(section) => {
+                                        self.configuration_for(section).unwrap_or(Value::Null)
+                                    }
+                                    // No section: everything the person configured.
+                                    None => Value::Object(
+                                        self.options
+                                            .configuration
+                                            .iter()
+                                            .map(|(k, v)| (k.clone(), v.clone()))
+                                            .collect(),
+                                    ),
                                 })
                                 .collect()
                         })
@@ -496,6 +502,36 @@ impl Session {
             events,
             terminate: false,
         }
+    }
+
+    /// The configuration of a section: an exact name, or a dotted path into one.
+    fn configuration_for(&self, section: &str) -> Option<Value> {
+        if let Some(found) = self.options.configuration.get(section) {
+            return Some(found.clone());
+        }
+        let mut parts = section.split('.');
+        let mut found = self.options.configuration.get(parts.next()?)?;
+        for part in parts {
+            found = found.get(part)?;
+        }
+        Some(found.clone())
+    }
+
+    /// New configuration: later `workspace/configuration` requests see it and the
+    /// server is told it changed.
+    pub fn configure(&mut self, configuration: BTreeMap<String, Value>) -> Output {
+        let settings = Value::Object(
+            configuration
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        );
+        self.options.configuration = configuration;
+        self.notify(
+            "workspace/didChangeConfiguration",
+            json!({ "settings": settings }),
+        )
+        .unwrap_or_default()
     }
 
     /// Answers a request the server made that was handed to the application
