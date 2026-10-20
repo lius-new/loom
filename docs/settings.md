@@ -74,43 +74,116 @@ reported; the other rules still apply.
 Loom ships no language servers and does not look for them on your PATH. The
 servers it can run are the ones in the catalog published with each release
 (`lsp-servers/lsp-servers.toml` beside the application), which describes how to
-start each server and which languages it serves. A language can have several
-servers; they all run for a file, and their diagnostics are shown together. A
-language that no installed server serves just has no language-server features.
+start each server and which languages it serves, plus servers you register
+yourself. A language can have several servers; they all run for a file, and their
+diagnostics are shown together. A language that no installed server serves just
+has no language-server features.
 
-To change how a catalogued server runs, or to turn it off, add entries to
-`settings.json`. An entry that names a server the catalog does not list is
-reported and ignored.
+`language_servers` is an object keyed by server name.
 
 ```jsonc
-"language_servers": [
-  {
-    "server": "some-server",
-    "command": "C:\tools\some-server.exe",      // another program
-    "args": [],                                   // replaces the default arguments
-    "initialization_options": { "key": false },
-    "install": "ask",                            // ask | auto | never
-    "enabled": true
+"language_servers": {
+  // A catalogued server: change how it behaves, never which program it is.
+  "rust-analyzer": {
+    "enabled": true,
+    "install": "ask",                              // ask | auto | never
+    "args": [],                                    // replaces the default arguments
+    "initialization_options": { "checkOnSave": false },
+    "settings": { "rust-analyzer": { "check": { "command": "clippy" } } },
+    "env": { "RA_LOG": "info" }
+  },
+  // A server of your own: a full definition. Its `command` must be an absolute
+  // path; Loom never searches PATH.
+  "my-server": {
+    "command": "C:\\tools\\my-server.exe",
+    "args": ["--stdio"],
+    "languages": [{ "language": "foo", "language_id": "foo" }],
+    "root": { "markers": ["foo.toml"], "strategy": "nearest", "fallback": "workspace" },
+    "priority": 10
   }
-]
+}
 ```
 
-Only `server` is required; everything else keeps the catalog's value. The last
-entry for a server wins. A server runs once per project folder, found with the
-project files the catalog names for it (the nearest or the outermost one, as the
-server's entry says), never above the open workspace folder. It stops a minute
-after its last file is closed, and a crashed server is restarted after 1, 2 and 4
-seconds before being reported as failed.
+For a catalogued server only `enabled`, `install`, `args`, `initialization_options`,
+`settings`, `env` and `priority` may be given; its `command`, `languages`, `root` and
+`display_name` are the catalog's. To run another program, register it under a new
+name. An entry with a mistake is reported and skipped; the others still apply.
+
+A server runs once per project folder, found with the project files its definition
+names (the nearest or the outermost one), never above the open workspace folder. It
+stops a minute after its last file is closed, and a crashed server is restarted
+after 1, 2 and 4 seconds before being reported as failed.
 
 `install` says what Loom does when a file needs a catalogued server whose files are
 not on this computer yet: `ask` (the default) reports the server as not installed
-and waits until you install it, `auto` downloads and installs it right away, and
-`never` leaves it alone. A server you point at your own program with `command`
-needs no installation. Downloads are checked against the catalog's SHA-256 and the
-server is started once before it is activated.
+and waits until you install it from the language panel, `auto` downloads and
+installs it right away, and `never` leaves it alone. A server you register needs no
+installation. Downloads are checked against the catalog's SHA-256 and the server is
+started once before it is activated.
 
-This setting is only read from your own `settings.json`: a project's
+`settings` is what the server gets when it asks for its configuration
+(`workspace/configuration`). Changing it tells the running server; it is not
+restarted. Changing `args`, `initialization_options` or `env` starts a new instance.
+
+### Languages
+
+```jsonc
+"languages": {
+  "typescript": {
+    "language_servers": ["biome", "typescript-language-server", "..."],
+    "formatter": "biome",
+    "format_on_save": true,
+    "code_actions_on_save": ["source.organizeImports"]
+  }
+}
+```
+
+`language_servers` chooses which servers a language uses and in what order (the
+first is preferred); `"..."` stands for the servers not named, in their usual
+order, and a list without it leaves the others out. `formatter` names the server
+that formats (by default the first that can). `format_on_save` and
+`code_actions_on_save` run before the file is written; a server that has not
+answered within a second is skipped and the file is saved anyway.
+
+### Behaviour
+
+```jsonc
+"lsp": {
+  "hover_delay_ms": 300,             // how long the pointer rests before hover opens
+  "completion": {
+    "auto": true,                    // open the list while typing; false = only the key
+    "accept_on": "enter_and_tab",    // enter_and_tab | enter | tab
+    "words_fallback": true           // complete words of the file without a server
+  },
+  "inlay_hints": false,
+  "semantic_highlighting": "combined",   // combined | off
+  "max_document_bytes": 8388608          // larger files are not sent to servers
+}
+```
+
+These settings are only read from your own `settings.json`: a project's
 `.loom/settings.json` cannot choose which program Loom runs.
+
+### Keys
+
+| Key | Action |
+| --- | --- |
+| Ctrl+Space | Show completions |
+| Ctrl+Shift+Space | Signature help |
+| Ctrl+K Ctrl+I | Hover |
+| F12 / Ctrl+F12 / Ctrl+Shift+F12 / Alt+F12 | Definition / implementation / type definition / declaration |
+| Shift+F12 | References |
+| F2 | Rename |
+| Ctrl+. | Code actions |
+| Shift+Alt+F | Format file |
+| Ctrl+K Ctrl+F | Format selection |
+| F8 / Shift+F8 | Next / previous problem |
+| Ctrl+Shift+O / Ctrl+T | Symbols in the file / in the workspace |
+| Alt+Left / Alt+Right | Back / forward |
+| Shift+Alt+Right / Left | Grow / shrink the selection by syntax |
+
+In Vim's normal mode: `K` hover, `gd` definition, `gD` declaration, `gy` type
+definition, `gi` implementation, `gr` references.
 
 ## Key bindings
 
