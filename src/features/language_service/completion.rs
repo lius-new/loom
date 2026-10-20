@@ -46,6 +46,19 @@ pub fn word_start(text: &str, cursor: usize) -> usize {
     start - kept
 }
 
+/// Where the identifier at `cursor` ends.
+pub fn word_end(text: &str, cursor: usize) -> usize {
+    let mut at = cursor.min(text.len());
+    while at < text.len() && !text.is_char_boundary(at) {
+        at += 1;
+    }
+    at + text[at..]
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .map(char::len_utf8)
+        .sum::<usize>()
+}
+
 impl Completion {
     /// Merges the lists of several servers. An item another server already offered
     /// (same label and kind) is dropped; the better-ranked server's stays.

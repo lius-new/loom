@@ -85,6 +85,10 @@ pub(crate) struct RequestSpec {
     pub extra: Value,
     /// For a request about an earlier answer: the instance that gave it.
     pub target: Option<u64>,
+    /// Only the servers of this name may answer (the person's chosen formatter).
+    pub server: Option<String>,
+    /// How long to wait, if not the usual.
+    pub timeout: Option<Duration>,
 }
 
 impl RequestSpec {
@@ -97,6 +101,8 @@ impl RequestSpec {
             end: offset,
             extra: Value::Null,
             target: None,
+            server: None,
+            timeout: None,
         }
     }
 
@@ -107,6 +113,16 @@ impl RequestSpec {
 
     pub fn extra(mut self, extra: Value) -> Self {
         self.extra = extra;
+        self
+    }
+
+    pub fn server(mut self, name: impl Into<String>) -> Self {
+        self.server = Some(name.into());
+        self
+    }
+
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
         self
     }
 
@@ -302,6 +318,13 @@ impl Coordinator {
             if spec.target.is_some_and(|target| target != instance.id) {
                 continue;
             }
+            if spec
+                .server
+                .as_deref()
+                .is_some_and(|name| name != &*instance.key.server)
+            {
+                continue;
+            }
             if spec.feature.merge() == Merge::Target && spec.target.is_none() {
                 continue;
             }
@@ -349,7 +372,7 @@ impl Coordinator {
             return;
         }
 
-        let timeout = self.options.timeouts.request;
+        let timeout = spec.timeout.unwrap_or(self.options.timeouts.request);
         let mut waiting = HashMap::new();
         let mut errors = Vec::new();
         for target in targets {

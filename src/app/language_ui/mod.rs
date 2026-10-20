@@ -12,6 +12,7 @@ pub(crate) mod keys;
 pub(crate) mod navigate;
 pub(crate) mod popup;
 pub(crate) mod refactor;
+pub(crate) mod save;
 pub(crate) mod signature;
 pub(crate) mod snippet_session;
 
@@ -37,6 +38,9 @@ pub struct LanguageUi {
     pub signature_timer: Option<Arc<crate::app::ui_timer::Timer>>,
     pub highlights: highlight::Highlights,
     pub expansion: expand::Expansion,
+    /// Steps taken before a file is written.
+    pub save: Option<save::Run>,
+    pub save_counter: u64,
     /// A rename, code action or formatting request in flight.
     pub refactor: Option<refactor::Pending>,
     /// The completion list, once asked for.
@@ -321,6 +325,7 @@ pub(crate) fn run_payload(
 pub(crate) fn tick(state: &AppContext) {
     let mut effects = Vec::new();
     let mut changes = Vec::new();
+    let mut proceed = None;
     state.try_update(|app| {
         app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
         hover::tick(app);
@@ -330,8 +335,12 @@ pub(crate) fn tick(state: &AppContext) {
         expand::tick(app);
         effects = actions::tick(app);
         changes = refactor::tick(app);
+        proceed = save::tick(state, app);
         true
     });
+    if let Some(then) = proceed {
+        then(state);
+    }
     for effect in effects {
         match effect {
             actions::Effect::Go(place, rect) => navigate::go(state, place, rect, true),

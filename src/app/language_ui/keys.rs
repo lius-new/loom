@@ -2,6 +2,7 @@
 //! takes for itself.
 use super::actions::{self, Wanted};
 use super::popup::{Item, Kind, Payload, Popup, VISIBLE};
+use super::save;
 use super::{
     AppContext, completion, expand, hover, navigate, refactor, signature, snippet_session,
 };
@@ -19,6 +20,16 @@ pub(crate) fn perform(env: &KeyEnv, action: Action) -> Option<bool> {
 /// [`perform`] with only what it needs.
 pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> Option<bool> {
     match action {
+        Action::Save => {
+            save::save(
+                state,
+                rect,
+                std::sync::Arc::new(|state| {
+                    crate::app::workspace_commands::save_active_document(state);
+                }),
+            );
+            Some(true)
+        }
         Action::GoToDefinition => goto(state, Feature::Definition, rect),
         Action::GoToDeclaration => goto(state, Feature::Declaration, rect),
         Action::GoToTypeDefinition => goto(state, Feature::TypeDefinition, rect),
@@ -91,6 +102,7 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
         | Action::MenuPageUp
         | Action::MenuPageDown
         | Action::MenuConfirm
+        | Action::MenuConfirmTab
         | Action::MenuCancel => popup_key(state, action, rect),
         Action::Backspace => {
             let mut handled = false;
@@ -146,8 +158,23 @@ fn completion_key(state: &AppContext, action: Action, rect: UiRect) -> Option<bo
     if !visible {
         return None;
     }
+    // `lsp.completion.accept_on` says which of Enter and Tab accept an item; the
+    // other key does what it does without the list.
+    let accept_on = state
+        .get()
+        .preferences
+        .values()
+        .lsp
+        .completion
+        .accept_on
+        .clone();
+    if (action == Action::MenuConfirm && accept_on == "tab")
+        || (action == Action::MenuConfirmTab && accept_on == "enter")
+    {
+        return Some(false);
+    }
     match action {
-        Action::MenuConfirm => state.update(|app| {
+        Action::MenuConfirm | Action::MenuConfirmTab => state.update(|app| {
             let rect = app.editor.language.rect.unwrap_or(rect);
             if completion::accept(app, None) {
                 crate::app::editor::reveal_cursor(app, rect);
@@ -189,7 +216,7 @@ fn popup_key(state: &AppContext, action: Action, rect: UiRect) -> Option<bool> {
         return None;
     }
     match action {
-        Action::MenuConfirm => {
+        Action::MenuConfirm | Action::MenuConfirmTab => {
             let mut renaming = false;
             state.try_update(|app| {
                 renaming = app

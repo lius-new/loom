@@ -184,6 +184,7 @@ actions! {
     MenuSelectNext => "menu::SelectNext", "Select the next menu item";
     MenuSelectPrevious => "menu::SelectPrevious", "Select the previous menu item";
     MenuConfirm => "menu::Confirm", "Choose the selected menu item";
+    MenuConfirmTab => "menu::ConfirmWithTab", "Choose the selected menu item with the Tab key";
     MenuPageUp => "menu::PageUp", "Move the selection up one page";
     MenuPageDown => "menu::PageDown", "Move the selection down one page";
 

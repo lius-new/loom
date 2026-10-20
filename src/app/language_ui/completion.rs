@@ -112,7 +112,7 @@ pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
     }
     let triggers = trigger_characters(ctx);
     let is_trigger = triggers.iter().any(|trigger| trigger.chars().eq([c]));
-    if is_word(c) || is_trigger {
+    if (is_word(c) || is_trigger) && app.preferences.values().lsp.completion.auto {
         schedule(ctx, app, is_trigger.then_some(c));
     }
 }
@@ -143,6 +143,9 @@ fn offers_completion(ctx: &AppContext) -> bool {
 /// Asks for completions soon, unless more typing comes first.
 fn schedule(ctx: &AppContext, app: &mut AppState, trigger: Option<char>) {
     if !offers_completion(ctx) {
+        if app.preferences.values().lsp.completion.words_fallback && trigger.is_none() {
+            words(app);
+        }
         return;
     }
     let Some(application) = ctx.services().and_then(|r| r.application()) else {
@@ -156,6 +159,92 @@ fn schedule(ctx: &AppContext, app: &mut AppState, trigger: Option<char>) {
             timed.update(|app| request(&timed, app, false, trigger));
         },
     )));
+}
+
+/// The words of the document, as completions, for when no server offers any.
+pub fn words(app: &mut AppState) {
+    let pane = app.workspace.active_pane();
+    let Some(t) = target(app, pane) else { return };
+    let start = word_start(&t.text, t.cursor);
+    let mut seen = std::collections::BTreeSet::new();
+    let skip = start..crate::features::language_service::completion::word_end(&t.text, t.cursor);
+    for (at, word) in words_of(&t.text) {
+        if word.chars().count() >= 3 && !skip.contains(&at) {
+            seen.insert(word);
+        }
+        if seen.len() >= 5000 {
+            break;
+        }
+    }
+    let list = reply::CompletionList {
+        items: seen
+            .into_iter()
+            .map(|word| reply::CompletionItem {
+                label: word,
+                label_detail: None,
+                kind: None,
+                detail: None,
+                documentation: None,
+                deprecated: false,
+                preselect: false,
+                sort_text: None,
+                filter_text: None,
+                insert_text: None,
+                snippet: false,
+                as_is: false,
+                edit: None,
+                additional_edits: Vec::new(),
+                commit_characters: Vec::new(),
+                command: None,
+                raw: serde_json::Value::Null,
+            })
+            .collect(),
+        incomplete: false,
+    };
+    let data = Completion::merge(start, t.cursor, vec![(0, usize::MAX, list)]);
+    app.editor.language.completion = Some(Session {
+        pane,
+        document: t.document,
+        incarnation: t.stamp.incarnation,
+        requested: t.text.clone(),
+        manual: false,
+        triggered: false,
+        handle: None,
+        data,
+        shown: Vec::new(),
+        selected: 0,
+        scroll: 0,
+        resolving: None,
+        last_cursor: t.cursor,
+        last_version: t.stamp.version,
+    });
+    let typed = t.text[start..t.cursor].to_owned();
+    if let Some(session) = app.editor.language.completion.as_mut() {
+        refilter(session, &typed);
+    }
+}
+
+/// Identifiers in `text` with where each starts.
+pub fn words_of(text: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (at, c) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        match (is_word(c), start) {
+            (true, None) => start = Some(at),
+            (false, Some(from)) => {
+                let word = &text[from..at];
+                if !word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                    out.push((from, word.to_owned()));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Asks the servers now. `manual` is the person pressing the key.
@@ -608,6 +697,14 @@ pub fn close(app: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn words_are_identifiers_without_the_numbers() {
+        let found = words_of("let value_1 = 42 + other; 9abc");
+        let words: Vec<&str> = found.iter().map(|(_, w)| w.as_str()).collect();
+        assert_eq!(words, ["let", "value_1", "other"]);
+        assert_eq!(found[1].0, 4);
+    }
 
     #[test]
     fn indentation_is_the_leading_whitespace_of_the_line() {

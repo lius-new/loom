@@ -12,9 +12,6 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// How long the pointer rests on a word before the servers are asked.
-pub(crate) const REST: Duration = Duration::from_millis(300);
-
 /// The word the pointer rests on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rest {
@@ -126,7 +123,9 @@ pub fn arm(state: &AppContext, rest: Rest) {
     };
     let timed = state.clone();
     let word = rest.clone();
-    let timer = ui_timer::after(application, REST, move || fire(&timed, &word));
+    // How long the pointer rests on a word before the servers are asked.
+    let delay = Duration::from_millis(state.get().preferences.values().lsp.hover_delay_ms);
+    let timer = ui_timer::after(application, delay, move || fire(&timed, &word));
     state.try_update(|app| {
         let hover = &mut app.editor.language.hover;
         if hover.rest.as_ref() == Some(&rest) {

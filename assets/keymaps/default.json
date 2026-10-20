@@ -140,7 +140,7 @@
       "pageup": "menu::PageUp",
       "pagedown": "menu::PageDown",
       "enter": "menu::Confirm",
-      "tab": "menu::Confirm",
+      "tab": "menu::ConfirmWithTab",
       "escape": "menu::Cancel"
     }
   },

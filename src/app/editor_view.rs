@@ -363,15 +363,22 @@ pub(crate) fn binding(
                 );
                 // The server's semantic tokens, when they describe exactly this text,
                 // are drawn over the syntax tree's classes.
-                if let Some(semantic) = syntax_state
-                    .services()
-                    .and_then(|runtime| runtime.language_services())
-                    .and_then(|services| {
-                        services
-                            .results(&document.meta.path, &document.stamp)
-                            .semantic
-                    })
-                    .filter(|spans| !spans.is_empty())
+                if syntax_state
+                    .get()
+                    .preferences
+                    .values()
+                    .lsp
+                    .semantic_highlighting
+                    == "combined"
+                    && let Some(semantic) = syntax_state
+                        .services()
+                        .and_then(|runtime| runtime.language_services())
+                        .and_then(|services| {
+                            services
+                                .results(&document.meta.path, &document.stamp)
+                                .semantic
+                        })
+                        .filter(|spans| !spans.is_empty())
                 {
                     for window in &mut tokens {
                         let composed = crate::features::language_service::semantic::compose(

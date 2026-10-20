@@ -1533,6 +1533,15 @@ struct LanguageHarness {
 
 impl LanguageHarness {
     fn new(source: &str, server_args: &[&str]) -> Self {
+        Self::configured(source, server_args, |_| {})
+    }
+
+    /// Like `new`, with the person's settings changed by `configure` first.
+    fn configured(
+        source: &str,
+        server_args: &[&str],
+        configure: impl FnOnce(&mut AppState),
+    ) -> Self {
         use lgui::{
             application::{AppView, ApplicationContext},
             core::UiScale,
@@ -1573,6 +1582,7 @@ impl LanguageHarness {
                 ..crate::features::settings::servers::LanguageServerSetting::named("rust-analyzer")
             }];
         let fake_command = fake.display().to_string();
+        configure(&mut app);
         let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
         let initial = Arc::new(Mutex::new(Some(app)));
         let exposed = Arc::new(Mutex::new(None));
@@ -2338,4 +2348,118 @@ fn a_server_can_ask_for_a_document_to_be_shown() {
             .iter()
             .any(|r| r["id"] == 9301 && r["result"]["success"] == true)
     });
+}
+
+fn on_save(kinds: &[&str], format: bool) -> impl FnOnce(&mut AppState) + use<> {
+    let kinds: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
+    move |app: &mut AppState| {
+        app.preferences.values_mut().languages.insert(
+            "rust".to_owned(),
+            crate::features::settings::servers::LanguageSetting {
+                format_on_save: format,
+                formatter: Some("rust-analyzer".to_owned()),
+                code_actions_on_save: kinds,
+                ..Default::default()
+            },
+        );
+    }
+}
+
+#[test]
+fn saving_formats_and_applies_the_chosen_actions_first() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::configured(
+        "fn alpha() {}\n",
+        &["--features", "formatting,codeAction"],
+        on_save(&["quickfix"], true),
+    );
+    h.until_ready();
+    h.act(Action::Save);
+    let path = h.state.get().workspace.active_path().unwrap().to_path_buf();
+    // The actions come first, then the formatting goes in front of them.
+    h.until("the file on disk", |_| {
+        std::fs::read_to_string(&path)
+            .is_ok_and(|text| text == "// formatted\n// fixed\nfn alpha() {}\n")
+    });
+    assert_eq!(h.document_text(), "// formatted\n// fixed\nfn alpha() {}\n");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_server_that_does_not_answer_never_keeps_the_file_from_being_saved() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::configured(
+        "fn alpha() {}\n",
+        &["--features", "formatting", "--ignore-requests"],
+        on_save(&[], true),
+    );
+    h.until_ready();
+    h.act(Action::Save);
+    let path = h.state.get().workspace.active_path().unwrap().to_path_buf();
+    h.until("the file on disk", |_| {
+        std::fs::read_to_string(&path).is_ok_and(|text| text == "fn alpha() {}\n")
+    });
+    assert_eq!(
+        h.document_text(),
+        "fn alpha() {}\n",
+        "unformatted but saved"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_language_without_save_settings_saves_at_once() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("fn alpha() {}\n", &["--features", "formatting"]);
+    h.until_ready();
+    h.act(Action::Save);
+    let path = h.state.get().workspace.active_path().unwrap().to_path_buf();
+    assert!(std::fs::read_to_string(&path).is_ok_and(|t| t == "fn alpha() {}\n"));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn automatic_completion_can_be_turned_off_and_the_key_still_works() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::configured("\n", &["--features", "completion"], |app| {
+        app.preferences.values_mut().lsp.completion.auto = false
+    });
+    h.until_ready();
+    h.type_text("a");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    h.render();
+    assert!(h.state.get().editor.language.completion.is_none());
+    h.act(Action::ShowCompletions);
+    h.until("the list", |h| !h.completion_labels().is_empty());
+}
+
+#[test]
+fn without_a_server_the_words_of_the_file_complete() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new("alphabet beta alphanumeric\n", &["--features", "hover"]);
+    h.until_ready();
+    h.set_cursor(27);
+    h.type_text("alp");
+    h.until("the words", |h| h.completion_labels().len() == 2);
+    assert_eq!(h.completion_labels(), ["alphabet", "alphanumeric"]);
+    h.act(Action::MenuConfirm);
+    assert!(h.document_text().ends_with("alphabet\n") || h.document_text().contains("alphabet"));
+}
+
+#[test]
+fn enter_alone_can_be_the_key_that_accepts() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::configured("\n", &["--features", "completion"], |app| {
+        app.preferences.values_mut().lsp.completion.accept_on = "enter".to_owned()
+    });
+    h.until_ready();
+    h.type_text("al");
+    h.until("the list", |h| h.completion_labels() == ["alpha-fake"]);
+    // Tab is not an accepting key now: the list stays and nothing is inserted by it.
+    let handled =
+        crate::app::language_ui::keys::perform_with(&h.state, h.rect, Action::MenuConfirmTab);
+    assert_eq!(handled, Some(false));
+    assert_eq!(h.document_text(), "al\n");
+    h.act(Action::MenuConfirm);
+    assert_eq!(h.document_text(), "alpha-fake\n");
 }
