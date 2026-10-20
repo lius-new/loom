@@ -95,6 +95,7 @@ pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
         app.editor.language.completion = None;
     }
     let Some(c) = typed else { return };
+    super::refactor::on_type(ctx, app, c);
     // A commit character accepts the highlighted item and is then kept.
     let commit = app
         .editor

@@ -98,6 +98,41 @@ pub struct Providers {
 }
 
 impl Providers {
+    /// The names of what the server offers, for showing the person.
+    pub fn names(&self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        for (offered, name) in [
+            (self.hover, "hover"),
+            (self.completion.is_some(), "completion"),
+            (self.signature_help.is_some(), "signature help"),
+            (self.definition, "definition"),
+            (self.declaration, "declaration"),
+            (self.type_definition, "type definition"),
+            (self.implementation, "implementation"),
+            (self.references, "references"),
+            (self.document_highlight, "highlights"),
+            (self.document_symbol, "outline"),
+            (self.workspace_symbol, "workspace symbols"),
+            (self.rename.is_some(), "rename"),
+            (self.code_action.is_some(), "code actions"),
+            (self.formatting, "format"),
+            (self.range_formatting, "format selection"),
+            (self.on_type_formatting.is_some(), "format on type"),
+            (self.inlay_hint, "inlay hints"),
+            (self.folding_range, "folding"),
+            (self.selection_range, "selection"),
+            (self.call_hierarchy, "call hierarchy"),
+            (self.type_hierarchy, "type hierarchy"),
+            (self.code_lens, "code lenses"),
+            (self.pull_diagnostics, "pull diagnostics"),
+        ] {
+            if offered {
+                names.push(name);
+            }
+        }
+        names
+    }
+
     pub fn parse(capabilities: &Value) -> Self {
         let get = |key: &str| capabilities.get(key);
         let on = |key: &str| enabled(get(key));

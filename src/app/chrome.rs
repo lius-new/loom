@@ -341,6 +341,17 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 }
                 lines.push(line(text, Level::Quiet));
             }
+            if let Some(providers) = &info.providers {
+                let offered = providers.names();
+                lines.push(line(
+                    if offered.is_empty() {
+                        "offers: nothing beyond diagnostics".to_owned()
+                    } else {
+                        format!("offers: {}", offered.join(", "))
+                    },
+                    Level::Quiet,
+                ));
+            }
             let counts = info.diagnostics;
             lines.push(line(
                 format!(

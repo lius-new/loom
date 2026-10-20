@@ -29,6 +29,8 @@ pub enum Wanted {
     },
     Format,
     FormatSelection,
+    /// Formatting triggered by a typed character, applied quietly.
+    OnType,
     Command {
         title: String,
     },
@@ -278,6 +280,52 @@ pub fn format(state: &AppContext, rect: UiRect, selection_only: bool) {
     }
 }
 
+/// A typed character may make the server want to format (`}` or `;` for example).
+pub fn on_type(ctx: &AppContext, app: &mut AppState, typed: char) {
+    let Some(services) = services(ctx) else {
+        return;
+    };
+    let wanted = services.infos().iter().any(|info| {
+        info.providers
+            .as_ref()
+            .and_then(|p| p.on_type_formatting.as_ref())
+            .is_some_and(|f| {
+                f.first.chars().eq([typed]) || f.more.iter().any(|m| m.chars().eq([typed]))
+            })
+    });
+    if !wanted {
+        return;
+    }
+    let pane = app.workspace.active_pane();
+    let Some(t) = target(app, pane) else { return };
+    services.sync(app);
+    let handle = Arc::new(
+        services.request(
+            RequestSpec::new(
+                Feature::OnTypeFormatting,
+                t.path.clone(),
+                t.lsp_stamp(),
+                t.cursor,
+            )
+            .extra(json!({ "ch": typed.to_string(),
+                           "options": { "tabSize": 4, "insertSpaces": true } })),
+        ),
+    );
+    let stamps = edit::stamps(app);
+    let rect = app
+        .editor
+        .language
+        .rect
+        .unwrap_or(UiRect::new(0.0, 0.0, 800.0, 600.0));
+    app.editor.language.refactor = Some(Pending {
+        wanted: Wanted::OnType,
+        handle,
+        target: t,
+        stamps,
+        rect,
+    });
+}
+
 // ---- answers ---------------------------------------------------------------
 
 fn failure_text(what: &str, failure: Option<&Failure>) -> String {
@@ -426,6 +474,27 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
                     effects.extend(action_effects(*instance, &action, &pending));
                 }
                 None => app.show_toast(format!("{title}: the server gave no result")),
+            }
+        }
+        Wanted::OnType => {
+            // Only while the text is as it was when asked: typing on makes the
+            // answer wrong.
+            let now = super::target(app, target.pane).filter(|t| t.stamp == target.stamp);
+            if let (Some(part), Some(link), Some(_)) = (
+                progress.usable(Feature::OnTypeFormatting).first(),
+                uri::file_uri(&target.path),
+                now,
+            ) {
+                let found = reply::text_edits(&part.value, part.encoding);
+                if !found.is_empty() {
+                    effects.push(Effect::Apply(Request {
+                        edit: single_document_edit(link, found),
+                        stamps: pending.stamps.clone(),
+                        rect: pending.rect,
+                        title: "Format".to_owned(),
+                        reply: None,
+                    }));
+                }
             }
         }
         Wanted::Format | Wanted::FormatSelection => {

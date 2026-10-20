@@ -2617,3 +2617,35 @@ fn hints_are_off_unless_asked_for() {
     assert!(h.state.get().editor.language.inlay.shown.is_none());
     assert!(!h.has_text(": i32"));
 }
+
+#[test]
+fn typing_a_trigger_character_lets_the_server_format() {
+    let mut h = LanguageHarness::new("let x = 1\n", &["--features", "onType"]);
+    h.until_ready();
+    h.set_cursor(9);
+    h.type_text(";");
+    h.until("the formatting", |h| {
+        h.document_text().starts_with("// after ;\n")
+    });
+    assert_eq!(h.document_text(), "// after ;\nlet x = 1;\n");
+}
+
+#[test]
+fn the_panel_names_what_a_server_offers() {
+    let mut h = LanguageHarness::new("x\n", &["--features", "hover,definition,rename"]);
+    h.until_ready();
+    let frame = crate::app::chrome::language_panel_frame(&h.state);
+    let text: Vec<String> = frame
+        .sections
+        .iter()
+        .flat_map(|s| s.lines.iter().map(|l| l.text.clone()))
+        .collect();
+    let offers = text
+        .iter()
+        .find(|l| l.starts_with("offers:"))
+        .expect("a line of capabilities");
+    for name in ["hover", "definition", "rename"] {
+        assert!(offers.contains(name), "{offers}");
+    }
+    assert!(!offers.contains("completion"));
+}

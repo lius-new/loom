@@ -275,6 +275,7 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
                 }
             },
             "formatting": { "dynamicRegistration": false },
+            "onTypeFormatting": { "dynamicRegistration": false },
             "rangeFormatting": { "dynamicRegistration": false },
             "signatureHelp": {
                 "dynamicRegistration": false,

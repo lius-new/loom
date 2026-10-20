@@ -175,6 +175,10 @@ fn feature_capabilities(options: &Options, caps: &mut serde_json::Map<String, Va
             ),
             "formatting" => caps.insert("documentFormattingProvider".into(), json!(true)),
             "rangeFormatting" => caps.insert("documentRangeFormattingProvider".into(), json!(true)),
+            "onType" => caps.insert(
+                "documentOnTypeFormattingProvider".into(),
+                json!({ "firstTriggerCharacter": ";", "moreTriggerCharacter": ["}"] }),
+            ),
             "inlay" => caps.insert("inlayHintProvider".into(), json!(true)),
             "folding" => caps.insert("foldingRangeProvider".into(), json!(true)),
             "selection" => caps.insert("selectionRangeProvider".into(), json!(true)),
@@ -288,6 +292,9 @@ fn feature_result(method: &str, params: &Value, options: &Options) -> Option<Val
         }
         "textDocument/formatting" | "textDocument/rangeFormatting" => {
             json!([{ "range": span(0, 0, 0), "newText": "// formatted\n" }])
+        }
+        "textDocument/onTypeFormatting" => {
+            json!([{ "range": span(0, 0, 0), "newText": format!("// after {}\n", params["ch"].as_str().unwrap_or("")) }])
         }
         "textDocument/inlayHint" => json!([{
             "position": { "line": 0, "character": 3 }, "label": ": i32", "kind": 1 }]),
