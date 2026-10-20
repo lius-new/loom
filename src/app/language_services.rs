@@ -59,6 +59,10 @@ impl LanguageServices {
         self.manager.saved(path, text);
     }
 
+    pub fn install(&self, server: &str) {
+        self.manager.install(server);
+    }
+
     pub fn restart(&self) {
         self.manager.restart();
     }

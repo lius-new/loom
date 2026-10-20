@@ -513,6 +513,10 @@ impl Coordinator {
             Msg::Install(server) => {
                 let pack = self.servers.get(&server).and_then(|d| d.pack.clone());
                 if let (Some(installer), Some(pack)) = (&self.installer, pack) {
+                    // A person asking again does not wait out the failure cooldown.
+                    if matches!(installer.status(&pack), PackStatus::Failed(_)) {
+                        installer.retry();
+                    }
                     let _ = installer.request(&pack);
                 }
             }

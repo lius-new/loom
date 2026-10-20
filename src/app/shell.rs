@@ -1204,6 +1204,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                         services.restart();
                     }
                 }
+                crate::ui::language_panel::Event::Install(server) => {
+                    if let Some(services) =
+                        panel_state.services().and_then(|r| r.language_services())
+                    {
+                        services.install(&server);
+                    }
+                }
                 crate::ui::language_panel::Event::RetryDownloads => {
                     crate::infrastructure::language_packs::resources().retry_downloads();
                 }

@@ -25,6 +25,8 @@ pub struct Section {
     pub title: String,
     pub level: Level,
     pub lines: Vec<Line>,
+    /// The server whose pack this section can install, with the button's label.
+    pub install: Option<(String, &'static str)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -37,6 +39,8 @@ pub enum Event {
     Close,
     Restart,
     RetryDownloads,
+    /// Install the pack of the named server.
+    Install(String),
 }
 pub type Commands = Arc<dyn Fn(Event) + Send + Sync>;
 
@@ -110,6 +114,33 @@ pub fn render(viewport: UiRect, frame: &Frame, commands: Commands) -> Element {
             title,
             theme::sans_semibold(colour_title(section.level), theme::UI_SIZE),
         ));
+        if let Some((server, label)) = &section.install {
+            let w = measure(label, theme::SMALL, 400) + 24.0;
+            let button = UiRect::new(
+                card.right - PAD - w,
+                y + 2.0,
+                card.right - PAD,
+                y + TITLE_H - 2.0,
+            );
+            let (server, install) = (server.clone(), commands.clone());
+            body = body.child(
+                panel(
+                    button,
+                    VisualStyle::filled(theme::c().active_line).radius(4.0),
+                )
+                .event_policy(policy)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move |cx: &mut UiEventContext| {
+                    install(Event::Install(server.clone()));
+                    cx.stop_propagation();
+                })
+                .child(text(
+                    UiRect::new(button.left + 12.0, button.top, button.right, button.bottom),
+                    *label,
+                    theme::sans(theme::c().text_soft, theme::SMALL),
+                )),
+            );
+        }
         y += TITLE_H;
         for line in &section.lines {
             let shown = clip(&line.text, (text_w / MONO_W) as usize);
@@ -210,6 +241,7 @@ mod tests {
                 title: "a".into(),
                 level: Level::Quiet,
                 lines: vec![line("x")],
+                install: None,
             }],
         };
         let two = Frame {
@@ -218,6 +250,7 @@ mod tests {
                 title: "a".into(),
                 level: Level::Quiet,
                 lines: vec![line("x"), line("y")],
+                install: None,
             }],
         };
         assert_eq!(height(&two) - height(&one), LINE_H);

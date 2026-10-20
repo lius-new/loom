@@ -370,10 +370,16 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 let tail = info.stderr.iter().rev().take(3).rev();
                 lines.extend(tail.map(|l| line(l.clone(), Level::Warning)));
             }
+            let install = match info.status {
+                Status::NotInstalled => Some("Install"),
+                Status::InstallFailed(_) => Some("Retry"),
+                _ => None,
+            };
             Section {
                 title: format!("{} — {state_text}", info.server),
                 level,
                 lines,
+                install: install.map(|label| (info.server_id.clone(), label)),
             }
         })
         .collect();
@@ -396,6 +402,7 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 .into_iter()
                 .map(|error| line(error, Level::Warning))
                 .collect(),
+            install: None,
         }
     }));
     Frame {
