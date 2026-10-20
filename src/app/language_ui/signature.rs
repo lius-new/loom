@@ -128,7 +128,12 @@ pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
 
 /// Whether `cursor` is still inside the call opened at `opened_at`.
 pub fn inside_call(text: &str, opened_at: usize, cursor: usize) -> bool {
-    if cursor <= opened_at || cursor > text.len() || opened_at >= text.len() {
+    if cursor <= opened_at
+        || cursor > text.len()
+        || opened_at >= text.len()
+        || !text.is_char_boundary(opened_at)
+        || !text.is_char_boundary(cursor)
+    {
         return false;
     }
     let (open, close) = match text[opened_at..].chars().next() {
@@ -262,6 +267,15 @@ mod tests {
         assert!(!inside_call(text, 1, 13), "after the closing bracket");
         assert!(!inside_call(text, 1, 1), "before anything was typed");
         assert!(inside_call(text, 6, 8), "the nested call itself");
+    }
+
+    #[test]
+    fn stale_positions_end_the_call_instead_of_panicking() {
+        // The text changed under the remembered position.
+        assert!(!inside_call("é(a", 1, 3), "inside a character");
+        assert!(!inside_call("(a", 5, 7));
+        assert!(!inside_call("(a", 0, 9));
+        assert!(!inside_call("é", 0, 1));
     }
 
     #[test]

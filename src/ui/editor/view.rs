@@ -811,7 +811,7 @@ pub(crate) fn anchor_rect(
     (scroll_x, scroll_y): (f32, f32),
     viewport_w: f32,
 ) -> Option<UiRect> {
-    if range.start > buffer.len() {
+    if range.start > buffer.len() || !buffer.text().is_char_boundary(range.start) {
         return None;
     }
     let line = buffer.line_of(range.start);
