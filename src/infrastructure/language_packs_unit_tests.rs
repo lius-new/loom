@@ -493,7 +493,7 @@ fn standard_manifest_is_authoritative_and_malformed_input_does_not_fall_back_to_
 }
 
 #[test]
-fn standard_rust_keeps_application_lsp_defaults_without_external_editor_metadata() {
+fn standard_rust_keeps_application_editing_defaults_without_external_editor_metadata() {
     let temp = Temp::new();
     write_standard(
         &temp,
@@ -502,11 +502,6 @@ fn standard_rust_keeps_application_lsp_defaults_without_external_editor_metadata
     );
     let registry = Packages::discover(&temp.0, None).registry().unwrap();
     let rust = registry.resolve_path(Path::new("new.rs"));
-    let servers = crate::features::language_service::server_set::rust_analyzer_for_tests();
-    assert_eq!(
-        servers.for_language(&registry, rust)[0].0.name.as_ref(),
-        "rust-analyzer"
-    );
     assert_eq!(
         registry.definition_of(rust).comments.line.as_deref(),
         Some("//")

@@ -242,7 +242,7 @@ fn demand_is_deduplicated_and_hot_activation_recovers_cached_plain_text() {
                 FileId::new(1),
                 text.clone(),
                 lang,
-                &[window.clone()],
+                std::slice::from_ref(&window),
                 &std::sync::atomic::AtomicBool::new(false),
             )
             .unwrap()[0]
