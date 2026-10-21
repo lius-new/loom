@@ -58,8 +58,13 @@ pub(crate) enum Event {
 
 pub(crate) type Sender = Arc<dyn Fn(Event) + Send + Sync>;
 
+/// Width in the proportional font the popup draws with, at `weight`.
+fn measure_weight(text: &str, weight: i32) -> f32 {
+    crate::ui::tabs::measure_sans(text, theme::UI_SIZE, weight)
+}
+
 fn measure(text: &str) -> f32 {
-    crate::ui::tabs::measure(text, theme::UI_SIZE, 400)
+    measure_weight(text, 400)
 }
 
 /// The width and height of the popup for `view`, before it is placed.
@@ -226,25 +231,39 @@ pub(crate) fn render(
             ));
         }
         let label_left = r.left + BADGE_W;
-        // The matched characters are drawn again, brighter, over the label.
-        item = item.child(text(
-            UiRect::new(label_left, r.top, r.right - 4.0, r.bottom),
-            row.label.clone(),
-            theme::sans(colour, theme::UI_SIZE),
-        ));
-        for &at in &row.matches {
-            if let Some(ch) = row.label.chars().nth(at) {
-                let before: String = row.label.chars().take(at).collect();
-                let x = label_left + measure(&before);
-                item = item.child(text(
-                    UiRect::new(x, r.top, x + measure(&ch.to_string()) + 2.0, r.bottom),
-                    ch.to_string(),
-                    theme::sans_semibold(theme::c().accent, theme::UI_SIZE),
-                ));
+        // The label in runs: the fuzzy-matched characters bold and brighter,
+        // each run placed after the measured width of the one before it, so
+        // nothing is drawn twice.
+        let mut label_right = label_left;
+        let mut run = String::new();
+        let mut run_matched = false;
+        let mut runs: Vec<(String, bool)> = Vec::new();
+        for (at, ch) in row.label.chars().enumerate() {
+            let matched = row.matches.contains(&at);
+            if !run.is_empty() && matched != run_matched {
+                runs.push((std::mem::take(&mut run), run_matched));
             }
+            run_matched = matched;
+            run.push(ch);
+        }
+        if !run.is_empty() {
+            runs.push((run, run_matched));
+        }
+        for (piece, matched) in runs {
+            let width = measure_weight(&piece, if matched { 600 } else { 400 });
+            item = item.child(text(
+                UiRect::new(label_right, r.top, label_right + width + 2.0, r.bottom),
+                piece,
+                if matched {
+                    theme::sans_semibold(theme::c().accent, theme::UI_SIZE)
+                } else {
+                    theme::sans(colour, theme::UI_SIZE)
+                },
+            ));
+            label_right += width;
         }
         if !row.detail.is_empty() {
-            let x = label_left + measure(&row.label) + 10.0;
+            let x = label_right + 10.0;
             if x < r.right {
                 item = item.child(text(
                     UiRect::new(x, r.top, r.right - 4.0, r.bottom),

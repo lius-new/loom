@@ -1853,7 +1853,10 @@ fn dragging_across_the_hover_card_selects_its_text_and_copy_takes_it() {
     h.send(InputEvent::PointerMove(at(last.right - 1.0, middle(last))));
     // Dragging out of the card keeps it, so the selection can be finished.
     h.send(InputEvent::PointerMove(at(790.0, 390.0)));
-    assert!(h.has_text("0:1"), "the card stays while a drag from it is held");
+    assert!(
+        h.has_text("0:1"),
+        "the card stays while a drag from it is held"
+    );
     h.send(InputEvent::PointerMove(at(last.right - 1.0, middle(last))));
     h.send(InputEvent::PointerUp {
         pointer: at(last.right - 1.0, middle(last)),

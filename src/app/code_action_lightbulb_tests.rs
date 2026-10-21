@@ -589,3 +589,42 @@ fn code_action_lightbulb_empty_disabled_and_failed_queries_stay_quiet() {
     assert!(revision(&failed.h).is_none());
     assert!(failed.h.state.get().editor.language.popup.is_none());
 }
+
+#[test]
+fn dragging_across_a_diagnostic_message_selects_it_and_leaving_drops_the_selection() {
+    use lgui::core::{InputEvent, Point, PointerButton, PointerData};
+    let mut c = Case::new(&["--diagnostics", "--diag-message", "first line\nsecond line"]);
+    let (x, y) = c.h.point_at(0, 1);
+    c.h.move_to(x, y);
+    c.h.until("the diagnostic card", |h| h.has_text("second line"));
+    let rect_of = |c: &Case, wanted: &str| {
+        c.h.session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| node.text.as_deref() == Some(wanted))
+            .map(|node| node.layout_rect)
+            .expect("the message line is drawn")
+    };
+    let (first, last) = (rect_of(&c, "first line"), rect_of(&c, "second line"));
+    let middle = |r: lgui::prelude::UiRect| (r.top + r.bottom) / 2.0;
+    let at = |x, y| PointerData::mouse(Point::new(x, y));
+    c.h.move_to(first.left + 1.0, middle(first));
+    c.h.send(InputEvent::PointerDown {
+        pointer: at(first.left + 1.0, middle(first)),
+        button: PointerButton::Left,
+    });
+    c.h.send(InputEvent::PointerMove(at(last.right - 1.0, middle(last))));
+    c.h.send(InputEvent::PointerUp {
+        pointer: at(last.right - 1.0, middle(last)),
+        button: PointerButton::Left,
+    });
+    assert_eq!(
+        c.h.state.get().editor.language.hover.selection.as_deref(),
+        Some("first line\nsecond line")
+    );
+    assert!(c.h.has_text("second line"), "selecting keeps the card");
+    // Moving off the card ends it, and the selection with it.
+    c.h.move_to(790.0, 390.0);
+    assert!(c.h.state.get().editor.language.hover.selection.is_none());
+}

@@ -561,7 +561,14 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
             return changed;
         }
         Event::DiagnosticHover(hovered) => {
+            // A selection started in the card is finished first.
+            if app.editor.language.hover.pressing {
+                return false;
+            }
             let changed = app.editor.editor_diagnostic_hover != hovered;
+            if changed {
+                app.editor.language.hover.selection = None;
+            }
             app.editor.editor_diagnostic_hover = hovered;
             return changed;
         }

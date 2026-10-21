@@ -12,7 +12,9 @@ use lgui::core::{
     UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::core::{PathStyle, Point, Stroke, UiPath, UiPathCommand, path};
-use lgui::prelude::{Color, Element, UiRect, VisualStyle, group, panel, text};
+use lgui::prelude::{
+    Color, Element, SelectableSegment, UiRect, VisualStyle, group, panel, selectable_text, text,
+};
 use lgui::text::{self, TextLayout, TextLayoutRequest};
 
 use super::gutter;
@@ -1108,6 +1110,9 @@ fn info_card_actions(
         card_rect.bottom - CARD_PAD,
     );
     let mut content = clip(body, 0.0, 0.0);
+    // The selectable text of the card, in reading order: the diagnostics, then the docs.
+    let mut segments: Vec<SelectableSegment> = Vec::new();
+    let mut below: Option<Element> = None;
     let mut y = body.top;
     for (index, (severity, lines, origin)) in entries.iter().enumerate() {
         if index > 0 {
@@ -1124,9 +1129,8 @@ fn info_card_actions(
         ));
         let text_left = body.left + mark_w;
         for (i, line) in lines.iter().enumerate() {
-            let row = UiRect::new(text_left, y, body.right, y + CARD_ROW);
-            content = content.child(text(
-                row,
+            segments.push(SelectableSegment::new(
+                UiRect::new(text_left, y, text_left + measure(line) + 6.0, y + CARD_ROW),
                 (*line).to_owned(),
                 theme::sans(theme::c().text_bright, size),
             ));
@@ -1181,16 +1185,14 @@ fn info_card_actions(
             y += CARD_ROW;
         }
     }
-    let interaction = binding.as_ref().map(|binding| {
-        let (links, selections) = (binding.clone(), binding.clone());
-        crate::ui::markdown::Interaction {
-            on_link: Some(std::sync::Arc::new(move |url: String| {
-                links.send(Event::OpenLink(url))
-            })),
-            on_select: Some(std::sync::Arc::new(move |_, text| {
-                selections.send(Event::HoverSelect(text))
-            })),
-        }
+    let on_link: Option<crate::ui::markdown::LinkHandler> = binding.as_ref().map(|binding| {
+        let send = binding.clone();
+        std::sync::Arc::new(move |url: String| send.send(Event::OpenLink(url)))
+            as crate::ui::markdown::LinkHandler
+    });
+    let on_select = binding.as_ref().map(|binding| {
+        let send = binding.clone();
+        move |_: &mut lgui::core::UiEventContext, text| send.send(Event::HoverSelect(text))
     });
     if let Some(fixes) = fixes
         && let Some(binding) = binding
@@ -1228,20 +1230,38 @@ fn info_card_actions(
             ));
             y += separator;
         }
-        content = content.child(crate::ui::markdown::render(
-            layout,
-            body.left,
-            y,
-            size,
-            CARD_ROW,
-            interaction.as_ref(),
-        ));
+        let parts =
+            crate::ui::markdown::parts(layout, body.left, y, size, CARD_ROW, on_link.as_ref());
+        below = Some(parts.below);
+        segments.extend(parts.segments);
+        content = content.child(parts.above);
     }
+    // Backgrounds, the one surface that draws and selects all the text, then
+    // everything that must stay clickable above it.
+    let mut layers = clip(body, 0.0, 0.0);
+    if let Some(below) = below {
+        layers = layers.child(below);
+    }
+    match on_select {
+        Some(on_select) => {
+            layers = layers.child(
+                selectable_text(body, segments)
+                    .selection_color(theme::c().accent)
+                    .on_select(on_select),
+            );
+        }
+        None => {
+            for segment in segments {
+                layers = layers.child(text(segment.rect, segment.text, segment.style));
+            }
+        }
+    }
+    let layers = layers.child(content);
     Some((
         card_rect,
         theme::bordered(card_rect, theme::c().surface, theme::c().border, 4.0, 1.0)
             .key("language-hover-card")
-            .child(content),
+            .child(layers),
     ))
 }
 

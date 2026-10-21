@@ -389,6 +389,92 @@ pub struct Interaction {
     pub on_select: Option<SelectHandler>,
 }
 
+/// A layout broken into layers, so a host can put its own text surface between
+/// them: backgrounds under the text, links above it.
+pub struct Parts {
+    /// Code boxes, quote bars and rules.
+    pub below: Element,
+    /// Link click targets; they draw nothing.
+    pub above: Element,
+    /// Every run of text, in reading order.
+    pub segments: Vec<SelectableSegment>,
+}
+
+/// The layers of a layout with its top-left corner at `(left, top)`. Links click
+/// through `on_link`; without one they are only coloured.
+pub fn parts(
+    layout: &Layout,
+    left: f32,
+    top: f32,
+    size: f32,
+    line_h: f32,
+    on_link: Option<&LinkHandler>,
+) -> Parts {
+    let bounds = UiRect::new(
+        left,
+        top,
+        left + layout.width.max(1.0),
+        top + layout.height.max(1.0),
+    );
+    let mut below = group(bounds);
+    for b in &layout.code_boxes {
+        below = below.child(panel(
+            UiRect::new(left + b.left, top + b.top, left + b.right, top + b.bottom),
+            VisualStyle::filled(theme::c().active_line).radius(3.0),
+        ));
+    }
+    for b in &layout.quote_bars {
+        below = below.child(panel(
+            UiRect::new(left + b.left, top + b.top, left + b.right, top + b.bottom),
+            VisualStyle::filled(theme::c().border),
+        ));
+    }
+    for (y, from, to) in &layout.rules {
+        below = below.child(panel(
+            UiRect::new(left + from, top + y, left + to, top + y + 1.0),
+            VisualStyle::filled(theme::c().border),
+        ));
+    }
+    let mut above = group(bounds);
+    let mut segments = Vec::with_capacity(layout.runs.len());
+    for run in &layout.runs {
+        let rect = UiRect::new(
+            left + run.x,
+            top + run.y,
+            left + run.x + run.width + 6.0,
+            top + run.y + line_h,
+        );
+        segments.push(SelectableSegment::new(
+            rect,
+            run.text.clone(),
+            text_style(run.style, size),
+        ));
+        let (Some(url), Some(handler)) = (run.url.as_ref(), on_link) else {
+            continue;
+        };
+        let (url, handler) = (url.clone(), handler.clone());
+        let hit = UiRect::new(rect.left, rect.top, rect.left + run.width, rect.bottom);
+        above = above.child(
+            panel(hit, VisualStyle::default())
+                .event_policy(EventPolicy {
+                    focus: false,
+                    ..EventPolicy::INTERACTIVE
+                })
+                .cursor(CursorIcon::Pointer)
+                .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
+                .on_click(move |cx: &mut UiEventContext| {
+                    cx.stop_propagation();
+                    handler(url.clone());
+                }),
+        );
+    }
+    Parts {
+        below: below.into(),
+        above: above.into(),
+        segments,
+    }
+}
+
 /// Draws a layout with its top-left corner at `(left, top)`.
 pub fn render(
     layout: &Layout,
@@ -404,81 +490,24 @@ pub fn render(
         left + layout.width.max(1.0),
         top + layout.height.max(1.0),
     );
-    let mut out = group(bounds);
-    for b in &layout.code_boxes {
-        out = out.child(panel(
-            UiRect::new(left + b.left, top + b.top, left + b.right, top + b.bottom),
-            VisualStyle::filled(theme::c().active_line).radius(3.0),
-        ));
-    }
-    for b in &layout.quote_bars {
-        out = out.child(panel(
-            UiRect::new(left + b.left, top + b.top, left + b.right, top + b.bottom),
-            VisualStyle::filled(theme::c().border),
-        ));
-    }
-    for (y, from, to) in &layout.rules {
-        out = out.child(panel(
-            UiRect::new(left + from, top + y, left + to, top + y + 1.0),
-            VisualStyle::filled(theme::c().border),
-        ));
-    }
-    let run_rect = |run: &Run| {
-        UiRect::new(
-            left + run.x,
-            top + run.y,
-            left + run.x + run.width + 6.0,
-            top + run.y + line_h,
-        )
-    };
     let on_link = interaction.and_then(|i| i.on_link.as_ref());
-    let selectable = interaction.and_then(|i| i.on_select.clone());
-    // One surface draws every run and selects across them; links sit above it.
-    if let Some(on_select) = &selectable {
-        let segments = layout
-            .runs
-            .iter()
-            .map(|run| {
-                SelectableSegment::new(run_rect(run), run.text.clone(), text_style(run.style, size))
-            })
-            .collect();
-        let on_select = on_select.clone();
-        out = out.child(
-            selectable_text(bounds, segments)
-                .selection_color(theme::c().accent)
-                .on_select(move |cx, text| on_select(cx, text)),
-        );
-    }
-    for run in &layout.runs {
-        let rect = run_rect(run);
-        let label = text(rect, run.text.clone(), text_style(run.style, size));
-        let (Some(url), Some(handler)) = (run.url.as_ref(), on_link) else {
-            if selectable.is_none() {
-                out = out.child(label);
+    let parts = parts(layout, left, top, size, line_h, on_link);
+    let mut out = group(bounds).child(parts.below);
+    match interaction.and_then(|i| i.on_select.clone()) {
+        Some(on_select) => {
+            out = out.child(
+                selectable_text(bounds, parts.segments)
+                    .selection_color(theme::c().accent)
+                    .on_select(move |cx, text| on_select(cx, text)),
+            );
+        }
+        None => {
+            for segment in parts.segments {
+                out = out.child(text(segment.rect, segment.text, segment.style));
             }
-            continue;
-        };
-        let (url, handler) = (url.clone(), handler.clone());
-        let hit = UiRect::new(rect.left, rect.top, rect.left + run.width, rect.bottom);
-        let link = panel(hit, VisualStyle::default())
-            .event_policy(EventPolicy {
-                focus: false,
-                ..EventPolicy::INTERACTIVE
-            })
-            .cursor(CursorIcon::Pointer)
-            .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
-            .on_click(move |cx: &mut UiEventContext| {
-                cx.stop_propagation();
-                handler(url.clone());
-            });
-        // The surface already draws the text when selectable.
-        out = out.child(if selectable.is_some() {
-            link
-        } else {
-            link.child(label)
-        });
+        }
     }
-    out
+    out.child(parts.above).into()
 }
 
 #[cfg(test)]
