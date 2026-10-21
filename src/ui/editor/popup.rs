@@ -300,6 +300,7 @@ pub(crate) fn render(
                     docs_rect.top + 8.0,
                     size,
                     18.0,
+                    None,
                 ))),
         );
         rect = UiRect::new(

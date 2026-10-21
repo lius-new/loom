@@ -363,6 +363,18 @@ pub(crate) fn binding(
                 }
                 return;
             }
+            if let Event::OpenLink(url) = event {
+                // Documentation comes from the language server: only web pages
+                // open, and only because the person clicked.
+                if (url.starts_with("https://") || url.starts_with("http://"))
+                    && !url.contains('\0')
+                    && let Err(error) = crate::infrastructure::update::open_page(&url)
+                {
+                    dispatcher
+                        .update(|app| app.show_error(format!("Could not open link: {error}")));
+                }
+                return;
+            }
             if let Event::PeekClose { revision } = event {
                 dispatcher.update(|app| {
                     if super::language_ui::peek::view(app, pane)
@@ -606,7 +618,8 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
         | Event::QuickFix { .. }
         | Event::PeekOpen { .. }
         | Event::PeekClose { .. }
-        | Event::DiagnosticLink(_) => {
+        | Event::DiagnosticLink(_)
+        | Event::OpenLink(_) => {
             return false;
         }
     }

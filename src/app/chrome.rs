@@ -153,9 +153,7 @@ pub fn workspace_home(
     )
 }
 
-pub fn status_binding(
-    state: &AppContext,
-) -> crate::ui::chrome::StatusBinding {
+pub fn status_binding(state: &AppContext) -> crate::ui::chrome::StatusBinding {
     use crate::ui::chrome::{FileStatus, StatusBinding, StatusCommand, StatusFrame};
     let reader = state.clone();
     let writer = state.clone();

@@ -182,6 +182,7 @@ pub(crate) fn render(
                 docs_top,
                 size,
                 ROW,
+                None,
             )),
         );
     }

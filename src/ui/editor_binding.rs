@@ -116,6 +116,8 @@ pub(crate) struct Metrics {
 }
 pub(crate) enum Event {
     DiagnosticLink(String),
+    /// A link in the hover documentation was clicked.
+    OpenLink(String),
     PeekOpen {
         revision: u64,
     },

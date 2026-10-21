@@ -6,6 +6,7 @@
 //! turns a layout into elements.
 use crate::features::markdown::{Block, Inline};
 use crate::ui::theme;
+use lgui::core::{CursorIcon, EventPolicy, UiEventContext};
 use lgui::prelude::{Element, UiRect, VisualStyle, group, panel, text};
 
 /// How a run of text looks.
@@ -372,8 +373,19 @@ pub fn measure(text: &str, style: Style, size: f32) -> f32 {
     }
 }
 
-/// Draws a layout with its top-left corner at `(left, top)`.
-pub fn render(layout: &Layout, left: f32, top: f32, size: f32, line_h: f32) -> Element {
+/// Called with a link's URL when it is clicked.
+pub type LinkHandler = std::sync::Arc<dyn Fn(String) + Send + Sync>;
+
+/// Draws a layout with its top-left corner at `(left, top)`. Links click
+/// through `on_link`; without one they are only coloured.
+pub fn render(
+    layout: &Layout,
+    left: f32,
+    top: f32,
+    size: f32,
+    line_h: f32,
+    on_link: Option<&LinkHandler>,
+) -> Element {
     let mut out = group(UiRect::new(
         left,
         top,
@@ -405,7 +417,27 @@ pub fn render(layout: &Layout, left: f32, top: f32, size: f32, line_h: f32) -> E
             left + run.x + run.width + 6.0,
             top + run.y + line_h,
         );
-        out = out.child(text(rect, run.text.clone(), text_style(run.style, size)));
+        let label = text(rect, run.text.clone(), text_style(run.style, size));
+        let (Some(url), Some(handler)) = (run.url.as_ref(), on_link) else {
+            out = out.child(label);
+            continue;
+        };
+        let (url, handler) = (url.clone(), handler.clone());
+        let hit = UiRect::new(rect.left, rect.top, rect.left + run.width, rect.bottom);
+        out = out.child(
+            panel(hit, VisualStyle::default())
+                .event_policy(EventPolicy {
+                    focus: false,
+                    ..EventPolicy::INTERACTIVE
+                })
+                .cursor(CursorIcon::Pointer)
+                .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
+                .on_click(move |cx: &mut UiEventContext| {
+                    cx.stop_propagation();
+                    handler(url.clone());
+                })
+                .child(label),
+        );
     }
     out
 }

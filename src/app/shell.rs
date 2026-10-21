@@ -1021,7 +1021,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             super::git_view::binding(&state, &git_store),
             git_store.clone().into(),
         ),
-        Some((editor_focus.clone(), terminal_focus.clone(), terminal_tabs.clone())),
+        Some((
+            editor_focus.clone(),
+            terminal_focus.clone(),
+            terminal_tabs.clone(),
+        )),
     ));
 
     for (&(pane, strip), &(_, body)) in strips.iter().zip(bodies.iter()) {

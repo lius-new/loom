@@ -1168,6 +1168,11 @@ fn info_card_actions(
             y += CARD_ROW;
         }
     }
+    let links: Option<crate::ui::markdown::LinkHandler> = binding.as_ref().map(|binding| {
+        let send = binding.clone();
+        std::sync::Arc::new(move |url: String| send.send(Event::OpenLink(url)))
+            as crate::ui::markdown::LinkHandler
+    });
     if let Some(fixes) = fixes
         && let Some(binding) = binding
     {
@@ -1205,7 +1210,12 @@ fn info_card_actions(
             y += separator;
         }
         content = content.child(crate::ui::markdown::render(
-            layout, body.left, y, size, CARD_ROW,
+            layout,
+            body.left,
+            y,
+            size,
+            CARD_ROW,
+            links.as_ref(),
         ));
     }
     Some((
