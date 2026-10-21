@@ -212,19 +212,19 @@ pub fn render(rect: UiRect, state: TitleBinding, git_controls: Element) -> Eleme
     let settings_r = UiRect::new(right - 148.0, rect.top, right - 116.0, rect.bottom);
     let settings_open = frame.settings_open;
 
-    // Panel toggles, left of Settings: Explorer, Source Control, Terminal.
+    // Panel toggles, left of Settings: Source Control (left dock), Explorer (right dock), Terminal.
     let toggles = [
         (
-            PanelToggle::Drawer,
-            "panel-left",
-            "Toggle Explorer",
-            frame.drawer_open,
-        ),
-        (
             PanelToggle::SourceControl,
-            "panel-right",
+            "panel-left",
             "Toggle Source Control",
             frame.source_control_open,
+        ),
+        (
+            PanelToggle::Drawer,
+            "panel-right",
+            "Toggle Explorer",
+            frame.drawer_open,
         ),
         (
             PanelToggle::Terminal,
