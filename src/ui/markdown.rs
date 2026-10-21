@@ -368,7 +368,7 @@ pub fn measure(text: &str, style: Style, size: f32) -> f32 {
             2 => 1.25,
             _ => 1.1,
         };
-        crate::ui::tabs::measure(text, size * scale, weight)
+        crate::ui::tabs::measure_sans(text, size * scale, weight)
     }
 }
 
