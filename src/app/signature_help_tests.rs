@@ -204,8 +204,10 @@ fn overload_buttons_dispatch_without_moving_the_caret_or_stealing_focus() {
         c.h.send(input);
     }
     c.h.set_cursor(cursor);
-    c.h.act(Action::ShowSignatureHelp);
-    c.h.until("signature card", |h| position(h) == Some((1, 2)));
+    // The previous card remains visible while the new request is pending.
+    // Wait for the response revision before using its button callbacks.
+    c.refresh();
+    assert_eq!(position(&c.h), Some((1, 2)));
     let focused = c.h.session.runtime().interaction_state().focused.clone();
     assert!(focused.is_some(), "the editor received framework focus");
     let before = c.requests().len();

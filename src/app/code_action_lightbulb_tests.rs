@@ -37,6 +37,23 @@ impl Case {
                 .unwrap()[1] = "object".into();
         });
         h.until_ready();
+        if extra.contains(&"--diagnostics") && !extra.contains(&"--diag-defer-until-save") {
+            // Pointer hover only starts a diagnostic card for known diagnostics.
+            // Ready can be published before the initial findings arrive.
+            h.until("initial diagnostics", |h| {
+                let app = h.state.get();
+                let id = app.workspace.active().unwrap();
+                let doc = &app.workspace.documents[&id];
+                h.runtime
+                    .language_services()
+                    .unwrap()
+                    .results(&doc.meta.path, &doc.stamp(id))
+                    .diagnostics
+                    .is_some()
+            });
+            // Findings may have arrived after the last render in until().
+            h.render();
+        }
         Self {
             h,
             files: Files(root),
@@ -51,7 +68,13 @@ impl Case {
             .collect()
     }
     fn wait_bulb(&mut self) -> u64 {
-        self.h.until("code action bulb", |h| revision(h).is_some());
+        self.h.until("rendered code action bulb", |h| {
+            revision(h).is_some()
+                && h.session.tree().nodes().iter().any(|node| {
+                    node.semantics.as_ref().and_then(|s| s.name.as_deref())
+                        == Some("Code actions (Ctrl+.)")
+                })
+        });
         revision(&self.h).unwrap()
     }
 }

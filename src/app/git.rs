@@ -2365,19 +2365,22 @@ mod tests {
                     split: Some(Direction::Right),
                 }
             ));
+            if scenario == "closed" {
+                state.update(|app| app.workspace.close_pane(target));
+            } else if scenario == "navigated" {
+                state.update(|app| {
+                    app.workspace
+                        .open_path("another.txt".into(), "another".into());
+                });
+            }
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 let completion = tasks.lock().unwrap().pop();
                 if let Some(completion) = completion {
-                    if scenario == "closed" {
-                        state.update(|app| app.workspace.close_pane(target));
-                    } else if scenario == "navigated" {
-                        state.update(|app| {
-                            app.workspace
-                                .open_path("another.txt".into(), "another".into());
-                        });
-                    }
                     completion();
+                }
+                // Language timers can post before the diff worker's completion.
+                if state.get().git.model.diff_loading().is_none() {
                     break;
                 }
                 assert!(Instant::now() < deadline, "diff worker did not respond");

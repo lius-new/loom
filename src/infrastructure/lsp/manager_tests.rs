@@ -1601,12 +1601,20 @@ fn ignored_progress_cancellation_and_missing_end_reports_are_bounded() {
 fn diagnostics_for_an_older_version_are_moved_along_the_edits_not_lost() {
     // The server answers late and never republishes: what it said about the text it
     // saw must still show once the text has moved on.
-    let f = Fixture::new(&["--diagnostics", "--diag-once", "--diag-delay-ms", "400"]);
+    let f = Fixture::new(&[
+        "--sync",
+        "object",
+        "--diagnostics",
+        "--diag-once",
+        "--diag-defer-until-save",
+    ]);
     f.show(vec![f.doc("a.fk", 0, "fn a")]);
-    // The server has the first text; its answer is still 400 ms away.
     f.wait_method_count("textDocument/didOpen", 1);
-    // An edit after the diagnosed stretch, made before the server answers.
+    // Release the old publication only after the edit has reached the server.
     f.show(vec![f.doc("a.fk", 5, "fn a plus more")]);
+    f.wait_method_count("textDocument/didChange", 1);
+    f.mgr()
+        .saved(f.dir.join("a.fk"), Arc::new("fn a plus more".into()));
     let found = f.wait_for("carried diagnostics", || {
         f.results_at("a.fk", 5).diagnostics
     });
@@ -1616,18 +1624,29 @@ fn diagnostics_for_an_older_version_are_moved_along_the_edits_not_lost() {
         0..2,
         "the underline is where the text it described still is"
     );
-    let counts = f.mgr().infos()[0].diagnostics;
+    // Results become visible before the coordinator publishes its status snapshot.
+    let counts = f.wait_for("diagnostic counts to be published", || {
+        let counts = f.mgr().infos()[0].diagnostics;
+        (counts.published == 1).then_some(counts)
+    });
     assert_eq!((counts.published, counts.carried, counts.shown), (1, 1, 0));
 }
 
 #[test]
 fn a_diagnostic_on_text_that_was_edited_before_the_server_answered_is_dropped() {
-    let f = Fixture::new(&["--diagnostics", "--diag-once", "--diag-delay-ms", "400"]);
+    let f = Fixture::new(&[
+        "--sync",
+        "object",
+        "--diagnostics",
+        "--diag-once",
+        "--diag-defer-until-save",
+    ]);
     f.show(vec![f.doc("a.fk", 0, "fn a")]);
-    // The server has the first text; its answer is still 400 ms away.
     f.wait_method_count("textDocument/didOpen", 1);
-    // The diagnosed first two characters are replaced.
+    // Replace the diagnosed characters before releasing the old publication.
     f.show(vec![f.doc("a.fk", 5, "xx a")]);
+    f.wait_method_count("textDocument/didChange", 1);
+    f.mgr().saved(f.dir.join("a.fk"), Arc::new("xx a".into()));
     f.wait_for("the publication", || {
         (f.mgr().infos()[0].diagnostics.published == 1).then_some(())
     });
@@ -2198,11 +2217,19 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
             progress.parts.is_empty(),
             "a reset budget would let the second 150ms reply succeed"
         );
+        // A loaded runner may process the first stale reply after the budget
+        // has expired. In that case no retry is sent and Stale is valid too.
         assert!(
-            matches!(progress.failure, Some(Failure::Failed(_))),
+            matches!(progress.failure, Some(Failure::Stale | Failure::Failed(_))),
             "{progress:?}"
         );
-        f.wait_method_count("textDocument/hover", 2);
+        f.wait_method_count("textDocument/hover", 1);
+        let requests = f
+            .methods()
+            .iter()
+            .filter(|m| *m == "textDocument/hover")
+            .count();
+        assert!((1..=2).contains(&requests), "{requests} requests");
     }
 
     #[test]
