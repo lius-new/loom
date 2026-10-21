@@ -152,6 +152,15 @@ pub fn execute_command(
         }
         app.editor.menu = None;
         app.editor.drag = None;
+        // Text selected in a hover card is what the person means to copy.
+        if command == Command::Copy
+            && let Some(text) = app.editor.language.hover.selection.clone()
+        {
+            if let Err(error) = clipboard.write_text(&text) {
+                app.show_error(format!("Clipboard: {error}"));
+            }
+            return;
+        }
         // Copy and Cut of a Vim visual selection go through Vim's registers.
         if matches!(command, Command::Copy | Command::Cut)
             && vim_input::visual_clipboard(app, command == Command::Cut, rect, clipboard.as_ref())

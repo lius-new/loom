@@ -1822,6 +1822,75 @@ last line
 }
 
 #[test]
+fn dragging_across_the_hover_card_selects_its_text_and_copy_takes_it() {
+    use lgui::core::{InputEvent, Point, PointerButton, PointerData};
+    let mut h = LanguageHarness::new("fn alpha() {}\n", &["--features", "hover", "--diagnostics"]);
+    h.until_ready();
+    let (x, y) = h.point_at(0, 1);
+    h.move_to(x, y);
+    h.until("the hover card", |h| {
+        h.has_text("0:1") && h.has_text("fake")
+    });
+    let rect_of = |h: &LanguageHarness, wanted: &str| {
+        h.session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| node.text.as_deref() == Some(wanted))
+            .map(|node| node.layout_rect)
+            .expect("the card text is drawn")
+    };
+    let (first, last) = (rect_of(&h, "0:1"), rect_of(&h, "fake"));
+    let middle = |r: UiRect| (r.top + r.bottom) / 2.0;
+    // Onto the card first, then press at the start of the first word and
+    // drag to the end of the last.
+    h.move_to(first.left + 1.0, middle(first));
+    let at = |x, y| PointerData::mouse(Point::new(x, y));
+    h.send(InputEvent::PointerDown {
+        pointer: at(first.left + 1.0, middle(first)),
+        button: PointerButton::Left,
+    });
+    h.send(InputEvent::PointerMove(at(last.right - 1.0, middle(last))));
+    // Dragging out of the card keeps it, so the selection can be finished.
+    h.send(InputEvent::PointerMove(at(790.0, 390.0)));
+    assert!(h.has_text("0:1"), "the card stays while a drag from it is held");
+    h.send(InputEvent::PointerMove(at(last.right - 1.0, middle(last))));
+    h.send(InputEvent::PointerUp {
+        pointer: at(last.right - 1.0, middle(last)),
+        button: PointerButton::Left,
+    });
+    let selected = h
+        .state
+        .get()
+        .editor
+        .language
+        .hover
+        .selection
+        .clone()
+        .expect("the card text is selected");
+    assert!(
+        selected.starts_with("0:1") && selected.contains("fake"),
+        "selected {selected:?}"
+    );
+    assert!(h.has_text("0:1"), "selecting keeps the card");
+
+    // Copy takes the selection, not the editor's.
+    let clipboard = std::sync::Arc::new(TestClipboard::default());
+    h.state.update(|app| {
+        app.editor.language.hover.selection = Some(selected.clone());
+    });
+    crate::app::editor::execute_command(
+        &h.state,
+        loom_editor_core::commands::Command::Copy,
+        h.rect,
+        clipboard.clone(),
+    );
+    assert_eq!(
+        clipboard.text.lock().unwrap().as_deref(),
+        Some(selected.as_str())
+    );
+}
+#[test]
 fn a_server_without_hover_leaves_the_pointer_alone() {
     let mut h = LanguageHarness::new("fn alpha() {}\n", &["--features", "definition"]);
     h.until_ready();

@@ -118,6 +118,10 @@ pub(crate) enum Event {
     DiagnosticLink(String),
     /// A link in the hover documentation was clicked.
     OpenLink(String),
+    /// The text selected in the hover documentation, or `None` once cleared.
+    HoverSelect(Option<String>),
+    /// A press on the hover card began or ended.
+    HoverPress(bool),
     PeekOpen {
         revision: u64,
     },

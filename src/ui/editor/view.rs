@@ -668,6 +668,19 @@ pub(crate) fn render(
                 st_diagnostic_hover.send(Event::DiagnosticHover(hovered));
             }
         });
+        // A drag that began on the card keeps it, wherever the pointer goes.
+        let st_press = state.clone();
+        root = root.on_event_capture(UiEventKind::PointerDown, move |_cx, payload| {
+            if let UiEventPayload::PointerDown { pointer, .. } = payload
+                && card_rect.is_some_and(|rect| rect.contains(pointer.point))
+            {
+                st_press.send(Event::HoverPress(true));
+            }
+        });
+        let st_release = state.clone();
+        root = root.on_event_capture(UiEventKind::PointerUp, move |_cx, _payload| {
+            st_release.send(Event::HoverPress(false));
+        });
         if s.peek_visible {
             if let Some(overlay) = state.overlay(PeekPlacement {
                 rect: UiRect::new(rect.left, code_top, rect.right, rect.bottom),
@@ -1168,10 +1181,16 @@ fn info_card_actions(
             y += CARD_ROW;
         }
     }
-    let links: Option<crate::ui::markdown::LinkHandler> = binding.as_ref().map(|binding| {
-        let send = binding.clone();
-        std::sync::Arc::new(move |url: String| send.send(Event::OpenLink(url)))
-            as crate::ui::markdown::LinkHandler
+    let interaction = binding.as_ref().map(|binding| {
+        let (links, selections) = (binding.clone(), binding.clone());
+        crate::ui::markdown::Interaction {
+            on_link: Some(std::sync::Arc::new(move |url: String| {
+                links.send(Event::OpenLink(url))
+            })),
+            on_select: Some(std::sync::Arc::new(move |_, text| {
+                selections.send(Event::HoverSelect(text))
+            })),
+        }
     });
     if let Some(fixes) = fixes
         && let Some(binding) = binding
@@ -1215,7 +1234,7 @@ fn info_card_actions(
             y,
             size,
             CARD_ROW,
-            links.as_ref(),
+            interaction.as_ref(),
         ));
     }
     Some((

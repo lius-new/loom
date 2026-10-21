@@ -43,6 +43,10 @@ pub struct Hover {
     pending: Option<Pending>,
     timer: Option<Arc<Timer>>,
     pub card: Option<Card>,
+    /// The text the person selected in the card, for Copy.
+    pub selection: Option<String>,
+    /// A press that began on the card is still held.
+    pub pressing: bool,
     view: Option<(PaneId, DocumentStamp, usize, (u32, u32))>,
 }
 

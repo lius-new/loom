@@ -298,6 +298,10 @@ pub(crate) fn binding(
                 metrics,
             } = event
             {
+                // Selecting in the card: moving off it must not take it away.
+                if dispatcher.get().editor.language.hover.pressing {
+                    return;
+                }
                 let mut armed = None;
                 dispatcher.try_update(|app| {
                     let offset = hover_offset(app, pane, rect, code_left, metrics, point);
@@ -363,6 +367,24 @@ pub(crate) fn binding(
                 }
                 return;
             }
+            if let Event::HoverPress(pressing) = event {
+                dispatcher.try_update(|app| {
+                    let hover = &mut app.editor.language.hover;
+                    let changed = hover.pressing != pressing;
+                    hover.pressing = pressing;
+                    changed
+                });
+                return;
+            }
+            if let Event::HoverSelect(text) = event {
+                dispatcher.try_update(|app| {
+                    let hover = &mut app.editor.language.hover;
+                    let changed = hover.selection != text;
+                    hover.selection = text;
+                    changed
+                });
+                return;
+            }
             if let Event::OpenLink(url) = event {
                 // Documentation comes from the language server: only web pages
                 // open, and only because the person clicked.
@@ -392,6 +414,9 @@ pub(crate) fn binding(
                 return;
             }
             if matches!(event, Event::HoverLeave) {
+                if dispatcher.get().editor.language.hover.pressing {
+                    return;
+                }
                 dispatcher.try_update(super::language_ui::hover::clear);
                 return;
             }
@@ -619,7 +644,9 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
         | Event::PeekOpen { .. }
         | Event::PeekClose { .. }
         | Event::DiagnosticLink(_)
-        | Event::OpenLink(_) => {
+        | Event::OpenLink(_)
+        | Event::HoverSelect(_)
+        | Event::HoverPress(_) => {
             return false;
         }
     }

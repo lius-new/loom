@@ -7,7 +7,10 @@
 use crate::features::markdown::{Block, Inline};
 use crate::ui::theme;
 use lgui::core::{CursorIcon, EventPolicy, UiEventContext};
-use lgui::prelude::{Element, UiRect, VisualStyle, group, panel, text};
+use lgui::prelude::{
+    Element, SelectHandler, SelectableSegment, UiRect, VisualStyle, group, panel, selectable_text,
+    text,
+};
 
 /// How a run of text looks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -376,22 +379,32 @@ pub fn measure(text: &str, style: Style, size: f32) -> f32 {
 /// Called with a link's URL when it is clicked.
 pub type LinkHandler = std::sync::Arc<dyn Fn(String) + Send + Sync>;
 
-/// Draws a layout with its top-left corner at `(left, top)`. Links click
-/// through `on_link`; without one they are only coloured.
+/// What the pointer can do with the drawn text. Without it the text is only
+/// drawn.
+#[derive(Clone, Default)]
+pub struct Interaction {
+    /// Links click through here; otherwise they are only coloured.
+    pub on_link: Option<LinkHandler>,
+    /// The text becomes selectable; told the selection, or `None` once cleared.
+    pub on_select: Option<SelectHandler>,
+}
+
+/// Draws a layout with its top-left corner at `(left, top)`.
 pub fn render(
     layout: &Layout,
     left: f32,
     top: f32,
     size: f32,
     line_h: f32,
-    on_link: Option<&LinkHandler>,
+    interaction: Option<&Interaction>,
 ) -> Element {
-    let mut out = group(UiRect::new(
+    let bounds = UiRect::new(
         left,
         top,
         left + layout.width.max(1.0),
         top + layout.height.max(1.0),
-    ));
+    );
+    let mut out = group(bounds);
     for b in &layout.code_boxes {
         out = out.child(panel(
             UiRect::new(left + b.left, top + b.top, left + b.right, top + b.bottom),
@@ -410,34 +423,60 @@ pub fn render(
             VisualStyle::filled(theme::c().border),
         ));
     }
-    for run in &layout.runs {
-        let rect = UiRect::new(
+    let run_rect = |run: &Run| {
+        UiRect::new(
             left + run.x,
             top + run.y,
             left + run.x + run.width + 6.0,
             top + run.y + line_h,
+        )
+    };
+    let on_link = interaction.and_then(|i| i.on_link.as_ref());
+    let selectable = interaction.and_then(|i| i.on_select.clone());
+    // One surface draws every run and selects across them; links sit above it.
+    if let Some(on_select) = &selectable {
+        let segments = layout
+            .runs
+            .iter()
+            .map(|run| {
+                SelectableSegment::new(run_rect(run), run.text.clone(), text_style(run.style, size))
+            })
+            .collect();
+        let on_select = on_select.clone();
+        out = out.child(
+            selectable_text(bounds, segments)
+                .selection_color(theme::c().accent)
+                .on_select(move |cx, text| on_select(cx, text)),
         );
+    }
+    for run in &layout.runs {
+        let rect = run_rect(run);
         let label = text(rect, run.text.clone(), text_style(run.style, size));
         let (Some(url), Some(handler)) = (run.url.as_ref(), on_link) else {
-            out = out.child(label);
+            if selectable.is_none() {
+                out = out.child(label);
+            }
             continue;
         };
         let (url, handler) = (url.clone(), handler.clone());
         let hit = UiRect::new(rect.left, rect.top, rect.left + run.width, rect.bottom);
-        out = out.child(
-            panel(hit, VisualStyle::default())
-                .event_policy(EventPolicy {
-                    focus: false,
-                    ..EventPolicy::INTERACTIVE
-                })
-                .cursor(CursorIcon::Pointer)
-                .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
-                .on_click(move |cx: &mut UiEventContext| {
-                    cx.stop_propagation();
-                    handler(url.clone());
-                })
-                .child(label),
-        );
+        let link = panel(hit, VisualStyle::default())
+            .event_policy(EventPolicy {
+                focus: false,
+                ..EventPolicy::INTERACTIVE
+            })
+            .cursor(CursorIcon::Pointer)
+            .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
+            .on_click(move |cx: &mut UiEventContext| {
+                cx.stop_propagation();
+                handler(url.clone());
+            });
+        // The surface already draws the text when selectable.
+        out = out.child(if selectable.is_some() {
+            link
+        } else {
+            link.child(label)
+        });
     }
     out
 }
