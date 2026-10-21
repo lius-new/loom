@@ -1,10 +1,10 @@
-//! A dismissible notification above the status bar's language-server item.
+//! A dismissible notification in the window's bottom-right corner.
 use super::{
-    tabs::{ellipsize, measure},
+    tabs::{close_glyph, ellipsize, measure},
     theme,
 };
 use lgui::{
-    core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiEventContext},
+    core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiEventContext, UiId},
     prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, text},
 };
 use std::sync::Arc;
@@ -23,19 +23,17 @@ pub enum Choice {
     Never,
 }
 
-/// No full-window hit surface or focus request: editing outside the card continues.
+/// Sits in the window's bottom-right corner above the status bar. No full-window hit
+/// surface or focus request: editing outside the card continues.
 pub fn render(
     viewport: UiRect,
-    anchor: Option<UiRect>,
     frame: &Frame,
     commands: Arc<dyn Fn(Choice, Vec<String>) + Send + Sync>,
 ) -> Element {
     let margin = (viewport.width() / 2.0).clamp(0.0, 8.0);
     let width = (viewport.width() - 2.0 * margin).clamp(0.0, 420.0);
-    let right = anchor
-        .map_or(viewport.right - 8.0, |r| r.right)
-        .clamp(viewport.left + margin + width, viewport.right - margin);
-    let bottom = anchor.map_or(viewport.bottom - theme::STATUS_H, |r| r.top) - 8.0;
+    let right = viewport.right - margin;
+    let bottom = viewport.bottom - theme::STATUS_H - 8.0;
     let narrow = width < 340.0;
     let card = UiRect::new(
         right - width,
@@ -95,10 +93,10 @@ pub fn render(
                 dismiss(Choice::Later, servers.clone());
                 cx.stop_propagation();
             })
-            .child(text(
+            .child(close_glyph(
+                UiId::new("language-install.close"),
                 close,
-                "×",
-                theme::sans(theme::c().text_muted, theme::UI_SIZE).centered(),
+                theme::c().text_muted,
             )),
     );
     let mut right = card.right - 12.0;

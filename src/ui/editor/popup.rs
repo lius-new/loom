@@ -141,10 +141,10 @@ pub(crate) fn render(
                     cx.stop_propagation();
                     close(Event::Dismiss);
                 })
-                .child(text(
+                .child(crate::ui::tabs::close_glyph(
+                    lgui::core::UiId::new("language-popup.close"),
                     r,
-                    "×",
-                    theme::sans(theme::c().text_soft, theme::UI_SIZE),
+                    theme::c().text_soft,
                 )),
         );
     }

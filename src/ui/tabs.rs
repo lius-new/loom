@@ -162,6 +162,21 @@ pub(crate) fn icon(id: UiId, key: &'static str, rect: UiRect, color: Color) -> E
     precompiled(UiElement::icon(id, rect, key).icon_style(IconStyle::new(color)))
 }
 
+/// The vector "close" icon, centred in `bounds`.
+pub(crate) fn close_glyph(id: UiId, bounds: UiRect, color: Color) -> Element {
+    let (cx, cy) = (
+        (bounds.left + bounds.right) / 2.0,
+        (bounds.top + bounds.bottom) / 2.0,
+    );
+    let half = CLOSE_ICON / 2.0;
+    icon(
+        id,
+        "close",
+        UiRect::new(cx - half, cy - half, cx + half, cy + half),
+        color,
+    )
+}
+
 /// The collapsed-drawer toggle sits at the right end of the top-right pane's strip.
 pub(crate) fn shows_drawer_toggle(app: &Frame<'_>, pane: PaneId) -> bool {
     !app.drawer_visible && app.workspace.layout().top_right() == pane

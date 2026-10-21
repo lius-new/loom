@@ -303,6 +303,10 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
         level,
         cancel: None,
     };
+    let offers = services
+        .as_ref()
+        .map(|s| s.install_offers())
+        .unwrap_or_default();
     let mut sections: Vec<Section> = services
         .map(|s| s.infos())
         .unwrap_or_default()
@@ -371,31 +375,38 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                     Level::Quiet,
                 ));
             }
-            let counts = info.diagnostics;
-            for registration in &info.registrations {
-                lines.push(line(format!("registered: {registration}"), Level::Quiet));
+            // Nothing runs until the pack is installed, so there is nothing to count.
+            if !matches!(info.status, Status::NotInstalled) {
+                let counts = info.diagnostics;
+                for registration in &info.registrations {
+                    lines.push(line(format!("registered: {registration}"), Level::Quiet));
+                }
+                lines.push(line(
+                    format!(
+                        "diagnostics: {} published, {} shown, {} moved, {} outdated, {} other file",
+                        counts.published,
+                        counts.shown,
+                        counts.carried,
+                        counts.outdated,
+                        counts.unknown
+                    ),
+                    if counts.published > 0 && counts.shown == 0 {
+                        Level::Warning
+                    } else {
+                        Level::Quiet
+                    },
+                ));
+                lines.push(line(
+                    format!(
+                        "{} documents{}",
+                        info.documents,
+                        info.process_id
+                            .map(|p| format!(", pid {p}"))
+                            .unwrap_or_default()
+                    ),
+                    Level::Quiet,
+                ));
             }
-            lines.push(line(
-                format!(
-                    "diagnostics: {} published, {} shown, {} moved, {} outdated, {} other file",
-                    counts.published, counts.shown, counts.carried, counts.outdated, counts.unknown
-                ),
-                if counts.published > 0 && counts.shown == 0 {
-                    Level::Warning
-                } else {
-                    Level::Quiet
-                },
-            ));
-            lines.push(line(
-                format!(
-                    "{} documents{}",
-                    info.documents,
-                    info.process_id
-                        .map(|p| format!(", pid {p}"))
-                        .unwrap_or_default()
-                ),
-                Level::Quiet,
-            ));
             let broken = matches!(info.status, Status::Restarting { .. } | Status::Failed(_));
             let recent = info.log.iter().rev().take(6).rev();
             lines.extend(recent.map(|l| line(l.clone(), Level::Quiet)));
@@ -403,7 +414,16 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 let tail = info.stderr.iter().rev().take(3).rev();
                 lines.extend(tail.map(|l| line(l.clone(), Level::Warning)));
             }
+            // The notification owns the decision while it is showing.
+            let offered = offers.iter().any(|offer| offer.server == info.server_id);
+            if offered && matches!(info.status, Status::NotInstalled) {
+                lines.push(line(
+                    "Waiting for your choice in the notification.".to_owned(),
+                    Level::Quiet,
+                ));
+            }
             let install = match info.status {
+                Status::NotInstalled if offered => None,
                 Status::NotInstalled => Some("Install"),
                 Status::InstallFailed(_) => Some("Retry"),
                 Status::InstallCancelled => Some("Resume"),

@@ -3015,6 +3015,7 @@ fn the_language_panel_cancel_button_ends_only_the_selected_server_task() {
         let seen = seen.clone();
         crate::ui::language_panel::render(
             rect,
+            None,
             &crate::app::chrome::language_panel_frame(&state),
             Arc::new(move |event| {
                 if let crate::ui::language_panel::Event::CancelTask(target) = event {

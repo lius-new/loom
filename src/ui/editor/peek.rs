@@ -60,11 +60,20 @@ pub(crate) fn render(view: &View, area: UiRect, binding: Binding) -> Element {
                         });
                     }
                 })
-                .child(text(
-                    button,
-                    label,
-                    theme::sans(theme::c().accent, theme::SMALL),
-                )),
+                .child(if open {
+                    text(
+                        button,
+                        label,
+                        theme::sans(theme::c().accent, theme::SMALL),
+                    )
+                    .into()
+                } else {
+                    crate::ui::tabs::close_glyph(
+                        lgui::core::UiId::new("language-definition-peek.close"),
+                        button,
+                        theme::c().accent,
+                    )
+                }),
         );
     }
     let code = UiRect::new(

@@ -95,9 +95,19 @@ fn height(frame: &Frame) -> f32 {
     PAD + body + FOOTER_H
 }
 
-pub fn render(viewport: UiRect, frame: &Frame, commands: Commands) -> Element {
+/// The card opens above `anchor`, the status-bar item of the language server which
+/// triggered it, with its right edge aligned to that item.
+pub fn render(
+    viewport: UiRect,
+    anchor: Option<UiRect>,
+    frame: &Frame,
+    commands: Commands,
+) -> Element {
     let h = height(frame).min(viewport.bottom - viewport.top - theme::STATUS_H - 2.0 * MARGIN);
-    let right = viewport.right - MARGIN;
+    let right = anchor
+        .map_or(viewport.right - MARGIN, |a| a.right)
+        .min(viewport.right - MARGIN)
+        .max(viewport.left + MARGIN + WIDTH);
     let bottom = viewport.bottom - theme::STATUS_H - MARGIN;
     let card = UiRect::new(right - WIDTH, bottom - h, right, bottom);
     let policy = EventPolicy {

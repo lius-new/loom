@@ -1191,16 +1191,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     // ---- Overlays ------------------------------------------------------
     if let Some(frame) = super::language_install::frame(&state) {
         let install_state = state.clone();
-        let status = super::chrome::status_binding(
-            &state,
-            editor_focus.clone(),
-            terminal_focus.clone(),
-            terminal_tabs.clone(),
-        )
-        .frame();
         root = root.child(crate::ui::language_install::render(
             vp,
-            crate::ui::statusbar::language_anchor(statusbar_rect, &status),
             &frame,
             std::sync::Arc::new(move |choice, servers| {
                 super::language_install::respond(&install_state, choice, servers)
@@ -1209,8 +1201,16 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
     if s.chrome.language_panel {
         let panel_state = state.clone();
+        let status = super::chrome::status_binding(
+            &state,
+            editor_focus.clone(),
+            terminal_focus.clone(),
+            terminal_tabs.clone(),
+        )
+        .frame();
         root = root.child(crate::ui::language_panel::render(
             vp,
+            crate::ui::statusbar::language_anchor(statusbar_rect, &status),
             &super::chrome::language_panel_frame(&state),
             std::sync::Arc::new(move |event| match event {
                 crate::ui::language_panel::Event::Close => {

@@ -305,6 +305,7 @@ language_id="rust"
             let runtime = runtime.clone();
             crate::ui::language_panel::render(
                 viewport,
+                None,
                 &super::super::chrome::language_panel_frame(&state),
                 Arc::new(move |event| {
                     let services = runtime.language_services().unwrap();
@@ -445,6 +446,11 @@ language_id="rust"
             Arc,
             atomic::{AtomicUsize, Ordering},
         };
+        // The dismiss control is a vector icon button, so it is found by its name.
+        let is_close = |node: &lgui::core::UiNode| {
+            node.semantics.as_ref().and_then(|s| s.name.as_deref())
+                == Some("Dismiss language server installation")
+        };
         for (label, choice) in [
             ("×", Choice::Later),
             ("Not now", Choice::Later),
@@ -470,7 +476,6 @@ language_id="rust"
                         level: crate::ui::chrome::NoteLevel::Quiet,
                     }],
                 };
-                let anchor = crate::ui::statusbar::language_anchor(status_rect, &status).unwrap();
                 let view: AppView = Arc::new(move |_| {
                     let clicks = clicks.clone();
                     let state = state.clone();
@@ -488,7 +493,6 @@ language_id="rust"
                     match frame(&state) {
                         Some(frame) => background.child(crate::ui::language_install::render(
                             viewport,
-                            Some(anchor),
                             &frame,
                             Arc::new(move |choice, servers| respond(&state, choice, servers)),
                         )),
@@ -517,14 +521,14 @@ language_id="rust"
                     .tree()
                     .nodes()
                     .iter()
-                    .find(|node| node.text.as_deref() == Some("×"))
+                    .find(|node| is_close(node))
                     .unwrap()
                     .paint_bounds;
                 assert!(close.bottom < status_rect.top);
                 if width > 420.0 {
                     assert!(
-                        (close.right - (anchor.right - 6.0)).abs() < 1.0,
-                        "notification aligns with LSP status: {close:?} {anchor:?}"
+                        (close.right - (viewport.right - 8.0 - 6.0)).abs() < 1.0,
+                        "notification sits in the window's right corner: {close:?}"
                     );
                 }
                 let outside_point = PointerData::mouse(Point::new(width / 2.0, 32.0));
@@ -556,7 +560,13 @@ language_id="rust"
                     .tree()
                     .nodes()
                     .iter()
-                    .find(|node| node.text.as_deref() == Some(label))
+                    .find(|node| {
+                        if label == "×" {
+                            is_close(node)
+                        } else {
+                            node.text.as_deref() == Some(label)
+                        }
+                    })
                     .unwrap()
                     .paint_bounds;
                 assert!(
