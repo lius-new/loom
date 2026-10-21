@@ -60,7 +60,7 @@ impl Session {
     fn selected_entry(&self) -> Option<&Entry> {
         self.shown
             .get(self.selected)
-            .map(|shown| &self.data.entries[shown.entry])
+            .and_then(|shown| self.data.entries.get(shown.entry))
     }
 }
 
@@ -288,6 +288,7 @@ pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Opti
         .is_some_and(|s| s.document == t.document && s.data.word_start == start);
     if same {
         if let Some(session) = app.editor.language.completion.as_mut() {
+            session.resolving = None;
             session.handle = Some(handle);
             session.requested = t.text.clone();
             session.data.cursor = t.cursor;
@@ -375,6 +376,56 @@ fn keep_visible(session: &mut Session) {
     }
 }
 
+/// Replace candidates and their display indices together. Old indices must
+/// never be used to read a shorter or reordered response.
+fn replace_candidates(session: &mut Session, mut data: Completion, typed: &str) {
+    let selected = session
+        .selected_entry()
+        .map(|entry| (entry.item.label.clone(), entry.item.kind));
+    let resolved: std::collections::HashMap<_, _> = session
+        .data
+        .entries
+        .iter()
+        .filter(|entry| entry.resolved)
+        .map(|entry| {
+            (
+                (entry.instance, entry.item.label.clone(), entry.item.kind),
+                &entry.item,
+            )
+        })
+        .collect();
+    let resolving = session.resolving.take().and_then(|(index, handle)| {
+        let old = session.data.entries.get(index)?;
+        let index = data
+            .entries
+            .iter()
+            .position(|entry| entry.instance == old.instance && entry.item.raw == old.item.raw)?;
+        Some((index, handle))
+    });
+    for entry in &mut data.entries {
+        if let Some(item) =
+            resolved.get(&(entry.instance, entry.item.label.clone(), entry.item.kind))
+            && item.raw == entry.item.raw
+        {
+            entry.item = (*item).clone();
+            entry.resolved = true;
+        }
+    }
+    session.shown.clear();
+    session.data = data;
+    session.resolving = resolving;
+    refilter(session, typed);
+    if let Some((label, kind)) = selected
+        && let Some(at) = session.shown.iter().position(|shown| {
+            let item = &session.data.entries[shown.entry].item;
+            item.label == label && item.kind == kind
+        })
+    {
+        session.selected = at;
+        keep_visible(session);
+    }
+}
+
 /// Folds in what the servers answered so far.
 pub fn tick(app: &mut AppState) -> bool {
     let text = app_text(app);
@@ -398,38 +449,12 @@ pub fn tick(app: &mut AppState) -> bool {
         if !sources.is_empty() || progress.finished {
             let word_start = session.data.word_start;
             let cursor = session.data.cursor;
-            let selected = session
-                .selected_entry()
-                .map(|e| (e.item.label.clone(), e.item.kind));
             let merged = Completion::merge(word_start, cursor, sources);
-            let resolved: std::collections::HashMap<_, _> = session
-                .data
-                .entries
-                .iter()
-                .filter(|e| e.resolved)
-                .map(|e| ((e.item.label.clone(), e.item.kind), e.item.clone()))
-                .collect();
-            session.data = merged;
-            for entry in &mut session.data.entries {
-                if let Some(item) = resolved.get(&(entry.item.label.clone(), entry.item.kind)) {
-                    entry.item = item.clone();
-                    entry.resolved = true;
-                }
-            }
             if progress.finished {
                 session.handle = None;
             }
             let typed = typed_prefix(text, session);
-            refilter(session, &typed);
-            if let Some((label, kind)) = selected
-                && let Some(at) = session.shown.iter().position(|s| {
-                    let item = &session.data.entries[s.entry].item;
-                    item.label == label && item.kind == kind
-                })
-            {
-                session.selected = at;
-                keep_visible(session);
-            }
+            replace_candidates(session, merged, &typed);
             if session.shown.is_empty() && session.handle.is_none() && !session.data.incomplete {
                 app.editor.language.completion = None;
             }
@@ -467,9 +492,11 @@ fn tick_resolve(app: &mut AppState) -> bool {
     }
     session.resolving = None;
     if let Some(part) = progress.parts.first()
-        && let Some(item) = reply::completion_item(&part.value, part.encoding)
+        && let Some(mut item) = reply::completion_item(&part.value, part.encoding)
         && let Some(entry) = session.data.entries.get_mut(index)
     {
+        // Keep the unresolved source identity for matching later snapshots.
+        item.raw = entry.item.raw.clone();
         entry.item = item;
         entry.resolved = true;
     }
@@ -511,7 +538,9 @@ pub fn resolve_selected(ctx: &AppContext, app: &mut AppState) {
         return;
     };
     let index = shown.entry;
-    let entry = &session.data.entries[index];
+    let Some(entry) = session.data.entries.get(index) else {
+        return;
+    };
     if entry.resolved || entry.item.documentation.is_some() {
         return;
     }
@@ -707,6 +736,95 @@ pub fn close(app: &mut AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn word_session() -> Session {
+        let mut app = AppState::new();
+        app.workspace.open_path(
+            std::env::temp_dir().join("completion-refresh.rs"),
+            "\nalpha0 alpha1 alpha2 alpha3 alpha4 alpha5 alpha6".into(),
+        );
+        app.workspace.active_editor_mut().unwrap().set_cursor(0);
+        words(&mut app);
+        app.editor.language.completion.take().unwrap()
+    }
+
+    fn candidates(items: serde_json::Value, instance: u64) -> Completion {
+        Completion::merge(
+            0,
+            0,
+            vec![(
+                instance,
+                0,
+                reply::completion(
+                    &items,
+                    crate::features::language_service::capabilities::PositionEncoding::Utf16,
+                ),
+            )],
+        )
+    }
+
+    #[test]
+    fn replacing_candidates_rebuilds_old_indices_for_every_shorter_list() {
+        for count in 0..=7 {
+            let mut session = word_session();
+            session.set_selected(6);
+            let items = (0..count)
+                .map(|index| json!({"label": format!("alpha{index}")}))
+                .collect::<Vec<_>>();
+            replace_candidates(&mut session, candidates(json!(items), 1), "");
+            assert_eq!(session.shown.len(), count);
+            assert_eq!(view(&session).rows.len(), count);
+            assert!(
+                session
+                    .shown
+                    .iter()
+                    .all(|shown| shown.entry < session.data.entries.len())
+            );
+            if count == 0 {
+                assert!(session.selected_entry().is_none());
+            } else {
+                assert!(session.selected_entry().is_some());
+                assert_eq!(session.selected, if count == 7 { 6 } else { 0 });
+            }
+        }
+        let mut session = word_session();
+        session.set_selected(6);
+        replace_candidates(
+            &mut session,
+            candidates(
+                json!([
+                    {"label":"alpha9"}, {"label":"alpha6"}, {"label":"alpha8"}
+                ]),
+                1,
+            ),
+            "",
+        );
+        assert_eq!(session.selected_entry().unwrap().item.label, "alpha6");
+        assert_eq!(session.selected, 0);
+        assert_eq!(session.shown[0].entry, 1);
+    }
+
+    #[test]
+    fn resolved_candidates_are_reused_only_for_the_same_server_and_payload() {
+        let original = json!([{"label":"alpha", "data":1}]);
+        let mut session = word_session();
+        replace_candidates(&mut session, candidates(original.clone(), 7), "");
+        session.data.entries[0].resolved = true;
+        session.data.entries[0].item.documentation = Some("old docs".into());
+        for (items, instance, reused) in [
+            (original.clone(), 7, true),
+            (original, 8, false),
+            (json!([{"label":"alpha", "data":2}]), 7, false),
+        ] {
+            let mut refreshed = session.clone();
+            replace_candidates(&mut refreshed, candidates(items, instance), "");
+            assert_eq!(refreshed.data.entries[0].resolved, reused);
+            assert_eq!(
+                refreshed.data.entries[0].item.documentation.is_some(),
+                reused
+            );
+        }
+    }
 
     #[test]
     fn words_are_identifiers_without_the_numbers() {

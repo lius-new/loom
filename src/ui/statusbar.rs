@@ -12,7 +12,7 @@
 use lgui::core::{EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiId, precompiled};
 use lgui::prelude::{Element, TextStyle, UiRect, VisualStyle, panel, text};
 
-use crate::ui::chrome::{StatusBinding, StatusCommand};
+use crate::ui::chrome::{StatusBinding, StatusCommand, StatusFrame};
 use crate::ui::theme;
 
 /// Padding between the bar's right edge and the last item.
@@ -28,6 +28,37 @@ const TEXT_MARGIN: f32 = 6.0;
 /// labels, and a too-narrow rect wraps text such as `feat/keymap` at the `/`.
 fn measure(s: &str, weight: i32) -> f32 {
     super::tabs::measure(s, theme::SMALL, weight)
+}
+
+/// The same measured layout anchors notifications to the language-server item.
+pub fn language_anchor(rect: UiRect, frame: &StatusFrame) -> Option<UiRect> {
+    let (items, language) = status_items(frame);
+    let mut x = items_left(rect, &items);
+    let mut span: Option<UiRect> = None;
+    for (index, (label, style)) in items.iter().enumerate() {
+        let width = measure(label, style.weight);
+        if language.contains(&index) {
+            let left = span.map_or(x, |span| span.left);
+            span = Some(UiRect::new(
+                left,
+                rect.top,
+                x + width + TEXT_MARGIN,
+                rect.bottom,
+            ));
+        }
+        x += width + GAP;
+    }
+    span
+}
+
+fn items_left(rect: UiRect, items: &[(String, TextStyle)]) -> f32 {
+    rect.right
+        - EDGE_PAD
+        - items
+            .iter()
+            .map(|(s, style)| measure(s, style.weight))
+            .sum::<f32>()
+        - GAP * items.len().saturating_sub(1) as f32
 }
 
 pub fn render(rect: UiRect, state: StatusBinding) -> Element {
@@ -66,78 +97,7 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
                 .icon_style(IconStyle::new(color)),
         )),
     );
-    // Right-aligned items. Without an active file, only the editor-wide
-    // settings are shown (no Ln/Col position, no language badge).
-    let mut items: Vec<(String, TextStyle)> = Vec::new();
-    // A key sequence waiting for its next keystroke, e.g. `Ctrl+K …`.
-    if !s.pending.as_slice().is_empty() {
-        items.push((
-            format!(
-                "{} …",
-                crate::features::keymap::keystroke::Keystroke::sequence_label(s.pending.as_slice())
-            ),
-            theme::mono_bold(theme::c().accent, theme::SMALL),
-        ));
-    }
-    let language_first = items.len();
-    let language_count = s.language.len();
-    for note in &s.language {
-        let style = match note.level {
-            crate::ui::chrome::NoteLevel::Quiet => theme::mono(theme::c().text_dim, theme::SMALL),
-            crate::ui::chrome::NoteLevel::Warning => {
-                theme::mono_bold(theme::c().warning, theme::SMALL)
-            }
-            crate::ui::chrome::NoteLevel::Error => theme::mono_bold(theme::c().error, theme::SMALL),
-        };
-        items.push((note.text.clone(), style));
-    }
-    if let Some(file) = &s.file {
-        if file.missing {
-            items.push((
-                "Deleted on Disk — Save Recreates".to_string(),
-                theme::mono_bold(theme::c().error, theme::SMALL),
-            ));
-        } else if file.conflict {
-            items.push((
-                "Changed on Disk".to_string(),
-                theme::mono_bold(theme::c().warning, theme::SMALL),
-            ));
-        }
-        if let Some((line, col)) = file.cursor {
-            items.push((
-                format!("Ln {}, Col {}", line + 1, col + 1),
-                theme::mono(theme::c().text_muted, theme::SMALL),
-            ));
-            items.push((
-                "Spaces: 2".to_string(),
-                theme::mono(theme::c().text_dim, theme::SMALL),
-            ));
-            items.push((
-                "UTF-8".to_string(),
-                theme::mono(theme::c().text_dim, theme::SMALL),
-            ));
-        } else if file.is_diff {
-            items.push((
-                "Text Diff".to_string(),
-                theme::mono(theme::c().text_dim, theme::SMALL),
-            ));
-        }
-        if file.is_file || file.is_diff {
-            items.push((
-                file.lang.badge().to_string(),
-                theme::mono_bold(file.lang.badge_color(), theme::SMALL),
-            ));
-        }
-    } else {
-        items.push((
-            "Spaces: 2".to_string(),
-            theme::mono(theme::c().text_dim, theme::SMALL),
-        ));
-        items.push((
-            "UTF-8".to_string(),
-            theme::mono(theme::c().text_dim, theme::SMALL),
-        ));
-    }
+    let (items, language) = status_items(&s);
 
     // Source Control panel toggle, beside the terminal toggle.
     let scm_slot = UiRect::new(rect.left + 34.0, rect.top, rect.left + 62.0, rect.bottom);
@@ -189,17 +149,12 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
         }
     }
 
-    let total = items
-        .iter()
-        .map(|(s, style)| measure(s, style.weight))
-        .sum::<f32>()
-        + GAP * (items.len().saturating_sub(1)) as f32;
-    let mut x = rect.right - EDGE_PAD - total;
+    let mut x = items_left(rect, &items);
     // The language server notes are one click target that opens its panel.
     let mut language_span: Option<(f32, f32)> = None;
     for (index, (label, style)) in items.into_iter().enumerate() {
         let w = measure(&label, style.weight);
-        if (language_first..language_first + language_count).contains(&index) {
+        if language.contains(&index) {
             let (from, _) = language_span.unwrap_or((x, x));
             language_span = Some((from, x + w + TEXT_MARGIN));
         }
@@ -229,6 +184,78 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
     bar = bar.child(crate::ui::components::divider::top(rect));
 
     bar
+}
+
+fn status_items(s: &StatusFrame) -> (Vec<(String, TextStyle)>, std::ops::Range<usize>) {
+    let mut items = Vec::new();
+    if !s.pending.is_empty() {
+        items.push((
+            format!(
+                "{} …",
+                crate::features::keymap::keystroke::Keystroke::sequence_label(&s.pending)
+            ),
+            theme::mono_bold(theme::c().accent, theme::SMALL),
+        ));
+    }
+    let language = items.len()..items.len() + s.language.len();
+    for note in &s.language {
+        let style = match note.level {
+            crate::ui::chrome::NoteLevel::Quiet => theme::mono(theme::c().text_dim, theme::SMALL),
+            crate::ui::chrome::NoteLevel::Warning => {
+                theme::mono_bold(theme::c().warning, theme::SMALL)
+            }
+            crate::ui::chrome::NoteLevel::Error => theme::mono_bold(theme::c().error, theme::SMALL),
+        };
+        items.push((note.text.clone(), style));
+    }
+    if let Some(file) = &s.file {
+        if file.missing {
+            items.push((
+                "Deleted on Disk — Save Recreates".into(),
+                theme::mono_bold(theme::c().error, theme::SMALL),
+            ));
+        } else if file.conflict {
+            items.push((
+                "Changed on Disk".into(),
+                theme::mono_bold(theme::c().warning, theme::SMALL),
+            ));
+        }
+        if let Some((line, col)) = file.cursor {
+            items.push((
+                format!("Ln {}, Col {}", line + 1, col + 1),
+                theme::mono(theme::c().text_muted, theme::SMALL),
+            ));
+            items.push((
+                "Spaces: 2".into(),
+                theme::mono(theme::c().text_dim, theme::SMALL),
+            ));
+            items.push((
+                "UTF-8".into(),
+                theme::mono(theme::c().text_dim, theme::SMALL),
+            ));
+        } else if file.is_diff {
+            items.push((
+                "Text Diff".into(),
+                theme::mono(theme::c().text_dim, theme::SMALL),
+            ));
+        }
+        if file.is_file || file.is_diff {
+            items.push((
+                file.lang.badge().into(),
+                theme::mono_bold(file.lang.badge_color(), theme::SMALL),
+            ));
+        }
+    } else {
+        items.push((
+            "Spaces: 2".into(),
+            theme::mono(theme::c().text_dim, theme::SMALL),
+        ));
+        items.push((
+            "UTF-8".into(),
+            theme::mono(theme::c().text_dim, theme::SMALL),
+        ));
+    }
+    (items, language)
 }
 
 /// Vim's mode, then its command line, message or pending keys, and macro

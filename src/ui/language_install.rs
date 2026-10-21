@@ -1,11 +1,11 @@
-//! A single non-modal invitation for missing language servers.
+//! A dismissible notification above the status bar's language-server item.
 use super::{
     tabs::{ellipsize, measure},
     theme,
 };
 use lgui::{
-    core::{CursorIcon, EventPolicy, UiEventContext},
-    prelude::{Element, UiRect, VisualStyle, panel, text},
+    core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiEventContext},
+    prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, text},
 };
 use std::sync::Arc;
 
@@ -23,36 +23,47 @@ pub enum Choice {
     Never,
 }
 
-/// No full-window hit surface: text editing outside this strip keeps working.
+/// No full-window hit surface or focus request: editing outside the card continues.
 pub fn render(
     viewport: UiRect,
+    anchor: Option<UiRect>,
     frame: &Frame,
     commands: Arc<dyn Fn(Choice, Vec<String>) + Send + Sync>,
 ) -> Element {
-    let width = (viewport.right - viewport.left - 16.0).clamp(0.0, 740.0);
-    let left = viewport.left + (viewport.right - viewport.left - width) / 2.0;
+    let margin = (viewport.width() / 2.0).clamp(0.0, 8.0);
+    let width = (viewport.width() - 2.0 * margin).clamp(0.0, 420.0);
+    let right = anchor
+        .map_or(viewport.right - 8.0, |r| r.right)
+        .clamp(viewport.left + margin + width, viewport.right - margin);
+    let bottom = anchor.map_or(viewport.bottom - theme::STATUS_H, |r| r.top) - 8.0;
     let narrow = width < 340.0;
     let card = UiRect::new(
-        left,
-        viewport.top + 8.0,
-        left + width,
-        viewport.top + if narrow { 166.0 } else { 108.0 },
+        right - width,
+        bottom - if narrow { 158.0 } else { 100.0 },
+        right,
+        bottom,
     );
     let policy = EventPolicy {
         focus: false,
         ..EventPolicy::INTERACTIVE
     };
     let mut strip = theme::bordered(card, theme::c().surface, theme::c().border, 6.0, 1.0)
+        .shadow(
+            ShadowStyle::new(Color::BLACK)
+                .alpha(theme::c().shadow_alpha)
+                .offset(0.0, 4.0)
+                .blur(12.0),
+        )
         .event_policy(policy)
         .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
         .child(text(
             UiRect::new(
                 card.left + 12.0,
                 card.top + 8.0,
-                card.right - 12.0,
+                card.right - 42.0,
                 card.top + 30.0,
             ),
-            ellipsize(&frame.title, (width - 24.0).max(0.0), theme::UI_SIZE, 600),
+            ellipsize(&frame.title, (width - 54.0).max(0.0), theme::UI_SIZE, 600),
             theme::sans_semibold(theme::c().text, theme::UI_SIZE),
         ))
         .child(text(
@@ -65,6 +76,31 @@ pub fn render(
             ellipsize(&frame.detail, (width - 24.0).max(0.0), theme::SMALL, 400),
             theme::sans(theme::c().text_muted, theme::SMALL),
         ));
+    let dismiss = commands.clone();
+    let servers = frame.servers.clone();
+    let close = UiRect::new(
+        card.right - 34.0,
+        card.top + 6.0,
+        card.right - 6.0,
+        card.top + 34.0,
+    );
+    strip = strip.child(
+        panel(close, VisualStyle::default())
+            .event_policy(policy)
+            .cursor(CursorIcon::Pointer)
+            .semantics(
+                Semantics::new(SemanticRole::Button).name("Dismiss language server installation"),
+            )
+            .on_click(move |cx: &mut UiEventContext| {
+                dismiss(Choice::Later, servers.clone());
+                cx.stop_propagation();
+            })
+            .child(text(
+                close,
+                "×",
+                theme::sans(theme::c().text_muted, theme::UI_SIZE).centered(),
+            )),
+    );
     let mut right = card.right - 12.0;
     for (index, (label, choice)) in [
         ("Don't ask again", Choice::Never),

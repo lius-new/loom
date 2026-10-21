@@ -198,6 +198,20 @@ node scripts/build/cargo.mjs test --locked --workspace
 node scripts/architecture/standalone-host.mjs --offline
 ~~~
 
+To run a source build with the same catalogs as a packaged application, stage
+both syntax and LSP resources before launching:
+
+~~~sh
+node scripts/build/stage-resources.mjs
+node scripts/build/cargo.mjs run --locked
+~~~
+
+The default executable directory is `target/debug`; pass `target/release` or a
+custom target/profile directory when appropriate. Cargo itself does not copy
+runtime resources. Staging only `language-packs` makes syntax available but does
+not register any catalogued language servers. Syntax download status is temporary;
+its disappearance does not mean a server has started. Restart after staging catalogs.
+
 assets/language-packs contains complete Markdown and JSON packages, including
 WASM modules, standard metadata, queries, licenses and provenance, plus the
 publication catalog. Both packages remain in scripts/language-packs/build.toml

@@ -52,7 +52,7 @@ pub fn respond(state: &AppContext, choice: Choice, requested: Vec<String>) {
     else {
         return;
     };
-    // A callback from an obsolete strip cannot install or change settings for
+    // A callback from an obsolete notification cannot install or change settings for
     // servers which are no longer offered.
     let current = services.install_offers();
     let servers = requested
@@ -446,6 +446,7 @@ language_id="rust"
             atomic::{AtomicUsize, Ordering},
         };
         for (label, choice) in [
+            ("×", Choice::Later),
             ("Not now", Choice::Later),
             ("Don't ask again", Choice::Never),
             ("Install", Choice::Install),
@@ -456,18 +457,38 @@ language_id="rust"
                 let outside = Arc::new(AtomicUsize::new(0));
                 let clicks = outside.clone();
                 let viewport = UiRect::new(0.0, 0.0, width, 400.0);
+                let status_rect = UiRect::new(0.0, 376.0, width, 400.0);
+                let status = crate::ui::chrome::StatusFrame {
+                    terminal_open: false,
+                    pending: vec![],
+                    file: None,
+                    source_control: false,
+                    diff_loading: false,
+                    vim: None,
+                    language: vec![crate::ui::chrome::StatusNote {
+                        text: "Rust Demo: not installed".into(),
+                        level: crate::ui::chrome::NoteLevel::Quiet,
+                    }],
+                };
+                let anchor = crate::ui::statusbar::language_anchor(status_rect, &status).unwrap();
                 let view: AppView = Arc::new(move |_| {
                     let clicks = clicks.clone();
                     let state = state.clone();
+                    let status = status.clone();
                     let background = panel(viewport, VisualStyle::default())
                         .event_policy(EventPolicy::INTERACTIVE)
                         .on_pointer_down_with_button(move |cx, _, _| {
                             clicks.fetch_add(1, Ordering::SeqCst);
                             cx.stop_propagation();
-                        });
+                        })
+                        .child(crate::ui::statusbar::render(
+                            status_rect,
+                            crate::ui::chrome::StatusBinding::new(move || status.clone(), |_| {}),
+                        ));
                     match frame(&state) {
                         Some(frame) => background.child(crate::ui::language_install::render(
                             viewport,
+                            Some(anchor),
                             &frame,
                             Arc::new(move |choice, servers| respond(&state, choice, servers)),
                         )),
@@ -477,7 +498,36 @@ language_id="rust"
                 let context = ApplicationContext::empty(Default::default());
                 let mut session = UiSession::new();
                 session.render_view(&view, viewport, UiScale::ONE);
-                let outside_point = PointerData::mouse(Point::new(width / 2.0, 350.0));
+                let title = session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|node| {
+                        node.text
+                            .as_deref()
+                            .is_some_and(|text| text.starts_with("Install language"))
+                    })
+                    .unwrap()
+                    .paint_bounds;
+                assert!(
+                    title.top > viewport.height() / 2.0,
+                    "notification stays near the status bar: {title:?}"
+                );
+                let close = session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|node| node.text.as_deref() == Some("×"))
+                    .unwrap()
+                    .paint_bounds;
+                assert!(close.bottom < status_rect.top);
+                if width > 420.0 {
+                    assert!(
+                        (close.right - (anchor.right - 6.0)).abs() < 1.0,
+                        "notification aligns with LSP status: {close:?} {anchor:?}"
+                    );
+                }
+                let outside_point = PointerData::mouse(Point::new(width / 2.0, 32.0));
                 let output = session.handle_input(InputEvent::PointerDown {
                     pointer: outside_point,
                     button: PointerButton::Left,
@@ -542,7 +592,7 @@ language_id="rust"
                 assert_eq!(
                     outside.load(Ordering::SeqCst),
                     1,
-                    "banner click did not reach editor"
+                    "notification click did not reach editor"
                 );
                 if choice == Choice::Never {
                     assert_eq!(

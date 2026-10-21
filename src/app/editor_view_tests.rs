@@ -2172,6 +2172,80 @@ fn typing_opens_a_completion_list_that_narrows_with_more_typing() {
 }
 
 #[test]
+fn completion_refresh_can_shrink_reorder_or_empty_the_candidates() {
+    use crate::features::keymap::action::Action;
+    let file = std::env::temp_dir().join(format!(
+        "loom-completion-refresh-{}-{}.json",
+        std::process::id(),
+        LANGUAGE_CASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let write = |labels: &[&str]| {
+        std::fs::write(&file, serde_json::to_vec(&serde_json::json!({
+            "isIncomplete": true,
+            "items": labels.iter().map(|label| serde_json::json!({"label": label, "kind": 6})).collect::<Vec<_>>()
+        })).unwrap()).unwrap();
+    };
+    write(&[
+        "alpha0", "alpha1", "alpha2", "alpha3", "alpha4", "alpha5", "alpha6",
+    ]);
+    let file_arg = file.display().to_string();
+    let mut h = LanguageHarness::new(
+        "\n",
+        &[
+            "--features",
+            "completion",
+            "--completion-items-file",
+            &file_arg,
+        ],
+    );
+    h.until_ready();
+    h.type_text("a");
+    h.until("seven candidates", |h| h.completion_labels().len() == 7);
+    h.act(Action::MenuSelectPrevious);
+    assert_eq!(
+        h.state
+            .get()
+            .editor
+            .language
+            .completion
+            .as_ref()
+            .unwrap()
+            .selected,
+        6
+    );
+    // This used to index entry 6 in the new three-item list while refiltering.
+    write(&["alpha9", "alpha6", "alpha8"]);
+    h.type_text("l");
+    h.until("three refreshed candidates", |h| {
+        h.completion_labels() == ["alpha6", "alpha8", "alpha9"]
+    });
+    assert_eq!(
+        h.state
+            .get()
+            .editor
+            .language
+            .completion
+            .as_ref()
+            .unwrap()
+            .selected,
+        0
+    );
+    assert!(h.has_text("alpha6"));
+    write(&[]);
+    h.act(Action::ShowCompletions);
+    h.until("the empty refresh", |h| h.completion_labels().is_empty());
+    assert_eq!(h.document_text(), "al\n");
+    write(&["alpha6", "alpha8", "alpha9"]);
+    h.act(Action::ShowCompletions);
+    h.until("fresh completion after an empty reply", |h| {
+        h.completion_labels().len() == 3
+    });
+    h.act(Action::MenuConfirm);
+    assert_eq!(h.document_text(), "alpha6\n");
+    let _ = std::fs::remove_file(file);
+}
+
+#[test]
 fn enter_accepts_the_highlighted_item_in_place_of_the_typed_word() {
     use crate::features::keymap::action::Action;
     let mut h = LanguageHarness::new("x = \n", &["--features", "completion"]);

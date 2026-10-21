@@ -323,7 +323,7 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 Status::InstallCancelling => ("cancelling install…".to_owned(), Level::Quiet),
                 Status::InstallCancelled => ("install cancelled".to_owned(), Level::Quiet),
             };
-            let mut lines = vec![line(info.root.display().to_string(), Level::Quiet)];
+            let mut lines = vec![line(crate::ui::display_path(&info.root), Level::Quiet)];
             match &info.status {
                 Status::Restarting { reason, .. }
                 | Status::Failed(reason)

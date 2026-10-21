@@ -83,8 +83,13 @@ well; the shared scripts prepare CMake and Skia privately.
 git clone https://github.com/lius-new/loom.git
 cd loom
 node scripts/build/cargo.mjs build --release --locked
+node scripts/build/stage-resources.mjs target/release
 node scripts/build/cargo.mjs run --release --locked
 ```
+
+For a development run, prepare resources with `node scripts/build/stage-resources.mjs`
+before `node scripts/build/cargo.mjs run --locked`. It stages both syntax resources
+and the language-server catalog beside the executable; Cargo alone does not copy them.
 
 On Debian or Ubuntu, install the native libraries first:
 

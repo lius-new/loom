@@ -255,6 +255,10 @@ fn feature_result(method: &str, params: &Value, options: &Options) -> Option<Val
             "name": format!("sym-{}", params["query"].as_str().unwrap_or("")),
             "kind": 12, "location": { "uri": "file:///C:/elsewhere.rs" }
         }]),
+        "textDocument/completion" if options.value("--completion-items-file").is_some() => {
+            let bytes = std::fs::read(options.value("--completion-items-file").unwrap()).ok()?;
+            serde_json::from_slice(&bytes).ok()?
+        }
         "textDocument/completion" => json!({
             "isIncomplete": options.flag("--completion-incomplete"),
             "items": [

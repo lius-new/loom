@@ -12,6 +12,7 @@ Use the shared build entry point:
 
 ```sh
 node scripts/build/cargo.mjs build --release --locked
+node scripts/build/stage-resources.mjs target/release
 node scripts/build/cargo.mjs run --release --locked
 node scripts/build/cargo.mjs test --locked --workspace
 ```
@@ -47,6 +48,22 @@ a platform-specific language library. There is no language producer workspace or
 Rust grammar wrapper. Place complete prebuilt language resources beside the
 executable or in the user data directory and restart; no editor rebuild is
 needed. See [Language resources](languages.md) for the format and release inputs.
+
+For `cargo run` or the shared wrapper's debug run, prepare resources with:
+
+```sh
+node scripts/build/stage-resources.mjs
+node scripts/build/cargo.mjs run --locked
+```
+
+The staging command defaults to `target/debug`. Pass `target/release` for a release
+run, or the executable's directory for custom Cargo targets/profiles. It copies
+both runtime resource sets: syntax collections and their download catalog, plus
+the LSP server catalog. It does not install language servers or download grammars.
+Without the syntax catalog a new language can appear as TXT; without the LSP
+catalog no catalogued server is registered. A temporary syntax download status
+then disappears when complete, leaving no server status to replace it. Restart
+the application after staging or updating catalogs; both are read at startup.
 
 ## System dependencies (Debian / Ubuntu)
 
