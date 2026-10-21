@@ -2,7 +2,7 @@
 use crate::ui::theme;
 use lgui::core::UiFocusHandle;
 use lgui::core::{CursorIcon, EventPolicy};
-use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, TextAlign, UiRect, VisualStyle, panel, text};
 use lgui::services::ServicesContextExt;
 use loom_editor_core::commands::Command;
 use std::sync::Arc;
@@ -109,9 +109,13 @@ pub fn render(
             theme::sans(color, theme::UI_SIZE),
         ))
         .child(text(
-            UiRect::new(r.right - 110.0, r.top, r.right - 4.0, r.bottom),
+            UiRect::new(r.right - 110.0, r.top, r.right - 8.0, r.bottom),
             shortcut,
-            theme::mono(color, theme::SMALL),
+            {
+                let mut style = theme::mono(color, theme::SMALL);
+                style.align = TextAlign::Right;
+                style
+            },
         ));
         menu = menu.child(row);
     }
