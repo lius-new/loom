@@ -63,18 +63,28 @@ thread_local! {
     static MEASURE_CACHE: RefCell<MeasureCache> = RefCell::new(MeasureCache::default());
 }
 
-/// Text widths grouped by `(size bits, weight)` so hits can look up by `&str`
+/// Text widths grouped by `(size bits, weight, monospace)` so hits can look up by `&str`
 /// without allocating.
 #[derive(Default)]
 struct MeasureCache {
-    widths: HashMap<(u32, i32), HashMap<String, f32>>,
+    widths: HashMap<(u32, i32, bool), HashMap<String, f32>>,
     len: usize,
 }
 
 /// Natural text width measured with the renderer's text system, falling back
 /// to a per-character estimate when no text system is installed.
 pub(crate) fn measure(s: &str, size: f32, weight: i32) -> f32 {
-    let style = (size.to_bits(), weight);
+    measure_in(s, size, weight, true)
+}
+
+/// The width of `s` in the interface's proportional font, which is what
+/// `theme::sans` draws; `measure` is for the monospace face.
+pub(crate) fn measure_sans(s: &str, size: f32, weight: i32) -> f32 {
+    measure_in(s, size, weight, false)
+}
+
+fn measure_in(s: &str, size: f32, weight: i32, mono: bool) -> f32 {
+    let style = (size.to_bits(), weight, mono);
     let cached = MEASURE_CACHE.with(|cache| {
         cache
             .borrow()
@@ -89,7 +99,9 @@ pub(crate) fn measure(s: &str, size: f32, weight: i32) -> f32 {
 
     let bounds = UiRect::new(0.0, 0.0, 10_000.0, size);
     let mut request = TextLayoutRequest::single_line(s, bounds, size, weight);
-    request.font_families = theme::MONO_FAMILIES;
+    if mono {
+        request.font_families = theme::MONO_FAMILIES;
+    }
     match text::layout(&request) {
         Some(layout) => {
             // Only shaped widths are cached: the estimate below is a stand-in
@@ -113,12 +125,21 @@ pub(crate) fn measure(s: &str, size: f32, weight: i32) -> f32 {
 }
 
 pub(crate) fn ellipsize(value: &str, max_width: f32, size: f32, weight: i32) -> String {
-    if measure(value, size, weight) <= max_width {
+    ellipsize_with(value, max_width, |s| measure(s, size, weight))
+}
+
+/// `ellipsize` for text drawn in the interface's proportional font.
+pub(crate) fn ellipsize_sans(value: &str, max_width: f32, size: f32, weight: i32) -> String {
+    ellipsize_with(value, max_width, |s| measure_sans(s, size, weight))
+}
+
+fn ellipsize_with(value: &str, max_width: f32, measure: impl Fn(&str) -> f32) -> String {
+    if measure(value) <= max_width {
         return value.to_owned();
     }
 
     const ELLIPSIS: &str = "…";
-    if max_width <= measure(ELLIPSIS, size, weight) {
+    if max_width <= measure(ELLIPSIS) {
         return ELLIPSIS.to_owned();
     }
 
@@ -126,9 +147,7 @@ pub(crate) fn ellipsize(value: &str, max_width: f32, size: f32, weight: i32) -> 
         .rfind('.')
         .filter(|index| *index > 0)
         .map(|index| &value[index..])
-        .filter(|suffix| {
-            measure(suffix, size, weight) + measure(ELLIPSIS, size, weight) < max_width
-        })
+        .filter(|suffix| measure(suffix) + measure(ELLIPSIS) < max_width)
         .unwrap_or("");
     let stem = &value[..value.len() - suffix.len()];
     let chars: Vec<char> = stem.chars().collect();
@@ -142,7 +161,7 @@ pub(crate) fn ellipsize(value: &str, max_width: f32, size: f32, weight: i32) -> 
             .chain(ELLIPSIS.chars())
             .chain(suffix.chars())
             .collect::<String>();
-        if measure(&candidate, size, weight) <= max_width {
+        if measure(&candidate) <= max_width {
             low = middle;
         } else {
             high = middle - 1;

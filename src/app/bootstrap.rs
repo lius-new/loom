@@ -45,10 +45,14 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub(crate) fn svg_icons() -> SvgIconRegistry {
+    let rings = ui::components::progress_ring::icons()
+        .fold(SvgIconRegistry::new(), |registry, (key, svg)| {
+            registry.with_icon(key, svg)
+        });
     file_icons::register(
         // Codicons are drawn on a 16px grid; render them at theme::ICON_SIZE
         // so their 1px strokes land on whole pixels.
-        SvgIconRegistry::new()
+        rings
             .with_icon(
                 ui::components::loading_indicator::ICON_KEY,
                 ui::components::loading_indicator::SVG,
@@ -70,6 +74,8 @@ pub(crate) fn svg_icons() -> SvgIconRegistry {
             .with_icon("arrow-down", icondata::VsArrowDown)
             .with_icon("cloud", icondata::VsCloud)
             .with_icon("cloud-upload", icondata::VsCloudUpload)
+            .with_icon("cloud-download", icondata::VsCloudDownload)
+            .with_icon("info", icondata::VsInfo)
             .with_icon("refresh", icondata::VsRefresh)
             .with_icon("sync", icondata::VsSync)
             .with_icon("search", icondata::VsSearch)

@@ -18,13 +18,12 @@ use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstallPolicy {
-    /// Say the server is missing and wait for the person to install it.
+    /// Say the server is missing and wait for the person to install it from the
+    /// language panel.
     #[default]
-    Ask,
+    Manual,
     /// Install it as soon as a file needs it.
     Auto,
-    /// Never install it on its own.
-    Never,
 }
 
 /// A language a registered server serves.
@@ -224,7 +223,7 @@ pub fn registered(
     (found, problems)
 }
 
-/// The install policy for `server`: the last entry that sets one, else asking.
+/// The install policy for `server`: the last entry that sets one, else installing by hand.
 pub fn install_policy(settings: &[LanguageServerSetting], server: &str) -> InstallPolicy {
     settings
         .iter()

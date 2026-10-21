@@ -91,7 +91,9 @@ pub struct StatusFrame {
     pub source_control: bool,
     pub diff_loading: bool,
     pub vim: Option<(loom_editor_core::vim::Mode, loom_editor_core::vim::Status)>,
-    /// What the language server and its diagnostics say about the active file.
+    /// The active file's main language server.
+    pub server: Option<ServerChip>,
+    /// What the active file's diagnostics and syntax downloads say.
     pub language: Vec<StatusNote>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +102,61 @@ pub enum NoteLevel {
     Warning,
     Error,
 }
+/// A language server as the status bar shows it: a block in the colour of its state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServerChip {
+    /// Its name, state and how many other servers serve the file.
+    pub text: String,
+    pub tone: crate::ui::language_panel::Tone,
+    pub progress: crate::ui::language_panel::Progress,
+    /// What the person most likely wants to do next, if anything.
+    pub action: Option<ChipAction>,
+}
+/// The suggested action for a language server, shown as an icon beside its chip.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChipAction {
+    /// Download the server's pack.
+    Install(String),
+    /// Try an install again, or carry on with a cancelled one.
+    Retry(String),
+    /// Restart the instance that stopped.
+    Restart(u64),
+    CancelInstall {
+        server: String,
+        generation: u64,
+    },
+    /// Look at the server's details in the language panel.
+    Details(u64),
+    /// The server is on its way; there is nothing to do yet.
+    Pending,
+}
+impl ChipAction {
+    /// The icon for the action; each action has its own.
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Install(_) => "cloud-download",
+            Self::Retry(_) => "refresh",
+            Self::Restart(_) => "update-restart",
+            Self::CancelInstall { .. } => "close",
+            Self::Details(_) => "info",
+            Self::Pending => "sync",
+        }
+    }
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Install(_) => "Install language server",
+            Self::Retry(_) => "Retry installing language server",
+            Self::Restart(_) => "Restart language server",
+            Self::CancelInstall { .. } => "Cancel installing language server",
+            Self::Details(_) => "Show language server details",
+            Self::Pending => "Language server is starting",
+        }
+    }
+    /// Whether clicking it does anything.
+    pub fn interactive(&self) -> bool {
+        !matches!(self, Self::Pending)
+    }
+}
 /// One short phrase for the right side of the status bar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusNote {
@@ -107,6 +164,7 @@ pub struct StatusNote {
     pub level: NoteLevel,
 }
 pub enum StatusCommand {
+    ServerAction(ChipAction),
     ToggleTerminal,
     ToggleSourceControl,
     LanguagePanel,

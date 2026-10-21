@@ -1848,15 +1848,9 @@ language_id = "fakelang"
             0,
             "asking never downloads"
         );
-        let offers = w.manager.install_offers();
-        assert_eq!(offers.len(), 1);
-        assert_eq!(offers[0].server, "demo");
-        assert_eq!(offers[0].languages, ["Fake"]);
-        assert!(offers[0].archives["demo"] > 0);
         w.manager.install("demo");
         w.wait("ready", |s| matches!(s, Status::Ready));
         assert_eq!(w.downloads.load(Ordering::SeqCst), 1);
-        assert!(w.manager.install_offers().is_empty());
     }
 
     #[test]
@@ -1868,27 +1862,10 @@ language_id = "fakelang"
         });
         w.show();
         w.wait("ready", |s| matches!(s, Status::Ready));
-        assert!(w.manager.install_offers().is_empty());
     }
 
     #[test]
-    fn never_policy_has_no_prompt_or_download_but_allows_manual_install() {
-        let mut w = world();
-        w.servers.push(LanguageServerSetting {
-            install: Some(InstallPolicy::Never),
-            ..LanguageServerSetting::named("demo")
-        });
-        w.show();
-        w.wait("not installed", |s| matches!(s, Status::NotInstalled));
-        assert!(w.manager.install_offers().is_empty());
-        assert_eq!(w.downloads.load(Ordering::SeqCst), 0);
-        w.manager.install("demo");
-        w.wait("ready", |s| matches!(s, Status::Ready));
-        assert_eq!(w.downloads.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn multiple_project_roots_share_one_invitation_and_declining_survives_restart() {
+    fn multiple_project_roots_each_wait_for_the_person_to_install_the_pack() {
         let w = world();
         let documents = ["one/a.fk", "two/a.fk"]
             .iter()
@@ -1913,16 +1890,8 @@ language_id = "fakelang"
         });
         w.wait("not installed", |s| matches!(s, Status::NotInstalled));
         assert_eq!(w.manager.infos().len(), 2);
-        assert_eq!(w.manager.install_offers().len(), 1);
-        w.manager.dismiss_install_prompt(vec!["demo".into()]);
-        let until = Instant::now() + Duration::from_secs(5);
-        while !w.manager.install_offers().is_empty() {
-            assert!(Instant::now() < until);
-            std::thread::sleep(Duration::from_millis(10));
-        }
         w.manager.restart();
         std::thread::sleep(Duration::from_millis(100));
-        assert!(w.manager.install_offers().is_empty());
         assert_eq!(w.downloads.load(Ordering::SeqCst), 0);
     }
 

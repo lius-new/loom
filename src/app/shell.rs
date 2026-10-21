@@ -1189,13 +1189,43 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
 
     // ---- Overlays ------------------------------------------------------
-    if let Some(frame) = super::language_install::frame(&state) {
-        let install_state = state.clone();
-        root = root.child(crate::ui::language_install::render(
+    if s.chrome.language_details.is_some()
+        && let Some(frame) = super::chrome::language_details_frame(&state)
+    {
+        let details_state = state.clone();
+        use lgui::services::ServicesContextExt as _;
+        let clipboard = application_context.clipboard();
+        let status = super::chrome::status_binding(
+            &state,
+            editor_focus.clone(),
+            terminal_focus.clone(),
+            terminal_tabs.clone(),
+        )
+        .frame();
+        root = root.child(crate::ui::language_details::render(
             vp,
+            crate::ui::statusbar::language_action_anchor(statusbar_rect, &status),
             &frame,
-            std::sync::Arc::new(move |choice, servers| {
-                super::language_install::respond(&install_state, choice, servers)
+            std::sync::Arc::new(move |event| match event {
+                crate::ui::language_details::Event::Close => {
+                    details_state.update(|app| app.chrome.language_details = None);
+                }
+                crate::ui::language_details::Event::Restart(instance) => {
+                    if let Some(services) =
+                        details_state.services().and_then(|r| r.language_services())
+                    {
+                        services.restart_instance(instance);
+                    }
+                }
+                crate::ui::language_details::Event::CopyLog => {
+                    if let Some(log) = super::chrome::language_details_log(&details_state) {
+                        match clipboard.write_text(&log) {
+                            Ok(()) => details_state.update(|app| app.show_success("Copied log.")),
+                            Err(error) => details_state
+                                .update(move |app| app.show_error(format!("Clipboard: {error}"))),
+                        }
+                    }
+                }
             }),
         ));
     }
@@ -1246,6 +1276,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 }
                 crate::ui::language_panel::Event::RetryDownloads => {
                     crate::infrastructure::language_packs::resources().retry_downloads();
+                }
+                crate::ui::language_panel::Event::RestartServer(instance) => {
+                    if let Some(services) =
+                        panel_state.services().and_then(|r| r.language_services())
+                    {
+                        services.restart_instance(instance);
+                    }
                 }
             }),
         ));

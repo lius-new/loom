@@ -13,6 +13,7 @@ pub(crate) mod editor_binding;
 pub mod explorer;
 pub mod git;
 pub mod keymap_page;
+pub mod language_details;
 pub mod language_panel;
 pub(crate) mod markdown;
 pub mod pane_sash;
@@ -93,7 +94,6 @@ pub fn display_path(path: &std::path::Path) -> String {
 }
 pub(crate) mod geometry;
 pub(crate) mod language;
-pub(crate) mod language_install;
 
 pub mod file_icons;
 pub mod fonts;

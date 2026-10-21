@@ -86,7 +86,7 @@ has no language-server features.
   // A catalogued server: change how it behaves, never which program it is.
   "rust-analyzer": {
     "enabled": true,
-    "install": "ask",                              // ask | auto | never
+    "install": "ask",                              // manual | auto
     "args": [],                                    // replaces the default arguments
     "initialization_options": { "checkOnSave": false },
     "settings": { "rust-analyzer": { "check": { "command": "clippy" } } },
@@ -126,19 +126,12 @@ in the panel log. This does not mean the server finished the work; **Restart
 servers** remains available when a server is stuck.
 
 `install` says what Loom does when a file needs a catalogued server whose files are
-not on this computer yet: `ask` (the default) shows a small notification above the
-status bar's language-server item, with
-**Install**, **Not now**, and **Don't ask again**. Missing servers are combined in
-one card; each server is offered at most once in the current language-service
-session. The **×** button and **Not now** dismiss it for that session without
-changing settings. The notification keeps keyboard focus in the editor and does
-not block clicks outside it. **Don't ask again** saves
-`install: "never"` in your user settings. `auto` downloads and installs right away,
-while `never` shows no invitation and performs no automatic download. You can
-still install manually from the language panel with either policy. The size is an
-estimate from missing catalog archives, counting shared runtimes once. A server you register needs no
-installation. Downloads are checked against the catalog's SHA-256 and the server is
-started once before it is activated.
+not on this computer yet. `manual` (the default) installs nothing on its own: the
+status bar shows the server with an amber dot, and the language panel lists it with an
+**Install** button and the download size, an estimate from the missing catalog
+archives that counts shared runtimes once. `auto` downloads and installs right away.
+A server you register needs no installation. Downloads are checked against the
+catalog's SHA-256 and the server is started once before it is activated.
 
 An installation in the language panel has a **Cancel** button. Cancelling removes
 queued work and cleans up partial downloads and staging files; a shared runtime

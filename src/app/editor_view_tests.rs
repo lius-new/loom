@@ -2978,15 +2978,12 @@ fn the_panel_names_what_a_server_offers() {
     let mut h = LanguageHarness::new("x\n", &["--features", "hover,definition,rename"]);
     h.until_ready();
     let frame = crate::app::chrome::language_panel_frame(&h.state);
-    let text: Vec<String> = frame
+    let offers = frame
         .sections
         .iter()
-        .flat_map(|s| s.lines.iter().map(|l| l.text.clone()))
-        .collect();
-    let offers = text
-        .iter()
-        .find(|l| l.starts_with("offers:"))
-        .expect("a line of capabilities");
+        .map(|s| &s.subtitle)
+        .find(|subtitle| subtitle.contains("hover"))
+        .expect("a subtitle naming the capabilities");
     for name in ["hover", "definition", "rename"] {
         assert!(offers.contains(name), "{offers}");
     }

@@ -143,12 +143,14 @@ pub fn status_binding(
     StatusBinding::new(
         move || {
             let app = reader.get();
+            let (server, language) = language_status(&reader, &app);
             StatusFrame {
                 terminal_open: app.default_terminal_open(),
                 pending: app.keymap.pending().to_vec(),
                 source_control: app.source_control.visible,
                 diff_loading: app.git.model.diff_loading().is_some(),
-                language: language_notes(&reader, &app),
+                server,
+                language,
                 vim: crate::app::editor_vim::is_active(&app)
                     .then(|| (app.editor.vim.mode(), app.editor.vim.status())),
                 file: app.workspace.active().map(|id| FileStatus {
@@ -172,8 +174,32 @@ pub fn status_binding(
             StatusCommand::ToggleTerminal => {
                 crate::app::terminal::toggle_panel(&writer, &tabs, &editor, &terminal)
             }
+            StatusCommand::ServerAction(crate::ui::chrome::ChipAction::Details(id)) => writer
+                .update(|app| {
+                    app.chrome.language_panel = false;
+                    app.chrome.language_details = match app.chrome.language_details {
+                        Some(open) if open == id => None,
+                        _ => Some(id),
+                    };
+                }),
+            StatusCommand::ServerAction(action) => {
+                use crate::ui::chrome::ChipAction;
+                if let Some(services) = writer.services().and_then(|r| r.language_services()) {
+                    match action {
+                        ChipAction::Details(_) | ChipAction::Pending => {}
+                        ChipAction::Install(server) | ChipAction::Retry(server) => {
+                            services.install(&server)
+                        }
+                        ChipAction::Restart(instance) => services.restart_instance(instance),
+                        ChipAction::CancelInstall { server, generation } => {
+                            services.cancel_install(&server, generation)
+                        }
+                    }
+                }
+            }
             StatusCommand::LanguagePanel => writer.update(|app| {
                 app.chrome.language_panel = !app.chrome.language_panel;
+                app.chrome.language_details = None;
             }),
             StatusCommand::ToggleSourceControl => writer.update(|app| {
                 app.apply(crate::features::keymap::action::Action::ToggleSourceControl)
@@ -181,12 +207,15 @@ pub fn status_binding(
         },
     )
 }
-/// Pending syntax resources, server state and the active file's diagnostics.
-fn language_notes(
+/// Pending syntax resources and the active file's main language server.
+fn language_status(
     state: &AppContext,
     app: &crate::app::state::AppState,
-) -> Vec<crate::ui::chrome::StatusNote> {
-    use crate::ui::chrome::{NoteLevel, StatusNote};
+) -> (
+    Option<crate::ui::chrome::ServerChip>,
+    Vec<crate::ui::chrome::StatusNote>,
+) {
+    use crate::ui::chrome::{NoteLevel, ServerChip, StatusNote};
     let mut notes = Vec::new();
     if let Some(info) = crate::infrastructure::language_packs::resources()
         .download_infos()
@@ -203,146 +232,410 @@ fn language_notes(
         });
     }
     let Some(id) = app.workspace.active() else {
-        return notes;
+        return (None, notes);
     };
     let Some(services) = state.services().and_then(|r| r.language_services()) else {
-        return notes;
+        return (None, notes);
     };
     let Some(document) = app.workspace.documents.get(&id).filter(|d| d.is_text()) else {
-        return notes;
+        return (None, notes);
     };
     let registry = crate::domain::language::Registry::builtin();
     let servers = crate::features::language_service::server_set::ServerSet::current();
     let infos = services.infos();
-    // One note for each server the language is bound to, in the servers' order.
+    // The language's main server is the chip; the others only add to its count, and
+    // the panel lists them.
+    let mut present = Vec::new();
     for (definition, _) in servers.for_language(registry, document.meta.lang) {
         let name = definition.display_name.to_string();
         let info = infos
             .iter()
             .filter(|i| i.server == name && document.meta.path.starts_with(&i.root))
             .max_by_key(|i| i.root.components().count());
-        let Some(info) = info else {
-            continue;
-        };
-        notes.push(server_note(&name, info));
+        if let Some(info) = info {
+            present.push(server_chip(&name, info));
+        }
     }
-    if let Some(found) = services
-        .results(&document.meta.path, &document.stamp(id))
-        .diagnostics
-    {
-        notes.extend(diagnostic_notes(&found));
-    }
-    notes
+    let chip = (!present.is_empty()).then(|| {
+        let others = present.len() - 1;
+        let (tone, text, progress, action) = present.remove(0);
+        ServerChip {
+            text: if others > 0 {
+                format!("{text} +{others}")
+            } else {
+                text
+            },
+            tone,
+            progress,
+            action,
+        }
+    });
+    (chip, notes)
 }
 
-/// The status-bar note for one server instance.
-fn server_note(
+/// The state, words and progress the status bar shows for one server instance.
+fn server_chip(
     name: &str,
     info: &crate::infrastructure::lsp::manager::InstanceInfo,
-) -> crate::ui::chrome::StatusNote {
+) -> (
+    crate::ui::language_panel::Tone,
+    String,
+    crate::ui::language_panel::Progress,
+    Option<crate::ui::chrome::ChipAction>,
+) {
     use crate::infrastructure::lsp::manager::Status;
-    use crate::ui::chrome::{NoteLevel, StatusNote};
-    let (text, level) = match &info.status {
-        Status::Starting => (format!("{name}: starting…"), NoteLevel::Quiet),
+    use crate::ui::chrome::ChipAction;
+    use crate::ui::language_panel::{Progress, Tone};
+    let server = || info.server_id.clone();
+    match &info.status {
+        Status::Starting => (
+            Tone::Busy,
+            format!("{name} starting"),
+            Progress::None,
+            Some(ChipAction::Pending),
+        ),
         Status::Ready => match info.tasks.first() {
             // The server is connected but still working: say what on.
             Some(task) => (
+                Tone::Busy,
                 match task.percentage {
                     Some(percent) => format!("{name}: {} {percent}%", task.title),
                     None => format!("{name}: {}", task.title),
                 },
-                NoteLevel::Quiet,
+                Progress::Spinner,
+                Some(ChipAction::Details(info.id)),
             ),
-            None => (name.to_owned(), NoteLevel::Quiet),
+            None => (
+                Tone::Ready,
+                name.to_owned(),
+                Progress::None,
+                Some(ChipAction::Details(info.id)),
+            ),
         },
-        Status::Restarting { .. } => (format!("{name}: restarting…"), NoteLevel::Warning),
-        Status::Failed(_) => (format!("{name}: stopped"), NoteLevel::Error),
-        Status::Unavailable(_) => (format!("{name}: not found"), NoteLevel::Quiet),
-        Status::NotInstalled => (format!("{name}: not installed"), NoteLevel::Warning),
-        Status::Installing(progress) => {
-            (format!("{name}: installing, {progress}"), NoteLevel::Quiet)
+        Status::Restarting { .. } => (
+            Tone::Failed,
+            format!("{name} restarting"),
+            Progress::Spinner,
+            Some(ChipAction::Restart(info.id)),
+        ),
+        Status::Failed(_) => (
+            Tone::Failed,
+            format!("{name} stopped"),
+            Progress::None,
+            Some(ChipAction::Restart(info.id)),
+        ),
+        Status::Unavailable(_) => (
+            Tone::Off,
+            format!("{name} not found"),
+            Progress::None,
+            Some(ChipAction::Restart(info.id)),
+        ),
+        Status::NotInstalled => (
+            Tone::Missing,
+            format!("{name} not installed"),
+            Progress::None,
+            Some(ChipAction::Install(server())),
+        ),
+        Status::Installing(text) => {
+            let percent = text
+                .strip_prefix("downloading ")
+                .and_then(|rest| rest.strip_suffix('%'))
+                .and_then(|number| number.parse::<u8>().ok());
+            let cancel = info
+                .install_generation
+                .map(|generation| ChipAction::CancelInstall {
+                    server: server(),
+                    generation,
+                });
+            match percent {
+                Some(percent) => (
+                    Tone::Busy,
+                    format!("{name} {percent}%"),
+                    Progress::Percent(percent),
+                    cancel,
+                ),
+                None => (
+                    Tone::Busy,
+                    format!("{name} {text}"),
+                    Progress::Spinner,
+                    cancel,
+                ),
+            }
         }
-        Status::InstallFailed(_) => (format!("{name}: install failed"), NoteLevel::Error),
-        Status::InstallCancelling => (format!("{name}: cancelling install…"), NoteLevel::Quiet),
-        Status::InstallCancelled => (format!("{name}: install cancelled"), NoteLevel::Quiet),
-    };
-    StatusNote { text, level }
+        Status::InstallFailed(_) => (
+            Tone::Failed,
+            format!("{name} install failed"),
+            Progress::None,
+            Some(ChipAction::Retry(server())),
+        ),
+        Status::InstallCancelling => (
+            Tone::Busy,
+            format!("{name} cancelling"),
+            Progress::None,
+            Some(ChipAction::Pending),
+        ),
+        Status::InstallCancelled => (
+            Tone::Missing,
+            format!("{name} cancelled"),
+            Progress::None,
+            Some(ChipAction::Retry(server())),
+        ),
+    }
 }
 
-/// Error and warning counts of the active file's diagnostics.
-fn diagnostic_notes(
-    found: &[crate::features::language_service::diagnostics::Diagnostic],
-) -> Vec<crate::ui::chrome::StatusNote> {
+/// The open details card's server, as the card shows it.
+pub fn language_details_frame(state: &AppContext) -> Option<crate::ui::language_details::Frame> {
     use crate::features::language_service::diagnostics::Severity;
-    use crate::ui::chrome::{NoteLevel, StatusNote};
-    let mut notes = Vec::new();
-    let count = |severity| found.iter().filter(|d| d.severity == severity).count();
-    let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
-    if errors > 0 {
-        notes.push(StatusNote {
-            text: format!("{errors} error{}", if errors == 1 { "" } else { "s" }),
-            level: NoteLevel::Error,
-        });
-    }
-    if warnings > 0 {
-        notes.push(StatusNote {
-            text: format!("{warnings} warning{}", if warnings == 1 { "" } else { "s" }),
-            level: NoteLevel::Warning,
-        });
-    }
-    notes
+    use crate::infrastructure::lsp::manager::Status;
+    use crate::ui::language_details::Frame;
+    use crate::ui::language_panel::{Level, Tone};
+    let services = state.services().and_then(|r| r.language_services())?;
+    let app = state.get();
+    let open = app.chrome.language_details?;
+    let info = services.infos().into_iter().find(|info| info.id == open)?;
+    let (tone, word) = match &info.status {
+        Status::Starting => (Tone::Busy, "Starting".to_owned()),
+        Status::Ready if info.tasks.is_empty() => (Tone::Ready, "Ready".to_owned()),
+        Status::Ready => (Tone::Busy, "Working".to_owned()),
+        Status::Restarting { attempt, .. } => (Tone::Failed, format!("Restarting ({attempt})")),
+        Status::Failed(_) => (Tone::Failed, "Stopped".to_owned()),
+        Status::Unavailable(_) => (Tone::Off, "Unavailable".to_owned()),
+        Status::NotInstalled => (Tone::Missing, "Not installed".to_owned()),
+        Status::Installing(text) => (Tone::Busy, format!("Installing, {text}")),
+        Status::InstallFailed(_) => (Tone::Failed, "Install failed".to_owned()),
+        Status::InstallCancelling => (Tone::Busy, "Cancelling".to_owned()),
+        Status::InstallCancelled => (Tone::Missing, "Cancelled".to_owned()),
+    };
+    let provides = match &info.providers {
+        Some(providers) => {
+            let names = providers.names();
+            if names.is_empty() {
+                "diagnostics only".to_owned()
+            } else {
+                names.join(", ")
+            }
+        }
+        None => "—".to_owned(),
+    };
+    // The active file's errors and warnings: the counts the status bar leaves out.
+    let diagnostics = app
+        .workspace
+        .active()
+        .and_then(|id| {
+            let document = app.workspace.documents.get(&id).filter(|d| d.is_text())?;
+            services
+                .results(&document.meta.path, &document.stamp(id))
+                .diagnostics
+        })
+        .map(|found| {
+            let count = |severity| found.iter().filter(|d| d.severity == severity).count();
+            let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
+            if errors + warnings == 0 {
+                "none".to_owned()
+            } else {
+                format!(
+                    "{errors} error{}, {warnings} warning{}",
+                    if errors == 1 { "" } else { "s" },
+                    if warnings == 1 { "" } else { "s" }
+                )
+            }
+        })
+        .unwrap_or_else(|| "—".to_owned());
+    let rows = vec![
+        ("Provides".to_owned(), provides),
+        ("Root".to_owned(), crate::ui::display_path(&info.root)),
+        (
+            "Documents".to_owned(),
+            match info.process_id {
+                Some(pid) => format!("{} · pid {pid}", info.documents),
+                None => info.documents.to_string(),
+            },
+        ),
+        ("Diagnostics".to_owned(), diagnostics),
+    ];
+    let mut log: Vec<(String, Level)> = info
+        .log
+        .iter()
+        .rev()
+        .take(6)
+        .rev()
+        .map(|line| (line.clone(), Level::Quiet))
+        .collect();
+    log.extend(
+        info.stderr
+            .iter()
+            .rev()
+            .take(4)
+            .rev()
+            .map(|line| (line.clone(), Level::Warning)),
+    );
+    Some(Frame {
+        instance: info.id,
+        name: info.server,
+        state: word,
+        tone,
+        rows,
+        log,
+    })
 }
 
-/// Syntax installation status and running language servers.
+/// The open details card's log as plain text, for copying.
+pub fn language_details_log(state: &AppContext) -> Option<String> {
+    let services = state.services().and_then(|r| r.language_services())?;
+    let open = state.get().chrome.language_details?;
+    let info = services.infos().into_iter().find(|info| info.id == open)?;
+    let mut text = format!(
+        "{} ({})\n",
+        info.server,
+        crate::ui::display_path(&info.root)
+    );
+    for line in info.log.iter().chain(info.stderr.iter()) {
+        text.push_str(line);
+        text.push('\n');
+    }
+    Some(text)
+}
+
+/// Language servers and syntax downloads: the active file's servers first.
 pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Frame {
     use crate::infrastructure::lsp::manager::Status;
-    use crate::ui::language_panel::{Frame, Level, Line, Section};
+    use crate::ui::language_panel::{Frame, Group, Level, Line, Progress, Section, Tone};
     let services = state.services().and_then(|r| r.language_services());
-    let line = |text: String, level| Line {
-        text,
-        level,
-        cancel: None,
-    };
-    let offers = services
-        .as_ref()
-        .map(|s| s.install_offers())
-        .unwrap_or_default();
+    let current = current_servers(state);
+    let registry = crate::domain::language::Registry::builtin();
+    let server_set = crate::features::language_service::server_set::ServerSet::current();
     let mut sections: Vec<Section> = services
         .map(|s| s.infos())
         .unwrap_or_default()
         .into_iter()
         .map(|info| {
-            let (state_text, level) = match &info.status {
-                Status::Starting => ("starting".to_owned(), Level::Quiet),
-                Status::Ready if info.tasks.is_empty() => ("ready".to_owned(), Level::Quiet),
-                Status::Ready => ("working".to_owned(), Level::Quiet),
-                Status::Restarting { attempt, .. } => {
-                    (format!("restarting (attempt {attempt})"), Level::Warning)
+            let group = match &current {
+                Some((path, ids))
+                    if ids.contains(&info.server_id) && path.starts_with(&info.root) =>
+                {
+                    Group::Current
                 }
-                Status::Failed(_) => ("stopped".to_owned(), Level::Error),
-                Status::Unavailable(_) => ("not available".to_owned(), Level::Quiet),
-                Status::NotInstalled => ("not installed".to_owned(), Level::Warning),
-                Status::Installing(progress) => (format!("installing, {progress}"), Level::Quiet),
-                Status::InstallFailed(_) => ("install failed".to_owned(), Level::Error),
-                Status::InstallCancelling => ("cancelling install…".to_owned(), Level::Quiet),
-                Status::InstallCancelled => ("install cancelled".to_owned(), Level::Quiet),
+                _ => Group::Other,
             };
-            let mut lines = vec![line(crate::ui::display_path(&info.root), Level::Quiet)];
-            match &info.status {
-                Status::Restarting { reason, .. }
-                | Status::Failed(reason)
-                | Status::InstallFailed(reason) => {
-                    lines.push(line(reason.clone(), Level::Error));
+            // The languages it serves, such as "TypeScript, JavaScript".
+            let mut names: Vec<String> = Vec::new();
+            for binding in server_set
+                .get(&info.server_id)
+                .map(|definition| definition.languages.as_slice())
+                .unwrap_or_default()
+            {
+                if let Some(id) = registry.language_by_name(&binding.language) {
+                    let name = registry.definition(id).display_name.to_string();
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+            let languages = match names.len() {
+                0..=3 => names.join(", "),
+                _ => format!("{}, …", names[..3].join(", ")),
+            };
+            let with = |detail: String| {
+                if languages.is_empty() {
+                    detail
+                } else if detail.is_empty() {
+                    languages.clone()
+                } else {
+                    format!("{languages} · {detail}")
+                }
+            };
+            let mut lines = Vec::new();
+            let mut subtitle_level = Level::Quiet;
+            let mut progress = Progress::None;
+            let mut install = None;
+            let mut restart = None;
+            let (tone, state_text, subtitle) = match &info.status {
+                Status::Starting => {
+                    progress = Progress::Spinner;
+                    (Tone::Busy, "Starting".to_owned(), languages.clone())
+                }
+                Status::Ready if info.tasks.is_empty() => {
+                    restart = Some(info.id);
+                    let detail = match &info.providers {
+                        Some(providers) => {
+                            let offered = providers.names();
+                            if offered.is_empty() {
+                                "diagnostics only".to_owned()
+                            } else {
+                                offered.join(", ")
+                            }
+                        }
+                        None => String::new(),
+                    };
+                    (Tone::Ready, "Ready".to_owned(), with(detail))
+                }
+                Status::Ready => {
+                    restart = Some(info.id);
+                    progress = Progress::Spinner;
+                    (Tone::Busy, "Working".to_owned(), languages.clone())
+                }
+                Status::Restarting { attempt, reason } => {
+                    progress = Progress::Spinner;
+                    subtitle_level = Level::Error;
+                    (
+                        Tone::Failed,
+                        format!("Restarting ({attempt})"),
+                        reason.clone(),
+                    )
+                }
+                Status::Failed(reason) => {
+                    restart = Some(info.id);
+                    subtitle_level = Level::Error;
+                    (Tone::Failed, "Stopped".to_owned(), reason.clone())
                 }
                 Status::Unavailable(reason) => {
-                    lines.push(line(reason.clone(), Level::Quiet));
-                    lines.push(line(
-                        "Set another program with language_servers in settings.json.".to_owned(),
-                        Level::Quiet,
-                    ));
+                    lines.push(Line {
+                        text: "Set another program with language_servers in settings.json."
+                            .to_owned(),
+                        level: Level::Quiet,
+                        cancel: None,
+                    });
+                    (Tone::Off, "Unavailable".to_owned(), reason.clone())
                 }
-                _ => {}
-            }
+                Status::NotInstalled => {
+                    install = Some("Install");
+                    let size = info
+                        .download_bytes
+                        .map(|bytes| format!("{:.1} MB", bytes as f64 / 1_000_000.0))
+                        .unwrap_or_default();
+                    (Tone::Missing, "Not installed".to_owned(), with(size))
+                }
+                Status::Installing(text) => {
+                    let percent = text
+                        .strip_prefix("downloading ")
+                        .and_then(|rest| rest.strip_suffix('%'))
+                        .and_then(|number| number.parse::<u8>().ok());
+                    let state_text = match percent {
+                        Some(percent) => {
+                            progress = Progress::Percent(percent);
+                            format!("{percent}%")
+                        }
+                        None => {
+                            progress = Progress::Spinner;
+                            text.clone()
+                        }
+                    };
+                    (Tone::Busy, state_text, with("installing".to_owned()))
+                }
+                Status::InstallFailed(reason) => {
+                    install = Some("Retry");
+                    subtitle_level = Level::Error;
+                    (Tone::Failed, "Install failed".to_owned(), reason.clone())
+                }
+                Status::InstallCancelling => {
+                    progress = Progress::Spinner;
+                    (Tone::Busy, "Cancelling".to_owned(), languages.clone())
+                }
+                Status::InstallCancelled => {
+                    install = Some("Resume");
+                    (Tone::Missing, "Cancelled".to_owned(), languages.clone())
+                }
+            };
             for task in &info.tasks {
                 let mut text = task.title.clone();
                 if let Some(percent) = task.percentage {
@@ -354,84 +647,26 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 if task.cancelling {
                     text.push_str(" (cancelling…)");
                 }
-                let mut task_line = line(text, Level::Quiet);
-                if task.cancellable && !task.cancelling {
-                    task_line.cancel = Some(crate::ui::language_panel::TaskTarget {
-                        instance: info.id,
-                        run: info.run,
-                        task: task.id,
-                    });
-                }
-                lines.push(task_line);
+                lines.push(Line {
+                    text,
+                    level: Level::Quiet,
+                    cancel: (task.cancellable && !task.cancelling).then_some({
+                        crate::ui::language_panel::TaskTarget {
+                            instance: info.id,
+                            run: info.run,
+                            task: task.id,
+                        }
+                    }),
+                });
             }
-            if let Some(providers) = &info.providers {
-                let offered = providers.names();
-                lines.push(line(
-                    if offered.is_empty() {
-                        "offers: nothing beyond diagnostics".to_owned()
-                    } else {
-                        format!("offers: {}", offered.join(", "))
-                    },
-                    Level::Quiet,
-                ));
-            }
-            // Nothing runs until the pack is installed, so there is nothing to count.
-            if !matches!(info.status, Status::NotInstalled) {
-                let counts = info.diagnostics;
-                for registration in &info.registrations {
-                    lines.push(line(format!("registered: {registration}"), Level::Quiet));
-                }
-                lines.push(line(
-                    format!(
-                        "diagnostics: {} published, {} shown, {} moved, {} outdated, {} other file",
-                        counts.published,
-                        counts.shown,
-                        counts.carried,
-                        counts.outdated,
-                        counts.unknown
-                    ),
-                    if counts.published > 0 && counts.shown == 0 {
-                        Level::Warning
-                    } else {
-                        Level::Quiet
-                    },
-                ));
-                lines.push(line(
-                    format!(
-                        "{} documents{}",
-                        info.documents,
-                        info.process_id
-                            .map(|p| format!(", pid {p}"))
-                            .unwrap_or_default()
-                    ),
-                    Level::Quiet,
-                ));
-            }
-            let broken = matches!(info.status, Status::Restarting { .. } | Status::Failed(_));
-            let recent = info.log.iter().rev().take(6).rev();
-            lines.extend(recent.map(|l| line(l.clone(), Level::Quiet)));
-            if broken {
-                let tail = info.stderr.iter().rev().take(3).rev();
-                lines.extend(tail.map(|l| line(l.clone(), Level::Warning)));
-            }
-            // The notification owns the decision while it is showing.
-            let offered = offers.iter().any(|offer| offer.server == info.server_id);
-            if offered && matches!(info.status, Status::NotInstalled) {
-                lines.push(line(
-                    "Waiting for your choice in the notification.".to_owned(),
-                    Level::Quiet,
-                ));
-            }
-            let install = match info.status {
-                Status::NotInstalled if offered => None,
-                Status::NotInstalled => Some("Install"),
-                Status::InstallFailed(_) => Some("Retry"),
-                Status::InstallCancelled => Some("Resume"),
-                _ => None,
-            };
             Section {
-                title: format!("{} — {state_text}", info.server),
-                level,
+                group,
+                title: info.server.clone(),
+                subtitle,
+                subtitle_level,
+                state: state_text,
+                tone,
+                progress,
                 lines,
                 install: install.map(|label| (info.server_id.clone(), label)),
                 cancel_install: if matches!(info.status, Status::Installing(_)) {
@@ -444,6 +679,7 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 } else {
                     None
                 },
+                restart,
             }
         })
         .collect();
@@ -454,26 +690,48 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
         .collect();
     let retry_downloads = downloads.iter().any(|i| i.error.is_some());
     sections.extend(downloads.into_iter().map(|info| {
+        let failed = info.error.is_some();
         Section {
-            title: format!("{} syntax — {}", info.name, info.status),
-            level: if info.error.is_some() {
-                Level::Warning
+            group: Group::Download,
+            title: format!("{} syntax", info.name),
+            subtitle: info.error.unwrap_or_default(),
+            subtitle_level: Level::Warning,
+            state: info.status.to_string(),
+            tone: if failed { Tone::Failed } else { Tone::Busy },
+            progress: if failed {
+                Progress::None
             } else {
-                Level::Quiet
+                Progress::Spinner
             },
-            lines: info
-                .error
-                .into_iter()
-                .map(|error| line(error, Level::Warning))
-                .collect(),
+            lines: Vec::new(),
             install: None,
             cancel_install: None,
+            restart: None,
         }
     }));
+    // The active file's servers first, then the others, then downloads; each keeps its order.
+    sections.sort_by_key(|section| section.group);
     Frame {
         sections,
         retry_downloads,
     }
+}
+
+/// The active text file's path and the ids of the servers its language is bound to.
+fn current_servers(
+    state: &AppContext,
+) -> Option<(std::path::PathBuf, std::collections::BTreeSet<String>)> {
+    let app = state.get();
+    let id = app.workspace.active()?;
+    let document = app.workspace.documents.get(&id).filter(|d| d.is_text())?;
+    let registry = crate::domain::language::Registry::builtin();
+    let servers = crate::features::language_service::server_set::ServerSet::current();
+    let ids = servers
+        .for_language(registry, document.meta.lang)
+        .into_iter()
+        .map(|(definition, _)| definition.name.to_string())
+        .collect();
+    Some((document.meta.path.clone(), ids))
 }
 
 pub fn status(

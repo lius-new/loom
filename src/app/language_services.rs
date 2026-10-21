@@ -76,16 +76,12 @@ impl LanguageServices {
         self.manager.cancel_install(server, generation);
     }
 
-    pub fn install_offers(&self) -> Vec<crate::features::language_service::install_prompt::Offer> {
-        self.manager.install_offers()
-    }
-
-    pub fn dismiss_install_prompt(&self, servers: Vec<String>) {
-        self.manager.dismiss_install_prompt(servers);
-    }
-
     pub fn restart(&self) {
         self.manager.restart();
+    }
+
+    pub fn restart_instance(&self, id: u64) {
+        self.manager.restart_instance(id);
     }
 
     pub fn cancel_task(&self, instance: u64, run: u64, task: u64) {

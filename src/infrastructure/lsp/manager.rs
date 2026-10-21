@@ -27,7 +27,6 @@ use crate::features::language_service::{
     diagnostics::{self, Diagnostic},
     dynamic,
     expand::{self, Installed},
-    install_prompt::{Offer as InstallOffer, Prompts as InstallPrompts},
     plan::{self, Assignment, InstanceKey},
     semantic,
     server_set::ServerSet,
@@ -142,6 +141,8 @@ pub(crate) enum Status {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InstanceInfo {
+    /// What installing the server would download, when it is not installed.
+    pub download_bytes: Option<u64>,
     pub id: u64,
     pub run: u64,
     pub registration_revision: u64,
@@ -310,13 +311,13 @@ enum Msg {
         text: Arc<String>,
     },
     Restart,
+    RestartInstance(u64),
     /// Install the pack of the named server.
     Install(String),
     CancelInstall {
         server: String,
         generation: u64,
     },
-    DismissInstallPrompt(Vec<String>),
     RetryInstalls,
     CancelTask {
         instance: u64,
@@ -371,7 +372,6 @@ pub(crate) struct Manager {
     actions: Arc<Mutex<Vec<ServerAction>>>,
     next_request: std::sync::atomic::AtomicU64,
     infos: Arc<Mutex<Vec<InstanceInfo>>>,
-    install_offers: Arc<Mutex<Vec<InstallOffer>>>,
     results: Store,
     thread: Option<JoinHandle<()>>,
 }
@@ -398,7 +398,6 @@ impl Manager {
                 listener
             });
         let infos = Arc::new(Mutex::new(Vec::new()));
-        let install_offers = Arc::default();
         let actions: Arc<Mutex<Vec<ServerAction>>> = Arc::default();
         let results: Store = Arc::default();
         let coordinator = Coordinator {
@@ -421,8 +420,6 @@ impl Manager {
             snapshot: Snapshot::default(),
             assignments: HashMap::new(),
             published: Vec::new(),
-            install_prompts: InstallPrompts::default(),
-            install_offers: Arc::clone(&install_offers),
         };
         let thread = thread::Builder::new()
             .name("loom-lsp-manager".into())
@@ -433,7 +430,6 @@ impl Manager {
             actions,
             next_request: std::sync::atomic::AtomicU64::new(1),
             infos,
-            install_offers,
             results,
             thread: Some(thread),
         }
@@ -453,6 +449,11 @@ impl Manager {
         let _ = self.tx.send(Msg::Restart);
     }
 
+    /// Restarts one instance, leaving the others alone.
+    pub fn restart_instance(&self, id: u64) {
+        let _ = self.tx.send(Msg::RestartInstance(id));
+    }
+
     /// Tells the servers that want to know that files changed on disk.
     pub fn files_changed(&self, change: FileChange) {
         let _ = self.tx.send(Msg::Files(change));
@@ -468,14 +469,6 @@ impl Manager {
             server: server.into(),
             generation,
         });
-    }
-
-    pub fn install_offers(&self) -> Vec<InstallOffer> {
-        self.install_offers.lock().unwrap().clone()
-    }
-
-    pub fn dismiss_install_prompt(&self, servers: Vec<String>) {
-        let _ = self.tx.send(Msg::DismissInstallPrompt(servers));
     }
 
     /// Asks again for every pack whose installation failed.
@@ -694,8 +687,6 @@ struct Coordinator {
     /// never touches the disk to look for project markers.
     assignments: HashMap<PathBuf, (ResolvedLanguage, Vec<Assignment>)>,
     published: Vec<InstanceInfo>,
-    install_prompts: InstallPrompts,
-    install_offers: Arc<Mutex<Vec<InstallOffer>>>,
 }
 
 /// The settings the person gave `server`, by their top-level names.
@@ -762,8 +753,8 @@ impl Coordinator {
             }
             Msg::Saved { path, text } => self.saved(&path, &text),
             Msg::Restart => self.restart(),
+            Msg::RestartInstance(id) => self.restart_where(|instance| instance.id == id),
             Msg::Install(server) => {
-                self.install_prompts.dismiss(std::slice::from_ref(&server));
                 let pack = self.servers.get(&server).and_then(|d| d.pack.clone());
                 if let (Some(installer), Some(pack)) = (&self.installer, pack) {
                     let _ = installer.resume(&pack);
@@ -778,7 +769,6 @@ impl Coordinator {
                     });
                 }
             }
-            Msg::DismissInstallPrompt(servers) => self.install_prompts.dismiss(&servers),
             Msg::RetryInstalls => {
                 if let Some(installer) = &self.installer {
                     installer.retry();
@@ -2058,11 +2048,18 @@ impl Coordinator {
     }
 
     fn restart(&mut self) {
+        self.restart_where(|_| true);
+    }
+
+    fn restart_where(&mut self, picked: impl Fn(&Instance) -> bool) {
         // An instance with no documents has nothing to restart for; it is simply
         // dropped and comes back when a document needs it.
         let mut stopping = Vec::new();
         let mut lost = Vec::new();
         self.instances.retain_mut(|instance| {
+            if !picked(instance) {
+                return true;
+            }
             lost.push(instance.id);
             stopping.push(std::mem::replace(
                 &mut instance.phase,
@@ -2088,6 +2085,7 @@ impl Coordinator {
             .instances
             .iter()
             .map(|instance| InstanceInfo {
+                download_bytes: None,
                 id: instance.id,
                 run: instance.run,
                 registration_revision: instance.registration_revision,
@@ -2165,7 +2163,19 @@ impl Coordinator {
                 },
             })
             .collect();
-        self.publish_install_offers(&infos);
+        let mut infos = infos;
+        for info in infos
+            .iter_mut()
+            .filter(|info| info.status == Status::NotInstalled)
+        {
+            info.download_bytes = self
+                .servers
+                .get(&info.server_id)
+                .and_then(|definition| definition.pack.as_deref())
+                .zip(self.installer.as_ref())
+                .and_then(|(pack, installer)| installer.missing_archives(pack).ok())
+                .map(|archives| archives.values().sum());
+        }
         {
             // Forget what an instance said about documents it does not hold any
             // more, and results of documents no server holds at all.
@@ -2211,71 +2221,6 @@ impl Coordinator {
         }
         self.published.clear();
         self.infos.lock().unwrap().clear();
-        self.install_offers.lock().unwrap().clear();
-    }
-
-    fn publish_install_offers(&mut self, infos: &[InstanceInfo]) {
-        let mut candidates = BTreeMap::<String, InstallOffer>::new();
-        if let Some(installer) = &self.installer {
-            for info in infos
-                .iter()
-                .filter(|info| info.status == Status::NotInstalled && info.documents != 0)
-            {
-                if install_policy(&self.snapshot.servers, &info.server_id) != InstallPolicy::Ask {
-                    continue;
-                }
-                let Some(pack) = self
-                    .servers
-                    .get(&info.server_id)
-                    .and_then(|definition| definition.pack.as_deref())
-                else {
-                    continue;
-                };
-                let Ok(archives) = installer.missing_archives(pack) else {
-                    continue;
-                };
-                let offer =
-                    candidates
-                        .entry(info.server_id.clone())
-                        .or_insert_with(|| InstallOffer {
-                            server: info.server_id.clone(),
-                            name: info.server.clone(),
-                            languages: Vec::new(),
-                            archives,
-                        });
-                let Some(instance) = self
-                    .instances
-                    .iter()
-                    .find(|instance| instance.id == info.id)
-                else {
-                    continue;
-                };
-                for document in &instance.documents {
-                    if let Some(snapshot) = self.snapshot.documents.iter().find(|snapshot| {
-                        uri::file_uri(&snapshot.path)
-                            .is_some_and(|key| uri::key(&key) == uri::key(&document.uri))
-                    }) {
-                        let name = self
-                            .registry
-                            .definition_of(snapshot.language)
-                            .display_name
-                            .to_string();
-                        if !offer.languages.contains(&name) {
-                            offer.languages.push(name);
-                        }
-                    }
-                }
-                offer.languages.sort();
-            }
-        }
-        let offers = self
-            .install_prompts
-            .reconcile(candidates.into_values().collect());
-        let mut published = self.install_offers.lock().unwrap();
-        if *published != offers {
-            *published = offers;
-            self.results_changed = true;
-        }
     }
 }
 

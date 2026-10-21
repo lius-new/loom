@@ -124,7 +124,7 @@ mod tests {
     use super::*;
     use crate::features::settings::servers::{InstallPolicy, LanguageServerSetting};
     #[test]
-    fn never_install_policy_is_written_and_reloaded_without_losing_other_preferences() {
+    fn install_policy_is_written_and_reloaded_without_losing_other_preferences() {
         let path = std::env::temp_dir().join(format!(
             "loom-install-policy-{}.json",
             std::time::SystemTime::now()
@@ -147,7 +147,7 @@ mod tests {
         );
         fs::write(&path, &original).unwrap();
         let mut settings = parse(&original).unwrap().settings;
-        settings.language_servers[0].install = Some(InstallPolicy::Never);
+        settings.language_servers[0].install = Some(InstallPolicy::Auto);
         settings.language_servers.push(LanguageServerSetting {
             server: "other-user".into(),
             ..settings.language_servers[0].clone()
