@@ -453,7 +453,13 @@ fn signature_controls_stay_inside_narrow_cards_and_do_not_overlap_the_label() {
             area.right,
             area.top + 38.0,
         );
-        let (card, _) = crate::ui::editor::signature::render(&view, anchor, area, Arc::new(|_| {}));
+        let (card, _) = crate::ui::editor::signature::render(
+            &view,
+            anchor,
+            area,
+            Arc::new(|_| {}),
+            crate::ui::editor::docs::Actions::ignored(),
+        );
         assert!(
             card.left >= area.left
                 && card.right <= area.right
@@ -461,7 +467,14 @@ fn signature_controls_stay_inside_narrow_cards_and_do_not_overlap_the_label() {
                 && card.bottom <= area.bottom
         );
         let ui: lgui::application::AppView = Arc::new(move |_| {
-            crate::ui::editor::signature::render(&view, anchor, area, Arc::new(|_| {})).1
+            crate::ui::editor::signature::render(
+                &view,
+                anchor,
+                area,
+                Arc::new(|_| {}),
+                crate::ui::editor::docs::Actions::ignored(),
+            )
+            .1
         });
         let mut session = lgui::session::UiSession::new();
         session.render_view(&ui, area, lgui::core::UiScale::ONE);

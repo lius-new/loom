@@ -1685,6 +1685,18 @@ impl LanguageHarness {
             .any(|node| node.text.as_deref() == Some(wanted))
     }
 
+    /// Whether a list row shows `label`: its matched and unmatched parts are
+    /// drawn as separate runs, so the label is read from them joined.
+    fn has_label(&self, label: &str) -> bool {
+        self.session
+            .tree()
+            .nodes()
+            .iter()
+            .filter_map(|node| node.text.as_deref())
+            .collect::<String>()
+            .contains(label)
+    }
+
     /// Keeps rendering until `check` passes, or fails with `what`.
     fn until(&mut self, what: &str, mut check: impl FnMut(&mut Self) -> bool) {
         self.until_for(what, std::time::Duration::from_secs(15), &mut check);
@@ -2238,7 +2250,7 @@ fn typing_opens_a_completion_list_that_narrows_with_more_typing() {
     h.type_text("a");
     h.until("the list", |h| h.completion_labels().len() == 2);
     h.render();
-    assert!(h.has_text("alpha-fake"));
+    assert!(h.has_label("alpha-fake"));
     // More typing narrows it without another round trip.
     h.type_text("l");
     assert_eq!(h.completion_labels(), ["alpha-fake"]);
@@ -2307,7 +2319,7 @@ fn completion_refresh_can_shrink_reorder_or_empty_the_candidates() {
             .selected,
         0
     );
-    assert!(h.has_text("alpha6"));
+    assert!(h.has_label("alpha6"));
     write(&[]);
     h.act(Action::ShowCompletions);
     h.until("the empty refresh", |h| h.completion_labels().is_empty());

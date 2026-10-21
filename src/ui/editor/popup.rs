@@ -1,6 +1,7 @@
 //! A list that opens over the code: completion items, definitions, symbols, code
 //! actions. It never takes focus from the editor; the keyboard reaches it
 //! through the keymap, the mouse through its rows.
+use super::docs;
 use super::view::card_origin;
 use crate::features::markdown::Block;
 use crate::ui::theme;
@@ -15,6 +16,8 @@ const MIN_W: f32 = 220.0;
 const MAX_W: f32 = 640.0;
 const INPUT_H: f32 = 26.0;
 const DOCS_W: f32 = 320.0;
+/// The widest the documentation grows to fit a long code line.
+const DOCS_MAX_W: f32 = 560.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Row {
@@ -54,6 +57,10 @@ pub(crate) enum Event {
     Pick(usize),
     Dismiss,
     Scroll(isize),
+    /// The text selected in the documentation, or `None` once cleared.
+    Select(Option<String>),
+    /// A link in the documentation was clicked.
+    OpenLink(String),
 }
 
 pub(crate) type Sender = Arc<dyn Fn(Event) + Send + Sync>;
@@ -288,19 +295,12 @@ pub(crate) fn render(
         && !blocks.is_empty()
     {
         // Documentation beside the list, or below it when there is no room.
-        let size = theme::UI_SIZE;
-        let layout = crate::ui::markdown::layout(
-            blocks,
-            DOCS_W - 16.0,
-            &crate::ui::markdown::Metrics {
-                measure: &|text, style| crate::ui::markdown::measure(text, style, size),
-                line_h: 18.0,
-                gap: 6.0,
-                indent: 16.0,
-            },
-        );
-        let doc_h = (layout.height + 16.0).min(area.height() * 0.6);
-        let beside = card.right + 4.0 + DOCS_W <= area.right;
+        // Wide enough for the widest code line, up to a limit; text wraps at it.
+        let max_w = DOCS_MAX_W.min((area.width() - 8.0).max(DOCS_W));
+        let (layout, text_w) = docs::fit(blocks, DOCS_W - 2.0 * docs::PAD, max_w - 2.0 * docs::PAD);
+        let docs_w = text_w + 2.0 * docs::PAD;
+        let doc_h = (layout.height + 2.0 * docs::PAD).min(area.height() * 0.6);
+        let beside = card.right + 4.0 + docs_w <= area.right;
         let docs_left = if beside { card.right + 4.0 } else { card.left };
         let docs_top = if beside {
             card.top
@@ -309,17 +309,26 @@ pub(crate) fn render(
         } else {
             (card.top - 4.0 - doc_h).max(area.top)
         };
-        let docs_rect = UiRect::new(docs_left, docs_top, docs_left + DOCS_W, docs_top + doc_h);
+        let docs_rect = UiRect::new(docs_left, docs_top, docs_left + docs_w, docs_top + doc_h);
+        let interaction = docs::Actions {
+            open_link: {
+                let send = send.clone();
+                Arc::new(move |url| send(Event::OpenLink(url)))
+            },
+            select: {
+                let send = send.clone();
+                Arc::new(move |text| send(Event::Select(text)))
+            },
+        }
+        .interaction();
         out = out.child(
             theme::bordered(docs_rect, theme::c().surface, theme::c().border, 5.0, 1.0)
                 .key("language-popup-docs")
-                .child(clip(docs_rect, 0.0, 0.0).child(crate::ui::markdown::render(
+                .child(clip(docs_rect, 0.0, 0.0).child(docs::render(
                     &layout,
-                    docs_rect.left + 8.0,
-                    docs_rect.top + 8.0,
-                    size,
-                    18.0,
-                    None,
+                    docs_rect.left + docs::PAD,
+                    docs_rect.top + docs::PAD,
+                    Some(&interaction),
                 ))),
         );
         rect = UiRect::new(

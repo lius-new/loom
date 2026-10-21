@@ -385,16 +385,17 @@ pub(crate) fn binding(
                 });
                 return;
             }
+            if let Event::SignatureSelect { revision, text } = event {
+                dispatcher.try_update(|app| {
+                    let next = text.map(|text| (revision, text));
+                    let changed = app.editor.language.signature_selection != next;
+                    app.editor.language.signature_selection = next;
+                    changed
+                });
+                return;
+            }
             if let Event::OpenLink(url) = event {
-                // Documentation comes from the language server: only web pages
-                // open, and only because the person clicked.
-                if (url.starts_with("https://") || url.starts_with("http://"))
-                    && !url.contains('\0')
-                    && let Err(error) = crate::infrastructure::update::open_page(&url)
-                {
-                    dispatcher
-                        .update(|app| app.show_error(format!("Could not open link: {error}")));
-                }
+                super::language_ui::open_link(&dispatcher, url);
                 return;
             }
             if let Event::PeekClose { revision } = event {
@@ -653,6 +654,7 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
         | Event::DiagnosticLink(_)
         | Event::OpenLink(_)
         | Event::HoverSelect(_)
+        | Event::SignatureSelect { .. }
         | Event::HoverPress(_) => {
             return false;
         }

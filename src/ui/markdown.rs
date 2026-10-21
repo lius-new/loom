@@ -8,8 +8,7 @@ use crate::features::markdown::{Block, Inline};
 use crate::ui::theme;
 use lgui::core::{CursorIcon, EventPolicy, UiEventContext};
 use lgui::prelude::{
-    Element, SelectHandler, SelectableSegment, UiRect, VisualStyle, group, panel, selectable_text,
-    text,
+    Element, SelectHandler, UiRect, VisualStyle, group, panel, scroll_view, selection_region, text,
 };
 
 /// How a run of text looks.
@@ -43,6 +42,9 @@ pub struct Layout {
     pub rules: Vec<(f32, f32, f32)>,
     /// Backgrounds of code blocks.
     pub code_boxes: Vec<UiRect>,
+    /// The width each code block's longest line needs, box padding included;
+    /// wider than its box, the block scrolls sideways.
+    pub code_extents: Vec<f32>,
     /// Vertical bars beside block quotes.
     pub quote_bars: Vec<UiRect>,
     pub width: f32,
@@ -63,6 +65,7 @@ struct Placer<'a> {
     runs: Vec<Run>,
     rules: Vec<(f32, f32, f32)>,
     code_boxes: Vec<UiRect>,
+    code_extents: Vec<f32>,
     quote_bars: Vec<UiRect>,
     max_width: f32,
 }
@@ -243,6 +246,7 @@ impl Placer<'_> {
                     }
                     top += self.m.line_h;
                 }
+                self.code_extents.push(right + pad - x);
                 let box_right = (x + width).min(right + pad).max(x + 2.0 * pad);
                 self.code_boxes.push(UiRect::new(
                     x,
@@ -300,6 +304,7 @@ pub fn layout(blocks: &[Block], max_width: f32, metrics: &Metrics) -> Layout {
         runs: Vec::new(),
         rules: Vec::new(),
         code_boxes: Vec::new(),
+        code_extents: Vec::new(),
         quote_bars: Vec::new(),
         max_width,
     };
@@ -316,6 +321,7 @@ pub fn layout(blocks: &[Block], max_width: f32, metrics: &Metrics) -> Layout {
         runs: placer.runs,
         rules: placer.rules,
         code_boxes: placer.code_boxes,
+        code_extents: placer.code_extents,
         quote_bars: placer.quote_bars,
     }
 }
@@ -389,15 +395,16 @@ pub struct Interaction {
     pub on_select: Option<SelectHandler>,
 }
 
-/// A layout broken into layers, so a host can put its own text surface between
-/// them: backgrounds under the text, links above it.
+/// A layout broken into layers, so a host can put its own surface around the
+/// text: backgrounds under it, links above it.
 pub struct Parts {
     /// Code boxes, quote bars and rules.
     pub below: Element,
+    /// The text, in reading order. Code blocks wider than their box are in a
+    /// container that scrolls sideways.
+    pub content: Vec<Element>,
     /// Link click targets; they draw nothing.
     pub above: Element,
-    /// Every run of text, in reading order.
-    pub segments: Vec<SelectableSegment>,
 }
 
 /// The layers of a layout with its top-left corner at `(left, top)`. Links click
@@ -417,9 +424,12 @@ pub fn parts(
         top + layout.height.max(1.0),
     );
     let mut below = group(bounds);
+    let mut boxes = Vec::with_capacity(layout.code_boxes.len());
     for b in &layout.code_boxes {
+        let rect = UiRect::new(left + b.left, top + b.top, left + b.right, top + b.bottom);
+        boxes.push(rect);
         below = below.child(panel(
-            UiRect::new(left + b.left, top + b.top, left + b.right, top + b.bottom),
+            rect,
             VisualStyle::filled(theme::c().active_line).radius(3.0),
         ));
     }
@@ -435,8 +445,14 @@ pub fn parts(
             VisualStyle::filled(theme::c().border),
         ));
     }
+    // Text in reading order; a code block holds the place of its first line.
+    enum Slot {
+        Text(Element),
+        Code(usize),
+    }
+    let mut slots = Vec::new();
+    let mut code: Vec<Vec<Element>> = boxes.iter().map(|_| Vec::new()).collect();
     let mut above = group(bounds);
-    let mut segments = Vec::with_capacity(layout.runs.len());
     for run in &layout.runs {
         let rect = UiRect::new(
             left + run.x,
@@ -444,11 +460,26 @@ pub fn parts(
             left + run.x + run.width + 6.0,
             top + run.y + line_h,
         );
-        segments.push(SelectableSegment::new(
-            rect,
-            run.text.clone(),
-            text_style(run.style, size),
-        ));
+        let label: Element = text(rect, run.text.clone(), text_style(run.style, size)).into();
+        let block = run
+            .style
+            .code
+            .then(|| {
+                layout
+                    .code_boxes
+                    .iter()
+                    .position(|b| run.y >= b.top && run.y < b.bottom && run.x >= b.left)
+            })
+            .flatten();
+        match block {
+            Some(index) => {
+                if code[index].is_empty() {
+                    slots.push(Slot::Code(index));
+                }
+                code[index].push(label);
+            }
+            None => slots.push(Slot::Text(label)),
+        }
         let (Some(url), Some(handler)) = (run.url.as_ref(), on_link) else {
             continue;
         };
@@ -468,10 +499,31 @@ pub fn parts(
                 }),
         );
     }
+    let mut content = Vec::with_capacity(slots.len());
+    for slot in slots {
+        match slot {
+            Slot::Text(element) => content.push(element),
+            Slot::Code(index) => {
+                let rect = boxes[index];
+                let extent = layout.code_extents.get(index).copied().unwrap_or(0.0);
+                let lines = std::mem::take(&mut code[index]);
+                content.push(if extent > rect.width() + 0.5 {
+                    // Wider than its box: the lines stay whole and scroll sideways.
+                    scroll_view(rect, (extent, rect.height()))
+                        .horizontal()
+                        .thumb_color(theme::c().text_faint)
+                        .children(lines)
+                        .into()
+                } else {
+                    group(rect).children(lines).into()
+                });
+            }
+        }
+    }
     Parts {
         below: below.into(),
+        content,
         above: above.into(),
-        segments,
     }
 }
 
@@ -496,16 +548,13 @@ pub fn render(
     match interaction.and_then(|i| i.on_select.clone()) {
         Some(on_select) => {
             out = out.child(
-                selectable_text(bounds, parts.segments)
+                selection_region(bounds)
                     .selection_color(theme::c().accent)
-                    .on_select(move |cx, text| on_select(cx, text)),
+                    .on_select(move |cx, text| on_select(cx, text))
+                    .children(parts.content),
             );
         }
-        None => {
-            for segment in parts.segments {
-                out = out.child(text(segment.rect, segment.text, segment.style));
-            }
-        }
+        None => out = out.children(parts.content),
     }
     out.child(parts.above).into()
 }

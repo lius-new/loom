@@ -12,9 +12,7 @@ use lgui::core::{
     UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::core::{PathStyle, Point, Stroke, UiPath, UiPathCommand, path};
-use lgui::prelude::{
-    Color, Element, SelectableSegment, UiRect, VisualStyle, group, panel, selectable_text, text,
-};
+use lgui::prelude::{Color, Element, UiRect, VisualStyle, group, panel, selection_region, text};
 use lgui::text::{self, TextLayout, TextLayoutRequest};
 
 use super::gutter;
@@ -609,6 +607,7 @@ pub(crate) fn render(
             )?;
             let send = state.clone();
             let revision = view.revision;
+            let (links, selections) = (state.clone(), state.clone());
             Some(super::signature::render(
                 view,
                 rect,
@@ -616,6 +615,12 @@ pub(crate) fn render(
                 std::sync::Arc::new(move |forward| {
                     send.send(Event::Signature { revision, forward });
                 }),
+                super::docs::Actions {
+                    open_link: std::sync::Arc::new(move |url| links.send(Event::OpenLink(url))),
+                    select: std::sync::Arc::new(move |text| {
+                        selections.send(Event::SignatureSelect { revision, text })
+                    }),
+                },
             ))
         });
         let popup_rect = popup.as_ref().map(|(rect, _)| *rect);
@@ -976,6 +981,14 @@ const CARD_MAX_W: f32 = 640.0;
 /// The gap between a hover card and the underline it explains.
 const CARD_GAP: f32 = 4.0;
 
+/// One line of a diagnostic message as drawn: how tall it is, whether it wrapped,
+/// and whether the origin after the message goes on a row below it.
+struct MessageRow {
+    height: f32,
+    wrapped: bool,
+    origin_below: bool,
+}
+
 /// Where a `width` × `height` hover card for `anchor` opens: below the
 /// underline, or above it when the space below is too short; starting at the
 /// underline's left edge, or ending at its right edge when the space to the
@@ -1047,7 +1060,6 @@ fn info_card_actions(
         })
         .collect();
     let mut natural = 0.0f32;
-    let mut rows = 0usize;
     for (_, lines, origin) in &entries {
         for (i, line) in lines.iter().enumerate() {
             let mut w = measure(line);
@@ -1058,7 +1070,6 @@ fn info_card_actions(
             }
             natural = natural.max(w);
         }
-        rows += lines.len().max(1);
     }
     let fixes = fixes.filter(|v| found.iter().any(|d| d.range == v.range));
     if let Some(fixes) = fixes {
@@ -1072,25 +1083,65 @@ fn info_card_actions(
         natural + mark_w
     };
     let max_width = CARD_MAX_W.min((area.width() - 8.0).max(80.0));
-    let documentation = docs.map(|blocks| {
-        crate::ui::markdown::layout(
-            blocks,
-            (max_width - 2.0 * CARD_PAD).max(40.0),
-            &crate::ui::markdown::Metrics {
-                measure: &|text, style| crate::ui::markdown::measure(text, style, size),
-                line_h: CARD_ROW,
-                gap: 6.0,
-                indent: 16.0,
-            },
-        )
-    });
+    let documentation = docs.map(|blocks| super::docs::layout(blocks, max_width - 2.0 * CARD_PAD));
     let width = (diagnostics_w.max(documentation.as_ref().map_or(0.0, |l| l.width))
         + 2.0 * CARD_PAD)
         .min(max_width);
+    // A message line wider than the card wraps onto more lines; when only the
+    // origin after the last line would not fit, it takes a row of its own.
+    let text_w = (width - 2.0 * CARD_PAD - mark_w).max(40.0);
+    let message_style = theme::sans(theme::c().text_bright, size);
+    let wrapped_style = message_style
+        .wrap(lgui::prelude::TextWrap::Words)
+        .vertical_align(text::TextVerticalAlign::Top);
+    let rows: Vec<Vec<MessageRow>> = entries
+        .iter()
+        .map(|(_, lines, origin)| {
+            lines
+                .iter()
+                .enumerate()
+                .map(|(i, line)| {
+                    let line_w = measure(line);
+                    let origin_w = origin
+                        .as_ref()
+                        .filter(|_| i + 1 == lines.len())
+                        .map_or(0.0, |origin| 8.0 + measure(origin));
+                    if line_w > text_w {
+                        let height = text::layout(&TextLayoutRequest::for_style(
+                            line,
+                            UiRect::new(0.0, 0.0, text_w, 10_000.0),
+                            &wrapped_style,
+                        ))
+                        .map_or(CARD_ROW, |laid_out| laid_out.height.max(CARD_ROW));
+                        MessageRow {
+                            height,
+                            wrapped: true,
+                            origin_below: origin_w > 0.0,
+                        }
+                    } else {
+                        MessageRow {
+                            height: CARD_ROW,
+                            wrapped: false,
+                            origin_below: line_w + origin_w > text_w && origin_w > 0.0,
+                        }
+                    }
+                })
+                .collect()
+        })
+        .collect();
     let diagnostics_h = if entries.is_empty() {
         0.0
     } else {
-        rows as f32 * CARD_ROW + (entries.len() - 1) as f32 * 9.0
+        rows.iter()
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|row| row.height + if row.origin_below { CARD_ROW } else { 0.0 })
+                    .sum::<f32>()
+                    .max(CARD_ROW)
+            })
+            .sum::<f32>()
+            + (entries.len() - 1) as f32 * 9.0
     };
     let separator = if entries.is_empty() || documentation.is_none() {
         0.0
@@ -1111,7 +1162,7 @@ fn info_card_actions(
     );
     let mut content = clip(body, 0.0, 0.0);
     // The selectable text of the card, in reading order: the diagnostics, then the docs.
-    let mut segments: Vec<SelectableSegment> = Vec::new();
+    let mut texts: Vec<Element> = Vec::new();
     let mut below: Option<Element> = None;
     let mut y = body.top;
     for (index, (severity, lines, origin)) in entries.iter().enumerate() {
@@ -1129,16 +1180,37 @@ fn info_card_actions(
         ));
         let text_left = body.left + mark_w;
         for (i, line) in lines.iter().enumerate() {
-            segments.push(SelectableSegment::new(
-                UiRect::new(text_left, y, text_left + measure(line) + 6.0, y + CARD_ROW),
-                (*line).to_owned(),
-                theme::sans(theme::c().text_bright, size),
-            ));
+            let row = &rows[index][i];
+            texts.push(if row.wrapped {
+                text(
+                    UiRect::new(text_left, y, text_left + text_w, y + row.height),
+                    (*line).to_owned(),
+                    wrapped_style,
+                )
+                .into()
+            } else {
+                text(
+                    UiRect::new(text_left, y, text_left + measure(line) + 6.0, y + CARD_ROW),
+                    (*line).to_owned(),
+                    message_style,
+                )
+                .into()
+            });
             if i + 1 == lines.len()
                 && let Some(origin) = origin
             {
-                let after = text_left + measure(line) + 8.0;
-                let r = UiRect::new(after, y, body.right.max(after), y + CARD_ROW);
+                // After the line, or on a row of its own when the line leaves no room.
+                let (after, origin_top) = if row.origin_below {
+                    (text_left, y + row.height)
+                } else {
+                    (text_left + measure(line) + 8.0, y)
+                };
+                let r = UiRect::new(
+                    after,
+                    origin_top,
+                    body.right.max(after),
+                    origin_top + CARD_ROW,
+                );
                 let href = found[index]
                     .extra
                     .pointer("/codeDescription/href")
@@ -1179,21 +1251,23 @@ fn info_card_actions(
                     ));
                 }
             }
-            y += CARD_ROW;
+            y += row.height + if row.origin_below { CARD_ROW } else { 0.0 };
         }
         if lines.is_empty() {
             y += CARD_ROW;
         }
     }
-    let on_link: Option<crate::ui::markdown::LinkHandler> = binding.as_ref().map(|binding| {
-        let send = binding.clone();
-        std::sync::Arc::new(move |url: String| send.send(Event::OpenLink(url)))
-            as crate::ui::markdown::LinkHandler
+    // Links and selection act the same in every card over the code.
+    let interaction = binding.as_ref().map(|binding| {
+        let (links, selections) = (binding.clone(), binding.clone());
+        super::docs::Actions {
+            open_link: std::sync::Arc::new(move |url| links.send(Event::OpenLink(url))),
+            select: std::sync::Arc::new(move |text| selections.send(Event::HoverSelect(text))),
+        }
+        .interaction()
     });
-    let on_select = binding.as_ref().map(|binding| {
-        let send = binding.clone();
-        move |_: &mut lgui::core::UiEventContext, text| send.send(Event::HoverSelect(text))
-    });
+    let on_link = interaction.as_ref().and_then(|i| i.on_link.clone());
+    let on_select = interaction.and_then(|i| i.on_select);
     if let Some(fixes) = fixes
         && let Some(binding) = binding
     {
@@ -1230,14 +1304,13 @@ fn info_card_actions(
             ));
             y += separator;
         }
-        let parts =
-            crate::ui::markdown::parts(layout, body.left, y, size, CARD_ROW, on_link.as_ref());
+        let parts = super::docs::parts(layout, body.left, y, on_link.as_ref());
         below = Some(parts.below);
-        segments.extend(parts.segments);
+        texts.extend(parts.content);
         content = content.child(parts.above);
     }
-    // Backgrounds, the one surface that draws and selects all the text, then
-    // everything that must stay clickable above it.
+    // Backgrounds, then the text (selectable as one region when the card is
+    // interactive), then everything that must stay clickable above it.
     let mut layers = clip(body, 0.0, 0.0);
     if let Some(below) = below {
         layers = layers.child(below);
@@ -1245,16 +1318,13 @@ fn info_card_actions(
     match on_select {
         Some(on_select) => {
             layers = layers.child(
-                selectable_text(body, segments)
+                selection_region(body)
                     .selection_color(theme::c().accent)
-                    .on_select(on_select),
+                    .on_select(move |cx, text| on_select(cx, text))
+                    .children(texts),
             );
         }
-        None => {
-            for segment in segments {
-                layers = layers.child(text(segment.rect, segment.text, segment.style));
-            }
-        }
+        None => layers = layers.children(texts),
     }
     let layers = layers.child(content);
     Some((

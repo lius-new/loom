@@ -1,9 +1,10 @@
 //! The signature help card: the signature of the call being typed, with the
 //! parameter the caret is on in bold.
+use super::docs;
 use crate::features::markdown::Block;
 use crate::ui::{fonts, theme};
 use lgui::core::{CursorIcon, EventPolicy, UiEventContext, clip};
-use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
+use lgui::prelude::{Element, UiRect, VisualStyle, panel, scroll_view, selection_region, text};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -29,23 +30,16 @@ pub(crate) fn render(
     anchor: UiRect,
     area: UiRect,
     change: Arc<dyn Fn(bool) + Send + Sync>,
+    actions: docs::Actions,
 ) -> (UiRect, Element) {
     let size = theme::UI_SIZE;
     let char_w = fonts::editor().char_w * size / fonts::editor().size.max(1.0);
     let label_chars = view.label.chars().count();
     let max_width = MAX_W.min((area.width() - 2.0 * GAP).max(0.0));
-    let docs = view.docs.as_ref().map(|blocks| {
-        crate::ui::markdown::layout(
-            blocks,
-            (max_width - 2.0 * PAD).max(40.0),
-            &crate::ui::markdown::Metrics {
-                measure: &|text, style| crate::ui::markdown::measure(text, style, size),
-                line_h: ROW,
-                gap: 6.0,
-                indent: 16.0,
-            },
-        )
-    });
+    let docs = view
+        .docs
+        .as_ref()
+        .map(|blocks| docs::layout(blocks, max_width - 2.0 * PAD));
     let label_w = label_chars as f32 * char_w;
     let navigation_w = if view.position.is_some() { 104.0 } else { 0.0 };
     let width = (label_w
@@ -83,16 +77,7 @@ pub(crate) fn render(
         .event_policy(policy)
         .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation());
     let label_top = card.top + PAD + navigation_h;
-    let mut label_line = clip(
-        UiRect::new(
-            card.left + PAD,
-            label_top,
-            (card.right - PAD).max(card.left + PAD),
-            (label_top + ROW).min(card.bottom),
-        ),
-        0.0,
-        0.0,
-    );
+    let mut label_pieces: Vec<Element> = Vec::new();
     let chars: Vec<char> = view.label.chars().collect();
     let (from, to) = view
         .active
@@ -112,18 +97,31 @@ pub(crate) fn render(
         } else {
             theme::mono(theme::c().text, size)
         };
-        label_line = label_line.child(text(
-            UiRect::new(
-                x,
-                label_top,
-                x + (end - start) as f32 * char_w + 4.0,
-                label_top + ROW,
-            ),
-            piece,
-            style,
-        ));
+        label_pieces.push(
+            text(
+                UiRect::new(
+                    x,
+                    label_top,
+                    x + (end - start) as f32 * char_w + 4.0,
+                    label_top + ROW,
+                ),
+                piece,
+                style,
+            )
+            .into(),
+        );
     }
-    body = body.child(label_line);
+    // A long signature scrolls sideways in its line rather than being cut off.
+    let label_view = UiRect::new(
+        card.left + PAD,
+        label_top,
+        (card.right - PAD).max(card.left + PAD),
+        (label_top + ROW).min(card.bottom),
+    );
+    let label_line = scroll_view(label_view, (label_w, ROW))
+        .horizontal()
+        .thumb_color(theme::c().text_faint)
+        .children(label_pieces);
     if let Some((index, total)) = view.position {
         let label = format!("{index}/{total}");
         let button_w = 24.0_f32.min((card.width() - 2.0 * PAD).max(0.0) / 3.0);
@@ -163,28 +161,40 @@ pub(crate) fn render(
             theme::sans(theme::c().text_faint, theme::SMALL),
         ));
     }
+    // The label and the docs are one selectable region, clipped to the card;
+    // the docs' backgrounds go under it and their links above.
+    let region_rect = UiRect::new(
+        card.left + PAD,
+        label_top.min(card.bottom),
+        card.right - PAD,
+        card.bottom - PAD,
+    );
+    let interaction = actions.interaction();
+    let mut texts: Vec<Element> = vec![label_line.into()];
+    let mut layers = clip(region_rect, 0.0, 0.0);
+    let mut links = None;
     if let Some(layout) = &docs {
-        let docs_top = label_top + ROW + 6.0;
-        body = body.child(
-            clip(
-                UiRect::new(
-                    card.left + PAD,
-                    docs_top.min(card.bottom),
-                    card.right - PAD,
-                    card.bottom - PAD,
-                ),
-                0.0,
-                0.0,
-            )
-            .child(crate::ui::markdown::render(
-                layout,
-                card.left + PAD,
-                docs_top,
-                size,
-                ROW,
-                None,
-            )),
+        let parts = docs::parts(
+            layout,
+            card.left + PAD,
+            label_top + ROW + 6.0,
+            interaction.on_link.as_ref(),
         );
+        layers = layers.child(parts.below);
+        texts.extend(parts.content);
+        links = Some(parts.above);
     }
+    let on_select = interaction.on_select.clone();
+    let mut region = selection_region(region_rect)
+        .selection_color(theme::c().accent)
+        .children(texts);
+    if let Some(on_select) = on_select {
+        region = region.on_select(move |cx, text| on_select(cx, text));
+    }
+    layers = layers.child(region);
+    if let Some(links) = links {
+        layers = layers.child(links);
+    }
+    body = body.child(layers);
     (card, body)
 }

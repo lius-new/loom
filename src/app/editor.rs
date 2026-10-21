@@ -152,9 +152,10 @@ pub fn execute_command(
         }
         app.editor.menu = None;
         app.editor.drag = None;
-        // Text selected in a hover card is what the person means to copy.
+        // Text selected in a hover card or the list's documentation is what
+        // the person means to copy.
         if command == Command::Copy
-            && let Some(text) = app.editor.language.hover.selection.clone()
+            && let Some(text) = super::language_ui::selected_text(app)
         {
             if let Err(error) = clipboard.write_text(&text) {
                 app.show_error(format!("Clipboard: {error}"));

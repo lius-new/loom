@@ -208,7 +208,7 @@ pub fn choice_event(
     }
     use crate::ui::editor::popup::Event;
     match event {
-        Event::Focus => {}
+        Event::Focus | Event::Select(_) | Event::OpenLink(_) => {}
         Event::Dismiss => dismiss_choices(app),
         Event::Hover(index) | Event::Pick(index) => {
             let session = app.editor.language.snippet.as_mut().unwrap();

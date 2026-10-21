@@ -173,6 +173,11 @@ pub(crate) enum Event {
         revision: u64,
         forward: bool,
     },
+    /// The text selected in signature help `revision`, or `None` once cleared.
+    SignatureSelect {
+        revision: u64,
+        text: Option<String>,
+    },
     Text(String),
     Composition {
         text: String,
