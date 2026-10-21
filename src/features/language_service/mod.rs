@@ -4,9 +4,11 @@
 pub(crate) mod capabilities;
 pub(crate) mod completion;
 pub(crate) mod diagnostics;
+pub(crate) mod dynamic;
 pub(crate) mod expand;
 pub(crate) mod framing;
 pub(crate) mod fuzzy;
+pub(crate) mod install_prompt;
 pub(crate) mod message;
 pub(crate) mod plan;
 pub(crate) mod position;
@@ -22,3 +24,4 @@ mod session_tests;
 pub(crate) mod snippet;
 pub(crate) mod sync;
 pub(crate) mod uri;
+pub(crate) mod watch;

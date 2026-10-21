@@ -48,6 +48,11 @@ pub struct Pending {
 /// Something to do once the state update that found it out is over.
 pub enum Effect {
     Apply(Request),
+    ApplyThen {
+        request: Request,
+        instance: u64,
+        command: Command,
+    },
     /// Run a server command: after a code action, or from a lens.
     Execute {
         instance: u64,
@@ -83,6 +88,10 @@ fn start(
     let stamps = edit::stamps(&app);
     drop(app);
     state.update(|app| {
+        if matches!(wanted, Wanted::CodeActions) {
+            super::lightbulb::pause(app);
+            super::quickfix::pause(app);
+        }
         app.editor.language.refactor = Some(Pending {
             wanted,
             handle,
@@ -189,7 +198,7 @@ pub fn code_actions(state: &AppContext, rect: UiRect) {
         Wanted::CodeActions,
         Feature::CodeAction,
         rect,
-        serde_json::Value::Null,
+        json!({ "context": { "triggerKind": 1 } }),
         range,
         None,
     );
@@ -219,18 +228,19 @@ pub fn run_action(state: &AppContext, instance: u64, action: Arc<CodeAction>, re
     let stamps = edit::stamps(&app);
     drop(app);
     if let Some(edit) = &action.edit {
-        edit::apply(
-            state,
-            Request {
-                edit: edit.clone(),
-                stamps,
-                rect,
-                title: action.title.clone(),
-                reply: None,
-            },
-        );
-    }
-    if let Some(command) = &action.command {
+        let request = Request {
+            edit: edit.clone(),
+            stamps,
+            rect,
+            title: action.title.clone(),
+            reply: None,
+        };
+        if let Some(command) = &action.command {
+            edit::apply_then(state, request, instance, command.clone());
+        } else {
+            edit::apply(state, request);
+        }
+    } else if let Some(command) = &action.command {
         execute(state, instance, command.clone(), rect);
     }
 }
@@ -434,34 +444,10 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
                     items.push((part.instance, action));
                 }
             }
-            // Preferred fixes first, then fixes before refactorings.
-            items.sort_by_key(|(_, action)| {
-                (
-                    action.disabled.is_some(),
-                    !action.preferred,
-                    !action
-                        .kind
-                        .as_deref()
-                        .is_some_and(|k| k.starts_with("quickfix")),
-                )
-            });
             if items.is_empty() {
                 app.show_toast(failure_text("fix here", progress.failure.as_ref()));
             } else {
-                let rows = items
-                    .into_iter()
-                    .map(|(instance, action)| action_item(instance, action))
-                    .collect();
-                app.editor.language.popup = Some(
-                    Popup::new(
-                        Kind::CodeActions,
-                        target.pane,
-                        target.stamp,
-                        Some(target.cursor),
-                        rows,
-                    )
-                    .titled("Code actions"),
-                );
+                app.editor.language.popup = action_popup(target, items);
             }
         }
         Wanted::ResolveAction { instance, title } => {
@@ -527,15 +513,22 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
 fn action_effects(instance: u64, action: &CodeAction, pending: &Pending) -> Vec<Effect> {
     let mut effects = Vec::new();
     if let Some(edit) = &action.edit {
-        effects.push(Effect::Apply(Request {
+        let request = Request {
             edit: edit.clone(),
             stamps: pending.stamps.clone(),
             rect: pending.rect,
             title: action.title.clone(),
             reply: None,
-        }));
-    }
-    if let Some(command) = &action.command {
+        };
+        match &action.command {
+            Some(command) => effects.push(Effect::ApplyThen {
+                request,
+                instance,
+                command: command.clone(),
+            }),
+            None => effects.push(Effect::Apply(request)),
+        }
+    } else if let Some(command) = &action.command {
         effects.push(Effect::Execute {
             instance,
             command: command.clone(),
@@ -543,6 +536,37 @@ fn action_effects(instance: u64, action: &CodeAction, pending: &Pending) -> Vec<
         });
     }
     effects
+}
+
+pub(super) fn action_popup(target: &Target, mut items: Vec<(u64, CodeAction)>) -> Option<Popup> {
+    if items.is_empty() {
+        return None;
+    }
+    // Preferred fixes first, then fixes before refactorings.
+    items.sort_by_key(|(_, action)| {
+        (
+            action.disabled.is_some(),
+            !action.preferred,
+            !action
+                .kind
+                .as_deref()
+                .is_some_and(|k| k.starts_with("quickfix")),
+        )
+    });
+    let rows = items
+        .into_iter()
+        .map(|(instance, action)| action_item(instance, action))
+        .collect();
+    Some(
+        Popup::new(
+            Kind::CodeActions,
+            target.pane,
+            target.stamp,
+            Some(target.cursor),
+            rows,
+        )
+        .titled("Code actions"),
+    )
 }
 
 fn action_item(instance: u64, action: CodeAction) -> Item {

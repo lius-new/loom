@@ -93,6 +93,7 @@ pub fn display_path(path: &std::path::Path) -> String {
 }
 pub(crate) mod geometry;
 pub(crate) mod language;
+pub(crate) mod language_install;
 
 pub mod file_icons;
 pub mod fonts;

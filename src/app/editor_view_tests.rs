@@ -1542,6 +1542,33 @@ impl LanguageHarness {
         server_args: &[&str],
         configure: impl FnOnce(&mut AppState),
     ) -> Self {
+        let exe = std::env::current_exe().unwrap();
+        let fake = exe
+            .parent()
+            .and_then(|deps| deps.parent())
+            .unwrap()
+            .join("examples")
+            .join(if cfg!(windows) {
+                "fake_lsp.exe"
+            } else {
+                "fake_lsp"
+            });
+        Self::with_servers(
+            source,
+            server_args,
+            crate::features::language_service::server_set::rust_analyzer_running(
+                &fake.display().to_string(),
+            ),
+            configure,
+        )
+    }
+
+    fn with_servers(
+        source: &str,
+        server_args: &[&str],
+        servers: Arc<crate::features::language_service::server_set::ServerSet>,
+        configure: impl FnOnce(&mut AppState),
+    ) -> Self {
         use lgui::{
             application::{AppView, ApplicationContext},
             core::UiScale,
@@ -1554,17 +1581,6 @@ impl LanguageHarness {
         );
         std::mem::forget(fonts_handle);
         fonts::set(&fonts::FontSettings::EDITOR, &fonts::FontSettings::TERMINAL);
-        let exe = std::env::current_exe().unwrap();
-        let fake = exe
-            .parent()
-            .and_then(|deps| deps.parent())
-            .unwrap()
-            .join("examples")
-            .join(if cfg!(windows) {
-                "fake_lsp.exe"
-            } else {
-                "fake_lsp"
-            });
         let mut app = AppState::new();
         let name = format!(
             "loom-language-ui-{}-{}.rs",
@@ -1581,7 +1597,6 @@ impl LanguageHarness {
                 args: Some(args),
                 ..crate::features::settings::servers::LanguageServerSetting::named("rust-analyzer")
             }];
-        let fake_command = fake.display().to_string();
         configure(&mut app);
         let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
         let initial = Arc::new(Mutex::new(Some(app)));
@@ -1604,9 +1619,7 @@ impl LanguageHarness {
                 let results_state = state.clone();
                 view_runtime.install_language_services(
                     crate::app::language_services::LanguageServices::new(
-                        crate::features::language_service::server_set::rust_analyzer_running(
-                            &fake_command,
-                        ),
+                        servers.clone(),
                         move || {
                             crate::app::language_ui::tick(&results_state);
                         },
@@ -1669,7 +1682,16 @@ impl LanguageHarness {
 
     /// Keeps rendering until `check` passes, or fails with `what`.
     fn until(&mut self, what: &str, mut check: impl FnMut(&mut Self) -> bool) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        self.until_for(what, std::time::Duration::from_secs(15), &mut check);
+    }
+
+    fn until_for(
+        &mut self,
+        what: &str,
+        timeout: std::time::Duration,
+        mut check: impl FnMut(&mut Self) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + timeout;
         loop {
             self.render();
             if check(self) {
@@ -1706,6 +1728,57 @@ impl LanguageHarness {
 }
 
 static LANGUAGE_CASES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[path = "real_language_server_tests.rs"]
+mod real_servers;
+
+#[path = "signature_help_tests.rs"]
+mod signature_help;
+
+#[path = "snippet_choice_tests.rs"]
+mod snippet_choice;
+
+#[path = "code_action_lightbulb_tests.rs"]
+mod code_action_lightbulb;
+
+#[test]
+fn an_explicit_hover_retries_the_same_symbol_after_content_modified() {
+    use crate::features::keymap::action::Action;
+    let log = std::env::temp_dir().join(format!("loom-hover-retry-{}.log", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let log_arg = log.display().to_string();
+    let mut h = LanguageHarness::new(
+        "fn alpha() {}\n",
+        &[
+            "--features",
+            "hover",
+            "--feature-error",
+            "--do-not-retrigger",
+            "--log",
+            &log_arg,
+        ],
+    );
+    h.until_ready();
+    h.set_cursor(5);
+    h.act(Action::ShowHover);
+    h.until("the first hover", |h| {
+        server_log(h, &log)
+            .iter()
+            .filter(|m| *m == "textDocument/hover")
+            .count()
+            == 1
+    });
+    h.act(Action::ShowHover);
+    h.until("the explicit retry", |h| {
+        server_log(h, &log)
+            .iter()
+            .filter(|m| *m == "textDocument/hover")
+            .count()
+            == 2
+    });
+    assert!(h.state.get().editor.language.hover.card.is_none());
+    let _ = std::fs::remove_file(log);
+}
 
 #[test]
 fn resting_the_pointer_on_a_word_shows_what_the_server_says_about_it() {
@@ -1840,6 +1913,105 @@ fn a_server_without_definitions_says_so() {
 }
 
 #[test]
+fn definition_peek_keeps_the_document_and_history_until_opened_and_rejects_old_events() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "definition"]);
+    h.until_ready();
+    h.set_cursor(15);
+    h.act(Action::PeekDefinition);
+    h.until("definition preview", |h| {
+        crate::app::language_ui::peek::view(&h.state.get(), PaneId::new(1)).is_some()
+    });
+    assert_eq!(h.cursor(), 15);
+    assert!(!h.state.get().editor.language.history.can_go_back());
+    let old = crate::app::language_ui::peek::view(&h.state.get(), PaneId::new(1))
+        .unwrap()
+        .revision;
+    h.act(Action::ClosePeek);
+    crate::app::language_ui::peek::jump(&h.state, old, h.rect);
+    assert_eq!(h.cursor(), 15);
+    h.act(Action::PeekDefinition);
+    h.until("new preview", |h| {
+        h.state.get().editor.language.peek.is_some()
+    });
+    h.act(Action::OpenPeekTarget);
+    h.until("preview target", |h| h.selection() == Some(0..1));
+    h.act(Action::GoBack);
+    h.until("preview history", |h| h.cursor() == 15);
+}
+
+#[test]
+fn definition_peek_expires_on_edits_and_late_definition_responses_do_not_navigate() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::new(
+        NAV_SOURCE,
+        &["--features", "definition", "--slow-ms", "180"],
+    );
+    h.until_ready();
+    h.set_cursor(15);
+    h.act(Action::GoToDefinition);
+    h.set_cursor(10);
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    h.render();
+    assert_eq!(h.cursor(), 10);
+    h.act(Action::PeekDefinition);
+    h.until("preview", |h| h.state.get().editor.language.peek.is_some());
+    h.type_text("x");
+    assert!(h.state.get().editor.language.peek.is_none());
+}
+
+#[test]
+fn navigation_history_uses_line_and_column_after_a_prior_line_changes_length() {
+    use crate::features::keymap::action::Action;
+    let source = "// comment\nfn alpha() {}\n";
+    let mut h = LanguageHarness::new(source, &["--features", "definition"]);
+    h.until_ready();
+    let before = source.find("alpha").unwrap() + 2;
+    h.set_cursor(before);
+    h.act(Action::GoToDefinition);
+    h.until("definition jump", |h| h.selection() == Some(0..1));
+    h.state.update(|app| {
+        let mut editor = app.workspace.active_editor_mut().unwrap();
+        editor.set_cursor(0);
+        loom_editor_core::normal::insert(&mut editor, "😀");
+    });
+    h.act(Action::GoBack);
+    h.until("line column history", |h| h.cursor() == before + "😀".len());
+}
+
+#[test]
+fn peeking_an_unopened_target_does_not_create_a_tab_and_dismissal_invalidates_queued_reads() {
+    use crate::app::language_ui::{navigate::Place, peek};
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "definition"]);
+    h.until_ready();
+    let path = std::env::temp_dir().join(format!(
+        "loom-peek-{}-{}.rs",
+        std::process::id(),
+        LANGUAGE_CASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&path, "fn target() {}\n").unwrap();
+    let tabs = h.state.get().workspace.documents.len();
+    let cursor = h.cursor();
+    peek::open(&h.state, Place::bytes(path.clone(), 3..9));
+    h.state.update(peek::close);
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    h.render();
+    assert!(h.state.get().editor.language.peek.is_none());
+    peek::open(&h.state, Place::bytes(path.clone(), 3..9));
+    h.until("unopened preview", |h| {
+        h.state.get().editor.language.peek.is_some()
+    });
+    assert_eq!(h.state.get().workspace.documents.len(), tabs);
+    assert_eq!(h.cursor(), cursor);
+    h.act(crate::features::keymap::action::Action::OpenPeekTarget);
+    h.until("opened preview target", |h| {
+        h.state.get().workspace.active_path() == Some(path.as_path())
+    });
+    assert_eq!(h.state.get().workspace.documents.len(), tabs + 1);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn references_open_a_list_whose_rows_go_to_their_places() {
     use crate::features::keymap::action::Action;
     let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "references"]);
@@ -1847,13 +2019,27 @@ fn references_open_a_list_whose_rows_go_to_their_places() {
     h.act(Action::FindAllReferences);
     h.until_popup("the references");
     h.render();
-    assert_eq!(h.popup_labels().len(), 2);
+    assert_eq!(
+        h.popup_labels().len(),
+        3,
+        "one file group and two references"
+    );
     assert!(h.has_text("2 references"));
     h.act(Action::MenuSelectNext);
     h.act(Action::MenuConfirm);
     // The second reference is line 1, columns 2 to 4.
     h.until("the jump", |h| h.selection() == Some(16..18));
-    assert!(h.state.get().editor.language.popup.is_none());
+    assert!(
+        h.state
+            .get()
+            .editor
+            .language
+            .popup
+            .as_ref()
+            .is_some_and(
+                |p| p.kind == crate::app::language_ui::popup::Kind::References && !p.panel_focused
+            )
+    );
 }
 
 #[test]
@@ -2541,9 +2727,87 @@ fn the_problems_of_the_open_files_are_listed_with_the_worst_first() {
     });
     h.act(Action::ToggleProblems);
     h.until_popup("the problems");
-    assert_eq!(h.popup_labels(), ["fake error"]);
+    assert_eq!(h.popup_labels().last().unwrap(), "fake error");
+    assert!(
+        h.state
+            .get()
+            .editor
+            .language
+            .popup
+            .as_ref()
+            .unwrap()
+            .view()
+            .panel
+    );
     h.act(Action::MenuConfirm);
     h.until("the jump", |h| h.selection() == Some(0..2));
+    assert!(
+        h.state
+            .get()
+            .editor
+            .language
+            .popup
+            .as_ref()
+            .is_some_and(|p| !p.panel_focused)
+    );
+}
+
+#[test]
+fn lazy_code_lenses_resolve_before_their_command_runs() {
+    use crate::features::keymap::action::Action;
+    let log = std::env::temp_dir().join(format!(
+        "loom-lazy-lens-{}.log",
+        LANGUAGE_CASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let log_arg = log.display().to_string();
+    let mut h = LanguageHarness::new(
+        "fn f() {}\n",
+        &[
+            "--features",
+            "codeLens,execute",
+            "--lazy-lens",
+            "--log",
+            &log_arg,
+        ],
+    );
+    h.until_ready();
+    h.act(Action::ShowCodeLenses);
+    h.until_popup("lazy lens");
+    assert_eq!(h.popup_labels(), ["Resolve code lens…"]);
+    h.act(Action::MenuConfirm);
+    h.until("resolved command", |h| {
+        server_log(h, &log).contains(&"workspace/executeCommand".into())
+    });
+    let calls = server_log(&h, &log);
+    assert!(
+        calls.iter().position(|m| m == "codeLens/resolve").unwrap()
+            < calls
+                .iter()
+                .position(|m| m == "workspace/executeCommand")
+                .unwrap()
+    );
+    assert_eq!(h.document_text(), "fn f() {}\n");
+    let _ = std::fs::remove_file(log);
+}
+
+#[test]
+fn async_navigation_does_not_open_a_target_after_the_source_cursor_moves() {
+    use crate::app::language_ui::navigate::{self, Place};
+    let mut h = LanguageHarness::new(NAV_SOURCE, &["--features", "definition"]);
+    h.until_ready();
+    let path = std::env::temp_dir().join(format!(
+        "loom-stale-navigation-{}.rs",
+        LANGUAGE_CASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&path, "fn target() {}\n").unwrap();
+    let tabs = h.state.get().workspace.documents.len();
+    navigate::go(&h.state, Place::bytes(path.clone(), 3..9), h.rect, true);
+    h.set_cursor(2);
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    h.render();
+    assert_eq!(h.state.get().workspace.documents.len(), tabs);
+    assert_eq!(h.cursor(), 2);
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -2648,4 +2912,87 @@ fn the_panel_names_what_a_server_offers() {
         assert!(offers.contains(name), "{offers}");
     }
     assert!(!offers.contains("completion"));
+}
+
+#[test]
+fn the_language_panel_cancel_button_ends_only_the_selected_server_task() {
+    use lgui::core::{InputEvent, Point, PointerData};
+    let mut h = LanguageHarness::new("fn alpha() {}\n", &["--progress", "--progress-cancellable"]);
+    h.until_ready();
+    h.until("the cancellable task", |h| {
+        crate::app::chrome::language_panel_frame(&h.state)
+            .sections
+            .iter()
+            .flat_map(|s| &s.lines)
+            .any(|line| line.cancel.is_some())
+    });
+    let state = h.state.clone();
+    let runtime = h.runtime.clone();
+    let invoked = Arc::new(Mutex::new(Vec::new()));
+    let seen = invoked.clone();
+    let rect = h.rect;
+    let view: lgui::application::AppView = Arc::new(move |_| {
+        let runtime = runtime.clone();
+        let seen = seen.clone();
+        crate::ui::language_panel::render(
+            rect,
+            &crate::app::chrome::language_panel_frame(&state),
+            Arc::new(move |event| {
+                if let crate::ui::language_panel::Event::CancelTask(target) = event {
+                    seen.lock().unwrap().push(target);
+                    runtime.language_services().unwrap().cancel_task(
+                        target.instance,
+                        target.run,
+                        target.task,
+                    );
+                }
+            }),
+        )
+    });
+    let mut session = lgui::session::UiSession::new();
+    session.render_view(&view, rect, lgui::core::UiScale::ONE);
+    let button = session
+        .tree()
+        .nodes()
+        .iter()
+        .find(|n| n.text.as_deref() == Some("Cancel"))
+        .expect("the active task has a cancel button")
+        .paint_bounds;
+    let pointer = PointerData::mouse(Point::new(
+        (button.left + button.right) / 2.0,
+        (button.top + button.bottom) / 2.0,
+    ));
+    for input in [
+        InputEvent::PointerDown {
+            pointer,
+            button: PointerButton::Left,
+        },
+        InputEvent::PointerUp {
+            pointer,
+            button: PointerButton::Left,
+        },
+    ] {
+        let events = session.handle_input(input);
+        lgui::core::dispatch_runtime_output(
+            events,
+            &h.context,
+            &lgui::window::WindowId::new("language-ui-test"),
+            |action| session.handle_default_action(action),
+            |_| {},
+        );
+    }
+    assert_eq!(invoked.lock().unwrap().len(), 1);
+    h.until("the server acknowledged cancellation", |h| {
+        h.runtime.language_services().unwrap().infos()[0]
+            .tasks
+            .is_empty()
+    });
+    let frame = crate::app::chrome::language_panel_frame(&h.state);
+    assert!(
+        frame
+            .sections
+            .iter()
+            .flat_map(|s| &s.lines)
+            .all(|line| line.cancel.is_none())
+    );
 }

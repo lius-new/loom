@@ -213,7 +213,7 @@ pub const SUPPORTED_TOKEN_MODIFIERS: &[&str] = &[
 
 /// The `capabilities` object sent in the initialize request.
 pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Value {
-    json!({
+    let mut capabilities = json!({
         "general": { "positionEncodings": ["utf-8", "utf-16"] },
         "textDocument": {
             "synchronization": {
@@ -305,7 +305,7 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
             },
             "semanticTokens": {
                 "dynamicRegistration": false,
-                "requests": { "range": false, "full": { "delta": true } },
+                "requests": { "range": true, "full": { "delta": true } },
                 "tokenTypes": token_types,
                 "tokenModifiers": token_modifiers,
                 "formats": ["relative"],
@@ -321,9 +321,9 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
                 "symbolKind": { "valueSet": (1..=26).collect::<Vec<u32>>() }
             },
             "configuration": true,
-            "workspaceFolders": false,
+            "workspaceFolders": true,
             "didChangeConfiguration": { "dynamicRegistration": false },
-            "didChangeWatchedFiles": { "dynamicRegistration": false },
+            "didChangeWatchedFiles": { "dynamicRegistration": true, "relativePatternSupport": true },
             "fileOperations": {
                 "dynamicRegistration": false,
                 "didCreate": true,
@@ -337,14 +337,29 @@ pub fn client_capabilities(token_types: &[&str], token_modifiers: &[&str]) -> Va
                 "failureHandling": "abort",
                 "normalizesLineEndings": false
             },
-            "semanticTokens": { "refreshSupport": true }
+            "semanticTokens": { "refreshSupport": true },
+            "diagnostics": { "refreshSupport": true }
         },
         "window": {
             "workDoneProgress": true,
             "showDocument": { "support": true },
             "showMessage": { "messageActionItem": { "additionalPropertiesSupport": false } }
         }
-    })
+    });
+    for (method, _) in super::dynamic::PROVIDERS {
+        let (scope, name) = method.split_once('/').unwrap();
+        let name = match name {
+            "prepareCallHierarchy" => "callHierarchy",
+            "prepareTypeHierarchy" => "typeHierarchy",
+            "symbol" => "symbol",
+            other => other,
+        };
+        if capabilities[scope].get(name).is_none() {
+            capabilities[scope][name] = json!({});
+        }
+        capabilities[scope][name]["dynamicRegistration"] = json!(true);
+    }
+    capabilities
 }
 
 #[cfg(test)]
@@ -465,7 +480,7 @@ mod tests {
         );
         assert_eq!(
             caps["textDocument"]["semanticTokens"]["requests"]["range"],
-            json!(false)
+            json!(true)
         );
         assert_eq!(
             caps["textDocument"]["semanticTokens"]["overlappingTokenSupport"],
@@ -481,7 +496,7 @@ mod tests {
         );
         assert_eq!(
             caps["workspace"]["didChangeWatchedFiles"]["dynamicRegistration"],
-            json!(false)
+            json!(true)
         );
         assert_eq!(caps["workspace"]["applyEdit"], json!(true));
         assert_eq!(caps["window"]["workDoneProgress"], json!(true));
@@ -490,5 +505,9 @@ mod tests {
             json!(true)
         );
         assert_eq!(caps["workspace"]["configuration"], json!(true));
+        assert_eq!(
+            caps["workspace"]["diagnostics"]["refreshSupport"],
+            json!(true)
+        );
     }
 }

@@ -25,6 +25,13 @@ pub(crate) struct LanguageServices {
 }
 
 impl LanguageServices {
+    #[cfg(test)]
+    pub(super) fn with_manager(manager: Manager) -> Self {
+        Self {
+            manager,
+            sent: Mutex::new(None),
+        }
+    }
     pub fn new(servers: Arc<ServerSet>, on_change: impl Fn() + Send + 'static) -> Self {
         Self {
             manager: Manager::start(
@@ -65,8 +72,24 @@ impl LanguageServices {
         self.manager.install(server);
     }
 
+    pub fn cancel_install(&self, server: &str, generation: u64) {
+        self.manager.cancel_install(server, generation);
+    }
+
+    pub fn install_offers(&self) -> Vec<crate::features::language_service::install_prompt::Offer> {
+        self.manager.install_offers()
+    }
+
+    pub fn dismiss_install_prompt(&self, servers: Vec<String>) {
+        self.manager.dismiss_install_prompt(servers);
+    }
+
     pub fn restart(&self) {
         self.manager.restart();
+    }
+
+    pub fn cancel_task(&self, instance: u64, run: u64, task: u64) {
+        self.manager.cancel_task(instance, run, task);
     }
 
     /// The server results that describe the document exactly as `stamp` says.
@@ -99,6 +122,14 @@ impl LanguageServices {
 
     pub fn infos(&self) -> Vec<InstanceInfo> {
         self.manager.infos()
+    }
+
+    pub fn code_action_context(
+        &self,
+        path: &std::path::Path,
+        stamp: Stamp,
+    ) -> crate::infrastructure::lsp::manager::CodeActionContext {
+        self.manager.code_action_context(path, stamp)
     }
 }
 

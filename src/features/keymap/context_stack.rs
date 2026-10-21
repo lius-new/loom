@@ -23,6 +23,9 @@ pub struct ContextFacts {
     pub popup: bool,
     /// A snippet is being filled in.
     pub snippet: bool,
+    pub snippet_choice: bool,
+    pub signature: bool,
+    pub language_peek: bool,
 }
 
 pub const WORKSPACE: &str = "Workspace";
@@ -40,6 +43,8 @@ pub const COMMIT_MESSAGE: &str = "CommitMessage";
 pub const VIM: &str = "Vim";
 pub const POPUP: &str = "Popup";
 pub const SNIPPET: &str = "Snippet";
+pub const SNIPPET_CHOICE: &str = "SnippetChoice";
+pub const SIGNATURE_HELP: &str = "SignatureHelp";
 
 pub fn os_name() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -131,6 +136,15 @@ pub fn context_stack(app: &ContextFacts) -> Vec<KeyContext> {
         }
         if app.snippet {
             stack.push(KeyContext::new(SNIPPET));
+        }
+        if app.snippet_choice {
+            stack.push(KeyContext::new(SNIPPET_CHOICE));
+        }
+        if app.signature {
+            stack.push(KeyContext::new(SIGNATURE_HELP));
+        }
+        if app.language_peek {
+            stack.push(KeyContext::new("LanguagePeek"));
         }
         if app.popup {
             stack.push(KeyContext::new(POPUP));

@@ -186,7 +186,7 @@ fn feature_capabilities(options: &Options, caps: &mut serde_json::Map<String, Va
             "typeHierarchy" => caps.insert("typeHierarchyProvider".into(), json!(true)),
             "codeLens" => caps.insert(
                 "codeLensProvider".into(),
-                json!({ "resolveProvider": false }),
+                json!({ "resolveProvider": options.flag("--lazy-lens") }),
             ),
             "fileOps" => caps.insert(
                 "workspace".into(),
@@ -259,7 +259,7 @@ fn feature_result(method: &str, params: &Value, options: &Options) -> Option<Val
             "isIncomplete": options.flag("--completion-incomplete"),
             "items": [
                 { "label": format!("alpha-{tag}"), "kind": 3, "sortText": "1" },
-                { "label": "beta", "kind": 6, "insertText": "beta($1)$0",
+                { "label": "beta", "kind": 6, "insertText": options.value("--completion-snippet-file").and_then(|path| std::fs::read_to_string(path).ok()).unwrap_or_else(|| "beta($1)$0".into()),
                   "insertTextFormat": 2, "data": { "n": 2 } },
             ]
         }),
@@ -267,6 +267,10 @@ fn feature_result(method: &str, params: &Value, options: &Options) -> Option<Val
             let mut item = params.clone();
             item["documentation"] = json!({ "kind": "markdown", "value": "resolved docs" });
             item
+        }
+        "textDocument/signatureHelp" if options.value("--signature-file").is_some() => {
+            let bytes = std::fs::read(options.value("--signature-file").unwrap()).ok()?;
+            serde_json::from_slice(&bytes).ok()?
         }
         "textDocument/signatureHelp" => json!({
             "signatures": [{ "label": "fn f(a: i32, b: i32)",
@@ -277,8 +281,20 @@ fn feature_result(method: &str, params: &Value, options: &Options) -> Option<Val
             "range": span(line, character, character + 1),
             "placeholder": "name"
         }),
-        "textDocument/rename" => json!({ "changes": { uri_text: [{
-            "range": span(0, 0, 1), "newText": params["newName"] }] } }),
+        "textDocument/rename" => {
+            if let Some(version) = options
+                .value("--edit-version")
+                .and_then(|s| s.parse::<i64>().ok())
+            {
+                json!({"documentChanges":[{"textDocument":{"uri":uri,"version":version},"edits":[{"range":span(0,0,1),"newText":params["newName"]}]}]})
+            } else {
+                json!({ "changes": { uri_text: [{"range": span(0, 0, 1), "newText": params["newName"] }] } })
+            }
+        }
+        "textDocument/codeAction" if options.value("--code-actions-file").is_some() => {
+            let bytes = std::fs::read(options.value("--code-actions-file").unwrap()).ok()?;
+            serde_json::from_slice(&bytes).ok()?
+        }
         "textDocument/codeAction" => json!([
             { "title": "Fix it", "kind": "quickfix", "isPreferred": true,
               "edit": { "changes": { uri_text: [{
@@ -312,9 +328,17 @@ fn feature_result(method: &str, params: &Value, options: &Options) -> Option<Val
         "callHierarchy/outgoingCalls" => json!([{
             "to": params["item"], "fromRanges": [span(1, 0, 1)] }]),
         "typeHierarchy/supertypes" | "typeHierarchy/subtypes" => json!([params["item"]]),
+        "textDocument/codeLens" if options.flag("--lazy-lens") => json!([{
+            "range": span(0, 0, 4), "data": { "id": 7 } }]),
         "textDocument/codeLens" => json!([{
             "range": span(0, 0, 4),
             "command": { "title": "Run test", "command": "fake.run", "arguments": [1] } }]),
+        "codeLens/resolve" => {
+            let mut lens = params.clone();
+            lens["command"] =
+                json!({"title":"Run resolved test","command":"fake.run","arguments":[7]});
+            lens
+        }
         "workspace/executeCommand" => json!({ "ran": params["command"] }),
         _ => return None,
     })
@@ -378,6 +402,14 @@ fn main() {
     };
     let mut input = std::io::BufReader::new(std::io::stdin().lock());
     let mut shutdown_seen = false;
+    let mut feature_errors = std::collections::HashSet::<String>::new();
+    let mut save_seen = false;
+    let mut registration_step = 0;
+    let registration_script: Vec<Value> = options
+        .value("--registration-script")
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
     // Release these on didSave so a test can reopen a document before any old
     // publication arrives, without relying on sleeps or thread scheduling.
     let mut deferred_diagnostics = Vec::new();
@@ -419,27 +451,43 @@ fn main() {
                         "params": { "items": [{ "section": "fake" }, { "section": "missing" }] }
                     }));
                 }
+                if options.flag("--ask-folders") {
+                    out.send(&json!({ "jsonrpc": "2.0", "id": 9004, "method": "workspace/workspaceFolders" }));
+                }
                 if options.flag("--ask-unknown") {
                     out.send(&json!({
-                        "jsonrpc": "2.0", "id": 9002, "method": "client/registerCapability",
-                        "params": { "registrations": [] }
+                        "jsonrpc": "2.0", "id": 9002, "method": "client/unheardOf",
+                        "params": {}
                     }));
                 }
-                if options.flag("--progress") {
-                    out.send(&json!({
+                for request in registration_script.iter().filter(|request| {
+                    request.get("onMethod").is_none() && request["step"].as_u64().unwrap_or(0) == 0
+                }) {
+                    out.send(&json!({"jsonrpc":"2.0", "id":request["id"], "method":request["method"], "params":request["params"]}));
+                }
+                if options.flag("--progress") || options.flag("--progress-pair") {
+                    let tokens = if options.flag("--progress-pair") {
+                        vec![json!(7), json!("7")]
+                    } else {
+                        vec![json!("load")]
+                    };
+                    for token in tokens {
+                        out.send(&json!({
                         "jsonrpc": "2.0", "id": 9200, "method": "window/workDoneProgress/create",
-                        "params": { "token": "load" }
+                        "params": { "token": token }
                     }));
-                    out.send(&json!({
+                        out.send(&json!({
                         "jsonrpc": "2.0", "method": "$/progress",
-                        "params": { "token": "load", "value": {
-                            "kind": "begin", "title": "Loading project", "message": "0/10", "percentage": 0 } }
+                        "params": { "token": token, "value": {
+                            "kind": "begin", "title": "Loading project", "message": "0/10", "percentage": 0,
+                            "cancellable": options.flag("--progress-cancellable") } }
                     }));
-                    out.send(&json!({
-                        "jsonrpc": "2.0", "method": "$/progress",
-                        "params": { "token": "load", "value": {
-                            "kind": "report", "message": "3/10", "percentage": 30 } }
-                    }));
+                        out.send(&json!({
+                            "jsonrpc": "2.0", "method": "$/progress",
+                            "params": { "token": token, "value": {
+                                "kind": "report", "message": "3/10", "percentage": 30 } }
+                        }));
+                    }
                 }
                 if options.flag("--log-message") {
                     out.send(&json!({
@@ -500,6 +548,10 @@ fn main() {
                     if !options.flag("--diag-unversioned") {
                         params["version"] = document["version"].clone();
                     }
+                    if let Some(url) = options.value("--diag-code-url") {
+                        params["diagnostics"][0]["code"] = json!(7);
+                        params["diagnostics"][0]["codeDescription"] = json!({"href":url});
+                    }
                     let publication = json!({
                         "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": params
                     });
@@ -521,6 +573,14 @@ fn main() {
                 }
             }
             ("textDocument/didSave", None) => {
+                save_seen = true;
+                registration_step += 1;
+                for request in registration_script
+                    .iter()
+                    .filter(|request| request["step"].as_u64() == Some(registration_step))
+                {
+                    out.send(&json!({"jsonrpc":"2.0", "id":request["id"], "method":request["method"], "params":request["params"]}));
+                }
                 for publication in deferred_diagnostics.drain(..) {
                     out.send(&publication);
                 }
@@ -535,12 +595,24 @@ fn main() {
                         "jsonrpc": "2.0", "id": 9100, "method": "workspace/semanticTokens/refresh"
                     }));
                 }
+                if options.flag("--pull-refresh-on-save") {
+                    out.send(&json!({ "jsonrpc": "2.0", "id": 9101, "method": "workspace/diagnostic/refresh" }));
+                }
+            }
+            ("window/workDoneProgress/cancel", None) => {
+                if !options.flag("--ignore-progress-cancel") {
+                    out.send(&json!({ "jsonrpc": "2.0", "method": "$/progress",
+                        "params": { "token": message["params"]["token"], "value": { "kind": "end" } } }));
+                }
             }
             ("textDocument/diagnostic", Some(id)) => {
                 // --pull-diagnostic TEXT: one error over the first character, the
                 // same resultId every time so "unchanged" can be answered.
                 let previous = message["params"]["previousResultId"].as_str();
-                if previous == Some("d1") && !options.flag("--pull-always-full") {
+                if save_seen && options.flag("--pull-refresh-on-save") {
+                    out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": {
+                        "kind": "full", "resultId": "d2", "items": [] } }));
+                } else if previous == Some("d1") && !options.flag("--pull-always-full") {
                     out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": {
                         "kind": "unchanged", "resultId": "d1" } }));
                 } else {
@@ -556,7 +628,10 @@ fn main() {
                     "resultId": "r2",
                     "edits": [{ "start": 0, "deleteCount": 5, "data": [0, 0, 3, 0, 0] }] } }));
             }
-            ("textDocument/semanticTokens/full", Some(id)) => {
+            (
+                "textDocument/semanticTokens/full" | "textDocument/semanticTokens/range",
+                Some(id),
+            ) => {
                 std::thread::sleep(Duration::from_millis(options.number("--slow-ms")));
                 // The first characters (two, or --semantic-length) are a keyword.
                 let result = if options.flag("--semantic-null") {
@@ -588,11 +663,25 @@ fn main() {
                     && feature_result(method, &Value::Null, &options).is_some()
                     && !options.flag("--ignore-requests") =>
             {
+                for request in registration_script
+                    .iter()
+                    .filter(|request| request["onMethod"].as_str() == Some(method))
+                {
+                    out.send(&json!({"jsonrpc":"2.0", "id":request["id"], "method":request["method"], "params":request["params"]}));
+                }
                 std::thread::sleep(Duration::from_millis(options.number("--slow-ms")));
                 let params = message.get("params").cloned().unwrap_or(Value::Null);
-                if options.flag("--feature-error") {
+                if options.flag("--feature-error")
+                    || (options.flag("--feature-error-once")
+                        && feature_errors.insert(method.to_owned()))
+                {
+                    let code = options
+                        .value("--feature-error-code")
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .unwrap_or(-32801);
                     out.send(&json!({ "jsonrpc": "2.0", "id": id,
-                        "error": { "code": -32801, "message": "content modified" } }));
+                        "error": { "code": code, "message": "content modified",
+                            "data": { "retriggerRequest": !options.flag("--do-not-retrigger") } } }));
                     continue;
                 }
                 if method == "workspace/executeCommand" && options.flag("--exec-edit") {

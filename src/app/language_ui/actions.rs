@@ -15,6 +15,7 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wanted {
     Goto(Feature),
+    Peek(Feature),
     References,
     DocumentSymbols,
     WorkspaceSymbols,
@@ -32,6 +33,7 @@ pub struct Pending {
 /// Something that must happen outside the state update that found it out.
 pub enum Effect {
     Go(Place, UiRect),
+    Peek(Place),
 }
 
 /// Asks the servers, replacing any earlier question still unanswered.
@@ -45,7 +47,7 @@ pub fn begin(state: &AppContext, wanted: Wanted, rect: UiRect, query: Option<Str
         return;
     };
     let (feature, extra) = match wanted {
-        Wanted::Goto(feature) => (feature, serde_json::Value::Null),
+        Wanted::Goto(feature) | Wanted::Peek(feature) => (feature, serde_json::Value::Null),
         Wanted::References => (
             Feature::References,
             json!({ "context": { "includeDeclaration": true } }),
@@ -109,7 +111,7 @@ fn why_nothing(wanted: Wanted, failure: Option<&Failure>) -> String {
         Wanted::Goto(Feature::Declaration) => "declaration",
         Wanted::Goto(Feature::TypeDefinition) => "type definition",
         Wanted::Goto(Feature::Implementation) => "implementation",
-        Wanted::Goto(_) => "definition",
+        Wanted::Goto(_) | Wanted::Peek(_) => "definition",
         Wanted::References => "references",
         Wanted::DocumentSymbols | Wanted::WorkspaceSymbols => "symbols",
     };
@@ -137,20 +139,38 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
     // Answers for a document the person has since left are dropped.
     let target = &pending.target;
     let same_document = app.workspace.active_pane() == target.pane
-        && app.workspace.pane(target.pane).and_then(|p| p.active()) == Some(target.document);
+        && super::target(app, target.pane).is_some_and(|now| {
+            now.stamp == target.stamp
+                && now.cursor == target.cursor
+                && now.selection == target.selection
+        });
+    if !same_document && pending.wanted != Wanted::WorkspaceSymbols {
+        return Vec::new();
+    }
     let mut effects = Vec::new();
     match pending.wanted {
-        Wanted::Goto(feature) => {
+        Wanted::Goto(feature) | Wanted::Peek(feature) => {
             let mut found = distinct(&progress.parts, feature);
             match found.len() {
                 0 => app.show_toast(why_nothing(pending.wanted, progress.failure.as_ref())),
                 1 => {
                     if let Some(place) = place_of(&found.remove(0)) {
-                        effects.push(Effect::Go(place, pending.rect));
+                        effects.push(if matches!(pending.wanted, Wanted::Peek(_)) {
+                            Effect::Peek(place)
+                        } else {
+                            Effect::Go(place, pending.rect)
+                        });
                     }
                 }
                 _ if same_document => {
-                    let items = location_items(app, &found, false);
+                    let mut items = location_items(app, &found, false);
+                    if matches!(pending.wanted, Wanted::Peek(_)) {
+                        for item in &mut items {
+                            if let Payload::Place(place) = &item.payload {
+                                item.payload = Payload::PeekPlace(place.clone());
+                            }
+                        }
+                    }
                     app.editor.language.popup = Some(
                         Popup::new(
                             Kind::Locations,
@@ -170,12 +190,35 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
             if found.is_empty() {
                 app.show_toast(why_nothing(pending.wanted, progress.failure.as_ref()));
             } else if same_document {
-                let items = location_items(app, &found, true);
-                app.editor.language.popup = Some(
-                    Popup::new(Kind::References, target.pane, target.stamp, None, items)
+                let mut items = location_items(app, &found, true);
+                items.sort_by_key(|item| match &item.payload {
+                    Payload::Place(place) => place.path.clone(),
+                    _ => Default::default(),
+                });
+                let mut grouped = Vec::new();
+                let mut previous = None;
+                for item in items {
+                    if let Payload::Place(place) = &item.payload
+                        && previous.as_ref() != Some(&place.path)
+                    {
+                        grouped.push(Item {
+                            label: display_path(app, &place.path),
+                            detail: String::new(),
+                            badge: "▾",
+                            faint: false,
+                            payload: Payload::Group(place.path.clone()),
+                        });
+                        previous = Some(place.path.clone());
+                    }
+                    grouped.push(item);
+                }
+                let mut panel =
+                    Popup::new(Kind::References, target.pane, target.stamp, None, grouped)
                         .with_field()
-                        .titled(format!("{} references", found.len())),
-                );
+                        .titled(format!("{} references", found.len()));
+                panel.resize(pending.rect.height());
+                panel.select(1);
+                app.editor.language.popup = Some(panel);
             }
         }
         Wanted::DocumentSymbols => {
@@ -369,6 +412,7 @@ mod tests {
             message: String::new(),
             source: None,
             code: None,
+            extra: serde_json::Value::Null,
         }
     }
 

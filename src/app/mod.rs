@@ -15,6 +15,7 @@ pub(crate) mod explorer_view;
 pub(crate) mod git;
 mod git_poll;
 mod git_tasks;
+pub(crate) mod language_install;
 #[cfg(test)]
 mod language_packages_tests;
 pub(crate) mod language_services;

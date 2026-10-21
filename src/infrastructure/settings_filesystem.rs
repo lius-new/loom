@@ -45,7 +45,11 @@ pub fn save(settings: &Settings) -> io::Result<()> {
             "could not determine the user configuration directory",
         )
     })?;
-    let text = match fs::read_to_string(&path) {
+    save_at(&path, settings)
+}
+
+fn save_at(path: &std::path::Path, settings: &Settings) -> io::Result<()> {
+    let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if *settings == Settings::default() {
@@ -65,7 +69,7 @@ pub fn save(settings: &Settings) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&path, &patched)?;
+    fs::write(path, &patched)?;
     *last_written().lock().expect("settings lock poisoned") = Some(patched);
     Ok(())
 }
@@ -113,4 +117,49 @@ pub fn current_file_is_own_write() -> bool {
     config_path(FILE_NAME)
         .and_then(|path| fs::read_to_string(path).ok())
         .is_some_and(|text| is_own_write(&text))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::settings::servers::{InstallPolicy, LanguageServerSetting};
+    #[test]
+    fn never_install_policy_is_written_and_reloaded_without_losing_other_preferences() {
+        let path = std::env::temp_dir().join(format!(
+            "loom-install-policy-{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let command = if cfg!(windows) {
+            "C:/demo/server.exe"
+        } else {
+            "/opt/demo/server"
+        };
+        let original = format!(
+            r#"// user preferences
+{{
+  "smooth_caret": false,
+  "language_servers": {{"demo-user": {{"command":"{command}","args":["--stdio"],"env":{{"A":"B"}},"languages":[{{"language":"rust","language_id":"rust"}}],"root":{{"markers":["Cargo.toml"],"fallback":"file_directory"}}}}}}
+}}
+"#
+        );
+        fs::write(&path, &original).unwrap();
+        let mut settings = parse(&original).unwrap().settings;
+        settings.language_servers[0].install = Some(InstallPolicy::Never);
+        settings.language_servers.push(LanguageServerSetting {
+            server: "other-user".into(),
+            ..settings.language_servers[0].clone()
+        });
+        save_at(&path, &settings).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.starts_with("// user preferences"));
+        assert_eq!(parse(&written).unwrap().settings, settings);
+        let invalid = "{ unfinished user edit";
+        fs::write(&path, invalid).unwrap();
+        assert!(save_at(&path, &settings).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), invalid);
+        let _ = fs::remove_file(path);
+    }
 }

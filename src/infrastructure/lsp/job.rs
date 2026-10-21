@@ -3,8 +3,8 @@
 //! A language server starts helpers of its own (rust-analyzer runs proc-macro
 //! servers and cargo). On Windows a process added to a job object marked
 //! kill-on-close takes its children down when the job handle closes, including
-//! when Loom itself dies. Elsewhere servers are left to exit on their closed
-//! standard input.
+//! when Loom itself dies. Unix servers run in an owned process group which is
+//! killed when the driver is dropped, including helpers holding pipe handles.
 #[cfg(windows)]
 pub(crate) struct Job(windows_sys::Win32::Foundation::HANDLE);
 
@@ -57,13 +57,52 @@ impl Drop for Job {
     }
 }
 
-#[cfg(not(windows))]
-pub(crate) struct Job;
+#[cfg(unix)]
+pub(crate) struct Job(libc::pid_t);
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 impl Job {
-    pub fn adopt(_process: &std::process::Child) -> Option<Self> {
+    pub fn adopt(process: &std::process::Child) -> Option<Self> {
+        let pid = libc::pid_t::try_from(process.id()).ok()?;
+        // SAFETY: this only queries a child created in its own group.
+        (pid > 0 && unsafe { libc::getpgid(pid) } == pid).then_some(Self(pid))
+    }
+}
+#[cfg(unix)]
+impl Drop for Job {
+    fn drop(&mut self) {
+        // SAFETY: a positive owned child/group ID is negated to target only the
+        // dedicated server group, never Loom's process group or all processes.
+        unsafe {
+            libc::kill(-self.0, libc::SIGKILL);
+        }
+    }
+}
+#[cfg(not(any(windows, unix)))]
+pub(crate) struct Job;
+#[cfg(not(any(windows, unix)))]
+impl Job {
+    pub fn adopt(_: &std::process::Child) -> Option<Self> {
         None
+    }
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use super::*;
+    use std::os::unix::process::CommandExt;
+    #[test]
+    fn dropping_the_owned_group_terminates_the_server() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "sleep 30 & wait"]).process_group(0);
+        let mut child = command.spawn().unwrap();
+        let group = Job::adopt(&child).unwrap();
+        drop(group);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while child.try_wait().unwrap().is_none() {
+            assert!(std::time::Instant::now() < end);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
 

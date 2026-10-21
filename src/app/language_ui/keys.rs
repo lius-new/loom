@@ -21,12 +21,31 @@ pub(crate) fn perform(env: &KeyEnv, action: Action) -> Option<bool> {
 /// [`perform`] with only what it needs.
 pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> Option<bool> {
     match action {
+        Action::PeekDefinition => {
+            actions::begin(state, Wanted::Peek(Feature::Definition), rect, None);
+            Some(true)
+        }
+        Action::ClosePeek => {
+            state.update(super::peek::close);
+            Some(true)
+        }
+        Action::OpenPeekTarget => {
+            let revision = super::peek::view(&state.get(), state.get().workspace.active_pane())
+                .map(|v| v.revision);
+            if let Some(revision) = revision {
+                super::peek::jump(state, revision, rect);
+            }
+            Some(true)
+        }
         Action::Save => {
+            let document = state.get().workspace.active();
             save::save(
                 state,
                 rect,
-                std::sync::Arc::new(|state| {
-                    crate::app::workspace_commands::save_active_document(state);
+                std::sync::Arc::new(move |state| {
+                    if let Some(document) = document {
+                        crate::app::workspace_commands::save_document(state, document);
+                    }
                 }),
             );
             Some(true)
@@ -55,6 +74,14 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
             state.update(|app| signature::request(state, app, None, true));
             Some(true)
         }
+        Action::NextSignature | Action::PreviousSignature => {
+            let mut moved = false;
+            state.try_update(|app| {
+                moved = signature::step(app, action == Action::NextSignature, None);
+                moved
+            });
+            Some(moved)
+        }
         Action::SelectLargerSyntaxNode => {
             state.update(|app| expand::grow(state, app));
             Some(true)
@@ -76,8 +103,17 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
             Some(true)
         }
         Action::ShowCompletions => {
+            state.update(snippet_session::dismiss_choices);
             state.update(|app| completion::request(state, app, true, None));
             Some(true)
+        }
+        Action::ShowSnippetChoices => {
+            let mut shown = false;
+            state.try_update(|app| {
+                shown = snippet_session::show_choices(app);
+                shown
+            });
+            Some(shown)
         }
         Action::NextSnippetTabstop | Action::PreviousSnippetTabstop => {
             let mut moved = false;
@@ -118,6 +154,9 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
         | Action::MenuConfirmTab
         | Action::MenuCancel => popup_key(state, action, rect),
         Action::Backspace => {
+            if snippet_session::choice_visible(&state.get()) {
+                return None;
+            }
             let mut handled = false;
             state.update(|app| {
                 handled = app
@@ -213,6 +252,20 @@ fn completion_key(state: &AppContext, action: Action, rect: UiRect) -> Option<bo
 }
 
 fn popup_key(state: &AppContext, action: Action, rect: UiRect) -> Option<bool> {
+    if snippet_session::choice_visible(&state.get()) {
+        state.update(|app| match action {
+            Action::MenuConfirm | Action::MenuConfirmTab => {
+                snippet_session::accept_choice(app);
+            }
+            Action::MenuCancel => snippet_session::dismiss_choices(app),
+            Action::MenuSelectNext => snippet_session::move_choice(app, 1),
+            Action::MenuSelectPrevious => snippet_session::move_choice(app, -1),
+            Action::MenuPageDown => snippet_session::move_choice(app, VISIBLE as isize),
+            Action::MenuPageUp => snippet_session::move_choice(app, -(VISIBLE as isize)),
+            _ => {}
+        });
+        return Some(true);
+    }
     if let Some(done) = completion_key(state, action, rect) {
         return Some(done);
     }
@@ -221,6 +274,10 @@ fn popup_key(state: &AppContext, action: Action, rect: UiRect) -> Option<bool> {
         let Some(popup) = app.editor.language.popup.as_mut() else {
             return;
         };
+        if !popup.panel_focused {
+            return;
+        }
+        popup.resize(rect.height());
         open = true;
         match action {
             Action::MenuSelectNext => popup.move_by(1),
@@ -267,8 +324,29 @@ pub(crate) fn choose(state: &AppContext, rect: UiRect) {
             .popup
             .as_ref()
             .and_then(|popup| popup.selected_item().cloned());
+        if let Some(Item {
+            payload: Payload::Group(path),
+            ..
+        }) = &chosen
+        {
+            if let Some(popup) = app.editor.language.popup.as_mut() {
+                popup.toggle_group(path.clone());
+            }
+            chosen = None;
+            return;
+        }
         if chosen.as_ref().is_some_and(|item| !item.faint) {
-            app.editor.language.close_popups();
+            if app
+                .editor
+                .language
+                .popup
+                .as_ref()
+                .is_some_and(|p| p.kind.is_panel())
+            {
+                app.editor.language.popup.as_mut().unwrap().panel_focused = false;
+            } else {
+                app.editor.language.close_popups();
+            }
         }
     });
     let Some(item) = chosen.filter(|item| !item.faint) else {
@@ -325,11 +403,14 @@ pub(crate) fn type_text(state: &AppContext, text: &str, rect: UiRect) -> bool {
 
 /// Whether a popup with a field of its own is open (and so wants typed text).
 pub(crate) fn takes_text(app: &crate::app::state::AppState) -> bool {
+    if snippet_session::choice_visible(app) {
+        return false;
+    }
     app.editor
         .language
         .popup
         .as_ref()
-        .is_some_and(|popup| popup.query.is_some())
+        .is_some_and(|popup| popup.query.is_some() && popup.panel_focused)
 }
 
 /// A workspace symbol search asks the servers again for the new text.

@@ -41,9 +41,18 @@ pub fn facts(app: &AppState) -> ContextFacts {
         terminal: app.terminal.ui.terminal_focused,
         editor: app.editor.focused && app.main_surface() == MainSurface::Editor,
         vim_active: crate::app::editor_vim::is_active(app),
-        popup: app.editor.language.popup.is_some()
-            || crate::app::language_ui::completion_visible(app),
+        popup: app
+            .editor
+            .language
+            .popup
+            .as_ref()
+            .is_some_and(|p| p.panel_focused)
+            || crate::app::language_ui::completion_visible(app)
+            || crate::app::language_ui::snippet_session::choice_visible(app),
         snippet: app.editor.language.snippet.is_some(),
+        snippet_choice: crate::app::language_ui::snippet_session::has_choices(app),
+        signature: crate::app::language_ui::signature::can_step(app),
+        language_peek: app.editor.language.peek.is_some(),
         menu: app.editor.menu.is_some()
             || app.explorer.ui.menu.is_some()
             || app.editor.tabs.tab_context_menu.is_some()

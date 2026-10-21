@@ -156,7 +156,10 @@ actions! {
     ShowCompletions => "editor::ShowCompletions", "Show the completion list";
     NextSnippetTabstop => "editor::NextSnippetTabstop", "Move to the next place to fill in a snippet";
     PreviousSnippetTabstop => "editor::PreviousSnippetTabstop", "Move to the previous place to fill in a snippet";
+    ShowSnippetChoices => "editor::ShowSnippetChoices", "Choose a value for the current snippet placeholder";
     ShowSignatureHelp => "editor::ShowSignatureHelp", "Show the parameters of the call being typed";
+    NextSignature => "editor::NextSignature", "Show the next signature of the call";
+    PreviousSignature => "editor::PreviousSignature", "Show the previous signature of the call";
     SelectLargerSyntaxNode => "editor::SelectLargerSyntaxNode", "Grow the selection to the enclosing syntax";
     SelectSmallerSyntaxNode => "editor::SelectSmallerSyntaxNode", "Shrink the selection back";
     Rename => "editor::Rename", "Rename the symbol at the cursor";
@@ -170,6 +173,9 @@ actions! {
     ShowCodeLenses => "editor::ShowCodeLenses", "List the code lenses of the file";
     ToggleProblems => "workspace::ToggleProblems", "List the problems of the open files";
     GoToDefinition => "editor::GoToDefinition", "Go to the definition of the symbol at the cursor";
+    PeekDefinition => "editor::PeekDefinition", "Preview the definition without leaving this file";
+    OpenPeekTarget => "editor::OpenPeekTarget", "Open the previewed definition";
+    ClosePeek => "editor::ClosePeek", "Close the definition preview";
     GoToDeclaration => "editor::GoToDeclaration", "Go to the declaration of the symbol at the cursor";
     GoToTypeDefinition => "editor::GoToTypeDefinition", "Go to the type of the symbol at the cursor";
     GoToImplementation => "editor::GoToImplementation", "Go to the implementations of the symbol at the cursor";

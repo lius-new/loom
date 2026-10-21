@@ -1,6 +1,7 @@
 //! Platform/framework adapters, composed by app.
 pub(crate) mod ui_dispatch;
 
+pub(crate) mod edit_journal;
 pub(crate) mod explorer_filesystem;
 pub(crate) mod git;
 pub(crate) mod search_filesystem;
@@ -20,6 +21,7 @@ pub mod keymap_filesystem;
 pub mod file_loader;
 
 pub mod file_watcher;
+pub(crate) mod lsp_watch;
 
 pub mod document_filesystem;
 pub mod file_dialogs;

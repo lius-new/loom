@@ -232,6 +232,14 @@ fn signature_labels_are_located_by_text_or_by_offsets() {
     assert_eq!(params[1].documentation.as_deref(), Some("second"));
     assert_eq!(signature_help(&json!({ "signatures": [] })), None);
     assert_eq!(signature_help(&Value::Null), None);
+    let help = signature_help(&json!({ "activeSignature": 5, "signatures": [
+        { "label": "first()" }, { "label": "second()" }
+    ] }))
+    .unwrap();
+    assert_eq!(
+        help.active_signature, 0,
+        "an invalid overload index defaults to the first signature"
+    );
 }
 
 #[test]

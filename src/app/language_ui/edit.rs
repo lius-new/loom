@@ -17,6 +17,14 @@ use std::path::PathBuf;
 /// Files larger than this are not opened to be edited by a server.
 const MAX_FILE: u64 = 16 * 1024 * 1024;
 
+fn remapped(base: &std::path::Path, suffix: &std::path::Path) -> PathBuf {
+    if suffix.as_os_str().is_empty() {
+        base.to_path_buf()
+    } else {
+        base.join(suffix)
+    }
+}
+
 /// A workspace edit and the state of the open documents it was computed for.
 #[derive(Clone)]
 pub struct Request {
@@ -44,6 +52,7 @@ pub fn stamps(app: &AppState) -> Vec<(PathBuf, DocumentStamp)> {
 struct Planned {
     path: PathBuf,
     edits: Vec<Edit>,
+    text: std::sync::Arc<String>,
 }
 
 #[derive(Default)]
@@ -76,12 +85,48 @@ fn path_of(link: &str) -> Result<PathBuf, String> {
 }
 
 /// Which files must be read from disk before the edit can be planned.
-fn unopened(app: &AppState, edit: &WorkspaceEdit) -> Result<Vec<PathBuf>, String> {
+pub(super) fn unopened(app: &AppState, edit: &WorkspaceEdit) -> Result<Vec<PathBuf>, String> {
     let mut paths = Vec::new();
-    for change in &edit.changes {
+    for (at, change) in edit.changes.iter().enumerate() {
         if let Change::Edit(DocumentEdit { uri, .. }) = change {
             let path = path_of(uri)?;
-            if app.workspace.file_id_for_path(&path).is_none() && !paths.contains(&path) {
+            let mut candidates = vec![path.clone()];
+            let mut created = false;
+            for prior in edit.changes[..at].iter().rev() {
+                match prior {
+                    Change::Rename { from, to, .. } => {
+                        let from = path_of(from)?;
+                        let to = path_of(to)?;
+                        for p in candidates.clone() {
+                            if let Ok(suffix) = p.strip_prefix(&to) {
+                                let old = remapped(&from, suffix);
+                                if !candidates.contains(&old) {
+                                    candidates.push(old);
+                                }
+                            }
+                        }
+                    }
+                    Change::Create { uri, .. } => {
+                        let p = path_of(uri)?;
+                        created |= candidates.contains(&p);
+                    }
+                    _ => {}
+                }
+            }
+            let mut available = created;
+            for candidate in candidates {
+                if app.workspace.file_id_for_path(&candidate).is_some() {
+                    available = true;
+                    continue;
+                }
+                if candidate.is_file() {
+                    available = true;
+                    if !paths.contains(&candidate) {
+                        paths.push(candidate);
+                    }
+                }
+            }
+            if !available && !paths.contains(&path) {
                 paths.push(path);
             }
         }
@@ -89,29 +134,72 @@ fn unopened(app: &AppState, edit: &WorkspaceEdit) -> Result<Vec<PathBuf>, String
     Ok(paths)
 }
 
+pub(super) fn load(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, String>, String> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::metadata(&path)
+                .and_then(|meta| {
+                    if meta.len() > MAX_FILE {
+                        Err(std::io::Error::other("the file is too large"))
+                    } else {
+                        std::fs::read_to_string(&path)
+                    }
+                })
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            Ok((path, text))
+        })
+        .collect()
+}
+
 /// Applies `request`, reading files that are not open first (off the UI thread).
 pub fn apply(state: &AppContext, request: Request) {
+    apply_with(state, request, None);
+}
+
+pub fn apply_then(
+    state: &AppContext,
+    request: Request,
+    instance: u64,
+    command: crate::features::language_service::reply::Command,
+) {
+    apply_with(state, request, Some((instance, command)));
+}
+
+fn apply_with(
+    state: &AppContext,
+    request: Request,
+    next: Option<(u64, crate::features::language_service::reply::Command)>,
+) {
     let app = state.get();
     let missing = match unopened(&app, &request.edit) {
         Ok(missing) => missing,
         Err(error) => {
-            report(state, &request, Err(error));
+            complete(state, &request, Err(error), next);
             return;
         }
     };
     if missing.is_empty() {
         let mut result = Ok(0);
         state.update(|app| result = apply_now(app, &request, HashMap::new()));
-        report(state, &request, result);
+        complete(state, &request, result, next);
         return;
     }
     let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
+        complete(
+            state,
+            &request,
+            Err("the application is no longer running".into()),
+            next,
+        );
         return;
     };
     let worker_state = state.clone();
+    let worker_request = request.clone();
     let spawned = std::thread::Builder::new()
         .name("loom-edit-read".to_owned())
         .spawn(move || {
+            let request = worker_request;
             let mut loaded = HashMap::new();
             let mut failure = None;
             for path in missing {
@@ -138,22 +226,38 @@ pub fn apply(state: &AppContext, request: Request) {
                 }
             }
             application.post(move || match failure {
-                Some(error) => {
-                    worker_state.update(|app| app.show_error(format!("{}: {error}", request.title)))
-                }
+                Some(error) => complete(&worker_state, &request, Err(error), next),
                 None => {
                     let mut result = Ok(0);
                     worker_state.update(|app| result = apply_now(app, &request, loaded));
-                    report(&worker_state, &request, result);
+                    complete(&worker_state, &request, result, next);
                 }
             });
         });
     if spawned.is_err() {
-        state.update(|app| app.show_error("Could not start reading the files"));
+        report(
+            state,
+            &request,
+            Err("Could not start reading the files".into()),
+        );
+    }
+}
+
+fn complete(
+    state: &AppContext,
+    request: &Request,
+    result: Result<usize, String>,
+    next: Option<(u64, crate::features::language_service::reply::Command)>,
+) {
+    let success = result.is_ok();
+    report(state, request, result);
+    if success && let Some((instance, command)) = next {
+        super::refactor::execute(state, instance, command, request.rect);
     }
 }
 
 fn report(state: &AppContext, request: &Request, result: Result<usize, String>) {
+    super::flush_files(state);
     if let Some(reply) = &request.reply {
         reply.send(Ok(match &result {
             Ok(_) => serde_json::json!({ "applied": true }),
@@ -177,22 +281,36 @@ pub fn apply_now(
     loaded: HashMap<PathBuf, String>,
 ) -> Result<usize, String> {
     let plan = plan(app, request, &loaded)?;
-    // Everything that can fail on the text is tried on copies first.
-    for step in &plan.steps {
-        if let Step::Text(planned) = step {
-            let copy = match app.workspace.file_id_for_path(&planned.path) {
-                Some(id) => app
-                    .workspace
-                    .documents
-                    .get(&id)
-                    .map(|d| d.buffer.clone())
-                    .ok_or("a document disappeared")?,
-                None => TextBuffer::new(loaded.get(&planned.path).cloned().unwrap_or_default()),
-            };
-            copy.check_edits(planned.edits.clone())
-                .map_err(|error| format!("the edits do not fit the file: {error}"))?;
+    let before = app.workspace.clone();
+    let counter = app.editor.language.next_transaction;
+    let transactions = app.editor.language.transactions.clone();
+    let events = app.editor.language.file_changes.len();
+    let mut journal = crate::infrastructure::edit_journal::Journal::default();
+    match apply_steps(app, plan, &mut journal) {
+        Ok(changed) => {
+            journal.commit();
+            Ok(changed)
+        }
+        Err(error) => {
+            app.workspace = before;
+            app.editor.language.next_transaction = counter;
+            app.editor.language.transactions = transactions;
+            app.editor.language.file_changes.truncate(events);
+            match journal.rollback() {
+                Ok(()) => Err(error),
+                Err(rollback) => Err(format!(
+                    "{error}; filesystem rollback incomplete: {rollback}; backups retained in .loom-edit-* directories"
+                )),
+            }
         }
     }
+}
+
+fn apply_steps(
+    app: &mut AppState,
+    plan: Plan,
+    journal: &mut crate::infrastructure::edit_journal::Journal,
+) -> Result<usize, String> {
     let active = app.workspace.active();
     let transaction = next_transaction(app);
     let mut documents: Vec<FileId> = Vec::new();
@@ -203,7 +321,7 @@ pub fn apply_now(
                 let id = match app.workspace.file_id_for_path(&planned.path) {
                     Some(id) => id,
                     None => {
-                        let text = loaded.get(&planned.path).cloned().unwrap_or_default();
+                        let text = planned.text.as_ref().clone();
                         app.workspace.open_path(planned.path.clone(), text)
                     }
                 };
@@ -214,11 +332,12 @@ pub fn apply_now(
                     return Err("a changed file cannot be edited".to_owned());
                 };
                 let cursor = editor.cursor();
-                editor.begin_transaction(transaction);
+                if !documents.contains(&id) {
+                    editor.begin_transaction(transaction);
+                }
                 let done = editor.edit(EditKind::Other, planned.edits, |changes, _| {
                     Selection::caret(changes.map(cursor, Assoc::After))
                 });
-                editor.end_transaction();
                 done.map_err(|error| error.to_string())?;
                 if !documents.contains(&id) {
                     documents.push(id);
@@ -230,16 +349,23 @@ pub fn apply_now(
                 overwrite,
                 ignore_if_exists,
             } => {
-                if path.exists() {
-                    if ignore_if_exists || !overwrite {
-                        continue;
+                if journal
+                    .create(&path, overwrite, ignore_if_exists)
+                    .map_err(|e| e.to_string())?
+                {
+                    if let Some(id) = app.workspace.file_id_for_path(&path) {
+                        app.workspace
+                            .documents
+                            .get_mut(&id)
+                            .unwrap()
+                            .buffer
+                            .reload(String::new());
                     }
+                    changed += 1;
+                    app.editor.language.file_changes.push(
+                        crate::infrastructure::lsp::manager::FileChange::Created(path),
+                    );
                 }
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                std::fs::write(&path, "").map_err(|e| e.to_string())?;
-                changed += 1;
             }
             Step::Rename {
                 from,
@@ -247,39 +373,41 @@ pub fn apply_now(
                 overwrite,
                 ignore_if_exists,
             } => {
-                if to.exists() && (ignore_if_exists || !overwrite) {
-                    continue;
+                if journal
+                    .rename(&from, &to, overwrite, ignore_if_exists)
+                    .map_err(|e| e.to_string())?
+                {
+                    app.workspace.close_paths_under(&to);
+                    app.workspace.move_open_path(&from, to.clone());
+                    changed += 1;
+                    app.editor.language.file_changes.push(
+                        crate::infrastructure::lsp::manager::FileChange::Renamed { from, to },
+                    );
                 }
-                if let Some(parent) = to.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                std::fs::rename(&from, &to).map_err(|e| e.to_string())?;
-                app.workspace.move_open_path(&from, to.clone());
-                changed += 1;
             }
             Step::Delete {
                 path,
                 recursive,
                 ignore_if_not_exists,
             } => {
-                if !path.exists() {
-                    if ignore_if_not_exists {
-                        continue;
-                    }
-                    return Err(format!("{} does not exist", path.display()));
+                if journal
+                    .delete(&path, recursive, ignore_if_not_exists)
+                    .map_err(|e| e.to_string())?
+                {
+                    app.workspace.close_paths_under(&path);
+                    changed += 1;
+                    app.editor.language.file_changes.push(
+                        crate::infrastructure::lsp::manager::FileChange::Deleted(path),
+                    );
                 }
-                app.workspace.close_paths_under(&path);
-                if path.is_dir() {
-                    if recursive {
-                        std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
-                    } else {
-                        std::fs::remove_dir(&path).map_err(|e| e.to_string())?;
-                    }
-                } else {
-                    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-                }
-                changed += 1;
             }
+        }
+    }
+    for id in &documents {
+        if let Some(pane) = app.workspace.pane_of(*id)
+            && let Some(mut editor) = app.workspace.view_editor_mut(pane, *id)
+        {
+            editor.end_transaction();
         }
     }
     if let Some(active) = active {
@@ -305,77 +433,152 @@ fn plan(
     loaded: &HashMap<PathBuf, String>,
 ) -> Result<Plan, String> {
     let mut plan = Plan::default();
-    let mut edited: Vec<PathBuf> = Vec::new();
+    let mut virtual_docs: HashMap<PathBuf, (std::sync::Arc<String>, Option<PathBuf>)> = loaded
+        .iter()
+        .map(|(p, t)| (p.clone(), (std::sync::Arc::new(t.clone()), Some(p.clone()))))
+        .collect();
+    for d in app.workspace.documents.values().filter(|d| d.is_text()) {
+        virtual_docs.insert(
+            d.meta.path.clone(),
+            (d.buffer.text_snapshot(), Some(d.meta.path.clone())),
+        );
+    }
     for change in &request.edit.changes {
         match change {
             Change::Edit(document) => {
                 let path = path_of(&document.uri)?;
-                if edited.contains(&path) {
-                    return Err("the server edits one file twice".to_owned());
+                let (text, origin) = virtual_docs
+                    .get(&path)
+                    .cloned()
+                    .ok_or("a file was not read or was deleted earlier in this edit")?;
+                if let Some(origin) = &origin {
+                    check_stamps(app, request, origin)?;
                 }
-                let text = match app.workspace.file_id_for_path(&path) {
-                    Some(id) => {
-                        let open = app
-                            .workspace
-                            .documents
-                            .get(&id)
-                            .ok_or("a document disappeared")?;
-                        // The server computed the edit for the text it was shown.
-                        if let Some((_, before)) = request.stamps.iter().find(|(p, _)| *p == path)
-                            && *before != open.stamp(id)
-                        {
-                            return Err(format!(
-                                "{} changed while the language server was working",
-                                path.display()
-                            ));
-                        }
-                        open.buffer.text_snapshot()
-                    }
-                    None => loaded
-                        .get(&path)
-                        .map(|text| std::sync::Arc::new(text.clone()))
-                        .ok_or("a file was not read")?,
-                };
-                let edits = document
+                let edits: Vec<Edit> = document
                     .edits
                     .iter()
                     .map(|e| Edit::replace(e.span.bytes(&text), e.new_text.clone()))
                     .collect();
-                edited.push(path.clone());
-                plan.steps.push(Step::Text(Planned { path, edits }));
+                let mut preview = TextBuffer::new(text.as_ref().clone());
+                let mut selection = Selection::default();
+                crate::model::text::EditorMut::new(&mut preview, &mut selection, Vec::new())
+                    .edit(EditKind::Other, edits.clone(), |_, _| Selection::default())
+                    .map_err(|e| format!("the edits do not fit the file: {e}"))?;
+                virtual_docs.insert(path.clone(), (preview.text_snapshot(), origin));
+                plan.steps.push(Step::Text(Planned { path, edits, text }));
             }
             Change::Create {
                 uri,
                 overwrite,
                 ignore_if_exists,
-            } => plan.steps.push(Step::Create {
-                path: path_of(uri)?,
-                overwrite: *overwrite,
-                ignore_if_exists: *ignore_if_exists,
-            }),
+            } => {
+                let path = path_of(uri)?;
+                check_stamps(app, request, &path)?;
+                if logical_exists(&path, &plan.steps) && !overwrite {
+                    if *ignore_if_exists {
+                        continue;
+                    } else {
+                        return Err(format!("{} already exists", path.display()));
+                    }
+                }
+                virtual_docs.insert(path.clone(), (std::sync::Arc::new(String::new()), None));
+                plan.steps.push(Step::Create {
+                    path,
+                    overwrite: *overwrite,
+                    ignore_if_exists: *ignore_if_exists,
+                });
+            }
             Change::Rename {
                 from,
                 to,
                 overwrite,
                 ignore_if_exists,
-            } => plan.steps.push(Step::Rename {
-                from: path_of(from)?,
-                to: path_of(to)?,
-                overwrite: *overwrite,
-                ignore_if_exists: *ignore_if_exists,
-            }),
+            } => {
+                let from = path_of(from)?;
+                let to = path_of(to)?;
+                check_stamps(app, request, &from)?;
+                check_stamps(app, request, &to)?;
+                if from == to {
+                    continue;
+                }
+                if logical_exists(&to, &plan.steps) && !overwrite {
+                    if *ignore_if_exists {
+                        continue;
+                    } else {
+                        return Err(format!("{} already exists", to.display()));
+                    }
+                }
+                virtual_docs.retain(|p, _| !p.starts_with(&to));
+                let moved: Vec<_> = virtual_docs
+                    .keys()
+                    .filter(|p| p.starts_with(&from))
+                    .cloned()
+                    .collect();
+                for p in moved {
+                    let value = virtual_docs.remove(&p).unwrap();
+                    virtual_docs.insert(remapped(&to, p.strip_prefix(&from).unwrap()), value);
+                }
+                plan.steps.push(Step::Rename {
+                    from,
+                    to,
+                    overwrite: *overwrite,
+                    ignore_if_exists: *ignore_if_exists,
+                });
+            }
             Change::Delete {
                 uri,
                 recursive,
                 ignore_if_not_exists,
-            } => plan.steps.push(Step::Delete {
-                path: path_of(uri)?,
-                recursive: *recursive,
-                ignore_if_not_exists: *ignore_if_not_exists,
-            }),
+            } => {
+                let path = path_of(uri)?;
+                check_stamps(app, request, &path)?;
+                virtual_docs.retain(|p, _| !p.starts_with(&path));
+                plan.steps.push(Step::Delete {
+                    path,
+                    recursive: *recursive,
+                    ignore_if_not_exists: *ignore_if_not_exists,
+                });
+            }
         }
     }
     Ok(plan)
+}
+
+fn check_stamps(app: &AppState, request: &Request, path: &std::path::Path) -> Result<(), String> {
+    for (p, before) in &request.stamps {
+        if p.starts_with(path)
+            && let Some(id) = app.workspace.file_id_for_path(p)
+            && app
+                .workspace
+                .documents
+                .get(&id)
+                .is_none_or(|d| d.stamp(id) != *before)
+        {
+            return Err(format!(
+                "{} changed while the language server was working",
+                p.display()
+            ));
+        }
+    }
+    Ok(())
+}
+fn logical_exists(path: &std::path::Path, steps: &[Step]) -> bool {
+    let mut path = path.to_path_buf();
+    for step in steps.iter().rev() {
+        match step {
+            Step::Create { path: p, .. } if *p == path => return true,
+            Step::Delete { path: p, .. } if path.starts_with(p) => return false,
+            Step::Rename { from, to, .. } => {
+                if let Ok(suffix) = path.strip_prefix(to) {
+                    path = remapped(from, suffix);
+                } else if path.starts_with(from) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    path.exists()
 }
 
 /// Undoes or redoes the change spanning several documents that the active one
@@ -597,5 +800,125 @@ mod tests {
             ),
             new_text: String::new(),
         };
+    }
+
+    #[test]
+    fn a_late_resource_failure_restores_disk_documents_selections_and_undo() {
+        let root = std::env::temp_dir().join(format!("loom-edit-rollback-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let from = root.join("from.rs");
+        let to = root.join("to.rs");
+        let removed = root.join("removed.rs");
+        let created = root.join("new/created.rs");
+        std::fs::write(&from, "original").unwrap();
+        std::fs::write(&to, "destination").unwrap();
+        std::fs::write(&removed, "keep").unwrap();
+        let mut app = AppState::new();
+        let id = app
+            .workspace
+            .open_path(from.clone(), "unsaved original".into());
+        app.workspace.active_editor_mut().unwrap().set_cursor(3);
+        let stamp = app.workspace.documents[&id].stamp(id);
+        let mut changes = edit_json(&[(&from, (0, 0), (0, 7), "edited")]).changes;
+        changes.extend([
+            Change::Rename {
+                from: uri_of(&from),
+                to: uri_of(&to),
+                overwrite: true,
+                ignore_if_exists: false,
+            },
+            Change::Create {
+                uri: uri_of(&created),
+                overwrite: false,
+                ignore_if_exists: false,
+            },
+            Change::Delete {
+                uri: uri_of(&removed),
+                recursive: false,
+                ignore_if_not_exists: false,
+            },
+            Change::Delete {
+                uri: uri_of(&root.join("missing")),
+                recursive: false,
+                ignore_if_not_exists: false,
+            },
+        ]);
+        let req = request(&app, WorkspaceEdit { changes });
+        assert!(apply_now(&mut app, &req, HashMap::new()).is_err());
+        assert_eq!(std::fs::read_to_string(&from).unwrap(), "original");
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "destination");
+        assert_eq!(std::fs::read_to_string(&removed).unwrap(), "keep");
+        assert!(!created.parent().unwrap().exists());
+        assert_eq!(app.workspace.documents[&id].stamp(id), stamp);
+        assert_eq!(
+            app.workspace.active_editor().unwrap().text(),
+            "unsaved original"
+        );
+        assert_eq!(app.workspace.active_editor().unwrap().cursor(), 3);
+        assert!(app.workspace.active_editor_mut().unwrap().undo().is_none());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 3);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ordered_create_edit_rename_edit_uses_one_text_undo_group() {
+        let root = std::env::temp_dir().join(format!("loom-edit-ordered-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let a = root.join("a.rs");
+        let b = root.join("b.rs");
+        let mut app = AppState::new();
+        let mut changes = vec![Change::Create {
+            uri: uri_of(&a),
+            overwrite: false,
+            ignore_if_exists: false,
+        }];
+        changes.extend(edit_json(&[(&a, (0, 0), (0, 0), "ab")]).changes);
+        changes.push(Change::Rename {
+            from: uri_of(&a),
+            to: uri_of(&b),
+            overwrite: false,
+            ignore_if_exists: false,
+        });
+        changes.extend(edit_json(&[(&b, (0, 1), (0, 2), "CD")]).changes);
+        let request = request(&app, WorkspaceEdit { changes });
+        assert!(unopened(&app, &request.edit).unwrap().is_empty());
+        assert_eq!(apply_now(&mut app, &request, HashMap::new()), Ok(4));
+        assert_eq!(text_of(&app, &b), "aCD");
+        assert!(!a.exists());
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "");
+        app.workspace.active_editor_mut().unwrap().undo();
+        assert_eq!(text_of(&app, &b), "");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unopened_rename_reads_the_original_and_preserves_unsaved_text_edits() {
+        let root = std::env::temp_dir().join(format!("loom-edit-alias-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let a = root.join("a.rs");
+        let b = root.join("b.rs");
+        std::fs::write(&a, "abc").unwrap();
+        let mut app = AppState::new();
+        let mut changes = vec![Change::Rename {
+            from: uri_of(&a),
+            to: uri_of(&b),
+            overwrite: false,
+            ignore_if_exists: false,
+        }];
+        changes.extend(edit_json(&[(&b, (0, 1), (0, 2), "B")]).changes);
+        let request = request(&app, WorkspaceEdit { changes });
+        assert_eq!(unopened(&app, &request.edit).unwrap(), vec![a.clone()]);
+        assert_eq!(
+            apply_now(
+                &mut app,
+                &request,
+                HashMap::from([(a.clone(), "abc".into())])
+            ),
+            Ok(2)
+        );
+        assert_eq!(text_of(&app, &b), "aBc");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "abc");
+        assert!(!a.exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -116,6 +116,7 @@
       "secondary-f12": "editor::GoToImplementation",
       "secondary-shift-f12": "editor::GoToTypeDefinition",
       "alt-f12": "editor::GoToDeclaration",
+      "secondary-alt-enter": "editor::PeekDefinition",
       "shift-f12": "editor::FindAllReferences",
       "secondary-k secondary-i": "editor::Hover",
       "f8": "editor::GoToDiagnostic",
@@ -128,6 +129,21 @@
     "bindings": {
       "tab": "editor::NextSnippetTabstop",
       "shift-tab": "editor::PreviousSnippetTabstop"
+    }
+  },
+  {"context":"LanguagePeek","bindings":{"escape":"editor::ClosePeek","enter":"editor::OpenPeekTarget"}},
+  {
+    "context": "SnippetChoice",
+    "bindings": {
+      "ctrl-space": "editor::ShowSnippetChoices"
+    }
+  },
+  {
+    // Change overloads without moving the caret or the completion selection.
+    "context": "SignatureHelp",
+    "bindings": {
+      "alt-up": "editor::PreviousSignature",
+      "alt-down": "editor::NextSignature"
     }
   },
   {

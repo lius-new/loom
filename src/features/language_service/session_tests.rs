@@ -67,6 +67,14 @@ fn the_first_thing_sent_is_an_initialize_request_with_what_loom_can_do() {
     );
     assert_eq!(params["rootUri"], json!("file:///work/project"));
     assert_eq!(
+        params["workspaceFolders"],
+        json!([{ "uri": "file:///work/project", "name": "project" }])
+    );
+    assert_eq!(
+        params["capabilities"]["workspace"]["workspaceFolders"],
+        true
+    );
+    assert_eq!(
         params["initializationOptions"],
         json!({ "cargo": { "features": "all" } })
     );
@@ -270,9 +278,12 @@ fn every_server_request_gets_an_answer() {
     assert_eq!(result(&out), Ok(Value::Null));
     assert_eq!(out.events, [Event::SemanticTokensRefresh]);
 
+    let out = ask(&mut session, 4, "workspace/diagnostic/refresh", Value::Null);
+    assert_eq!(result(&out), Ok(Value::Null));
+    assert_eq!(out.events, [Event::DiagnosticsRefresh]);
+
     for method in [
         "window/workDoneProgress/create",
-        "workspace/diagnostic/refresh",
         "workspace/inlayHint/refresh",
     ] {
         assert_eq!(
@@ -316,12 +327,16 @@ fn every_server_request_gets_an_answer() {
         }]
     );
 
-    // Dynamic registration was not offered, so it is refused, and so is anything unknown.
-    for method in [
-        "client/registerCapability",
-        "client/unregisterCapability",
-        "textDocument/unheardOf",
-    ] {
+    // Registration is answered asynchronously after the coordinator commits it.
+    for method in ["client/registerCapability", "client/unregisterCapability"] {
+        let out = ask(&mut session, 9, method, json!({}));
+        assert!(out.send.is_empty());
+        assert!(
+            matches!(out.events.as_slice(), [Event::ServerRequest{method: found, ..}] if found == method)
+        );
+    }
+    {
+        let method = "textDocument/unheardOf";
         let out = ask(&mut session, 9, method, json!({}));
         let Err(error) = result(&out) else {
             panic!("{method} should be refused")
@@ -600,11 +615,12 @@ fn progress_reports_are_read_for_every_kind_and_other_payloads_are_ignored() {
     assert_eq!(
         begin,
         Some((
-            "t".into(),
+            Id::String("t".into()),
             ProgressUpdate::Begin {
                 title: "Indexing".into(),
                 message: Some("a".into()),
-                percentage: Some(5)
+                percentage: Some(5),
+                cancellable: None,
             }
         ))
     );
@@ -613,17 +629,21 @@ fn progress_reports_are_read_for_every_kind_and_other_payloads_are_ignored() {
     assert_eq!(
         report,
         Some((
-            "7".into(),
+            Id::Number(7),
             ProgressUpdate::Report {
                 message: None,
-                percentage: Some(100)
+                percentage: Some(100),
+                cancellable: None,
             }
         )),
         "numeric tokens work and the percentage is capped"
     );
     assert_eq!(
         parse_progress(&json!({ "token": "t", "value": { "kind": "end" } })),
-        Some(("t".into(), ProgressUpdate::End { message: None }))
+        Some((
+            Id::String("t".into()),
+            ProgressUpdate::End { message: None }
+        ))
     );
     // Partial results and malformed reports are not ours.
     assert_eq!(
@@ -635,4 +655,21 @@ fn progress_reports_are_read_for_every_kind_and_other_payloads_are_ignored() {
         None
     );
     assert_eq!(parse_progress(&json!({ "value": { "kind": "end" } })), None);
+    let cancel = parse_progress(
+        &json!({ "token": "t", "value": { "kind": "report", "cancellable": false } }),
+    );
+    assert!(matches!(
+        cancel,
+        Some((
+            _,
+            ProgressUpdate::Report {
+                cancellable: Some(false),
+                ..
+            }
+        ))
+    ));
+    assert_eq!(
+        parse_progress(&json!({ "token": 1.5, "value": { "kind": "end" } })),
+        None
+    );
 }

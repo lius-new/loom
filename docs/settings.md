@@ -114,12 +114,36 @@ names (the nearest or the outermost one), never above the open workspace folder.
 stops a minute after its last file is closed, and a crashed server is restarted
 after 1, 2 and 4 seconds before being reported as failed.
 
+Each server instance reports only its own project folder to the server. Opening
+several project folders creates separate instances and keeps their document
+sessions and results independent.
+
+The language panel shows the server's background tasks. A task marked cancellable
+by its server has a **Cancel** button. It stays marked as cancelling until the
+server ends it. If cancellation is not acknowledged within five seconds, or a task
+reports no progress for five minutes, Loom stops tracking it and records a warning
+in the panel log. This does not mean the server finished the work; **Restart
+servers** remains available when a server is stuck.
+
 `install` says what Loom does when a file needs a catalogued server whose files are
-not on this computer yet: `ask` (the default) reports the server as not installed
-and waits until you install it from the language panel, `auto` downloads and
-installs it right away, and `never` leaves it alone. A server you register needs no
+not on this computer yet: `ask` (the default) shows a non-modal invitation with
+**Install**, **Not now**, and **Don't ask again**. Missing servers are combined in
+one strip; each server is offered at most once in the current language-service
+session. **Not now** dismisses it for that session; **Don't ask again** saves
+`install: "never"` in your user settings. `auto` downloads and installs right away,
+while `never` shows no invitation and performs no automatic download. You can
+still install manually from the language panel with either policy. The size is an
+estimate from missing catalog archives, counting shared runtimes once. A server you register needs no
 installation. Downloads are checked against the catalog's SHA-256 and the server is
 started once before it is activated.
+
+An installation in the language panel has a **Cancel** button. Cancelling removes
+queued work and cleans up partial downloads and staging files; a shared runtime
+continues while another installation still needs it. A blocked network call stays
+marked as cancelling until it returns or times out (30 seconds for connecting,
+60 seconds for a read). **Resume** starts a fresh attempt and reuses complete,
+verified archives. Automatic installation respects cancellation for the current
+language-service session; it does not resume a cancelled request on its own.
 
 `settings` is what the server gets when it asks for its configuration
 (`workspace/configuration`). Changing it tells the running server; it is not
@@ -133,7 +157,7 @@ restarted. Changing `args`, `initialization_options` or `env` starts a new insta
     "language_servers": ["biome", "typescript-language-server", "..."],
     "formatter": "biome",
     "format_on_save": true,
-    "code_actions_on_save": ["source.organizeImports"]
+    "code_actions_on_save": ["source.organizeImports", "source.removeUnusedImports"]
   }
 }
 ```
@@ -142,8 +166,13 @@ restarted. Changing `args`, `initialization_options` or `env` starts a new insta
 first is preferred); `"..."` stands for the servers not named, in their usual
 order, and a list without it leaves the others out. `formatter` names the server
 that formats (by default the first that can). `format_on_save` and
-`code_actions_on_save` run before the file is written; a server that has not
-answered within a second is skipped and the file is saved anyway.
+`code_actions_on_save` run before the file is written. Action kinds run in list
+order, with each request using the text left by the preceding action; lazy
+actions are resolved and commands finish before formatting. Each server step
+has a one second limit, and the complete pipeline has a two second limit before
+the file is saved anyway. Saving continues to target the original document if
+you switch tabs while waiting. TypeScript Language Server 6 uses separate kinds
+for sorting/combining imports and removing unused imports, as in this example.
 
 ### Behaviour
 
@@ -169,7 +198,9 @@ These settings are only read from your own `settings.json`: a project's
 | Key | Action |
 | --- | --- |
 | Ctrl+Space | Show completions |
+| Ctrl+Space in a choice placeholder | Reopen the snippet's choices |
 | Ctrl+Shift+Space | Signature help |
+| Alt+Up / Alt+Down | Previous / next overload while signature help offers several |
 | Ctrl+K Ctrl+I | Hover |
 | F12 / Ctrl+F12 / Ctrl+Shift+F12 / Alt+F12 | Definition / implementation / type definition / declaration |
 | Shift+F12 | References |
@@ -181,6 +212,41 @@ These settings are only read from your own `settings.json`: a project's
 | Ctrl+Shift+O / Ctrl+T | Symbols in the file / in the workspace |
 | Alt+Left / Alt+Right | Back / forward |
 | Shift+Alt+Right / Left | Grow / shrink the selection by syntax |
+
+A lightbulb appears in the gutter when the caret or selection rests for 350 ms
+and a language server offers an enabled code action. Click it to open the cached
+list, or press Ctrl+. to request actions explicitly. Discovery never applies an
+edit. The bulb and its menu expire when the selection, open documents,
+diagnostics, or server registrations change. Empty, disabled-only, and failed
+automatic results stay quiet; explicit menus retain disabled actions and their
+reasons. The bulb has its own lane beside line numbers and Git change marks and
+keeps the editor's caret and focus when clicked.
+
+Signature help also offers up/down buttons when the call has several overloads.
+Switching updates the parameter highlight and documentation without moving the
+caret. The selection is retained while help refreshes, including when the server
+reorders its signatures; if it disappears, the server's current choice is used.
+The buttons keep focus in the editor, and the completion list's Up/Down keys still
+move through completions. Customize these bindings in the `SignatureHelp` context
+with `editor::PreviousSignature` and `editor::NextSignature`.
+
+Snippet placeholders can offer a list of values. Up/Down and PageUp/PageDown move
+through it; Enter, Tab, or a click chooses a value and updates its mirrors in one
+undo step. Tab then moves to the next placeholder, and Shift+Tab goes back.
+Escape dismisses the list so you can type your own value; Ctrl+Space reopens it
+at the current choice. This uses `editor::ShowSnippetChoices` in the
+`SnippetChoice` context. The list keeps focus in the editor and its confirmation
+keys are independent of `lsp.completion.accept_on`. Undo/Redo ends the snippet
+session; Escape outside the list also ends it.
+
+Snippets can transform variables when inserted and placeholder mirrors when Tab
+leaves the current placeholder. For example, `${1:name} ${1/(.*)/${1:/upcase}/}`
+turns the second `name` into `NAME` on Tab. Capture references, conditional formats,
+and common case conversions are supported. Unknown variable names become editable
+placeholders; repeated names share their value. Known variables without an
+available value use their default or an empty string. Invalid or over-budget
+transforms preserve the input value; regular expression behavior is not fully
+compatible with ECMAScript UTF-16 semantics.
 
 In Vim's normal mode: `K` hover, `gd` definition, `gD` declaration, `gy` type
 definition, `gi` implementation, `gr` references.

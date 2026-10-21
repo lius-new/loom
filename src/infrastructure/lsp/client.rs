@@ -125,6 +125,11 @@ impl Client {
             use std::os::windows::process::CommandExt;
             process.creation_flags(0x0800_0000);
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            process.process_group(0);
+        }
         let mut child = process.spawn()?;
         let process_id = child.id();
         let job = super::job::Job::adopt(&child);

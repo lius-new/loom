@@ -18,7 +18,7 @@ pub enum Id {
 }
 
 impl Id {
-    fn to_json(&self) -> Value {
+    pub fn to_json(&self) -> Value {
         match self {
             Self::Number(number) => json!(number),
             Self::String(text) => json!(text),

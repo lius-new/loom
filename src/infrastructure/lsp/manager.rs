@@ -12,6 +12,8 @@
 //! - restarts a crashed server after 1, 2 and 4 seconds, then reports it failed
 //!   until the user restarts it;
 //! - reports a program that cannot be started as unavailable, once, quietly.
+#[path = "manager_registration.rs"]
+mod registration;
 #[path = "manager_requests.rs"]
 mod requests;
 pub(crate) use requests::{
@@ -23,7 +25,9 @@ use crate::domain::language::{Registry, ResolvedLanguage};
 use crate::features::language_service::{
     capabilities::ServerCapabilities,
     diagnostics::{self, Diagnostic},
+    dynamic,
     expand::{self, Installed},
+    install_prompt::{Offer as InstallOffer, Prompts as InstallPrompts},
     plan::{self, Assignment, InstanceKey},
     semantic,
     server_set::ServerSet,
@@ -69,6 +73,10 @@ pub(crate) struct Options {
     pub backoff: Vec<Duration>,
     /// A server that stayed ready this long starts counting failures afresh.
     pub stable_after: Duration,
+    /// Stop displaying progress that has not been refreshed for this long.
+    pub progress_timeout: Duration,
+    /// Wait for an end report after cancellation, then stop tracking the task.
+    pub cancel_grace: Duration,
 }
 
 impl Default for Options {
@@ -82,6 +90,8 @@ impl Default for Options {
                 Duration::from_secs(4),
             ],
             stable_after: Duration::from_secs(60),
+            progress_timeout: Duration::from_secs(300),
+            cancel_grace: Duration::from_secs(5),
         }
     }
 }
@@ -126,16 +136,22 @@ pub(crate) enum Status {
     Installing(String),
     /// Installing its pack failed.
     InstallFailed(String),
+    InstallCancelling,
+    InstallCancelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InstanceInfo {
+    pub id: u64,
+    pub run: u64,
+    pub registration_revision: u64,
     /// The server's name as people see it.
     pub server: String,
     /// The server definition's own name, as settings and commands name it.
     pub server_id: String,
     pub root: PathBuf,
     pub status: Status,
+    pub install_generation: Option<u64>,
     pub documents: usize,
     /// The program and its arguments as started.
     pub command: String,
@@ -149,6 +165,7 @@ pub(crate) struct InstanceInfo {
     pub diagnostics: DiagnosticCounts,
     /// What the server offers, once it has said.
     pub providers: Option<crate::features::language_service::providers::Providers>,
+    pub registrations: Vec<String>,
 }
 
 /// What became of the diagnostics a server published, so a missing underline can
@@ -169,9 +186,19 @@ pub(crate) struct DiagnosticCounts {
 /// One running background task of a server.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TaskInfo {
+    pub id: u64,
     pub title: String,
     pub message: Option<String>,
     pub percentage: Option<u8>,
+    pub cancellable: bool,
+    pub cancelling: bool,
+}
+
+struct Task {
+    token: crate::features::language_service::message::Id,
+    info: TaskInfo,
+    updated: Instant,
+    cancelled: Option<Instant>,
 }
 
 /// Messages and tasks kept per instance.
@@ -249,6 +276,33 @@ pub(crate) struct DocumentResults {
     pub semantic: Option<Arc<[TokenSpan]>>,
 }
 
+/// Pins diagnostic publications so equal-looking replacements (including new
+/// server data) and restarted or re-registered providers invalidate action lists.
+#[derive(Clone, Default)]
+pub(crate) struct CodeActionContext {
+    sources: Vec<(u64, u64, u64)>,
+    diagnostics: Vec<Arc<[Diagnostic]>>,
+}
+
+impl PartialEq for CodeActionContext {
+    fn eq(&self, other: &Self) -> bool {
+        self.sources == other.sources
+            && self.diagnostics.len() == other.diagnostics.len()
+            && self
+                .diagnostics
+                .iter()
+                .zip(&other.diagnostics)
+                .all(|(a, b)| Arc::ptr_eq(a, b))
+    }
+}
+impl Eq for CodeActionContext {}
+
+impl CodeActionContext {
+    pub fn has_sources(&self) -> bool {
+        !self.sources.is_empty()
+    }
+}
+
 enum Msg {
     Snapshot(Box<Snapshot>),
     Saved {
@@ -258,7 +312,17 @@ enum Msg {
     Restart,
     /// Install the pack of the named server.
     Install(String),
+    CancelInstall {
+        server: String,
+        generation: u64,
+    },
+    DismissInstallPrompt(Vec<String>),
     RetryInstalls,
+    CancelTask {
+        instance: u64,
+        run: u64,
+        task: u64,
+    },
     /// Some pack's installation moved on.
     InstallChanged,
     Request {
@@ -281,6 +345,24 @@ enum Msg {
         run: u64,
         event: Box<Event>,
     },
+    RegistrationReady {
+        instance: u64,
+        run: u64,
+        generation: u64,
+        outcome: Result<(), String>,
+    },
+    WatchedFiles {
+        instance: u64,
+        run: u64,
+        generation: u64,
+        changes: Vec<Value>,
+    },
+    WatchError {
+        instance: u64,
+        run: u64,
+        generation: u64,
+        error: String,
+    },
     Stop,
 }
 
@@ -289,6 +371,7 @@ pub(crate) struct Manager {
     actions: Arc<Mutex<Vec<ServerAction>>>,
     next_request: std::sync::atomic::AtomicU64,
     infos: Arc<Mutex<Vec<InstanceInfo>>>,
+    install_offers: Arc<Mutex<Vec<InstallOffer>>>,
     results: Store,
     thread: Option<JoinHandle<()>>,
 }
@@ -315,6 +398,7 @@ impl Manager {
                 listener
             });
         let infos = Arc::new(Mutex::new(Vec::new()));
+        let install_offers = Arc::default();
         let actions: Arc<Mutex<Vec<ServerAction>>> = Arc::default();
         let results: Store = Arc::default();
         let coordinator = Coordinator {
@@ -337,6 +421,8 @@ impl Manager {
             snapshot: Snapshot::default(),
             assignments: HashMap::new(),
             published: Vec::new(),
+            install_prompts: InstallPrompts::default(),
+            install_offers: Arc::clone(&install_offers),
         };
         let thread = thread::Builder::new()
             .name("loom-lsp-manager".into())
@@ -347,6 +433,7 @@ impl Manager {
             actions,
             next_request: std::sync::atomic::AtomicU64::new(1),
             infos,
+            install_offers,
             results,
             thread: Some(thread),
         }
@@ -376,13 +463,75 @@ impl Manager {
         let _ = self.tx.send(Msg::Install(server.to_owned()));
     }
 
+    pub fn cancel_install(&self, server: &str, generation: u64) {
+        let _ = self.tx.send(Msg::CancelInstall {
+            server: server.into(),
+            generation,
+        });
+    }
+
+    pub fn install_offers(&self) -> Vec<InstallOffer> {
+        self.install_offers.lock().unwrap().clone()
+    }
+
+    pub fn dismiss_install_prompt(&self, servers: Vec<String>) {
+        let _ = self.tx.send(Msg::DismissInstallPrompt(servers));
+    }
+
     /// Asks again for every pack whose installation failed.
     pub fn retry_installs(&self) {
         let _ = self.tx.send(Msg::RetryInstalls);
     }
 
+    pub fn cancel_task(&self, instance: u64, run: u64, task: u64) {
+        let _ = self.tx.send(Msg::CancelTask {
+            instance,
+            run,
+            task,
+        });
+    }
+
     pub fn infos(&self) -> Vec<InstanceInfo> {
         self.infos.lock().unwrap().clone()
+    }
+
+    pub fn code_action_context(&self, path: &Path, stamp: Stamp) -> CodeActionContext {
+        let sources = self
+            .infos
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|info| {
+                info.status == Status::Ready
+                    && info.documents > 0
+                    && path.starts_with(&info.root)
+                    && info
+                        .providers
+                        .as_ref()
+                        .is_some_and(|p| p.code_action.is_some())
+            })
+            .map(|info| (info.id, info.run, info.registration_revision))
+            .collect();
+        let diagnostics = uri::file_uri(path)
+            .and_then(|uri| {
+                self.results
+                    .lock()
+                    .unwrap()
+                    .get(&uri::key(&uri))
+                    .map(|entry| {
+                        entry
+                            .diagnostics
+                            .values()
+                            .filter(|(at, ..)| *at == stamp)
+                            .map(|(_, found, _)| found.clone())
+                            .collect()
+                    })
+            })
+            .unwrap_or_default();
+        CodeActionContext {
+            sources,
+            diagnostics,
+        }
     }
 
     /// What the servers know about `path` in the editor state `stamp`. Results
@@ -436,9 +585,10 @@ impl Drop for Manager {
 }
 
 struct Running {
-    client: Client,
     /// Present once `initialize` has been answered.
+    /// Drop leases before waiting for the process to exit.
     ready: Option<Box<Ready>>,
+    client: Client,
 }
 
 struct Ready {
@@ -448,7 +598,18 @@ struct Ready {
     semantic: SemanticState,
     pull: PullState,
     /// Work-done progress tokens in the order they began.
-    tasks: Vec<(String, TaskInfo)>,
+    tasks: Vec<Task>,
+    next_task: u64,
+    registrations: dynamic::Registry,
+    watch: Option<crate::infrastructure::lsp_watch::Handle>,
+    watch_generation: u64,
+    next_registration: u64,
+    registration_pending: Option<registration::Pending>,
+    registration_queue: std::collections::VecDeque<(
+        crate::features::language_service::message::Id,
+        String,
+        Value,
+    )>,
 }
 
 /// When to ask for a document's semantic tokens and which answers still count.
@@ -474,7 +635,7 @@ impl Ready {
         self.capabilities
             .semantic_tokens
             .as_ref()
-            .is_some_and(|tokens| tokens.full)
+            .is_some_and(|tokens| tokens.full || tokens.range)
     }
 }
 
@@ -493,6 +654,7 @@ enum Phase {
 struct Instance {
     id: u64,
     run: u64,
+    registration_revision: u64,
     key: InstanceKey,
     phase: Phase,
     failures: usize,
@@ -532,6 +694,8 @@ struct Coordinator {
     /// never touches the disk to look for project markers.
     assignments: HashMap<PathBuf, (ResolvedLanguage, Vec<Assignment>)>,
     published: Vec<InstanceInfo>,
+    install_prompts: InstallPrompts,
+    install_offers: Arc<Mutex<Vec<InstallOffer>>>,
 }
 
 /// The settings the person gave `server`, by their top-level names.
@@ -599,20 +763,32 @@ impl Coordinator {
             Msg::Saved { path, text } => self.saved(&path, &text),
             Msg::Restart => self.restart(),
             Msg::Install(server) => {
+                self.install_prompts.dismiss(std::slice::from_ref(&server));
                 let pack = self.servers.get(&server).and_then(|d| d.pack.clone());
                 if let (Some(installer), Some(pack)) = (&self.installer, pack) {
-                    // A person asking again does not wait out the failure cooldown.
-                    if matches!(installer.status(&pack), PackStatus::Failed(_)) {
-                        installer.retry();
-                    }
-                    let _ = installer.request(&pack);
+                    let _ = installer.resume(&pack);
                 }
             }
+            Msg::CancelInstall { server, generation } => {
+                let pack = self.servers.get(&server).and_then(|d| d.pack.clone());
+                if let (Some(installer), Some(pack)) = (&self.installer, pack) {
+                    installer.cancel(&super::super::lsp_install::InstallTarget {
+                        pack: pack.to_string(),
+                        generation,
+                    });
+                }
+            }
+            Msg::DismissInstallPrompt(servers) => self.install_prompts.dismiss(&servers),
             Msg::RetryInstalls => {
                 if let Some(installer) = &self.installer {
                     installer.retry();
                 }
             }
+            Msg::CancelTask {
+                instance,
+                run,
+                task,
+            } => self.cancel_task(instance, run, task),
             Msg::InstallChanged => self.install_changed(),
             Msg::Request { id, spec, shared } => {
                 self.request(id, *spec, shared);
@@ -640,6 +816,28 @@ impl Coordinator {
                 run,
                 event,
             } => self.event(instance, run, *event),
+            Msg::RegistrationReady {
+                instance,
+                run,
+                generation,
+                outcome,
+            } => self.registration_ready(instance, run, generation, outcome),
+            Msg::WatchedFiles {
+                instance,
+                run,
+                generation,
+                changes,
+            } => self.watched_files(instance, run, generation, changes),
+            Msg::WatchError {
+                instance,
+                run,
+                generation,
+                error,
+            } => {
+                if let Some(at) = self.watch_instance(instance, run, generation) {
+                    self.remember(at, 2, &error);
+                }
+            }
         }
         true
     }
@@ -655,16 +853,38 @@ impl Coordinator {
                     Phase::Waiting { retry_at, .. } => Some(*retry_at),
                     _ => None,
                 };
-                let (semantic, pull) = match &instance.phase {
+                let (semantic, pull, progress) = match &instance.phase {
                     Phase::Running(Running {
                         ready: Some(ready), ..
                     }) => (
                         ready.semantic.due.values().min().copied(),
                         ready.pull.due.values().min().copied(),
+                        ready
+                            .tasks
+                            .iter()
+                            .map(|task| {
+                                task.cancelled
+                                    .map_or(task.updated + self.options.progress_timeout, |when| {
+                                        when + self.options.cancel_grace
+                                    })
+                            })
+                            .min(),
                     ),
-                    _ => (None, None),
+                    _ => (None, None, None),
                 };
-                [idle, retry, semantic, pull].into_iter().flatten().min()
+                let registration = match &instance.phase {
+                    Phase::Running(Running {
+                        ready: Some(ready), ..
+                    }) => ready
+                        .registration_pending
+                        .as_ref()
+                        .map(|pending| pending.deadline),
+                    _ => None,
+                };
+                [idle, retry, semantic, pull, progress, registration]
+                    .into_iter()
+                    .flatten()
+                    .min()
             })
             .chain(self.book.deadline())
             .min()
@@ -675,6 +895,8 @@ impl Coordinator {
         self.expire_requests(now);
         self.request_semantic_tokens(now);
         self.request_pulls(now);
+        self.expire_progress(now);
+        self.expire_registrations(now);
         let idle_stop = self.options.idle_stop;
         let mut stopping = Vec::new();
         let mut lost = Vec::new();
@@ -795,6 +1017,7 @@ impl Coordinator {
             self.instances.push(Instance {
                 id,
                 run: 0,
+                registration_revision: 0,
                 key,
                 phase: Phase::Failed(String::new()),
                 failures: 0,
@@ -919,6 +1142,8 @@ impl Coordinator {
             )),
             Some(PackStatus::Verifying) => Status::Installing("verifying".to_owned()),
             Some(PackStatus::Starting) => Status::Installing("starting".to_owned()),
+            Some(PackStatus::Cancelling) => Status::InstallCancelling,
+            Some(PackStatus::Cancelled) => Status::InstallCancelled,
             // Installed a moment ago: the instance starts as soon as the message arrives.
             Some(PackStatus::Installed(_)) => Status::Starting,
             Some(PackStatus::Failed(error)) => Status::InstallFailed(error),
@@ -1107,6 +1332,13 @@ impl Coordinator {
                         semantic: SemanticState::default(),
                         pull: PullState::default(),
                         tasks: Vec::new(),
+                        next_task: 0,
+                        registrations: dynamic::Registry::default(),
+                        watch: None,
+                        watch_generation: 0,
+                        next_registration: 0,
+                        registration_pending: None,
+                        registration_queue: Default::default(),
                     }));
                 }
                 self.sync(at);
@@ -1127,6 +1359,20 @@ impl Coordinator {
                     let now = Instant::now();
                     for document in &instance.documents {
                         ready.semantic.due.insert(uri::key(&document.uri), now);
+                    }
+                }
+            }
+            Event::DiagnosticsRefresh => {
+                let instance = &mut self.instances[at];
+                if let Phase::Running(Running {
+                    ready: Some(ready), ..
+                }) = &mut instance.phase
+                {
+                    if ready.capabilities.providers.pull_diagnostics {
+                        let now = Instant::now();
+                        for document in &instance.documents {
+                            ready.pull.due.insert(uri::key(&document.uri), now);
+                        }
                     }
                 }
             }
@@ -1166,7 +1412,12 @@ impl Coordinator {
         log.push_back(format!("{label}: {message}"));
     }
 
-    fn progress(&mut self, at: usize, token: String, update: ProgressUpdate) {
+    fn progress(
+        &mut self,
+        at: usize,
+        token: crate::features::language_service::message::Id,
+        update: ProgressUpdate,
+    ) {
         let Phase::Running(Running {
             ready: Some(ready), ..
         }) = &mut self.instances[at].phase
@@ -1179,33 +1430,113 @@ impl Coordinator {
                 title,
                 message,
                 percentage,
+                cancellable,
             } => {
-                tasks.retain(|(known, _)| *known != token);
+                tasks.retain(|task| task.token != token);
                 if tasks.len() < MAX_TASKS {
-                    tasks.push((
+                    ready.next_task += 1;
+                    tasks.push(Task {
                         token,
-                        TaskInfo {
+                        info: TaskInfo {
+                            id: ready.next_task,
                             title,
                             message,
                             percentage,
+                            cancellable: cancellable.unwrap_or(false),
+                            cancelling: false,
                         },
-                    ));
+                        updated: Instant::now(),
+                        cancelled: None,
+                    });
                 }
             }
             ProgressUpdate::Report {
                 message,
                 percentage,
+                cancellable,
             } => {
-                if let Some((_, task)) = tasks.iter_mut().find(|(known, _)| *known == token) {
+                if let Some(task) = tasks.iter_mut().find(|task| task.token == token) {
                     if message.is_some() {
-                        task.message = message;
+                        task.info.message = message;
                     }
                     if percentage.is_some() {
-                        task.percentage = percentage;
+                        task.info.percentage = percentage;
                     }
+                    if let Some(cancellable) = cancellable {
+                        task.info.cancellable = cancellable;
+                    }
+                    task.updated = Instant::now();
                 }
             }
-            ProgressUpdate::End { .. } => tasks.retain(|(known, _)| *known != token),
+            ProgressUpdate::End { .. } => tasks.retain(|task| task.token != token),
+        }
+    }
+
+    fn cancel_task(&mut self, instance: u64, run: u64, task_id: u64) {
+        let Some(instance) = self
+            .instances
+            .iter_mut()
+            .find(|i| i.id == instance && i.run == run)
+        else {
+            return;
+        };
+        let Phase::Running(Running {
+            client,
+            ready: Some(ready),
+        }) = &mut instance.phase
+        else {
+            return;
+        };
+        let Some(task) = ready.tasks.iter_mut().find(|t| t.info.id == task_id) else {
+            return;
+        };
+        if task.info.cancellable
+            && !task.info.cancelling
+            && client.notify(
+                "window/workDoneProgress/cancel",
+                json!({ "token": task.token.to_json() }),
+            )
+        {
+            task.info.cancelling = true;
+            task.cancelled = Some(Instant::now());
+        }
+    }
+
+    fn expire_progress(&mut self, now: Instant) {
+        let mut expired = Vec::new();
+        for (at, instance) in self.instances.iter_mut().enumerate() {
+            if let Phase::Running(Running {
+                ready: Some(ready), ..
+            }) = &mut instance.phase
+            {
+                ready.tasks.retain(|task| {
+                    let due = task
+                        .cancelled
+                        .map_or(task.updated + self.options.progress_timeout, |when| {
+                            when + self.options.cancel_grace
+                        });
+                    if due <= now {
+                        expired.push((
+                            at,
+                            format!(
+                                "Stopped tracking {}: {}",
+                                task.info.title,
+                                if task.cancelled.is_some() {
+                                    "cancellation was not acknowledged"
+                                } else {
+                                    "no progress report before timeout"
+                                }
+                            ),
+                        ));
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+        }
+        for (at, message) in expired {
+            self.remember(at, 2, &message);
         }
     }
 
@@ -1673,6 +2004,23 @@ impl Coordinator {
                         "textDocument/semanticTokens/full/delta",
                         json!({ "textDocument": { "uri": document.uri }, "previousResultId": id }),
                     ),
+                    None if ready
+                        .capabilities
+                        .semantic_tokens
+                        .as_ref()
+                        .is_some_and(|tokens| !tokens.full && tokens.range) =>
+                    {
+                        // One stamped range covers the whole open document. It
+                        // cannot leave stale or uncovered viewport fragments.
+                        let end = crate::features::language_service::position::LineIndex::new(
+                            &document.text,
+                        )
+                        .position(document.text.len(), ready.capabilities.position_encoding);
+                        (
+                            "textDocument/semanticTokens/range",
+                            json!({"textDocument":{"uri":document.uri},"range":{"start":{"line":0,"character":0},"end":{"line":end.line,"character":end.character}}}),
+                        )
+                    }
                     None => (
                         "textDocument/semanticTokens/full",
                         json!({ "textDocument": { "uri": document.uri } }),
@@ -1740,16 +2088,43 @@ impl Coordinator {
             .instances
             .iter()
             .map(|instance| InstanceInfo {
+                id: instance.id,
+                run: instance.run,
+                registration_revision: instance.registration_revision,
                 server: self.servers.get(&instance.key.server).map_or_else(
                     || instance.key.server.to_string(),
                     |definition| definition.display_name.to_string(),
                 ),
                 server_id: instance.key.server.to_string(),
+                install_generation: self
+                    .servers
+                    .get(&instance.key.server)
+                    .and_then(|definition| definition.pack.as_deref())
+                    .and_then(|pack| self.installer.as_ref()?.cancel_target(pack))
+                    .map(|target| target.generation),
                 providers: match &instance.phase {
                     Phase::Running(Running {
                         ready: Some(ready), ..
-                    }) => Some(ready.capabilities.providers.clone()),
+                    }) => {
+                        let mut providers = ready
+                            .registrations
+                            .effective(&ready.capabilities.providers, None);
+                        for document in &instance.documents {
+                            providers.merge(
+                                &ready
+                                    .registrations
+                                    .effective(&ready.capabilities.providers, Some(document)),
+                            );
+                        }
+                        Some(providers)
+                    }
                     _ => None,
+                },
+                registrations: match &instance.phase {
+                    Phase::Running(Running {
+                        ready: Some(ready), ..
+                    }) => ready.registrations.ids(),
+                    _ => Vec::new(),
                 },
                 root: instance.key.root.clone(),
                 documents: instance.documents.len(),
@@ -1764,7 +2139,7 @@ impl Coordinator {
                 tasks: match &instance.phase {
                     Phase::Running(Running {
                         ready: Some(ready), ..
-                    }) => ready.tasks.iter().map(|(_, task)| task.clone()).collect(),
+                    }) => ready.tasks.iter().map(|task| task.info.clone()).collect(),
                     _ => Vec::new(),
                 },
                 log: instance.log.iter().cloned().collect(),
@@ -1790,6 +2165,7 @@ impl Coordinator {
                 },
             })
             .collect();
+        self.publish_install_offers(&infos);
         {
             // Forget what an instance said about documents it does not hold any
             // more, and results of documents no server holds at all.
@@ -1835,6 +2211,71 @@ impl Coordinator {
         }
         self.published.clear();
         self.infos.lock().unwrap().clear();
+        self.install_offers.lock().unwrap().clear();
+    }
+
+    fn publish_install_offers(&mut self, infos: &[InstanceInfo]) {
+        let mut candidates = BTreeMap::<String, InstallOffer>::new();
+        if let Some(installer) = &self.installer {
+            for info in infos
+                .iter()
+                .filter(|info| info.status == Status::NotInstalled && info.documents != 0)
+            {
+                if install_policy(&self.snapshot.servers, &info.server_id) != InstallPolicy::Ask {
+                    continue;
+                }
+                let Some(pack) = self
+                    .servers
+                    .get(&info.server_id)
+                    .and_then(|definition| definition.pack.as_deref())
+                else {
+                    continue;
+                };
+                let Ok(archives) = installer.missing_archives(pack) else {
+                    continue;
+                };
+                let offer =
+                    candidates
+                        .entry(info.server_id.clone())
+                        .or_insert_with(|| InstallOffer {
+                            server: info.server_id.clone(),
+                            name: info.server.clone(),
+                            languages: Vec::new(),
+                            archives,
+                        });
+                let Some(instance) = self
+                    .instances
+                    .iter()
+                    .find(|instance| instance.id == info.id)
+                else {
+                    continue;
+                };
+                for document in &instance.documents {
+                    if let Some(snapshot) = self.snapshot.documents.iter().find(|snapshot| {
+                        uri::file_uri(&snapshot.path)
+                            .is_some_and(|key| uri::key(&key) == uri::key(&document.uri))
+                    }) {
+                        let name = self
+                            .registry
+                            .definition_of(snapshot.language)
+                            .display_name
+                            .to_string();
+                        if !offer.languages.contains(&name) {
+                            offer.languages.push(name);
+                        }
+                    }
+                }
+                offer.languages.sort();
+            }
+        }
+        let offers = self
+            .install_prompts
+            .reconcile(candidates.into_values().collect());
+        let mut published = self.install_offers.lock().unwrap();
+        if *published != offers {
+            *published = offers;
+            self.results_changed = true;
+        }
     }
 }
 
@@ -1843,6 +2284,12 @@ fn stop_in_background(phase: Phase) -> Option<JoinHandle<()>> {
     let Phase::Running(mut running) = phase else {
         return None;
     };
+    if let Some(ready) = running.ready.as_mut() {
+        ready.watch = None;
+        ready.registration_pending = None;
+        ready.registration_queue.clear();
+        ready.registrations = dynamic::Registry::default();
+    }
     thread::Builder::new()
         .name("loom-lsp-stop".into())
         .spawn(move || {

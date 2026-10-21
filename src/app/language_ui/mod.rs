@@ -10,9 +10,12 @@ pub(crate) mod highlight;
 pub(crate) mod hover;
 pub(crate) mod inlay;
 pub(crate) mod keys;
+pub(crate) mod lightbulb;
 pub(crate) mod lists;
 pub(crate) mod navigate;
+pub(crate) mod peek;
 pub(crate) mod popup;
+pub(crate) mod quickfix;
 pub(crate) mod refactor;
 pub(crate) mod save;
 pub(crate) mod signature;
@@ -30,15 +33,22 @@ use std::sync::Arc;
 /// All transient language-server interaction state of the editor.
 #[derive(Clone, Default)]
 pub struct LanguageUi {
+    pub file_changes: Vec<crate::infrastructure::lsp::manager::FileChange>,
+    pub peek: Option<peek::Peek>,
+    pub peek_revision: u64,
     pub hover: hover::Hover,
     pub history: navigate::History,
+    pub navigation_revision: u64,
     /// The list open over the code, if any.
     pub popup: Option<popup::Popup>,
     /// A question whose answer the person is waiting for.
     pub pending: Option<actions::Pending>,
     pub signature: Option<signature::Session>,
     pub signature_timer: Option<Arc<crate::app::ui_timer::Timer>>,
+    pub signature_revision: u64,
     pub highlights: highlight::Highlights,
+    pub lightbulb: lightbulb::Lightbulb,
+    pub quickfix: quickfix::QuickFix,
     pub inlay: inlay::Inlay,
     pub expansion: expand::Expansion,
     /// A hierarchy or code lens request in flight.
@@ -55,6 +65,7 @@ pub struct LanguageUi {
     pub typed: Option<char>,
     /// A snippet whose tab stops are being filled in.
     pub snippet: Option<snippet_session::Session>,
+    pub snippet_revision: u64,
     /// The editor's rectangle as last seen, for revealing the caret.
     pub rect: Option<lgui::prelude::UiRect>,
     /// Changes that span several documents, by transaction, for undoing them
@@ -128,12 +139,33 @@ pub(crate) fn services(
 /// Runs after every state update: starts, follows or ends the features that
 /// watch the document. It must stay cheap when nothing relevant happened.
 pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
+    if let Some(panel) = app.editor.language.popup.as_mut()
+        && panel.kind.is_panel()
+        && panel.pane != app.workspace.active_pane()
+    {
+        panel.panel_focused = false;
+    }
+    if app.editor.language.popup.as_ref().is_some_and(|p| {
+        p.kind.is_panel()
+            && (app.workspace.pane(p.pane).is_none()
+                || app
+                    .workspace
+                    .documents
+                    .get(&p.stamp.document)
+                    .is_none_or(|d| d.stamp(p.stamp.document) != p.stamp))
+    }) {
+        app.editor.language.popup = None;
+    }
     let typed = app.editor.language.typed.take();
+    hover::observe(app);
+    peek::observe(app);
     completion::observe(ctx, app, typed);
     signature::observe(ctx, app, typed);
     snippet_session::observe(app);
     highlight::observe(ctx, app);
     inlay::observe(ctx, app);
+    lightbulb::observe(ctx, app);
+    quickfix::observe(ctx, app);
 }
 
 /// Ends what Escape ends: the hover card, the signature, a grown selection.
@@ -142,10 +174,14 @@ pub(crate) fn dismiss(app: &mut AppState) -> bool {
     let open = !app.editor.language.hover.is_idle()
         || app.editor.language.signature.is_some()
         || app.editor.language.popup.is_some()
-        || app.editor.language.completion.is_some();
+        || app.editor.language.completion.is_some()
+        || app.editor.language.snippet.is_some();
+    let open = open || app.editor.language.peek.is_some();
+    peek::close(app);
     hover::clear(app);
     signature::close(app);
     app.editor.language.close_popups();
+    snippet_session::end(app);
     open
 }
 
@@ -168,6 +204,7 @@ pub(crate) fn signature_view(
             active: view.active,
             docs: view.docs,
             position: view.position,
+            revision: session.revision,
         },
     ))
 }
@@ -200,7 +237,16 @@ pub(crate) fn popup_view(
         .language
         .popup
         .as_ref()
-        .filter(|popup| popup.pane == pane && popup.stamp == *stamp)
+        .filter(|popup| {
+            popup.pane == pane
+                && (popup.stamp == *stamp
+                    || popup.kind.is_panel()
+                        && app
+                            .workspace
+                            .documents
+                            .get(&popup.stamp.document)
+                            .is_some_and(|d| d.stamp(popup.stamp.document) == popup.stamp))
+        })
         .map(popup::Popup::view)
 }
 
@@ -218,6 +264,7 @@ pub(crate) fn popup_event(
     });
     if completing {
         match event {
+            Event::Focus => {}
             Event::Hover(index) => {
                 state.update(|app| {
                     if let Some(session) = app.editor.language.completion.as_mut() {
@@ -243,7 +290,17 @@ pub(crate) fn popup_event(
         }
         return;
     }
+    state.update(|app| {
+        if let Some(popup) = app.editor.language.popup.as_mut() {
+            popup.resize(rect.height());
+        }
+    });
     match event {
+        Event::Focus => state.update(|app| {
+            if let Some(popup) = app.editor.language.popup.as_mut() {
+                popup.panel_focused = true;
+            }
+        }),
         Event::Hover(index) => {
             state.try_update(|app| {
                 app.editor.language.popup.as_mut().is_some_and(|p| {
@@ -283,16 +340,37 @@ fn server_action(state: &AppContext, action: crate::infrastructure::lsp::manager
         false
     });
     match action {
-        ServerAction::ApplyEdit { label, edit, reply } => edit::apply(
-            state,
-            edit::Request {
-                edit,
-                stamps,
-                rect,
-                title: label.unwrap_or_else(|| "Language server edit".to_owned()),
-                reply: Some(reply),
-            },
-        ),
+        ServerAction::ApplyEdit {
+            label,
+            edit,
+            reply,
+            expected,
+        } => {
+            let app = state.get();
+            let valid = expected.iter().all(|(path, expected)| {
+                app.workspace
+                    .file_id_for_path(path)
+                    .and_then(|id| app.workspace.documents.get(&id))
+                    .is_some_and(|d| {
+                        d.incarnation == expected.incarnation
+                            && d.buffer.version() == expected.version
+                    })
+            });
+            if !valid {
+                reply.send(Ok(serde_json::json!({"applied":false,"failureReason":"a document changed while the edit was queued"})));
+                return;
+            }
+            edit::apply(
+                state,
+                edit::Request {
+                    edit,
+                    stamps,
+                    rect,
+                    title: label.unwrap_or_else(|| "Language server edit".to_owned()),
+                    reply: Some(reply),
+                },
+            )
+        }
         ServerAction::ShowDocument {
             uri,
             selection,
@@ -317,12 +395,15 @@ pub(crate) fn run_payload(
     rect: lgui::prelude::UiRect,
 ) {
     match payload {
+        popup::Payload::Group(_) => {}
+        popup::Payload::PeekPlace(place) => peek::open(state, place),
         popup::Payload::Action { instance, action } => {
             refactor::run_action(state, instance, action, rect)
         }
         popup::Payload::Command { instance, command } => {
             refactor::execute(state, instance, command, rect)
         }
+        popup::Payload::Lens { instance, lens } => lists::resolve_lens(state, instance, lens),
         popup::Payload::Place(_) | popup::Payload::Hierarchy { .. } | popup::Payload::Nothing => {}
     }
 }
@@ -340,6 +421,8 @@ pub(crate) fn tick(state: &AppContext) {
         signature::tick(app);
         highlight::tick(app);
         inlay::tick(app);
+        lightbulb::tick(state, app);
+        quickfix::tick(state, app);
         expand::tick(app);
         effects = actions::tick(app);
         changes = refactor::tick(app);
@@ -347,27 +430,47 @@ pub(crate) fn tick(state: &AppContext) {
         proceed = save::tick(state, app);
         true
     });
+    flush_files(state);
+    if let Some(services) = services(state) {
+        for action in services.take_actions() {
+            server_action(state, action);
+        }
+    }
     if let Some(then) = proceed {
         then(state);
     }
     for effect in effects {
         match effect {
             actions::Effect::Go(place, rect) => navigate::go(state, place, rect, true),
-        }
-    }
-    if let Some(services) = services(state) {
-        for action in services.take_actions() {
-            server_action(state, action);
+            actions::Effect::Peek(place) => peek::open(state, place),
         }
     }
     for effect in changes {
         match effect {
             refactor::Effect::Apply(request) => edit::apply(state, request),
+            refactor::Effect::ApplyThen {
+                request,
+                instance,
+                command,
+            } => edit::apply_then(state, request, instance, command),
             refactor::Effect::Execute {
                 instance,
                 command,
                 rect,
             } => refactor::execute(state, instance, command, rect),
+        }
+    }
+}
+
+pub(super) fn flush_files(state: &AppContext) {
+    if state.get().editor.language.file_changes.is_empty() {
+        return;
+    }
+    let mut changes = Vec::new();
+    state.update(|app| changes = std::mem::take(&mut app.editor.language.file_changes));
+    if let Some(services) = services(state) {
+        for change in changes {
+            services.files_changed(change);
         }
     }
 }

@@ -30,6 +30,7 @@ pub(crate) struct Row {
 
 #[derive(Clone)]
 pub(crate) struct View {
+    pub panel: bool,
     pub rows: Arc<[Row]>,
     pub selected: usize,
     /// The first row shown.
@@ -48,6 +49,7 @@ pub(crate) struct View {
 }
 
 pub(crate) enum Event {
+    Focus,
     Hover(usize),
     Pick(usize),
     Dismiss,
@@ -83,13 +85,25 @@ pub(crate) fn render(
     area: UiRect,
     send: Sender,
 ) -> (UiRect, Element) {
-    let (width, height) = size(view, area);
-    let (left, top) = match anchor {
-        Some(anchor) => card_origin(anchor, area, width, height),
-        None => (
-            area.left + ((area.width() - width) / 2.0).max(4.0),
-            area.top + 24.0,
-        ),
+    let (mut width, mut height) = size(view, area);
+    if view.panel {
+        width = (area.width() - 8.0).max(0.0);
+        height = height.min(
+            (area.height() * 0.45)
+                .max(90.0)
+                .min((area.height() - 8.0).max(0.0)),
+        );
+    }
+    let (left, top) = if view.panel {
+        (area.left + 4.0, area.bottom - height - 4.0)
+    } else {
+        match anchor {
+            Some(anchor) => card_origin(anchor, area, width, height),
+            None => (
+                area.left + ((area.width() - width) / 2.0).max(4.0),
+                area.top + 24.0,
+            ),
+        }
     };
     let card = UiRect::new(left, top, left + width, top + height);
     let policy = EventPolicy {
@@ -111,6 +125,29 @@ pub(crate) fn render(
             cx.stop_propagation();
         });
     let mut y = top + PAD;
+    if view.panel {
+        let r = UiRect::new(
+            card.right - 26.0,
+            card.top + 4.0,
+            card.right - 4.0,
+            card.top + 26.0,
+        );
+        let close = send.clone();
+        body = body.child(
+            panel(r, VisualStyle::default())
+                .event_policy(policy)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move |cx: &mut UiEventContext| {
+                    cx.stop_propagation();
+                    close(Event::Dismiss);
+                })
+                .child(text(
+                    r,
+                    "×",
+                    theme::sans(theme::c().text_soft, theme::UI_SIZE),
+                )),
+        );
+    }
     if let Some(title) = &view.title {
         body = body.child(text(
             UiRect::new(left + PAD + 4.0, y, left + width - PAD, y + ROW_H),
@@ -122,11 +159,20 @@ pub(crate) fn render(
     if let Some(query) = &view.query {
         let field = UiRect::new(left + PAD, y, left + width - PAD, y + INPUT_H - 4.0);
         body = body.child(
-            panel(field, VisualStyle::filled(theme::c().bg).radius(3.0)).child(text(
-                UiRect::new(field.left + 6.0, field.top, field.right - 6.0, field.bottom),
-                format!("{query}\u{258F}"),
-                theme::sans(theme::c().text_bright, theme::UI_SIZE),
-            )),
+            panel(field, VisualStyle::filled(theme::c().bg).radius(3.0))
+                .event_policy(policy)
+                .on_pointer_down({
+                    let focus = send.clone();
+                    move |cx, _| {
+                        cx.stop_propagation();
+                        focus(Event::Focus);
+                    }
+                })
+                .child(text(
+                    UiRect::new(field.left + 6.0, field.top, field.right - 6.0, field.bottom),
+                    format!("{query}\u{258F}"),
+                    theme::sans(theme::c().text_bright, theme::UI_SIZE),
+                )),
         );
         y += INPUT_H;
     }
@@ -210,7 +256,14 @@ pub(crate) fn render(
         rows = rows.child(item);
     }
     body = body.child(rows);
-    let mut out = panel(area, VisualStyle::default()).child(body);
+    if view.panel {
+        body = body.on_pointer_down_with_button(|cx, _, _| cx.stop_propagation());
+    }
+    let mut out = if view.panel {
+        body
+    } else {
+        panel(area, VisualStyle::default()).child(body)
+    };
     let mut rect = card;
     if let Some(blocks) = &view.docs
         && !blocks.is_empty()
@@ -258,15 +311,17 @@ pub(crate) fn render(
     }
     // A press outside the popup dismisses it.
     let dismiss = send;
-    out = out
-        .event_policy(policy)
-        .on_pointer_down_with_button(move |cx, p, _| {
-            if !rect.contains(p.point) {
-                dismiss(Event::Dismiss);
-            } else {
-                cx.stop_propagation();
-            }
-        });
+    if !view.panel {
+        out = out
+            .event_policy(policy)
+            .on_pointer_down_with_button(move |cx, p, _| {
+                if !rect.contains(p.point) {
+                    dismiss(Event::Dismiss);
+                } else {
+                    cx.stop_propagation();
+                }
+            });
+    }
     (rect, out)
 }
 
@@ -289,6 +344,7 @@ mod tests {
 
     fn view(count: usize, visible: usize) -> View {
         View {
+            panel: false,
             rows: rows(count),
             selected: 0,
             scroll: 0,

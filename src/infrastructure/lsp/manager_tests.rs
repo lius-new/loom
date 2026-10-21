@@ -91,6 +91,431 @@ fn fake_server() -> PathBuf {
 
 static RUNS: AtomicUsize = AtomicUsize::new(0);
 
+mod registration {
+    use super::*;
+    use crate::features::language_service::{request::Feature, uri};
+    use crate::infrastructure::lsp::manager::{Failure, Progress, RequestSpec};
+
+    fn fixture(script: Value, features: &str) -> Fixture {
+        let mut fixture = Fixture::new(&["--sync", "object", "--features", features]);
+        let path = fixture.dir.join("registrations.json");
+        std::fs::write(&path, serde_json::to_vec(&script).unwrap()).unwrap();
+        fixture.settings[0].args.as_mut().unwrap().extend([
+            "--registration-script".into(),
+            path.to_string_lossy().into_owned(),
+        ]);
+        fixture
+    }
+
+    fn register(id: u64, step: u64, registrations: Value) -> Value {
+        json!({"id":id,"step":step,"method":"client/registerCapability","params":{"registrations":registrations}})
+    }
+
+    fn unregister(id: u64, step: u64, name: &str, method: &str) -> Value {
+        json!({"id":id,"step":step,"method":"client/unregisterCapability","params":{"unregisterations":[{"id":name,"method":method}]}})
+    }
+
+    fn answer(f: &Fixture, id: u64) -> Value {
+        f.wait_for("registration reply", || {
+            f.log()
+                .into_iter()
+                .find(|message| message["id"] == id && message.get("method").is_none())
+        })
+    }
+
+    fn accepted(f: &Fixture, id: u64) {
+        let reply = answer(f, id);
+        assert_eq!(reply.get("result"), Some(&Value::Null), "{reply}");
+    }
+
+    fn request(f: &Fixture, feature: Feature, file: &str) -> Progress {
+        let handle = f.mgr().request(RequestSpec::new(
+            feature,
+            f.dir.join(file),
+            Stamp {
+                incarnation: 1,
+                version: 0,
+            },
+            0,
+        ));
+        f.wait_for("feature reply", || {
+            handle.is_finished().then(|| handle.poll())
+        })
+    }
+
+    fn save(f: &Fixture) {
+        f.mgr().saved(f.dir.join("a.fk"), Arc::new("x".into()));
+    }
+
+    fn disk_events(f: &Fixture) -> Vec<Value> {
+        f.log()
+            .iter()
+            .filter(|message| message["method"] == "workspace/didChangeWatchedFiles")
+            .flat_map(|message| {
+                message["params"]["changes"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    fn event(f: &Fixture, path: &std::path::Path, kind: u8) {
+        let expected = json!({"uri":uri::file_uri(path).unwrap(),"type":kind});
+        f.wait_for("watched file notification", || {
+            disk_events(f).contains(&expected).then_some(())
+        });
+    }
+
+    #[test]
+    fn providers_are_selected_per_document_and_unregister_preserves_static_and_other_ids() {
+        let f = fixture(
+            json!([
+                register(
+                    7000,
+                    0,
+                    json!([
+                        {"id":"a","method":"textDocument/hover","registerOptions":{"documentSelector":[{"language":"fake","scheme":"file","pattern":"a.fk"}]}},
+                        {"id":"b","method":"textDocument/hover","registerOptions":{"documentSelector":[{"pattern":"b.fk"}]}}
+                    ])
+                ),
+                unregister(7001, 1, "a", "textDocument/hover"),
+                unregister(7002, 2, "b", "textDocument/hover")
+            ]),
+            "definition",
+        );
+        f.show(vec![
+            f.doc("a.fk", 0, "x"),
+            f.doc("b.fk", 0, "x"),
+            f.doc("c.fk", 0, "x"),
+        ]);
+        accepted(&f, 7000);
+        assert_eq!(request(&f, Feature::Hover, "a.fk").parts.len(), 1);
+        assert_eq!(request(&f, Feature::Hover, "b.fk").parts.len(), 1);
+        assert_eq!(
+            request(&f, Feature::Hover, "c.fk").failure,
+            Some(Failure::Unsupported)
+        );
+        save(&f);
+        accepted(&f, 7001);
+        assert_eq!(
+            request(&f, Feature::Hover, "a.fk").failure,
+            Some(Failure::Unsupported)
+        );
+        assert_eq!(request(&f, Feature::Hover, "b.fk").parts.len(), 1);
+        assert_eq!(request(&f, Feature::Definition, "a.fk").parts.len(), 1);
+        save(&f);
+        accepted(&f, 7002);
+        f.wait_for("registration panel clears", || {
+            f.mgr().infos()[0].registrations.is_empty().then_some(())
+        });
+        assert!(!f.mgr().infos()[0].providers.as_ref().unwrap().hover);
+        assert!(f.mgr().infos()[0].providers.as_ref().unwrap().definition);
+    }
+
+    #[test]
+    fn unregister_invalidates_inflight_replies_and_unknown_methods_fail_atomically() {
+        let mut unreg = unregister(7010, 99, "hover", "textDocument/hover");
+        unreg["onMethod"] = json!("textDocument/hover");
+        let f = fixture(
+            json!([
+                register(
+                    7000,
+                    0,
+                    json!([{"id":"hover","method":"textDocument/hover"}])
+                ),
+                unreg,
+                register(
+                    7001,
+                    1,
+                    json!([{"id":"new","method":"textDocument/hover"},{"id":"unsupported","method":"textDocument/didOpen"}])
+                ),
+                register(7002, 2, json!([{"id":"new","method":"textDocument/hover"}]))
+            ]),
+            "",
+        );
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        accepted(&f, 7000);
+        let progress = request(&f, Feature::Hover, "a.fk");
+        assert_eq!(progress.failure, Some(Failure::Stale));
+        assert!(progress.parts.is_empty());
+        accepted(&f, 7010);
+        save(&f);
+        assert_eq!(answer(&f, 7001)["error"]["code"], -32602);
+        assert_eq!(
+            request(&f, Feature::Hover, "a.fk").failure,
+            Some(Failure::Unsupported)
+        );
+        save(&f);
+        accepted(&f, 7002);
+    }
+
+    #[test]
+    fn native_disk_events_include_closed_files_rename_git_masks_and_unregister_release() {
+        let f = fixture(
+            json!([
+                register(
+                    7000,
+                    0,
+                    json!([{"id":"files","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[
+                        {"globPattern":"**/*.wat"}, {"globPattern":"**/*.wat"},
+                        {"globPattern":"**/*.created","kind":1}, {"globPattern":"**/.git/config"}
+                    ]}}])
+                ),
+                unregister(7001, 1, "files", "workspace/didChangeWatchedFiles")
+            ]),
+            "hover",
+        );
+        f.show(vec![f.doc("a.fk", 0, "unsaved")]);
+        accepted(&f, 7000);
+        let file = f.dir.join("closed.wat");
+        std::fs::write(&file, "first").unwrap();
+        event(&f, &file, 1);
+        std::fs::write(&file, "changed and longer").unwrap();
+        event(&f, &file, 2);
+        let renamed = f.dir.join("renamed.wat");
+        std::fs::rename(&file, &renamed).unwrap();
+        event(&f, &file, 3);
+        event(&f, &renamed, 1);
+        std::fs::remove_file(&renamed).unwrap();
+        event(&f, &renamed, 3);
+        std::fs::create_dir(f.dir.join(".git")).unwrap();
+        let config = f.dir.join(".git/config");
+        std::fs::write(&config, "git").unwrap();
+        event(&f, &config, 1);
+        let masked = f.dir.join("a.created");
+        std::fs::write(&masked, "created").unwrap();
+        event(&f, &masked, 1);
+        std::fs::write(&masked, "changed").unwrap();
+        std::fs::remove_file(&masked).unwrap();
+        save(&f);
+        accepted(&f, 7001);
+        let count = disk_events(&f).len();
+        std::fs::write(f.dir.join("after.wat"), "no lease").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(disk_events(&f).len(), count);
+        assert!(
+            disk_events(&f)
+                .iter()
+                .filter(|e| e["uri"] == uri::file_uri(&masked).unwrap())
+                .all(|e| e["type"] == 1)
+        );
+        assert!(
+            !f.methods()
+                .iter()
+                .any(|method| method == "textDocument/didChange"),
+            "disk events must not synthesize unsaved document sync"
+        );
+        assert_eq!(
+            disk_events(&f)
+                .iter()
+                .filter(|e| e["uri"] == uri::file_uri(&file).unwrap() && e["type"] == 1)
+                .count(),
+            1,
+            "overlapping watches deduplicate"
+        );
+    }
+
+    #[test]
+    fn external_relative_roots_ack_after_setup_and_failed_setup_rolls_back_all_providers() {
+        // A sibling tree exercises an extra lease outside the instance root.
+        let outside = std::env::temp_dir().join(format!(
+            "loom-extra-{}-{}",
+            std::process::id(),
+            RUNS.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&outside).unwrap();
+        let base = uri::file_uri(&outside).unwrap();
+        let f = fixture(
+            json!([
+                register(
+                    7000,
+                    0,
+                    json!([
+                        {"id":"hover","method":"textDocument/hover"},
+                        {"id":"bad","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":{"baseUri":uri::file_uri(&outside.join("missing")).unwrap(),"pattern":"**"}}]}}
+                    ])
+                ),
+                register(
+                    7001,
+                    1,
+                    json!([{"id":"extra","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":{"baseUri":{"uri":base,"name":"extra"},"pattern":"**/*.wat"}}]}}])
+                ),
+                unregister(7002, 2, "extra", "workspace/didChangeWatchedFiles")
+            ]),
+            "",
+        );
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        assert_eq!(answer(&f, 7000)["error"]["code"], -32603);
+        assert_eq!(
+            request(&f, Feature::Hover, "a.fk").failure,
+            Some(Failure::Unsupported)
+        );
+        assert!(f.mgr().infos()[0].registrations.is_empty());
+        save(&f);
+        accepted(&f, 7001);
+        let path = outside.join("closed.wat");
+        std::fs::write(&path, "external").unwrap();
+        event(&f, &path, 1);
+        save(&f);
+        accepted(&f, 7002);
+        let count = disk_events(&f).len();
+        std::fs::write(&path, "after unregistration").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(disk_events(&f).len(), count);
+        drop(f);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn restarting_a_server_discards_its_old_registrations_and_watch_callbacks() {
+        let mut f = fixture(
+            json!([register(
+                7000,
+                0,
+                json!([
+                    {"id":"hover","method":"textDocument/hover"},
+                    {"id":"files","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":"**/*.wat"}]}}
+                ])
+            )]),
+            "",
+        );
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        accepted(&f, 7000);
+        let old = f.mgr().infos()[0].run;
+        std::fs::write(f.dir.join("registrations.json"), "[]").unwrap();
+        // The settings are unchanged, so only the explicit restart creates a run.
+        f.mgr().restart();
+        f.wait_for("new run", || {
+            f.mgr()
+                .infos()
+                .into_iter()
+                .find(|i| i.run != old && i.status == Status::Ready)
+        });
+        assert!(f.mgr().infos()[0].registrations.is_empty());
+        assert_eq!(
+            request(&f, Feature::Hover, "a.fk").failure,
+            Some(Failure::Unsupported)
+        );
+        let count = disk_events(&f).len();
+        std::fs::write(f.dir.join("new-run.wat"), "x").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(disk_events(&f).len(), count);
+        // Stop before the fixture's filesystem cleanup.
+        drop(f.manager.take());
+    }
+
+    #[test]
+    fn failed_watch_reconfiguration_resumes_the_previous_lease() {
+        let missing = uri::file_uri(&std::env::temp_dir().join(format!(
+            "loom-no-watch-{}-{}",
+            std::process::id(),
+            RUNS.fetch_add(1, Ordering::Relaxed)
+        )))
+        .unwrap();
+        let f = fixture(
+            json!([
+                register(
+                    7000,
+                    0,
+                    json!([{"id":"existing","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":"**/*.wat"}]}}])
+                ),
+                register(
+                    7001,
+                    1,
+                    json!([{"id":"bad","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":{"baseUri":missing,"pattern":"**"}}]}}])
+                )
+            ]),
+            "",
+        );
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        accepted(&f, 7000);
+        save(&f);
+        assert_eq!(answer(&f, 7001)["error"]["code"], -32603);
+        let path = f.dir.join("after-rollback.wat");
+        std::fs::write(&path, "still watching").unwrap();
+        event(&f, &path, 1);
+        assert_eq!(f.mgr().infos()[0].registrations.len(), 1);
+    }
+
+    #[test]
+    fn reusing_a_registration_id_replaces_its_watch_options_transactionally() {
+        let f = fixture(
+            json!([
+                register(
+                    7000,
+                    0,
+                    json!([{"id":"files","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":"**/*.old"}]}}])
+                ),
+                register(
+                    7001,
+                    1,
+                    json!([{"id":"files","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":"**/*.new"}]}}])
+                )
+            ]),
+            "",
+        );
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        accepted(&f, 7000);
+        let old = f.dir.join("before.old");
+        std::fs::write(&old, "old").unwrap();
+        event(&f, &old, 1);
+        save(&f);
+        accepted(&f, 7001);
+        let new = f.dir.join("after.new");
+        std::fs::write(&new, "new").unwrap();
+        event(&f, &new, 1);
+        std::fs::write(f.dir.join("ignored.old"), "ignored").unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(f.mgr().infos()[0].registrations.len(), 1);
+        assert!(
+            !disk_events(&f)
+                .iter()
+                .any(|event| event["uri"] == uri::file_uri(&f.dir.join("ignored.old")).unwrap())
+        );
+    }
+
+    #[test]
+    fn dynamic_watch_subscriptions_are_isolated_between_two_roots() {
+        let f = fixture(
+            json!([register(
+                7000,
+                0,
+                json!([{"id":"files","method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[{"globPattern":"**/*.wat"}]}}])
+            )]),
+            "",
+        );
+        for root in ["first", "second"] {
+            std::fs::create_dir(f.dir.join(root)).unwrap();
+        }
+        f.show(vec![
+            f.doc("first/a.fk", 0, "x"),
+            f.doc("second/a.fk", 0, "x"),
+        ]);
+        f.wait_for("two watcher registrations", || {
+            (f.log()
+                .iter()
+                .filter(|message| {
+                    message["id"] == 7000 && message.get("result") == Some(&Value::Null)
+                })
+                .count()
+                == 2)
+                .then_some(())
+        });
+        let path = f.dir.join("first/closed.wat");
+        std::fs::write(&path, "one root").unwrap();
+        event(&f, &path, 1);
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(
+            disk_events(&f)
+                .iter()
+                .filter(|event| event["uri"] == uri::file_uri(&path).unwrap())
+                .count(),
+            1
+        );
+    }
+}
+
 struct Fixture {
     manager: Option<Manager>,
     dir: PathBuf,
@@ -111,6 +536,8 @@ fn options() -> Options {
         idle_stop: Duration::from_millis(600),
         backoff: vec![Duration::from_millis(50), Duration::from_millis(50)],
         stable_after: Duration::from_secs(60),
+        progress_timeout: Duration::from_secs(300),
+        cancel_grace: Duration::from_millis(150),
     }
 }
 
@@ -128,6 +555,14 @@ impl Fixture {
 
     /// Runs the given servers, each with its own arguments and its own log.
     fn with_servers(servers: Arc<ServerSet>, runs: &[(&str, &[&str])]) -> Self {
+        Self::with_options(servers, runs, options())
+    }
+
+    fn with_options(
+        servers: Arc<ServerSet>,
+        runs: &[(&str, &[&str])],
+        manager_options: Options,
+    ) -> Self {
         let n = RUNS.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("loom-mgr-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -150,7 +585,7 @@ impl Fixture {
         }
         let changes = Arc::new(AtomicUsize::new(0));
         let counter = changes.clone();
-        let manager = Manager::start(registry(), servers, None, options(), move || {
+        let manager = Manager::start(registry(), servers, None, manager_options, move || {
             counter.fetch_add(1, Ordering::Relaxed);
         });
         Self {
@@ -234,6 +669,7 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        drop(self.manager.take());
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
@@ -614,16 +1050,21 @@ fn a_null_answer_clears_the_layer() {
 }
 
 #[test]
-fn a_server_without_full_tokens_is_never_asked() {
+fn a_range_only_server_gets_a_stamped_document_coverage_request() {
     let f = Fixture::new(&["--semantic", "range"]);
     f.show(vec![f.doc("a.fk", 0, "fn a")]);
     f.wait_method_count("textDocument/didOpen", 1);
-    std::thread::sleep(Duration::from_millis(300));
+    f.wait_method_count("textDocument/semanticTokens/range", 1);
     assert!(
         !f.methods()
             .contains(&"textDocument/semanticTokens/full".to_owned())
     );
+    let spans = f.wait_for("range tokens", || f.results_at("a.fk", 0).semantic);
+    assert_eq!(spans[0].range, 0..2);
+    f.show(vec![f.doc("a.fk", 1, "fn abc")]);
+    f.wait_method_count("textDocument/semanticTokens/range", 2);
     assert!(f.results_at("a.fk", 0).semantic.is_none());
+    f.wait_for("new range coverage", || f.results_at("a.fk", 1).semantic);
 }
 
 #[test]
@@ -998,6 +1439,165 @@ fn background_tasks_logs_and_the_command_are_reported() {
 }
 
 #[test]
+fn each_instance_reports_only_its_own_workspace_folder() {
+    let f = Fixture::new(&["--ask-folders"]);
+    for dir in ["first", "second"] {
+        std::fs::create_dir_all(f.dir.join(dir)).unwrap();
+        std::fs::write(f.dir.join(dir).join("fake.toml"), "").unwrap();
+    }
+    f.show(vec![
+        f.doc("first/a.fk", 0, "one"),
+        f.doc("second/b.fk", 0, "two"),
+    ]);
+    f.wait_ready(2);
+    f.wait_for("both folder replies", || {
+        (f.log()
+            .iter()
+            .filter(|m| m["id"] == 9004 && m.get("result").is_some())
+            .count()
+            == 2)
+            .then_some(())
+    });
+    let log = f.log();
+    let folder_sets: Vec<_> = log
+        .iter()
+        .filter(|m| m["method"] == "initialize")
+        .map(|m| m["params"]["workspaceFolders"].clone())
+        .collect();
+    assert_eq!(folder_sets.len(), 2);
+    for folder in &folder_sets {
+        let folders = folder.as_array().unwrap();
+        assert_eq!(folders.len(), 1);
+        assert!(["first", "second"].contains(&folders[0]["name"].as_str().unwrap()));
+        assert!(
+            log.iter()
+                .any(|m| m["id"] == 9004 && m["result"] == *folder)
+        );
+    }
+    assert_ne!(folder_sets[0], folder_sets[1]);
+    assert!(
+        !f.methods()
+            .contains(&"workspace/didChangeWorkspaceFolders".to_owned())
+    );
+}
+
+#[test]
+fn progress_cancellation_preserves_numeric_and_string_tokens() {
+    let f = Fixture::new(&["--progress-pair", "--progress-cancellable"]);
+    f.show(vec![f.doc("a.fk", 0, "x")]);
+    let info = f.wait_for("two distinct tasks", || {
+        f.mgr().infos().into_iter().find(|i| i.tasks.len() == 2)
+    });
+    assert_ne!(info.tasks[0].id, info.tasks[1].id);
+    f.mgr().cancel_task(info.id, info.run, info.tasks[0].id);
+    f.wait_for("only the numeric task ended", || {
+        let current = f.mgr().infos().into_iter().next()?;
+        (current.tasks.len() == 1 && current.tasks[0].id == info.tasks[1].id).then_some(())
+    });
+    f.mgr().cancel_task(info.id, info.run, info.tasks[1].id);
+    f.wait_for("the string task ended", || {
+        f.mgr().infos()[0].tasks.is_empty().then_some(())
+    });
+    let tokens: Vec<_> = f
+        .log()
+        .into_iter()
+        .filter(|m| m["method"] == "window/workDoneProgress/cancel")
+        .map(|m| m["params"]["token"].clone())
+        .collect();
+    assert_eq!(tokens, [json!(7), json!("7")]);
+}
+
+#[test]
+fn noncancellable_tasks_and_stale_panel_actions_send_no_cancellation() {
+    for cancellable in [false, true] {
+        let mut args = vec!["--sync", "object", "--progress"];
+        if cancellable {
+            args.push("--progress-cancellable");
+        }
+        let f = Fixture::new(&args);
+        f.show(vec![f.doc("a.fk", 0, "x")]);
+        let old = f.wait_for("a task", || {
+            f.mgr().infos().into_iter().find(|i| !i.tasks.is_empty())
+        });
+        if cancellable {
+            f.mgr().restart();
+            f.wait_for("a new server run", || {
+                f.mgr()
+                    .infos()
+                    .into_iter()
+                    .find(|i| i.run != old.run && !i.tasks.is_empty())
+            });
+        }
+        f.mgr().cancel_task(old.id, old.run, old.tasks[0].id);
+        f.mgr().saved(f.dir.join("a.fk"), Arc::new("x".into()));
+        f.wait_method_count("textDocument/didSave", 1);
+        assert!(
+            !f.methods()
+                .contains(&"window/workDoneProgress/cancel".to_owned())
+        );
+    }
+}
+
+#[test]
+fn ignored_progress_cancellation_and_missing_end_reports_are_bounded() {
+    let f = Fixture::new(&[
+        "--progress",
+        "--progress-cancellable",
+        "--ignore-progress-cancel",
+    ]);
+    f.show(vec![f.doc("a.fk", 0, "x")]);
+    let info = f.wait_for("a cancellable task", || {
+        f.mgr().infos().into_iter().find(|i| !i.tasks.is_empty())
+    });
+    f.mgr().cancel_task(info.id, info.run, info.tasks[0].id);
+    f.mgr().cancel_task(info.id, info.run, info.tasks[0].id);
+    f.wait_for("cancelling is visible", || {
+        f.mgr().infos()[0]
+            .tasks
+            .iter()
+            .any(|t| t.cancelling)
+            .then_some(())
+    });
+    f.wait_for("unacknowledged cancellation stops being displayed", || {
+        let info = f.mgr().infos().into_iter().next()?;
+        (info.tasks.is_empty()
+            && info
+                .log
+                .iter()
+                .any(|l| l.contains("cancellation was not acknowledged")))
+        .then_some(())
+    });
+    assert_eq!(
+        f.methods()
+            .iter()
+            .filter(|m| *m == "window/workDoneProgress/cancel")
+            .count(),
+        1
+    );
+    let f = Fixture::with_options(
+        servers(&[("fake-server", "fake", 0)]),
+        &[("fake-server", &["--progress"])],
+        Options {
+            progress_timeout: Duration::from_millis(300),
+            ..options()
+        },
+    );
+    f.show(vec![f.doc("a.fk", 0, "x")]);
+    f.wait_for("a task before its timeout", || {
+        f.mgr().infos().into_iter().find(|i| !i.tasks.is_empty())
+    });
+    f.wait_for("a missing end is not shown forever", || {
+        let info = f.mgr().infos().into_iter().next()?;
+        (info.tasks.is_empty()
+            && info
+                .log
+                .iter()
+                .any(|l| l.contains("no progress report before timeout")))
+        .then_some(())
+    });
+}
+
+#[test]
 fn diagnostics_for_an_older_version_are_moved_along_the_edits_not_lost() {
     // The server answers late and never republishes: what it said about the text it
     // saw must still show once the text has moved on.
@@ -1229,9 +1829,15 @@ language_id = "fakelang"
             0,
             "asking never downloads"
         );
+        let offers = w.manager.install_offers();
+        assert_eq!(offers.len(), 1);
+        assert_eq!(offers[0].server, "demo");
+        assert_eq!(offers[0].languages, ["Fake"]);
+        assert!(offers[0].archives["demo"] > 0);
         w.manager.install("demo");
         w.wait("ready", |s| matches!(s, Status::Ready));
         assert_eq!(w.downloads.load(Ordering::SeqCst), 1);
+        assert!(w.manager.install_offers().is_empty());
     }
 
     #[test]
@@ -1243,6 +1849,62 @@ language_id = "fakelang"
         });
         w.show();
         w.wait("ready", |s| matches!(s, Status::Ready));
+        assert!(w.manager.install_offers().is_empty());
+    }
+
+    #[test]
+    fn never_policy_has_no_prompt_or_download_but_allows_manual_install() {
+        let mut w = world();
+        w.servers.push(LanguageServerSetting {
+            install: Some(InstallPolicy::Never),
+            ..LanguageServerSetting::named("demo")
+        });
+        w.show();
+        w.wait("not installed", |s| matches!(s, Status::NotInstalled));
+        assert!(w.manager.install_offers().is_empty());
+        assert_eq!(w.downloads.load(Ordering::SeqCst), 0);
+        w.manager.install("demo");
+        w.wait("ready", |s| matches!(s, Status::Ready));
+        assert_eq!(w.downloads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn multiple_project_roots_share_one_invitation_and_declining_survives_restart() {
+        let w = world();
+        let documents = ["one/a.fk", "two/a.fk"]
+            .iter()
+            .map(|name| {
+                let path = w.dir.join(name);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                SnapshotDocument {
+                    language: registry().resolve_path(&path),
+                    path,
+                    stamp: Stamp {
+                        incarnation: 1,
+                        version: 0,
+                    },
+                    text: Arc::new("x".into()),
+                }
+            })
+            .collect();
+        w.manager.update(Snapshot {
+            documents,
+            workspace_roots: vec![w.dir.clone()],
+            ..Snapshot::default()
+        });
+        w.wait("not installed", |s| matches!(s, Status::NotInstalled));
+        assert_eq!(w.manager.infos().len(), 2);
+        assert_eq!(w.manager.install_offers().len(), 1);
+        w.manager.dismiss_install_prompt(vec!["demo".into()]);
+        let until = Instant::now() + Duration::from_secs(5);
+        while !w.manager.install_offers().is_empty() {
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        w.manager.restart();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(w.manager.install_offers().is_empty());
+        assert_eq!(w.downloads.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -1365,6 +2027,20 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
     }
 
     #[test]
+    fn versioned_workspace_edits_must_match_the_instances_current_synced_document() {
+        for (version, valid) in [("1", true), ("999", false)] {
+            let f = featured(&["--edit-version", version]);
+            f.show(vec![f.doc("a.fk", 0, "abc")]);
+            let handle = f.ready_then_ask(Feature::Rename, 0, 1);
+            let progress = f.finish(&handle);
+            assert_eq!(!progress.parts.is_empty(), valid);
+            if !valid {
+                assert_eq!(progress.failure, Some(Failure::Stale));
+            }
+        }
+    }
+
+    #[test]
     fn a_request_for_an_old_state_is_stale_and_sends_nothing() {
         let f = featured(&[]);
         f.show(vec![f.doc("a.fk", 0, "one")]);
@@ -1426,6 +2102,147 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
         f.show(vec![f.doc("a.fk", 0, "x")]);
         let handle = f.ready_then_ask(Feature::Hover, 0, 0);
         assert_eq!(f.finish(&handle).failure, Some(Failure::Stale));
+        assert_eq!(
+            f.methods()
+                .iter()
+                .filter(|m| *m == "textDocument/hover")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn transient_content_modified_and_server_cancelled_queries_retry_once() {
+        for code in ["-32801", "-32802"] {
+            let f = featured(&["--feature-error-once", "--feature-error-code", code]);
+            f.show(vec![f.doc("a.fk", 0, "alpha")]);
+            let handle = f.ready_then_ask(Feature::Hover, 0, 2);
+            let progress = f.finish(&handle);
+            assert_eq!(progress.failure, None, "{progress:?}");
+            assert_eq!(progress.parts.len(), 1);
+            assert_eq!(
+                f.methods()
+                    .iter()
+                    .filter(|m| *m == "textDocument/hover")
+                    .count(),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn a_retry_never_replays_a_command_or_an_outdated_document() {
+        let f = featured(&["--feature-error-once"]);
+        f.show(vec![f.doc("a.fk", 0, "alpha")]);
+        f.wait_status("ready", |s| matches!(s, Status::Ready));
+        f.wait_method_count("textDocument/didOpen", 1);
+        let instance = f.mgr().infos()[0].id;
+        let handle = f.mgr().request(
+            RequestSpec::new(Feature::ExecuteCommand, f.dir.join("a.fk"), stamp(0), 0)
+                .target(instance)
+                .extra(json!({ "command": "fake.run" })),
+        );
+        assert_eq!(f.finish(&handle).failure, Some(Failure::Stale));
+        assert_eq!(
+            f.methods()
+                .iter()
+                .filter(|m| *m == "workspace/executeCommand")
+                .count(),
+            1
+        );
+
+        let f = featured(&["--feature-error-once", "--slow-ms", "200"]);
+        f.show(vec![f.doc("a.fk", 0, "alpha")]);
+        let handle = f.ready_then_ask(Feature::Hover, 0, 2);
+        f.wait_method_count("textDocument/hover", 1);
+        f.show(vec![f.doc("a.fk", 1, "different")]);
+        assert_eq!(f.finish(&handle).failure, Some(Failure::Stale));
+        assert_eq!(
+            f.methods()
+                .iter()
+                .filter(|m| *m == "textDocument/hover")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_server_can_forbid_retriggering_and_a_retry_keeps_the_original_budget() {
+        let f = featured(&[
+            "--feature-error-once",
+            "--feature-error-code",
+            "-32802",
+            "--do-not-retrigger",
+        ]);
+        f.show(vec![f.doc("a.fk", 0, "alpha")]);
+        let handle = f.ready_then_ask(Feature::Hover, 0, 2);
+        assert_eq!(f.finish(&handle).failure, Some(Failure::Stale));
+        assert_eq!(
+            f.methods()
+                .iter()
+                .filter(|m| *m == "textDocument/hover")
+                .count(),
+            1
+        );
+
+        let f = featured(&["--feature-error-once", "--slow-ms", "150"]);
+        f.show(vec![f.doc("a.fk", 0, "alpha")]);
+        f.wait_status("ready", |s| matches!(s, Status::Ready));
+        f.wait_method_count("textDocument/didOpen", 1);
+        let handle = f.mgr().request(
+            RequestSpec::new(Feature::Hover, f.dir.join("a.fk"), stamp(0), 2)
+                .timeout(Duration::from_millis(240)),
+        );
+        let progress = f.finish(&handle);
+        assert!(
+            progress.parts.is_empty(),
+            "a reset budget would let the second 150ms reply succeed"
+        );
+        assert!(
+            matches!(progress.failure, Some(Failure::Failed(_))),
+            "{progress:?}"
+        );
+        f.wait_method_count("textDocument/hover", 2);
+    }
+
+    #[test]
+    fn only_the_stale_server_is_retried_and_dropping_a_retried_handle_cancels_it() {
+        let f = Fixture::with_servers(
+            two_servers(),
+            &[
+                (
+                    "alpha",
+                    &[
+                        "--features",
+                        "hover",
+                        "--feature-error-once",
+                        "--slow-ms",
+                        "100",
+                    ],
+                ),
+                ("beta", &["--features", "hover"]),
+            ],
+        );
+        f.show(vec![f.doc("a.fk", 0, "alpha")]);
+        f.wait_ready(2);
+        let handle = f.ask(Feature::Hover, 0, 2);
+        let progress = f.finish(&handle);
+        assert_eq!(progress.parts.len(), 2);
+        for (n, expected) in [2, 1].into_iter().enumerate() {
+            let log = std::fs::read_to_string(&f.logs[n]).unwrap();
+            let count = log
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .filter(|m| m["method"] == "textDocument/hover")
+                .count();
+            assert_eq!(count, expected);
+        }
+        let f = featured(&["--feature-error-once", "--slow-ms", "150"]);
+        f.show(vec![f.doc("a.fk", 0, "alpha")]);
+        let handle = f.ready_then_ask(Feature::Hover, 0, 2);
+        f.wait_method_count("textDocument/hover", 2);
+        drop(handle);
+        f.wait_method_count("$/cancelRequest", 1);
     }
 
     #[test]
@@ -1709,4 +2526,34 @@ fn a_server_that_answers_pull_requests_is_asked_for_problems_after_edits() {
         .collect();
     assert!(asked.len() >= 2, "{asked:?}");
     assert_eq!(asked[1]["params"]["previousResultId"], "d1");
+}
+
+#[test]
+fn diagnostic_refresh_repulls_all_open_files_without_an_editor_change() {
+    let f = Fixture::new(&[
+        "--sync",
+        "object",
+        "--features",
+        "pull",
+        "--pull-refresh-on-save",
+    ]);
+    f.show(vec![f.doc("a.fk", 0, "one"), f.doc("b.fk", 0, "two")]);
+    for file in ["a.fk", "b.fk"] {
+        f.wait_for("initial pulled diagnostics", || {
+            f.results_at(file, 0).diagnostics.filter(|d| !d.is_empty())
+        });
+    }
+    f.mgr().saved(f.dir.join("a.fk"), Arc::new("one".into()));
+    for file in ["a.fk", "b.fk"] {
+        f.wait_for("refreshed diagnostics at the same stamp", || {
+            f.results_at(file, 0).diagnostics.filter(|d| d.is_empty())
+        });
+    }
+    f.wait_method_count("textDocument/diagnostic", 4);
+    assert!(!f.methods().contains(&"textDocument/didChange".to_owned()));
+    assert!(
+        f.log()
+            .iter()
+            .any(|m| m["id"] == 9101 && m["result"].is_null())
+    );
 }

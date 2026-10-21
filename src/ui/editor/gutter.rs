@@ -77,7 +77,12 @@ pub fn render(
         } else {
             theme::c().text_faint
         };
-        let num_rect = UiRect::new(rect.left, y, rect.right - 10.0, y + fonts::editor().line_h);
+        let num_rect = UiRect::new(
+            rect.left + theme::GUTTER_ACTION_W,
+            y,
+            rect.right - 10.0,
+            y + fonts::editor().line_h,
+        );
         g = g.child(text(
             num_rect,
             (i + 1).to_string(),

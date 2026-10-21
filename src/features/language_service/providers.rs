@@ -98,6 +98,68 @@ pub struct Providers {
 }
 
 impl Providers {
+    /// Union registrations without erasing static providers or another ID's options.
+    pub fn merge(&mut self, other: &Self) {
+        macro_rules! flags { ($($name:ident),*) => { $(self.$name |= other.$name;)* }; }
+        flags!(
+            hover,
+            definition,
+            declaration,
+            type_definition,
+            implementation,
+            references,
+            document_highlight,
+            document_symbol,
+            workspace_symbol,
+            formatting,
+            range_formatting,
+            inlay_hint,
+            folding_range,
+            selection_range,
+            call_hierarchy,
+            type_hierarchy,
+            code_lens,
+            pull_diagnostics
+        );
+        fn strings(into: &mut Vec<String>, from: &[String]) {
+            for value in from {
+                if !into.contains(value) {
+                    into.push(value.clone());
+                }
+            }
+        }
+        if let Some(other) = &other.completion {
+            let current = self.completion.get_or_insert_default();
+            current.resolve |= other.resolve;
+            strings(&mut current.trigger_characters, &other.trigger_characters);
+        }
+        if let Some(other) = &other.signature_help {
+            let current = self.signature_help.get_or_insert_default();
+            strings(&mut current.trigger_characters, &other.trigger_characters);
+            strings(
+                &mut current.retrigger_characters,
+                &other.retrigger_characters,
+            );
+        }
+        if let Some(prepare) = other.rename {
+            *self.rename.get_or_insert(false) |= prepare;
+        }
+        if let Some(other) = &other.code_action {
+            self.code_action.get_or_insert_default().resolve |= other.resolve;
+        }
+        if let Some(other) = &other.on_type_formatting {
+            if let Some(current) = &mut self.on_type_formatting {
+                if other.first != current.first {
+                    strings(&mut current.more, std::slice::from_ref(&other.first));
+                }
+                strings(&mut current.more, &other.more);
+            } else {
+                self.on_type_formatting = Some(other.clone());
+            }
+        }
+        strings(&mut self.execute_command, &other.execute_command);
+    }
+
     /// The names of what the server offers, for showing the person.
     pub fn names(&self) -> Vec<&'static str> {
         let mut names = Vec::new();

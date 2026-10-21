@@ -15,17 +15,22 @@ use lgui::prelude::UiRect;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long each server step may take before the file is saved anyway.
 const STEP: Duration = Duration::from_secs(1);
 
 /// What to do once the steps are over (normally: write the file).
 pub type Then = Arc<dyn Fn(&AppContext) + Send + Sync>;
+type Loaded = HashMap<std::path::PathBuf, String>;
+type Loading = Arc<std::sync::Mutex<Option<Result<Loaded, String>>>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     Actions,
+    Resolve,
+    Loading,
+    Command,
     Format,
 }
 
@@ -43,6 +48,11 @@ pub struct Run {
     kinds: Vec<String>,
     format: Option<String>,
     do_format: bool,
+    kind: usize,
+    action: Option<(u64, reply::CodeAction)>,
+    deadline: Instant,
+    stamps: Vec<(std::path::PathBuf, DocumentStamp)>,
+    loading: Option<Loading>,
 }
 
 /// What the language's settings ask for before saving.
@@ -102,10 +112,17 @@ pub fn save(state: &AppContext, rect: UiRect, then: Then) {
         kinds: wanted.kinds,
         format: wanted.formatter,
         do_format: wanted.format,
+        kind: 0,
+        action: None,
+        deadline: Instant::now() + STEP * 2,
+        stamps: Vec::new(),
+        loading: None,
     };
     let _ = services;
     let mut started = false;
     state.update(|app| {
+        super::lightbulb::pause(app);
+        super::quickfix::pause(app);
         app.editor.language.save_counter += 1;
         let mut run = run;
         run.id = app.editor.language.save_counter;
@@ -118,6 +135,13 @@ pub fn save(state: &AppContext, rect: UiRect, then: Then) {
 
 /// Sends the request of the run's stage. False when there is nothing to ask.
 fn begin_stage(state: &AppContext, app: &mut AppState, mut run: Run) -> bool {
+    let remaining = run
+        .deadline
+        .saturating_duration_since(Instant::now())
+        .min(STEP);
+    if remaining.is_zero() {
+        return false;
+    }
     let Some(t) = target(app, run.pane).filter(|t| t.stamp == run.stamp) else {
         return false;
     };
@@ -126,9 +150,29 @@ fn begin_stage(state: &AppContext, app: &mut AppState, mut run: Run) -> bool {
     };
     services.sync(app);
     let spec = match run.stage {
+        Stage::Loading => return false,
         Stage::Actions => RequestSpec::new(Feature::CodeAction, t.path.clone(), t.lsp_stamp(), 0)
             .range(t.text.len())
-            .extra(json!({ "context": { "diagnostics": [], "only": run.kinds } })),
+            .extra(json!({ "context": { "triggerKind":1, "only": [run.kinds[run.kind]] } })),
+        Stage::Resolve => {
+            let Some((instance, action)) = &run.action else {
+                return false;
+            };
+            RequestSpec::new(Feature::CodeActionResolve, t.path.clone(), t.lsp_stamp(), 0)
+                .target(*instance)
+                .extra(action.raw.clone())
+        }
+        Stage::Command => {
+            let Some((instance, action)) = &run.action else {
+                return false;
+            };
+            let Some(command) = &action.command else {
+                return false;
+            };
+            RequestSpec::new(Feature::ExecuteCommand, t.path.clone(), t.lsp_stamp(), 0)
+                .target(*instance)
+                .extra(json!({"command":command.command,"arguments":command.arguments}))
+        }
         Stage::Format => {
             let mut spec = RequestSpec::new(Feature::Formatting, t.path.clone(), t.lsp_stamp(), 0)
                 .extra(json!({ "options": { "tabSize": 4, "insertSpaces": true } }));
@@ -138,13 +182,16 @@ fn begin_stage(state: &AppContext, app: &mut AppState, mut run: Run) -> bool {
             spec
         }
     };
-    run.handle = Some(Arc::new(services.request(spec.timeout(STEP))));
+    run.stamps = edit::stamps(app);
+    run.handle = Some(Arc::new(services.request(spec.timeout(remaining))));
+    app.editor.language.save_counter = app.editor.language.save_counter.wrapping_add(1);
+    run.id = app.editor.language.save_counter;
     let id = run.id;
     let timed = state.clone();
     if let Some(application) = state.services().and_then(|r| r.application()) {
         run.timer = Some(Arc::new(ui_timer::after(
             application,
-            STEP + STEP / 2,
+            remaining + Duration::from_millis(50),
             move || expire(&timed, id),
         )));
     }
@@ -174,66 +221,219 @@ fn expire(state: &AppContext, id: u64) {
 /// Applies a finished step and moves on. Returns what to run when the saving
 /// can go ahead.
 pub fn tick(state: &AppContext, app: &mut AppState) -> Option<Then> {
-    let run = app.editor.language.save.clone()?;
+    let mut run = app.editor.language.save.clone()?;
+    if run.stage == Stage::Loading {
+        let loaded = run.loading.as_ref()?.lock().unwrap().take()?;
+        app.editor.language.save = None;
+        if target(app, run.pane).is_none_or(|t| t.stamp != run.stamp) {
+            return Some(run.then);
+        }
+        return match loaded {
+            Ok(loaded) => apply_loaded(state, app, run, loaded),
+            Err(error) => {
+                app.show_toast(format!("Save: {error}"));
+                next_kind(state, app, run)
+            }
+        };
+    }
     let progress = run.handle.as_ref()?.poll();
     if !progress.finished {
         return None;
     }
     app.editor.language.save = None;
-    let current =
-        target(app, run.pane).filter(|t| t.stamp == run.stamp && t.document == run.document);
-    if let Some(t) = &current {
-        let stamps = edit::stamps(app);
-        let link = uri::file_uri(&t.path);
-        let mut edits = Vec::new();
-        match run.stage {
-            Stage::Actions => {
-                for part in &progress.parts {
-                    for action in reply::code_actions(&part.value, part.encoding) {
-                        let wanted = action.kind.as_deref().is_some_and(|kind| {
-                            run.kinds
-                                .iter()
-                                .any(|k| kind == k || kind.starts_with(&format!("{k}.")))
-                        });
-                        if let (true, Some(edit)) = (wanted, action.edit) {
-                            edits.push(edit);
-                        }
-                    }
+    let Some(t) = target(app, run.pane).filter(|t| {
+        t.document == run.document
+            && (t.stamp == run.stamp
+                || run.stage == Stage::Command
+                    && t.stamp.incarnation == run.stamp.incarnation
+                    && t.stamp.language_generation == run.stamp.language_generation)
+    }) else {
+        return Some(run.then);
+    };
+    match run.stage {
+        Stage::Loading => unreachable!(),
+        Stage::Actions => {
+            let kind = &run.kinds[run.kind];
+            let mut actions: Vec<_> = progress
+                .parts
+                .iter()
+                .flat_map(|p| {
+                    reply::code_actions(&p.value, p.encoding)
+                        .into_iter()
+                        .map(move |a| (p.instance, a))
+                })
+                .filter(|(_, a)| {
+                    a.disabled.is_none()
+                        && a.kind
+                            .as_ref()
+                            .is_some_and(|k| k == kind || k.starts_with(&format!("{kind}.")))
+                })
+                .collect();
+            actions.sort_by_key(|(_, a)| !a.preferred);
+            run.action = actions.into_iter().next();
+            if run.action.as_ref().is_some_and(|(_, a)| a.needs_resolve) {
+                run.stage = Stage::Resolve;
+                if begin_stage(state, app, run.clone()) {
+                    return None;
                 }
-            }
-            Stage::Format => {
-                if let (Some(part), Some(link)) =
-                    (progress.usable(Feature::Formatting).first(), link)
-                {
-                    let found = reply::text_edits(&part.value, part.encoding);
-                    if !found.is_empty() {
-                        edits.push(single_document_edit(link, found));
-                    }
-                }
+            } else if run.action.is_some() {
+                return apply_action(state, app, run);
             }
         }
-        for edit in edits {
-            let request = Request {
-                edit,
-                stamps: stamps.clone(),
-                rect: run.rect,
-                title: "Save".to_owned(),
-                reply: None,
-            };
-            if let Err(error) = edit::apply_now(app, &request, HashMap::new()) {
+        Stage::Resolve => {
+            if let Some(part) = progress.parts.first()
+                && let Some(action) =
+                    reply::code_actions(&json!([part.value.clone()]), part.encoding)
+                        .pop()
+                        .filter(|a| a.disabled.is_none())
+            {
+                let instance = run.action.as_ref()?.0;
+                run.action = Some((instance, action));
+                return apply_action(state, app, run);
+            }
+        }
+        Stage::Command => {}
+        Stage::Format => {
+            if let (Some(part), Some(link)) = (
+                progress.usable(Feature::Formatting).first(),
+                uri::file_uri(&t.path),
+            ) {
+                let edits = reply::text_edits(&part.value, part.encoding);
+                if !edits.is_empty() {
+                    let request = Request {
+                        edit: single_document_edit(link, edits),
+                        stamps: run.stamps.clone(),
+                        rect: run.rect,
+                        title: "Save".into(),
+                        reply: None,
+                    };
+                    if let Err(error) = edit::apply_now(app, &request, HashMap::new()) {
+                        app.show_toast(format!("Save: {error}"));
+                    }
+                }
+            }
+            return Some(run.then);
+        }
+    }
+    next_kind(state, app, run)
+}
+
+fn apply_action(state: &AppContext, app: &mut AppState, run: Run) -> Option<Then> {
+    if let Some(edit) = run.action.as_ref().and_then(|(_, a)| a.edit.as_ref()) {
+        match edit::unopened(app, edit) {
+            Ok(paths) if !paths.is_empty() => return load_action(state, app, run, paths),
+            Ok(_) => {}
+            Err(error) => {
                 app.show_toast(format!("Save: {error}"));
+                return next_kind(state, app, run);
             }
         }
     }
-    if current.is_some() && run.stage == Stage::Actions && run.do_format {
-        let next = Run {
-            stage: Stage::Format,
-            stamp: target(app, run.pane).map_or(run.stamp, |t| t.stamp),
-            ..run.clone()
+    apply_loaded(state, app, run, HashMap::new())
+}
+
+fn load_action(
+    state: &AppContext,
+    app: &mut AppState,
+    mut run: Run,
+    paths: Vec<std::path::PathBuf>,
+) -> Option<Then> {
+    let remaining = run
+        .deadline
+        .saturating_duration_since(Instant::now())
+        .min(STEP);
+    let Some(application) = state
+        .services()
+        .and_then(|r| r.application())
+        .filter(|_| !remaining.is_zero())
+    else {
+        return Some(run.then);
+    };
+    app.editor.language.save_counter = app.editor.language.save_counter.wrapping_add(1);
+    run.id = app.editor.language.save_counter;
+    run.stage = Stage::Loading;
+    run.handle = None;
+    let loading: Loading = Default::default();
+    run.loading = Some(loading.clone());
+    let id = run.id;
+    let timed = state.clone();
+    run.timer = Some(Arc::new(ui_timer::after(
+        application.clone(),
+        remaining,
+        move || expire(&timed, id),
+    )));
+    let next = state.clone();
+    let then = run.then.clone();
+    app.editor.language.save = Some(run);
+    if std::thread::Builder::new()
+        .name("loom-save-read".into())
+        .spawn(move || {
+            *loading.lock().unwrap() = Some(edit::load(paths));
+            application.post(move || {
+                if next
+                    .get()
+                    .editor
+                    .language
+                    .save
+                    .as_ref()
+                    .is_some_and(|r| r.id == id)
+                {
+                    super::tick(&next);
+                }
+            });
+        })
+        .is_err()
+    {
+        app.editor.language.save = None;
+        app.show_toast("Save: could not start reading the files");
+        return Some(then);
+    }
+    None
+}
+
+fn apply_loaded(
+    state: &AppContext,
+    app: &mut AppState,
+    mut run: Run,
+    loaded: Loaded,
+) -> Option<Then> {
+    let (_, action) = run.action.as_ref()?;
+    if let Some(edit) = &action.edit {
+        let request = Request {
+            edit: edit.clone(),
+            stamps: run.stamps.clone(),
+            rect: run.rect,
+            title: "Save".into(),
+            reply: None,
         };
-        if begin_stage(state, app, next) {
+        if let Err(error) = edit::apply_now(app, &request, loaded) {
+            app.show_toast(format!("Save: {error}"));
+            return next_kind(state, app, run);
+        }
+    }
+    if action.command.is_some() {
+        run.stage = Stage::Command;
+        run.stamp = target(app, run.pane).map_or(run.stamp, |t| t.stamp);
+        if begin_stage(state, app, run.clone()) {
             return None;
         }
     }
-    Some(run.then)
+    next_kind(state, app, run)
+}
+fn next_kind(state: &AppContext, app: &mut AppState, mut run: Run) -> Option<Then> {
+    run.kind += 1;
+    run.action = None;
+    run.stamp = target(app, run.pane).map_or(run.stamp, |t| t.stamp);
+    if run.kind < run.kinds.len() {
+        run.stage = Stage::Actions;
+    } else if run.do_format {
+        run.stage = Stage::Format;
+    } else {
+        return Some(run.then);
+    }
+    if begin_stage(state, app, run.clone()) {
+        None
+    } else {
+        Some(run.then)
+    }
 }

@@ -41,7 +41,7 @@ impl Place {
         }
     }
 
-    fn range(&self, text: &str) -> Range<usize> {
+    pub(super) fn range(&self, text: &str) -> Range<usize> {
         match &self.target {
             Target::Span(span) => span.bytes(text),
             Target::Bytes(range) => {
@@ -58,6 +58,7 @@ impl Place {
 pub struct Mark {
     pub path: PathBuf,
     pub offset: usize,
+    pub position: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Default)]
@@ -121,6 +122,14 @@ fn here(app: &AppState) -> Option<Mark> {
     Some(Mark {
         path,
         offset: editor.cursor(),
+        position: {
+            let p = crate::features::language_service::position::LineIndex::new(editor.text())
+                .position(
+                    editor.cursor(),
+                    crate::features::language_service::capabilities::PositionEncoding::Utf8,
+                );
+            Some((p.line, p.character))
+        },
     })
 }
 
@@ -141,6 +150,13 @@ fn select(app: &mut AppState, range: Range<usize>, rect: UiRect) {
 pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
     let app = state.get();
     let origin = here(&app);
+    let source = super::target(&app, app.workspace.active_pane());
+    let mut revision = 0;
+    state.update(|app| {
+        app.editor.language.navigation_revision =
+            app.editor.language.navigation_revision.wrapping_add(1);
+        revision = app.editor.language.navigation_revision;
+    });
     if app.workspace.file_id_for_path(&place.path).is_some() {
         state.update(|app| {
             arrive(
@@ -174,19 +190,34 @@ pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
                 .and_then(|bytes| {
                     String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_owned())
                 });
-            application.post(move || match read {
-                Ok(text) => worker_state.update(|app| {
-                    arrive(
-                        app,
-                        &place,
-                        Some(text),
-                        rect,
-                        remember.then_some(origin).flatten(),
-                    )
-                }),
-                Err(error) => worker_state.update(|app| {
-                    app.show_error(format!("Could not open {}: {error}", place.path.display()))
-                }),
+            application.post(move || {
+                worker_state.update(|app| {
+                    if app.editor.language.navigation_revision != revision
+                        || source.as_ref().is_some_and(|source| {
+                            app.workspace.active_pane() != source.pane
+                                || super::target(app, source.pane).is_none_or(|now| {
+                                    now.stamp != source.stamp
+                                        || now.cursor != source.cursor
+                                        || now.selection != source.selection
+                                })
+                        })
+                    {
+                        return;
+                    }
+                    match read {
+                        Ok(text) => arrive(
+                            app,
+                            &place,
+                            Some(text),
+                            rect,
+                            remember.then_some(origin).flatten(),
+                        ),
+                        Err(error) => app.show_error(format!(
+                            "Could not open {}: {error}",
+                            place.path.display()
+                        )),
+                    }
+                })
             });
         });
     if spawned.is_err() {
@@ -221,7 +252,17 @@ fn arrive(
     else {
         return;
     };
+    let panel = app
+        .editor
+        .language
+        .popup
+        .take()
+        .filter(|p| p.kind.is_panel());
     app.editor.language.close_popups();
+    app.editor.language.popup = panel.map(|mut p| {
+        p.panel_focused = false;
+        p
+    });
     select(app, range, rect);
 }
 
@@ -232,12 +273,7 @@ pub fn back(state: &AppContext, rect: UiRect) {
     let mut target = None;
     state.update(|app| target = app.editor.language.history.go_back(here));
     if let Some(mark) = target {
-        go(
-            state,
-            Place::bytes(mark.path, mark.offset..mark.offset),
-            rect,
-            false,
-        );
+        go(state, mark_place(mark), rect, false);
     }
 }
 
@@ -248,12 +284,7 @@ pub fn forward(state: &AppContext, rect: UiRect) {
     let mut target = None;
     state.update(|app| target = app.editor.language.history.go_forward(here));
     if let Some(mark) = target {
-        go(
-            state,
-            Place::bytes(mark.path, mark.offset..mark.offset),
-            rect,
-            false,
-        );
+        go(state, mark_place(mark), rect, false);
     }
 }
 
@@ -270,6 +301,24 @@ pub fn display_path(app: &AppState, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn mark_place(mark: Mark) -> Place {
+    match mark.position {
+        Some((line, character)) => {
+            let p = crate::features::language_service::position::Position { line, character };
+            Place::span(
+                mark.path,
+                Span {
+                    start: p,
+                    end: p,
+                    encoding:
+                        crate::features::language_service::capabilities::PositionEncoding::Utf8,
+                },
+            )
+        }
+        None => Place::bytes(mark.path, mark.offset..mark.offset),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +327,7 @@ mod tests {
         Mark {
             path: path.into(),
             offset,
+            position: None,
         }
     }
 

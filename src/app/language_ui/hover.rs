@@ -43,6 +43,25 @@ pub struct Hover {
     pending: Option<Pending>,
     timer: Option<Arc<Timer>>,
     pub card: Option<Card>,
+    view: Option<(PaneId, DocumentStamp, usize, (u32, u32))>,
+}
+
+pub fn observe(app: &mut AppState) {
+    if app.editor.language.hover.is_idle() && app.editor.editor_diagnostic_hover.is_none() {
+        app.editor.language.hover.view = None;
+        return;
+    }
+    let pane = app.workspace.active_pane();
+    let now = target(app, pane).map(|t| {
+        let (x, y) = app.workspace.scroll(pane);
+        (pane, t.stamp, t.cursor, (x.to_bits(), y.to_bits()))
+    });
+    if app.editor.language.hover.view.is_some() && app.editor.language.hover.view != now {
+        clear(app);
+        app.editor.editor_diagnostic_hover = None;
+    } else {
+        app.editor.language.hover.view = now;
+    }
 }
 
 impl Hover {
@@ -216,7 +235,13 @@ pub fn show_at_cursor(state: &AppContext) {
     };
     drop(app);
     let mut rest = None;
-    state.update(|app| rest = pointer_over(app, pane, Some(cursor)));
+    state.update(|app| {
+        // An explicit command is also a retry. The previous request may have
+        // returned ContentModified while the server was loading the project;
+        // pointer_over deliberately ignores an unchanged mouse position.
+        clear(app);
+        rest = pointer_over(app, pane, Some(cursor));
+    });
     if let Some(rest) = rest {
         fire(state, &rest);
     }

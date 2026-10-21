@@ -71,6 +71,8 @@ pub enum Event {
     },
     /// The server asks for its semantic tokens to be requested again.
     SemanticTokensRefresh,
+    /// The server invalidated pulled diagnostics, possibly without a text edit.
+    DiagnosticsRefresh,
     /// `window/logMessage`.
     Log {
         level: i64,
@@ -78,7 +80,7 @@ pub enum Event {
     },
     /// A step of a background task the server reports (`$/progress`).
     Progress {
-        token: String,
+        token: Id,
         update: ProgressUpdate,
     },
     /// `window/showMessage` or `window/showMessageRequest`.
@@ -107,10 +109,12 @@ pub enum ProgressUpdate {
         message: Option<String>,
         /// 0 to 100, if the server knows.
         percentage: Option<u8>,
+        cancellable: Option<bool>,
     },
     Report {
         message: Option<String>,
         percentage: Option<u8>,
+        cancellable: Option<bool>,
     },
     End {
         message: Option<String>,
@@ -119,10 +123,10 @@ pub enum ProgressUpdate {
 
 /// Reads the parameters of `$/progress`. Anything that is not work-done progress
 /// (for example partial results) is not ours to show.
-pub fn parse_progress(params: &Value) -> Option<(String, ProgressUpdate)> {
+pub fn parse_progress(params: &Value) -> Option<(Id, ProgressUpdate)> {
     let token = match params.get("token")? {
-        Value::String(token) => token.clone(),
-        Value::Number(token) => token.to_string(),
+        Value::String(token) => Id::String(token.clone()),
+        Value::Number(token) => Id::Number(token.as_i64()?),
         _ => return None,
     };
     let value = params.get("value")?;
@@ -134,15 +138,18 @@ pub fn parse_progress(params: &Value) -> Option<(String, ProgressUpdate)> {
         .get("percentage")
         .and_then(Value::as_u64)
         .map(|p| p.min(100) as u8);
+    let cancellable = value.get("cancellable").and_then(Value::as_bool);
     let update = match value.get("kind")?.as_str()? {
         "begin" => ProgressUpdate::Begin {
             title: value.get("title")?.as_str()?.to_owned(),
             message,
             percentage,
+            cancellable,
         },
         "report" => ProgressUpdate::Report {
             message,
             percentage,
+            cancellable,
         },
         "end" => ProgressUpdate::End { message },
         _ => return None,
@@ -187,6 +194,12 @@ impl Session {
             json!({ "name": "Loom", "version": options.client_version }),
         );
         params.insert("rootUri".into(), json!(options.root_uri));
+        params.insert(
+            "workspaceFolders".into(),
+            json!([
+                { "uri": options.root_uri, "name": options.root_name }
+            ]),
+        );
         params.insert("rootPath".into(), Value::Null);
         params.insert(
             "capabilities".into(),
@@ -452,8 +465,11 @@ impl Session {
             }
             // Tokens are tracked from their first report.
             "window/workDoneProgress/create" => Ok(Value::Null),
-            "workspace/diagnostic/refresh"
-            | "workspace/codeLens/refresh"
+            "workspace/diagnostic/refresh" => {
+                events.push(Event::DiagnosticsRefresh);
+                Ok(Value::Null)
+            }
+            "workspace/codeLens/refresh"
             | "workspace/inlayHint/refresh"
             | "workspace/inlineValue/refresh"
             | "workspace/foldingRange/refresh" => Ok(Value::Null),
@@ -464,7 +480,10 @@ impl Session {
                 });
                 Ok(Value::Null)
             }
-            "window/showDocument" | "workspace/applyEdit" => {
+            "window/showDocument"
+            | "workspace/applyEdit"
+            | "client/registerCapability"
+            | "client/unregisterCapability" => {
                 // Answered later, by whoever carries it out.
                 return Output {
                     events: vec![Event::ServerRequest {
@@ -478,15 +497,6 @@ impl Session {
             "workspace/workspaceFolders" => Ok(json!([
                 { "uri": self.options.root_uri, "name": self.options.root_name }
             ])),
-            "client/registerCapability" | "client/unregisterCapability" => {
-                events.push(Event::Refused {
-                    method: method.to_owned(),
-                });
-                Err(ResponseError::new(
-                    METHOD_NOT_FOUND,
-                    "Loom did not offer dynamic registration",
-                ))
-            }
             other => {
                 events.push(Event::Refused {
                     method: other.to_owned(),

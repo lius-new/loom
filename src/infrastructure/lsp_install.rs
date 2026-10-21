@@ -28,8 +28,8 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc, Condvar, Mutex, Weak,
-        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     time::{Duration, Instant},
@@ -47,6 +47,32 @@ pub(crate) type Download = dyn Fn(&str) -> Result<Box<dyn Read + Send>, String> 
 pub(crate) type Smoke = dyn Fn(&SmokeRequest) -> Result<(), String> + Send + Sync;
 type Listener = dyn Fn() + Send + Sync;
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Cancellation(Arc<AtomicBool>);
+impl PartialEq for Cancellation {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Cancellation {
+    pub(crate) fn cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+    fn check(&self) -> Result<(), String> {
+        if self.cancelled() {
+            Err("installation cancelled".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstallTarget {
+    pub pack: String,
+    pub generation: u64,
+}
+
 /// One server to start before its pack is activated.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SmokeRequest {
@@ -55,6 +81,7 @@ pub(crate) struct SmokeRequest {
     pub args: Vec<String>,
     pub options: Option<Value>,
     pub cwd: PathBuf,
+    pub cancellation: Cancellation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +97,8 @@ pub(crate) enum PackStatus {
     Verifying,
     /// Starting the pack's servers once, before it is activated.
     Starting,
+    Cancelling,
+    Cancelled,
     Installed(PathBuf),
     Failed(String),
 }
@@ -86,10 +115,25 @@ enum Step {
     Starting,
 }
 
+#[derive(Clone)]
+struct Ticket {
+    run: u64,
+    cancellation: Cancellation,
+}
+
 enum Job {
-    Queued,
-    Running(Step),
+    Queued(Ticket),
+    Running(Ticket, Step),
     Failed { error: String, retry: Instant },
+}
+
+impl Job {
+    fn ticket(&self) -> Option<&Ticket> {
+        match self {
+            Self::Queued(ticket) | Self::Running(ticket, _) => Some(ticket),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -97,6 +141,11 @@ struct Work {
     states: BTreeMap<String, Job>,
     queue: VecDeque<String>,
     running: usize,
+    next: u64,
+    /// Explicit root requests; dependencies are retained only while needed.
+    requests: BTreeMap<String, u64>,
+    /// Cancelled roots and the generations still draining before cleanup ends.
+    cancelled: BTreeMap<String, BTreeMap<String, u64>>,
 }
 
 pub(crate) struct Installer {
@@ -104,7 +153,6 @@ pub(crate) struct Installer {
     managed: PathBuf,
     platform: String,
     work: Mutex<Work>,
-    changed: Condvar,
     revision: AtomicU64,
     listeners: Mutex<Vec<Weak<Listener>>>,
     download: Arc<Download>,
@@ -124,7 +172,6 @@ impl Installer {
             managed,
             platform,
             work: Mutex::default(),
-            changed: Condvar::new(),
             revision: AtomicU64::new(0),
             listeners: Mutex::default(),
             download,
@@ -186,16 +233,37 @@ impl Installer {
     }
 
     pub(crate) fn status(&self, pack: &str) -> PackStatus {
-        if let Some(state) = self.work.lock().unwrap().states.get(pack) {
+        let work = self.work.lock().unwrap();
+        if !matches!(work.states.get(pack), Some(Job::Running(_, _))) {
+            if let Some(directory) = self.installed_dir(pack) {
+                return PackStatus::Installed(directory);
+            }
+        }
+        if let Some(pending) = work.cancelled.get(pack) {
+            return if pending.iter().any(|(id, run)| {
+                work.states
+                    .get(id)
+                    .and_then(Job::ticket)
+                    .is_some_and(|ticket| ticket.run == *run)
+            }) {
+                PackStatus::Cancelling
+            } else {
+                PackStatus::Cancelled
+            };
+        }
+        if let Some(state) = work.states.get(pack) {
             return match state {
-                Job::Queued => PackStatus::Queued,
-                Job::Running(Step::Waiting) => PackStatus::Queued,
-                Job::Running(Step::Downloading { received, total }) => PackStatus::Downloading {
+                Job::Queued(_) => PackStatus::Queued,
+                Job::Running(ticket, _) if ticket.cancellation.cancelled() => {
+                    PackStatus::Cancelling
+                }
+                Job::Running(_, Step::Waiting) => PackStatus::Queued,
+                Job::Running(_, Step::Downloading { received, total }) => PackStatus::Downloading {
                     received: *received,
                     total: *total,
                 },
-                Job::Running(Step::Verifying) => PackStatus::Verifying,
-                Job::Running(Step::Starting) => PackStatus::Starting,
+                Job::Running(_, Step::Verifying) => PackStatus::Verifying,
+                Job::Running(_, Step::Starting) => PackStatus::Starting,
                 Job::Failed { error, .. } => PackStatus::Failed(error.clone()),
             };
         }
@@ -210,7 +278,14 @@ impl Installer {
 
     /// Packs with anything to report: being installed, or failed.
     pub(crate) fn busy(&self) -> Vec<(String, PackStatus)> {
-        let ids: Vec<String> = self.work.lock().unwrap().states.keys().cloned().collect();
+        let ids: BTreeSet<String> = {
+            let work = self.work.lock().unwrap();
+            work.states
+                .keys()
+                .chain(work.cancelled.keys())
+                .cloned()
+                .collect()
+        };
         ids.into_iter()
             .map(|id| {
                 let status = self.status(&id);
@@ -242,33 +317,166 @@ impl Installer {
         Ok(order)
     }
 
+    /// Catalog-only size estimate for a prompt; hashing cached archives belongs
+    /// to the installer workers, never to the coordinator's status publication.
+    pub(crate) fn missing_archives(&self, pack: &str) -> Result<BTreeMap<String, u64>, String> {
+        self.plan(pack)?
+            .into_iter()
+            .filter(|id| self.installed_dir(id).is_none())
+            .map(|id| {
+                self.catalog
+                    .archive(&id, &self.platform)
+                    .map(|archive| (id, archive.size))
+            })
+            .collect()
+    }
+
     /// Asks for `pack` to be installed. Repeated requests are cheap: a pack that is
     /// installed, queued or running is left alone, and a failed one waits out its
     /// cooldown.
     pub(crate) fn request(self: &Arc<Self>, pack: &str) -> Result<(), String> {
         let order = self.plan(pack)?;
-        let mut workers = 0;
-        let mut queued = false;
+        let changed = {
+            let mut work = self.work.lock().unwrap();
+            if work.cancelled.contains_key(pack) || self.installed_dir(pack).is_some() {
+                return Ok(());
+            }
+            let requested = !work.requests.contains_key(pack);
+            let retrying = order.iter().any(|id| matches!(work.states.get(id), Some(Job::Failed { retry, .. }) if Instant::now() >= *retry));
+            if requested || retrying {
+                work.next += 1;
+                let generation = work.next;
+                work.requests.insert(pack.to_owned(), generation);
+            }
+            self.reconcile(&mut work) || requested
+        };
+        if changed {
+            self.wake();
+        }
+        Ok(())
+    }
+
+    /// A manual install also resumes a cancelled request, with a fresh target.
+    pub(crate) fn resume(self: &Arc<Self>, pack: &str) -> Result<(), String> {
+        let order = self.plan(pack)?;
         {
             let mut work = self.work.lock().unwrap();
+            work.cancelled.remove(pack);
+            let retrying = order
+                .iter()
+                .any(|id| matches!(work.states.get(id), Some(Job::Failed { .. })));
+            if retrying || !work.requests.contains_key(pack) {
+                work.next += 1;
+                let generation = work.next;
+                work.requests.insert(pack.to_owned(), generation);
+            }
+            if retrying {
+                if let Some(Job::Running(ticket, _)) = work.states.get(pack) {
+                    ticket.cancellation.0.store(true, Ordering::Release);
+                }
+            }
             for id in order {
-                if self.installed_dir(&id).is_some() {
+                if matches!(work.states.get(&id), Some(Job::Failed { .. })) {
+                    work.states.remove(&id);
+                }
+            }
+            self.reconcile(&mut work);
+        }
+        self.wake();
+        Ok(())
+    }
+
+    pub(crate) fn cancel_target(&self, pack: &str) -> Option<InstallTarget> {
+        let work = self.work.lock().unwrap();
+        if self.installed_dir(pack).is_some() {
+            return None;
+        }
+        work.requests.get(pack).map(|generation| InstallTarget {
+            pack: pack.into(),
+            generation: *generation,
+        })
+    }
+
+    pub(crate) fn cancel(self: &Arc<Self>, target: &InstallTarget) {
+        {
+            let mut work = self.work.lock().unwrap();
+            if work.requests.get(&target.pack) != Some(&target.generation)
+                || self.installed_dir(&target.pack).is_some()
+            {
+                return;
+            }
+            work.requests.remove(&target.pack);
+            let needed = self.needed(&work);
+            let mut pending = BTreeMap::new();
+            for id in self.plan(&target.pack).unwrap_or_default() {
+                if needed.contains(&id) {
                     continue;
                 }
                 match work.states.get(&id) {
-                    Some(Job::Queued | Job::Running(_)) => continue,
-                    Some(Job::Failed { retry, .. }) if Instant::now() < *retry => continue,
-                    _ => {}
+                    Some(Job::Running(ticket, _)) => {
+                        ticket.cancellation.0.store(true, Ordering::Release);
+                        pending.insert(id, ticket.run);
+                    }
+                    Some(_) => {
+                        work.states.remove(&id);
+                    }
+                    None => {}
                 }
-                work.states.insert(id.clone(), Job::Queued);
-                work.queue.push_back(id);
-                queued = true;
             }
-            while work.running < WORKERS && work.running < work.queue.len() {
-                work.running += 1;
-                workers += 1;
-            }
+            work.queue.retain(|id| needed.contains(id));
+            work.cancelled.insert(target.pack.clone(), pending);
         }
+        self.wake();
+    }
+
+    fn needed(&self, work: &Work) -> BTreeSet<String> {
+        work.requests
+            .keys()
+            .filter(|id| self.installed_dir(id).is_none())
+            .flat_map(|id| self.plan(id).unwrap_or_default())
+            .collect()
+    }
+
+    fn reconcile(&self, work: &mut Work) -> bool {
+        let mut changed = false;
+        for id in self.needed(work) {
+            if self.installed_dir(&id).is_some() {
+                continue;
+            }
+            match work.states.get(&id) {
+                Some(Job::Queued(_) | Job::Running(_, _)) => continue,
+                Some(Job::Failed { retry, .. }) if Instant::now() < *retry => continue,
+                _ => {}
+            }
+            work.next += 1;
+            let ticket = Ticket {
+                run: work.next,
+                cancellation: Cancellation::default(),
+            };
+            work.states.insert(id.clone(), Job::Queued(ticket));
+            work.queue.push_back(id);
+            changed = true;
+        }
+        changed
+    }
+
+    // Only dispatch dependency-ready jobs. A worker must never block behind a
+    // queued dependency after another worker has been cancelled and resumed.
+    fn ready(&self, work: &Work, id: &str) -> bool {
+        self.catalog.requires(id).iter().all(|requirement| {
+            self.installed_dir(requirement).is_some()
+                || matches!(work.states.get(requirement), Some(Job::Failed { .. }))
+        })
+    }
+
+    fn wake(self: &Arc<Self>) {
+        let workers = {
+            let mut work = self.work.lock().unwrap();
+            let ready = work.queue.iter().filter(|id| self.ready(&work, id)).count();
+            let workers = ready.min(WORKERS - work.running);
+            work.running += workers;
+            workers
+        };
         for _ in 0..workers {
             let installer = self.clone();
             let spawned = std::thread::Builder::new()
@@ -278,54 +486,72 @@ impl Installer {
                 self.work.lock().unwrap().running -= 1;
             }
         }
-        if queued {
-            self.notify();
-        }
-        Ok(())
+        self.notify();
     }
 
     /// Forgets every failure and asks for those packs again.
     pub(crate) fn retry(self: &Arc<Self>) {
-        let failed: Vec<String> = {
-            let mut work = self.work.lock().unwrap();
-            let failed: Vec<String> = work
-                .states
-                .iter()
-                .filter(|(_, state)| matches!(state, Job::Failed { .. }))
-                .map(|(id, _)| id.clone())
-                .collect();
-            for id in &failed {
-                work.states.remove(id);
-            }
-            failed
+        let roots: Vec<String> = {
+            let work = self.work.lock().unwrap();
+            work.requests
+                .keys()
+                .filter(|root| {
+                    self.plan(root)
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|id| matches!(work.states.get(id), Some(Job::Failed { .. })))
+                })
+                .cloned()
+                .collect()
         };
-        for id in failed {
-            let _ = self.request(&id);
+        for id in roots {
+            let _ = self.resume(&id);
         }
     }
 
     fn run(self: Arc<Self>) {
         loop {
-            let id = {
+            let (id, ticket, dependency_error) = {
                 let mut work = self.work.lock().unwrap();
-                let Some(id) = work.queue.pop_front() else {
+                let Some(index) = work.queue.iter().position(|id| self.ready(&work, id)) else {
                     work.running -= 1;
                     return;
                 };
-                work.states.insert(id.clone(), Job::Running(Step::Waiting));
-                id
+                let id = work.queue.remove(index).unwrap();
+                let Some(Job::Queued(ticket)) = work.states.remove(&id) else {
+                    unreachable!("queued ticket")
+                };
+                work.states
+                    .insert(id.clone(), Job::Running(ticket.clone(), Step::Waiting));
+                let dependency_error = self.catalog.requires(&id).iter().find_map(|requirement| {
+                    match work.states.get(requirement) {
+                        Some(Job::Failed { error, .. })
+                            if self.installed_dir(requirement).is_none() =>
+                        {
+                            Some(format!("{id} needs {requirement}: {error}"))
+                        }
+                        _ => None,
+                    }
+                });
+                (id, ticket, dependency_error)
             };
             self.notify();
-            let result = self.install(&id);
+            let result = match dependency_error {
+                Some(error) => Err(error),
+                None => self.install(&id, &ticket),
+            };
             {
                 let mut work = self.work.lock().unwrap();
                 match result {
+                    _ if ticket.cancellation.cancelled() => {
+                        work.states.remove(&id);
+                    }
                     Ok(()) => {
                         work.states.remove(&id);
                     }
                     Err(error) => {
                         work.states.insert(
-                            id,
+                            id.clone(),
                             Job::Failed {
                                 error,
                                 retry: Instant::now() + RETRY_AFTER,
@@ -333,54 +559,39 @@ impl Installer {
                         );
                     }
                 }
-                self.changed.notify_all();
+                self.reconcile(&mut work);
             }
-            self.notify();
+            self.wake();
         }
     }
 
-    fn step(&self, pack: &str, step: Step) {
-        if let Some(state) = self.work.lock().unwrap().states.get_mut(pack) {
-            *state = Job::Running(step);
+    fn step(&self, pack: &str, ticket: &Ticket, step: Step) {
+        if let Some(state @ Job::Running(_, _)) = self.work.lock().unwrap().states.get_mut(pack) {
+            if state
+                .ticket()
+                .is_some_and(|current| current.run == ticket.run)
+                && !ticket.cancellation.cancelled()
+            {
+                *state = Job::Running(ticket.clone(), step);
+            }
         }
         self.notify();
     }
 
-    /// Blocks until `pack` is installed, or reports why it will not be.
-    fn wait_for(&self, pack: &str) -> Result<(), String> {
-        let mut work = self.work.lock().unwrap();
-        loop {
-            if self.installed_dir(pack).is_some() {
-                return Ok(());
-            }
-            match work.states.get(pack) {
-                Some(Job::Failed { error, .. }) => return Err(format!("{pack}: {error}")),
-                Some(_) => {}
-                None => return Err(format!("{pack} is not being installed")),
-            }
-            work = self
-                .changed
-                .wait_timeout(work, Duration::from_millis(500))
-                .unwrap()
-                .0;
-        }
-    }
-
-    fn install(&self, pack: &str) -> Result<(), String> {
-        for requirement in self.catalog.requires(pack) {
-            self.wait_for(&requirement)
-                .map_err(|error| format!("{pack} needs {error}"))?;
-        }
+    fn install(&self, pack: &str, ticket: &Ticket) -> Result<(), String> {
+        let cancellation = &ticket.cancellation;
+        cancellation.check()?;
         let archive = self.catalog.archive(pack, &self.platform)?;
         let destination = self.pack_directory(&archive, pack);
         if destination.is_dir() {
             return Ok(());
         }
-        let file = self.fetch(pack, &archive)?;
+        let file = self.fetch(pack, &archive, ticket)?;
         let staging = Temporary::new(&self.managed.join("staging"))?;
-        let unpacked = unpack(&file, staging.path(), pack)?;
-        self.step(pack, Step::Starting);
+        let unpacked = unpack(&file, staging.path(), pack, cancellation)?;
+        self.step(pack, ticket, Step::Starting);
         for launch in self.catalog.launches(pack) {
+            cancellation.check()?;
             let runtime = |id: &str| self.installed_dir(id);
             let installed = Installed {
                 pack: &unpacked,
@@ -401,18 +612,33 @@ impl Installer {
                     .map(|options| expand::expand_json(options, &installed))
                     .transpose()?,
                 cwd: unpacked.clone(),
+                cancellation: cancellation.clone(),
             };
             (self.smoke)(&request)
                 .map_err(|error| format!("{} did not start: {error}", launch.server))?;
         }
         fs::create_dir_all(destination.parent().expect("a pack directory has a parent"))
             .map_err(|e| e.to_string())?;
+        // Cancellation and activation share this fence. Once cancellation has
+        // been acknowledged, this generation cannot expose an installed pack.
+        let work = self.work.lock().unwrap();
+        cancellation.check()?;
+        if work
+            .states
+            .get(pack)
+            .and_then(Job::ticket)
+            .map(|current| current.run)
+            != Some(ticket.run)
+        {
+            return Err("installation superseded".into());
+        }
         match fs::rename(&unpacked, &destination) {
             Ok(()) => {}
             // Another process installed the same pack first.
             Err(_) if destination.is_dir() => {}
             Err(error) => return Err(format!("activate {pack}: {error}")),
         }
+        drop(work);
         prune(
             destination.parent().expect("a pack directory has a parent"),
             &destination,
@@ -421,30 +647,37 @@ impl Installer {
     }
 
     /// The verified archive: from the cache, or downloaded and verified.
-    fn fetch(&self, pack: &str, archive: &PackArchive) -> Result<PathBuf, String> {
+    fn fetch(&self, pack: &str, archive: &PackArchive, ticket: &Ticket) -> Result<PathBuf, String> {
+        let cancellation = &ticket.cancellation;
+        cancellation.check()?;
         let cache = self.managed.join("archives");
         fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
         let file = cache.join(format!("{}.tar.gz", archive.sha256));
-        if verified(&file, archive) {
+        if verified(&file, archive, cancellation)? {
             return Ok(file);
         }
         self.step(
             pack,
+            ticket,
             Step::Downloading {
                 received: 0,
                 total: archive.size,
             },
         );
+        cancellation.check()?;
         let mut reader = (self.download)(&archive.url)?;
+        cancellation.check()?;
         let partial = Temporary::file(&cache)?;
         let mut output = fs::File::create(partial.path()).map_err(|e| e.to_string())?;
         let mut context = Context::new(&SHA256);
         let mut buffer = vec![0u8; 64 * 1024];
         let (mut received, mut reported) = (0u64, 0u64);
         loop {
+            cancellation.check()?;
             let read = reader
                 .read(&mut buffer)
                 .map_err(|e| format!("download: {e}"))?;
+            cancellation.check()?;
             if read == 0 {
                 break;
             }
@@ -460,6 +693,7 @@ impl Installer {
                 reported = received;
                 self.step(
                     pack,
+                    ticket,
                     Step::Downloading {
                         received,
                         total: archive.size,
@@ -469,7 +703,8 @@ impl Installer {
         }
         output.flush().map_err(|e| e.to_string())?;
         drop(output);
-        self.step(pack, Step::Verifying);
+        self.step(pack, ticket, Step::Verifying);
+        cancellation.check()?;
         if received != archive.size {
             return Err(format!(
                 "the download is {received} bytes, the catalog says {}",
@@ -485,23 +720,30 @@ impl Installer {
 }
 
 /// Whether `file` is the archive the catalog pins.
-fn verified(file: &Path, archive: &PackArchive) -> bool {
+fn verified(
+    file: &Path,
+    archive: &PackArchive,
+    cancellation: &Cancellation,
+) -> Result<bool, String> {
+    cancellation.check()?;
     let Ok(mut input) = fs::File::open(file) else {
-        return false;
+        return Ok(false);
     };
     if input.metadata().map(|m| m.len()).ok() != Some(archive.size) {
-        return false;
+        return Ok(false);
     }
     let mut context = Context::new(&SHA256);
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
+        cancellation.check()?;
         match input.read(&mut buffer) {
             Ok(0) => break,
             Ok(read) => context.update(&buffer[..read]),
-            Err(_) => return false,
+            Err(_) => return Ok(false),
         }
     }
-    hex(context.finish().as_ref()) == archive.sha256
+    cancellation.check()?;
+    Ok(hex(context.finish().as_ref()) == archive.sha256)
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -577,12 +819,19 @@ fn safe_path(path: &str) -> bool {
 /// Unpacks a pack archive into `root`, which must hold exactly the directory `id`.
 /// Only regular files and directories are accepted, nothing may repeat, and size
 /// limits apply; anything else rejects the whole archive.
-fn unpack(archive: &Path, root: &Path, id: &str) -> Result<PathBuf, String> {
+fn unpack(
+    archive: &Path,
+    root: &Path,
+    id: &str,
+    cancellation: &Cancellation,
+) -> Result<PathBuf, String> {
+    cancellation.check()?;
     let input = fs::File::open(archive).map_err(|e| e.to_string())?;
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(input));
     let mut seen = BTreeSet::new();
     let mut total = 0u64;
     for entry in tar.entries().map_err(|e| e.to_string())? {
+        cancellation.check()?;
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry
             .path()
@@ -620,7 +869,17 @@ fn unpack(archive: &Path, root: &Path, id: &str) -> Result<PathBuf, String> {
             .create_new(true)
             .open(&output)
             .map_err(|e| e.to_string())?;
-        let copied = std::io::copy(&mut entry, &mut file).map_err(|e| e.to_string())?;
+        let mut copied = 0;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            cancellation.check()?;
+            let read = entry.read(&mut buffer).map_err(|e| e.to_string())?;
+            if read == 0 {
+                break;
+            }
+            file.write_all(&buffer[..read]).map_err(|e| e.to_string())?;
+            copied += read as u64;
+        }
         if copied != size {
             return Err("the archive is truncated".into());
         }
@@ -653,6 +912,7 @@ fn http_download(url: &str) -> Result<Box<dyn Read + Send>, String> {
 
 /// Starts a server and completes `initialize` with it, then stops it.
 fn start_and_initialize(request: &SmokeRequest) -> Result<(), String> {
+    request.cancellation.check()?;
     let root_uri = uri::file_uri(&request.cwd).ok_or("the pack directory has no usable path")?;
     let launch = Launch {
         env: Default::default(),
@@ -675,13 +935,21 @@ fn start_and_initialize(request: &SmokeRequest) -> Result<(), String> {
         let _ = events.send(event);
     })
     .map_err(|e| format!("{}: {e}", request.program.display()))?;
+    let deadline = Instant::now() + Duration::from_secs(40);
     let outcome = loop {
-        match inbox.recv_timeout(Duration::from_secs(40)) {
+        if let Err(error) = request.cancellation.check() {
+            break Err(error);
+        }
+        if Instant::now() >= deadline {
+            break Err("it did not answer initialize in time".to_owned());
+        }
+        match inbox.recv_timeout(Duration::from_millis(50)) {
             Ok(Event::Ready(_)) => break Ok(()),
             Ok(Event::StateChanged(State::Failed(reason))) => break Err(reason),
             Ok(Event::StateChanged(State::Stopped)) => break Err("the server exited".to_owned()),
             Ok(_) => {}
-            Err(_) => break Err("it did not answer initialize in time".to_owned()),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break Err("the server exited".to_owned()),
         }
     };
     let tail = client.stderr_tail();

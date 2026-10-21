@@ -17,6 +17,20 @@ pub enum Level {
 pub struct Line {
     pub text: String,
     pub level: Level,
+    pub cancel: Option<TaskTarget>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TaskTarget {
+    pub instance: u64,
+    pub run: u64,
+    pub task: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstallTarget {
+    pub server: String,
+    pub generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,6 +41,7 @@ pub struct Section {
     pub lines: Vec<Line>,
     /// The server whose pack this section can install, with the button's label.
     pub install: Option<(String, &'static str)>,
+    pub cancel_install: Option<InstallTarget>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -41,6 +56,8 @@ pub enum Event {
     RetryDownloads,
     /// Install the pack of the named server.
     Install(String),
+    CancelInstall(InstallTarget),
+    CancelTask(TaskTarget),
 }
 pub type Commands = Arc<dyn Fn(Event) + Send + Sync>;
 
@@ -108,13 +125,21 @@ pub fn render(viewport: UiRect, frame: &Frame, commands: Commands) -> Element {
         ));
     }
     for section in &frame.sections {
-        let title = ellipsize(&section.title, text_w, theme::UI_SIZE, 600);
+        let action = section
+            .install
+            .as_ref()
+            .map(|(_, label)| *label)
+            .or(section.cancel_install.as_ref().map(|_| "Cancel"));
+        let action_w = action
+            .map(|label| measure(label, theme::SMALL, 400) + 32.0)
+            .unwrap_or(0.0);
+        let title = ellipsize(&section.title, text_w - action_w, theme::UI_SIZE, 600);
         body = body.child(text(
             UiRect::new(card.left + PAD, y, card.right - PAD, y + TITLE_H),
             title,
             theme::sans_semibold(colour_title(section.level), theme::UI_SIZE),
         ));
-        if let Some((server, label)) = &section.install {
+        if let Some(label) = action {
             let w = measure(label, theme::SMALL, 400) + 24.0;
             let button = UiRect::new(
                 card.right - PAD - w,
@@ -122,7 +147,9 @@ pub fn render(viewport: UiRect, frame: &Frame, commands: Commands) -> Element {
                 card.right - PAD,
                 y + TITLE_H - 2.0,
             );
-            let (server, install) = (server.clone(), commands.clone());
+            let install_server = section.install.as_ref().map(|(server, _)| server.clone());
+            let target = section.cancel_install.clone();
+            let install = commands.clone();
             body = body.child(
                 panel(
                     button,
@@ -131,24 +158,51 @@ pub fn render(viewport: UiRect, frame: &Frame, commands: Commands) -> Element {
                 .event_policy(policy)
                 .cursor(CursorIcon::Pointer)
                 .on_click(move |cx: &mut UiEventContext| {
-                    install(Event::Install(server.clone()));
+                    if let Some(server) = &install_server {
+                        install(Event::Install(server.clone()));
+                    } else if let Some(target) = &target {
+                        install(Event::CancelInstall(target.clone()));
+                    }
                     cx.stop_propagation();
                 })
                 .child(text(
                     UiRect::new(button.left + 12.0, button.top, button.right, button.bottom),
-                    *label,
+                    label,
                     theme::sans(theme::c().text_soft, theme::SMALL),
                 )),
             );
         }
         y += TITLE_H;
         for line in &section.lines {
-            let shown = clip(&line.text, (text_w / MONO_W) as usize);
+            let cancel_w = if line.cancel.is_some() { 62.0 } else { 0.0 };
+            let shown = clip(&line.text, ((text_w - cancel_w) / MONO_W) as usize);
             body = body.child(text(
-                UiRect::new(card.left + PAD, y, card.right - PAD, y + LINE_H),
+                UiRect::new(card.left + PAD, y, card.right - PAD - cancel_w, y + LINE_H),
                 shown,
                 theme::mono(colour(line.level), theme::SMALL),
             ));
+            if let Some(target) = line.cancel {
+                let button =
+                    UiRect::new(card.right - PAD - cancel_w, y, card.right - PAD, y + LINE_H);
+                let cancel = commands.clone();
+                body = body.child(
+                    panel(
+                        button,
+                        VisualStyle::filled(theme::c().active_line).radius(3.0),
+                    )
+                    .event_policy(policy)
+                    .cursor(CursorIcon::Pointer)
+                    .on_click(move |cx: &mut UiEventContext| {
+                        cancel(Event::CancelTask(target));
+                        cx.stop_propagation();
+                    })
+                    .child(text(
+                        button,
+                        "Cancel",
+                        theme::sans(theme::c().text_soft, theme::SMALL),
+                    )),
+                );
+            }
             y += LINE_H;
         }
         y += GAP;
@@ -234,6 +288,7 @@ mod tests {
         let line = |t: &str| Line {
             text: t.into(),
             level: Level::Quiet,
+            cancel: None,
         };
         let one = Frame {
             retry_downloads: false,
@@ -242,6 +297,7 @@ mod tests {
                 level: Level::Quiet,
                 lines: vec![line("x")],
                 install: None,
+                cancel_install: None,
             }],
         };
         let two = Frame {
@@ -251,6 +307,7 @@ mod tests {
                 level: Level::Quiet,
                 lines: vec![line("x"), line("y")],
                 install: None,
+                cancel_install: None,
             }],
         };
         assert_eq!(height(&two) - height(&one), LINE_H);

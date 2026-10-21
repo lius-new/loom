@@ -254,6 +254,9 @@ pub fn words_of(text: &str) -> Vec<(usize, String)> {
 /// Asks the servers now. `manual` is the person pressing the key.
 pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Option<char>) {
     app.editor.language.completion_timer = None;
+    if !manual && snippet_session::choice_visible(app) {
+        return;
+    }
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else { return };
     let Some(services) = services(ctx) else {
@@ -561,6 +564,7 @@ pub fn view(session: &Session) -> crate::ui::editor::popup::View {
         (!source.trim().is_empty()).then(|| markdown::parse(&source).into())
     });
     View {
+        panel: false,
         rows: rows.into(),
         selected: session.selected,
         scroll: session.scroll,
@@ -632,11 +636,13 @@ pub fn accept(app: &mut AppState, then: Option<char>) -> bool {
     );
     let indent = line_indent(&t.text, plan.range.start);
     let mut snippet = plan.snippet.then(|| {
-        let resolve = snippet::document_variables(
+        let resolve = snippet::insertion_variables(
             &t.path,
             t.selection
                 .as_ref()
                 .map_or("", |range| &t.text[range.clone()]),
+            &t.text,
+            cursor,
         );
         let mut parsed = snippet::parse(&plan.text, &resolve);
         if !entry.item.as_is {

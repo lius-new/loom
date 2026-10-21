@@ -622,7 +622,8 @@ pub fn signature_help(value: &Value) -> Option<SignatureHelp> {
     let active_signature = value
         .get("activeSignature")
         .and_then(Value::as_u64)
-        .map_or(0, |n| (n as usize).min(signatures.len() - 1));
+        .filter(|n| *n < signatures.len() as u64)
+        .map_or(0, |n| n as usize);
     Some(SignatureHelp {
         active_signature,
         active_parameter: value

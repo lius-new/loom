@@ -6,7 +6,7 @@ use crate::features::language_service::reply::{self, SignatureHelp};
 use crate::features::language_service::request::Feature;
 use crate::features::markdown::{self, Block};
 use crate::infrastructure::lsp::manager::{RequestHandle, RequestSpec};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,6 +14,7 @@ const DEBOUNCE: Duration = Duration::from_millis(20);
 
 #[derive(Clone)]
 pub struct Session {
+    pub revision: u64,
     pub pane: PaneId,
     pub document: FileId,
     pub incarnation: u64,
@@ -23,6 +24,67 @@ pub struct Session {
     pub help: Option<SignatureHelp>,
     last_cursor: usize,
     last_version: u64,
+    requested: crate::domain::document::DocumentStamp,
+    requested_cursor: usize,
+    source: Option<u64>,
+    raw_help: Option<Value>,
+    selected: Option<(usize, String)>,
+}
+
+#[derive(Clone, Copy)]
+enum Trigger {
+    Invoked,
+    Character(char),
+    ContentChange,
+}
+
+fn revision(app: &mut AppState) -> u64 {
+    app.editor.language.signature_revision += 1;
+    app.editor.language.signature_revision
+}
+
+fn current(app: &AppState, session: &Session) -> bool {
+    target(app, app.workspace.active_pane()).is_some_and(|t| {
+        t.pane == session.pane
+            && t.document == session.document
+            && t.stamp.incarnation == session.incarnation
+            && t.stamp.language_generation == session.requested.language_generation
+            && ((t.cursor == session.last_cursor && t.stamp.version == session.last_version)
+                || inside_call(&t.text, session.opened_at, t.cursor))
+    })
+}
+
+pub fn can_step(app: &AppState) -> bool {
+    app.editor
+        .language
+        .signature
+        .as_ref()
+        .is_some_and(|session| {
+            current(app, session)
+                && session
+                    .help
+                    .as_ref()
+                    .is_some_and(|help| help.signatures.len() > 1)
+        })
+}
+
+/// Changes only the local selection. A button from an obsolete card is ignored.
+pub fn step(app: &mut AppState, forward: bool, expected: Option<u64>) -> bool {
+    if !can_step(app) {
+        return false;
+    }
+    let session = app.editor.language.signature.as_mut().unwrap();
+    if expected.is_some_and(|value| value != session.revision) {
+        return false;
+    }
+    let help = session.help.as_mut().unwrap();
+    let total = help.signatures.len();
+    help.active_signature = (help.active_signature + if forward { 1 } else { total - 1 }) % total;
+    session.selected = Some((
+        help.active_signature,
+        help.signatures[help.active_signature].label.clone(),
+    ));
+    true
 }
 
 /// What to draw.
@@ -40,18 +102,19 @@ pub struct View {
 pub fn view(session: &Session) -> Option<View> {
     let help = session.help.as_ref()?;
     let signature = help.signatures.get(help.active_signature)?;
-    let active = signature
+    let parameter = signature
         .active_parameter
         .or(help.active_parameter)
-        .and_then(|index| signature.parameters.get(index))
-        .map(|parameter| parameter.label.clone());
+        .and_then(|index| {
+            signature
+                .parameters
+                .get(index)
+                .or_else(|| signature.parameters.first())
+        })
+        .or_else(|| signature.parameters.first());
+    let active = parameter.map(|parameter| parameter.label.clone());
     let mut source = String::new();
-    if let Some(parameter) = signature
-        .active_parameter
-        .or(help.active_parameter)
-        .and_then(|index| signature.parameters.get(index))
-        .and_then(|p| p.documentation.as_ref())
-    {
+    if let Some(parameter) = parameter.and_then(|p| p.documentation.as_ref()) {
         source.push_str(parameter);
         source.push_str("\n\n");
     }
@@ -92,37 +155,49 @@ fn triggers(ctx: &AppContext) -> (Vec<String>, Vec<String>) {
 pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else {
-        app.editor.language.signature = None;
+        if app.editor.language.signature.is_some() || app.editor.language.signature_timer.is_some()
+        {
+            close(app);
+        }
         return;
     };
     let mut keep = true;
+    let mut changed = false;
     if let Some(session) = app.editor.language.signature.as_mut() {
-        if session.document != t.document || session.incarnation != t.stamp.incarnation {
+        if session.pane != pane
+            || session.document != t.document
+            || session.incarnation != t.stamp.incarnation
+            || session.requested.language_generation != t.stamp.language_generation
+        {
             keep = false;
         } else if session.last_version != t.stamp.version || session.last_cursor != t.cursor {
+            changed = true;
             session.last_version = t.stamp.version;
             session.last_cursor = t.cursor;
             keep = inside_call(&t.text, session.opened_at, t.cursor);
         }
     }
     if !keep {
-        app.editor.language.signature = None;
+        close(app);
     }
-    let Some(c) = typed else { return };
     let (open, again) = triggers(ctx);
-    let opens = open.iter().any(|s| s.chars().eq([c]));
-    let refresh =
-        app.editor.language.signature.is_some() && again.iter().any(|s| s.chars().eq([c]));
+    let opens = typed.is_some_and(|c| open.iter().any(|s| s.chars().eq([c])));
+    let refresh = app.editor.language.signature.is_some()
+        && typed.is_some_and(|c| again.iter().any(|s| s.chars().eq([c])));
     if opens || refresh {
+        let c = typed.unwrap();
         schedule(
             ctx,
             app,
-            if opens {
+            if opens && (app.editor.language.signature.is_none() || matches!(c, '(' | '[' | '<')) {
                 Some(t.cursor.saturating_sub(c.len_utf8()))
             } else {
                 None
             },
+            Trigger::Character(c),
         );
+    } else if changed && keep && app.editor.language.signature.is_some() {
+        schedule(ctx, app, None, Trigger::ContentChange);
     }
 }
 
@@ -156,45 +231,113 @@ pub fn inside_call(text: &str, opened_at: usize, cursor: usize) -> bool {
     true
 }
 
-fn schedule(ctx: &AppContext, app: &mut AppState, opened_at: Option<usize>) {
+fn schedule(ctx: &AppContext, app: &mut AppState, opened_at: Option<usize>, trigger: Trigger) {
     let Some(application) = ctx.services().and_then(|r| r.application()) else {
         return;
     };
     let timed = ctx.clone();
+    let Some(expected) = target(app, app.workspace.active_pane()) else {
+        return;
+    };
+    let scheduled = revision(app);
     app.editor.language.signature_timer = Some(Arc::new(ui_timer::after(
         application,
         DEBOUNCE,
-        move || timed.update(|app| request(&timed, app, opened_at, false)),
+        move || {
+            timed.try_update(|app| {
+                if app.editor.language.signature_revision != scheduled
+                    || !target(app, app.workspace.active_pane()).is_some_and(|t| {
+                        t.pane == expected.pane
+                            && t.document == expected.document
+                            && t.stamp == expected.stamp
+                            && t.cursor == expected.cursor
+                    })
+                {
+                    return false;
+                }
+                request_with_trigger(&timed, app, opened_at, trigger);
+                true
+            });
+        },
     )));
 }
 
 /// Asks the servers now.
 pub fn request(ctx: &AppContext, app: &mut AppState, opened_at: Option<usize>, manual: bool) {
+    request_with_trigger(
+        ctx,
+        app,
+        opened_at,
+        if manual {
+            Trigger::Invoked
+        } else {
+            Trigger::ContentChange
+        },
+    );
+}
+
+fn request_with_trigger(
+    ctx: &AppContext,
+    app: &mut AppState,
+    opened_at: Option<usize>,
+    trigger: Trigger,
+) {
     app.editor.language.signature_timer = None;
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else { return };
     let Some(services) = services(ctx) else {
         return;
     };
+    if app
+        .editor
+        .language
+        .signature
+        .as_ref()
+        .is_some_and(|session| {
+            !current(app, session) || opened_at.is_some_and(|at| at != session.opened_at)
+        })
+    {
+        app.editor.language.signature = None;
+    }
+    let mut context = json!({ "triggerKind": match trigger { Trigger::Invoked => 1, Trigger::Character(_) => 2, Trigger::ContentChange => 3 }, "isRetrigger": false });
+    if let Trigger::Character(c) = trigger {
+        context["triggerCharacter"] = json!(c.to_string());
+    }
+    let session = app.editor.language.signature.as_ref();
+    let source = session.and_then(|s| s.source);
+    if let Some(session) = session {
+        if let (Some(help), Some(raw)) = (&session.help, &session.raw_help) {
+            let mut raw = raw.clone();
+            raw["activeSignature"] = json!(help.active_signature);
+            context["activeSignatureHelp"] = raw;
+            context["isRetrigger"] = json!(true);
+        }
+    }
     services.sync(app);
-    let handle = Arc::new(
-        services.request(
-            RequestSpec::new(
-                Feature::SignatureHelp,
-                t.path.clone(),
-                t.lsp_stamp(),
-                t.cursor,
-            )
-            .extra(json!({ "context": {
-                    "triggerKind": if manual { 1 } else { 2 },
-                    "isRetrigger": app.editor.language.signature.is_some(),
-                } })),
-        ),
-    );
+    let mut spec = RequestSpec::new(
+        Feature::SignatureHelp,
+        t.path.clone(),
+        t.lsp_stamp(),
+        t.cursor,
+    )
+    .extra(json!({ "context": context }));
+    if let Some(source) = source {
+        spec = spec.target(source);
+    }
+    let handle = Arc::new(services.request(spec));
+    let next = revision(app);
     match app.editor.language.signature.as_mut() {
-        Some(session) => session.handle = Some(handle),
+        Some(session) => {
+            session.handle = Some(handle);
+            session.last_cursor = t.cursor;
+            session.last_version = t.stamp.version;
+            session.requested = t.stamp;
+            session.requested_cursor = t.cursor;
+            session.revision = next;
+        }
         None => {
             app.editor.language.signature = Some(Session {
+                revision: next,
                 pane,
                 document: t.document,
                 incarnation: t.stamp.incarnation,
@@ -203,6 +346,11 @@ pub fn request(ctx: &AppContext, app: &mut AppState, opened_at: Option<usize>, m
                 help: None,
                 last_cursor: t.cursor,
                 last_version: t.stamp.version,
+                requested: t.stamp,
+                requested_cursor: t.cursor,
+                source: None,
+                raw_help: None,
+                selected: None,
             })
         }
     }
@@ -228,29 +376,69 @@ pub fn open_bracket_before(text: &str, cursor: usize) -> usize {
 
 /// Folds in the servers' answer.
 pub fn tick(app: &mut AppState) -> bool {
-    let Some(session) = app.editor.language.signature.as_mut() else {
+    let Some(mut session) = app.editor.language.signature.take() else {
         return false;
     };
+    if !current(app, &session) {
+        close(app);
+        return true;
+    }
     let Some(handle) = session.handle.clone() else {
+        app.editor.language.signature = Some(session);
         return false;
     };
+    let t = target(app, session.pane).unwrap();
+    if session.requested != t.stamp || session.requested_cursor != t.cursor {
+        session.handle = None;
+        app.editor.language.signature = Some(session);
+        return true;
+    }
     let progress = handle.poll();
     if !progress.finished {
+        app.editor.language.signature = Some(session);
         return false;
     }
     session.handle = None;
-    let help = progress
-        .usable(Feature::SignatureHelp)
-        .first()
-        .and_then(|part| reply::signature_help(&part.value));
-    match help {
-        Some(help) => session.help = Some(help),
-        None => app.editor.language.signature = None,
+    let part = progress.usable(Feature::SignatureHelp).first().cloned();
+    if let Some((part, mut help)) =
+        part.and_then(|part| reply::signature_help(&part.value).map(|help| (part, help)))
+    {
+        if session.source == Some(part.instance) {
+            if let Some((old, label)) = &session.selected {
+                let chosen = help
+                    .signatures
+                    .get(*old)
+                    .filter(|s| s.label == *label)
+                    .map(|_| *old)
+                    .or_else(|| help.signatures.iter().position(|s| s.label == *label));
+                if let Some(index) = chosen {
+                    help.active_signature = index;
+                    session.selected = Some((index, label.clone()));
+                } else {
+                    session.selected = None;
+                }
+            }
+        } else {
+            session.selected = None;
+        }
+        let mut raw = part.value.clone();
+        // The parser discards signatures without a label; keep wire indexes aligned.
+        if let Some(signatures) = raw["signatures"].as_array_mut() {
+            signatures.retain(|s| s["label"].is_string());
+        }
+        session.source = Some(part.instance);
+        session.raw_help = Some(raw);
+        session.help = Some(help);
+        session.revision = revision(app);
+        app.editor.language.signature = Some(session);
+    } else {
+        close(app);
     }
     true
 }
 
 pub fn close(app: &mut AppState) {
+    revision(app);
     app.editor.language.signature = None;
     app.editor.language.signature_timer = None;
 }

@@ -1,8 +1,12 @@
 use super::*;
+use serde_json::json;
 use std::{
     collections::HashMap,
     io::Cursor,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        Condvar,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 static CASES: AtomicUsize = AtomicUsize::new(0);
@@ -95,7 +99,11 @@ fn good_demo() -> Blob {
 }
 
 fn catalog(node: &Blob, demo: &Blob) -> Arc<Catalog> {
-    let text = format!(
+    Arc::new(Catalog::parse(&catalog_text(node, demo)).unwrap())
+}
+
+fn catalog_text(node: &Blob, demo: &Blob) -> String {
+    format!(
         r#"
 schema = 1
 [distribution]
@@ -136,8 +144,7 @@ language_id = "rust"
         node.bytes.len(),
         demo.sha256,
         demo.bytes.len(),
-    );
-    Arc::new(Catalog::parse(&text).unwrap())
+    )
 }
 
 const NODE_URL: &str =
@@ -217,6 +224,7 @@ impl World {
                     | PackStatus::Downloading { .. }
                     | PackStatus::Verifying
                     | PackStatus::Starting
+                    | PackStatus::Cancelling
             ) {
                 return status;
             }
@@ -237,6 +245,314 @@ fn failure(status: PackStatus) -> String {
         PackStatus::Failed(error) => error,
         other => panic!("expected a failure, got {other:?}"),
     }
+}
+
+/// A bounded stand-in for an OS read which cannot be interrupted mid-call.
+#[derive(Default)]
+struct ReadGate {
+    state: Mutex<(bool, bool)>,
+    changed: Condvar,
+}
+impl ReadGate {
+    fn block(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.0 = true;
+        self.changed.notify_all();
+        let (state, timeout) = self
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(20), |s| !s.1)
+            .unwrap();
+        assert!(
+            state.1 && !timeout.timed_out(),
+            "test did not release the read"
+        );
+    }
+    fn entered(&self) {
+        let state = self.state.lock().unwrap();
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(20), |s| !s.0)
+            .unwrap();
+        assert!(state.0, "worker did not reach the read");
+    }
+    fn release(&self) {
+        self.state.lock().unwrap().1 = true;
+        self.changed.notify_all();
+    }
+}
+struct GatedReader {
+    bytes: Cursor<Vec<u8>>,
+    gate: Arc<ReadGate>,
+}
+impl Read for GatedReader {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        self.gate.block();
+        self.bytes.read(output)
+    }
+}
+fn gate_downloads(world: &mut World) -> Arc<ReadGate> {
+    let gate = Arc::new(ReadGate::default());
+    let (reader_gate, served, downloads) =
+        (gate.clone(), world.served.clone(), world.downloads.clone());
+    world.installer = Installer::new(
+        world.installer.catalog.clone(),
+        world.managed.clone(),
+        "linux-x86_64".into(),
+        Arc::new(move |url| {
+            downloads.fetch_add(1, Ordering::SeqCst);
+            let bytes = served.lock().unwrap()[url].clone();
+            Ok(Box::new(GatedReader {
+                bytes: Cursor::new(bytes),
+                gate: reader_gate.clone(),
+            }))
+        }),
+        Arc::new(|_| Ok(())),
+    );
+    gate
+}
+fn archives_have_no_partial_files(world: &World) -> bool {
+    fs::read_dir(world.managed.join("archives"))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().starts_with(".install-"))
+        })
+        .unwrap_or(true)
+}
+
+#[test]
+fn cancellation_drains_a_blocked_read_removes_queued_dependents_and_requires_manual_resume() {
+    let mut w = World::new(good_node(), good_demo());
+    let gate = gate_downloads(&mut w);
+    w.installer.request("demo").unwrap();
+    gate.entered();
+    let target = w.installer.cancel_target("demo").unwrap();
+    w.installer.cancel(&target);
+    assert_eq!(w.installer.status("demo"), PackStatus::Cancelling);
+    assert!(w.installer.cancel_target("demo").is_none());
+    w.installer.request("demo").unwrap();
+    w.installer.retry();
+    assert_eq!(w.installer.status("demo"), PackStatus::Cancelling);
+    gate.release();
+    assert_eq!(w.settle("demo"), PackStatus::Cancelled);
+    assert_eq!(
+        w.downloads.load(Ordering::SeqCst),
+        1,
+        "queued server never downloaded"
+    );
+    assert!(w.installer.installed_dir("node").is_none());
+    assert!(w.staging_is_empty() && archives_have_no_partial_files(&w));
+    w.installer.resume("demo").unwrap();
+    w.installer.cancel(&target); // An old panel must not cancel a resumed job.
+    assert!(matches!(w.settle("demo"), PackStatus::Installed(_)));
+    assert_eq!(w.downloads.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn cancelling_one_request_retains_a_shared_runtime_until_the_last_request_cancels() {
+    for cancel_last in [false, true] {
+        let mut w = World::new(good_node(), good_demo());
+        let gate = gate_downloads(&mut w);
+        w.installer.request("demo").unwrap();
+        gate.entered();
+        w.installer.request("node").unwrap();
+        w.installer
+            .cancel(&w.installer.cancel_target("demo").unwrap());
+        assert_eq!(w.installer.status("demo"), PackStatus::Cancelled);
+        assert!(matches!(
+            w.installer.status("node"),
+            PackStatus::Downloading { .. }
+        ));
+        if cancel_last {
+            w.installer
+                .cancel(&w.installer.cancel_target("node").unwrap());
+            assert_eq!(w.installer.status("node"), PackStatus::Cancelling);
+        }
+        gate.release();
+        if cancel_last {
+            assert_eq!(w.settle("node"), PackStatus::Cancelled);
+            assert!(w.installer.installed_dir("node").is_none());
+        } else {
+            assert!(matches!(w.settle("node"), PackStatus::Installed(_)));
+            w.installer.resume("demo").unwrap();
+            assert!(matches!(w.settle("demo"), PackStatus::Installed(_)));
+            assert_eq!(
+                w.downloads.load(Ordering::SeqCst),
+                2,
+                "shared runtime downloaded once"
+            );
+        }
+        assert!(w.staging_is_empty() && archives_have_no_partial_files(&w));
+    }
+}
+
+#[test]
+fn resume_while_smoke_is_draining_uses_a_fresh_generation_and_verified_cache() {
+    let mut w = World::new(good_node(), good_demo());
+    let gate = Arc::new(ReadGate::default());
+    let smoke_gate = gate.clone();
+    let (served, downloads, smoked) = (w.served.clone(), w.downloads.clone(), w.smoked.clone());
+    w.installer = Installer::new(
+        w.installer.catalog.clone(),
+        w.managed.clone(),
+        "linux-x86_64".into(),
+        Arc::new(move |url| {
+            downloads.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(Cursor::new(served.lock().unwrap()[url].clone())))
+        }),
+        Arc::new(move |request| {
+            smoked.lock().unwrap().push(request.clone());
+            smoke_gate.block();
+            if request.cancellation.cancelled() {
+                Err("late smoke failure".into())
+            } else {
+                Ok(())
+            }
+        }),
+    );
+    w.installer.request("demo").unwrap();
+    gate.entered();
+    let old = w.installer.cancel_target("demo").unwrap();
+    w.installer.cancel(&old);
+    assert_eq!(w.installer.status("demo"), PackStatus::Cancelling);
+    assert!(w.installer.installed_dir("node").is_some());
+    w.installer.resume("demo").unwrap();
+    let resumed = w.installer.cancel_target("demo").unwrap();
+    assert_ne!(old.generation, resumed.generation);
+    w.installer.cancel(&old);
+    gate.release();
+    assert!(matches!(w.settle("demo"), PackStatus::Installed(_)));
+    assert_eq!(
+        w.downloads.load(Ordering::SeqCst),
+        2,
+        "verified archives reused"
+    );
+    assert_eq!(w.smoked.lock().unwrap().len(), 2);
+    assert!(w.staging_is_empty() && archives_have_no_partial_files(&w));
+    w.installer.cancel(&resumed);
+    assert!(
+        matches!(w.installer.status("demo"), PackStatus::Installed(_)),
+        "activation won the race"
+    );
+}
+
+#[test]
+fn cancellation_during_verification_or_before_smoke_cannot_activate_or_leave_staging() {
+    for before_smoke in [false, true] {
+        let w = World::new(good_node(), good_demo());
+        let weak = Arc::downgrade(&w.installer);
+        let listener: Arc<Listener> = Arc::new(move || {
+            let installer = weak.upgrade().unwrap();
+            let status = installer.status("demo");
+            if (before_smoke && status == PackStatus::Starting)
+                || (!before_smoke && status == PackStatus::Verifying)
+            {
+                if let Some(target) = installer.cancel_target("demo") {
+                    installer.cancel(&target);
+                }
+            }
+        });
+        w.installer.subscribe(listener.clone());
+        w.installer.request("demo").unwrap();
+        assert_eq!(w.settle("demo"), PackStatus::Cancelled);
+        assert!(w.installer.installed_dir("demo").is_none());
+        assert!(w.smoked.lock().unwrap().is_empty());
+        assert!(w.staging_is_empty() && archives_have_no_partial_files(&w));
+        drop(listener);
+        w.installer.resume("demo").unwrap();
+        assert!(matches!(w.settle("demo"), PackStatus::Installed(_)));
+    }
+}
+
+#[test]
+fn two_servers_share_a_runtime_and_resume_without_workers_waiting_on_queued_dependencies() {
+    let node = good_node();
+    let demo = good_demo();
+    let other = archive(&[("other/server", b"other", 0o755)]);
+    let text = format!(
+        r#"{}
+[packs.other]
+version="1.0.0"
+license="MIT"
+requires=["node@22"]
+[packs.other.platforms.any]
+asset="other-any.tar.gz"
+release="lsp-servers-1"
+sha256="{}"
+size={}
+[servers.other]
+name="Other"
+pack="other"
+command="${{pack}}/server"
+[servers.other.root]
+markers=["other.toml"]
+fallback="workspace"
+[[servers.other.languages]]
+language="rust"
+language_id="rust"
+"#,
+        catalog_text(&node, &demo),
+        other.sha256,
+        other.bytes.len()
+    );
+    let catalog = Arc::new(Catalog::parse(&text).unwrap());
+    let mut w = World::new(node, demo);
+    w.served.lock().unwrap().insert(
+        catalog.archive("other", "linux-x86_64").unwrap().url,
+        other.bytes,
+    );
+    let gate = gate_downloads(&mut w);
+    // Replace only metadata before any workers exist; retain the controlled reader.
+    w.installer = Installer::new(
+        catalog,
+        w.managed.clone(),
+        "linux-x86_64".into(),
+        w.installer.download.clone(),
+        Arc::new(|_| Ok(())),
+    );
+    w.installer.request("demo").unwrap();
+    gate.entered();
+    w.installer.request("other").unwrap();
+    let old = w.installer.cancel_target("demo").unwrap();
+    w.installer.cancel(&old);
+    assert_eq!(w.installer.status("demo"), PackStatus::Cancelled);
+    assert_eq!(w.installer.status("other"), PackStatus::Queued);
+    w.installer.resume("demo").unwrap();
+    w.installer.cancel(&old);
+    assert_eq!(
+        w.installer.work.lock().unwrap().running,
+        1,
+        "dependent jobs do not occupy workers"
+    );
+    gate.release();
+    assert!(matches!(w.settle("demo"), PackStatus::Installed(_)));
+    assert!(matches!(w.settle("other"), PackStatus::Installed(_)));
+    assert_eq!(
+        w.downloads.load(Ordering::SeqCst),
+        3,
+        "two servers and exactly one runtime"
+    );
+    assert!(w.staging_is_empty() && archives_have_no_partial_files(&w));
+}
+
+#[test]
+fn installation_prompt_size_includes_only_missing_archives_and_shared_runtime_ids() {
+    let w = World::new(good_node(), good_demo());
+    let estimate = w.installer.missing_archives("demo").unwrap();
+    assert_eq!(estimate.len(), 2);
+    assert!(estimate["node"] > 0 && estimate["demo"] > 0);
+    assert_eq!(
+        w.downloads.load(Ordering::SeqCst),
+        0,
+        "estimating never downloads"
+    );
+    w.installer.request("node").unwrap();
+    assert!(matches!(w.settle("node"), PackStatus::Installed(_)));
+    let estimate = w.installer.missing_archives("demo").unwrap();
+    assert_eq!(estimate.keys().collect::<Vec<_>>(), ["demo"]);
+    w.installer.request("demo").unwrap();
+    assert!(matches!(w.settle("demo"), PackStatus::Installed(_)));
+    assert!(w.installer.missing_archives("demo").unwrap().is_empty());
 }
 
 #[test]
@@ -527,25 +843,42 @@ size = 10
 
 #[test]
 fn a_failure_waits_out_its_cooldown_unless_the_user_retries() {
-    let w = World::new(good_node(), good_demo());
-    w.served.lock().unwrap().remove(DEMO_URL);
-    w.installer.request("demo").unwrap();
-    failure(w.settle("demo"));
-    let attempts = w.downloads.load(Ordering::SeqCst);
-    w.installer.request("demo").unwrap();
-    assert!(
-        matches!(w.installer.status("demo"), PackStatus::Failed(_)),
-        "still cooling down"
-    );
-    assert_eq!(w.downloads.load(Ordering::SeqCst), attempts);
+    for manual in [false, true] {
+        let w = World::new(good_node(), good_demo());
+        w.served.lock().unwrap().remove(DEMO_URL);
+        w.installer.request("demo").unwrap();
+        failure(w.settle("demo"));
+        let old = w.installer.cancel_target("demo").unwrap();
+        let attempts = w.downloads.load(Ordering::SeqCst);
+        w.installer.request("demo").unwrap();
+        assert!(
+            matches!(w.installer.status("demo"), PackStatus::Failed(_)),
+            "still cooling down"
+        );
+        assert_eq!(w.downloads.load(Ordering::SeqCst), attempts);
 
-    w.served
-        .lock()
-        .unwrap()
-        .insert(DEMO_URL.to_owned(), good_demo().bytes);
-    w.installer.retry();
-    assert!(matches!(w.settle("demo"), PackStatus::Installed(_)));
-    assert!(w.downloads.load(Ordering::SeqCst) > attempts);
+        w.served
+            .lock()
+            .unwrap()
+            .insert(DEMO_URL.to_owned(), good_demo().bytes);
+        if manual {
+            w.installer.retry();
+        } else {
+            if let Some(Job::Failed { retry, .. }) =
+                w.installer.work.lock().unwrap().states.get_mut("demo")
+            {
+                *retry = Instant::now();
+            }
+            w.installer.request("demo").unwrap();
+        }
+        assert_ne!(
+            w.installer.work.lock().unwrap().requests["demo"],
+            old.generation
+        );
+        w.installer.cancel(&old);
+        assert!(matches!(w.settle("demo"), PackStatus::Installed(_)));
+        assert!(w.downloads.load(Ordering::SeqCst) > attempts);
+    }
 }
 
 #[test]
@@ -594,9 +927,54 @@ fn fake_server() -> PathBuf {
 }
 
 #[test]
+fn cancelling_a_real_initialization_stops_and_reaps_the_smoke_process() {
+    let scratch = Scratch::new();
+    let log = scratch.0.join("messages.jsonl");
+    let program = scratch
+        .0
+        .join(if cfg!(windows) { "smoke.exe" } else { "smoke" });
+    fs::copy(fake_server(), &program).unwrap();
+    let cancellation = Cancellation::default();
+    let request = SmokeRequest {
+        cancellation: cancellation.clone(),
+        server: "fake".into(),
+        program: program.clone(),
+        args: vec![
+            "--init-delay-ms".into(),
+            "20000".into(),
+            "--log".into(),
+            log.to_string_lossy().into_owned(),
+        ],
+        options: None,
+        cwd: scratch.0.clone(),
+    };
+    let (done, result) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let _ = done.send(start_and_initialize(&request));
+    });
+    let until = Instant::now() + Duration::from_secs(10);
+    while !fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("initialize")
+    {
+        assert!(Instant::now() < until, "smoke did not reach initialize");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    cancellation.0.store(true, Ordering::Release);
+    let error = result
+        .recv_timeout(Duration::from_secs(8))
+        .expect("cancelled initialize stops within its exit grace")
+        .unwrap_err();
+    assert!(error.contains("cancelled"), "{error}");
+    worker.join().unwrap();
+    fs::remove_file(program).expect("Windows releases the staged executable after cancellation");
+}
+
+#[test]
 fn a_real_server_process_is_started_and_initialized_by_the_smoke_test() {
     let scratch = Scratch::new();
     let request = |program: PathBuf, args: Vec<String>| SmokeRequest {
+        cancellation: Cancellation::default(),
         server: "fake".into(),
         program,
         args,
@@ -614,4 +992,99 @@ fn a_real_server_process_is_started_and_initialized_by_the_smoke_test() {
     let missing =
         start_and_initialize(&request(scratch.0.join("no-such-server"), Vec::new())).unwrap_err();
     assert!(missing.contains("no-such-server"), "{missing}");
+}
+
+/// Opt-in network acceptance: consumes the committed catalog and the production
+/// download, verification, unpacking and initialize paths. Keeps its verified
+/// packs under target so the editor acceptance tests can use the same binaries.
+#[test]
+#[ignore = "downloads published rust-analyzer, TypeScript and managed Node packs"]
+fn real_published_server_packs_install() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let managed = root.join("target/real-lsp-validation/managed");
+    let catalog =
+        Arc::new(Catalog::read(&root.join("assets/lsp-servers/lsp-servers.toml")).unwrap());
+    let installer = Installer::new(
+        catalog.clone(),
+        managed.clone(),
+        super::super::lsp_catalog::platform(),
+        Arc::new(http_download),
+        Arc::new(start_and_initialize),
+    );
+    let mut receipt = serde_json::Map::new();
+    let all = std::env::var_os("LOOM_ALL_SERVER_PACKS").is_some();
+    let packs: Vec<String> = if all {
+        catalog
+            .pack_ids()
+            .filter(|p| {
+                catalog
+                    .archive(p, &super::super::lsp_catalog::platform())
+                    .is_ok()
+            })
+            .map(str::to_owned)
+            .collect()
+    } else {
+        vec!["rust-analyzer".into(), "typescript-language-server".into()]
+    };
+    for pack in &packs {
+        installer.request(pack).unwrap();
+        let started = Instant::now();
+        let mut previous = String::new();
+        loop {
+            let status = installer.status(pack);
+            // Print transitions, not every polling iteration or download byte.
+            let stage = std::mem::discriminant(&status);
+            let stage = format!("{stage:?}");
+            if stage != previous {
+                println!(
+                    "{pack}: {status:?} ({:.1}s)",
+                    started.elapsed().as_secs_f32()
+                );
+                previous = stage;
+            }
+            match status {
+                PackStatus::Installed(path) => {
+                    receipt.insert(pack.clone(), json!(path));
+                    break;
+                }
+                PackStatus::Failed(error) | PackStatus::Unavailable(error) => {
+                    panic!("{pack}: {error}; all jobs: {:?}", installer.busy());
+                }
+                _ => {}
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(300),
+                "{pack}: {:?}",
+                installer.busy()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    receipt.insert(
+        "node".into(),
+        json!(
+            installer
+                .installed_dir("node")
+                .expect("managed Node installed")
+        ),
+    );
+    // A new installer, with network forbidden, must discover the activated packs.
+    let offline = Installer::new(
+        catalog,
+        managed,
+        super::super::lsp_catalog::platform(),
+        Arc::new(|_| panic!("installed packs must not access the network")),
+        Arc::new(start_and_initialize),
+    );
+    for pack in receipt.keys() {
+        assert!(matches!(offline.status(pack), PackStatus::Installed(_)));
+        offline.request(pack).unwrap();
+    }
+    let receipt_path = root.join("target/real-lsp-validation/packs.json");
+    fs::write(
+        &receipt_path,
+        serde_json::to_string_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+    println!("verified published packs: {}", receipt_path.display());
 }

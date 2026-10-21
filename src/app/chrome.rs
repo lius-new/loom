@@ -263,6 +263,8 @@ fn server_note(
             (format!("{name}: installing, {progress}"), NoteLevel::Quiet)
         }
         Status::InstallFailed(_) => (format!("{name}: install failed"), NoteLevel::Error),
+        Status::InstallCancelling => (format!("{name}: cancelling install…"), NoteLevel::Quiet),
+        Status::InstallCancelled => (format!("{name}: install cancelled"), NoteLevel::Quiet),
     };
     StatusNote { text, level }
 }
@@ -296,7 +298,11 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
     use crate::infrastructure::lsp::manager::Status;
     use crate::ui::language_panel::{Frame, Level, Line, Section};
     let services = state.services().and_then(|r| r.language_services());
-    let line = |text: String, level| Line { text, level };
+    let line = |text: String, level| Line {
+        text,
+        level,
+        cancel: None,
+    };
     let mut sections: Vec<Section> = services
         .map(|s| s.infos())
         .unwrap_or_default()
@@ -314,6 +320,8 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 Status::NotInstalled => ("not installed".to_owned(), Level::Warning),
                 Status::Installing(progress) => (format!("installing, {progress}"), Level::Quiet),
                 Status::InstallFailed(_) => ("install failed".to_owned(), Level::Error),
+                Status::InstallCancelling => ("cancelling install…".to_owned(), Level::Quiet),
+                Status::InstallCancelled => ("install cancelled".to_owned(), Level::Quiet),
             };
             let mut lines = vec![line(info.root.display().to_string(), Level::Quiet)];
             match &info.status {
@@ -339,7 +347,18 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 if let Some(message) = &task.message {
                     text.push_str(&format!(" — {message}"));
                 }
-                lines.push(line(text, Level::Quiet));
+                if task.cancelling {
+                    text.push_str(" (cancelling…)");
+                }
+                let mut task_line = line(text, Level::Quiet);
+                if task.cancellable && !task.cancelling {
+                    task_line.cancel = Some(crate::ui::language_panel::TaskTarget {
+                        instance: info.id,
+                        run: info.run,
+                        task: task.id,
+                    });
+                }
+                lines.push(task_line);
             }
             if let Some(providers) = &info.providers {
                 let offered = providers.names();
@@ -353,6 +372,9 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 ));
             }
             let counts = info.diagnostics;
+            for registration in &info.registrations {
+                lines.push(line(format!("registered: {registration}"), Level::Quiet));
+            }
             lines.push(line(
                 format!(
                     "diagnostics: {} published, {} shown, {} moved, {} outdated, {} other file",
@@ -384,6 +406,7 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
             let install = match info.status {
                 Status::NotInstalled => Some("Install"),
                 Status::InstallFailed(_) => Some("Retry"),
+                Status::InstallCancelled => Some("Resume"),
                 _ => None,
             };
             Section {
@@ -391,6 +414,16 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 level,
                 lines,
                 install: install.map(|label| (info.server_id.clone(), label)),
+                cancel_install: if matches!(info.status, Status::Installing(_)) {
+                    info.install_generation.map(|generation| {
+                        crate::ui::language_panel::InstallTarget {
+                            server: info.server_id.clone(),
+                            generation,
+                        }
+                    })
+                } else {
+                    None
+                },
             }
         })
         .collect();
@@ -414,6 +447,7 @@ pub fn language_panel_frame(state: &AppContext) -> crate::ui::language_panel::Fr
                 .map(|error| line(error, Level::Warning))
                 .collect(),
             install: None,
+            cancel_install: None,
         }
     }));
     Frame {

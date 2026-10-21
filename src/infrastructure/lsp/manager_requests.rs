@@ -53,6 +53,7 @@ pub(crate) enum ServerAction {
         label: Option<String>,
         edit: WorkspaceEdit,
         reply: Reply,
+        expected: Vec<(PathBuf, Stamp)>,
     },
     /// `window/showDocument`; answer with `{ "success": bool }`.
     ShowDocument {
@@ -234,15 +235,23 @@ impl super::Manager {
 }
 
 struct Live {
+    spec: RequestSpec,
     shared: Arc<Mutex<Progress>>,
     /// Requests of the same kind for the same document replace each other.
     replaces: Option<(Feature, PathBuf)>,
     /// Tag to the instance it was sent to.
     waiting: HashMap<u64, u64>,
+    attempts: HashMap<u64, Attempt>,
     parts: Vec<Arc<Part>>,
     stale: bool,
     errors: Vec<String>,
     deadline: Instant,
+}
+
+struct Attempt {
+    params: Value,
+    run: u64,
+    retried: bool,
 }
 
 #[derive(Default)]
@@ -265,6 +274,41 @@ fn is_stale(error: &ResponseError) -> bool {
 }
 
 impl Coordinator {
+    /// A capability transaction invalidates outstanding interactive answers from
+    /// this instance. Static providers remain available for subsequent requests.
+    pub(super) fn registration_changed(&mut self, at: usize) {
+        self.instances[at].registration_revision =
+            self.instances[at].registration_revision.wrapping_add(1);
+        let instance = &self.instances[at];
+        let mut affected = Vec::new();
+        for (id, live) in &mut self.book.live {
+            let tags = live
+                .waiting
+                .iter()
+                .filter(|(_, server)| **server == instance.id)
+                .map(|(tag, _)| *tag)
+                .collect::<Vec<_>>();
+            let before = live.parts.len();
+            live.parts.retain(|part| part.instance != instance.id);
+            if !tags.is_empty() || before != live.parts.len() {
+                for tag in tags {
+                    live.waiting.remove(&tag);
+                    live.attempts.remove(&tag);
+                    self.book.tags.remove(&tag);
+                    if let Phase::Running(running) = &instance.phase {
+                        running.client.cancel(tag);
+                    }
+                }
+                live.stale = true;
+                affected.push(*id);
+            }
+        }
+        for id in affected {
+            self.settle(id);
+        }
+        self.results_changed = true;
+    }
+
     pub(super) fn request(&mut self, id: u64, spec: RequestSpec, shared: Arc<Mutex<Progress>>) {
         let key = spec
             .feature
@@ -312,7 +356,17 @@ impl Coordinator {
             else {
                 continue;
             };
-            if !spec.feature.supported(&ready.capabilities.providers) {
+            let selected_key = uri::file_uri(&spec.path).map(|uri| uri::key(&uri));
+            let selected = instance.documents.iter().find(|document| {
+                selected_key
+                    .as_ref()
+                    .is_some_and(|key| uri::key(&document.uri) == *key)
+            });
+            if !spec.feature.supported(
+                &ready
+                    .registrations
+                    .effective(&ready.capabilities.providers, selected),
+            ) {
                 continue;
             }
             if spec.target.is_some_and(|target| target != instance.id) {
@@ -373,7 +427,9 @@ impl Coordinator {
         }
 
         let timeout = spec.timeout.unwrap_or(self.options.timeouts.request);
+        let deadline = Instant::now() + timeout + GRACE;
         let mut waiting = HashMap::new();
+        let mut attempts = HashMap::new();
         let mut errors = Vec::new();
         for target in targets {
             let instance = &self.instances[target.at];
@@ -384,9 +440,11 @@ impl Coordinator {
             if spec.feature == Feature::CodeAction
                 && extra.pointer("/context/diagnostics").is_none()
             {
-                extra["context"] = serde_json::json!({
-                    "diagnostics": self.diagnostics_in(instance, &document_key, &spec),
-                });
+                if !extra["context"].is_object() {
+                    extra["context"] = serde_json::json!({});
+                }
+                extra["context"]["diagnostics"] =
+                    self.diagnostics_in(instance, &document_key, &spec).into();
             }
             let params = request::params(
                 spec.feature,
@@ -397,8 +455,16 @@ impl Coordinator {
             );
             self.book.next_tag += 1;
             let tag = TAG_BASE + self.book.next_tag;
-            if client.request_within(spec.feature.method(), params, tag, timeout) {
+            if client.request_within(spec.feature.method(), params.clone(), tag, timeout) {
                 waiting.insert(tag, instance.id);
+                attempts.insert(
+                    tag,
+                    Attempt {
+                        params,
+                        run: instance.run,
+                        retried: false,
+                    },
+                );
                 self.book.tags.insert(tag, id);
             } else {
                 errors.push(format!("{}: could not send", instance.key.server));
@@ -415,13 +481,15 @@ impl Coordinator {
         self.book.live.insert(
             id,
             Live {
+                spec,
                 shared,
                 replaces: key,
                 waiting,
+                attempts,
                 parts: Vec::new(),
                 stale: false,
                 errors,
-                deadline: Instant::now() + timeout + GRACE,
+                deadline,
             },
         );
     }
@@ -466,6 +534,13 @@ impl Coordinator {
 
     /// A request only the application can answer.
     pub(super) fn server_request(&mut self, at: usize, id: Id, method: &str, params: &Value) {
+        if matches!(
+            method,
+            "client/registerCapability" | "client/unregisterCapability"
+        ) {
+            self.registration_request(at, id, method, params);
+            return;
+        }
         let instance = &self.instances[at];
         let Phase::Running(Running {
             client,
@@ -491,6 +566,9 @@ impl Coordinator {
         };
         match method {
             "workspace/applyEdit" => {
+                if !edit_versions_current(instance, params.get("edit").unwrap_or(&Value::Null)) {
+                    return refuse("a versioned document changed before the edit arrived");
+                }
                 match crate::features::language_service::reply::workspace_edit(
                     params.get("edit").unwrap_or(&Value::Null),
                     encoding,
@@ -502,6 +580,11 @@ impl Coordinator {
                             .map(str::to_owned),
                         edit,
                         reply,
+                        expected: instance
+                            .documents
+                            .iter()
+                            .filter_map(|d| uri::file_path(&d.uri).map(|p| (p, d.stamp)))
+                            .collect(),
                     }),
                     Err(error) => refuse(&format!("the edit cannot be read: {error}")),
                 }
@@ -584,8 +667,70 @@ impl Coordinator {
             return;
         };
         live.waiting.remove(&tag);
+        let attempt = live.attempts.remove(&tag);
+        if let (Err(error), Some(mut attempt)) = (&outcome, attempt) {
+            // Only replay a query against the exact same document and server
+            // lifetime, once, inside the original deadline. Commands may have
+            // already changed external state even if the server cancelled them.
+            let same_document = live.spec.feature == Feature::WorkspaceSymbol
+                || uri::file_uri(&live.spec.path).is_some_and(|uri| {
+                    instance.documents.iter().any(|document| {
+                        uri::key(&document.uri) == uri::key(&uri)
+                            && document.stamp == live.spec.stamp
+                    })
+                });
+            let remaining = live
+                .deadline
+                .saturating_duration_since(Instant::now() + GRACE);
+            let retry = is_stale(error)
+                && error
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.get("retriggerRequest"))
+                    .and_then(Value::as_bool)
+                    != Some(false)
+                && !attempt.retried
+                && same_document
+                && attempt.run == instance.run
+                && live.spec.feature != Feature::ExecuteCommand
+                && !remaining.is_zero();
+            if retry && let Phase::Running(Running { client, .. }) = &instance.phase {
+                self.book.next_tag += 1;
+                let new_tag = TAG_BASE + self.book.next_tag;
+                if client.request_within(
+                    live.spec.feature.method(),
+                    attempt.params.clone(),
+                    new_tag,
+                    remaining,
+                ) {
+                    attempt.retried = true;
+                    live.waiting.insert(new_tag, instance.id);
+                    live.attempts.insert(new_tag, attempt);
+                    self.book.tags.insert(new_tag, request);
+                    return;
+                }
+            }
+        }
         match outcome {
             Ok(value) => {
+                let valid = match live.spec.feature {
+                    Feature::Rename => edit_versions_current(instance, &value),
+                    Feature::CodeAction => value.as_array().is_none_or(|rows| {
+                        rows.iter().all(|a| {
+                            a.get("edit")
+                                .is_none_or(|edit| edit_versions_current(instance, edit))
+                        })
+                    }),
+                    Feature::CodeActionResolve => value
+                        .get("edit")
+                        .is_none_or(|edit| edit_versions_current(instance, edit)),
+                    _ => true,
+                };
+                if !valid {
+                    live.stale = true;
+                    self.settle(request);
+                    return;
+                }
                 if !value.is_null() {
                     live.parts.push(Arc::new(Part { value, ..part }));
                     live.parts.sort_by_key(|p| (p.rank, p.instance));
@@ -643,6 +788,7 @@ impl Coordinator {
             if let Some(live) = self.book.live.get_mut(&request) {
                 for tag in lost {
                     live.waiting.remove(&tag);
+                    live.attempts.remove(&tag);
                     self.book.tags.remove(&tag);
                 }
                 live.errors.push("the server stopped".to_owned());
@@ -679,6 +825,39 @@ impl Coordinator {
             self.settle(request);
         }
     }
+}
+
+fn edit_versions_current(instance: &super::Instance, edit: &Value) -> bool {
+    let Phase::Running(Running {
+        ready: Some(ready), ..
+    }) = &instance.phase
+    else {
+        return false;
+    };
+    edit.get("documentChanges")
+        .and_then(Value::as_array)
+        .is_none_or(|changes| {
+            changes.iter().all(|change| {
+                let Some(doc) = change.get("textDocument") else {
+                    return true;
+                };
+                let Some(version) = doc.get("version").filter(|v| !v.is_null()) else {
+                    return true;
+                };
+                let Some(version) = version.as_i64().and_then(|v| i32::try_from(v).ok()) else {
+                    return false;
+                };
+                let Some(link) = doc.get("uri").and_then(Value::as_str) else {
+                    return false;
+                };
+                ready.sync.stamp_of(link, version).is_some_and(|stamp| {
+                    instance
+                        .documents
+                        .iter()
+                        .any(|d| uri::key(&d.uri) == uri::key(link) && d.stamp == stamp)
+                })
+            })
+        })
 }
 
 fn finish(shared: &Arc<Mutex<Progress>>, parts: Vec<Arc<Part>>, failure: Option<Failure>) {

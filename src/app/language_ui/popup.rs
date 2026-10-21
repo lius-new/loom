@@ -12,13 +12,22 @@ use std::sync::Arc;
 pub enum Payload {
     /// Go there.
     Place(Place),
+    PeekPlace(Place),
+    Group(std::path::PathBuf),
     /// Run a code action of the server instance that offered it.
     Action {
         instance: u64,
         action: Arc<CodeAction>,
     },
     /// Run a server command.
-    Command { instance: u64, command: Command },
+    Command {
+        instance: u64,
+        command: Command,
+    },
+    Lens {
+        instance: u64,
+        lens: Arc<crate::features::language_service::reply::CodeLens>,
+    },
     /// A call or type hierarchy item: show what it leads to.
     Hierarchy {
         instance: u64,
@@ -52,6 +61,12 @@ pub enum Kind {
     Problems,
 }
 
+impl Kind {
+    pub fn is_panel(self) -> bool {
+        matches!(self, Self::References | Self::Hierarchy | Self::Problems)
+    }
+}
+
 #[derive(Clone)]
 pub struct Popup {
     pub kind: Kind,
@@ -73,6 +88,9 @@ pub struct Popup {
     /// Whether typing narrows the rows here; a server that searches itself
     /// (workspace symbols) is trusted to have done so.
     pub local_filter: bool,
+    pub panel_focused: bool,
+    pub visible: usize,
+    collapsed: std::collections::HashSet<std::path::PathBuf>,
 }
 
 /// Rows visible at once.
@@ -100,6 +118,9 @@ impl Popup {
             empty: "No results".to_owned(),
             origin: 0,
             local_filter: true,
+            panel_focused: true,
+            visible: VISIBLE,
+            collapsed: Default::default(),
         };
         popup.refilter();
         popup
@@ -152,6 +173,9 @@ impl Popup {
     }
 
     pub fn type_text(&mut self, text: &str) -> bool {
+        if !self.panel_focused {
+            return false;
+        }
         let Some(query) = &mut self.query else {
             return false;
         };
@@ -161,6 +185,9 @@ impl Popup {
     }
 
     pub fn backspace(&mut self) -> bool {
+        if !self.panel_focused {
+            return false;
+        }
         let Some(query) = &mut self.query else {
             return false;
         };
@@ -187,7 +214,31 @@ impl Popup {
                 Some((at, found.score, found.positions))
             })
             .collect();
-        if !typed.is_empty() {
+        if self.kind.is_panel() {
+            let mut group = None;
+            let mut folded = false;
+            let mut grouped = Vec::new();
+            for (at, item) in self.items.iter().enumerate() {
+                if let Payload::Group(path) = &item.payload {
+                    group = Some(at);
+                    folded = typed.is_empty() && self.collapsed.contains(path);
+                    if typed.is_empty() {
+                        grouped.push((at, 0, Vec::new()));
+                    }
+                    continue;
+                }
+                if !folded && let Some(row) = shown.iter().find(|(i, _, _)| *i == at) {
+                    if let Some(g) = group
+                        && grouped.last().is_none_or(|(i, _, _)| *i < g)
+                    {
+                        grouped.push((g, 0, Vec::new()));
+                    }
+                    grouped.push(row.clone());
+                }
+            }
+            shown = grouped;
+        }
+        if !typed.is_empty() && !self.kind.is_panel() {
             shown.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         }
         self.shown = shown.into_iter().map(|(at, _, hits)| (at, hits)).collect();
@@ -199,6 +250,7 @@ impl Popup {
     pub fn view(&self) -> crate::ui::editor::popup::View {
         use crate::ui::editor::popup::{Row, View};
         View {
+            panel: self.kind.is_panel(),
             rows: self
                 .shown
                 .iter()
@@ -207,7 +259,15 @@ impl Popup {
                     Some(Row {
                         label: item.label.clone(),
                         detail: item.detail.clone(),
-                        badge: item.badge,
+                        badge: if let Payload::Group(path) = &item.payload {
+                            if self.collapsed.contains(path) {
+                                "▸"
+                            } else {
+                                "▾"
+                            }
+                        } else {
+                            item.badge
+                        },
                         matches: hits.clone(),
                         faint: item.faint,
                     })
@@ -216,7 +276,7 @@ impl Popup {
                 .into(),
             selected: self.selected,
             scroll: self.scroll,
-            visible: VISIBLE,
+            visible: self.visible,
             query: self.query.clone(),
             title: self.title.clone(),
             empty: self.empty.clone(),
@@ -260,16 +320,32 @@ impl Popup {
     }
 
     pub fn scroll_by(&mut self, delta: isize) {
-        let max = self.shown.len().saturating_sub(VISIBLE) as isize;
+        let max = self.shown.len().saturating_sub(self.visible) as isize;
         self.scroll = (self.scroll as isize + delta).clamp(0, max) as usize;
     }
 
     fn keep_selection_visible(&mut self) {
         if self.selected < self.scroll {
             self.scroll = self.selected;
-        } else if self.selected >= self.scroll + VISIBLE {
-            self.scroll = self.selected + 1 - VISIBLE;
+        } else if self.selected >= self.scroll + self.visible {
+            self.scroll = self.selected + 1 - self.visible;
         }
+    }
+
+    pub fn resize(&mut self, height: f32) {
+        if self.kind.is_panel() {
+            self.visible = (((height * 0.45).max(90.0).min((height - 8.0).max(0.0)) - 56.0)
+                / crate::ui::editor::popup::ROW_H)
+                .floor()
+                .max(1.0) as usize;
+            self.keep_selection_visible();
+        }
+    }
+    pub fn toggle_group(&mut self, path: std::path::PathBuf) {
+        if !self.collapsed.remove(&path) {
+            self.collapsed.insert(path);
+        }
+        self.refilter();
     }
 }
 
@@ -363,5 +439,30 @@ mod tests {
         p.move_by(1);
         p.page(1);
         assert!(p.selected_item().is_none());
+    }
+
+    #[test]
+    fn reference_groups_fold_and_filter_without_taking_editor_text_after_navigation() {
+        let path = std::path::PathBuf::from("a.rs");
+        let mut p = popup(&[]);
+        p.kind = Kind::References;
+        p.query = Some(String::new());
+        let mut a = item("alpha");
+        a.payload = Payload::Place(Place::bytes(path.clone(), 0..1));
+        let mut b = item("beta");
+        b.payload = Payload::Place(Place::bytes(path.clone(), 2..3));
+        let mut header = item("a.rs");
+        header.payload = Payload::Group(path.clone());
+        p.set_items(vec![header, a, b]);
+        assert_eq!(p.shown.len(), 3);
+        p.toggle_group(path);
+        assert_eq!(p.shown.len(), 1);
+        assert_eq!(p.view().rows[0].badge, "▸");
+        assert!(p.type_text("alpha"));
+        assert_eq!(p.shown.len(), 2);
+        assert_eq!(p.view().rows[1].label, "alpha");
+        p.panel_focused = false;
+        assert!(!p.type_text("editor text"));
+        assert!(!p.backspace());
     }
 }

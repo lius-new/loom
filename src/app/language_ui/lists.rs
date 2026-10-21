@@ -56,6 +56,9 @@ enum Step {
         item: Arc<HierarchyItem>,
     },
     Lenses,
+    ResolveLens {
+        instance: u64,
+    },
 }
 
 #[derive(Clone)]
@@ -127,6 +130,21 @@ fn why(what: &str, failure: Option<&Failure>) -> String {
     }
 }
 
+pub fn resolve_lens(state: &AppContext, instance: u64, lens: Arc<reply::CodeLens>) {
+    let app = state.get();
+    let Some(t) = target(&app, app.workspace.active_pane()) else {
+        return;
+    };
+    ask(
+        state,
+        Step::ResolveLens { instance },
+        Relation::Callers,
+        Feature::CodeLensResolve,
+        |s| s.target(instance).extra(lens.raw.clone()),
+        t,
+    );
+}
+
 /// Takes the answer of the pending request when it is complete. May start the
 /// next step, which is why it needs the application context.
 pub fn tick(state: &AppContext, app: &mut AppState) {
@@ -141,7 +159,11 @@ pub fn tick(state: &AppContext, app: &mut AppState) {
     let t = &pending.target;
     let same_document = app.workspace.active_pane() == t.pane
         && app.workspace.pane(t.pane).and_then(|p| p.active()) == Some(t.document);
-    if !same_document {
+    if !same_document
+        || target(app, t.pane).is_none_or(|now| {
+            now.stamp != t.stamp || now.cursor != t.cursor || now.selection != t.selection
+        })
+    {
         return;
     }
     match pending.step {
@@ -224,18 +246,24 @@ pub fn tick(state: &AppContext, app: &mut AppState) {
             let mut rows = Vec::new();
             for part in &progress.parts {
                 for lens in reply::code_lenses(&part.value, part.encoding) {
-                    let Some(command) = lens.command else {
-                        continue;
-                    };
                     let line = lens.span.start.line as usize + 1;
                     rows.push(Item {
-                        label: command.title.clone(),
+                        label: lens
+                            .command
+                            .as_ref()
+                            .map_or_else(|| "Resolve code lens…".into(), |c| c.title.clone()),
                         detail: format!("line {line}"),
                         badge: "\u{25B6}",
                         faint: false,
-                        payload: Payload::Command {
-                            instance: part.instance,
-                            command,
+                        payload: match lens.command.clone() {
+                            Some(command) => Payload::Command {
+                                instance: part.instance,
+                                command,
+                            },
+                            None => Payload::Lens {
+                                instance: part.instance,
+                                lens: Arc::new(lens),
+                            },
                         },
                     });
                 }
@@ -248,6 +276,44 @@ pub fn tick(state: &AppContext, app: &mut AppState) {
                         .with_field()
                         .titled("Code lenses"),
                 );
+            }
+        }
+        Step::ResolveLens { instance } => {
+            let command = progress
+                .parts
+                .first()
+                .and_then(|part| {
+                    reply::code_lenses(&serde_json::json!([part.value.clone()]), part.encoding)
+                        .into_iter()
+                        .next()
+                })
+                .and_then(|lens| lens.command);
+            if let Some(command) = command {
+                if let Some(application) = state.services().and_then(|r| r.application()) {
+                    let next = state.clone();
+                    let source = t.clone();
+                    application.post(move || {
+                        let app = next.get();
+                        let current = app.workspace.active_pane() == source.pane
+                            && target(&app, source.pane).is_some_and(|now| {
+                                now.stamp == source.stamp
+                                    && now.cursor == source.cursor
+                                    && now.selection == source.selection
+                            });
+                        drop(app);
+                        if current {
+                            let rect = next
+                                .get()
+                                .editor
+                                .language
+                                .rect
+                                .unwrap_or(lgui::prelude::UiRect::new(0.0, 0.0, 0.0, 0.0));
+                            super::refactor::execute(&next, instance, command, rect);
+                        }
+                    });
+                }
+            } else {
+                app.show_toast(why("a code lens command", progress.failure.as_ref()));
             }
         }
     }
@@ -322,18 +388,42 @@ pub fn problems(state: &AppContext) {
         }
     }
     found.sort_by(|a, b| (a.0, &a.1, a.2).cmp(&(b.0, &b.1, b.2)));
-    let rows: Vec<Item> = found.into_iter().map(|(.., item)| item).collect();
-    let count = rows.len();
+    let count = found.len();
+    let mut groups: Vec<(std::path::PathBuf, Vec<Item>)> = Vec::new();
+    let mut indices = std::collections::HashMap::new();
+    for (.., item) in found {
+        let Payload::Place(place) = &item.payload else {
+            continue;
+        };
+        let path = place.path.clone();
+        let at = *indices.entry(path.clone()).or_insert_with(|| {
+            groups.push((path, Vec::new()));
+            groups.len() - 1
+        });
+        groups[at].1.push(item);
+    }
+    let mut rows = Vec::new();
+    for (path, items) in groups {
+        rows.push(Item {
+            label: display_path(&app, &path),
+            detail: format!("{} problems", items.len()),
+            badge: "▾",
+            faint: false,
+            payload: Payload::Group(path),
+        });
+        rows.extend(items);
+    }
     drop(app);
     state.update(|app| {
         if count == 0 {
             app.show_toast("No problems in the open files");
             return;
         }
-        app.editor.language.popup = Some(
-            Popup::new(Kind::Problems, t.pane, t.stamp, None, rows)
-                .with_field()
-                .titled(format!("{count} problems")),
-        );
+        let mut panel = Popup::new(Kind::Problems, t.pane, t.stamp, None, rows)
+            .with_field()
+            .titled(format!("{count} problems"));
+        panel.resize(app.editor.language.rect.map_or(600.0, |r| r.height()));
+        panel.select(1);
+        app.editor.language.popup = Some(panel);
     });
 }

@@ -158,6 +158,9 @@ pub fn execute_command(
         {
             return;
         }
+        if matches!(command, Command::Undo | Command::Redo) {
+            super::language_ui::snippet_session::end(app);
+        }
         if matches!(command, Command::Undo | Command::Redo)
             && let Some(outcome) =
                 super::language_ui::edit::undo_redo(app, command == Command::Undo)

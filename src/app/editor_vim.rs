@@ -315,23 +315,34 @@ fn scroll_cursor(app: &mut AppState, rect: UiRect, position: ScrollPosition) {
 fn perform(state: &AppContext, requests: Vec<Request>, rect: UiRect) {
     for request in requests {
         match request {
-            Request::Save => crate::app::language_ui::save::save(
-                state,
-                rect,
-                std::sync::Arc::new(|state| {
-                    crate::app::workspace_commands::save_active_document(state);
-                }),
-            ),
+            Request::Save => {
+                let document = state.get().workspace.active();
+                crate::app::language_ui::save::save(
+                    state,
+                    rect,
+                    std::sync::Arc::new(move |state| {
+                        if let Some(document) = document {
+                            crate::app::workspace_commands::save_document(state, document);
+                        }
+                    }),
+                )
+            }
             Request::Quit { force } => quit(state, force),
-            Request::SaveAndQuit => crate::app::language_ui::save::save(
-                state,
-                rect,
-                std::sync::Arc::new(|state| {
-                    if crate::app::workspace_commands::save_active_document(state) {
-                        quit(state, false);
-                    }
-                }),
-            ),
+            Request::SaveAndQuit => {
+                let document = state.get().workspace.active();
+                crate::app::language_ui::save::save(
+                    state,
+                    rect,
+                    std::sync::Arc::new(move |state| {
+                        if let Some(document) = document
+                            && crate::app::workspace_commands::save_document(state, document)
+                            && state.get().workspace.active() == Some(document)
+                        {
+                            quit(state, false);
+                        }
+                    }),
+                )
+            }
             Request::Scroll(_) => {}
             Request::Language(command) => {
                 crate::app::language_ui::keys::vim_command(state, command, rect)

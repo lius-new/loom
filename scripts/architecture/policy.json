@@ -855,6 +855,10 @@
     }
   },
   "framework_runtime_access": [
+    "src/app/code_action_lightbulb_tests.rs",
+    "src/app/snippet_choice_tests.rs",
+    "src/app/signature_help_tests.rs",
+    "src/app/language_install.rs",
     "src/app/editor_vim_integration_tests.rs",
     "src/app/git_view_tests.rs",
     "src/app/search.rs",

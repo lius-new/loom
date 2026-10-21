@@ -561,7 +561,7 @@ fn what_the_server_asks_of_the_client_is_answered_and_the_answers_arrive() {
     assert_eq!(refused["error"]["code"], json!(-32601));
     server.wait(
         "the refusal to be noted",
-        |e| matches!(e, Event::Refused { method } if method == "client/registerCapability"),
+        |e| matches!(e, Event::Refused { method } if method == "client/unheardOf"),
     );
     server.client.stop();
 }

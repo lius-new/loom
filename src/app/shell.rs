@@ -395,8 +395,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         scale_windows.set_scale_preference(window_geometry::scale_preference(settings.ui_scale));
         || {}
     });
+    let persistence_state = state.clone();
     cx.use_effect(settings.clone(), move || {
-        let _ = settings_persistence::save(&settings);
+        if let Err(error) = settings_persistence::save(&settings) {
+            persistence_state
+                .update(|app| app.show_error(format!("Could not save user settings: {error}")));
+        }
         || {}
     });
     let show_clone_dialog = s.git.ui.clone_visible;
@@ -1185,6 +1189,16 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
 
     // ---- Overlays ------------------------------------------------------
+    if let Some(frame) = super::language_install::frame(&state) {
+        let install_state = state.clone();
+        root = root.child(crate::ui::language_install::render(
+            editor_area,
+            &frame,
+            std::sync::Arc::new(move |choice, servers| {
+                super::language_install::respond(&install_state, choice, servers)
+            }),
+        ));
+    }
     if s.chrome.language_panel {
         let panel_state = state.clone();
         root = root.child(crate::ui::language_panel::render(
@@ -1206,6 +1220,20 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                         panel_state.services().and_then(|r| r.language_services())
                     {
                         services.install(&server);
+                    }
+                }
+                crate::ui::language_panel::Event::CancelTask(target) => {
+                    if let Some(services) =
+                        panel_state.services().and_then(|r| r.language_services())
+                    {
+                        services.cancel_task(target.instance, target.run, target.task);
+                    }
+                }
+                crate::ui::language_panel::Event::CancelInstall(target) => {
+                    if let Some(services) =
+                        panel_state.services().and_then(|r| r.language_services())
+                    {
+                        services.cancel_install(&target.server, target.generation);
                     }
                 }
                 crate::ui::language_panel::Event::RetryDownloads => {

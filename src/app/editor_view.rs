@@ -200,6 +200,10 @@ pub(crate) fn snapshot(
         peek_visible,
         hover: None,
         popup: None,
+        snippet_choices: None,
+        lightbulb: None,
+        quickfix: None,
+        language_peek: None,
         signature: None,
         symbol_highlights: Arc::from(Vec::new()),
         inlay_hints: Arc::from(Vec::new()),
@@ -235,7 +239,11 @@ pub(crate) fn binding(
             if let Some(document) = &view.document {
                 let app = reader.get();
                 view.popup = super::language_ui::popup_view(&app, pane, &document.stamp);
+                view.snippet_choices = super::language_ui::snippet_session::choice_view(&app, pane);
                 view.signature = super::language_ui::signature_view(&app, pane);
+                view.lightbulb = super::language_ui::lightbulb::for_view(&reader, &app, pane);
+                view.quickfix = super::language_ui::quickfix::view(&reader, &app, pane);
+                view.language_peek = super::language_ui::peek::view(&app, pane);
                 view.inlay_hints = app
                     .editor
                     .language
@@ -304,6 +312,65 @@ pub(crate) fn binding(
             }
             if let Event::Popup(popup_event) = event {
                 super::language_ui::popup_event(&dispatcher, popup_event, rect);
+                return;
+            }
+            if let Event::SnippetChoice { revision, event } = event {
+                dispatcher.try_update(|app| {
+                    super::language_ui::snippet_session::choice_event(app, revision, event)
+                });
+                return;
+            }
+            if let Event::CodeActions { revision } = event {
+                dispatcher.try_update(|app| {
+                    super::language_ui::lightbulb::open(&dispatcher, app, pane, revision)
+                });
+                return;
+            }
+            if let Event::QuickFix { revision, index } = event {
+                super::language_ui::quickfix::choose(&dispatcher, pane, revision, index, rect);
+                return;
+            }
+            if let Event::PeekOpen { revision } = event {
+                super::language_ui::peek::jump(&dispatcher, revision, rect);
+                return;
+            }
+            if let Event::DiagnosticLink(url) = event {
+                let app = dispatcher.get();
+                let valid = super::language_ui::target(&app, pane)
+                    .and_then(|t| {
+                        super::language_ui::services(&dispatcher)
+                            .and_then(|s| s.results(&t.path, &t.stamp).diagnostics)
+                    })
+                    .is_some_and(|ds| {
+                        ds.iter().any(|d| {
+                            d.extra
+                                .pointer("/codeDescription/href")
+                                .and_then(serde_json::Value::as_str)
+                                == Some(url.as_str())
+                        })
+                    });
+                if valid
+                    && (url.starts_with("https://") || url.starts_with("http://"))
+                    && !url.contains('\0')
+                {
+                    if let Err(error) = crate::infrastructure::update::open_page(&url) {
+                        dispatcher.update(|app| {
+                            app.show_error(format!(
+                                "Could not open diagnostic documentation: {error}"
+                            ))
+                        });
+                    }
+                }
+                return;
+            }
+            if let Event::PeekClose { revision } = event {
+                dispatcher.update(|app| {
+                    if super::language_ui::peek::view(app, pane)
+                        .is_some_and(|v| v.revision == revision)
+                    {
+                        super::language_ui::peek::close(app);
+                    }
+                });
                 return;
             }
             if let Event::Text(text) = &event
@@ -403,6 +470,9 @@ pub(crate) fn binding(
 
 pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Event) -> bool {
     match event {
+        Event::Signature { revision, forward } => {
+            return super::language_ui::signature::step(app, forward, Some(revision));
+        }
         Event::PointerDown {
             document,
             point,
@@ -412,6 +482,15 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
         } => {
             if app.workspace.pane(pane).and_then(|value| value.active()) != Some(document) {
                 return false;
+            }
+            if let Some(popup) = app
+                .editor
+                .language
+                .popup
+                .as_mut()
+                .filter(|p| p.kind == super::language_ui::popup::Kind::References)
+            {
+                popup.panel_focused = false;
             }
             editor::pointer_down(app, pane, document, rect, code_left, metrics, point, button);
         }
@@ -518,7 +597,16 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
                 app.editor.editor_horizontal_scrollbar_dragging = false;
             }
         }
-        Event::Peek { .. } | Event::HoverMove { .. } | Event::HoverLeave | Event::Popup(_) => {
+        Event::Peek { .. }
+        | Event::HoverMove { .. }
+        | Event::HoverLeave
+        | Event::Popup(_)
+        | Event::SnippetChoice { .. }
+        | Event::CodeActions { .. }
+        | Event::QuickFix { .. }
+        | Event::PeekOpen { .. }
+        | Event::PeekClose { .. }
+        | Event::DiagnosticLink(_) => {
             return false;
         }
     }

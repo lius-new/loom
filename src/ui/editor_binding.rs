@@ -66,6 +66,11 @@ pub(crate) struct ViewState {
     pub hover: Option<HoverView>,
     /// The list open over the code, if any.
     pub popup: Option<crate::ui::editor::popup::View>,
+    pub snippet_choices: Option<(u64, crate::ui::editor::popup::View)>,
+    /// Generation of the code-action list available at the current selection.
+    pub lightbulb: Option<u64>,
+    pub quickfix: Option<QuickFixView>,
+    pub language_peek: Option<crate::ui::editor::peek::View>,
     /// The signature of the call being typed, with where it opened.
     pub signature: Option<(usize, crate::ui::editor::signature::View)>,
     /// Other occurrences of the symbol under the caret.
@@ -79,6 +84,11 @@ pub(crate) struct ViewState {
 pub(crate) struct HoverView {
     pub anchor: Range<usize>,
     pub blocks: Arc<[crate::features::markdown::Block]>,
+}
+pub(crate) struct QuickFixView {
+    pub revision: u64,
+    pub range: Range<usize>,
+    pub labels: Vec<String>,
 }
 /// One adjacent run of changes in the overview ruler, with a zero-based first line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +115,20 @@ pub(crate) struct Metrics {
     pub max_y: f32,
 }
 pub(crate) enum Event {
+    DiagnosticLink(String),
+    PeekOpen {
+        revision: u64,
+    },
+    PeekClose {
+        revision: u64,
+    },
+    QuickFix {
+        revision: u64,
+        index: usize,
+    },
+    CodeActions {
+        revision: u64,
+    },
     PointerDown {
         document: FileId,
         point: (f32, f32),
@@ -135,6 +159,14 @@ pub(crate) enum Event {
     HoverLeave,
     /// The mouse did something in the popup list.
     Popup(crate::ui::editor::popup::Event),
+    SnippetChoice {
+        revision: u64,
+        event: crate::ui::editor::popup::Event,
+    },
+    Signature {
+        revision: u64,
+        forward: bool,
+    },
     Text(String),
     Composition {
         text: String,

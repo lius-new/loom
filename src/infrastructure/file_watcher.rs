@@ -147,6 +147,23 @@ pub(crate) fn start(
     roots: Vec<PathBuf>,
     on_batch: impl Fn(FileChangeBatch) + Send + 'static,
 ) -> notify::Result<FileWatchHandle> {
+    start_filtered(roots, on_batch, true)
+}
+
+/// Protocol consumers may explicitly watch Git metadata. The editor's reload
+/// watcher keeps its existing exclusion; both consumers share the same source.
+pub(crate) fn start_unfiltered(
+    roots: Vec<PathBuf>,
+    on_batch: impl Fn(FileChangeBatch) + Send + 'static,
+) -> notify::Result<FileWatchHandle> {
+    start_filtered(roots, on_batch, false)
+}
+
+fn start_filtered(
+    roots: Vec<PathBuf>,
+    on_batch: impl Fn(FileChangeBatch) + Send + 'static,
+    exclude_git: bool,
+) -> notify::Result<FileWatchHandle> {
     let roots = normalized_roots(roots);
     let (event_sender, event_receiver) = mpsc::channel::<notify::Result<Event>>();
 
@@ -188,7 +205,8 @@ pub(crate) fn start(
                                 Err(RecvTimeoutError::Disconnected) => break,
                             }
                         }
-                        let batch = coalesce_events(std::mem::take(&mut pending), &roots);
+                        let batch =
+                            coalesce_filtered(std::mem::take(&mut pending), &roots, exclude_git);
                         if batch.requires_full_rescan || !batch.changes.is_empty() {
                             on_batch(batch);
                         }
@@ -265,6 +283,14 @@ pub(crate) fn coalesce_events(
     events: Vec<notify::Result<Event>>,
     roots: &[PathBuf],
 ) -> FileChangeBatch {
+    coalesce_filtered(events, roots, true)
+}
+
+fn coalesce_filtered(
+    events: Vec<notify::Result<Event>>,
+    roots: &[PathBuf],
+    exclude_git: bool,
+) -> FileChangeBatch {
     let mut by_path = HashMap::<PathBuf, FileChangeKind>::new();
     let mut requires_full_rescan = false;
 
@@ -286,9 +312,10 @@ pub(crate) fn coalesce_events(
             let path = absolute_event_path(path, roots);
             // Git metadata is polled by the Git worker and must not cause
             // directory/document reload storms during checkout or staging.
-            if path
-                .components()
-                .any(|component| component.as_os_str() == ".git")
+            if exclude_git
+                && path
+                    .components()
+                    .any(|component| component.as_os_str() == ".git")
             {
                 continue;
             }

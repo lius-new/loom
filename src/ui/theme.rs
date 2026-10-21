@@ -456,7 +456,9 @@ pub const TERMINAL_MIN_H: f32 = 120.0;
 pub const TERMINAL_MAX_H: f32 = 480.0;
 pub const EDITOR_MIN_H: f32 = 96.0;
 /// Minimum editor gutter width; see `fonts::Metrics::gutter_w`.
-pub const GUTTER_W: f32 = 48.0;
+/// Line numbers and Git marks retain 48 pixels beside the action lane.
+pub const GUTTER_W: f32 = 66.0;
+pub const GUTTER_ACTION_W: f32 = 18.0;
 pub const CODE_PAD: f32 = 16.0;
 /// Estimated monospace advance of UI text at `UI_SIZE`. Code surfaces use
 /// the measured `fonts::Metrics::char_w` instead.

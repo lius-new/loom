@@ -41,16 +41,21 @@ impl Diagnostic {
     /// request.
     pub fn to_protocol(&self, text: &str, encoding: PositionEncoding) -> Value {
         let span = super::reply::Span::of(text, self.range.clone(), encoding);
-        let mut object = serde_json::json!({
-            "range": span.json(),
-            "severity": self.severity.number(),
-            "message": self.message,
-        });
+        let mut object = if self.extra.is_object() {
+            self.extra.clone()
+        } else {
+            serde_json::json!({})
+        };
+        object["range"] = span.json();
+        object["severity"] = self.severity.number().into();
+        object["message"] = self.message.clone().into();
         if let Some(source) = &self.source {
             object["source"] = source.clone().into();
         }
         if let Some(code) = &self.code {
-            object["code"] = code.clone().into();
+            if object.get("code").is_none() {
+                object["code"] = code.clone().into();
+            }
         }
         object
     }
@@ -63,6 +68,8 @@ pub struct Diagnostic {
     pub message: String,
     pub source: Option<String>,
     pub code: Option<String>,
+    /// Original fields (typed code, data, tags, related information and links).
+    pub extra: Value,
 }
 
 /// What one `publishDiagnostics` notification says, before positions are
@@ -83,6 +90,7 @@ struct Raw {
     message: String,
     source: Option<String>,
     code: Option<String>,
+    extra: Value,
 }
 
 fn position(value: &Value) -> Option<Position> {
@@ -105,6 +113,7 @@ pub fn parse(params: &Value) -> Option<Published> {
                 .filter_map(|item| {
                     let range = item.get("range")?;
                     Some(Raw {
+                        extra: item.clone(),
                         start: position(range.get("start")?)?,
                         end: position(range.get("end")?)?,
                         severity: Severity::from_protocol(
@@ -167,6 +176,7 @@ impl Published {
                     }
                 }
                 Diagnostic {
+                    extra: raw.extra.clone(),
                     range: start..end,
                     severity: raw.severity,
                     message: raw.message.clone(),
@@ -239,6 +249,21 @@ pub fn carry(old: &str, new: &str, diagnostics: Vec<Diagnostic>) -> Vec<Diagnost
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quick_fix_context_preserves_numeric_codes_data_links_tags_and_related_information() {
+        let params = serde_json::json!({"uri":"file:///a","diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},"message":"missing","code":2304,"data":{"ticket":7},"tags":[1],"codeDescription":{"href":"https://example.com/error"},"relatedInformation":[]}]});
+        let diagnostic = parse(&params)
+            .unwrap()
+            .resolve("abc", PositionEncoding::Utf16)
+            .remove(0);
+        let wire = diagnostic.to_protocol("abc", PositionEncoding::Utf16);
+        assert_eq!(wire["code"], 2304);
+        assert_eq!(wire["data"]["ticket"], 7);
+        assert_eq!(wire["tags"], serde_json::json!([1]));
+        assert_eq!(wire["relatedInformation"], serde_json::json!([]));
+        assert_eq!(wire["codeDescription"]["href"], "https://example.com/error");
+    }
     use crate::features::language_service::capabilities::PositionEncoding::{Utf8, Utf16};
     use serde_json::json;
 
@@ -319,6 +344,7 @@ mod tests {
             message: "m".into(),
             source: None,
             code: None,
+            extra: Value::Null,
         }
     }
 

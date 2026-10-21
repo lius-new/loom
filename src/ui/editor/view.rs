@@ -241,6 +241,24 @@ pub(crate) fn render(
             );
         }
         let st_gutter_hover = state.clone();
+        if focused_pane
+            && visible_lines.contains(&cursor_line)
+            && let Some(revision) = s.lightbulb
+        {
+            let top = code_top + cursor_line as f32 * fonts::editor().line_h - scroll_y;
+            let st_actions = state.clone();
+            content = content.child(clip(gutter_viewport, 0.0, 0.0).child(
+                super::lightbulb::render(
+                    UiRect::new(
+                        gutter_viewport.left,
+                        top,
+                        gutter_viewport.left + theme::GUTTER_ACTION_W,
+                        top + fonts::editor().line_h,
+                    ),
+                    move || st_actions.send(Event::CodeActions { revision }),
+                ),
+            ));
+        }
         root = root.on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
             if let UiEventPayload::PointerMove { pointer } = payload {
                 let point = pointer.point;
@@ -523,32 +541,59 @@ pub(crate) fn render(
                         && hover.anchor.start < d.range.end.max(d.range.start + 1)
                 })
                 .collect();
-            anchor.and_then(|anchor| info_card(&found, Some(&hover.blocks), anchor, hover_area))
+            anchor.and_then(|anchor| {
+                info_card_actions(
+                    &found,
+                    Some(&hover.blocks),
+                    anchor,
+                    hover_area,
+                    s.quickfix.as_ref(),
+                    Some(state.clone()),
+                )
+            })
         } else if let Some((anchor, range)) = &hovered_diagnostic {
             let found: Vec<_> = s.diagnostics.iter().filter(|d| d.range == *range).collect();
-            info_card(&found, None, *anchor, hover_area)
+            info_card_actions(
+                &found,
+                None,
+                *anchor,
+                hover_area,
+                s.quickfix.as_ref(),
+                Some(state.clone()),
+            )
         } else {
             None
         };
         // The popup list, drawn over the code; the pointer on it leaves hover alone.
-        let popup = s.popup.as_ref().map(|view| {
-            let anchor = view.anchor.and_then(|offset| {
-                anchor_rect(
-                    &buffer,
-                    &(offset..offset),
-                    (code_left, code_top, layout_right),
-                    (scroll_x, scroll_y),
-                    metrics.viewport_w,
+        let choice_revision = s.snippet_choices.as_ref().map(|(revision, _)| *revision);
+        let popup = s
+            .snippet_choices
+            .as_ref()
+            .map(|(_, view)| view)
+            .or(s.popup.as_ref())
+            .map(|view| {
+                let anchor = view.anchor.and_then(|offset| {
+                    anchor_rect(
+                        &buffer,
+                        &(offset..offset),
+                        (code_left, code_top, layout_right),
+                        (scroll_x, scroll_y),
+                        metrics.viewport_w,
+                    )
+                });
+                let send = state.clone();
+                super::popup::render(
+                    view,
+                    anchor,
+                    hover_area,
+                    std::sync::Arc::new(move |event| {
+                        send.send(match choice_revision {
+                            Some(revision) => Event::SnippetChoice { revision, event },
+                            None => Event::Popup(event),
+                        })
+                    }),
                 )
             });
-            let send = state.clone();
-            super::popup::render(
-                view,
-                anchor,
-                hover_area,
-                std::sync::Arc::new(move |event| send.send(Event::Popup(event))),
-            )
-        });
         let signature = s.signature.as_ref().and_then(|(anchor, view)| {
             let rect = anchor_rect(
                 &buffer,
@@ -557,9 +602,19 @@ pub(crate) fn render(
                 (scroll_x, scroll_y),
                 metrics.viewport_w,
             )?;
-            Some(super::signature::render(view, rect, hover_area))
+            let send = state.clone();
+            let revision = view.revision;
+            Some(super::signature::render(
+                view,
+                rect,
+                hover_area,
+                std::sync::Arc::new(move |forward| {
+                    send.send(Event::Signature { revision, forward });
+                }),
+            ))
         });
         let popup_rect = popup.as_ref().map(|(rect, _)| *rect);
+        let signature_rect = signature.as_ref().map(|(rect, _)| *rect);
         let card_rect = card
             .as_ref()
             .map(|(rect, _)| *rect)
@@ -572,6 +627,7 @@ pub(crate) fn render(
                 // On the card itself nothing changes: it must stay to be read.
                 if card_rect.is_some_and(|rect| rect.contains(point))
                     || popup_rect.is_some_and(|rect| rect.contains(point))
+                    || signature_rect.is_some_and(|rect| rect.contains(point))
                 {
                     return;
                 }
@@ -671,6 +727,9 @@ pub(crate) fn render(
         }
         if let Some((_, popup)) = popup {
             root = root.child(popup);
+        }
+        if let Some(peek) = &s.language_peek {
+            root = root.child(super::peek::render(peek, rect, state.clone()));
         }
     }
 
@@ -915,11 +974,23 @@ pub(crate) fn card_origin(anchor: UiRect, area: UiRect, width: f32, height: f32)
 /// VS Code shows `rustc(E0425)`), then what the language servers say about the
 /// text, as Markdown. It is placed by [`card_origin`]. `None` when there is
 /// nothing to show.
+#[cfg(test)]
 pub(crate) fn info_card(
     found: &[&Diagnostic],
     docs: Option<&[crate::features::markdown::Block]>,
     anchor: UiRect,
     area: UiRect,
+) -> Option<(UiRect, Element)> {
+    info_card_actions(found, docs, anchor, area, None, None)
+}
+
+fn info_card_actions(
+    found: &[&Diagnostic],
+    docs: Option<&[crate::features::markdown::Block]>,
+    anchor: UiRect,
+    area: UiRect,
+    fixes: Option<&crate::ui::editor_binding::QuickFixView>,
+    binding: Option<Binding>,
 ) -> Option<(UiRect, Element)> {
     let docs = docs.filter(|blocks| !blocks.is_empty());
     if found.is_empty() && docs.is_none() {
@@ -958,6 +1029,12 @@ pub(crate) fn info_card(
         }
         rows += lines.len().max(1);
     }
+    let fixes = fixes.filter(|v| found.iter().any(|d| d.range == v.range));
+    if let Some(fixes) = fixes {
+        for label in &fixes.labels {
+            natural = natural.max(measure(label) + 20.0);
+        }
+    }
     let diagnostics_w = if entries.is_empty() {
         0.0
     } else {
@@ -990,7 +1067,8 @@ pub(crate) fn info_card(
         9.0
     };
     let docs_h = documentation.as_ref().map_or(0.0, |l| l.height);
-    let height = (diagnostics_h + separator + docs_h + 2.0 * CARD_PAD)
+    let fixes_h = fixes.map_or(0.0, |v| v.labels.len() as f32 * CARD_ROW + 9.0);
+    let height = (diagnostics_h + separator + docs_h + fixes_h + 2.0 * CARD_PAD)
         .min((area.height() * 0.7).max(CARD_ROW * 3.0));
     let (left, top) = card_origin(anchor, area, width, height);
     let card_rect = UiRect::new(left, top, left + width, top + height);
@@ -1027,15 +1105,78 @@ pub(crate) fn info_card(
                 && let Some(origin) = origin
             {
                 let after = text_left + measure(line) + 8.0;
-                content = content.child(text(
-                    UiRect::new(after, y, body.right.max(after), y + CARD_ROW),
-                    origin.clone(),
-                    theme::sans(theme::c().text_faint, size),
-                ));
+                let r = UiRect::new(after, y, body.right.max(after), y + CARD_ROW);
+                let href = found[index]
+                    .extra
+                    .pointer("/codeDescription/href")
+                    .and_then(serde_json::Value::as_str);
+                if let Some(href) =
+                    href.filter(|u| u.starts_with("https://") || u.starts_with("http://"))
+                    && let Some(binding) = binding.as_ref()
+                {
+                    let send = binding.clone();
+                    let url = href.to_owned();
+                    content = content.child(
+                        panel(r, VisualStyle::default())
+                            .event_policy(EventPolicy {
+                                focus: false,
+                                ..EventPolicy::INTERACTIVE
+                            })
+                            .cursor(CursorIcon::Pointer)
+                            .semantics(
+                                Semantics::new(SemanticRole::Button)
+                                    .name("Open diagnostic documentation"),
+                            )
+                            .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
+                            .on_click(move |cx: &mut lgui::core::UiEventContext| {
+                                cx.stop_propagation();
+                                send.send(Event::DiagnosticLink(url.clone()));
+                            })
+                            .child(text(
+                                r,
+                                origin.clone(),
+                                theme::sans(theme::c().accent, size),
+                            )),
+                    );
+                } else {
+                    content = content.child(text(
+                        r,
+                        origin.clone(),
+                        theme::sans(theme::c().text_faint, size),
+                    ));
+                }
             }
             y += CARD_ROW;
         }
         if lines.is_empty() {
+            y += CARD_ROW;
+        }
+    }
+    if let Some(fixes) = fixes
+        && let Some(binding) = binding
+    {
+        y += 9.0;
+        for (index, label) in fixes.labels.iter().enumerate() {
+            let r = UiRect::new(body.left, y, body.right, y + CARD_ROW);
+            let send = binding.clone();
+            let revision = fixes.revision;
+            content = content.child(
+                panel(r, VisualStyle::default())
+                    .event_policy(EventPolicy {
+                        focus: false,
+                        ..EventPolicy::INTERACTIVE
+                    })
+                    .cursor(CursorIcon::Pointer)
+                    .semantics(
+                        Semantics::new(SemanticRole::Button).name(format!("Quick fix: {label}")),
+                    )
+                    .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
+                    .on_click(move |cx: &mut lgui::core::UiEventContext| {
+                        cx.stop_propagation();
+                        send.send(Event::QuickFix { revision, index });
+                    })
+                    .child(text(r, label.clone(), theme::sans(theme::c().accent, size))),
+            );
             y += CARD_ROW;
         }
     }
