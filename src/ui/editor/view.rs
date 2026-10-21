@@ -525,6 +525,7 @@ pub(crate) fn render(
             .cloned();
         // The card: a server hover text with the diagnostics under it, or just the
         // diagnostic the pointer is on.
+        let mut card_anchor: Option<UiRect> = None;
         let card = if let Some(hover) = &s.hover {
             let anchor = anchor_rect(
                 &buffer,
@@ -533,6 +534,7 @@ pub(crate) fn render(
                 (scroll_x, scroll_y),
                 metrics.viewport_w,
             );
+            card_anchor = anchor;
             let found: Vec<&Diagnostic> = s
                 .diagnostics
                 .iter()
@@ -552,6 +554,7 @@ pub(crate) fn render(
                 )
             })
         } else if let Some((anchor, range)) = &hovered_diagnostic {
+            card_anchor = Some(*anchor);
             let found: Vec<_> = s.diagnostics.iter().filter(|d| d.range == *range).collect();
             info_card_actions(
                 &found,
@@ -619,6 +622,18 @@ pub(crate) fn render(
             .as_ref()
             .map(|(rect, _)| *rect)
             .filter(|_| popup_rect.is_none());
+        // The strip between the word and its card: the pointer crossing it on
+        // the way to the card must not dismiss the card.
+        let card_bridge = card_rect.zip(card_anchor).and_then(|(card, anchor)| {
+            let (left, right) = (card.left.min(anchor.left), card.right.max(anchor.right));
+            if card.top >= anchor.bottom {
+                Some(UiRect::new(left, anchor.bottom, right, card.top))
+            } else if card.bottom <= anchor.top {
+                Some(UiRect::new(left, card.bottom, right, anchor.top))
+            } else {
+                None
+            }
+        });
         let st_diagnostic_hover = state.clone();
         let dragging = s.dragging;
         root = root.on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
@@ -626,6 +641,7 @@ pub(crate) fn render(
                 let point = pointer.point;
                 // On the card itself nothing changes: it must stay to be read.
                 if card_rect.is_some_and(|rect| rect.contains(point))
+                    || card_bridge.is_some_and(|rect| rect.contains(point))
                     || popup_rect.is_some_and(|rect| rect.contains(point))
                     || signature_rect.is_some_and(|rect| rect.contains(point))
                 {
