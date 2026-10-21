@@ -218,8 +218,8 @@ fn expire(state: &AppContext, id: u64) {
     }
 }
 
-/// Applies a finished step and moves on. Returns what to run when the saving
-/// can go ahead.
+/// Applies a finished step and moves on. Follow-up work must run after the UI
+/// has delivered queued server actions, including edits from a completed command.
 pub fn tick(state: &AppContext, app: &mut AppState) -> Option<Then> {
     let mut run = app.editor.language.save.clone()?;
     if run.stage == Stage::Loading {
@@ -292,7 +292,17 @@ pub fn tick(state: &AppContext, app: &mut AppState) -> Option<Then> {
                 return apply_action(state, app, run);
             }
         }
-        Stage::Command => {}
+        Stage::Command => {
+            // The command reply and its applyEdit can share one UI notification.
+            // tick() delivers server actions before invoking this continuation.
+            return Some(Arc::new(move |state| {
+                let mut then = None;
+                state.update(|app| then = next_kind(state, app, run.clone()));
+                if let Some(then) = then {
+                    then(state);
+                }
+            }));
+        }
         Stage::Format => {
             if let (Some(part), Some(link)) = (
                 progress.usable(Feature::Formatting).first(),

@@ -2291,8 +2291,7 @@ mod tests {
         use std::sync::Mutex;
         use std::time::{Duration, Instant};
 
-        let (root, backend) =
-            crate::infrastructure::git::backend::tests::repository().expect("Git runtime");
+        let (root, backend) = crate::infrastructure::git::backend::tests::required_repository();
         std::fs::write(root.join("file.txt"), "base\n").unwrap();
         backend.stage(&root, &["file.txt".into()]).unwrap();
         backend.commit(&root, "base", false, false).unwrap();

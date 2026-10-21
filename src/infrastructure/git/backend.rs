@@ -1629,51 +1629,76 @@ pub(crate) mod tests {
     use super::*;
     use crate::infrastructure::git::runtime::GitRuntimeManager;
 
+    fn temporary_repository_root() -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        loop {
+            let root = std::env::temp_dir().join(format!(
+                "loom-git-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            // Exclusive creation also handles directories left by an older process
+            // that happened to have the same PID. Wall-clock resolution is irrelevant.
+            match std::fs::create_dir(&root) {
+                Ok(()) => return root,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create Git fixture directory {}: {error}", root.display()),
+            }
+        }
+    }
+
     pub(crate) fn repository() -> Option<(PathBuf, CliGitBackend)> {
         let runtime = GitRuntimeManager::default().resolve().ok()?;
-        let root = std::env::temp_dir().join(format!(
-            "loom-git-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()?
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).ok()?;
+        Some(repository_with_runtime(runtime))
+    }
+
+    pub(crate) fn required_repository() -> (PathBuf, CliGitBackend) {
+        let runtime = GitRuntimeManager::default()
+            .resolve()
+            .expect("resolve Git runtime for required repository fixture");
+        repository_with_runtime(runtime)
+    }
+
+    fn repository_with_runtime(runtime: GitRuntime) -> (PathBuf, CliGitBackend) {
+        let root = temporary_repository_root();
         let backend = CliGitBackend::new(runtime);
-        backend
-            .runner()
-            .run(GitCommand::new().cwd(&root).args(["init", "-b", "main"]))
-            .ok()?;
         // These synthetic fixtures assert exact LF bytes after checkout.
-        // Pin only their local policy, independently of system/user defaults.
-        for (key, value) in [("core.autocrlf", "false"), ("core.eol", "lf")] {
+        // Pin their local policy independently of system/user defaults.
+        let commands: &[&[&str]] = &[
+            &["init", "-b", "main"],
+            &["config", "--local", "core.autocrlf", "false"],
+            &["config", "--local", "core.eol", "lf"],
+            &["config", "--local", "user.name", "Loom Test"],
+            &["config", "--local", "user.email", "loom@example.invalid"],
+        ];
+        for args in commands {
             backend
                 .runner()
-                .run(
-                    GitCommand::new()
-                        .cwd(&root)
-                        .args(["config", "--local", key, value]),
-                )
-                .expect("set the temporary repository's fixture line endings");
+                .run(GitCommand::new().cwd(&root).args(args.iter().copied()))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Git fixture setup failed: executable={} cwd={} args={args:?}; {error:?}",
+                        backend.runner().git_runtime().executable.display(),
+                        root.display()
+                    )
+                });
         }
-        backend
-            .runner()
-            .run(
-                GitCommand::new()
-                    .cwd(&root)
-                    .args(["config", "user.name", "Loom Test"]),
-            )
-            .ok()?;
-        backend
-            .runner()
-            .run(GitCommand::new().cwd(&root).args([
-                "config",
-                "user.email",
-                "loom@example.invalid",
-            ]))
-            .ok()?;
-        Some((root, backend))
+        (root, backend)
+    }
+
+    #[test]
+    fn temporary_repository_directories_are_exclusive_under_parallel_creation() {
+        let threads: Vec<_> = (0..32)
+            .map(|_| std::thread::spawn(temporary_repository_root))
+            .collect();
+        let roots: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        let unique: std::collections::HashSet<_> = roots.iter().collect();
+        assert_eq!(unique.len(), roots.len());
+        for root in roots {
+            assert!(root.is_dir());
+            std::fs::remove_dir(root).unwrap();
+        }
     }
 
     #[test]

@@ -1400,17 +1400,18 @@ fn diagnostics_from_a_server_are_underlined_in_the_editor() {
                 application.clone(),
             ));
             let results_state = state.clone();
+            // Match shell.rs: deliver server results through the UI queue, after
+            // the UI has installed the request handle that will consume them.
+            let results_ready = crate::infrastructure::ui_dispatch::LatestNotification::new(
+                application.clone(),
+                move |()| crate::app::language_ui::tick(&results_state),
+            );
             view_runtime.install_language_services(
                 crate::app::language_services::LanguageServices::new(
                     crate::features::language_service::server_set::rust_analyzer_running(
                         &fake.display().to_string(),
                     ),
-                    move || {
-                        results_state.try_update(|app| {
-                            app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
-                            true
-                        });
-                    },
+                    move || results_ready.send(()),
                 ),
             );
         }
@@ -1617,12 +1618,16 @@ impl LanguageHarness {
                     application.clone(),
                 ));
                 let results_state = state.clone();
+                // Match shell.rs: deliver server results through the UI queue, after
+                // the UI has installed the request handle that will consume them.
+                let results_ready = crate::infrastructure::ui_dispatch::LatestNotification::new(
+                    application.clone(),
+                    move |()| crate::app::language_ui::tick(&results_state),
+                );
                 view_runtime.install_language_services(
                     crate::app::language_services::LanguageServices::new(
                         servers.clone(),
-                        move || {
-                            crate::app::language_ui::tick(&results_state);
-                        },
+                        move || results_ready.send(()),
                     ),
                 );
             }
