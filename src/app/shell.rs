@@ -1021,6 +1021,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             super::git_view::binding(&state, &git_store),
             git_store.clone().into(),
         ),
+        Some((editor_focus.clone(), terminal_focus.clone(), terminal_tabs.clone())),
     ));
 
     for (&(pane, strip), &(_, body)) in strips.iter().zip(bodies.iter()) {
@@ -1149,13 +1150,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         root = root.child(layout_map::render_divider(divider.clone(), state.clone()));
     }
 
-    root = root.child(super::chrome::status(
-        statusbar_rect,
-        state.clone(),
-        editor_focus.clone(),
-        terminal_focus.clone(),
-        terminal_tabs.clone(),
-    ));
+    root = root.child(super::chrome::status(statusbar_rect, state.clone()));
 
     if s.explorer.ui.menu.is_none()
         && s.editor.tabs.tab_context_menu.is_none()
@@ -1195,13 +1190,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         let details_state = state.clone();
         use lgui::services::ServicesContextExt as _;
         let clipboard = application_context.clipboard();
-        let status = super::chrome::status_binding(
-            &state,
-            editor_focus.clone(),
-            terminal_focus.clone(),
-            terminal_tabs.clone(),
-        )
-        .frame();
+        let status = super::chrome::status_binding(&state).frame();
         root = root.child(crate::ui::language_details::render(
             vp,
             crate::ui::statusbar::language_action_anchor(statusbar_rect, &status),
@@ -1231,13 +1220,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
     if s.chrome.language_panel {
         let panel_state = state.clone();
-        let status = super::chrome::status_binding(
-            &state,
-            editor_focus.clone(),
-            terminal_focus.clone(),
-            terminal_tabs.clone(),
-        )
-        .frame();
+        let status = super::chrome::status_binding(&state).frame();
         root = root.child(crate::ui::language_panel::render(
             vp,
             crate::ui::statusbar::language_anchor(statusbar_rect, &status),

@@ -42,27 +42,43 @@ pub struct TitleFrame {
     pub settings_open: bool,
     pub maximized: bool,
     pub update: Option<crate::features::update::Indicator>,
+    pub drawer_open: bool,
+    pub source_control_open: bool,
+    pub terminal_open: bool,
+}
+/// A workspace panel the title bar shows or hides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PanelToggle {
+    Drawer,
+    SourceControl,
+    Terminal,
 }
 #[derive(Clone)]
 pub struct TitleBinding {
     read: Arc<dyn Fn() -> TitleFrame + Send + Sync>,
     open: Arc<dyn Fn() + Send + Sync>,
     update: Arc<dyn Fn() -> bool + Send + Sync>,
+    toggle: Arc<dyn Fn(PanelToggle) + Send + Sync>,
 }
 impl TitleBinding {
     pub fn new(
         read: impl Fn() -> TitleFrame + Send + Sync + 'static,
         open: impl Fn() + Send + Sync + 'static,
         update: impl Fn() -> bool + Send + Sync + 'static,
+        toggle: impl Fn(PanelToggle) + Send + Sync + 'static,
     ) -> Self {
         Self {
             read: Arc::new(read),
             open: Arc::new(open),
             update: Arc::new(update),
+            toggle: Arc::new(toggle),
         }
     }
     pub fn frame(&self) -> TitleFrame {
         (self.read)()
+    }
+    pub fn toggle(&self, panel: PanelToggle) {
+        (self.toggle)(panel);
     }
     pub fn open_settings(&self) {
         (self.open)();
@@ -85,10 +101,8 @@ pub struct FileStatus {
 }
 #[derive(Clone)]
 pub struct StatusFrame {
-    pub terminal_open: bool,
     pub pending: Vec<crate::features::keymap::keystroke::Keystroke>,
     pub file: Option<FileStatus>,
-    pub source_control: bool,
     pub diff_loading: bool,
     pub vim: Option<(loom_editor_core::vim::Mode, loom_editor_core::vim::Status)>,
     /// The active file's main language server.
@@ -165,8 +179,6 @@ pub struct StatusNote {
 }
 pub enum StatusCommand {
     ServerAction(ChipAction),
-    ToggleTerminal,
-    ToggleSourceControl,
     LanguagePanel,
 }
 #[derive(Clone)]

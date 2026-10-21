@@ -44,12 +44,11 @@ fn hover_button(rect: UiRect, key: impl Into<String>, selected: bool) -> Element
     .key(key.into())
 }
 
-/// Header with the Explorer/Search page buttons and the collapse button.
+/// Header with the Explorer/Search page buttons.
 pub fn header(
     rect: UiRect,
     mode: DrawerMode,
     select: Arc<dyn Fn(DrawerMode) + Send + Sync>,
-    collapse: Arc<dyn Fn() + Send + Sync>,
 ) -> Element {
     let mut header = panel(rect, VisualStyle::filled(theme::c().sidebar));
     for (index, label, icon, target) in [
@@ -88,32 +87,6 @@ pub fn header(
         header = header.child(button);
     }
 
-    let collapse_hit = UiRect::new(
-        rect.right - 32.0,
-        rect.top + 2.0,
-        rect.right - 4.0,
-        (rect.bottom - 2.0).max(rect.top + 2.0),
-    );
-    let collapse_icon = theme::icon_rect(UiRect::new(
-        collapse_hit.left + 7.0,
-        rect.top,
-        collapse_hit.left + 21.0,
-        rect.bottom,
-    ));
-    header = header.child(
-        hover_button(collapse_hit, "sidebar.collapse", false)
-            .event_policy(EventPolicy::INTERACTIVE)
-            .semantics(Semantics::new(SemanticRole::Button).name("Collapse sidebar"))
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || collapse())
-            .child(drawer_icon(
-                "sidebar.collapse.icon",
-                "panel-left",
-                collapse_icon,
-                theme::c().text_dim,
-            )),
-    );
-
     header.child(crate::ui::components::divider::bottom(rect))
 }
 
@@ -134,7 +107,6 @@ mod tests {
                     UiRect::new(0.0, 0.0, 300.0, theme::TABS_H),
                     mode,
                     Arc::new(|_| {}),
-                    Arc::new(|| {}),
                 )
             });
             let mut session = UiSession::new();
@@ -142,7 +114,6 @@ mod tests {
             for (name, selected) in [
                 ("Explorer", mode == DrawerMode::Files),
                 ("Search", mode == DrawerMode::Search),
-                ("Collapse sidebar", false),
             ] {
                 let find = |session: &UiSession| {
                     session

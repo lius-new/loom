@@ -4,10 +4,15 @@ use crate::app::terminal_binding::TerminalStore;
 use crate::ui::chrome::{HomeBinding, HomeCommand, HomeFrame, TitleBinding, TitleFrame};
 use lgui::core::{UiFocusHandle, UiId};
 use lgui::prelude::{Element, UiRect};
-pub fn title_binding(state: &AppContext) -> TitleBinding {
+/// What the terminal toggle needs: the editor and terminal focus and the tabs.
+pub type TerminalToggle = (UiFocusHandle, UiFocusHandle, TerminalStore);
+pub fn title_binding(state: &AppContext, terminal: Option<TerminalToggle>) -> TitleBinding {
+    use crate::features::keymap::action::Action;
+    use crate::ui::chrome::PanelToggle;
     let reader = state.clone();
     let writer = state.clone();
     let updater = state.clone();
+    let toggler = state.clone();
     TitleBinding::new(
         move || {
             let app = reader.get();
@@ -15,16 +20,33 @@ pub fn title_binding(state: &AppContext) -> TitleBinding {
                 settings_open: app.workspace.active_is_settings(),
                 maximized: crate::app::window::is_maximized(),
                 update: app.update.indicator(),
+                drawer_open: app.drawer.visible,
+                source_control_open: app.source_control.visible,
+                terminal_open: app.default_terminal_open(),
             }
         },
-        move || {
-            writer.update(|app| app.apply(crate::features::keymap::action::Action::OpenSettings))
-        },
+        move || writer.update(|app| app.apply(Action::OpenSettings)),
         move || crate::app::update::activate(&updater),
+        move |panel| match panel {
+            PanelToggle::Drawer => toggler.update(|app| app.apply(Action::ToggleDrawer)),
+            PanelToggle::SourceControl => {
+                toggler.update(|app| app.apply(Action::ToggleSourceControl))
+            }
+            PanelToggle::Terminal => {
+                if let Some((editor, terminal, tabs)) = &terminal {
+                    crate::app::terminal::toggle_panel(&toggler, tabs, editor, terminal);
+                }
+            }
+        },
     )
 }
-pub fn title(rect: UiRect, state: AppContext, git: Element) -> Element {
-    crate::ui::titlebar::render(rect, title_binding(&state), git)
+pub fn title(
+    rect: UiRect,
+    state: AppContext,
+    git: Element,
+    terminal: Option<TerminalToggle>,
+) -> Element {
+    crate::ui::titlebar::render(rect, title_binding(&state, terminal), git)
 }
 pub fn home_binding(
     state: &AppContext,
@@ -133,9 +155,6 @@ pub fn workspace_home(
 
 pub fn status_binding(
     state: &AppContext,
-    editor: UiFocusHandle,
-    terminal: UiFocusHandle,
-    tabs: TerminalStore,
 ) -> crate::ui::chrome::StatusBinding {
     use crate::ui::chrome::{FileStatus, StatusBinding, StatusCommand, StatusFrame};
     let reader = state.clone();
@@ -145,9 +164,7 @@ pub fn status_binding(
             let app = reader.get();
             let (server, language) = language_status(&reader, &app);
             StatusFrame {
-                terminal_open: app.default_terminal_open(),
                 pending: app.keymap.pending().to_vec(),
-                source_control: app.source_control.visible,
                 diff_loading: app.git.model.diff_loading().is_some(),
                 server,
                 language,
@@ -171,9 +188,6 @@ pub fn status_binding(
             }
         },
         move |command| match command {
-            StatusCommand::ToggleTerminal => {
-                crate::app::terminal::toggle_panel(&writer, &tabs, &editor, &terminal)
-            }
             StatusCommand::ServerAction(crate::ui::chrome::ChipAction::Details(id)) => writer
                 .update(|app| {
                     app.chrome.language_panel = false;
@@ -200,9 +214,6 @@ pub fn status_binding(
             StatusCommand::LanguagePanel => writer.update(|app| {
                 app.chrome.language_panel = !app.chrome.language_panel;
                 app.chrome.language_details = None;
-            }),
-            StatusCommand::ToggleSourceControl => writer.update(|app| {
-                app.apply(crate::features::keymap::action::Action::ToggleSourceControl)
             }),
         },
     )
@@ -734,12 +745,6 @@ fn current_servers(
     Some((document.meta.path.clone(), ids))
 }
 
-pub fn status(
-    rect: UiRect,
-    state: AppContext,
-    editor: UiFocusHandle,
-    terminal: UiFocusHandle,
-    tabs: TerminalStore,
-) -> Element {
-    crate::ui::statusbar::render(rect, status_binding(&state, editor, terminal, tabs))
+pub fn status(rect: UiRect, state: AppContext) -> Element {
+    crate::ui::statusbar::render(rect, status_binding(&state))
 }

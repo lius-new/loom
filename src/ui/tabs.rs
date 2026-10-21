@@ -1,5 +1,5 @@
 //! Editor tab strip: buffer tabs with language badges, a close button, and
-//! the collapsed drawer control on the right.
+//! the scrollbar.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -36,8 +36,6 @@ pub(super) const MAX_TAB_W: f32 = 220.0;
 /// Keeps the badge, an ellipsis and the close button usable when tabs shrink.
 pub(super) const MIN_TAB_W: f32 = 96.0;
 const EDITOR_MIN_TAB_W: f32 = 120.0;
-const CLUSTER_PAD: f32 = 8.0;
-const ICON: f32 = theme::ICON_SIZE;
 const DIRTY_MARK: &str = "●";
 const DISK_STATE_MARK: &str = "!";
 const FADE_W: f32 = 16.0;
@@ -196,19 +194,6 @@ pub(crate) fn close_glyph(id: UiId, bounds: UiRect, color: Color) -> Element {
     )
 }
 
-/// The collapsed-drawer toggle sits at the right end of the top-right pane's strip.
-pub(crate) fn shows_drawer_toggle(app: &Frame<'_>, pane: PaneId) -> bool {
-    !app.drawer_visible && app.workspace.layout().top_right() == pane
-}
-
-pub(crate) fn controls_left(rect: UiRect, app: &Frame<'_>, pane: PaneId) -> f32 {
-    if !shows_drawer_toggle(app, pane) {
-        rect.right
-    } else {
-        rect.right - CLUSTER_PAD - ICON - CLUSTER_PAD - 1.0
-    }
-}
-
 /// File and loading icons share one 16 px slot on the tab's baseline.
 const BADGE_ICON: f32 = 16.0;
 const CLOSE_ICON: f32 = 12.0;
@@ -348,10 +333,9 @@ pub(crate) fn tab_layout(
     let widths = natural_tab_widths(app, pane);
     let active_index = pane_active(app, pane)
         .and_then(|active| pane_items(app, pane).iter().position(|id| *id == active));
-    let base_viewport_width = (controls_left(rect, app, pane) - rect.left).max(0.0);
     tab_layout::calculate(TabLayoutInput {
         natural_widths: &widths,
-        viewport_width: base_viewport_width,
+        viewport_width: rect.width().max(0.0),
         scroll_x: tab_scroll_x(app, pane),
         active_index,
         reveal_active,
@@ -568,7 +552,6 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
 
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar))
         .key(format!("tab-strip-{}", pane.get()));
-    let controls_left = controls_left(rect, &s, pane);
     let layout = tab_layout(rect, &s, pane, false);
     let tab_viewport = UiRect::new(
         rect.left,
@@ -998,35 +981,6 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
                 }),
             );
         bar = bar.child(scrollbar);
-    }
-
-    // Show the drawer toggle here only when the drawer is collapsed.
-    if shows_drawer_toggle(&s, pane) {
-        let top = rect.top + (rect.height() - ICON) / 2.0;
-        let icon_r = UiRect::new(
-            rect.right - CLUSTER_PAD - ICON,
-            top,
-            rect.right - CLUSTER_PAD,
-            top + ICON,
-        );
-        bar = bar.child(panel(
-            UiRect::new(controls_left, rect.top, controls_left + 1.0, rect.bottom),
-            VisualStyle::filled(theme::c().border),
-        ));
-        bar = bar.child(
-            panel(
-                UiRect::new(controls_left + 1.0, rect.top, rect.right, rect.bottom),
-                VisualStyle::filled(theme::c().sidebar),
-            )
-            .event_policy(EventPolicy::INTERACTIVE)
-            .on_click(move || state.run(Command::OpenDrawer))
-            .child(icon(
-                UiId::owned(format!("tabs.drawer.{}", pane.get())),
-                "panel-left",
-                icon_r,
-                theme::c().text_muted,
-            )),
-        );
     }
 
     // Paint the 1px separator after all backgrounds,

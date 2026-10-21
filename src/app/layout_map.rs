@@ -989,10 +989,27 @@ mod tests {
             root = root.child(crate::app::chrome::status(
                 UiRect::new(0.0, 776.0, 1200.0, 800.0),
                 state.clone(),
-                editor_focus.clone(),
-                focus.clone(),
-                tabs.clone(),
             ));
+            // The title bar's terminal toggle, in the test's old toggle spot.
+            let title = crate::app::chrome::title_binding(
+                &state,
+                Some((editor_focus.clone(), focus.clone(), tabs.clone())),
+            );
+            root = root.child(
+                Element::new(move |_cx| {
+                    UiElement::panel(
+                        UiId::new("layout-terminal-toggle"),
+                        UiRect::new(0.0, 776.0, 34.0, 800.0),
+                        VisualStyle::default(),
+                    )
+                })
+                .event_policy(EventPolicy {
+                    hover: true,
+                    press: true,
+                    focus: false,
+                })
+                .on_click(move || title.toggle(crate::ui::chrome::PanelToggle::Terminal)),
+            );
             root.child(render(
                 viewport,
                 state.clone(),

@@ -24,7 +24,6 @@ pub fn frame(app: &AppState) -> Frame<'_> {
                 generation: p.generation,
             }),
         },
-        drawer_visible: app.drawer.visible,
         welcome_panes: app
             .workspace
             .panes
@@ -50,7 +49,6 @@ pub fn binding(state: &AppContext) -> Binding {
                     indicator: p.indicator,
                     generation: p.generation,
                 }),
-                drawer_visible: app.drawer.visible,
                 welcome_panes,
             }
         },
@@ -135,17 +133,8 @@ pub fn run(state: &AppContext, command: Command) {
             app.editor.tabs.tab_scrollbar_drag_offset = offset;
             app.editor.tabs.tab_drag = None;
         }
-        Command::OpenDrawer => app.drawer.visible = true,
         Command::Close(..) => {}
     });
-}
-/// The collapsed-drawer toggle sits at the right end of the top-right pane's strip.
-fn shows_drawer_toggle(app: &AppState, pane: PaneId) -> bool {
-    crate::ui::tabs::shows_drawer_toggle(&frame(app), pane)
-}
-
-fn controls_left(rect: UiRect, app: &AppState, pane: PaneId) -> f32 {
-    crate::ui::tabs::controls_left(rect, &frame(app), pane)
 }
 
 fn pane_items(app: &AppState, pane: PaneId) -> &[FileId] {
@@ -480,7 +469,7 @@ mod tests {
                 ))
                 .child(crate::ui::titlebar::render(
                     title,
-                    crate::app::chrome::title_binding(&state),
+                    crate::app::chrome::title_binding(&state, None),
                     group(title),
                 ))
                 .child(render(
@@ -493,7 +482,6 @@ mod tests {
                     drawer,
                     crate::ui::drawer::DrawerMode::Files,
                     Arc::new(|_| {}),
-                    Arc::new(|| {}),
                 ))
                 .child(crate::ui::components::divider::top(details))
         });

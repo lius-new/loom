@@ -58,6 +58,8 @@ pub(crate) fn svg_icons() -> SvgIconRegistry {
                 ui::components::loading_indicator::SVG,
             )
             .with_icon("panel-left", icondata::VsLayoutSidebarLeft)
+            .with_icon("panel-right", icondata::VsLayoutSidebarRight)
+            .with_icon("panel-bottom", icondata::VsLayoutPanel)
             .with_icon("check", icondata::VsCheck)
             .with_icon("terminal", icondata::VsTerminal)
             .with_icon("plus", icondata::VsAdd)

@@ -47,7 +47,6 @@ pub(crate) fn drawer_header(rect: UiRect, state: &AppContext) -> Element {
     use crate::features::keymap::action::Action;
     let mode = state.get().drawer.mode;
     let select_state = state.clone();
-    let collapse_state = state.clone();
     drawer::header(
         rect,
         mode,
@@ -57,14 +56,6 @@ pub(crate) fn drawer_header(rect: UiRect, state: &AppContext) -> Element {
                     DrawerMode::Files => Action::OpenExplorer,
                     DrawerMode::Search => Action::OpenSearch,
                 })
-            })
-        }),
-        Arc::new(move || {
-            collapse_state.update(|app| {
-                app.drawer.visible = false;
-                app.explorer.ui.hovered = false;
-                app.explorer.ui.hovered_path = None;
-                app.search.blur();
             })
         }),
     )

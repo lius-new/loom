@@ -1,5 +1,5 @@
 //! Custom frameless title bar: repository controls on the left; the update
-//! button, Settings and the native window controls on the right.
+//! button, panel toggles, Settings and the native window controls on the right.
 //!
 //! The bar is marked as a native window drag region; interactive children
 //! (the buttons) are excluded automatically by hit testing.
@@ -13,7 +13,7 @@ use lgui::prelude::{Element, UiRect, VisualStyle, panel};
 use crate::features::update::{Indicator, Stage};
 use crate::ui::git::badge::{BADGE_H, BADGE_ICON, BADGE_PAD, ICON_GAP, TEXT_MARGIN, measure};
 
-use crate::ui::chrome::TitleBinding;
+use crate::ui::chrome::{PanelToggle, TitleBinding};
 use crate::ui::theme;
 
 /// Windows 11 caption close-button red, the same in light and dark themes.
@@ -183,6 +183,18 @@ fn update_button(right: f32, bar: UiRect, indicator: Indicator, state: TitleBind
         })
 }
 
+/// Width of each panel toggle button.
+const TOGGLE_W: f32 = 32.0;
+
+/// Stable key and icon id of a panel toggle.
+fn key_for(panel: PanelToggle) -> &'static str {
+    match panel {
+        PanelToggle::Drawer => "titlebar.toggle.drawer",
+        PanelToggle::SourceControl => "titlebar.toggle.source-control",
+        PanelToggle::Terminal => "titlebar.toggle.terminal",
+    }
+}
+
 pub fn render(rect: UiRect, state: TitleBinding, git_controls: Element) -> Element {
     let frame = state.frame();
     let maximized = frame.maximized;
@@ -199,9 +211,57 @@ pub fn render(rect: UiRect, state: TitleBinding, git_controls: Element) -> Eleme
     // Settings, just left of the window controls.
     let settings_r = UiRect::new(right - 148.0, rect.top, right - 116.0, rect.bottom);
     let settings_open = frame.settings_open;
+
+    // Panel toggles, left of Settings: Explorer, Source Control, Terminal.
+    let toggles = [
+        (
+            PanelToggle::Drawer,
+            "panel-left",
+            "Toggle Explorer",
+            frame.drawer_open,
+        ),
+        (
+            PanelToggle::SourceControl,
+            "panel-right",
+            "Toggle Source Control",
+            frame.source_control_open,
+        ),
+        (
+            PanelToggle::Terminal,
+            "panel-bottom",
+            "Toggle Terminal",
+            frame.terminal_open,
+        ),
+    ];
+    let toggles_left = settings_r.left - TOGGLE_W * toggles.len() as f32;
+    for (index, (panel, key, name, open)) in toggles.into_iter().enumerate() {
+        let left = toggles_left + TOGGLE_W * index as f32;
+        let toggle_state = state.clone();
+        bar = bar.child(
+            caption_button(
+                key_for(panel),
+                UiRect::new(left, rect.top, left + TOGGLE_W, rect.bottom),
+                CaptionIcon {
+                    id: key_for(panel),
+                    key,
+                    color: if open {
+                        theme::c().accent
+                    } else {
+                        theme::c().text_muted
+                    },
+                    glyph: Glyph::Ui,
+                },
+                false,
+                move |_: &mut UiEventContext| toggle_state.toggle(panel),
+            )
+            .semantics(Semantics::new(SemanticRole::Button).name(name))
+            .cursor(CursorIcon::Pointer),
+        );
+    }
+
     if let Some(indicator) = frame.update {
         bar = bar.child(update_button(
-            settings_r.left - 6.0,
+            toggles_left - 6.0,
             rect,
             indicator,
             state.clone(),

@@ -21,14 +21,12 @@ pub struct EditorFrame<'a> {
 pub struct Frame<'a> {
     pub workspace: &'a Core,
     pub editor: EditorFrame<'a>,
-    pub drawer_visible: bool,
     pub welcome_panes: Vec<PaneId>,
 }
 pub struct Snapshot {
     pub core: Core,
     pub tabs: UiState,
     pub pending: Option<Pending>,
-    pub drawer_visible: bool,
     pub welcome_panes: Vec<PaneId>,
 }
 impl Snapshot {
@@ -39,7 +37,6 @@ impl Snapshot {
                 tabs: &self.tabs,
                 pending_file: self.pending.clone(),
             },
-            drawer_visible: self.drawer_visible,
             welcome_panes: self.welcome_panes.clone(),
         }
     }
@@ -52,7 +49,6 @@ pub enum Command {
     CancelPending(u64),
     Track(PaneId, f32, f32),
     Thumb(PaneId, f32),
-    OpenDrawer,
 }
 #[derive(Clone)]
 pub struct Binding {

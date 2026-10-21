@@ -1,6 +1,5 @@
 //! Status bar: cursor position, indent mode, encoding, and language badge,
-//! grouped at the right edge. The terminal and Source Control toggles sit on
-//! the left; repository controls live in the title bar.
+//! grouped at the right edge. Panel toggles live in the title bar.
 //!
 //! Items are laid out from measured text widths so every gap is uniform, and
 //! each text rect carries a small right margin so glyphs are never clipped by
@@ -9,7 +8,7 @@
 //! With no active file there is no cursor position or language to report, so
 //! only the universal editor settings (indent mode, encoding) remain.
 
-use lgui::core::{EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiId, precompiled};
+use lgui::core::{EventPolicy, SemanticRole, Semantics, UiId};
 use lgui::prelude::{Element, TextStyle, UiRect, VisualStyle, panel, text};
 
 use crate::ui::chrome::{ServerChip, StatusBinding, StatusCommand, StatusFrame};
@@ -139,69 +138,9 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
 
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
-    let st = state.clone();
-    let top = rect.top + (rect.height() - theme::ICON_SIZE) / 2.0;
-    let icon_r = UiRect::new(
-        rect.left + 10.0,
-        top,
-        rect.left + 10.0 + theme::ICON_SIZE,
-        top + theme::ICON_SIZE,
-    );
-    let color = if s.terminal_open {
-        theme::c().accent
-    } else {
-        theme::c().text_muted
-    };
-    bar = bar.child(
-        panel(
-            UiRect::new(rect.left, rect.top, rect.left + 34.0, rect.bottom),
-            VisualStyle::default(),
-        )
-        .event_policy(EventPolicy {
-            hover: true,
-            press: true,
-            focus: false,
-        })
-        .on_click(move || {
-            st.run(StatusCommand::ToggleTerminal);
-        })
-        .child(precompiled(
-            UiElement::icon(UiId::new("statusbar.terminal"), icon_r, "terminal")
-                .icon_style(IconStyle::new(color)),
-        )),
-    );
     let items = status_items(&s);
 
-    // Source Control panel toggle, beside the terminal toggle.
-    let scm_slot = UiRect::new(rect.left + 34.0, rect.top, rect.left + 62.0, rect.bottom);
-    let scm_state = state.clone();
-    bar = bar.child(
-        panel(scm_slot, VisualStyle::default())
-            .event_policy(EventPolicy::INTERACTIVE)
-            .semantics(Semantics::new(SemanticRole::Button).name("Toggle Source Control"))
-            .on_click(move || {
-                scm_state.run(StatusCommand::ToggleSourceControl);
-            })
-            .child(precompiled(
-                UiElement::icon(
-                    UiId::new("statusbar.source-control"),
-                    UiRect::new(
-                        scm_slot.left + 6.0,
-                        top,
-                        scm_slot.left + 6.0 + theme::ICON_SIZE,
-                        top + theme::ICON_SIZE,
-                    ),
-                    "source-control",
-                )
-                .icon_style(IconStyle::new(if s.source_control {
-                    theme::c().accent
-                } else {
-                    theme::c().text_muted
-                })),
-            )),
-    );
-
-    let mut left = scm_slot.right + GAP;
+    let mut left = rect.left + EDGE_PAD;
     if s.diff_loading {
         bar = bar.child(text(
             UiRect::new(left, rect.top, left + 140.0, rect.bottom),
