@@ -184,6 +184,200 @@ mod tests {
     }
 
     #[test]
+    fn scrollbars_follow_pane_hover_and_drag_history_outside_the_pane() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, PointerData, UiScale, dispatch_runtime_output};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+
+        let exposed = Arc::new(Mutex::new(None));
+        let output = exposed.clone();
+        let viewport = UiRect::new(0.0, 0.0, 600.0, 320.0);
+        let terminal_rect = UiRect::new(0.0, 0.0, 600.0, 260.0);
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(AppState::new));
+            let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
+                let mut tabs = TerminalTabs::new();
+                tabs.split(1);
+                tabs
+            });
+            *output.lock().unwrap() = Some((state.clone(), tabs.clone()));
+            let id = UiId::new("scrollbar-terminal-input");
+            let focus = cx.focus_handle(id.clone());
+            let editor_focus = cx.focus_handle(UiId::new("scrollbar-editor-input"));
+            let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
+            let values = tabs.get().active_group();
+            let regions = values
+                .iter()
+                .zip(session_rects(terminal_rect, &values))
+                .map(|(tab, rect)| (tab.id, rect))
+                .collect();
+            let binding = crate::app::terminal_view::binding(&state, &tabs, &application).0;
+            track_hover(
+                group(viewport).child(render(
+                    terminal_rect,
+                    state,
+                    editor_focus,
+                    focus,
+                    id,
+                    tabs.get().active().unwrap().controller,
+                    tabs,
+                    application,
+                    true,
+                    260.0,
+                )),
+                binding,
+                regions,
+            )
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let (state, tabs) = exposed.lock().unwrap().clone().unwrap();
+        let values = tabs.get().tabs();
+        let left = values[0].controller.test_controller();
+        let right = values[1].controller.test_controller();
+        let thumb = |session: &UiSession, id| {
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| {
+                    let rect = node.layout_rect;
+                    node.style.fill.is_some()
+                        && (rect.right - (id as f32 * 300.0 - 2.0)).abs() < 0.01
+                        && (rect.width() - 8.0).abs() < 0.01
+                })
+                .map(|node| node.layout_rect)
+        };
+        let context = ApplicationContext::empty(Default::default());
+        let send = |session: &mut UiSession, input| {
+            dispatch_runtime_output(
+                session.handle_input(input),
+                &context,
+                &lgui::window::WindowId::new("terminal-scrollbar-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        let inside = PointerData::mouse(Point::new(80.0, 90.0));
+        send(&mut session, InputEvent::PointerMove(inside));
+        assert!(
+            thumb(&session, 1).is_none(),
+            "empty history has no scrollbar"
+        );
+        for controller in [&left, &right] {
+            controller
+                .test_parser()
+                .process("output\r\n".repeat(100).as_bytes());
+        }
+        tabs.notify();
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(thumb(&session, 1).is_some());
+        assert!(thumb(&session, 2).is_none());
+        let bottom = thumb(&session, 1).unwrap();
+        assert_eq!(
+            session
+                .tree()
+                .cursor_at(Point::new(bottom.left + 3.0, bottom.top + 4.0)),
+            None
+        );
+        assert_eq!(
+            session.tree().cursor_at(inside.point),
+            Some(lgui::core::CursorIcon::Text)
+        );
+        send(
+            &mut session,
+            InputEvent::PointerMove(PointerData::mouse(Point::new(450.0, 90.0))),
+        );
+        assert!(thumb(&session, 1).is_none());
+        assert!(thumb(&session, 2).is_some());
+        send(&mut session, InputEvent::PointerMove(inside));
+        left.scroll(20);
+        tabs.notify();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let scrolled = thumb(&session, 1).unwrap();
+        assert!(scrolled.top < bottom.top);
+        let start = PointerData::mouse(Point::new(
+            (scrolled.left + scrolled.right) * 0.5,
+            scrolled.top + 4.0,
+        ));
+        send(
+            &mut session,
+            InputEvent::PointerDown {
+                pointer: start,
+                button: PointerButton::Left,
+            },
+        );
+        assert!(state.get().terminal.ui.terminal_scrollbar_drag.is_some());
+        assert!(!state.get().terminal.ui.selecting_terminal);
+        let above = PointerData::mouse(Point::new(350.0, 0.0));
+        send(&mut session, InputEvent::PointerMove(above));
+        {
+            let parser = left.test_parser();
+            assert_eq!(
+                parser.screen().scrollback(),
+                parser.screen().scrollback_rows()
+            );
+        }
+        assert!(
+            thumb(&session, 1).is_some(),
+            "drag keeps thumb visible outside pane"
+        );
+        assert_eq!(right.test_parser().screen().scrollback(), 0);
+        let below = PointerData::mouse(Point::new(350.0, 310.0));
+        send(&mut session, InputEvent::PointerMove(below));
+        assert_eq!(left.test_parser().screen().scrollback(), 0);
+        send(
+            &mut session,
+            InputEvent::PointerUp {
+                pointer: below,
+                button: PointerButton::Left,
+            },
+        );
+        assert!(state.get().terminal.ui.terminal_scrollbar_drag.is_none());
+        assert!(thumb(&session, 1).is_none());
+        assert!(
+            left.test_selection().is_none(),
+            "drag must not start text selection"
+        );
+        send(&mut session, InputEvent::PointerMove(inside));
+        assert!(thumb(&session, 1).is_some());
+        left.test_parser().process(b"\x1b[?1049h");
+        tabs.notify();
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(
+            thumb(&session, 1).is_none(),
+            "alternate screen has no history scrollbar"
+        );
+        left.test_parser().process(b"\x1b[?1049l");
+        tabs.notify();
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(thumb(&session, 1).is_some());
+
+        let restored = thumb(&session, 1).unwrap();
+        send(
+            &mut session,
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(Point::new(restored.left + 3.0, restored.top + 4.0)),
+                button: PointerButton::Left,
+            },
+        );
+        assert!(state.get().terminal.ui.terminal_scrollbar_drag.is_some());
+        left.test_parser().process(b"\x1b[?1049h");
+        tabs.notify();
+        session.render_view(&view, viewport, UiScale::ONE);
+        send(
+            &mut session,
+            InputEvent::PointerUp {
+                pointer: below,
+                button: PointerButton::Left,
+            },
+        );
+        assert!(state.get().terminal.ui.terminal_scrollbar_drag.is_none());
+    }
+
+    #[test]
     fn mouse_coordinates_use_cells_instead_of_selection_boundaries() {
         let content = UiRect::new(12.0, 6.0, 500.0, 400.0);
         let point = Point::new(

@@ -238,6 +238,10 @@ pub enum Command {
         delta: f32,
         modifiers: Modifiers,
     },
+    Scrollback {
+        target: SessionId,
+        rows: usize,
+    },
     Focus,
     ResizeStart,
     Resize(f32),

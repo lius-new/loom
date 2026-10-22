@@ -112,6 +112,9 @@ pub struct TerminalSnapshot {
     pub rows: u16,
     pub cols: u16,
     pub lines: Vec<Vec<TerminalRun>>,
+    /// View offset from the live screen; zero is the bottom of the history.
+    pub scrollback: usize,
+    pub scrollback_rows: usize,
     pub cursor: (u16, u16),
     pub cursor_visible: bool,
     pub application_cursor: bool,

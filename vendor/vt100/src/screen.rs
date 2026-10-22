@@ -139,6 +139,12 @@ impl Screen {
         self.grid().scrollback()
     }
 
+    /// Returns the number of retained history rows in the active screen.
+    #[must_use]
+    pub fn scrollback_rows(&self) -> usize {
+        self.grid().scrollback_rows()
+    }
+
     /// Returns the text contents of the terminal.
     ///
     /// This will not include any formatting information, and will be in plain

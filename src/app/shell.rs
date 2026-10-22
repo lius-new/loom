@@ -181,10 +181,14 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     let split_drag = app.editor.diff_split.drag.take().is_some()
                         | app.terminal.ui.terminal_split_drag.take().is_some()
                         | app.layout.application_sash_drag.take().is_some();
+                    let terminal_scrollbar =
+                        app.terminal.ui.terminal_scrollbar_drag.take().is_some()
+                            | app.terminal.ui.hovered_terminal.take().is_some();
                     crate::app::editor::finish_scrollbar_drag(app)
                         | super::tabs::cancel_pointer_interaction(app)
                         | had_pending
                         | split_drag
+                        | terminal_scrollbar
                 });
             } else {
                 crate::app::file_watcher::refresh_async(
@@ -800,10 +804,37 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     // element sees it (see `key_actions`).
     root = key_actions::attach(root, key_env.clone());
 
-    // Track the pointer against the whole drawer rather than individual tree
-    // rows. Capturing at the root also observes moves into sibling regions and
-    // overlays, so the scrollbar thumb disappears as soon as the drawer is
-    // left.
+    // Each visible terminal split reveals its own scrollbar on pointer entry.
+    let terminal_hover_sessions = application_snapshot
+        .regions
+        .iter()
+        .flat_map(|(_, content, rect)| {
+            let Content::Terminal { tabs, active } = content else {
+                return Vec::new();
+            };
+            let sessions = terminal_tab_snapshot
+                .region_view(tabs, *active)
+                .active_group();
+            let weights = sessions
+                .iter()
+                .map(|session| session.width_weight)
+                .collect::<Vec<_>>();
+            let rects = crate::ui::terminal::view::weighted_pane_rects((*rect).into(), &weights);
+            sessions
+                .into_iter()
+                .zip(rects)
+                .map(|(session, rect)| (session.id, rect))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    root = crate::ui::terminal::view::track_hover(
+        root,
+        terminal::binding(&state, &terminal_tabs, &application).0,
+        terminal_hover_sessions,
+    );
+
+    // Track the whole drawer at the root so moving into sibling regions or
+    // overlays hides its scrollbar immediately.
     let st_hover = state.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {

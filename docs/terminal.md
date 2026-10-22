@@ -32,3 +32,11 @@ and custom prompts are loaded without modifying user configuration files.
 **Ctrl + +** (or **Ctrl + =**) and **Ctrl + −** adjust the terminal font size
 while the terminal has focus. **Ctrl + 0** resets it. On macOS, use Command
 instead of Ctrl.
+
+## Scrollback
+
+Move the pointer into a terminal pane to reveal its vertical scrollbar when
+history is available. Drag the thumb to browse history; it stays visible while
+dragging outside the pane and hides when the pointer leaves after release.
+Each split terminal has its own scrollbar. The scrollbar overlays the right
+padding without changing the terminal's columns.

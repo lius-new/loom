@@ -11,13 +11,14 @@ use super::layout_binding::{MapBinding, MapCommand};
 
 use lgui::core::{
     CursorIcon, EventPolicy, IconStyle, Point, PointerButton, SemanticRole, Semantics, UiElement,
-    UiFocusHandle, UiId, WheelUnit, clip,
+    UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::prelude::{Color, Element, UiRect, VisualStyle, component, group, panel, text};
 use lgui::services::ServicesContextExt;
 
 use crate::features::terminal::SessionId;
 use crate::features::terminal::{TerminalRun, TerminalSize};
+use crate::ui::components::scrollbar;
 use crate::ui::fonts;
 use crate::ui::tabs::{
     GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
@@ -31,6 +32,27 @@ const BODY_PAD_Y: f32 = 6.0;
 const RESIZE_HIT_H: f32 = 8.0;
 const SHELL_MENU_W: f32 = 172.0;
 const SHELL_MENU_ROW_H: f32 = 28.0;
+
+/// Observe the whole window so leaving a session also hides its scrollbar.
+pub(crate) fn track_hover(
+    root: Element,
+    state: Binding,
+    sessions: Vec<(SessionId, UiRect)>,
+) -> Element {
+    root.on_event_capture(UiEventKind::PointerMove, move |_, payload| {
+        if let UiEventPayload::PointerMove { pointer } = payload {
+            let hovered = sessions
+                .iter()
+                .find(|(_, rect)| rect.contains(pointer.point))
+                .map(|(id, _)| *id);
+            state.ui.try_update(|ui| {
+                let changed = ui.hovered_terminal != hovered;
+                ui.hovered_terminal = hovered;
+                changed
+            });
+        }
+    })
+}
 
 pub(crate) fn terminal_cell_width() -> f32 {
     fonts::terminal().char_w
@@ -483,8 +505,7 @@ pub(crate) fn render_session(
         press: true,
         focus: false,
     })
-    .semantics(semantics)
-    .cursor(CursorIcon::Text);
+    .semantics(semantics);
 
     let focus_on_click = terminal_focus.clone();
     let click_tabs = terminal_tabs.clone();
@@ -575,12 +596,119 @@ pub(crate) fn render_session(
         }
     });
 
-    terminal.child(render_screen(
-        content,
-        &snapshot,
-        focused,
-        cursor_blink_visible,
-    ))
+    // Default cursors inherit in lgui, so keep the text cursor off the
+    // scrollbar's ancestors and apply it only to the screen content.
+    terminal = terminal.child(
+        render_screen(content, &snapshot, focused, cursor_blink_visible).cursor(CursorIcon::Text),
+    );
+    let ui = state.get().ui;
+    if (snapshot.scrollback_rows > 0 && ui.hovered_terminal == Some(session_id))
+        || ui
+            .terminal_scrollbar_drag
+            .is_some_and(|(id, _)| id == session_id)
+    {
+        terminal = terminal.child(vertical_scrollbar(
+            body,
+            &snapshot,
+            state,
+            terminal_tabs,
+            terminal_focus,
+            session_id,
+            application,
+        ));
+    }
+    terminal
+}
+
+fn vertical_scrollbar(
+    body: UiRect,
+    snapshot: &crate::features::terminal::TerminalSnapshot,
+    state: Binding,
+    tabs: Sessions,
+    focus: UiFocusHandle,
+    session: SessionId,
+    application: FrameRequest,
+) -> Element {
+    let track = UiRect::new(
+        body.right - scrollbar::SIZE,
+        body.top + BODY_PAD_Y,
+        body.right,
+        body.bottom - BODY_PAD_Y,
+    );
+    if track.height() <= 0.0 {
+        return group(body);
+    }
+    let history = snapshot.scrollback_rows;
+    let rows = usize::from(snapshot.rows);
+    let height = (track.height() * rows as f32 / (history + rows).max(1) as f32)
+        .max(scrollbar::MIN_THUMB_LENGTH)
+        .min(track.height());
+    let travel = track.height() - height;
+    let top = track.top
+        + travel * (1.0 - snapshot.scrollback.min(history) as f32 / history.max(1) as f32);
+    // Keep the pressed node alive until release if a program switches screens
+    // or clears history during the drag. An empty rect paints no scrollbar.
+    let thumb_rect = if history == 0 {
+        UiRect::new(track.right, track.top, track.right, track.top)
+    } else {
+        UiRect::new(
+            track.left + scrollbar::INSET,
+            top,
+            track.right - scrollbar::INSET,
+            top + height,
+        )
+    };
+    let down = state.clone();
+    let moving = state.clone();
+    let up = state;
+    let select = tabs.clone();
+    scrollbar::thumb(thumb_rect, 0xb8)
+        .key(format!("terminal-scrollbar-thumb-{session}"))
+        .event_policy(EventPolicy {
+            hover: true,
+            press: true,
+            focus: false,
+        })
+        .on_pointer_down_with_button(move |cx, pointer, button| {
+            if button != PointerButton::Left {
+                return;
+            }
+            commands::select(&down, &select, session);
+            focus.focus();
+            down.ui.update(|ui| {
+                ui.selecting_terminal = false;
+                ui.terminal_scrollbar_drag = Some((session, pointer.point.y - top));
+            });
+            cx.stop_propagation();
+        })
+        .on_pointer_drag(move |cx, pointer| {
+            if let Some((id, offset)) = moving.get().ui.terminal_scrollbar_drag
+                && id == session
+                && travel > 0.0
+            {
+                let fraction = ((pointer.point.y - track.top - offset) / travel).clamp(0.0, 1.0);
+                tabs.run(Command::Scrollback {
+                    target: session,
+                    rows: ((1.0 - fraction) * history as f32).round() as usize,
+                });
+                application.request_frame();
+                cx.stop_propagation();
+            }
+        })
+        .on_pointer_up(move |cx, _| {
+            up.ui.try_update(|ui| {
+                if ui
+                    .terminal_scrollbar_drag
+                    .is_some_and(|(id, _)| id == session)
+                {
+                    ui.terminal_scrollbar_drag = None;
+                    true
+                } else {
+                    false
+                }
+            });
+            cx.stop_propagation();
+        })
 }
 
 #[allow(clippy::too_many_arguments)]

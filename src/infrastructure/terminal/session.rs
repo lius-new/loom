@@ -338,6 +338,10 @@ impl TerminalController {
         crate::features::terminal::mouse::scroll_history(parser.screen_mut(), rows);
     }
 
+    pub fn set_scrollback(&self, rows: usize) {
+        lock(&self.inner.parser).screen_mut().set_scrollback(rows);
+    }
+
     pub fn set_mouse_position(&self, row: u16, col: u16) {
         lock(&self.inner.mouse).set_position(row, col);
     }
@@ -417,6 +421,8 @@ impl TerminalController {
             rows,
             cols,
             lines,
+            scrollback: screen.scrollback(),
+            scrollback_rows: screen.scrollback_rows(),
             cursor: screen.cursor_position(),
             cursor_visible: !screen.hide_cursor() && screen.scrollback() == 0,
             application_cursor: screen.application_cursor(),

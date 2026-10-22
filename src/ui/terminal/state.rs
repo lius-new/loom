@@ -23,6 +23,10 @@ pub struct ProfileEditor {
 }
 #[derive(Clone, Default)]
 pub struct TerminalUiState {
+    /// Session under the pointer, used to reveal its overlay scrollbar.
+    pub hovered_terminal: Option<crate::features::terminal::SessionId>,
+    /// Session and pointer offset within the dragged scrollbar thumb.
+    pub terminal_scrollbar_drag: Option<(crate::features::terminal::SessionId, f32)>,
     pub selecting_terminal: bool,
     pub terminal_focused: bool,
     pub terminal_shell_menu: bool,

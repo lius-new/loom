@@ -3,7 +3,6 @@
 mod tests {
     use crate::app::terminal_binding::TerminalTab;
     use crate::app::terminal_binding::fixtures::Sessions as TerminalTabs;
-    #[cfg(windows)]
     use crate::app::terminal_runtime::TerminalDisplay;
     use crate::features::terminal::ShellKind;
     use crate::features::terminal::TerminalSize;
@@ -22,6 +21,28 @@ mod tests {
     use std::thread;
     #[cfg(windows)]
     use std::{io::Write, path::Path, time::Duration};
+
+    #[test]
+    fn scrollbar_snapshot_tracks_retained_history_offset_and_active_screen() {
+        let controller = TerminalController::new();
+        assert_eq!(controller.snapshot().scrollback_rows, 0);
+        controller
+            .test_parser()
+            .process("line\r\n".repeat(40).as_bytes());
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.scrollback, 0);
+        assert_eq!(snapshot.scrollback_rows, 17);
+        controller.set_scrollback(usize::MAX);
+        let snapshot = controller.snapshot();
+        assert_eq!(snapshot.scrollback, snapshot.scrollback_rows);
+        assert!(!snapshot.cursor_visible);
+        controller.test_parser().process(b"\x1b[?1049h");
+        assert_eq!(controller.snapshot().scrollback_rows, 0);
+        controller.test_parser().process(b"\x1b[?1049l");
+        assert_eq!(controller.snapshot().scrollback_rows, 17);
+        controller.set_scrollback(0);
+        assert_eq!(controller.snapshot().scrollback, 0);
+    }
 
     #[test]
     fn shrinking_and_growing_terminal_height_restores_logs_cursor_and_styles() {

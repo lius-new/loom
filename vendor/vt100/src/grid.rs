@@ -241,6 +241,10 @@ impl Grid {
         self.scrollback_offset
     }
 
+    pub fn scrollback_rows(&self) -> usize {
+        self.scrollback.len()
+    }
+
     pub fn set_scrollback(&mut self, rows: usize) {
         self.scrollback_offset = rows.min(self.scrollback.len());
     }

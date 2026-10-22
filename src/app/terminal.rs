@@ -421,6 +421,12 @@ pub(crate) fn wheel(
     }
 }
 
+pub(crate) fn set_scrollback(tabs: &TerminalStore, id: SessionId, rows: usize) {
+    if let Some(tab) = target(tabs, id) {
+        tab.controller.set_scrollback(rows);
+    }
+}
+
 pub(crate) fn shell_menu(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> bool {
     if !select(state, tabs, id) {
         return false;

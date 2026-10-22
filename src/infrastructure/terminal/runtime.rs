@@ -169,6 +169,8 @@ impl TerminalHandle {
                 rows: 24,
                 cols: 80,
                 lines: vec![vec![]; 24],
+                scrollback: 0,
+                scrollback_rows: 0,
                 cursor: (0, 0),
                 cursor_visible: false,
                 application_cursor: false,
@@ -186,6 +188,9 @@ impl TerminalHandle {
     }
     pub fn scroll(&self, rows: i32) {
         self.with(|c| c.scroll(rows));
+    }
+    pub fn set_scrollback(&self, rows: usize) {
+        self.with(|c| c.set_scrollback(rows));
     }
     pub fn set_mouse_position(&self, row: u16, col: u16) {
         self.with(|c| c.set_mouse_position(row, col));

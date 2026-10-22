@@ -205,6 +205,7 @@ pub(crate) fn run(
             delta,
             modifiers,
         } => commands::wheel(tabs, target, delta, modifiers),
+        Command::Scrollback { target, rows } => commands::set_scrollback(tabs, target, rows),
         Command::Focus => state.update(|app| {
             app.terminal.ui.terminal_focused = true;
             app.editor.focused = false;
