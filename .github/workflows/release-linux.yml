@@ -9,9 +9,9 @@ on:
       version:
         description: Version from Cargo.toml, without the leading v
         required: true
-        default: "0.1.2"
+        default: "0.1.3"
       publish:
-        description: Upload the packages to the GitHub release
+        description: Upload the packages to the GitHub release draft
         type: boolean
         default: false
 
@@ -126,34 +126,38 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish to GitHub release
+    name: Upload to GitHub release draft
     needs: package
-    # Tag pushes always publish; manual runs only when asked to.
+    # Tag pushes always upload to the draft; manual runs only when asked to.
     if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - name: Check out release source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
       - name: Download artifacts
         uses: actions/download-artifact@v7
         with:
           name: Loom-${{ needs.package.outputs.version }}-linux-x86_64
           path: dist
 
-      # Each platform workflow adds its own assets to the shared release. The
-      # other platforms run on the same tag, so creation can race: fall back
-      # to uploading when the release appeared in the meantime.
-      - name: Create or update GitHub release
+      # Draft creation and notes belong to the Prepare release draft workflow.
+      - name: Upload packages to release draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v${{ needs.package.outputs.version }}
           VERSION: ${{ needs.package.outputs.version }}
-        run: |
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
-            ! gh release create "$TAG" dist/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "Loom $VERSION" \
-              --generate-notes; then
-            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
-          fi
+        run: >-
+          node scripts/release/publish.mjs
+          --version "$VERSION" --target "$GITHUB_SHA"
+          --repo "$GITHUB_REPOSITORY" --assets dist

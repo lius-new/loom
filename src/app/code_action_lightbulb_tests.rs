@@ -59,6 +59,21 @@ impl Case {
             files: Files(root),
         }
     }
+    fn wait_diagnostics(&mut self, range: std::ops::Range<usize>) {
+        self.h.until("diagnostics for the current text", |h| {
+            let app = h.state.get();
+            let id = app.workspace.active().unwrap();
+            let doc = &app.workspace.documents[&id];
+            h.runtime
+                .language_services()
+                .unwrap()
+                .results(&doc.meta.path, &doc.stamp(id))
+                .diagnostics
+                .is_some_and(|found| found.iter().any(|d| d.range == range))
+        });
+        // until() can observe a publication that arrived after its last render.
+        self.h.render();
+    }
     fn requests(&self) -> Vec<Value> {
         std::fs::read_to_string(self.files.0.join("log.jsonl"))
             .unwrap_or_default()
@@ -307,7 +322,9 @@ fn diagnostic_card_quick_fix_uses_the_hovered_range_and_keeps_focus_and_cursor()
 
 #[test]
 fn diagnostic_card_quick_fix_rejects_old_callbacks_and_expires_on_scroll_or_typing() {
-    let mut c = Case::new(&["--diagnostics"]);
+    let mut c = Case::new(&["--diagnostics", "--diag-defer-until-save"]);
+    saved(&c.h);
+    c.wait_diagnostics(0..2);
     let (x, y) = c.h.point_at(0, 1);
     c.h.move_to(x, y);
     c.h.until("diagnostic actions", |h| {
@@ -321,6 +338,10 @@ fn diagnostic_card_quick_fix_rejects_old_callbacks_and_expires_on_scroll_or_typi
     crate::app::language_ui::quickfix::choose(&c.h.state, PaneId::new(1), revision, 0, c.h.rect);
     assert!(!c.h.document_text().contains("fixed"));
     assert!(c.h.state.get().editor.editor_diagnostic_hover.is_none());
+    // The old range follows the insertion until the server publishes again.
+    c.wait_diagnostics(1..3);
+    saved(&c.h);
+    c.wait_diagnostics(0..2);
     c.h.move_to(400.0, 300.0);
     c.h.move_to(x, y);
     c.h.until("new diagnostic actions", |h| {

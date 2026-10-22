@@ -661,6 +661,14 @@
       "owner": "app/state:TerminalPanelState",
       "migrated_in": "R7.4"
     },
+    "ui/terminal/state.hovered_terminal": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "terminal overlay scrollbars"
+    },
+    "ui/terminal/state.terminal_scrollbar_drag": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "terminal overlay scrollbars"
+    },
     "ui/terminal/state.selecting_terminal": {
       "owner": "ui/terminal/state",
       "migrated_in": "R7.4"
@@ -858,7 +866,6 @@
     "src/app/code_action_lightbulb_tests.rs",
     "src/app/snippet_choice_tests.rs",
     "src/app/signature_help_tests.rs",
-    "src/app/language_install.rs",
     "src/app/editor_vim_integration_tests.rs",
     "src/app/git_view_tests.rs",
     "src/app/search.rs",
@@ -873,7 +880,8 @@
       "toast_seq",
       "welcome_hover",
       "workspace_home_hover",
-      "language_panel"
+      "language_panel",
+      "language_details"
     ],
     "SidebarChrome": [
       "visible",

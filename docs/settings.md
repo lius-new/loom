@@ -86,7 +86,7 @@ has no language-server features.
   // A catalogued server: change how it behaves, never which program it is.
   "rust-analyzer": {
     "enabled": true,
-    "install": "ask",                              // manual | auto
+    "install": "manual",                           // manual | auto
     "args": [],                                    // replaces the default arguments
     "initialization_options": { "checkOnSave": false },
     "settings": { "rust-analyzer": { "check": { "command": "clippy" } } },

@@ -14,7 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  LOOM_VERSION: 0.1.2
+  LOOM_VERSION: 0.1.3
 
 jobs:
   core:
@@ -68,6 +68,9 @@ jobs:
           node --test scripts/baseline/test-results.test.mjs
           node --test scripts/package/lib/language-packs.test.mjs scripts/package/lib/lsp-servers.test.mjs
           node scripts/architecture/check.mjs
+
+      - name: Check release tooling
+        run: node --test scripts/release/release.test.mjs
 
       - name: Check language-package tooling
         run: |
