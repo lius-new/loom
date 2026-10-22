@@ -113,11 +113,22 @@ prepares each target separately before merging the binaries. Core-only CI remain
 independent of CMake and Skia.
 
 Each platform has its own release workflow (`release-windows.yml`,
-`release-macos.yml`, `release-linux.yml`). Each validates that the requested
-version matches `Cargo.toml`, builds the packages with the scripts in
-[`scripts/package`](../scripts/package/README.md), and publishes them to the
-GitHub release. Push a version tag such as `v0.1.0`, or run a workflow
-manually with `0.1.0`.
+`release-macos.yml`, `release-linux.yml`). Each validates the requested
+version against `Cargo.toml` and builds packages with the scripts in
+[`scripts/package`](../scripts/package/README.md). Application tag pushes also
+run **Prepare release draft**, which collects English `Release Notes:` entries
+from commit bodies and creates a GitHub Release draft. Platform workflows
+upload their packages to that draft without changing its notes. Review the
+notes, all build results and packages before publishing the draft on GitHub.
+
+No per-version release note files are maintained. Record Added, Improved,
+Fixed or Upgrade entries in the relevant commit body, or `- N/A` for internal
+changes. Keep the section when squash-merging a PR. Before releasing, sync
+the root package version and lock entry, the CI version, and the default
+version inputs in all four release workflows. The scripts require an existing
+tag matching the build commit and never create or move tags. See
+[Release notes and drafts](../scripts/release/README.md) for the format,
+local preview command and manual workflow behavior.
 
 Build the packages for the current platform locally with:
 
