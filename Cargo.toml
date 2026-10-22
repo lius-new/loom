@@ -84,3 +84,22 @@ ProductName = "Loom"
 FileDescription = "Loom"
 InternalName = "Loom"
 OriginalFilename = "Loom.exe"
+
+# Unoptimized layout and painting take ~35 ms per frame, which is longer than a
+# key-repeat interval; typing into the terminal then queues and lags.
+[profile.dev.package.lgui]
+opt-level = 2
+[profile.dev.package.lgui-assets]
+opt-level = 2
+[profile.dev.package.lgui-core]
+opt-level = 2
+[profile.dev.package.lgui-platform-winit]
+opt-level = 2
+[profile.dev.package.lgui-render-api]
+opt-level = 2
+[profile.dev.package.lgui-render-skia]
+opt-level = 2
+[profile.dev.package.lgui-services]
+opt-level = 2
+[profile.dev.package.lgui-widgets]
+opt-level = 2
