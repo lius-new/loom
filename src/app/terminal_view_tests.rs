@@ -274,7 +274,8 @@ mod tests {
         tabs.notify();
         session.render_view(&view, viewport, UiScale::ONE);
         assert!(thumb(&session, 1).is_some());
-        assert!(thumb(&session, 2).is_none());
+        // History keeps the faint scrollbar visible in every pane.
+        assert!(thumb(&session, 2).is_some());
         let bottom = thumb(&session, 1).unwrap();
         assert_eq!(
             session
@@ -290,7 +291,7 @@ mod tests {
             &mut session,
             InputEvent::PointerMove(PointerData::mouse(Point::new(450.0, 90.0))),
         );
-        assert!(thumb(&session, 1).is_none());
+        assert!(thumb(&session, 1).is_some());
         assert!(thumb(&session, 2).is_some());
         send(&mut session, InputEvent::PointerMove(inside));
         left.scroll(20);
@@ -336,7 +337,7 @@ mod tests {
             },
         );
         assert!(state.get().terminal.ui.terminal_scrollbar_drag.is_none());
-        assert!(thumb(&session, 1).is_none());
+        assert!(thumb(&session, 1).is_some());
         assert!(
             left.test_selection().is_none(),
             "drag must not start text selection"
@@ -1106,7 +1107,7 @@ mod tests {
                 (0, count)
             );
         }
-        assert_eq!(pty_size(UiRect::new(0.0, 0.0, 400.0, 160.0)).cols, 60);
+        assert_eq!(pty_size(UiRect::new(0.0, 0.0, 400.0, 160.0)).cols, 62);
     }
 
     #[test]

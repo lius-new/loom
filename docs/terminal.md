@@ -35,8 +35,8 @@ instead of Ctrl.
 
 ## Scrollback
 
-Move the pointer into a terminal pane to reveal its vertical scrollbar when
-history is available. Drag the thumb to browse history; it stays visible while
-dragging outside the pane and hides when the pointer leaves after release.
-Each split terminal has its own scrollbar. The scrollbar overlays the right
-padding without changing the terminal's columns.
+Terminal panes with history show a faint vertical scrollbar that brightens when
+the pointer is in the pane or the thumb is dragged. Drag the thumb to browse
+history; it stays bright while dragging outside the pane. Each split terminal
+has its own scrollbar. Like the editor, it overlays the text at the right edge
+without reserving width or changing the terminal's columns.

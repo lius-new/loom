@@ -19,6 +19,7 @@ use lgui::services::ServicesContextExt;
 use crate::features::terminal::SessionId;
 use crate::features::terminal::{TerminalRun, TerminalSize};
 use crate::ui::components::scrollbar;
+use crate::ui::editor::view::{scroll_from_thumb, thumb_geometry};
 use crate::ui::fonts;
 use crate::ui::tabs::{
     GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
@@ -28,6 +29,9 @@ use crate::ui::theme;
 
 const HEADER_H: f32 = theme::TABS_H;
 const BODY_PAD_X: f32 = 12.0;
+/// The right edge is nearly flush: the overlay scrollbar draws over the text
+/// instead of reserving columns, as in the editor.
+const BODY_PAD_RIGHT: f32 = 0.0;
 const BODY_PAD_Y: f32 = 6.0;
 const RESIZE_HIT_H: f32 = 8.0;
 const SHELL_MENU_W: f32 = 172.0;
@@ -123,7 +127,7 @@ pub(crate) fn weighted_pane_rects(rect: UiRect, weights: &[f32]) -> Vec<UiRect> 
 
 pub(crate) fn pty_size_for_body(rect: UiRect) -> TerminalSize {
     let cell_width = terminal_cell_width();
-    let body_w = (rect.width() - BODY_PAD_X * 2.0).max(cell_width);
+    let body_w = (rect.width() - BODY_PAD_X - BODY_PAD_RIGHT).max(cell_width);
     let body_h = (rect.height() - BODY_PAD_Y * 2.0).max(terminal_line_h());
     TerminalSize {
         rows: (body_h / terminal_line_h())
@@ -176,7 +180,7 @@ pub(crate) fn render_view(
     let active_content = UiRect::new(
         active_body.left + BODY_PAD_X,
         active_body.top + BODY_PAD_Y,
-        active_body.right - BODY_PAD_X,
+        active_body.right - BODY_PAD_RIGHT,
         active_body.bottom - BODY_PAD_Y,
     );
     let cursor_rect = terminal_cursor_rect(
@@ -486,7 +490,7 @@ pub(crate) fn render_session(
     let content = UiRect::new(
         body.left + BODY_PAD_X,
         body.top + BODY_PAD_Y,
-        body.right - BODY_PAD_X,
+        body.right - BODY_PAD_RIGHT,
         body.bottom - BODY_PAD_Y,
     );
     let cursor_rect = terminal_cursor_rect(content, snapshot.cursor, snapshot.rows, snapshot.cols);
@@ -602,11 +606,11 @@ pub(crate) fn render_session(
         render_screen(content, &snapshot, focused, cursor_blink_visible).cursor(CursorIcon::Text),
     );
     let ui = state.get().ui;
-    if (snapshot.scrollback_rows > 0 && ui.hovered_terminal == Some(session_id))
+    let emphasized = ui.hovered_terminal == Some(session_id)
         || ui
             .terminal_scrollbar_drag
-            .is_some_and(|(id, _)| id == session_id)
-    {
+            .is_some_and(|(id, _)| id == session_id);
+    if snapshot.scrollback_rows > 0 || emphasized {
         terminal = terminal.child(vertical_scrollbar(
             body,
             &snapshot,
@@ -615,6 +619,7 @@ pub(crate) fn render_session(
             terminal_focus,
             session_id,
             application,
+            emphasized,
         ));
     }
     terminal
@@ -628,24 +633,30 @@ fn vertical_scrollbar(
     focus: UiFocusHandle,
     session: SessionId,
     application: FrameRequest,
+    emphasized: bool,
 ) -> Element {
     let track = UiRect::new(
         body.right - scrollbar::SIZE,
-        body.top + BODY_PAD_Y,
+        body.top,
         body.right,
-        body.bottom - BODY_PAD_Y,
+        body.bottom,
     );
     if track.height() <= 0.0 {
         return group(body);
     }
     let history = snapshot.scrollback_rows;
     let rows = usize::from(snapshot.rows);
-    let height = (track.height() * rows as f32 / (history + rows).max(1) as f32)
-        .max(scrollbar::MIN_THUMB_LENGTH)
-        .min(track.height());
-    let travel = track.height() - height;
-    let top = track.top
-        + travel * (1.0 - snapshot.scrollback.min(history) as f32 / history.max(1) as f32);
+    // Scroll offsets count rows from the oldest line, as in the editor.
+    let scroll = (history - snapshot.scrollback.min(history)) as f32;
+    let geometry = thumb_geometry(
+        track.top,
+        track.height(),
+        rows as f32,
+        (history + rows) as f32,
+        scroll,
+    );
+    let travel = track.height() - geometry.length;
+    let alpha = if emphasized { 0xb8 } else { 0x68 };
     // Keep the pressed node alive until release if a program switches screens
     // or clears history during the drag. An empty rect paints no scrollbar.
     let thumb_rect = if history == 0 {
@@ -653,62 +664,100 @@ fn vertical_scrollbar(
     } else {
         UiRect::new(
             track.left + scrollbar::INSET,
-            top,
+            geometry.start,
             track.right - scrollbar::INSET,
-            top + height,
+            geometry.start + geometry.length,
         )
     };
-    let down = state.clone();
-    let moving = state.clone();
-    let up = state;
-    let select = tabs.clone();
-    scrollbar::thumb(thumb_rect, 0xb8)
-        .key(format!("terminal-scrollbar-thumb-{session}"))
-        .event_policy(EventPolicy {
-            hover: true,
-            press: true,
-            focus: false,
-        })
-        .on_pointer_down_with_button(move |cx, pointer, button| {
-            if button != PointerButton::Left {
-                return;
-            }
-            commands::select(&down, &select, session);
-            focus.focus();
-            down.ui.update(|ui| {
-                ui.selecting_terminal = false;
-                ui.terminal_scrollbar_drag = Some((session, pointer.point.y - top));
+    let scroll_to = {
+        let tabs = tabs.clone();
+        let application = application.clone();
+        move |pointer_y: f32, offset: f32| {
+            let from_top =
+                scroll_from_thumb(pointer_y - track.top - offset, travel, history as f32);
+            tabs.run(Command::Scrollback {
+                target: session,
+                rows: history.saturating_sub(from_top.round() as usize),
             });
+            application.request_frame();
+        }
+    };
+    let drag_scroll_to = scroll_to.clone();
+    let press = {
+        let state = state.clone();
+        let tabs = tabs.clone();
+        move |cx: &mut lgui::core::UiEventContext, pointer_y: f32, offset: f32, jump: bool| {
+            commands::select(&state, &tabs, session);
+            focus.focus();
+            state.ui.update(|ui| {
+                ui.selecting_terminal = false;
+                ui.terminal_scrollbar_drag = Some((session, offset));
+            });
+            if jump {
+                scroll_to(pointer_y, offset);
+            }
             cx.stop_propagation();
-        })
-        .on_pointer_drag(move |cx, pointer| {
-            if let Some((id, offset)) = moving.get().ui.terminal_scrollbar_drag
+        }
+    };
+    let drag = {
+        let state = state.clone();
+        let scroll_to = drag_scroll_to;
+        move |cx: &mut lgui::core::UiEventContext, pointer_y: f32| {
+            if let Some((id, offset)) = state.get().ui.terminal_scrollbar_drag
                 && id == session
                 && travel > 0.0
             {
-                let fraction = ((pointer.point.y - track.top - offset) / travel).clamp(0.0, 1.0);
-                tabs.run(Command::Scrollback {
-                    target: session,
-                    rows: ((1.0 - fraction) * history as f32).round() as usize,
-                });
-                application.request_frame();
+                scroll_to(pointer_y, offset);
                 cx.stop_propagation();
             }
+        }
+    };
+    let release = move |cx: &mut lgui::core::UiEventContext| {
+        state.ui.try_update(|ui| {
+            if ui
+                .terminal_scrollbar_drag
+                .is_some_and(|(id, _)| id == session)
+            {
+                ui.terminal_scrollbar_drag = None;
+                true
+            } else {
+                false
+            }
+        });
+        cx.stop_propagation();
+    };
+    let policy = EventPolicy {
+        hover: true,
+        press: true,
+        focus: false,
+    };
+
+    let (track_press, track_drag, track_release) = (press.clone(), drag.clone(), release.clone());
+    let track_hit = scrollbar::track(track)
+        .key(format!("terminal-scrollbar-track-{session}"))
+        .event_policy(policy)
+        .on_pointer_down_with_button(move |cx, pointer, button| {
+            if button == PointerButton::Left {
+                // Jump with the thumb centred on the pointer, then keep dragging.
+                track_press(cx, pointer.point.y, geometry.length / 2.0, true);
+            }
         })
-        .on_pointer_up(move |cx, _| {
-            up.ui.try_update(|ui| {
-                if ui
-                    .terminal_scrollbar_drag
-                    .is_some_and(|(id, _)| id == session)
-                {
-                    ui.terminal_scrollbar_drag = None;
-                    true
-                } else {
-                    false
-                }
-            });
-            cx.stop_propagation();
+        .on_pointer_drag(move |cx, pointer| track_drag(cx, pointer.point.y))
+        .on_pointer_up(move |cx, _| track_release(cx));
+    let thumb = scrollbar::thumb(thumb_rect, alpha)
+        .key(format!("terminal-scrollbar-thumb-{session}"))
+        .event_policy(policy)
+        .on_pointer_down_with_button(move |cx, pointer, button| {
+            if button == PointerButton::Left {
+                press(cx, pointer.point.y, pointer.point.y - geometry.start, false);
+            }
         })
+        .on_pointer_drag(move |cx, pointer| drag(cx, pointer.point.y))
+        .on_pointer_up(move |cx, _| release(cx));
+    group(track)
+        .key(format!("terminal-scrollbar-{session}"))
+        .child(track_hit)
+        .child(thumb)
 }
 
 #[allow(clippy::too_many_arguments)]
