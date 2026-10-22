@@ -339,10 +339,7 @@ pub fn render(rect: UiRect, state: TitleBinding, git_controls: Element) -> Eleme
     ));
 
     // Hairline bottom border
-    bar = bar.child(panel(
-        UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-        VisualStyle::filled(theme::c().border),
-    ));
+    bar = bar.child(crate::ui::components::divider::bottom(rect));
 
     bar
 }
