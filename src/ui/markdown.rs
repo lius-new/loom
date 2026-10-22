@@ -447,7 +447,7 @@ pub fn parts(
     }
     // Text in reading order; a code block holds the place of its first line.
     enum Slot {
-        Text(Element),
+        Text(Box<Element>),
         Code(usize),
     }
     let mut slots = Vec::new();
@@ -478,7 +478,7 @@ pub fn parts(
                 }
                 code[index].push(label);
             }
-            None => slots.push(Slot::Text(label)),
+            None => slots.push(Slot::Text(Box::new(label))),
         }
         let (Some(url), Some(handler)) = (run.url.as_ref(), on_link) else {
             continue;
@@ -502,7 +502,7 @@ pub fn parts(
     let mut content = Vec::with_capacity(slots.len());
     for slot in slots {
         match slot {
-            Slot::Text(element) => content.push(element),
+            Slot::Text(element) => content.push(*element),
             Slot::Code(index) => {
                 let rect = boxes[index];
                 let extent = layout.code_extents.get(index).copied().unwrap_or(0.0);
@@ -515,15 +515,15 @@ pub fn parts(
                         .children(lines)
                         .into()
                 } else {
-                    group(rect).children(lines).into()
+                    group(rect).children(lines)
                 });
             }
         }
     }
     Parts {
-        below: below.into(),
+        below,
         content,
-        above: above.into(),
+        above,
     }
 }
 
@@ -556,7 +556,7 @@ pub fn render(
         }
         None => out = out.children(parts.content),
     }
-    out.child(parts.above).into()
+    out.child(parts.above)
 }
 
 #[cfg(test)]
