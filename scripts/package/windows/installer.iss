@@ -27,6 +27,10 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 DisableReadyPage=yes
 PrivilegesRequired=lowest
+; This per-user installer does not elevate. On affected Windows builds,
+; RedirectionGuard reaches applications launched by [Run] and their shells,
+; blocking user-created junctions such as Scoop's apps\fnm\current.
+RedirectionGuard=no
 SetupArchitecture=x64
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

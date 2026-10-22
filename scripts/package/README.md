@@ -21,6 +21,29 @@ Every step can run on its own; each checks that the previous one has run.
 (release workflows pass the tag). `compile` builds with `LOOM_UPDATES=1`,
 which turns on update checks; a plain `cargo build` has them off.
 
+## Windows installer launch check
+
+After the Windows `setup` step, run:
+
+```powershell
+node scripts/package/windows/launch-smoke.mjs
+```
+
+This builds an isolated copy of the production installer with a disposable GUI
+probe in place of Loom. It exercises `/VERYSILENT /relaunch=1` and verifies that
+the launched app, CMD and PowerShell can access a user-created directory junction
+and resolve a command through it. It does not replace the installed Loom or
+register shortcuts, file associations or an uninstaller. Rust and the pinned
+Inno Setup toolchain are required; an alternate ISCC path may be passed as the
+first argument.
+The Windows release workflow runs this check before building release artifacts.
+
+The per-user installer explicitly uses `RedirectionGuard=no`: on affected
+Windows builds this installer policy reaches applications started by `[Run]`,
+including both the post-install launch and the automatic update relaunch, and
+blocks Scoop's `current` junctions. This setting applies to the installer; it
+does not change Windows-wide mitigation settings.
+
 ## Layout
 
 Application assembly copies the complete Markdown and JSON packages directly
