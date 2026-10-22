@@ -28,20 +28,33 @@ pub(crate) const PROMPT_H: f32 = 32.0;
 pub(crate) const SECTION_H: f32 = 22.0;
 pub(crate) const ROW_H: f32 = 20.0;
 
-/// The secondary sections stay anchored at the bottom. Expanded
-/// details always have a 45% height budget, even without changes to review, with
-/// enough room for the section headers even in a short drawer.
+/// Keep the section headers and commit bar accessible when resizing details.
+fn details_height_bounds(body: UiRect, detail_headers: usize) -> (f32, f32) {
+    let available = (body.height() - PROMPT_H).max(0.0);
+    let min = (detail_headers as f32 * SECTION_H).min(available);
+    let max = (available - SECTION_H * 2.0).max(min);
+    (min, max)
+}
+
+/// The secondary sections stay anchored at the bottom. Until resized, expanded
+/// details use a 45% height budget, with room for the section headers.
 pub(crate) fn drawer_regions(
     body: UiRect,
     changes_height: f32,
     details_height: f32,
     detail_headers: usize,
+    preferred_details_height: Option<f32>,
 ) -> (UiRect, UiRect, UiRect) {
     let available = body.height().max(0.0);
     let content_available = (available - PROMPT_H).max(0.0);
     let headers_height = detail_headers as f32 * SECTION_H;
     let limit = (content_available * 0.45).max(headers_height);
-    let height = details_height.min(limit).clamp(0.0, content_available);
+    let height = if let Some(height) = preferred_details_height {
+        let (min, max) = details_height_bounds(body, detail_headers);
+        height.clamp(min, max)
+    } else {
+        details_height.min(limit).clamp(0.0, content_available)
+    };
     let top = body.bottom - height;
     // Short lists end naturally above the commit bar; long lists scroll in the
     // remaining space while the commit bar stays accessible below them.
@@ -432,8 +445,13 @@ pub fn render(
     let detail_headers = 2
         + usize::from(!repository.stashes.is_empty())
         + usize::from(repository.worktrees.len() > 1);
-    let (content_rect, prompt_rect, details_rect) =
-        drawer_regions(body_rect, changes_height, details_height, detail_headers);
+    let (content_rect, prompt_rect, details_rect) = drawer_regions(
+        body_rect,
+        changes_height,
+        details_height,
+        detail_headers,
+        app.ui.details_height,
+    );
     let prompt_top = prompt_rect.top;
     let prompt_bottom = prompt_rect.bottom;
     let max_scroll = (changes_height - content_rect.height()).max(0.0);
@@ -806,14 +824,6 @@ pub fn render(
             state.clone(),
             ScrollRegion::Details,
         ));
-    if details_rect.height() > 0.0 {
-        root = root.child(crate::ui::components::divider::top(UiRect::new(
-            rect.left,
-            details_rect.top,
-            rect.right,
-            details_rect.bottom,
-        )));
-    }
     let field = UiRect::new(
         rect.left + 12.0,
         prompt_top + 4.0,
@@ -874,6 +884,14 @@ pub fn render(
     )
     .child(commit_options_button(options_rect, state.clone()));
     root = root.child(clip(field, 0.0, 0.0).child(commit_field));
+    if details_rect.height() > 0.0 {
+        root = root.child(git_details_resize_handle(
+            body_rect,
+            details_rect.top,
+            detail_headers,
+            state.clone(),
+        ));
+    }
     // Keep the header edge crisp and above scrolling rows and operation banners.
     root = root.child(crate::ui::components::divider::bottom(topline));
     root = root.child(git_resize_handle(rect, state, resizing));
@@ -973,9 +991,51 @@ pub(crate) fn git_vertical_scrollbar(
     })
 }
 
+fn git_details_resize_handle(
+    body: UiRect,
+    top: f32,
+    detail_headers: usize,
+    state: Binding,
+) -> Element {
+    let active = state.get().ui.details_resize_offset.is_some();
+    let (min, max) = details_height_bounds(body, detail_headers);
+    let drag_start = state.clone();
+    let drag_move = state.clone();
+    let drag_end = state;
+    crate::ui::components::resize_handle::render(
+        "git-details-resize-handle",
+        UiRect::new(body.left, top - 4.0, body.right, top + 4.0),
+        UiRect::new(body.left, top, body.right, top + 1.0),
+        CursorIcon::ResizeVertical,
+        active,
+    )
+    .on_pointer_down_with_button(move |_cx, pointer, button| {
+        if button == PointerButton::Left {
+            drag_start.update(|app| {
+                app.ui.details_resize_offset = Some(pointer.point.y - top);
+                app.ui.hover = None;
+                app.ui.clear_hover_cards();
+            });
+        }
+    })
+    .on_pointer_drag(move |_cx, pointer| {
+        drag_move.update(|app| {
+            if let Some(offset) = app.ui.details_resize_offset {
+                app.ui.details_height =
+                    Some((body.bottom - pointer.point.y + offset).clamp(min, max));
+            }
+        });
+    })
+    .on_pointer_up(move |_cx, _pointer| {
+        drag_end.update(|app| app.ui.details_resize_offset = None);
+    })
+}
+
 pub(crate) fn git_resize_handle(rect: UiRect, state: Binding, resizing: bool) -> Element {
     if !state.frame().resizable {
-        return lgui::prelude::group(rect);
+        // Cursor resolution includes passive nodes. A full-size placeholder
+        // would mask every hover cursor beneath it in the application layout.
+        return lgui::prelude::group(UiRect::new(rect.left, rect.top, rect.left, rect.top));
     }
     let handle_rect = UiRect::new(rect.right - 8.0, rect.top, rect.right, rect.bottom);
     let drawer_left = rect.left;

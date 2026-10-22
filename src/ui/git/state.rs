@@ -20,6 +20,10 @@ pub struct GitUiState {
     pub scroll: f32,
     /// Independent scroll of the Worktrees/Stashes/Tags/Commits area.
     pub details_scroll: f32,
+    /// User-selected height of the bottom sections; None keeps automatic sizing.
+    pub details_height: Option<f32>,
+    /// Pointer's offset from the divider while dragging it.
+    pub details_resize_offset: Option<f32>,
     pub scrollbar_dragging: bool,
     pub scrollbar_drag_offset: f32,
     pub details_scrollbar_dragging: bool,
@@ -60,6 +64,8 @@ impl Default for GitUiState {
             hover: None,
             scroll: 0.0,
             details_scroll: 0.0,
+            details_height: None,
+            details_resize_offset: None,
             scrollbar_dragging: false,
             scrollbar_drag_offset: 0.0,
             details_scrollbar_dragging: false,

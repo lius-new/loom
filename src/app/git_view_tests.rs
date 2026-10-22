@@ -602,13 +602,142 @@ mod panel_virtualization_tests {
         save_drawer_preview(&session, &context, viewport, "git-drawer-clean-expanded");
         for height in [120.0, 300.0, 900.0] {
             let body = UiRect::new(0.0, TOPLINE_H, 340.0, height);
-            let (changes, prompt, details) = drawer_regions(body, 5000.0, 1500.0, 3);
+            let (changes, prompt, details) = drawer_regions(body, 5000.0, 1500.0, 3, None);
             assert_eq!(changes.bottom, prompt.top);
             assert_eq!(prompt.bottom, details.top);
             assert_eq!(prompt.height(), PROMPT_H);
             assert_eq!(details.bottom, body.bottom);
             assert!(changes.height() >= 0.0 && details.height() >= 0.0);
         }
+        // Production uses the application layout, which disables the drawer's
+        // own width handle. Its placeholder must not mask any hover cursors.
+        state.update(|app| {
+            app.layout.application_layout = Some(
+                crate::domain::application_layout::ApplicationLayout::initial(
+                    viewport.into(),
+                    220.0,
+                    220.0,
+                    240.0,
+                ),
+            );
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        // The divider captures the pointer outside its strip, preserves the
+        // grab offset, and keeps the chosen height when sections collapse.
+        let divider_top = session
+            .tree()
+            .node(&UiId::owned("resize-line-git-details-resize-handle"))
+            .unwrap()
+            .layout_rect
+            .top;
+        let grab = Point::new(100.0, divider_top - 2.0);
+        let divider = session.tree().hit_test(grab).unwrap().id;
+        for offset in [-3.0, 0.0, 3.0] {
+            let point = Point::new(100.0, divider_top + offset);
+            send(
+                &mut session,
+                InputEvent::PointerMove(PointerData::mouse(point)),
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert_eq!(
+                session.tree().cursor_at(point),
+                Some(CursorIcon::ResizeVertical)
+            );
+            assert_eq!(state.get().git.ui.details_resize_offset, None);
+        }
+        let input = find(&session, "Commit message");
+        assert_eq!(
+            session
+                .tree()
+                .cursor_at(Point::new(input.left + 10.0, input.top + 10.0)),
+            Some(CursorIcon::Text),
+        );
+        for input in [
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(grab),
+                button: PointerButton::Right,
+            },
+            InputEvent::PointerMove(PointerData::mouse(Point::new(100.0, 250.0))),
+            InputEvent::PointerUp {
+                pointer: PointerData::mouse(Point::new(100.0, 250.0)),
+                button: PointerButton::Right,
+            },
+        ] {
+            send(&mut session, input);
+        }
+        assert_eq!(state.get().git.ui.details_height, None);
+        assert_eq!(state.get().git.ui.details_resize_offset, None);
+        let drag_to = |session: &mut UiSession, y: f32| {
+            let top = session.tree().node(&divider).unwrap().layout_rect.top;
+            let grab = Point::new(100.0, top + 2.0);
+            send(
+                session,
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(grab),
+                    button: PointerButton::Left,
+                },
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert!(state.get().git.ui.details_resize_offset.is_some());
+            assert_eq!(
+                session
+                    .tree()
+                    .node(&UiId::owned("resize-line-git-details-resize-handle"))
+                    .unwrap()
+                    .style
+                    .fill,
+                Some(theme::c().accent),
+            );
+            // Grab two pixels above the divider; this offset must not jump.
+            let point = Point::new(100.0, y - 2.0);
+            send(session, InputEvent::PointerMove(PointerData::mouse(point)));
+            session.render_view(&view, viewport, UiScale::ONE);
+            send(
+                session,
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert_eq!(state.get().git.ui.details_resize_offset, None);
+            assert_eq!(
+                session
+                    .tree()
+                    .node(&UiId::owned("resize-line-git-details-resize-handle"))
+                    .unwrap()
+                    .style
+                    .fill,
+                Some(theme::c().border),
+            );
+        };
+        drag_to(&mut session, viewport.bottom - 300.0);
+        assert_eq!(state.get().git.ui.details_height, Some(300.0));
+        assert_eq!(find(&session, "TAGS").top, viewport.bottom - 300.0);
+        assert_eq!(find(&session, "Commit message"), empty_input);
+        save_drawer_preview(&session, &context, viewport, "git-drawer-resized-details");
+        state.update(|app| {
+            app.git.ui.collapsed_sections.insert(HISTORY);
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(find(&session, "TAGS").top, viewport.bottom - 300.0);
+        drag_to(&mut session, -1000.0);
+        assert_eq!(
+            find(&session, "TAGS").top,
+            TOPLINE_H + PROMPT_H + SECTION_H * 2.0,
+        );
+        drag_to(&mut session, viewport.bottom + 1000.0);
+        assert_eq!(
+            find(&session, "TAGS").top,
+            viewport.bottom - SECTION_H * 2.0
+        );
+        // Releasing ends the resize even after dragging beyond the drawer.
+        let height = state.get().git.ui.details_height;
+        send(
+            &mut session,
+            InputEvent::PointerMove(PointerData::mouse(grab)),
+        );
+        assert_eq!(state.get().git.ui.details_height, height);
         state.update(|app| {
             app.git.ui.scroll = 100.0;
             app.git.ui.details_scroll = 200.0;
@@ -616,6 +745,31 @@ mod panel_virtualization_tests {
         crate::app::git::select_repository(&state, &store, PathBuf::from("loom"));
         assert_eq!(state.get().git.ui.scroll, 0.0);
         assert_eq!(state.get().git.ui.details_scroll, 0.0);
+    }
+
+    #[test]
+    fn resized_details_fit_short_drawers_and_preserve_the_requested_height() {
+        for bottom in [20.0_f32, 60.0, 120.0, 300.0, 900.0] {
+            let body = UiRect::new(0.0, TOPLINE_H, 340.0, bottom.max(TOPLINE_H));
+            for height in [0.0, 300.0, 10_000.0] {
+                let (changes, prompt, details) =
+                    drawer_regions(body, 5000.0, 1500.0, 4, Some(height));
+                assert!(changes.height() >= 0.0);
+                assert!(prompt.height() >= 0.0);
+                assert!(details.height() >= 0.0);
+                assert_eq!(changes.bottom, prompt.top);
+                assert_eq!(prompt.bottom, details.top);
+                assert_eq!(details.bottom, body.bottom);
+                assert_eq!(prompt.height(), body.height().min(PROMPT_H));
+                assert!(
+                    details.height() >= (SECTION_H * 4.0).min((body.height() - PROMPT_H).max(0.0))
+                );
+                if bottom == 900.0 && height == 300.0 {
+                    assert_eq!(details.height(), 300.0);
+                    assert_eq!(changes.height(), body.height() - PROMPT_H - 300.0);
+                }
+            }
+        }
     }
 
     fn save_drawer_preview(
