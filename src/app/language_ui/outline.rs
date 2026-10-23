@@ -173,7 +173,7 @@ fn refresh(ctx: &AppContext, app: &mut AppState) {
     }
     let ui = &mut app.editor.language.outline;
     ui.timer = None;
-    if outline::is_markdown(&t.path) {
+    if crate::features::markdown::is_markdown_path(&t.path) {
         ui.outline = Arc::new(Outline::new(outline::markdown::items(&t.text)));
         ui.status = Status::Ready;
         ui.follow();

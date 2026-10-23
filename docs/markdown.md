@@ -14,8 +14,10 @@ Open a .md, .markdown, .mdown or .mkd file and use:
 | markdown::OpenPreviewToSide | Ctrl+K, V | Open or focus the explicitly associated side preview |
 | markdown::OpenSource | Configurable | Focus the associated source view |
 
-Use Command instead of Ctrl on macOS. The tab context menu also provides these
-actions. Repeating side preview reuses its association. Copying a tab
+Use Command instead of Ctrl on macOS. The tab context menu offers **Toggle
+Markdown Preview** for Markdown files only; the other two actions have no menu
+entry. A Markdown file's right-click menu in the file tree ends with **Preview
+Markdown**, which opens the file as a preview. Repeating side preview reuses its association. Copying a tab
 creates a separate view; moving it preserves its identity. Closing or converting
 the associated source safely detaches the preview.
 

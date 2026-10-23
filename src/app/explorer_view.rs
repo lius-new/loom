@@ -245,6 +245,10 @@ fn run_menu(
             &target.path,
             action == MenuAction::CopyRelativePath,
         ),
+        MenuAction::PreviewMarkdown => {
+            let pane = state.get().workspace.active_pane();
+            super::markdown_view::open_local(state, pane, target.path, None);
+        }
         MenuAction::AddFolder => unreachable!("handled before the target check"),
     }
 }
@@ -466,6 +470,26 @@ mod tests {
             target: target(root.clone(), ExplorerTargetKind::Directory),
         });
         assert!(h.state.get().explorer.model.roots().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preview_markdown_turns_an_open_markdown_file_into_its_preview() {
+        let (root, mut app) = workspace("explorer-view-preview", &["notes.md"]);
+        let path = root.join("notes.md");
+        let id = app.workspace.test_open_view(path.clone(), "# Notes".into());
+        let h = harness(app);
+
+        h.run(Command::Menu {
+            action: MenuAction::PreviewMarkdown,
+            target: target(path, ExplorerTargetKind::File),
+        });
+
+        let app = h.state.get();
+        assert_eq!(
+            app.workspace.view(id).map(|view| view.presentation),
+            Some(crate::domain::view::Presentation::Markdown)
+        );
         let _ = fs::remove_dir_all(root);
     }
 

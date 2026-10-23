@@ -22,6 +22,7 @@ pub enum MenuAction {
     RevealInFileExplorer,
     CopyPath,
     CopyRelativePath,
+    PreviewMarkdown,
 }
 
 #[derive(Clone, Debug, PartialEq)]

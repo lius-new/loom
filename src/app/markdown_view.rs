@@ -28,13 +28,7 @@ use std::sync::Arc;
 pub fn eligible(app: &AppState, view: ViewId) -> bool {
     app.workspace
         .view_meta(view)
-        .and_then(|meta| meta.path.extension())
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| {
-            ["md", "markdown", "mdown", "mkd"]
-                .iter()
-                .any(|ext| value.eq_ignore_ascii_case(ext))
-        })
+        .is_some_and(|meta| crate::features::markdown::is_markdown_path(&meta.path))
         && app.workspace.view_document(view).is_some()
 }
 fn reset_input(app: &mut AppState) {
@@ -551,31 +545,37 @@ fn open_link(state: &AppContext, pane: PaneId, view: ViewId, result: &Rendered, 
                 state.update(|app| app.show_error(format!("Heading not found: {fragment}")));
             }
         }
-        Some(Address::Local { path, fragment }) => {
-            let loader = state.services().and_then(|runtime| runtime.file_loader());
-            state.update(|app| {
-                app.workspace.activate_pane(pane);
-                if let Some(document) = app.workspace.file_id_for_path(&path) {
-                    app.workspace.activate_document(document);
-                    if let Some(view) = app.workspace.active() {
-                        finish_navigation(app, view, fragment);
-                    }
-                } else if crate::app::file_loading::request(
-                    app,
-                    path,
-                    crate::app::workspace::OpenMode::Permanent,
-                    None,
-                    loader.as_ref(),
-                ) {
-                    if let Some(pending) = app.editor.pending_file.as_mut() {
-                        pending.markdown = true;
-                        pending.markdown_fragment = fragment;
-                    }
-                }
-            });
-        }
+        Some(Address::Local { path, fragment }) => open_local(state, pane, path, fragment),
         None => state.update(|app| app.show_error("Unsupported Markdown link")),
     }
+}
+/// Opens `path` in `pane` as a Markdown preview, reading it first when needed.
+pub(crate) fn open_local(
+    state: &AppContext,
+    pane: PaneId,
+    path: std::path::PathBuf,
+    fragment: Option<String>,
+) {
+    let loader = state.services().and_then(|runtime| runtime.file_loader());
+    state.update(|app| {
+        app.workspace.activate_pane(pane);
+        if let Some(document) = app.workspace.file_id_for_path(&path) {
+            app.workspace.activate_document(document);
+            if let Some(view) = app.workspace.active() {
+                finish_navigation(app, view, fragment);
+            }
+        } else if crate::app::file_loading::request(
+            app,
+            path,
+            crate::app::workspace::OpenMode::Permanent,
+            None,
+            loader.as_ref(),
+        ) && let Some(pending) = app.editor.pending_file.as_mut()
+        {
+            pending.markdown = true;
+            pending.markdown_fragment = fragment;
+        }
+    });
 }
 pub fn finish_navigation(app: &mut AppState, view: ViewId, fragment: Option<String>) {
     if eligible(app, view) {

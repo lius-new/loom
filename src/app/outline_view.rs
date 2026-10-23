@@ -21,7 +21,7 @@ pub(crate) fn render(rect: UiRect, state: &AppContext, code_rect: UiRect) -> Ele
     let markdown = ui
         .path
         .as_deref()
-        .is_some_and(crate::features::outline::is_markdown);
+        .is_some_and(crate::features::markdown::is_markdown_path);
     let message = match &ui.status {
         Status::NoDocument => Some("Open a text file to see its structure."),
         Status::Loading if ui.outline.is_empty() => Some("Reading structure…"),

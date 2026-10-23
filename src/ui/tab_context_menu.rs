@@ -16,8 +16,6 @@ const SEP_H: f32 = 5.0;
 pub(crate) enum Action {
     KeepOpen,
     ToggleMarkdown,
-    MarkdownToSide,
-    MarkdownSource,
     SplitRight,
     SplitDown,
     ReloadFromDisk,
@@ -39,10 +37,6 @@ pub(crate) enum Entry {
 }
 
 pub(crate) const ENTRIES: &[Entry] = &[
-    Entry::Item("Toggle Markdown Preview", Action::ToggleMarkdown),
-    Entry::Item("Markdown Preview to Side", Action::MarkdownToSide),
-    Entry::Item("Open Markdown Source", Action::MarkdownSource),
-    Entry::Separator,
     Entry::Item("Keep Open", Action::KeepOpen),
     Entry::Separator,
     Entry::Item("Split Right", Action::SplitRight),
@@ -62,7 +56,27 @@ pub(crate) const ENTRIES: &[Entry] = &[
     Entry::Separator,
     Entry::Item("Reveal in File Tree", Action::RevealInTree),
     Entry::Item("Reveal in File Explorer", Action::RevealInFileExplorer),
+    Entry::Separator,
+    Entry::Item("Toggle Markdown Preview", Action::ToggleMarkdown),
 ];
+
+/// The entries to show: the Markdown item only for Markdown files, and no
+/// separator left leading the menu or doubled up by a hidden item.
+fn visible(enabled: &[Action]) -> Vec<&'static Entry> {
+    let mut shown: Vec<&'static Entry> = Vec::new();
+    for entry in ENTRIES {
+        match entry {
+            Entry::Item(_, Action::ToggleMarkdown)
+                if !enabled.contains(&Action::ToggleMarkdown) => {}
+            Entry::Separator if !matches!(shown.last(), Some(Entry::Item(..))) => {}
+            _ => shown.push(entry),
+        }
+    }
+    if matches!(shown.last(), Some(Entry::Separator)) {
+        shown.pop();
+    }
+    shown
+}
 
 pub fn render(viewport: UiRect, state: Binding) -> Element {
     let Some(menu) = state.frame() else {
@@ -70,8 +84,9 @@ pub fn render(viewport: UiRect, state: Binding) -> Element {
     };
     let target = menu.target;
     let pane = menu.pane;
+    let entries = visible(&menu.enabled);
     let menu_h = MENU_PAD * 2.0
-        + ENTRIES
+        + entries
             .iter()
             .map(|entry| match entry {
                 Entry::Item(..) => ITEM_H,
@@ -116,7 +131,7 @@ pub fn render(viewport: UiRect, state: Binding) -> Element {
 
     let mut row_top = card.top + MENU_PAD;
     let mut item_index = 0usize;
-    for entry in ENTRIES {
+    for entry in entries {
         match entry {
             Entry::Separator => {
                 let line_y = row_top + (SEP_H - 1.0) / 2.0;
@@ -188,4 +203,34 @@ pub fn render(viewport: UiRect, state: Binding) -> Element {
     }
 
     overlay.child(surface)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(enabled: &[Action]) -> Vec<&'static str> {
+        visible(enabled)
+            .into_iter()
+            .map(|entry| match entry {
+                Entry::Item(label, _) => *label,
+                Entry::Separator => "-",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_markdown_entry_shows_only_for_markdown_files_without_a_stray_separator() {
+        let plain = labels(&[]);
+        assert_eq!(plain.first(), Some(&"Keep Open"));
+        assert_eq!(plain.last(), Some(&"Reveal in File Explorer"));
+        assert!(!plain.contains(&"Toggle Markdown Preview"));
+        assert!(plain.windows(2).all(|pair| pair != ["-", "-"]));
+
+        let markdown = labels(&[Action::ToggleMarkdown]);
+        assert_eq!(
+            &markdown[markdown.len() - 2..],
+            ["-", "Toggle Markdown Preview"]
+        );
+    }
 }

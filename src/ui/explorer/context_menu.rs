@@ -95,6 +95,27 @@ const FILE_ENTRIES: &[Entry] = &[
     item("Delete", MenuAction::Delete),
 ];
 
+/// Appended to a Markdown file's menu.
+const MARKDOWN_ENTRIES: &[Entry] = &[
+    Entry::Separator,
+    item("Preview Markdown", MenuAction::PreviewMarkdown),
+];
+
+/// The entries for `target`: directory actions, or file actions plus the
+/// Markdown preview for Markdown files.
+fn entries_for(target: Option<&ExplorerContextTarget>) -> Vec<&'static Entry> {
+    match target {
+        Some(target) if target.kind == ExplorerTargetKind::File => {
+            let markdown = crate::features::markdown::is_markdown_path(&target.path);
+            FILE_ENTRIES
+                .iter()
+                .chain(markdown.then_some(MARKDOWN_ENTRIES).into_iter().flatten())
+                .collect()
+        }
+        _ => DIRECTORY_ENTRIES.iter().collect(),
+    }
+}
+
 /// The empty-space menu acts on the root containing the active file. Falling
 /// back to the first root keeps its behavior deterministic before a file is
 /// opened. The longest match wins when workspace roots are nested.
@@ -138,14 +159,7 @@ pub fn render(
     let s = state.get();
     let target = context_target(&s, active_path);
     let has_item_target = s.ui.menu_target.is_some();
-    let entries = if target
-        .as_ref()
-        .is_some_and(|target| target.kind == ExplorerTargetKind::File)
-    {
-        FILE_ENTRIES
-    } else {
-        DIRECTORY_ENTRIES
-    };
+    let entries = entries_for(target.as_ref());
     let can_remove = target.as_ref().is_some_and(|target| {
         target.kind == ExplorerTargetKind::Directory && s.model.is_root(&target.path)
     });
@@ -450,6 +464,30 @@ mod tests {
         assert!(!labels.contains(&"New File"));
         assert!(!labels.contains(&"Add Folder From Workspace"));
         assert!(!labels.contains(&"Remove Folder From Workspace"));
+    }
+
+    #[test]
+    fn only_markdown_files_get_the_preview_entry_and_it_comes_last() {
+        let file = |name: &str| ExplorerContextTarget {
+            path: PathBuf::from(name),
+            kind: ExplorerTargetKind::File,
+        };
+        let last = |entries: Vec<&Entry>| {
+            entries.into_iter().rev().find_map(|entry| match entry {
+                Entry::Item { label, .. } => Some(*label),
+                Entry::Separator => None,
+            })
+        };
+        assert_eq!(
+            last(entries_for(Some(&file("a/readme.MD")))),
+            Some("Preview Markdown")
+        );
+        assert_eq!(last(entries_for(Some(&file("a/main.rs")))), Some("Delete"));
+        let folder = ExplorerContextTarget {
+            path: PathBuf::from("a/b.md"),
+            kind: ExplorerTargetKind::Directory,
+        };
+        assert_eq!(last(entries_for(Some(&folder))), Some("Delete"));
     }
 
     #[test]
