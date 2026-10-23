@@ -149,7 +149,7 @@ pub fn render_in(
                     bounds.right -= offset;
                 }
                 if bounds.bottom > rect.top && bounds.top < rect.bottom {
-                    content=content.child(panel(bounds,VisualStyle::filled(theme::c().surface)).child(text(bounds,"Large block exceeds the preview budget. Open Source to read it; Select All / Copy includes its complete text.",theme::sans(theme::c().warning,13.0))));
+                    content=content.child(panel(bounds,VisualStyle::filled(theme::c().surface)).child(text(bounds,"Large block exceeds the preview budget. Toggle the preview to read the source; Select All / Copy includes its complete text.",theme::sans(theme::c().warning,13.0))));
                 }
             }
             Decoration::Rule { y, left, right } => {

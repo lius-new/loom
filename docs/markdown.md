@@ -15,14 +15,11 @@ Open a .md, .markdown, .mdown or .mkd file and use:
 | markdown::OpenSource | Configurable | Focus the associated source view |
 
 Use Command instead of Ctrl on macOS. The tab context menu also provides these
-actions. **Open Source** in the reader toolbar locates the current reading
-anchor in source. Repeating side preview reuses its association. Copying a tab
+actions. Repeating side preview reuses its association. Copying a tab
 creates a separate view; moving it preserves its identity. Closing or converting
 the associated source safely detaches the preview.
 
-The reader toolbar provides **Open Source**, **Load Remote Images** and
-**Outline**. In a narrow pane, scroll the toolbar horizontally to reach the
-remaining controls. Outline entries navigate by source anchors. A
+The reader toolbar provides **Outline**. Outline entries navigate by source anchors. A
 source/preview pair scrolls together: an editor and a preview of the same
 document in different panes need no explicit association. Whichever side moved
 drives the other, with no focus requirement and no feedback loop. Session
@@ -62,10 +59,9 @@ separate logical region. Cards do not load images or other external resources.
 | Fenced code highlighting | Visible blocks request existing language packages; unknown or unavailable grammars remain readable |
 | SVG, math and Mermaid | No active renderer; image fallback or literal syntax |
 
-Remote images are off by default. **Load Remote Images** authorizes only the
-current document path for the current runtime view; it is not saved as a global
-or session permission. UNC paths follow the same opt-in policy. Local
-image changes invalidate their cached dimensions and pixels on a one-second
+Images in a Markdown file load automatically, including remote HTTP(S) and UNC
+paths. Documentation cards from language servers never load remote images or
+network paths. Local image changes invalidate their cached dimensions and pixels on a one-second
 poll. Remote loads use bounded byte/time limits. Unsupported links report an
 error instead of launching an arbitrary protocol.
 
@@ -83,10 +79,10 @@ Text uses system font fallback. Install Noto CJK and Noto Color Emoji on Linux
 for Chinese and color Emoji coverage. Font size accepts 10–32, line height 14–80, and maximum reading width 320–1800
 logical pixels. Effective line height is at least 1.2 times the font size.
 
-Preview admits source up to 2 MiB; larger files show Open Source instead.
+Preview admits source up to 2 MiB; larger files show the source instead.
 Event, depth, output and retained-memory limits also apply. A native paragraph
 is limited to 16 KiB. Oversized blocks/cells show an explicit fallback while
-other content remains readable; Open Source displays the full source and
+other content remains readable; toggling to the source displays the full text and
 logical Select All/Copy retains the block. Other parse/layout budget failures
 show a diagnostic rather than silently truncating content.
 

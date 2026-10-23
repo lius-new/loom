@@ -38,7 +38,7 @@ pub fn load(base: Option<&Path>, destination: &str, remote: bool) -> Result<Load
     match address {
         Address::Local { path, .. } => {
             if !remote && network_path(&path) {
-                return Err("Network image disabled; choose Load Remote Images".into());
+                return Err("Network images are not loaded in this view".into());
             }
             let before = stamp(&path);
             let file = std::fs::File::open(&path).map_err(|error| error.to_string())?;
@@ -56,7 +56,7 @@ pub fn load(base: Option<&Path>, destination: &str, remote: bool) -> Result<Load
         }
         Address::Web(url) => {
             if !remote {
-                return Err("Remote image disabled; choose Load Remote Images".into());
+                return Err("Remote images are not loaded in this view".into());
             }
             let agent = ureq::AgentBuilder::new()
                 .timeout_connect(Duration::from_secs(3))
@@ -114,7 +114,7 @@ mod tests {
         assert!(
             load(None, "https://example.com/image.png", false)
                 .unwrap_err()
-                .contains("disabled")
+                .contains("not loaded")
         );
         assert!(load(None, "data:image/png,a", true).is_err());
     }

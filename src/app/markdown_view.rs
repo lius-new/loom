@@ -209,60 +209,9 @@ pub fn render(
         ((body.width() - app.preferences.values().markdown.max_width as f32) * 0.5).max(0.0);
     body.left += margin;
     body.right -= margin;
-    let source_state = state.clone();
-    let mut root = group(UiRect::new(
-        rect.left,
-        rect.top,
-        rect.left + 360.0_f32.max(header.width()),
-        header.bottom,
-    ))
-    .child(button(
-        UiRect::new(rect.left + 10.0, rect.top, rect.left + 110.0, header.bottom),
-        "Open Source",
-        move || {
-            source_state.update(|app| {
-                app.workspace.activate(pane, view.id);
-                let at = app
-                    .workspace
-                    .view(view.id)
-                    .map(|view| view.reader.source_byte);
-                source(app, at);
-            })
-        },
-    ));
-    let remote_state = state.clone();
-    root = root.child(button(
-        UiRect::new(
-            rect.left + 120.0,
-            rect.top,
-            rect.left + 280.0,
-            header.bottom,
-        ),
-        "Load Remote Images",
-        move || {
-            remote_state.update(|app| {
-                if let Some(path) = app
-                    .workspace
-                    .view_meta(view.id)
-                    .map(|meta| meta.path.clone())
-                {
-                    app.editor
-                        .markdown_views
-                        .entry(view.id)
-                        .or_default()
-                        .remote_base = Some(path);
-                }
-            })
-        },
-    ));
     let outline_state = state.clone();
-    root = root.child(button(
-        UiRect::new(
-            rect.left + 290.0,
-            rect.top,
-            rect.left + 350.0,
-            header.bottom,
-        ),
+    let toolbar = panel(header, VisualStyle::filled(theme::c().surface)).child(button(
+        UiRect::new(rect.left + 10.0, rect.top, rect.left + 70.0, header.bottom),
         "Outline",
         move || {
             outline_state.update(|app| {
@@ -271,11 +220,6 @@ pub fn render(
             })
         },
     ));
-    let toolbar = panel(header, VisualStyle::filled(theme::c().surface)).child(
-        lgui::prelude::scroll_view(header, (360.0_f32.max(header.width()), 28.0))
-            .horizontal()
-            .child(root),
-    );
     // The centered reading column is narrower than the pane; fill the margins.
     let mut root = group(rect)
         .child(panel(
@@ -333,23 +277,14 @@ pub fn render(
                             .workspace
                             .view_meta(view.id)
                             .map(|meta| meta.path.clone()),
-                        remote: app
-                            .editor
-                            .markdown_views
-                            .get(&view.id)
-                            .and_then(|value| value.remote_base.as_ref())
-                            .is_some_and(|path| {
-                                app.workspace
-                                    .view_meta(view.id)
-                                    .is_some_and(|meta| meta.path == *path)
-                            }),
+                        remote: true,
                     },
                     publication,
                 })
             }
         }
         Some(ParseStatus::Declined(failure)) => Status::Failed(format!(
-            "Markdown preview limit: {:?}. Use Open Source to read the complete document.",
+            "Markdown preview limit: {:?}. Toggle the preview to read the complete source.",
             failure.reason
         )),
         Some(ParseStatus::Stopped) => Status::Failed("Markdown service stopped".into()),

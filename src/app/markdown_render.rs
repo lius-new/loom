@@ -399,7 +399,7 @@ fn render(
         )
         .map_err(|failure| {
             format!(
-                "Markdown layout unavailable: {:?}. Open Source to read the complete document.",
+                "Markdown layout unavailable: {:?}. Toggle the preview to read the complete source.",
                 failure.reason
             )
         })?;
