@@ -105,6 +105,7 @@ pub struct NativeBackend {
     cache: VecDeque<Cached>,
     tiles: VecDeque<CachedTile>,
     tile_bytes: usize,
+    spaces: VecDeque<(u64, u32, f32)>,
     bytes: usize,
     pub ink: Ink,
 }
@@ -117,6 +118,7 @@ impl Default for NativeBackend {
             cache: VecDeque::new(),
             tiles: VecDeque::new(),
             tile_bytes: 0,
+            spaces: VecDeque::new(),
             bytes: 0,
             ink: Ink::default(),
         }
@@ -170,6 +172,33 @@ fn text_style(style: InlineStyle, r: &ParagraphRequest<'_>, ink: Ink) -> TextSty
     out
 }
 impl NativeBackend {
+    fn tab_space(&mut self, r: &ParagraphRequest<'_>) -> Result<f32, TextFailure> {
+        if !r.text.contains('\t') {
+            return Ok(0.0);
+        }
+        if let Some((_, _, space)) = self
+            .spaces
+            .iter()
+            .find(|(font, scale, _)| *font == r.font_generation && *scale == r.scale.to_bits())
+        {
+            return Ok(*space);
+        }
+        let manager = sk::FontMgr::default();
+        let face = MONO
+            .iter()
+            .find_map(|family| manager.match_family_style(family, sk::FontStyle::normal()))
+            .ok_or(TextFailure::Unsupported)?;
+        let space = sk::Font::new(face, 16.0 * r.scale).measure_str(" ", None).0;
+        if !space.is_finite() || space <= 0.0 {
+            return Err(TextFailure::Unsupported);
+        }
+        if self.spaces.len() >= 8 {
+            self.spaces.pop_front();
+        }
+        self.spaces
+            .push_back((r.font_generation, r.scale.to_bits(), space));
+        Ok(space)
+    }
     fn get(&mut self, r: &ParagraphRequest<'_>) -> Result<&Cached, TextFailure> {
         if !r.width.is_finite()
             || r.width <= 0.0
@@ -196,13 +225,7 @@ impl NativeBackend {
         // The parser supplies disjoint, ordered leaf spans. Fill synthetic gaps with body style.
         let mut offset = 0;
         let mut column = 0usize;
-        let manager = sk::FontMgr::default();
-        let face = MONO
-            .iter()
-            .find_map(|family| manager.match_family_style(family, sk::FontStyle::normal()))
-            .ok_or(TextFailure::Unsupported)?;
-        let font = sk::Font::new(face, 16.0 * r.scale);
-        let space = font.measure_str(" ", None).0;
+        let space = self.tab_space(r)?;
         for span in r.spans {
             if span.bytes.start < offset
                 || span.bytes.end > r.text.len()
@@ -389,6 +412,7 @@ impl NativeBackend {
         self.cache.clear();
         self.tiles.clear();
         self.tile_bytes = 0;
+        self.spaces.clear();
         self.bytes = 0;
     }
 }
@@ -402,6 +426,10 @@ fn add_text(
     space: f32,
     line_height: f32,
 ) {
+    if space == 0.0 {
+        builder.add_text(text);
+        return;
+    }
     let mut start = 0;
     for (byte, c) in text.grapheme_indices(true) {
         if c == "\t" {

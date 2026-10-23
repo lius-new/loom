@@ -22,7 +22,8 @@ creates a separate view; moving it preserves its identity. Closing or converting
 the associated source safely detaches the preview.
 
 The reader toolbar provides **Outline**, **Sync Scroll**, **Load Remote Images**
-and **Larger Preview**. Outline entries navigate by source anchors. Sync Scroll
+and **Larger Preview**. In a narrow pane, scroll the toolbar horizontally to
+reach the remaining controls. Outline entries navigate by source anchors. Sync Scroll
 follows the focused member of an associated source/preview pair, preventing a
 feedback loop. Session restore keeps view modes, positions and associations.
 

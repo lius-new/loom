@@ -51,8 +51,9 @@ typed views and pane/item references, never runtime IDs; restore validates
 same-document/source mode before rebuilding associations. The sole legacy
 reader converts unversioned sessions; malformed/future formats remain intact.
 
-File ParseKey contains the complete DocumentStamp, input generation, format,
-syntax and limits. Card keys use Consumer::Card(owner) plus immutable Markup
+File ParseKey contains the complete DocumentStamp, format, syntax and limits
+(with a reserved parse-policy generation). View input generations are checked
+by hosts, so different views still share the same parse publication. Card keys use Consumer::Card(owner) plus immutable Markup
 identity/revision; no fake file/view identity is manufactured. Card content
 identity is assigned at ingestion, with composed identities retaining parts.
 Plaintext is preserved even when mixed with formatted documentation.
@@ -62,7 +63,8 @@ layout lease. Rendered holds LayoutEntry, image references and its frame lease.
 UI bindings retain the envelope, so eviction cannot hide memory still held by
 a visible/retiring frame. Ready results are validated against wanted keys before
 publication; callbacks also validate document stamp, view/input generation,
-card identity and current frame. Old bounded geometry is discarded after a
+card identity and the parse of the frame actually displayed. A newer raster
+publication of that same parse cannot invalidate an in-flight logical gesture. Old bounded geometry is discarded after a
 horizontal change or a viewport jump outside its overscan window.
 
 One parser worker coalesces edits (80 ms, at most about 250 ms of continuous
@@ -88,7 +90,9 @@ ParagraphIndex converts byte/scalar/UTF-16 boundaries. Skia line metrics,
 rectangles and hit positions use UTF-16; portable output uses grapheme-safe
 UTF-8 ranges. Summary, geometry and paint share the same styled paragraph and
 font/layout key. No independently shaped words are placed to approximate a line.
-Tabs use measured monospace stops while retaining one logical tab unit.
+Tabs use measured monospace stops while retaining one logical tab unit. Normal
+paragraphs never resolve a monospace face; tab advances have a bounded cache
+keyed by font generation and scale.
 
 Structural layout computes flow for body/headings, quotes/lists, tables, code,
 images and explicit large-block fallbacks. Fine geometry is requested only for

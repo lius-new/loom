@@ -260,6 +260,9 @@ impl MarkdownService {
             }
             return effect;
         }
+        let Some(event) = event.on_frame(result.frame) else {
+            return effect;
+        };
         let mut viewport = result.viewport;
         viewport.restore(
             &result.layout,

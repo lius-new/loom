@@ -713,3 +713,31 @@ pub fn cancel_gesture(state: &mut InteractionState) {
     state.drag_point = None;
     state.dragging = false;
 }
+
+impl ReaderEvent {
+    /// A logical hit comes from the frame actually shown to the user. A newer
+    /// raster publication of the same parse must not drop its pointer/scroll
+    /// transaction. Different documents/parses remain invalid.
+    pub fn on_frame(mut self, frame: FrameKey) -> Option<Self> {
+        let key = match &mut self {
+            Self::Focus(_) => return Some(self),
+            Self::HorizontalScroll { key, .. }
+            | Self::Scroll { key, .. }
+            | Self::PointerDown { key, .. }
+            | Self::PointerDrag { key, .. }
+            | Self::PointerUp { key, .. }
+            | Self::Move { key, .. }
+            | Self::Copy { key }
+            | Self::SelectAll { key }
+            | Self::ClearSelection { key }
+            | Self::CopyNode { key, .. }
+            | Self::FocusLink { key, .. }
+            | Self::OpenLink { key, .. } => key,
+        };
+        if key.parse != frame.parse {
+            return None;
+        }
+        *key = frame;
+        Some(self)
+    }
+}

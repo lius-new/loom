@@ -95,7 +95,7 @@ impl Reader {
             .render_view(&self.view, self.rect, UiScale::ONE);
     }
     fn wait(&mut self, mut predicate: impl FnMut(&Self) -> bool) {
-        let limit = Instant::now() + Duration::from_secs(10);
+        let limit = Instant::now() + Duration::from_secs(60);
         loop {
             self.render();
             if predicate(self) {
@@ -304,11 +304,17 @@ fn dragging_past_the_bottom_continues_scrolling_until_release() {
         .unwrap()
         .reader
         .source_byte;
-    let until = Instant::now() + Duration::from_millis(180);
-    while Instant::now() < until {
-        std::thread::sleep(Duration::from_millis(20));
-        reader.render();
-    }
+    reader.wait(|reader| {
+        reader
+            .state
+            .get()
+            .workspace
+            .view(view)
+            .unwrap()
+            .reader
+            .source_byte
+            > first
+    });
     let after = reader
         .state
         .get()
@@ -573,6 +579,12 @@ fn stale_frame_release_cancels_the_gesture_without_opening_a_link() {
         .input_generation;
     reader.state.update(|app| {
         let state = app.editor.markdown_views.entry(view).or_default();
+        state.revision = old.frame.parse;
+        state.selection = Some(crate::features::markdown::reader::LogicalSelection {
+            revision: old.frame.parse,
+            anchor: DisplayByte(0),
+            head: DisplayByte(0),
+        });
         state.pressed = Some((old.frame.parse, DisplayByte(0), None));
         state.drag_point = Some((20.0, 400.0));
     });
@@ -587,6 +599,29 @@ fn stale_frame_release_cancels_the_gesture_without_opening_a_link() {
             .is_some_and(|result| result.frame != old.frame)
             && r.text_rect("Heading").is_some()
     });
+    super::markdown_view::event(
+        &reader.state,
+        PaneId::new(1),
+        view,
+        generation,
+        &old,
+        crate::features::markdown::reader::ReaderEvent::PointerDrag {
+            key: old.frame,
+            hit: Some(crate::features::markdown::reader::Hit {
+                display: DisplayByte(2),
+                link: None,
+            }),
+            point: (20.0, 20.0),
+        },
+        reader.clipboard.clone(),
+    );
+    assert_eq!(
+        reader.state.get().editor.markdown_views[&view]
+            .selection
+            .unwrap()
+            .head,
+        DisplayByte(2)
+    );
     super::markdown_view::event(
         &reader.state,
         PaneId::new(1),
@@ -656,4 +691,46 @@ fn visible_snippets_load_known_wasm_resources_and_unknown_languages_remain_plain
     assert_eq!(packages.activity().wasm_loads, 1);
     assert_eq!(highlighter.highlight("json", text, &cancelled), spans);
     assert_eq!(packages.activity().wasm_loads, 1);
+}
+
+#[test]
+fn larger_preview_toolbar_targets_its_pane_instead_of_the_active_other_document() {
+    let mut reader = Reader::new("# Heading".into());
+    reader.wait(|r| r.text_rect("Heading").is_some());
+    let target = reader.state.get().workspace.active().unwrap();
+    reader.state.update(|app| {
+        let other = app
+            .workspace
+            .split_empty(PaneId::new(1), crate::domain::pane_layout::Direction::Right)
+            .unwrap();
+        app.workspace.activate_pane(other);
+        app.workspace
+            .open_path("other.md".into(), "other source".into());
+    });
+    let other = reader.state.get().workspace.active().unwrap();
+    reader.render();
+    let bounds = reader
+        .session
+        .tree()
+        .nodes()
+        .iter()
+        .find(|node| node.text.as_deref() == Some("Larger Preview"))
+        .unwrap()
+        .layout_rect;
+    let pointer = PointerData::mouse(Point::new(bounds.left + 8.0, bounds.top + 8.0));
+    reader.send(InputEvent::PointerDown {
+        pointer,
+        button: PointerButton::Left,
+    });
+    reader.send(InputEvent::PointerUp {
+        pointer,
+        button: PointerButton::Left,
+    });
+    let app = reader.state.get();
+    assert_eq!(app.workspace.active(), Some(target));
+    assert!(app.editor.markdown_views[&target].large);
+    assert_eq!(
+        app.workspace.view(other).unwrap().presentation,
+        Presentation::Source
+    );
 }

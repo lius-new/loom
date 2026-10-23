@@ -208,22 +208,26 @@ pub fn render(
     body.left += margin;
     body.right -= margin;
     let source_state = state.clone();
-    let mut root = lgui::core::clip(header, 0.0, 0.0)
-        .child(panel(header, VisualStyle::filled(theme::c().surface)))
-        .child(button(
-            UiRect::new(rect.left + 10.0, rect.top, rect.left + 110.0, header.bottom),
-            "Open Source",
-            move || {
-                source_state.update(|app| {
-                    app.workspace.activate(pane, view.id);
-                    let at = app
-                        .workspace
-                        .view(view.id)
-                        .map(|view| view.reader.source_byte);
-                    source(app, at);
-                })
-            },
-        ));
+    let mut root = group(UiRect::new(
+        rect.left,
+        rect.top,
+        rect.left + 580.0_f32.max(header.width()),
+        header.bottom,
+    ))
+    .child(button(
+        UiRect::new(rect.left + 10.0, rect.top, rect.left + 110.0, header.bottom),
+        "Open Source",
+        move || {
+            source_state.update(|app| {
+                app.workspace.activate(pane, view.id);
+                let at = app
+                    .workspace
+                    .view(view.id)
+                    .map(|view| view.reader.source_byte);
+                source(app, at);
+            })
+        },
+    ));
     let remote_state = state.clone();
     root = root.child(button(
         UiRect::new(
@@ -292,11 +296,17 @@ pub fn render(
         "Larger Preview",
         move || {
             larger.update(|app| {
+                app.workspace.activate(pane, view.id);
                 app.apply(crate::features::keymap::action::Action::MarkdownLargePreview)
             })
         },
     ));
-    let mut root = group(rect).child(root);
+    let toolbar = panel(header, VisualStyle::filled(theme::c().surface)).child(
+        lgui::prelude::scroll_view(header, (580.0_f32.max(header.width()), 28.0))
+            .horizontal()
+            .child(root),
+    );
+    let mut root = group(rect).child(toolbar);
     let Some(service) = state.services().and_then(|runtime| runtime.markdown()) else {
         return root;
     };
@@ -472,10 +482,6 @@ pub(super) fn event(
     let Some(service) = state.services().and_then(|runtime| runtime.markdown()) else {
         return;
     };
-    let current_frame = service.render.is_current(
-        crate::infrastructure::markdown_worker::Consumer::Document(view),
-        result.frame,
-    );
     let mut effects = crate::features::markdown::reader::Effects::default();
     let activate = matches!(action, ReaderEvent::PointerDown { .. });
     state.update(|app| {
@@ -502,11 +508,10 @@ pub(super) fn event(
             app.editor.ime = None;
             app.workspace.activate(pane, view);
         }
-        if !current_frame
-            || service.query(app, view).and_then(|value| match value {
-                ParseStatus::Ready(publication) => Some(publication.revision),
-                _ => None,
-            }) != Some(result.frame.parse)
+        if service.query(app, view).and_then(|value| match value {
+            ParseStatus::Ready(publication) => Some(publication.revision),
+            _ => None,
+        }) != Some(result.frame.parse)
         {
             if action.ends_gesture() {
                 crate::features::markdown::reader::cancel_gesture(

@@ -464,3 +464,32 @@ fn keyboard_links_and_copy_code_share_the_pure_reader_transaction() {
     );
     assert_eq!(effect.copy.as_deref(), Some("let 中 = 1;\n"));
 }
+
+#[test]
+fn layout_publication_can_advance_without_dropping_same_parse_logical_input() {
+    let key = FrameKey {
+        parse: 7,
+        layout: 1,
+    };
+    let next = FrameKey {
+        parse: 7,
+        layout: 2,
+    };
+    let event = ReaderEvent::PointerDrag {
+        key,
+        hit: Some(Hit {
+            display: DisplayByte(3),
+            link: None,
+        }),
+        point: (20.0, 300.0),
+    };
+    assert!(matches!(event.on_frame(next),Some(ReaderEvent::PointerDrag {key,..}) if key==next));
+    assert!(
+        ReaderEvent::Copy { key }
+            .on_frame(FrameKey {
+                parse: 8,
+                layout: 2
+            })
+            .is_none()
+    );
+}
