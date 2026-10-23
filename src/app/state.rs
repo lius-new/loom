@@ -477,6 +477,12 @@ impl AppState {
                 self.search.results_focus_request = 0;
                 self.close_menus();
             }
+            Action::OpenOutline => {
+                self.drawer.visible = true;
+                self.drawer.mode = DrawerMode::Outline;
+                self.search.blur();
+                self.close_menus();
+            }
             Action::ToggleDrawer => {
                 self.drawer.visible = !self.drawer.visible;
                 if !self.drawer.visible {

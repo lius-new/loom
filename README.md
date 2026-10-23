@@ -114,6 +114,7 @@ the first build; no system CMake or manual Skia download is required. See
 - [Editing](docs/editing.md) — mouse, keyboard shortcuts, files, sessions and large files
 - [Language packages](docs/languages.md) — independent, demand-loaded packages and user installation
 - [Workspace search](docs/search.md)
+- [Outline](docs/outline.md) — the structure of the current file
 - [Terminal](docs/terminal.md)
 - [Git](docs/git.md)
 - [Settings and key bindings](docs/settings.md)

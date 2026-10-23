@@ -126,6 +126,8 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/session_filesystem.rs')return ['infrastructure','domain','serde','serde_json','std::fs','std::process'].includes(root);
   if(['src/ui/editor/view.rs','src/ui/components/text.rs'].includes(file)&&root==='unicode_width')return true;
   if(file==='src/ui/explorer/context_menu.rs'&&root==='unicode_width')return true;
+  if(file==='src/ui/outline/view.rs'&&root==='unicode_width')return true;
+  if(file==='src/features/outline/lsp.rs')return ['features','domain','serde_json'].includes(root);
   if(file==='src/infrastructure/markdown_worker.rs')return ['infrastructure','domain','features','std::thread'].includes(root);
   if(file==='src/infrastructure/markdown_resources.rs')return ['infrastructure','features','image','ureq','std::fs'].includes(root);
   if(file==='src/ui/markdown/native.rs')return ['ui','features','skia_safe','unicode_segmentation','unicode_width'].includes(root);

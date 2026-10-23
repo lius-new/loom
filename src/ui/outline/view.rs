@@ -1,0 +1,509 @@
+//! A structure tree in the style of IntelliJ's Structure tool window: a small
+//! toolbar, then one line per symbol with a chevron, a tinted kind icon, the
+//! name and, fainter, its detail. The line holding the caret stays marked.
+//!
+//! The view reads one [`Frame`] and reports everything the person does as a
+//! [`Command`]; it never touches application state.
+use std::sync::Arc;
+
+use lgui::core::{
+    CursorIcon, EventPolicy, IconStyle, PointerButton, SemanticRole, Semantics, UiElement,
+    UiEventKind, UiEventPayload, UiId, WheelUnit, clip, precompiled,
+};
+use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
+use unicode_width::UnicodeWidthStr;
+
+use crate::features::highlighting::HighlightId;
+use crate::features::outline::{Kind, Node, Outline, Row};
+use crate::ui::components::scrollbar;
+use crate::ui::theme;
+
+const HEADER_H: f32 = theme::TABS_H;
+const TOOLBAR_H: f32 = 28.0;
+const ROW_H: f32 = 22.0;
+const INDENT: f32 = 14.0;
+const CHEVRON_W: f32 = 14.0;
+const ICON_SIZE: f32 = 16.0;
+const GAP: f32 = 4.0;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Command {
+    /// Move the caret to the node.
+    Go(usize),
+    Toggle(String),
+    ExpandAll,
+    CollapseAll,
+    ToggleSort,
+    /// The list's new top offset in pixels.
+    Scroll(f32),
+    Hover(Option<usize>),
+    /// Where inside the thumb the pointer took hold of it.
+    ScrollbarGrab(f32),
+    ScrollbarRelease,
+    ResizeStart,
+    Resize(f32),
+    ResizeEnd,
+}
+
+#[derive(Clone)]
+pub struct Commands(Arc<dyn Fn(Command) + Send + Sync>);
+
+impl Commands {
+    pub fn new(dispatch: impl Fn(Command) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(dispatch))
+    }
+
+    pub fn dispatch(&self, command: Command) {
+        (self.0)(command);
+    }
+}
+
+pub enum Body<'a> {
+    /// Nothing to list; says why.
+    Message(&'a str),
+    Tree {
+        outline: &'a Outline,
+        rows: &'a [Row],
+        /// Key of the node holding the caret.
+        current: Option<&'a str>,
+        /// Key of a node to bring into sight.
+        reveal: Option<&'a str>,
+    },
+}
+
+pub struct Frame<'a> {
+    pub body: Body<'a>,
+    /// Name of the described file.
+    pub file: Option<&'a str>,
+    pub sorted: bool,
+    pub scroll: f32,
+    pub hovered: Option<usize>,
+    pub scrollbar_grab: Option<f32>,
+    pub resizable: bool,
+    pub resizing: bool,
+}
+
+pub fn render(rect: UiRect, frame: &Frame<'_>, commands: Commands, header: Element) -> Element {
+    let header_rect = UiRect::new(rect.left, rect.top, rect.right, rect.top + HEADER_H);
+    let toolbar = UiRect::new(
+        rect.left,
+        header_rect.bottom,
+        rect.right,
+        header_rect.bottom + TOOLBAR_H,
+    );
+    let list = UiRect::new(rect.left, toolbar.bottom, rect.right, rect.bottom);
+    let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
+
+    // Empty space clears the hovered row; rows drawn later win hit-testing.
+    let clear = commands.clone();
+    bar = bar.child(
+        panel(list, VisualStyle::default())
+            .event_policy(EventPolicy::INTERACTIVE)
+            .on_event_capture(UiEventKind::PointerMove, move |_cx, _payload| {
+                clear.dispatch(Command::Hover(None));
+            }),
+    );
+
+    match &frame.body {
+        Body::Message(message) => {
+            bar = bar.child(text(
+                UiRect::new(
+                    list.left + 12.0,
+                    list.top + 12.0,
+                    list.right - 12.0,
+                    list.top + 60.0,
+                ),
+                message.to_string(),
+                theme::sans(theme::c().text_dim, 12.0),
+            ));
+        }
+        Body::Tree {
+            outline,
+            rows,
+            current,
+            reveal,
+        } => {
+            bar = tree(
+                bar, list, frame, outline, rows, *current, *reveal, &commands,
+            )
+        }
+    }
+
+    bar = bar.child(toolbar_row(toolbar, frame, &commands));
+    bar = bar.child(header);
+
+    if frame.resizable {
+        let handle_rect = UiRect::new(rect.left, rect.top, rect.left + 8.0, rect.bottom);
+        let right = rect.right;
+        let (down, drag, up) = (commands.clone(), commands.clone(), commands.clone());
+        let handle = crate::ui::components::resize_handle::render(
+            "outline-resize-handle",
+            handle_rect,
+            UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
+            CursorIcon::ResizeHorizontal,
+            frame.resizing,
+        )
+        .on_pointer_down_with_button(move |_cx, _p, button| {
+            if button == PointerButton::Left {
+                down.dispatch(Command::ResizeStart);
+            }
+        })
+        .on_pointer_drag(move |_cx, p| {
+            drag.dispatch(Command::Resize(
+                (right - p.point.x).clamp(theme::SIDEBAR_MIN_W, theme::SIDEBAR_MAX_W),
+            ));
+        })
+        .on_pointer_up(move |_cx, _p| up.dispatch(Command::ResizeEnd));
+        bar = bar.child(handle);
+    }
+    bar
+}
+
+fn toolbar_row(rect: UiRect, frame: &Frame<'_>, commands: &Commands) -> Element {
+    let mut row = panel(rect, VisualStyle::filled(theme::c().sidebar));
+    let mut left = rect.left + 8.0;
+    for (index, label, icon, active, command) in [
+        (0, "Expand All", "expand-all", false, Command::ExpandAll),
+        (
+            1,
+            "Collapse All",
+            "search-collapse",
+            false,
+            Command::CollapseAll,
+        ),
+        (
+            2,
+            "Sort Alphabetically",
+            "sort",
+            frame.sorted,
+            Command::ToggleSort,
+        ),
+    ] {
+        let slot = UiRect::new(left, rect.top + 3.0, left + 24.0, rect.bottom - 3.0);
+        left += 26.0;
+        let commands = commands.clone();
+        row = row.child(
+            tool_button(slot, format!("outline-tool-{index}"), active)
+                .semantics(Semantics::new(SemanticRole::Button).name(label))
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || commands.dispatch(command.clone()))
+                .child(crate::ui::drawer::drawer_icon(
+                    UiId::owned(format!("outline-tool-icon-{index}")),
+                    icon,
+                    theme::icon_rect(slot),
+                    if active {
+                        theme::c().accent
+                    } else {
+                        theme::c().text_dim
+                    },
+                )),
+        );
+    }
+    if let Some(file) = frame.file {
+        row = row.child(text(
+            UiRect::new(left + 8.0, rect.top + 6.0, rect.right - 10.0, rect.bottom),
+            file.to_owned(),
+            theme::sans(theme::c().text_faint, 12.0),
+        ));
+    }
+    row.child(crate::ui::components::divider::bottom(rect))
+}
+
+/// Transparent until hovered or pressed, filled while `active`.
+fn tool_button(rect: UiRect, key: String, active: bool) -> Element {
+    Element::new(move |cx| {
+        let flags = cx.context.interaction_flags(&cx.id);
+        let style = if active || flags.hovered || flags.pressed {
+            VisualStyle::filled(theme::c().surface).radius(3.0)
+        } else {
+            VisualStyle::default()
+        };
+        UiElement::panel(cx.id, rect, style).children(cx.children)
+    })
+    .key(key)
+    .event_policy(EventPolicy {
+        hover: true,
+        press: true,
+        focus: false,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tree(
+    mut bar: Element,
+    list: UiRect,
+    frame: &Frame<'_>,
+    outline: &Outline,
+    rows: &[Row],
+    current: Option<&str>,
+    reveal: Option<&str>,
+    commands: &Commands,
+) -> Element {
+    let content_h = rows.len() as f32 * ROW_H;
+    let max_scroll = (content_h - list.height()).max(0.0);
+    let mut scroll = frame.scroll.clamp(0.0, max_scroll);
+    if let Some(index) = reveal.and_then(|key| {
+        rows.iter()
+            .position(|row| outline.node(row.node).is_some_and(|node| node.key == key))
+    }) {
+        let top = index as f32 * ROW_H;
+        if top < scroll {
+            scroll = top;
+        } else if top + ROW_H > scroll + list.height() {
+            scroll = top + ROW_H - list.height();
+        }
+        scroll = scroll.clamp(0.0, max_scroll);
+    }
+
+    let wheel = commands.clone();
+    bar = bar.on_event(UiEventKind::Wheel, move |_cx, payload| {
+        if let UiEventPayload::Wheel { delta } = payload {
+            let step = match delta.unit {
+                WheelUnit::Lines => delta.y * ROW_H * 3.0,
+                WheelUnit::Pixels => delta.y,
+            };
+            wheel.dispatch(Command::Scroll((scroll - step).clamp(0.0, max_scroll)));
+        }
+    });
+
+    let first = (scroll / ROW_H).floor() as usize;
+    let last = (((scroll + list.height()) / ROW_H).ceil() as usize + 1).min(rows.len());
+    let mut body = clip(list, 0.0, 0.0);
+    for (index, row) in rows.iter().enumerate().take(last).skip(first) {
+        let Some(node) = outline.node(row.node) else {
+            continue;
+        };
+        let top = list.top + index as f32 * ROW_H - scroll;
+        body = body.child(row_element(
+            list,
+            top,
+            index,
+            row,
+            node,
+            current == Some(node.key.as_str()),
+            frame.hovered == Some(index),
+            commands,
+        ));
+    }
+    bar = bar.child(body);
+
+    if max_scroll > 0.0 {
+        bar = bar.child(vertical_scrollbar(
+            list, content_h, scroll, max_scroll, frame, commands,
+        ));
+    }
+    bar
+}
+
+#[allow(clippy::too_many_arguments)]
+fn row_element(
+    list: UiRect,
+    top: f32,
+    index: usize,
+    row: &Row,
+    node: &Node,
+    current: bool,
+    hovered: bool,
+    commands: &Commands,
+) -> Element {
+    let rect = UiRect::new(list.left, top, list.right, top + ROW_H);
+    let style = if current {
+        VisualStyle::filled(theme::c().selection).alpha(130)
+    } else if hovered {
+        VisualStyle::filled(theme::c().surface)
+    } else {
+        VisualStyle::default()
+    };
+    let left = list.left + 8.0 + f32::from(row.depth) * INDENT;
+    let chevron = UiRect::new(left, top, left + CHEVRON_W, top + ROW_H);
+    let icon = UiRect::new(
+        chevron.right,
+        top + (ROW_H - ICON_SIZE) / 2.0,
+        chevron.right + ICON_SIZE,
+        top + (ROW_H + ICON_SIZE) / 2.0,
+    );
+    let label_left = icon.right + GAP;
+    let name_width = node.name.width() as f32 * theme::UI_CHAR_W;
+
+    let go = commands.clone();
+    let hover = commands.clone();
+    let node_index = row.node;
+    let mut element = panel(rect, style)
+        .key(format!("outline-row-{index}"))
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .semantics(Semantics::new(SemanticRole::Button).name(node.name.clone()))
+        .on_pointer_move(move |_cx, _pointer| hover.dispatch(Command::Hover(Some(index))))
+        .on_pointer_down_with_button(move |cx, _pointer, button| {
+            if button == PointerButton::Left {
+                go.dispatch(Command::Go(node_index));
+                cx.stop_propagation();
+            }
+        });
+
+    if row.has_children {
+        let toggle = commands.clone();
+        let key = node.key.clone();
+        element = element.child(
+            panel(chevron, VisualStyle::default())
+                .event_policy(EventPolicy::INTERACTIVE)
+                .on_pointer_down_with_button(move |cx, _pointer, button| {
+                    if button == PointerButton::Left {
+                        toggle.dispatch(Command::Toggle(key.clone()));
+                        cx.stop_propagation();
+                    }
+                })
+                .child(crate::ui::drawer::drawer_icon(
+                    UiId::owned(format!("outline-chevron-{index}")),
+                    if row.expanded {
+                        "chevron-down"
+                    } else {
+                        "chevron-right"
+                    },
+                    theme::icon_rect(chevron),
+                    theme::c().text_dim,
+                )),
+        );
+    }
+
+    element = element.child(kind_badge(index, node.kind, icon));
+
+    let color = if node.deprecated {
+        theme::c().text_faint
+    } else {
+        theme::c().text
+    };
+    element = element.child(text(
+        UiRect::new(label_left, top + 4.0, list.right - 12.0, top + ROW_H),
+        node.name.clone(),
+        theme::mono(color, theme::UI_SIZE),
+    ));
+    if let Some(detail) = &node.detail {
+        let detail_left = label_left + name_width + 8.0;
+        if detail_left < list.right - 24.0 {
+            element = element.child(text(
+                UiRect::new(detail_left, top + 4.0, list.right - 12.0, top + ROW_H),
+                detail.clone(),
+                theme::mono(theme::c().text_faint, theme::UI_SIZE),
+            ));
+        }
+    }
+    element
+}
+
+/// The tinted symbol icon; headings get a small `H1`..`H6` tag instead.
+fn kind_badge(index: usize, kind: Kind, rect: UiRect) -> Element {
+    if let Kind::Heading(level) = kind {
+        return text(
+            UiRect::new(rect.left, rect.top + 1.0, rect.right + 2.0, rect.bottom),
+            format!("H{level}"),
+            theme::sans_semibold(theme::syntax_color(HighlightId::KEYWORD), 10.0),
+        )
+        .into();
+    }
+    let (icon, class) = kind_style(kind);
+    precompiled(
+        UiElement::icon(UiId::owned(format!("outline-kind-{index}")), rect, icon)
+            .icon_style(IconStyle::new(theme::syntax_color(class))),
+    )
+}
+
+/// The icon key and highlight class whose color tints a kind.
+fn kind_style(kind: Kind) -> (&'static str, HighlightId) {
+    match kind {
+        Kind::Class => ("symbol-class", HighlightId::TYPE),
+        Kind::Struct => ("symbol-struct", HighlightId::TYPE),
+        Kind::Interface => ("symbol-interface", HighlightId::TYPE_BUILTIN),
+        Kind::Enum => ("symbol-enum", HighlightId::TYPE),
+        Kind::TypeParameter => ("symbol-parameter", HighlightId::TYPE),
+        Kind::Method | Kind::Constructor => ("symbol-method", HighlightId::FUNCTION_METHOD),
+        Kind::Function => ("symbol-method", HighlightId::FUNCTION),
+        Kind::Event => ("symbol-event", HighlightId::FUNCTION),
+        Kind::Operator => ("symbol-operator", HighlightId::OPERATOR),
+        Kind::Field => ("symbol-field", HighlightId::PROPERTY),
+        Kind::Property => ("symbol-property", HighlightId::PROPERTY),
+        Kind::Variable => ("symbol-variable", HighlightId::VARIABLE),
+        Kind::Key => ("symbol-key", HighlightId::PROPERTY),
+        Kind::Constant | Kind::Boolean | Kind::Null => ("symbol-constant", HighlightId::CONSTANT),
+        Kind::EnumMember => ("symbol-enum-member", HighlightId::CONSTANT),
+        Kind::Module | Kind::Namespace | Kind::Package => ("symbol-namespace", HighlightId::MODULE),
+        Kind::File => ("symbol-file", HighlightId::MODULE),
+        Kind::String => ("symbol-string", HighlightId::STRING),
+        Kind::Number => ("symbol-number", HighlightId::NUMBER),
+        Kind::Array | Kind::Object => ("symbol-array", HighlightId::TYPE),
+        Kind::Heading(_) => ("symbol-misc", HighlightId::KEYWORD),
+    }
+}
+
+fn vertical_scrollbar(
+    list: UiRect,
+    content_h: f32,
+    scroll: f32,
+    max_scroll: f32,
+    frame: &Frame<'_>,
+    commands: &Commands,
+) -> Element {
+    let track = UiRect::new(
+        list.right - scrollbar::SIZE,
+        list.top,
+        list.right,
+        list.bottom,
+    );
+    let thumb = (track.height() * list.height() / content_h)
+        .max(scrollbar::MIN_THUMB_LENGTH)
+        .min(track.height());
+    let travel = (track.height() - thumb).max(0.0);
+    let start = track.top + travel * (scroll / max_scroll);
+    let emphasized = frame.hovered.is_some() || frame.scrollbar_grab.is_some();
+    let grab = frame.scrollbar_grab.unwrap_or(thumb / 2.0);
+    let to_scroll = move |pointer_y: f32, grab: f32| {
+        if travel <= 0.0 {
+            0.0
+        } else {
+            ((pointer_y - track.top - grab).clamp(0.0, travel) / travel) * max_scroll
+        }
+    };
+
+    let (track_down, track_drag, track_up) = (commands.clone(), commands.clone(), commands.clone());
+    let track_hit = scrollbar::track(track)
+        .event_policy(EventPolicy::INTERACTIVE)
+        .on_pointer_down_with_button(move |cx, pointer, button| {
+            if button != PointerButton::Left {
+                return;
+            }
+            track_down.dispatch(Command::ScrollbarGrab(thumb / 2.0));
+            track_down.dispatch(Command::Scroll(to_scroll(pointer.point.y, thumb / 2.0)));
+            cx.stop_propagation();
+        })
+        .on_pointer_drag(move |cx, pointer| {
+            track_drag.dispatch(Command::Scroll(to_scroll(pointer.point.y, grab)));
+            cx.stop_propagation();
+        })
+        .on_pointer_up(move |_cx, _pointer| track_up.dispatch(Command::ScrollbarRelease));
+
+    let (thumb_down, thumb_drag, thumb_up) = (commands.clone(), commands.clone(), commands.clone());
+    let thumb_hit = scrollbar::thumb(
+        UiRect::new(
+            track.left + scrollbar::INSET,
+            start,
+            track.right - scrollbar::INSET,
+            start + thumb,
+        ),
+        if emphasized { 0xb8 } else { 0x68 },
+    )
+    .event_policy(EventPolicy::INTERACTIVE)
+    .on_pointer_down_with_button(move |cx, pointer, button| {
+        if button != PointerButton::Left {
+            return;
+        }
+        thumb_down.dispatch(Command::ScrollbarGrab(pointer.point.y - start));
+        cx.stop_propagation();
+    })
+    .on_pointer_drag(move |cx, pointer| {
+        thumb_drag.dispatch(Command::Scroll(to_scroll(pointer.point.y, grab)));
+        cx.stop_propagation();
+    })
+    .on_pointer_up(move |_cx, _pointer| thumb_up.dispatch(Command::ScrollbarRelease));
+
+    lgui::core::group(track).child(track_hit).child(thumb_hit)
+}

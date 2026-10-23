@@ -16,6 +16,8 @@ pub enum DrawerMode {
     #[default]
     Files,
     Search,
+    /// The structure of the active document.
+    Outline,
 }
 
 /// `id` must be unique in the frame: elements sharing one replace each
@@ -44,7 +46,7 @@ fn hover_button(rect: UiRect, key: impl Into<String>, selected: bool) -> Element
     .key(key.into())
 }
 
-/// Header with the Explorer/Search page buttons.
+/// Header with the Explorer/Search/Outline page buttons.
 pub fn header(
     rect: UiRect,
     mode: DrawerMode,
@@ -54,8 +56,9 @@ pub fn header(
     for (index, label, icon, target) in [
         (0, "Explorer", "explorer", DrawerMode::Files),
         (1, "Search", "search", DrawerMode::Search),
+        (2, "Outline", "outline", DrawerMode::Outline),
     ] {
-        let button_width = ((rect.width() - 48.0).max(0.0) / 2.0).min(28.0);
+        let button_width = ((rect.width() - 48.0).max(0.0) / 3.0).min(28.0);
         let left = rect.left + 8.0 + index as f32 * (button_width + 4.0);
         let hit = UiRect::new(
             left,
@@ -101,7 +104,7 @@ mod tests {
     fn header_buttons_fill_when_selected_or_hovered() {
         let viewport = UiRect::new(0.0, 0.0, 400.0, 200.0);
         let context = ApplicationContext::empty(Default::default());
-        for mode in [DrawerMode::Files, DrawerMode::Search] {
+        for mode in [DrawerMode::Files, DrawerMode::Search, DrawerMode::Outline] {
             let view: lgui::application::AppView = Arc::new(move |_| {
                 header(
                     UiRect::new(0.0, 0.0, 300.0, theme::TABS_H),
@@ -114,6 +117,7 @@ mod tests {
             for (name, selected) in [
                 ("Explorer", mode == DrawerMode::Files),
                 ("Search", mode == DrawerMode::Search),
+                ("Outline", mode == DrawerMode::Outline),
             ] {
                 let find = |session: &UiSession| {
                     session

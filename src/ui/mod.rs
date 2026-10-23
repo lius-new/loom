@@ -16,6 +16,7 @@ pub mod keymap_page;
 pub mod language_details;
 pub mod language_panel;
 pub(crate) mod markdown;
+pub mod outline;
 pub mod pane_sash;
 pub mod search;
 pub mod settings;

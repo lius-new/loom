@@ -113,6 +113,9 @@ mod markdown_drag;
 mod markdown_render;
 pub(crate) mod markdown_service;
 mod markdown_view;
+mod outline_view;
 
 #[cfg(test)]
 mod markdown_tests;
+#[cfg(test)]
+mod outline_view_tests;

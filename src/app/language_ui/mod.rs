@@ -13,6 +13,7 @@ pub(crate) mod keys;
 pub(crate) mod lightbulb;
 pub(crate) mod lists;
 pub(crate) mod navigate;
+pub(crate) mod outline;
 pub(crate) mod peek;
 pub(crate) mod popup;
 pub(crate) mod quickfix;
@@ -54,6 +55,8 @@ pub struct LanguageUi {
     pub signature_timer: Option<Arc<crate::app::ui_timer::Timer>>,
     pub signature_revision: u64,
     pub highlights: highlight::Highlights,
+    /// The Outline drawer's tree and view state.
+    pub outline: outline::OutlineUi,
     pub lightbulb: lightbulb::Lightbulb,
     pub quickfix: quickfix::QuickFix,
     pub inlay: inlay::Inlay,
@@ -250,6 +253,7 @@ pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
     inlay::observe(ctx, app);
     lightbulb::observe(ctx, app);
     quickfix::observe(ctx, app);
+    outline::observe(ctx, app);
 }
 
 /// Ends what Escape ends: the hover card, the signature, a grown selection.
@@ -531,6 +535,7 @@ pub(crate) fn tick(state: &AppContext) {
         effects = actions::tick(app);
         changes = refactor::tick(app);
         lists::tick(state, app);
+        outline::tick(state, app);
         proceed = save::tick(state, app);
         true
     });

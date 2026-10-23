@@ -71,6 +71,7 @@ actions! {
     ToggleDrawer => "workspace::ToggleDrawer", "Show or hide the Explorer drawer";
     OpenExplorer => "workspace::OpenExplorer", "Show the Explorer drawer";
     OpenSearch => "workspace::OpenSearch", "Search across workspace files";
+    OpenOutline => "workspace::OpenOutline", "Show the structure of the current file";
     SearchNext => "search::SelectNextMatch", "Preview the next search match";
     SearchPrevious => "search::SelectPreviousMatch", "Preview the previous search match";
     SearchOpen => "search::OpenMatch", "Open the selected search match";

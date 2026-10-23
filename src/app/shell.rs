@@ -1173,6 +1173,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                     results_focus: search_results_focus,
                 },
             ));
+        } else if s.drawer.mode == crate::ui::drawer::DrawerMode::Outline {
+            root = root.child(super::outline_view::render(
+                explorer_rect,
+                &state,
+                code_rect,
+            ));
         } else {
             root = root.child(super::explorer_view::render(
                 explorer_rect,
