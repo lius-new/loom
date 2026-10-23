@@ -2,6 +2,8 @@
 #![allow(dead_code)]
 #[path = "../../../src/features/markdown/content.rs"]
 pub mod content;
+#[path = "../../../src/features/markdown/html.rs"]
+pub mod html;
 #[path = "../../../src/features/markdown/layout.rs"]
 pub mod layout;
 #[path = "../../../src/features/markdown/model.rs"]
@@ -17,6 +19,6 @@ pub mod reader;
 pub mod resources;
 pub mod features {
     pub mod markdown {
-        pub use crate::{content, layout, model, parser, reader, resources};
+        pub use crate::{content, html, layout, model, parser, reader, resources};
     }
 }
