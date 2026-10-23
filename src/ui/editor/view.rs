@@ -183,7 +183,7 @@ pub(crate) fn render(
             let highlight_y = code_top + cursor_line as f32 * fonts::editor().line_h;
             let highlight = panel(
                 UiRect::new(
-                    rect.left + fonts::editor().gutter_w(),
+                    code_left,
                     highlight_y,
                     rect.right,
                     highlight_y + fonts::editor().line_h,

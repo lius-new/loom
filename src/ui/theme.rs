@@ -459,7 +459,7 @@ pub const EDITOR_MIN_H: f32 = 96.0;
 /// Line numbers and Git marks retain 32 pixels beside the action lane.
 pub const GUTTER_W: f32 = 46.0;
 pub const GUTTER_ACTION_W: f32 = 14.0;
-pub const CODE_PAD: f32 = 12.0;
+pub const CODE_PAD: f32 = 4.0;
 /// Estimated monospace advance of UI text at `UI_SIZE`. Code surfaces use
 /// the measured `fonts::Metrics::char_w` instead.
 pub const UI_CHAR_W: f32 = UI_SIZE * 0.6;
