@@ -63,7 +63,7 @@ separate logical region. Cards do not load images or other external resources.
 
 Remote images are off by default. **Load Remote Images** authorizes only the
 current document path for the current runtime view; it is not saved as a global
-or session permission. Network shares follow the same opt-in policy. Local
+or session permission. UNC paths follow the same opt-in policy. Local
 image changes invalidate their cached dimensions and pixels on a one-second
 poll. Remote loads use bounded byte/time limits. Unsupported links report an
 error instead of launching an arbitrary protocol.

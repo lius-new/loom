@@ -1,0 +1,12 @@
+{
+  "source_commit": "ea73b4093a0ae8bcf18318d726a4b1e6ca3270ac",
+  "platform": "windows-x86_64",
+  "profile": "release",
+  "scenario": "Production evidence test: rich/README scenes, repeated 64 KiB first reads, live edits and scrolling",
+  "method": "Parent process sampled Windows lifetime PeakWorkingSet64 and private bytes while child was live; requested 10 ms interval",
+  "observed_peak_working_set_bytes": 114864128,
+  "observed_peak_private_bytes": 100429824,
+  "samples": 285,
+  "child_exit_code": 0,
+  "scope": "Whole test process including native heaps, fonts, raster caches, loaded code and harness; not retained ledger cost or a hard memory ceiling; not a separate Skia allocation measurement"
+}

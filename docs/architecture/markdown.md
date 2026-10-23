@@ -121,7 +121,7 @@ Heading slugs preserve alphanumeric graphemes and globally disambiguate collisio
 
 Image loading checks encoded size and dimensions before bounded decoding. The
 asset cache retains encoded+decoded cost, watches successful/missing local files
-and invalidates layouts on changes. Remote/share loading requires per-view
+and invalidates layouts on changes. Remote HTTP(S) and UNC loading require per-view
 document permission. Cards have no base path and perform no resource I/O.
 HTML is literal; SVG/math/Mermaid are not executable extension hooks.
 
@@ -170,4 +170,7 @@ UI projection plus software draw; it does not measure the desktop compositor,
 native event delivery, screen reader, process peak RSS or GPU presentation.
 CI runs the same production rules/native/UI tests on Windows, Linux and macOS,
 uploads the evidence, then builds/packages the host. Platform conclusions and
-build/run URLs belong to the implementation tracker, not inferred from Windows.
+build/run URLs are recorded in the implementation tracker and
+[CI validation](../../tests/markdown/ci-validation.json). Windows process-level
+memory observations are archived separately from retained cache accounting;
+they include native heaps and the harness, and do not establish a hard limit.
