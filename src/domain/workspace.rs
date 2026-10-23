@@ -1,8 +1,8 @@
 //! Open documents and the editor panes that show them.
 //!
 //! Documents are shared: a file opened in two panes has one text buffer, one
-//! undo history and one dirty state. Each pane keeps its own tab list,
-//! preview slot and, per document, its own selection and scroll position.
+//! undo history and one dirty state. Each pane keeps its tab list and preview
+//! slot. Independent ViewIds own selection, scroll and presentation state.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -12,39 +12,16 @@ use crate::domain::document::{
     DiskRead, DiskState, DocumentStamp, FileId, FileMeta, ResolvedLanguage,
 };
 use crate::domain::geometry::Rect;
+use crate::domain::identity::{DiffId, ViewId};
 use crate::domain::language::LanguageRules;
 use crate::domain::pane_layout::{Direction, PaneId, PaneNode};
+use crate::domain::view::{DocumentView, Presentation, ReaderPosition, ViewTarget};
 use loom_editor_core::text::{Editor, EditorMut, Selection, TextBuffer};
 
-pub const SETTINGS_TITLE: &str = "Settings";
-pub const KEYMAP_TITLE: &str = "Keymap";
-
-/// Built-in pages that open in a tab instead of a file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AppPage {
-    Settings,
-    Keymap,
-}
-
-impl AppPage {
-    pub fn title(self) -> &'static str {
-        match self {
-            AppPage::Settings => SETTINGS_TITLE,
-            AppPage::Keymap => KEYMAP_TITLE,
-        }
-    }
-}
-
-/// How one pane shows one document.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct ViewState {
-    pub selection: Selection,
-    pub scroll_x: f32,
-    pub scroll_y: f32,
-}
+pub use crate::domain::view::AppPage;
 
 #[derive(Clone)]
-pub(crate) struct OpenDocument<D, K> {
+pub(crate) struct OpenDocument {
     /// Which lifetime of this document services and caches belong to. Zero until
     /// the workspace installs it; see `Workspace::insert_document`.
     pub(crate) incarnation: u64,
@@ -52,13 +29,8 @@ pub(crate) struct OpenDocument<D, K> {
     pub(crate) buffer: TextBuffer,
     pub(crate) saved_text: Arc<String>,
     pub(crate) dirty_cache: Arc<Mutex<(u64, usize, usize, bool)>>,
-    pub(crate) diff: Option<Arc<D>>,
-    pub(crate) collapsed_diffs: BTreeSet<K>,
-    pub(crate) focused_diff: Option<K>,
-    /// A built-in page (Settings, Keymap) rather than a file.
-    pub(crate) page: Option<AppPage>,
-    /// One view per pane that has this document as a tab.
-    pub(crate) views: HashMap<PaneId, ViewState>,
+    /// Membership index only. Per-view state lives in Workspace::views.
+    pub(crate) view_ids: BTreeSet<ViewId>,
     pub(crate) disk_state: DiskState,
     pub(crate) disk_conflict: bool,
     pub(crate) missing_on_disk: bool,
@@ -67,7 +39,7 @@ pub(crate) struct OpenDocument<D, K> {
     pub(crate) loading: Option<bool>,
 }
 
-impl<D: Clone, K: Clone + Ord> OpenDocument<D, K> {
+impl OpenDocument {
     pub(crate) fn new(meta: FileMeta, contents: String, disk_state: DiskState) -> Self {
         let buffer = TextBuffer::new(contents);
         let saved_text = buffer.text_snapshot();
@@ -77,11 +49,7 @@ impl<D: Clone, K: Clone + Ord> OpenDocument<D, K> {
             buffer,
             saved_text,
             dirty_cache: Arc::new(Mutex::new((u64::MAX, 0, 0, false))),
-            diff: None,
-            collapsed_diffs: BTreeSet::new(),
-            focused_diff: None,
-            page: None,
-            views: HashMap::new(),
+            view_ids: BTreeSet::new(),
             disk_state,
             disk_conflict: false,
             missing_on_disk: false,
@@ -102,7 +70,7 @@ impl<D: Clone, K: Clone + Ord> OpenDocument<D, K> {
 
     /// Whether this tab edits a file on disk (not a diff or the settings page).
     pub(crate) fn is_text(&self) -> bool {
-        self.is_shareable() && self.loading.is_none()
+        self.loading.is_none()
     }
 
     pub(crate) fn is_dirty(&self) -> bool {
@@ -118,61 +86,45 @@ impl<D: Clone, K: Clone + Ord> OpenDocument<D, K> {
         *cache = (version, saved, text, dirty);
         dirty
     }
+}
 
-    /// Diffs and built-in pages exist once; only text files can be shown in
-    /// several panes at the same time.
-    pub(crate) fn is_shareable(&self) -> bool {
-        self.page.is_none() && self.diff.is_none()
-    }
-
-    fn editor_mut(&mut self, pane: PaneId) -> Option<EditorMut<'_>> {
-        let mut own = None;
-        let mut peers = Vec::new();
-        for (id, view) in self.views.iter_mut() {
-            if *id == pane {
-                own = Some(&mut view.selection);
-            } else {
-                peers.push(&mut view.selection);
-            }
-        }
-        Some(EditorMut::new(&mut self.buffer, own?, peers))
-    }
-
-    /// Clamp every view after the text was replaced wholesale.
-    pub(crate) fn clamp_views(&mut self) {
-        for view in self.views.values_mut() {
-            view.selection = self.buffer.clamp(view.selection);
-        }
-    }
+/// Diff payloads have their own identity and never allocate a text buffer.
+#[derive(Clone)]
+pub(crate) struct DiffRecord<D, K> {
+    pub(crate) meta: FileMeta,
+    pub(crate) content: Arc<D>,
+    pub(crate) collapsed_diffs: BTreeSet<K>,
+    pub(crate) focused_diff: Option<K>,
+    pub(crate) view: ViewId,
 }
 
 /// One editor pane: an ordered tab list with an active and a preview tab.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Pane {
-    pub(crate) items: Vec<FileId>,
-    pub(crate) active: Option<FileId>,
+    pub(crate) items: Vec<ViewId>,
+    pub(crate) active: Option<ViewId>,
     /// The one replaceable tab of this pane.
-    pub(crate) preview: Option<FileId>,
+    pub(crate) preview: Option<ViewId>,
 }
 
 impl Pane {
-    pub fn items(&self) -> &[FileId] {
+    pub fn items(&self) -> &[ViewId] {
         &self.items
     }
 
-    pub fn active(&self) -> Option<FileId> {
+    pub fn active(&self) -> Option<ViewId> {
         self.active
     }
 
-    pub fn preview(&self) -> Option<FileId> {
+    pub fn preview(&self) -> Option<ViewId> {
         self.preview
     }
 
-    pub fn is_preview(&self, id: FileId) -> bool {
+    pub fn is_preview(&self, id: ViewId) -> bool {
         self.preview == Some(id)
     }
 
-    pub fn contains(&self, id: FileId) -> bool {
+    pub fn contains(&self, id: ViewId) -> bool {
         self.items.contains(&id)
     }
 
@@ -181,7 +133,7 @@ impl Pane {
     }
 
     /// Remove a tab, activating its right neighbour (or the new last tab).
-    fn remove(&mut self, id: FileId) -> bool {
+    fn remove(&mut self, id: ViewId) -> bool {
         let Some(index) = self.items.iter().position(|item| *item == id) else {
             return false;
         };
@@ -209,13 +161,13 @@ pub enum ReconcileResult {
 }
 
 #[derive(Clone)]
-pub struct PreparedDiskUpdate<D, K> {
+pub struct PreparedDiskUpdate {
     pub(crate) id: FileId,
     pub(crate) path: PathBuf,
     pub(crate) expected_disk: DiskState,
     pub(crate) expected_saved: Arc<String>,
     pub(crate) expected_version: u64,
-    pub(crate) replacement: OpenDocument<D, K>,
+    pub(crate) replacement: OpenDocument,
     pub(crate) outcome: ReconcileResult,
 }
 
@@ -226,9 +178,9 @@ pub enum OpenMode {
 }
 
 /// Constructed entirely on a worker; installing it does not scan the text.
-pub(crate) struct PreparedTextFile<D, K>(OpenDocument<D, K>);
+pub(crate) struct PreparedTextFile(OpenDocument);
 
-impl<D: Clone, K: Clone + Ord> PreparedTextFile<D, K> {
+impl PreparedTextFile {
     pub fn with_disk_state(path: PathBuf, contents: String, disk: DiskState) -> Self {
         Self(OpenDocument::new(FileMeta::from_path(path), contents, disk))
     }
@@ -236,8 +188,12 @@ impl<D: Clone, K: Clone + Ord> PreparedTextFile<D, K> {
 
 #[derive(Clone)]
 pub struct Workspace<D, K> {
-    pub(crate) documents: HashMap<FileId, OpenDocument<D, K>>,
+    pub(crate) documents: HashMap<FileId, OpenDocument>,
     pub(crate) paths: HashMap<PathBuf, FileId>,
+    pub(crate) views: HashMap<ViewId, DocumentView>,
+    pub(crate) diffs: HashMap<DiffId, DiffRecord<D, K>>,
+    next_view_id: u64,
+    next_diff_id: u64,
     pub(crate) panes: HashMap<PaneId, Pane>,
     pub(crate) layout: PaneNode,
     pub(crate) active_pane: PaneId,
@@ -253,8 +209,9 @@ pub struct Workspace<D, K> {
 
 #[derive(Clone)]
 pub(crate) enum Retired<D, K> {
-    Document(OpenDocument<D, K>),
-    Update(PreparedDiskUpdate<D, K>),
+    Document(OpenDocument),
+    Update(PreparedDiskUpdate),
+    Diff(DiffRecord<D, K>),
 }
 
 impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
@@ -316,6 +273,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             document.saved_text = Arc::new(contents);
             document.disk_state = current;
             document.disk_conflict = false;
+            self.clamp_document_views(id);
             ReconcileResult::Reloaded(path)
         }
     }
@@ -338,6 +296,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         document.disk_state = disk;
         document.disk_conflict = false;
         document.missing_on_disk = false;
+        self.clamp_document_views(id);
         Ok(())
     }
 
@@ -386,6 +345,10 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         Self {
             documents: HashMap::new(),
             paths: HashMap::new(),
+            views: HashMap::new(),
+            diffs: HashMap::new(),
+            next_view_id: 1,
+            next_diff_id: 1,
             panes: HashMap::from([(pane, Pane::default())]),
             layout: PaneNode::Leaf(pane),
             active_pane: pane,
@@ -457,38 +420,20 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     }
 
     /// Which pane shows `id`, preferring the active pane, then recency.
-    pub fn pane_of(&self, id: FileId) -> Option<PaneId> {
-        let holders = self
-            .pane_ids()
+    pub fn pane_of(&self, id: ViewId) -> Option<PaneId> {
+        self.pane_ids()
             .into_iter()
-            .filter(|pane| self.panes[pane].contains(id))
-            .collect::<Vec<_>>();
-        if holders.contains(&self.active_pane) {
-            return Some(self.active_pane);
-        }
-        self.most_recent_pane(&holders)
+            .find(|pane| self.panes[pane].contains(id))
     }
 
     /// Split `pane`, copying its active tab (with its view) into a new pane on
     /// the `direction` side, and focus the new pane. Built-in pages and diffs
     /// exist once, so a pane showing one splits into an empty pane.
     pub fn split(&mut self, pane: PaneId, direction: Direction) -> Option<PaneId> {
-        let source = self.panes.get(&pane)?;
-        let copied = source.active.filter(|id| {
-            self.documents
-                .get(id)
-                .is_some_and(OpenDocument::is_shareable)
-        });
-        let new = PaneId::new(self.next_pane_id);
-        self.next_pane_id += 1;
-        if !self.layout.split(pane, new, direction) {
-            return None;
-        }
-        self.panes.insert(new, Pane::default());
+        let copied = self.panes.get(&pane)?.active.filter(|id| self.is_file(*id));
+        let new = self.add_pane(pane, direction)?;
         if let Some(id) = copied {
-            self.insert_item(new, id, 0, Some(pane));
-            let new_pane = self.panes.get_mut(&new).expect("pane was just added");
-            new_pane.active = Some(id);
+            self.copy_item(pane, id, new, 0);
         }
         self.activate_pane(new);
         Some(new)
@@ -498,7 +443,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     /// leaves are numbered `0..` in reading order. Each leaf becomes a new empty
     /// pane; the new panes are returned in that order.
     pub fn restore_layout(&mut self, mut shape: PaneNode) -> Vec<PaneId> {
-        if !self.documents.is_empty() {
+        if !self.views.is_empty() {
             return self.pane_ids();
         }
         let count = shape.leaves().len();
@@ -618,41 +563,169 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 
     /// Insert a reference to an open document into a pane, creating its view
     /// from `view_source`'s view (or the most recently focused one).
-    pub(crate) fn insert_item(
+    pub(crate) fn insert_item(&mut self, pane: PaneId, id: ViewId, index: usize) {
+        let target = self.panes.get_mut(&pane).expect("view destination exists");
+        assert!(!target.contains(id), "one view occupies exactly one slot");
+        target.items.insert(index.min(target.items.len()), id);
+    }
+
+    pub(crate) fn create_view(&mut self, target: ViewTarget, presentation: Presentation) -> ViewId {
+        let id = ViewId::new(self.next_view_id);
+        self.next_view_id += 1;
+        self.views
+            .insert(id, DocumentView::new(id, target, presentation));
+        if let ViewTarget::Text(document) = target {
+            self.documents
+                .get_mut(&document)
+                .expect("document exists")
+                .view_ids
+                .insert(id);
+        }
+        id
+    }
+
+    pub(crate) fn insert_diff(&mut self, pane: PaneId, meta: FileMeta, content: Arc<D>) -> ViewId {
+        let id = DiffId::new(self.next_diff_id);
+        self.next_diff_id += 1;
+        let view = self.create_view(ViewTarget::Diff(id), Presentation::Source);
+        self.diffs.insert(
+            id,
+            DiffRecord {
+                meta,
+                content,
+                collapsed_diffs: BTreeSet::new(),
+                focused_diff: None,
+                view,
+            },
+        );
+        self.insert_item(pane, view, usize::MAX);
+        self.activate(pane, view);
+        view
+    }
+
+    pub fn view_document(&self, id: ViewId) -> Option<FileId> {
+        self.views.get(&id)?.document()
+    }
+    pub fn pane_document(&self, pane: PaneId) -> Option<FileId> {
+        self.view_document(self.panes.get(&pane)?.active?)
+    }
+    pub fn active_document(&self) -> Option<FileId> {
+        self.view_document(self.active()?)
+    }
+    pub fn view(&self, id: ViewId) -> Option<&DocumentView> {
+        self.views.get(&id)
+    }
+    pub fn view_meta(&self, id: ViewId) -> Option<&FileMeta> {
+        match self.views.get(&id)?.target {
+            ViewTarget::Text(id) => self.meta(id),
+            ViewTarget::Diff(id) => Some(&self.diffs.get(&id)?.meta),
+            ViewTarget::Builtin(page) => {
+                static SETTINGS: std::sync::LazyLock<FileMeta> = std::sync::LazyLock::new(|| {
+                    FileMeta::from_path(PathBuf::from(AppPage::Settings.title()))
+                });
+                static KEYMAP: std::sync::LazyLock<FileMeta> = std::sync::LazyLock::new(|| {
+                    FileMeta::from_path(PathBuf::from(AppPage::Keymap.title()))
+                });
+                Some(match page {
+                    AppPage::Settings => &SETTINGS,
+                    AppPage::Keymap => &KEYMAP,
+                })
+            }
+        }
+    }
+    pub fn is_view_dirty(&self, id: ViewId) -> bool {
+        self.view_document(id).is_some_and(|id| self.is_dirty(id))
+    }
+    pub fn set_presentation(&mut self, id: ViewId, presentation: Presentation) -> bool {
+        let Some(view) = self.views.get_mut(&id).filter(|v| v.document().is_some()) else {
+            return false;
+        };
+        if view.presentation == presentation {
+            return false;
+        }
+        view.presentation = presentation;
+        if presentation == Presentation::Source {
+            view.associated_source = None;
+        }
+        view.input_generation += 1;
+        if let Some(document) = view.document().and_then(|id| self.documents.get_mut(&id)) {
+            document.buffer.break_undo_group();
+        }
+        if presentation == Presentation::Markdown {
+            for other in self.views.values_mut() {
+                if other.associated_source == Some(id) {
+                    other.associated_source = None;
+                }
+            }
+        }
+        true
+    }
+    pub fn set_reader_position(&mut self, id: ViewId, position: ReaderPosition) -> bool {
+        let Some(document) = self
+            .view_document(id)
+            .and_then(|id| self.documents.get(&id))
+        else {
+            return false;
+        };
+        let view = self.views.get_mut(&id).unwrap();
+        view.reader = ReaderPosition {
+            source_byte: document
+                .buffer
+                .clamp(Selection::caret(position.source_byte))
+                .cursor,
+            block_fraction: if position.block_fraction.is_finite() {
+                position.block_fraction.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+        };
+        true
+    }
+    pub fn activate_document(&mut self, id: FileId) {
+        let candidates = self.tabs_of(id);
+        let pane = if candidates.iter().any(|(p, _)| *p == self.active_pane) {
+            Some(self.active_pane)
+        } else {
+            self.most_recent_pane(&candidates.iter().map(|(p, _)| *p).collect::<Vec<_>>())
+        };
+        if let Some(pane) = pane {
+            if let Some((_, view)) = candidates
+                .iter()
+                .find(|(p, v)| *p == pane && self.views[v].accepts_text())
+            {
+                self.activate(pane, *view);
+                return;
+            }
+            self.activate_pane(pane);
+        }
+        if self.documents.contains_key(&id) {
+            self.attach_text_tab(id, OpenMode::Permanent);
+        }
+    }
+    pub(crate) fn restore_view(
         &mut self,
         pane: PaneId,
-        id: FileId,
-        index: usize,
-        view_source: Option<PaneId>,
-    ) {
-        let Some(target) = self.panes.get(&pane) else {
-            return;
-        };
-        if target.contains(id) {
-            return;
+        document: FileId,
+        saved: &crate::domain::workspace_session::SavedView,
+    ) -> ViewId {
+        let id = self.create_view(ViewTarget::Text(document), Presentation::Source);
+        saved.apply(self.views.get_mut(&id).unwrap());
+        self.insert_item(pane, id, usize::MAX);
+        if !self.is_loading(document) {
+            self.clamp_document_views(document);
         }
-        let holders = self
-            .pane_mru
-            .iter()
-            .copied()
-            .filter(|p| {
-                self.documents
-                    .get(&id)
-                    .is_some_and(|d| d.views.contains_key(p))
-            })
-            .collect::<Vec<_>>();
-        let source = view_source
-            .filter(|p| holders.contains(p))
-            .or_else(|| holders.first().copied());
-        let Some(document) = self.documents.get_mut(&id) else {
-            return;
-        };
-        let view = source
-            .and_then(|p| document.views.get(&p).copied())
-            .unwrap_or_default();
-        document.views.insert(pane, view);
-        let target = self.panes.get_mut(&pane).expect("pane exists");
-        target.items.insert(index.min(target.items.len()), id);
+        id
+    }
+    fn clamp_document_views(&mut self, id: FileId) {
+        if let Some(document) = self.documents.get(&id) {
+            for view in self.views.values_mut().filter(|v| v.document() == Some(id)) {
+                view.source.selection = document.buffer.clamp(view.source.selection);
+                view.reader.source_byte = document
+                    .buffer
+                    .clamp(Selection::caret(view.reader.source_byte))
+                    .cursor;
+            }
+        }
     }
 
     /// Put a tab into a new pane on `direction`'s side of `target`, moving it
@@ -661,19 +734,14 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     pub fn split_with_item(
         &mut self,
         from: PaneId,
-        id: FileId,
+        id: ViewId,
         target: PaneId,
         direction: Direction,
         copy: bool,
     ) -> bool {
-        if !self.panes.get(&from).is_some_and(|p| p.contains(id)) {
+        if !self.panes.get(&from).is_some_and(|p| p.contains(id)) || (copy && !self.is_file(id)) {
             return false;
         }
-        let copy = copy
-            && self
-                .documents
-                .get(&id)
-                .is_some_and(OpenDocument::is_shareable);
         if !copy && from == target && self.panes[&from].items.len() == 1 {
             return false;
         }
@@ -689,58 +757,53 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 
     /// Move a tab to another pane (or reorder within one) at `index`, and
     /// activate it there. A pane left empty is removed.
-    pub fn move_item(&mut self, from: PaneId, id: FileId, to: PaneId, index: usize) -> bool {
+    pub fn move_item(&mut self, from: PaneId, id: ViewId, to: PaneId, index: usize) -> bool {
         if from == to {
             return self.move_tab(from, id, index);
         }
         if !self.panes.get(&from).is_some_and(|p| p.contains(id)) || !self.panes.contains_key(&to) {
             return false;
         }
-        let was_preview = self.panes[&from].is_preview(id);
-        if self.panes[&to].contains(id) {
-            self.panes.get_mut(&from).unwrap().remove(id);
-            if let Some(document) = self.documents.get_mut(&id) {
-                document.views.remove(&from);
-            }
-        } else {
-            self.insert_item(to, id, index, Some(from));
-            self.panes.get_mut(&from).unwrap().remove(id);
-            if let Some(document) = self.documents.get_mut(&id) {
-                document.views.remove(&from);
-            }
-            if was_preview {
-                self.replace_preview_slot(to, id);
-            }
+        let preview = self.panes[&from].is_preview(id);
+        self.panes.get_mut(&from).unwrap().remove(id);
+        self.insert_item(to, id, index);
+        if preview {
+            self.replace_preview_slot(to, id);
         }
-        self.panes.get_mut(&to).unwrap().active = Some(id);
-        self.activate_pane(to);
+        self.activate(to, id);
         self.remove_pane_if_empty(from);
         true
     }
 
     /// Copy a tab into another pane at `index` and activate it there.
     /// Built-in pages and diffs cannot be copied.
-    pub fn copy_item(&mut self, from: PaneId, id: FileId, to: PaneId, index: usize) -> bool {
-        if from == to
-            || !self.panes.get(&from).is_some_and(|p| p.contains(id))
+    pub fn copy_item(&mut self, from: PaneId, id: ViewId, to: PaneId, index: usize) -> bool {
+        if !self.panes.get(&from).is_some_and(|p| p.contains(id))
             || !self.panes.contains_key(&to)
-            || !self
-                .documents
-                .get(&id)
-                .is_some_and(OpenDocument::is_shareable)
+            || !self.is_file(id)
         {
             return false;
         }
-        self.insert_item(to, id, index, Some(from));
-        self.panes.get_mut(&to).unwrap().active = Some(id);
-        self.activate_pane(to);
+        let source = self.views[&id];
+        let new = self.create_view(source.target, source.presentation);
+        self.views.insert(
+            new,
+            DocumentView {
+                id: new,
+                input_generation: 0,
+                associated_source: None,
+                ..source
+            },
+        );
+        self.insert_item(to, new, index);
+        self.activate(to, new);
         true
     }
 
     /// Give `pane`'s preview slot to `id`, closing a clean previous preview.
-    fn replace_preview_slot(&mut self, pane: PaneId, id: FileId) {
+    fn replace_preview_slot(&mut self, pane: PaneId, id: ViewId) {
         if let Some(old) = self.panes[&pane].preview.filter(|old| *old != id) {
-            if self.is_dirty(old) {
+            if self.is_view_dirty(old) {
                 self.panes.get_mut(&pane).unwrap().preview = None;
             } else {
                 self.close_item(pane, old);
@@ -753,19 +816,19 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 
     /// Labels for a pane's tabs. Duplicate file names receive the shortest
     /// parent path suffix that distinguishes them within that pane.
-    pub fn tab_labels(&self, pane: PaneId) -> HashMap<FileId, String> {
+    pub fn tab_labels(&self, pane: PaneId) -> HashMap<ViewId, String> {
         let Some(pane) = self.panes.get(&pane) else {
             return HashMap::new();
         };
-        let mut groups: HashMap<String, Vec<(FileId, &Path)>> = HashMap::new();
+        let mut groups: HashMap<String, Vec<(ViewId, &Path)>> = HashMap::new();
         for id in &pane.items {
-            let Some(document) = self.documents.get(id) else {
+            let Some(meta) = self.view_meta(*id) else {
                 continue;
             };
             groups
-                .entry(document.meta.name.clone())
+                .entry(meta.name.clone())
                 .or_default()
-                .push((*id, document.meta.path.as_path()));
+                .push((*id, meta.path.as_path()));
         }
 
         let mut labels = HashMap::with_capacity(pane.items.len());
@@ -806,7 +869,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     }
 
     /// Activate a tab of a pane and focus that pane.
-    pub fn activate(&mut self, pane: PaneId, id: FileId) -> bool {
+    pub fn activate(&mut self, pane: PaneId, id: ViewId) -> bool {
         let Some(target) = self.panes.get_mut(&pane) else {
             return false;
         };
@@ -821,7 +884,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 
     /// Reveal an open document: activate it in the active pane if it is there,
     /// otherwise in the most recent pane that shows it.
-    pub fn set_active(&mut self, id: FileId) {
+    pub fn set_active(&mut self, id: ViewId) {
         if let Some(pane) = self.pane_of(id) {
             self.activate(pane, id);
         }
@@ -868,7 +931,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 
     /// Move a tab to a final index within its pane while preserving its
     /// document and active state. Returns whether the visible order changed.
-    pub fn move_tab(&mut self, pane: PaneId, id: FileId, target_index: usize) -> bool {
+    pub fn move_tab(&mut self, pane: PaneId, id: ViewId, target_index: usize) -> bool {
         let Some(pane) = self.panes.get_mut(&pane) else {
             return false;
         };
@@ -886,54 +949,72 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 
     /// Remove a tab from one pane. The document is released when no pane
     /// shows it any more, and an emptied pane (other than the last) closes.
-    pub fn close_item(&mut self, pane: PaneId, id: FileId) {
+    pub fn close_item(&mut self, pane: PaneId, id: ViewId) {
         if !self.panes.get_mut(&pane).is_some_and(|p| p.remove(id)) {
             return;
         }
-        let orphaned = self.documents.get_mut(&id).is_some_and(|document| {
-            document.views.remove(&pane);
-            document.views.is_empty()
-        });
-        if orphaned && let Some(document) = self.documents.remove(&id) {
-            if document.is_shareable() {
-                self.paths.remove(&document.meta.path);
+        for other in self.views.values_mut() {
+            if other.associated_source == Some(id) {
+                other.associated_source = None;
             }
-            self.retired.push(Retired::Document(document));
+        }
+        if let Some(view) = self.views.remove(&id) {
+            match view.target {
+                ViewTarget::Text(document) => {
+                    let orphan = self.documents.get_mut(&document).is_some_and(|d| {
+                        d.view_ids.remove(&id);
+                        d.view_ids.is_empty()
+                    });
+                    if orphan && let Some(d) = self.documents.remove(&document) {
+                        self.paths.remove(&d.meta.path);
+                        self.retired.push(Retired::Document(d));
+                    }
+                }
+                ViewTarget::Diff(diff) => {
+                    if let Some(d) = self.diffs.remove(&diff) {
+                        self.retired.push(Retired::Diff(d));
+                    }
+                }
+                ViewTarget::Builtin(_) => {}
+            }
         }
         self.remove_pane_if_empty(pane);
     }
 
     /// Close a document in every pane that shows it.
     pub fn close(&mut self, id: FileId) {
-        for pane in self.pane_ids() {
-            self.close_item(pane, id);
+        for (pane, view) in self.tabs_of(id) {
+            self.close_item(pane, view);
         }
     }
 
     /// Every tab showing a document, in pane order.
-    pub fn tabs_of(&self, id: FileId) -> Vec<(PaneId, FileId)> {
+    pub fn tabs_of(&self, id: FileId) -> Vec<(PaneId, ViewId)> {
         self.pane_ids()
             .into_iter()
-            .filter(|pane| self.panes[pane].contains(id))
-            .map(|pane| (pane, id))
+            .flat_map(|pane| {
+                self.panes[&pane]
+                    .items
+                    .iter()
+                    .copied()
+                    .filter(move |view| self.view_document(*view) == Some(id))
+                    .map(move |view| (pane, view))
+            })
             .collect()
     }
 
     /// The documents that closing these tabs would release, i.e. those with no
     /// remaining tab elsewhere.
-    pub fn released_by(&self, targets: &[(PaneId, FileId)]) -> Vec<FileId> {
+    pub fn released_by(&self, targets: &[(PaneId, ViewId)]) -> Vec<FileId> {
         let mut released = Vec::new();
-        for &(_, id) in targets {
-            if released.contains(&id) {
+        for &(pane, view) in targets {
+            if self.pane_of(view) != Some(pane) {
                 continue;
             }
-            let Some(document) = self.documents.get(&id) else {
+            let Some(id) = self.view_document(view) else {
                 continue;
             };
-            if document
-                .views
-                .keys()
-                .all(|pane| targets.contains(&(*pane, id)))
+            if !released.contains(&id) && self.tabs_of(id).iter().all(|pair| targets.contains(pair))
             {
                 released.push(id);
             }
@@ -944,20 +1025,20 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     // ---- The focused editor ------------------------------------------------
 
     /// Active tab of the active pane.
-    pub fn active(&self) -> Option<FileId> {
+    pub fn active(&self) -> Option<ViewId> {
         self.active_pane_ref().active
     }
 
     /// Tabs of the active pane.
-    pub fn active_items(&self) -> &[FileId] {
+    pub fn active_items(&self) -> &[ViewId] {
         &self.active_pane_ref().items
     }
 
-    pub fn preview(&self) -> Option<FileId> {
+    pub fn preview(&self) -> Option<ViewId> {
         self.active_pane_ref().preview
     }
 
-    pub fn promote_preview(&mut self, pane: PaneId, id: FileId) -> bool {
+    pub fn promote_preview(&mut self, pane: PaneId, id: ViewId) -> bool {
         match self.panes.get_mut(&pane) {
             Some(pane) if pane.preview == Some(id) => {
                 pane.preview = None;
@@ -974,7 +1055,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     }
 
     pub fn active_meta(&self) -> Option<&FileMeta> {
-        self.active().and_then(|id| self.meta(id))
+        self.view_meta(self.active()?)
     }
 
     /// Path of the active file or diff; built-in pages have none.
@@ -986,9 +1067,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     }
 
     pub fn active_diff(&self) -> Option<&D> {
-        self.active()
-            .and_then(|id| self.documents.get(&id))
-            .and_then(|document| document.diff.as_deref())
+        self.diff_of(self.active()?)
     }
 
     pub fn active_page(&self) -> Option<AppPage> {
@@ -1009,56 +1088,84 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 
     /// The text editor of a pane's active tab, if that tab is a file.
     pub fn editor(&self, pane: PaneId) -> Option<Editor<'_>> {
-        let id = self.panes.get(&pane)?.active?;
-        let document = self.documents.get(&id).filter(|d| d.is_text())?;
-        let view = document.views.get(&pane)?;
-        Some(Editor::new(&document.buffer, view.selection))
+        let view = self
+            .views
+            .get(&self.panes.get(&pane)?.active?)
+            .filter(|v| v.accepts_text())?;
+        let document = self
+            .documents
+            .get(&view.document()?)
+            .filter(|d| d.is_text())?;
+        Some(Editor::new(&document.buffer, view.source.selection))
     }
 
     /// The editor of one specific view: `document` as shown in `pane`, whether
     /// or not it is the pane's active tab.
-    pub fn view_editor_mut(&mut self, pane: PaneId, document: FileId) -> Option<EditorMut<'_>> {
-        if !self.panes.get(&pane)?.contains(document) {
+    pub fn view_editor_mut(&mut self, pane: PaneId, view: ViewId) -> Option<EditorMut<'_>> {
+        if !self.panes.get(&pane)?.contains(view) {
             return None;
         }
-        self.documents
-            .get_mut(&document)
-            .filter(|d| d.is_text())?
-            .editor_mut(pane)
+        let id = self
+            .views
+            .get(&view)
+            .filter(|v| v.accepts_text())?
+            .document()?;
+        self.document_view_editor_mut(id, view)
+    }
+    pub(crate) fn document_editor_mut(&mut self, id: FileId) -> Option<EditorMut<'_>> {
+        let view = *self.documents.get(&id)?.view_ids.iter().next()?;
+        self.document_view_editor_mut(id, view)
+    }
+    fn document_view_editor_mut(&mut self, id: FileId, view: ViewId) -> Option<EditorMut<'_>> {
+        let document = self.documents.get_mut(&id).filter(|d| d.is_text())?;
+        let mut own = None;
+        let mut peers = Vec::new();
+        let mut readers = Vec::new();
+        for v in self.views.values_mut().filter(|v| v.document() == Some(id)) {
+            if v.id == view {
+                own = Some(&mut v.source.selection);
+            } else {
+                peers.push(&mut v.source.selection);
+            }
+            readers.push((
+                &mut v.reader.source_byte,
+                loom_editor_core::text::Assoc::After,
+            ));
+        }
+        Some(EditorMut::new(&mut document.buffer, own?, peers).with_anchors(readers))
     }
 
     pub fn editor_mut(&mut self, pane: PaneId) -> Option<EditorMut<'_>> {
-        let id = self.panes.get(&pane)?.active?;
-        self.documents
-            .get_mut(&id)
-            .filter(|d| d.is_text())?
-            .editor_mut(pane)
+        self.view_editor_mut(pane, self.panes.get(&pane)?.active?)
     }
 
     /// The diff shown by a pane's active tab.
     pub fn diff(&self, pane: PaneId) -> Option<&D> {
-        let id = self.panes.get(&pane)?.active?;
-        self.documents.get(&id)?.diff.as_deref()
+        self.diff_of(self.panes.get(&pane)?.active?)
     }
 
     pub fn collapsed_diffs(&self, pane: PaneId) -> BTreeSet<K> {
         self.panes
             .get(&pane)
             .and_then(|p| p.active)
-            .and_then(|id| self.documents.get(&id))
-            .map(|document| document.collapsed_diffs.clone())
+            .and_then(|id| self.diff_record(id))
+            .map(|d| d.collapsed_diffs.clone())
             .unwrap_or_default()
     }
 
     pub fn toggle_diff_section(&mut self, pane: PaneId, request: K) {
-        let Some(id) = self.panes.get(&pane).and_then(|p| p.active) else {
+        let Some(ViewTarget::Diff(id)) = self
+            .panes
+            .get(&pane)
+            .and_then(|p| p.active)
+            .and_then(|v| self.views.get(&v))
+            .map(|v| v.target)
+        else {
             return;
         };
-        let Some(document) = self.documents.get_mut(&id) else {
-            return;
-        };
-        if !document.collapsed_diffs.insert(request.clone()) {
-            document.collapsed_diffs.remove(&request);
+        let d = self.diffs.get_mut(&id).unwrap();
+        if !d.collapsed_diffs.insert(request.clone()) {
+            d.collapsed_diffs.remove(&request);
         }
     }
 
@@ -1068,30 +1175,25 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         self.page(id)
     }
 
-    pub fn view(&self, pane: PaneId, id: FileId) -> Option<&ViewState> {
-        self.documents.get(&id)?.views.get(&pane)
-    }
-
     /// Scroll offset of a pane's active tab.
     pub fn scroll(&self, pane: PaneId) -> (f32, f32) {
         self.panes
             .get(&pane)
             .and_then(|p| p.active)
-            .and_then(|id| self.view(pane, id))
-            .map_or((0.0, 0.0), |view| (view.scroll_x, view.scroll_y))
+            .and_then(|v| self.views.get(&v))
+            .map_or((0.0, 0.0), |v| (v.source.scroll_x, v.source.scroll_y))
     }
 
     pub fn set_scroll(&mut self, pane: PaneId, x: f32, y: f32) {
-        let Some(id) = self.panes.get(&pane).and_then(|p| p.active) else {
-            return;
-        };
-        if let Some(view) = self
-            .documents
-            .get_mut(&id)
-            .and_then(|document| document.views.get_mut(&pane))
+        if let Some(v) = self
+            .panes
+            .get(&pane)
+            .and_then(|p| p.active)
+            .and_then(|id| self.views.get_mut(&id))
+            .filter(|v| v.presentation == Presentation::Source)
         {
-            view.scroll_x = x.max(0.0);
-            view.scroll_y = y.max(0.0);
+            v.source.scroll_x = x.max(0.0);
+            v.source.scroll_y = y.max(0.0);
         }
     }
 
@@ -1103,13 +1205,11 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     /// `text` and `diff` are the new-to-old ratios of the editor line height
     /// and the diff row height.
     pub fn rescale_code_scroll(&mut self, text: f32, diff: f32) {
-        for document in self.documents.values_mut() {
-            if document.page.is_some() {
-                continue;
-            }
-            let factor = if document.diff.is_some() { diff } else { text };
-            for view in document.views.values_mut() {
-                view.scroll_y *= factor;
+        for v in self.views.values_mut() {
+            match v.target {
+                ViewTarget::Text(_) => v.source.scroll_y *= text,
+                ViewTarget::Diff(_) => v.source.scroll_y *= diff,
+                ViewTarget::Builtin(_) => {}
             }
         }
     }
@@ -1119,7 +1219,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     }
 
     pub fn active_save_snapshot(&self) -> Option<(FileId, PathBuf, String)> {
-        self.save_snapshot(self.active()?)
+        self.save_snapshot(self.active_document()?)
     }
 
     // ---- Documents ---------------------------------------------------------
@@ -1128,9 +1228,11 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     pub(crate) fn ordered_documents(&self) -> Vec<FileId> {
         let mut ids = Vec::new();
         for pane in self.pane_ids() {
-            for id in &self.panes[&pane].items {
-                if !ids.contains(id) {
-                    ids.push(*id);
+            for view in &self.panes[&pane].items {
+                if let Some(id) = self.view_document(*view)
+                    && !ids.contains(&id)
+                {
+                    ids.push(id);
                 }
             }
         }
@@ -1151,14 +1253,18 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     }
 
     /// The diff shown by tab `id`, if it is a diff tab.
-    pub fn diff_of(&self, id: FileId) -> Option<&D> {
-        self.documents.get(&id)?.diff.as_deref()
+    pub fn diff_of(&self, id: ViewId) -> Option<&D> {
+        Some(&self.diff_record(id)?.content)
+    }
+    pub(crate) fn diff_record(&self, id: ViewId) -> Option<&DiffRecord<D, K>> {
+        let ViewTarget::Diff(id) = self.views.get(&id)?.target else {
+            return None;
+        };
+        self.diffs.get(&id)
     }
 
-    pub fn is_diff(&self, id: FileId) -> bool {
-        self.documents
-            .get(&id)
-            .is_some_and(|document| document.diff.is_some())
+    pub fn is_diff(&self, id: ViewId) -> bool {
+        self.diff_record(id).is_some()
     }
 
     pub fn file_id_for_path(&self, path: &Path) -> Option<FileId> {
@@ -1255,20 +1361,13 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         let mut document = OpenDocument::new(
             FileMeta::from_path(path.clone()),
             String::new(),
-            DiskState {
-                modified_time: None,
-                size: 0,
-                content_hash: 0,
-            },
+            DiskState::from_contents(""),
         );
         document.loading = Some(false);
         let id = self.allocate_file_id();
         self.insert_document(id, document);
         self.paths.insert(path, id);
-        let pane = self.active_pane;
-        self.insert_item(pane, id, usize::MAX, None);
-        self.active_pane_mut().active = Some(id);
-        id
+        self.attach_text_tab(id, OpenMode::Permanent)
     }
 
     pub(crate) fn is_loading(&self, id: FileId) -> bool {
@@ -1296,17 +1395,15 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     /// documents are prepared once even when shown in more than one pane.
     pub(crate) fn loading_files(&self) -> Vec<(FileId, PathBuf)> {
         let mut ids = Vec::new();
-        if let Some(id) = self.active() {
+        if let Some(id) = self.active_document() {
             ids.push(id);
         }
         for pane in self.pane_ids() {
-            if let Some(id) = self.panes[&pane].active {
+            if let Some(id) = self.pane_document(pane) {
                 ids.push(id);
             }
         }
-        for pane in self.pane_ids() {
-            ids.extend(&self.panes[&pane].items);
-        }
+        ids.extend(self.ordered_documents());
         let mut seen = std::collections::HashSet::new();
         ids.into_iter()
             .filter(|id| seen.insert(*id) && self.is_loading(*id))
@@ -1320,7 +1417,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         &mut self,
         id: FileId,
         path: &Path,
-        prepared: PreparedTextFile<D, K>,
+        prepared: PreparedTextFile,
     ) -> bool {
         let Some(document) = self
             .documents
@@ -1331,30 +1428,51 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             return false;
         };
         let mut replacement = prepared.0;
-        replacement.views = std::mem::take(&mut document.views);
+        replacement.view_ids = std::mem::take(&mut document.view_ids);
+        replacement.incarnation = document.incarnation;
         self.retired
             .push(Retired::Document(std::mem::replace(document, replacement)));
+        self.clamp_document_views(id);
         true
     }
 
     pub(crate) fn attach_text_tab(&mut self, id: FileId, mode: OpenMode) -> FileId {
         let pane = self.active_pane;
-        if !self.panes[&pane].contains(id) {
-            let index = self.preview_replacement_index(pane, mode);
-            self.insert_item(pane, id, index.unwrap_or(usize::MAX), None);
-            if mode == OpenMode::Preview {
-                self.replace_preview_slot(pane, id);
+        let existing = self.panes[&pane].items.iter().copied().find(|v| {
+            self.views[v].document() == Some(id)
+                && self.views[v].presentation == Presentation::Source
+        });
+        let view = if let Some(view) = existing {
+            if mode == OpenMode::Permanent {
+                self.promote_preview(pane, view);
             }
-        } else if mode == OpenMode::Permanent {
-            self.promote_preview(pane, id);
-        }
-        self.active_pane_mut().active = Some(id);
+            view
+        } else {
+            let index = self
+                .preview_replacement_index(pane, mode)
+                .unwrap_or(usize::MAX);
+            let source = self
+                .tabs_of(id)
+                .first()
+                .and_then(|(_, v)| self.views.get(v))
+                .copied();
+            let view = self.create_view(ViewTarget::Text(id), Presentation::Source);
+            if let Some(source) = source {
+                self.views.get_mut(&view).unwrap().source = source.source;
+            }
+            self.insert_item(pane, view, index);
+            if mode == OpenMode::Preview {
+                self.replace_preview_slot(pane, view);
+            }
+            view
+        };
+        self.active_pane_mut().active = Some(view);
         id
     }
 
     pub(crate) fn open_prepared_text(
         &mut self,
-        prepared: PreparedTextFile<D, K>,
+        prepared: PreparedTextFile,
         mode: OpenMode,
     ) -> FileId {
         let path = prepared.0.meta.path.clone();
@@ -1362,17 +1480,10 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             self.retired.push(Retired::Document(prepared.0));
             return self.attach_text_tab(id, mode);
         }
-        let pane = self.active_pane;
-        let replacement_index = self.preview_replacement_index(pane, mode);
         let id = self.allocate_file_id();
         self.insert_document(id, prepared.0);
         self.paths.insert(path, id);
-        self.insert_item(pane, id, replacement_index.unwrap_or(usize::MAX), None);
-        if mode == OpenMode::Preview {
-            self.replace_preview_slot(pane, id);
-        }
-        self.active_pane_mut().active = Some(id);
-        id
+        self.attach_text_tab(id, mode)
     }
 
     /// Where a new preview tab goes: in place of the pane's clean preview.
@@ -1381,7 +1492,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             return None;
         }
         let preview = self.panes[&pane].preview?;
-        if self.is_dirty(preview) {
+        if self.is_view_dirty(preview) {
             // Defensive promotion: UI edit paths promote eagerly, but no
             // missed path may allow a dirty preview to be replaced.
             self.panes.get_mut(&pane).unwrap().preview = None;
@@ -1397,13 +1508,10 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 
     /// The one way a document enters the workspace: it gets a fresh incarnation,
     /// so a stale result for an earlier document can never match it.
-    pub(crate) fn insert_document(&mut self, id: FileId, mut document: OpenDocument<D, K>) {
+    pub(crate) fn insert_document(&mut self, id: FileId, mut document: OpenDocument) {
         document.incarnation = self.next_incarnation;
         self.next_incarnation += 1;
-        if document.is_shareable() {
-            // A new document has no results yet, so no generation bump is needed.
-            document.meta.lang = self.language_for(&document.meta.path);
-        }
+        document.meta.lang = self.language_for(&document.meta.path);
         self.documents.insert(id, document);
     }
 
@@ -1426,9 +1534,6 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             let Some(document) = self.documents.get(&id) else {
                 continue;
             };
-            if !document.is_shareable() {
-                continue;
-            }
             let language = self.language_for(&document.meta.path);
             let document = self.documents.get_mut(&id).expect("checked above");
             let generation = document.meta.language_generation;
@@ -1445,7 +1550,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     }
 
     /// Activate an existing single-instance tab wherever it is.
-    pub(crate) fn reveal(&mut self, id: FileId) -> bool {
+    pub(crate) fn reveal(&mut self, id: ViewId) -> bool {
         match self.pane_of(id) {
             Some(pane) => {
                 self.activate(pane, id);
@@ -1456,69 +1561,61 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     }
 
     /// Open the settings page, or focus it if it is already open.
-    pub fn open_settings(&mut self) -> FileId {
+    pub fn open_settings(&mut self) -> ViewId {
         self.open_page(AppPage::Settings)
     }
 
     /// Open the keymap page, or focus it if it is already open.
-    pub fn open_keymap(&mut self) -> FileId {
+    pub fn open_keymap(&mut self) -> ViewId {
         self.open_page(AppPage::Keymap)
     }
 
     /// Open a built-in page; each page has at most one tab in the workspace.
-    pub fn open_page(&mut self, page: AppPage) -> FileId {
+    pub fn open_page(&mut self, page: AppPage) -> ViewId {
         if let Some(id) = self.page_id(page) {
             self.reveal(id);
             return id;
         }
-
-        let id = self.allocate_file_id();
-        let path = PathBuf::from(page.title());
-        let mut meta = FileMeta::from_path(path.clone());
-        meta.name = page.title().to_owned();
-        let mut document = OpenDocument::new(meta, String::new(), DiskState::from_contents(""));
-        document.page = Some(page);
-        self.insert_document(id, document);
+        let id = self.create_view(ViewTarget::Builtin(page), Presentation::Source);
         let pane = self.active_pane;
-        self.insert_item(pane, id, usize::MAX, None);
-        self.active_pane_mut().active = Some(id);
+        self.insert_item(pane, id, usize::MAX);
+        self.activate(pane, id);
         id
     }
 
-    pub fn page_id(&self, page: AppPage) -> Option<FileId> {
-        self.documents
-            .iter()
-            .find_map(|(id, document)| (document.page == Some(page)).then_some(*id))
+    pub fn page_id(&self, page: AppPage) -> Option<ViewId> {
+        self.views
+            .values()
+            .find(|v| v.target == ViewTarget::Builtin(page))
+            .map(|v| v.id)
     }
 
     /// The built-in page a tab shows, if it is not a file or diff.
-    pub fn page(&self, id: FileId) -> Option<AppPage> {
-        self.documents.get(&id).and_then(|document| document.page)
+    pub fn page(&self, id: ViewId) -> Option<AppPage> {
+        match self.views.get(&id)?.target {
+            ViewTarget::Builtin(page) => Some(page),
+            _ => None,
+        }
     }
 
-    pub fn settings_id(&self) -> Option<FileId> {
+    pub fn settings_id(&self) -> Option<ViewId> {
         self.page_id(AppPage::Settings)
     }
 
-    pub fn is_settings(&self, id: FileId) -> bool {
+    pub fn is_settings(&self, id: ViewId) -> bool {
         self.page(id) == Some(AppPage::Settings)
     }
 
     /// Whether a tab is backed by a file (rather than a diff or settings).
-    pub fn is_file(&self, id: FileId) -> bool {
-        self.documents
-            .get(&id)
-            .is_some_and(OpenDocument::is_shareable)
+    pub fn is_file(&self, id: ViewId) -> bool {
+        self.view_document(id).is_some()
     }
 
     // ---- Disk --------------------------------------------------------------
 
     /// Delayed disk notifications never overwrite a save, rename, closed tab,
     /// or editor changes made while the worker was reading the file.
-    pub fn apply_disk_updates(
-        &mut self,
-        updates: Vec<PreparedDiskUpdate<D, K>>,
-    ) -> Vec<ReconcileResult> {
+    pub fn apply_disk_updates(&mut self, updates: Vec<PreparedDiskUpdate>) -> Vec<ReconcileResult> {
         let mut outcomes = Vec::new();
         let mut retired = Vec::new();
         for update in updates {
@@ -1547,7 +1644,6 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
                     .buffer
                     .install_prepared(update.replacement.buffer.clone());
                 document.saved_text = update.replacement.saved_text.clone();
-                document.clamp_views();
             }
             document.disk_state = update.replacement.disk_state.clone();
             document.disk_conflict = update.replacement.disk_conflict;
@@ -1560,6 +1656,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             outcomes.push(update.outcome.clone());
             // Keep old shared text alive until the reclaimer frees it.
             self.retired.push(Retired::Document(old));
+            self.clamp_document_views(update.id);
             retired.push(update);
         }
         self.retired
@@ -1585,12 +1682,8 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 /// External reloads reset edit history but retain each view's caret and
 /// selection as far as the new document length permits. Scroll positions
 /// live in the views and are therefore preserved as well.
-pub(crate) fn replace_buffer_from_disk<D: Clone, K: Clone + Ord>(
-    document: &mut OpenDocument<D, K>,
-    contents: String,
-) {
+pub(crate) fn replace_buffer_from_disk(document: &mut OpenDocument, contents: String) {
     document.buffer.reload(contents);
-    document.clamp_views();
 }
 
 fn parent_components(path: &Path) -> Vec<String> {
@@ -1611,3 +1704,5 @@ fn parent_suffix(parts: &[String], depth: usize) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod view_tests;

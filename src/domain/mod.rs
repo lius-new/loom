@@ -8,6 +8,7 @@ pub(crate) mod identity;
 pub(crate) mod language;
 pub(crate) mod line_change;
 pub mod pane_layout;
+pub mod view;
 pub mod workspace;
 pub mod workspace_session;
 

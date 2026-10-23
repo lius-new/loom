@@ -4,8 +4,10 @@
 
 - UTF-8 text editing with grapheme-safe movement and deletion (including Chinese,
   combining marks and Emoji); LF and CRLF line endings are preserved.
-- Click a file in the tree to open or reactivate its tab. Each document keeps its
-  own selection, scroll position and undo/redo history.
+- Click a file in the tree to open or reactivate its source tab. Views of a file
+  share its text, undo/redo history and dirty state. Each view keeps its own
+  selection and scroll position. Copying a tab creates a new view; moving a tab
+  preserves the view and its position.
 - Open UTF-8 text files up to 64 MiB from the Explorer, file dialog or launch
   arguments. Workspace search has a separate 4 MiB per-file limit.
 - On Windows, drag files from another application into an editor pane or its
@@ -27,6 +29,10 @@
   file contents. A background worker prepares the selected documents first;
   surviving tabs are filled in place without changing focus. Restoring tabs are
   remembered on exit and cannot edit or save their empty staging buffers.
+- Sessions save typed view records in editor-layout schema 2, including each
+  view's source position. Repeated paths share one restored text document and
+  one background load. The previous unversioned format is read and migrated on
+  the next save. An invalid or unsupported session is reported and preserved.
 
 ## Syntax highlighting
 

@@ -383,12 +383,17 @@ pub(crate) fn update_composition(app: &mut AppState, text: &str, cursor: Option<
     let Some(document) = app.workspace.active() else {
         return;
     };
+    let Some(view) = app.workspace.view(document).filter(|v| v.accepts_text()) else {
+        return;
+    };
+    let input_generation = view.input_generation;
     match app.editor.ime.as_mut() {
         Some(session) => {
             // An emptied composition has ended; a new one starts where the
             // focus is now.
             if session.text.is_empty() {
                 (session.pane, session.document) = (pane, document);
+                session.input_generation = input_generation;
             }
             session.text = text.to_owned();
             session.cursor = cursor;
@@ -396,6 +401,7 @@ pub(crate) fn update_composition(app: &mut AppState, text: &str, cursor: Option<
         None if !text.is_empty() => {
             app.editor.ime = Some(ImeSession {
                 pane,
+                input_generation,
                 document,
                 text: text.to_owned(),
                 cursor,
@@ -423,6 +429,15 @@ pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
     else {
         return;
     };
+    if app.workspace.view(document).is_none_or(|v| {
+        !v.accepts_text()
+            || session
+                .as_ref()
+                .is_some_and(|s| s.input_generation != v.input_generation)
+    }) {
+        return;
+    }
+    let pane = app.workspace.pane_of(document).unwrap_or(pane);
     let in_active_view =
         app.workspace.active_pane() == pane && app.workspace.active() == Some(document);
     if in_active_view && vim_input::is_active(app) {
@@ -460,7 +475,7 @@ mod tests;
 pub(crate) fn pointer_down(
     app: &mut AppState,
     pane: crate::domain::identity::PaneId,
-    id: crate::domain::identity::FileId,
+    id: crate::domain::identity::ViewId,
     rect: UiRect,
     code_left: f32,
     metrics: ScrollMetrics,

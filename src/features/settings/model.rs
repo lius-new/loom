@@ -12,6 +12,7 @@ pub struct Values {
     pub shell_options: Vec<crate::features::terminal::profiles::ShellOption>,
     pub terminal_cursor_blink: bool,
     pub smooth_caret: bool,
+    pub markdown: super::markdown::MarkdownSettings,
     pub check_for_updates: bool,
     pub editor_font: super::font::FontSettings,
     pub terminal_font: super::font::FontSettings,

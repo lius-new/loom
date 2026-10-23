@@ -28,17 +28,24 @@ impl AppContext {
         }
     }
     /// Tells the language servers about document changes this update made.
-    fn sync_language_services(&self, app: &AppState) {
+    fn sync_document_services(&self, app: &AppState) {
         if let Some(services) = self.services().and_then(|r| r.language_services()) {
             services.sync(app);
+        }
+        if let Some(markdown) = self.services().and_then(|r| r.markdown()) {
+            markdown.sync(app);
         }
     }
     pub(crate) fn update(&self, change: impl FnOnce(&mut AppState)) {
         self.model.update(|app| {
             let before = app.editor.pending_file.as_ref().map(|p| p.generation);
             change(app);
+            super::markdown_view::sync_sources(app);
+            app.editor
+                .markdown_views
+                .retain(|id, _| app.workspace.views.contains_key(id));
             self.invalidate_cancelled(before, app);
-            self.sync_language_services(app);
+            self.sync_document_services(app);
             super::language_ui::observe(self, app);
         });
     }
@@ -47,7 +54,7 @@ impl AppContext {
             let before = app.editor.pending_file.as_ref().map(|p| p.generation);
             let changed = change(app);
             self.invalidate_cancelled(before, app);
-            self.sync_language_services(app);
+            self.sync_document_services(app);
             super::language_ui::observe(self, app);
             changed
         })

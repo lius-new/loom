@@ -56,13 +56,21 @@ pub fn load() -> WorkspaceSession {
     let _guard = persistence_lock()
         .lock()
         .expect("persistence lock poisoned");
-    load_unlocked()
+    load_checked_unlocked().unwrap_or_default()
 }
 
-fn load_unlocked() -> WorkspaceSession {
-    session_path()
-        .and_then(|path| filesystem::read_json(&path))
-        .unwrap_or_default()
+/// Startup reports invalid/future sessions; update paths preserve the same file.
+pub fn load_checked() -> io::Result<WorkspaceSession> {
+    let _guard = persistence_lock()
+        .lock()
+        .expect("persistence lock poisoned");
+    load_checked_unlocked()
+}
+fn load_checked_unlocked() -> io::Result<WorkspaceSession> {
+    match session_path() {
+        Some(path) => filesystem::read_session(&path),
+        None => Ok(WorkspaceSession::default()),
+    }
 }
 
 pub fn save(open_folders: &[PathBuf], recent_folders: &[PathBuf]) -> io::Result<()> {
@@ -120,9 +128,13 @@ fn update(change: impl FnOnce(&mut WorkspaceSession)) -> io::Result<()> {
             "could not determine the user configuration directory",
         )
     })?;
-    let mut session = load_unlocked();
+    update_at(&path, change)
+}
+
+fn update_at(path: &Path, change: impl FnOnce(&mut WorkspaceSession)) -> io::Result<()> {
+    let mut session = filesystem::read_session(path)?;
     change(&mut session);
-    save_to(&path, &session)
+    save_to(path, &session)
 }
 
 fn save_to(path: &Path, session: &WorkspaceSession) -> io::Result<()> {
@@ -182,25 +194,55 @@ fn restore_editor_layout_with(
     let Some(layout) = layout else {
         return;
     };
+    if let Err(error) = layout.validate() {
+        app.show_error(format!("Could not restore editor layout: {error}"));
+        return;
+    }
     let mut contents = Vec::new();
     let shape = editor_session::restored_shape(layout.root, &mut contents);
     let panes = app.workspace.restore_layout(shape);
+    let mut restored = Vec::<Vec<Option<crate::domain::identity::ViewId>>>::new();
+    let mut associations = Vec::new();
     for (&pane, (items, active)) in panes.iter().zip(contents) {
+        let mut restored_items = vec![None; items.len()];
         app.workspace.activate_pane(pane);
         let mut first = None;
         let mut active_id = None;
-        for path in items {
-            let is_active = active.as_ref() == Some(&path);
-            let Some(id) = open(&mut app.workspace, path) else {
+        for (index, saved) in items.into_iter().enumerate() {
+            let path = saved.path().to_path_buf();
+            let existing = app.workspace.file_id_for_path(&path);
+            let Some(document) = existing.or_else(|| open(&mut app.workspace, path)) else {
                 continue;
             };
-            first.get_or_insert(id);
-            if is_active {
-                active_id = Some(id);
+            let temporary = existing.is_none().then(|| app.workspace.active()).flatten();
+            let view = app.workspace.restore_view(pane, document, &saved);
+            restored_items[index] = Some(view);
+            if let Some(reference) = saved.association() {
+                associations.push((view, reference));
+            }
+            if let Some(temporary) = temporary {
+                app.workspace.close_item(pane, temporary);
+            }
+            first.get_or_insert(view);
+            if active == Some(index) {
+                active_id = Some(view);
             }
         }
         if let Some(id) = active_id.or(first) {
             app.workspace.activate(pane, id);
+        }
+        restored.push(restored_items);
+    }
+    for (view, reference) in associations {
+        if let Some(source) = restored
+            .get(reference.pane)
+            .and_then(|pane| pane.get(reference.item))
+            .copied()
+            .flatten()
+        {
+            if let Some(value) = app.workspace.views.get_mut(&view) {
+                value.associated_source = Some(source);
+            }
         }
     }
     for &pane in &panes {
@@ -236,6 +278,72 @@ mod tests {
     use std::{env, fs};
 
     #[test]
+    fn p1_invalid_or_future_session_is_reported_and_preserved_on_update() {
+        let root = env::temp_dir().join(format!("loom-p1-invalid-session-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("session.json");
+        for raw in [
+            r#"{"editor_layout":{"schema":99,"root":{"pane":{"items":[]}}}}"#,
+            r#"{"editor_layout":{"schema":2,"root":{"pane":{"items":[],"active":7}}}}"#,
+            "broken json",
+        ] {
+            fs::write(&path, raw).unwrap();
+            let error =
+                update_at(&path, |s| s.open_folders = vec!["replacement".into()]).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(fs::read_to_string(&path).unwrap(), raw);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn p1_restore_repeated_path_keeps_views_positions_and_one_deferred_load() {
+        use crate::domain::view::Presentation;
+        let raw = r#"{"schema":2,"root":{"pane":{"items":[{"kind":"text","path":"shared.md","source":{"cursor":3,"anchor":null,"scroll_x":2,"scroll_y":20}},{"kind":"text","path":"shared.md","presentation":"markdown","reader":{"source_byte":9,"block_fraction":0.5}}],"active":1}},"active_pane":0}"#;
+        let layout = serde_json::from_str(raw).unwrap();
+        let mut app = AppState::new();
+        hydrate_editor_layout(&mut app, Some(layout));
+        let items = app.workspace.active_items().to_vec();
+        assert_eq!(items.len(), 2);
+        assert_ne!(items[0], items[1]);
+        let document = app.workspace.view_document(items[0]).unwrap();
+        assert_eq!(app.workspace.view_document(items[1]), Some(document));
+        assert_eq!(
+            app.workspace.loading_files(),
+            vec![(document, "shared.md".into())]
+        );
+        assert_eq!(app.workspace.active(), Some(items[1]));
+        assert_eq!(
+            app.workspace
+                .view(items[0])
+                .unwrap()
+                .source
+                .selection
+                .cursor,
+            3
+        );
+        assert_eq!(
+            app.workspace.view(items[1]).unwrap().presentation,
+            Presentation::Markdown
+        );
+        let before = saved_editor_layout(&app.workspace).unwrap();
+        let incarnation = app.workspace.documents[&document].incarnation;
+        assert!(app.workspace.install_restored(
+            document,
+            Path::new("shared.md"),
+            crate::app::workspace::PreparedTextFile::new(
+                "shared.md".into(),
+                "abc中文\r\ntext".into()
+            )
+        ));
+        assert_eq!(app.workspace.documents[&document].incarnation, incarnation);
+        assert_eq!(app.workspace.text_snapshots().len(), 1);
+        assert_eq!(before, saved_editor_layout(&app.workspace).unwrap());
+        assert!(app.workspace.active_editor_mut().is_none());
+        assert_eq!(app.main_surface(), crate::app::state::MainSurface::Markdown);
+    }
+
+    #[test]
     fn session_replacement_preserves_other_fields_and_is_readable_after_each_save() {
         let root = env::temp_dir().join(format!("loom-session-atomic-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -249,7 +357,7 @@ mod tests {
         session.editor_layout = Some(EditorLayout {
             root: SavedPaneNode::Pane {
                 items: vec!["single-click.json".into()],
-                active: Some("single-click.json".into()),
+                active: Some(0),
             },
             active_pane: 0,
         });
@@ -283,14 +391,14 @@ mod tests {
                         SavedChild {
                             size: 0.4,
                             node: SavedPaneNode::Pane {
-                                items: vec![PathBuf::from("one/main.rs")],
-                                active: Some(PathBuf::from("one/main.rs")),
+                                items: vec![PathBuf::from("one/main.rs").into()],
+                                active: Some(0),
                             },
                         },
                         SavedChild {
                             size: 0.6,
                             node: SavedPaneNode::Pane {
-                                items: vec![PathBuf::from("two/lib.rs")],
+                                items: vec![PathBuf::from("two/lib.rs").into()],
                                 active: None,
                             },
                         },

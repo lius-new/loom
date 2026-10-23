@@ -2176,7 +2176,7 @@ mod tests {
     }
 
     #[test]
-    fn diff_drop_opens_in_each_split_direction_without_replacing_the_original() {
+    fn diff_drop_moves_the_unique_view_in_each_split_direction() {
         use crate::model::pane_layout::Direction;
         for direction in [
             Direction::Left,
@@ -2185,6 +2185,9 @@ mod tests {
             Direction::Down,
         ] {
             let mut app = AppState::new();
+            let keep = app
+                .workspace
+                .test_open_view("keep.txt".into(), String::new());
             let original = app.workspace.open_prepared_diff(dropped_diff("a.txt"));
             let pane = app.workspace.active_pane();
             assert!(apply_diff_drop(
@@ -2196,9 +2199,9 @@ mod tests {
                 }
             ));
             assert_eq!(app.workspace.pane_ids().len(), 2);
-            assert_eq!(app.workspace.pane(pane).unwrap().items(), &[original]);
+            assert_eq!(app.workspace.pane(pane).unwrap().items(), &[keep]);
             assert_ne!(app.workspace.active_pane(), pane);
-            assert_ne!(app.workspace.active(), Some(original));
+            assert_eq!(app.workspace.active(), Some(original));
             assert_eq!(
                 app.workspace
                     .diff(app.workspace.active_pane())
@@ -2211,15 +2214,22 @@ mod tests {
     }
 
     #[test]
-    fn diff_drop_inserts_and_reuses_only_the_target_panes_matching_tab() {
+    fn diff_drop_inserts_and_reuses_the_unique_matching_view() {
         use crate::model::pane_layout::Direction;
         let mut app = AppState::new();
+        let keep = app
+            .workspace
+            .test_open_view("keep.txt".into(), String::new());
         let original = app.workspace.open_prepared_diff(dropped_diff("a.txt"));
         let source = app.workspace.active_pane();
         let target = app.workspace.split_empty(source, Direction::Right).unwrap();
         app.workspace.activate_pane(target);
-        let first = app.workspace.open_path("first.txt".into(), String::new());
-        let second = app.workspace.open_path("second.txt".into(), String::new());
+        let first = app
+            .workspace
+            .test_open_view("first.txt".into(), String::new());
+        let second = app
+            .workspace
+            .test_open_view("second.txt".into(), String::new());
         assert!(apply_diff_drop(
             &mut app,
             dropped_diff("a.txt"),
@@ -2229,12 +2239,12 @@ mod tests {
             }
         ));
         let diff = app.workspace.active().unwrap();
-        assert_ne!(diff, original);
+        assert_eq!(diff, original);
         assert_eq!(
             app.workspace.pane(target).unwrap().items(),
             &[first, diff, second]
         );
-        assert_eq!(app.workspace.pane(source).unwrap().items(), &[original]);
+        assert_eq!(app.workspace.pane(source).unwrap().items(), &[keep]);
         assert!(apply_diff_drop(
             &mut app,
             dropped_diff("a.txt"),
@@ -2263,7 +2273,9 @@ mod tests {
     fn diff_drop_to_a_closed_pane_leaves_the_current_layout_intact() {
         use crate::model::pane_layout::Direction;
         let mut app = AppState::new();
-        let current = app.workspace.open_path("current.txt".into(), "keep".into());
+        let current = app
+            .workspace
+            .test_open_view("current.txt".into(), "keep".into());
         let source = app.workspace.active_pane();
         let target = app.workspace.split_empty(source, Direction::Right).unwrap();
         app.workspace.close_pane(target);
@@ -2322,7 +2334,8 @@ mod tests {
                 let state = AppContext::detached(cx.state_with(|| {
                     let mut app = AppState::new();
                     app.explorer.model.restore(roots.clone(), Vec::new());
-                    app.workspace.open_path("current.txt".into(), "keep".into());
+                    app.workspace
+                        .test_open_view("current.txt".into(), "keep".into());
                     app
                 }))
                 .with_runtime(&runtime);
@@ -2369,7 +2382,7 @@ mod tests {
             } else if scenario == "navigated" {
                 state.update(|app| {
                     app.workspace
-                        .open_path("another.txt".into(), "another".into());
+                        .test_open_view("another.txt".into(), "another".into());
                 });
             }
             let deadline = Instant::now() + Duration::from_secs(5);

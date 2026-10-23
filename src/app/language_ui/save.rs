@@ -40,6 +40,8 @@ pub struct Run {
     stage: Stage,
     pane: PaneId,
     document: FileId,
+    view: crate::domain::identity::ViewId,
+    input_generation: u64,
     stamp: DocumentStamp,
     handle: Option<Arc<RequestHandle>>,
     timer: Option<Arc<ui_timer::Timer>>,
@@ -104,6 +106,8 @@ pub fn save(state: &AppContext, rect: UiRect, then: Then) {
         },
         pane,
         document: t.document,
+        view: t.view,
+        input_generation: t.input_generation,
         stamp: t.stamp,
         handle: None,
         timer: None,
@@ -142,7 +146,9 @@ fn begin_stage(state: &AppContext, app: &mut AppState, mut run: Run) -> bool {
     if remaining.is_zero() {
         return false;
     }
-    let Some(t) = target(app, run.pane).filter(|t| t.stamp == run.stamp) else {
+    let Some(t) = target(app, run.pane).filter(|t| {
+        t.view == run.view && t.input_generation == run.input_generation && t.stamp == run.stamp
+    }) else {
         return false;
     };
     let Some(services) = services(state) else {
@@ -225,7 +231,9 @@ pub fn tick(state: &AppContext, app: &mut AppState) -> Option<Then> {
     if run.stage == Stage::Loading {
         let loaded = run.loading.as_ref()?.lock().unwrap().take()?;
         app.editor.language.save = None;
-        if target(app, run.pane).is_none_or(|t| t.stamp != run.stamp) {
+        if target(app, run.pane).is_none_or(|t| {
+            t.view != run.view || t.input_generation != run.input_generation || t.stamp != run.stamp
+        }) {
             return Some(run.then);
         }
         return match loaded {
@@ -243,7 +251,9 @@ pub fn tick(state: &AppContext, app: &mut AppState) -> Option<Then> {
     app.editor.language.save = None;
     let Some(t) = target(app, run.pane).filter(|t| {
         t.document == run.document
-            && (t.stamp == run.stamp
+            && (t.view == run.view
+                && t.input_generation == run.input_generation
+                && t.stamp == run.stamp
                 || run.stage == Stage::Command
                     && t.stamp.incarnation == run.stamp.incarnation
                     && t.stamp.language_generation == run.stamp.language_generation)

@@ -57,9 +57,15 @@ impl Harness {
         };
         harness.vim.options.enabled = true;
         let mut editor = EditorMut::new(&mut harness.buffer, &mut harness.selection, Vec::new());
-        harness
-            .vim
-            .enter_view((PaneId::new(1), FileId::new(1)), &mut editor);
+        harness.vim.enter_view(
+            crate::vim::ViewKey {
+                pane: PaneId::new(1),
+                document: FileId::new(1),
+                view: crate::identity::ViewId::new(1),
+                input_generation: 0,
+            },
+            &mut editor,
+        );
         harness
     }
 

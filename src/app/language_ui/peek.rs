@@ -66,7 +66,10 @@ pub fn open(ctx: &AppContext, place: Place) {
 fn valid(app: &AppState, origin: &Target) -> bool {
     app.workspace.active_pane() == origin.pane
         && super::target(app, origin.pane).is_some_and(|t| {
-            t.stamp == origin.stamp && t.cursor == origin.cursor && t.selection == origin.selection
+            t.same_view(origin)
+                && t.stamp == origin.stamp
+                && t.cursor == origin.cursor
+                && t.selection == origin.selection
         })
 }
 fn install(app: &mut AppState, revision: u64, origin: Target, place: Place, text: Arc<String>) {

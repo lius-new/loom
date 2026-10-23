@@ -32,8 +32,12 @@ fn directory_search_and_hidden_session_restore_do_not_load_languages() {
             &mut app,
             Some(EditorLayout {
                 root: SavedPaneNode::Pane {
-                    items: vec![md.clone(), root.join("hidden.rs"), root.join("hidden.css")],
-                    active: Some(md.clone()),
+                    items: vec![
+                        md.clone().into(),
+                        root.join("hidden.rs").into(),
+                        root.join("hidden.css").into(),
+                    ],
+                    active: Some(0),
                 },
                 active_pane: 0,
             }),
@@ -58,7 +62,7 @@ fn directory_search_and_hidden_session_restore_do_not_load_languages() {
         assert_eq!(
             model
                 .workspace
-                .meta(model.workspace.active().unwrap())
+                .view_meta(model.workspace.active().unwrap())
                 .unwrap()
                 .path,
             md

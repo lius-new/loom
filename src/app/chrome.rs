@@ -171,11 +171,17 @@ pub fn status_binding(state: &AppContext) -> crate::ui::chrome::StatusBinding {
                 file: app.workspace.active().map(|id| FileStatus {
                     lang: app
                         .workspace
-                        .meta(id)
+                        .view_meta(id)
                         .expect("active document metadata exists")
                         .lang,
-                    missing: app.workspace.is_missing_on_disk(id),
-                    conflict: app.workspace.has_disk_conflict(id),
+                    missing: app
+                        .workspace
+                        .view_document(id)
+                        .is_some_and(|id| app.workspace.is_missing_on_disk(id)),
+                    conflict: app
+                        .workspace
+                        .view_document(id)
+                        .is_some_and(|id| app.workspace.has_disk_conflict(id)),
                     cursor: app
                         .workspace
                         .active_editor()
@@ -240,7 +246,7 @@ fn language_status(
             },
         });
     }
-    let Some(id) = app.workspace.active() else {
+    let Some(id) = app.workspace.active_document() else {
         return (None, notes);
     };
     let Some(services) = state.services().and_then(|r| r.language_services()) else {
@@ -429,7 +435,7 @@ pub fn language_details_frame(state: &AppContext) -> Option<crate::ui::language_
     // The active file's errors and warnings: the counts the status bar leaves out.
     let diagnostics = app
         .workspace
-        .active()
+        .active_document()
         .and_then(|id| {
             let document = app.workspace.documents.get(&id).filter(|d| d.is_text())?;
             services
@@ -731,7 +737,7 @@ fn current_servers(
     state: &AppContext,
 ) -> Option<(std::path::PathBuf, std::collections::BTreeSet<String>)> {
     let app = state.get();
-    let id = app.workspace.active()?;
+    let id = app.workspace.active_document()?;
     let document = app.workspace.documents.get(&id).filter(|d| d.is_text())?;
     let registry = crate::domain::language::Registry::builtin();
     let servers = crate::features::language_service::server_set::ServerSet::current();

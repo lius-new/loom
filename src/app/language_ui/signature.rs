@@ -1,10 +1,10 @@
 //! Signature help: the parameters of the call the caret is in, shown above it.
 use super::{AppContext, AppState, services, target};
 use crate::app::ui_timer;
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{FileId, PaneId, ViewId};
 use crate::features::language_service::reply::{self, SignatureHelp};
 use crate::features::language_service::request::Feature;
-use crate::features::markdown::{self, Block};
+use crate::features::markdown::content::Markup;
 use crate::infrastructure::lsp::manager::{RequestHandle, RequestSpec};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -17,6 +17,8 @@ pub struct Session {
     pub revision: u64,
     pub pane: PaneId,
     pub document: FileId,
+    pub view: ViewId,
+    pub input_generation: u64,
     pub incarnation: u64,
     /// Where the call's opening bracket is, as far as is known.
     pub opened_at: usize,
@@ -47,6 +49,8 @@ fn current(app: &AppState, session: &Session) -> bool {
     target(app, app.workspace.active_pane()).is_some_and(|t| {
         t.pane == session.pane
             && t.document == session.document
+            && t.view == session.view
+            && t.input_generation == session.input_generation
             && t.stamp.incarnation == session.incarnation
             && t.stamp.language_generation == session.requested.language_generation
             && ((t.cursor == session.last_cursor && t.stamp.version == session.last_version)
@@ -94,7 +98,7 @@ pub struct View {
     pub label: String,
     /// The active parameter, as character offsets into the label.
     pub active: Option<std::ops::Range<usize>>,
-    pub docs: Option<Arc<[Block]>>,
+    pub docs: Option<Markup>,
     /// Which signature of how many, when there are several.
     pub position: Option<(usize, usize)>,
 }
@@ -113,19 +117,18 @@ pub fn view(session: &Session) -> Option<View> {
         })
         .or_else(|| signature.parameters.first());
     let active = parameter.map(|parameter| parameter.label.clone());
-    let mut source = String::new();
-    if let Some(parameter) = parameter.and_then(|p| p.documentation.as_ref()) {
-        source.push_str(parameter);
-        source.push_str("\n\n");
+    let mut parts = Vec::new();
+    if let Some(parameter) = parameter.and_then(|parameter| parameter.documentation.as_ref()) {
+        parts.push(parameter.clone());
     }
     if let Some(documentation) = &signature.documentation {
-        source.push_str(documentation);
+        parts.push(documentation.clone());
     }
     Some(View {
         anchor: session.opened_at,
         label: signature.label.clone(),
         active,
-        docs: (!source.trim().is_empty()).then(|| markdown::parse(&source).into()),
+        docs: Markup::join(&parts),
         position: (help.signatures.len() > 1)
             .then_some((help.active_signature + 1, help.signatures.len())),
     })
@@ -166,6 +169,8 @@ pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
     if let Some(session) = app.editor.language.signature.as_mut() {
         if session.pane != pane
             || session.document != t.document
+            || session.view != t.view
+            || session.input_generation != t.input_generation
             || session.incarnation != t.stamp.incarnation
             || session.requested.language_generation != t.stamp.language_generation
         {
@@ -249,6 +254,8 @@ fn schedule(ctx: &AppContext, app: &mut AppState, opened_at: Option<usize>, trig
                     || !target(app, app.workspace.active_pane()).is_some_and(|t| {
                         t.pane == expected.pane
                             && t.document == expected.document
+                            && t.view == expected.view
+                            && t.input_generation == expected.input_generation
                             && t.stamp == expected.stamp
                             && t.cursor == expected.cursor
                     })
@@ -340,6 +347,8 @@ fn request_with_trigger(
                 revision: next,
                 pane,
                 document: t.document,
+                view: t.view,
+                input_generation: t.input_generation,
                 incarnation: t.stamp.incarnation,
                 opened_at: opened_at.unwrap_or_else(|| open_bracket_before(&t.text, t.cursor)),
                 handle: Some(handle),

@@ -5,7 +5,7 @@ use crate::text::{Edit, EditKind, EditorMut, Selection, TextBuffer};
 use super::command::{Action, Command, Motion, Target};
 use super::motion::first_non_blank;
 use super::search;
-use super::{CommandLine, Host, Key, Mode, PendingSearch, Request, Vim};
+use super::{CommandLine, Host, Key, Mode, PendingSearch, Request, ViewKey, Vim};
 
 /// An Ex line range, zero-based and inclusive.
 type Lines = (usize, usize);
@@ -309,7 +309,7 @@ impl Vim {
     }
 
     pub(super) fn push_jump_at(&mut self, offset: usize) {
-        if let Some((_, document)) = self.view {
+        if let Some(ViewKey { document, .. }) = self.view {
             self.marks.insert((document, '\''), offset);
             self.jumps.truncate(self.jump_index);
             self.jumps.push((document, offset));

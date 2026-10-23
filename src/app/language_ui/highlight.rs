@@ -18,6 +18,8 @@ const REST: Duration = Duration::from_millis(250);
 struct Pending {
     handle: Arc<RequestHandle>,
     pane: PaneId,
+    view: crate::domain::identity::ViewId,
+    input_generation: u64,
     stamp: DocumentStamp,
     text: Arc<String>,
 }
@@ -104,6 +106,8 @@ fn request(ctx: &AppContext, app: &mut AppState) {
     app.editor.language.highlights.pending = Some(Pending {
         handle,
         pane,
+        view: t.view,
+        input_generation: t.input_generation,
         stamp: t.stamp,
         text: t.text.clone(),
     });
@@ -118,6 +122,13 @@ pub fn tick(app: &mut AppState) -> bool {
         return false;
     }
     app.editor.language.highlights.pending = None;
+    if target(app, pending.pane).is_none_or(|t| {
+        t.view != pending.view
+            || t.input_generation != pending.input_generation
+            || t.stamp != pending.stamp
+    }) {
+        return false;
+    }
     let ranges: Vec<Range<usize>> = progress
         .usable(Feature::DocumentHighlight)
         .iter()

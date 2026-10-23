@@ -1,0 +1,199 @@
+{
+  "environment": {
+    "arch": "x86_64",
+    "logical_cpus": 12,
+    "os": "windows"
+  },
+  "guarded_cases": [
+    {
+      "elapsed_ms": 15.0611,
+      "name": "event-limit",
+      "rust_peak_extra_bytes": 34744352,
+      "source_bytes": 262144,
+      "stop": "EventBudget"
+    },
+    {
+      "elapsed_ms": 0.4199,
+      "name": "depth-limit",
+      "rust_peak_extra_bytes": 927744,
+      "source_bytes": 16385,
+      "stop": "DepthBudget"
+    },
+    {
+      "elapsed_ms": 0.0,
+      "name": "source-limit",
+      "rust_peak_extra_bytes": 0,
+      "source_bytes": 532480,
+      "stop": "SourceBudget"
+    }
+  ],
+  "memory_scope": "Rust global allocator live/peak extra bytes; excludes native heaps and source input",
+  "parser": "pulldown-cmark 0.13.5",
+  "profile": "release; 2 warmups + 9 samples; p95 = nearest rank (maximum for n=9); diagnostic limits deliberately exceed automatic admission",
+  "results": [
+    {
+      "constructor_p95_ms": 0.0331,
+      "median_ms": 0.043300000000000005,
+      "name": "repository-readme",
+      "p95_ms": 0.0589,
+      "rust_peak_extra_bytes": 76224,
+      "rust_retained_bytes_median": 27456,
+      "samples": 9,
+      "shape": {
+        "depth": 3,
+        "display_bytes": 5525,
+        "events": 404,
+        "fragments": 283
+      },
+      "source_bytes": 6262,
+      "source_lines": 148,
+      "warmups": 2
+    },
+    {
+      "constructor_p95_ms": 0.0095,
+      "median_ms": 0.0203,
+      "name": "editing-guide",
+      "p95_ms": 0.021500000000000002,
+      "rust_peak_extra_bytes": 58624,
+      "rust_retained_bytes_median": 27264,
+      "samples": 9,
+      "shape": {
+        "depth": 3,
+        "display_bytes": 6632,
+        "events": 372,
+        "fragments": 286
+      },
+      "source_bytes": 6936,
+      "source_lines": 129,
+      "warmups": 2
+    },
+    {
+      "constructor_p95_ms": 0.6386000000000001,
+      "median_ms": 0.8363,
+      "name": "mixed-64k",
+      "p95_ms": 1.2549,
+      "rust_peak_extra_bytes": 1238752,
+      "rust_retained_bytes_median": 385024,
+      "samples": 9,
+      "shape": {
+        "depth": 2,
+        "display_bytes": 53582,
+        "events": 10276,
+        "fragments": 6606
+      },
+      "source_bytes": 65693,
+      "source_lines": 4037,
+      "warmups": 2
+    },
+    {
+      "constructor_p95_ms": 4.3374,
+      "median_ms": 6.7005,
+      "name": "mixed-512k",
+      "p95_ms": 8.151399999999999,
+      "rust_peak_extra_bytes": 9896160,
+      "rust_retained_bytes_median": 3080192,
+      "samples": 9,
+      "shape": {
+        "depth": 2,
+        "display_bytes": 427634,
+        "events": 82012,
+        "fragments": 52722
+      },
+      "source_bytes": 524291,
+      "source_lines": 32219,
+      "warmups": 2
+    },
+    {
+      "constructor_p95_ms": 15.4131,
+      "median_ms": 27.459999999999997,
+      "name": "mixed-2m",
+      "p95_ms": 31.7277,
+      "rust_peak_extra_bytes": 39583968,
+      "rust_retained_bytes_median": 12320768,
+      "samples": 9,
+      "shape": {
+        "depth": 2,
+        "display_bytes": 1710536,
+        "events": 328048,
+        "fragments": 210888
+      },
+      "source_bytes": 2097164,
+      "source_lines": 128876,
+      "warmups": 2
+    },
+    {
+      "constructor_p95_ms": 62.1849,
+      "median_ms": 105.1896,
+      "name": "mixed-8m-diagnostic",
+      "p95_ms": 118.096,
+      "rust_peak_extra_bytes": 158335584,
+      "rust_retained_bytes_median": 49283072,
+      "samples": 9,
+      "shape": {
+        "depth": 2,
+        "display_bytes": 6842144,
+        "events": 1312192,
+        "fragments": 843552
+      },
+      "source_bytes": 8388656,
+      "source_lines": 515504,
+      "warmups": 2
+    },
+    {
+      "constructor_p95_ms": 1.0283,
+      "median_ms": 1.2657,
+      "name": "single-paragraph-2m",
+      "p95_ms": 1.9732999999999998,
+      "rust_peak_extra_bytes": 7350490,
+      "rust_retained_bytes_median": 4194490,
+      "samples": 9,
+      "shape": {
+        "depth": 1,
+        "display_bytes": 2097166,
+        "events": 3,
+        "fragments": 2
+      },
+      "source_bytes": 2097165,
+      "source_lines": 1,
+      "warmups": 2
+    },
+    {
+      "constructor_p95_ms": 9.489600000000001,
+      "median_ms": 22.9389,
+      "name": "unclosed-brackets-256k",
+      "p95_ms": 24.6582,
+      "rust_peak_extra_bytes": 50866208,
+      "rust_retained_bytes_median": 21495808,
+      "samples": 9,
+      "shape": {
+        "depth": 1,
+        "display_bytes": 262145,
+        "events": 262146,
+        "fragments": 262145
+      },
+      "source_bytes": 262144,
+      "source_lines": 1,
+      "warmups": 2
+    },
+    {
+      "constructor_p95_ms": 0.32,
+      "median_ms": 0.49879999999999997,
+      "name": "nested-quotes-8192",
+      "p95_ms": 0.6073,
+      "rust_peak_extra_bytes": 927912,
+      "rust_retained_bytes_median": 168,
+      "samples": 9,
+      "shape": {
+        "depth": 8193,
+        "display_bytes": 2,
+        "events": 16387,
+        "fragments": 2
+      },
+      "source_bytes": 16385,
+      "source_lines": 1,
+      "warmups": 2
+    }
+  ],
+  "schema": 1,
+  "scope": "isolated parse + flat display/source mapping; not full AST/layout or application latency"
+}

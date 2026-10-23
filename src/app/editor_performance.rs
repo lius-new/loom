@@ -19,7 +19,7 @@ use std::{
 fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
     let app = state.get();
     let pane = app.workspace.active_pane();
-    let id = app.workspace.pane(pane).unwrap().active().unwrap();
+    let id = app.workspace.pane_document(pane).unwrap();
     let doc = app.workspace.documents.get(&id).unwrap();
     let left = rect.left + crate::ui::fonts::editor().gutter_w() + crate::ui::theme::CODE_PAD;
     let metrics = view::scroll_metrics(rect, left, &doc.buffer);

@@ -32,6 +32,8 @@ jobs:
         run: cargo test --locked -p loom-editor-core
       - name: Test workspace domain without GUI build dependencies
         run: cargo test --locked -p loom-workspace-tests
+      - name: Test production Markdown rules without GUI build dependencies
+        run: cargo test --locked -p loom-markdown-tests
 
   quality:
     name: Format and lint
@@ -51,7 +53,7 @@ jobs:
             libgl1-mesa-dev \
             libgles2-mesa-dev \
             libwayland-dev \
-            libxkbcommon-dev
+            libxkbcommon-dev fonts-noto-cjk fonts-noto-color-emoji
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -64,7 +66,7 @@ jobs:
 
       - name: Check architecture boundaries
         run: |
-          node --test scripts/architecture/check.test.mjs scripts/architecture/standalone-host.test.mjs scripts/architecture/language-resources.test.mjs
+          node --test scripts/architecture/check.test.mjs scripts/architecture/markdown.test.mjs scripts/architecture/standalone-host.test.mjs scripts/architecture/language-resources.test.mjs
           node --test scripts/baseline/test-results.test.mjs
           node --test scripts/package/lib/language-packs.test.mjs scripts/package/lib/lsp-servers.test.mjs
           node scripts/architecture/check.mjs
@@ -135,7 +137,7 @@ jobs:
             libgl1-mesa-dev \
             libgles2-mesa-dev \
             libwayland-dev \
-            libxkbcommon-dev
+            libxkbcommon-dev fonts-noto-cjk fonts-noto-color-emoji
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -147,6 +149,19 @@ jobs:
 
       - name: Run tests
         run: cargo test --locked --workspace
+
+      - name: Record production Markdown native/UI evidence
+        env:
+          LOOM_MARKDOWN_EVIDENCE_DIR: markdown-evidence
+        run: cargo test --locked -p loom app::markdown_tests::production_markdown_evidence -- --ignored --exact --nocapture
+
+      - name: Upload Markdown evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: Markdown-evidence-${{ matrix.target_name }}
+          path: markdown-evidence/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Test upstream WASM modules without native language binaries
         run: node tests/language-runtime/run-wasm.mjs

@@ -10,3 +10,5 @@ mod servers_tests;
 pub mod theme_id;
 
 pub mod model;
+
+pub mod markdown;

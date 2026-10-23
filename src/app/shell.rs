@@ -12,6 +12,7 @@ use std::time::Duration;
 use lgui::ApplicationHandle;
 use lgui::core::{UiElement, UiEventKind, UiEventPayload, UiId};
 use lgui::prelude::{Element, RenderCx, UiRect, VisualStyle, component, group};
+use lgui::services::ServicesContextExt;
 use lgui::window::WindowFocusChanged;
 
 use crate::app::key_actions::{self, KeyEnv, TerminalEnv};
@@ -58,6 +59,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let loading_state = state.clone();
     let loading_application = application.as_ref().clone();
     let loading_runtime = runtime.clone();
+    let loading_clipboard = application_context.clipboard();
     cx.use_effect((), move || {
         let restore = crate::app::workspace_restore::SessionRestore::new(
             loading_state.clone(),
@@ -76,6 +78,11 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             crate::features::language_service::server_set::ServerSet::current(),
             move || results_ready.send(()),
         ));
+        loading_runtime.install_markdown(super::markdown_service::MarkdownService::new(
+            loading_state.clone(),
+            loading_application.clone(),
+            loading_clipboard,
+        ));
         loading_runtime.install_highlighter(super::syntax::Highlighter::new(
             loading_state.clone(),
             loading_application.clone(),
@@ -90,6 +97,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         move || {
             restore.shutdown();
             loading_runtime.clear_file_loader();
+            loading_runtime.clear_markdown();
             loading_runtime.clear_highlighter();
             loading_runtime.clear_language_services();
         }
@@ -271,6 +279,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         changed
     });
     let s = state.get();
+    if let Some(markdown) = runtime.markdown() {
+        markdown.sync(&s);
+    }
     let syntax_runtime = runtime.clone();
     let syntax_open = s.workspace.ordered_documents();
     cx.use_effect(syntax_open.clone(), move || {
@@ -501,14 +512,18 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 .map_or(&[][..], |pane| pane.items())
                 .iter()
                 .filter_map(|id| {
-                    s.workspace.meta(*id).map(|meta| {
+                    s.workspace.view_meta(*id).map(|meta| {
                         (
                             *id,
                             meta.name.clone(),
-                            s.workspace.is_dirty(*id),
+                            s.workspace.is_view_dirty(*id),
                             s.workspace.is_diff(*id),
-                            s.workspace.has_disk_conflict(*id),
-                            s.workspace.is_missing_on_disk(*id),
+                            s.workspace
+                                .view_document(*id)
+                                .is_some_and(|id| s.workspace.has_disk_conflict(id)),
+                            s.workspace
+                                .view_document(*id)
+                                .is_some_and(|id| s.workspace.is_missing_on_disk(id)),
                         )
                     })
                 })
@@ -1082,6 +1097,14 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 super::git_view::binding(&state, &git_store),
                 editor_focus.clone(),
                 super::editor_view::binding(state.clone(), git_store.clone(), pane, body),
+            ),
+            MainSurface::Markdown => super::markdown_view::render(
+                pane,
+                body,
+                state.clone(),
+                surface_id,
+                editor_focus.clone(),
+                application_context.clipboard(),
             ),
             MainSurface::Editor => editor_view::render(
                 pane,

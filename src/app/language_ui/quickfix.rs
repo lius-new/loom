@@ -11,6 +11,8 @@ use std::{ops::Range, sync::Arc, time::Duration};
 #[derive(Clone, PartialEq, Eq)]
 struct Key {
     pane: PaneId,
+    view: crate::domain::identity::ViewId,
+    input_generation: u64,
     stamp: DocumentStamp,
     range: Range<usize>,
     cursor: usize,
@@ -37,11 +39,13 @@ fn current(ctx: &AppContext, app: &AppState) -> Option<(Target, Key)> {
     if !found.iter().any(|d| &d.range == range) {
         return None;
     }
-    let view = app.workspace.documents.get(&t.document)?.views.get(pane)?;
+    let view = &app.workspace.view(t.view)?.source;
     let mut workspace = super::edit::stamps(app);
     workspace.sort_by(|a, b| a.0.cmp(&b.0));
     let key = Key {
         pane: *pane,
+        view: t.view,
+        input_generation: t.input_generation,
         stamp: t.stamp,
         range: range.clone(),
         cursor: t.cursor,

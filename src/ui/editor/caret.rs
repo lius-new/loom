@@ -6,8 +6,8 @@ use lgui::core::{
 use lgui::prelude::{Element, UiRect, VisualStyle};
 use std::time::Instant;
 
-use crate::domain::identity::FileId;
 use crate::domain::identity::PaneId;
+use crate::domain::identity::ViewId;
 use crate::ui::fonts;
 
 const DURATION_MS: f32 = 80.0;
@@ -16,7 +16,7 @@ const FRAME_INTERVAL_MS: u64 = 8;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct CaretContext {
     pub pane: PaneId,
-    pub document: FileId,
+    pub document: ViewId,
     pub viewport: UiRect,
     pub scroll: (f32, f32),
 }
@@ -195,7 +195,7 @@ mod tests {
     fn context() -> CaretContext {
         CaretContext {
             pane: PaneId::new(1),
-            document: FileId::new(1),
+            document: ViewId::new(1),
             viewport: UiRect::new(0.0, 0.0, 500.0, 300.0),
             scroll: (0.0, 0.0),
         }
@@ -441,7 +441,7 @@ mod tests {
         let mut scrolled = original;
         scrolled.scroll = (4.0, 40.0);
         let mut document = original;
-        document.document = FileId::new(2);
+        document.document = ViewId::new(2);
         let mut pane = original;
         pane.pane = PaneId::new(2);
         let mut resized = original;

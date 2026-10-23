@@ -19,7 +19,13 @@ fn text_file_above_four_mib_opens_in_explorer() {
     assert!(open_tree_file(&mut app, path.clone(), 2, None));
     assert_eq!(app.workspace.active_path(), Some(path.as_path()));
     let id = app.workspace.active().unwrap();
-    assert_eq!(app.workspace.save_snapshot(id).unwrap().2, contents);
+    assert_eq!(
+        app.workspace
+            .save_snapshot(app.workspace.test_document(id))
+            .unwrap()
+            .2,
+        contents
+    );
     assert!(app.chrome.toast.is_none());
     fs::remove_dir_all(root).unwrap();
 }
@@ -49,7 +55,7 @@ fn launch_paths_open_the_first_folder_add_others_and_open_files() {
         vec![normalized_folder(first), normalized_folder(second)]
     );
     let active = app.workspace.active().unwrap();
-    assert_eq!(app.workspace.meta(active).unwrap().path, file);
+    assert_eq!(app.workspace.view_meta(active).unwrap().path, file);
     assert!(app.chrome.toast.is_none());
     let _ = fs::remove_dir_all(root);
 }
@@ -143,7 +149,8 @@ fn removing_a_workspace_folder_keeps_disk_documents_and_clears_tree_state() {
     app.explorer
         .model
         .begin_create(child.clone(), ExplorerCreateKind::File);
-    app.workspace.open_path(open_file.clone(), String::new());
+    app.workspace
+        .test_open_view(open_file.clone(), String::new());
 
     assert!(remove_folder_state(&mut app, &removed));
 
@@ -209,10 +216,10 @@ fn dropping_a_file_on_a_strip_inserts_it_at_the_marker() {
     let pane = app.workspace.active_pane();
     let first = app
         .workspace
-        .open_path(PathBuf::from("first.rs"), String::new());
+        .test_open_view(PathBuf::from("first.rs"), String::new());
     let second = app
         .workspace
-        .open_path(PathBuf::from("second.rs"), String::new());
+        .test_open_view(PathBuf::from("second.rs"), String::new());
     press_file(
         &mut app,
         "new.rs",
@@ -234,7 +241,7 @@ fn dropping_a_file_near_a_pane_edge_opens_it_in_a_new_split() {
     let pane = app.workspace.active_pane();
     let first = app
         .workspace
-        .open_path(PathBuf::from("first.rs"), String::new());
+        .test_open_view(PathBuf::from("first.rs"), String::new());
     press_file(
         &mut app,
         "new.rs",
@@ -259,7 +266,7 @@ fn dropping_a_file_on_another_pane_opens_it_there_and_failures_change_nothing() 
     let mut app = AppState::new();
     let left = app.workspace.active_pane();
     app.workspace
-        .open_path(PathBuf::from("first.rs"), String::new());
+        .test_open_view(PathBuf::from("first.rs"), String::new());
     let right = app
         .workspace
         .split(left, crate::model::pane_layout::Direction::Right)
@@ -299,7 +306,7 @@ fn renamed_directory_retargets_tabs_and_rebuilds_tree_state() {
     app.explorer
         .model
         .begin_rename(old_path.clone(), ExplorerTargetKind::Directory);
-    app.workspace.open_path(old_file, String::new());
+    app.workspace.test_open_view(old_file, String::new());
 
     apply_renamed_path_state(&mut app, &old_path, &new_path);
 
@@ -322,7 +329,8 @@ fn renamed_file_retargets_its_open_editor_tab() {
     let old_path = root.join("before.rs");
     let new_path = root.join("after.rs");
     app.explorer.model.restore(vec![root], Vec::new());
-    app.workspace.open_path(old_path.clone(), String::new());
+    app.workspace
+        .test_open_view(old_path.clone(), String::new());
 
     apply_renamed_path_state(&mut app, &old_path, &new_path);
 
@@ -336,7 +344,7 @@ fn deleted_file_closes_its_open_editor_tab() {
     let root = PathBuf::from("workspace");
     let path = root.join("deleted.rs");
     app.explorer.model.restore(vec![root], Vec::new());
-    app.workspace.open_path(path.clone(), String::new());
+    app.workspace.test_open_view(path.clone(), String::new());
 
     apply_deleted_path_state(&mut app, &path);
 
@@ -394,7 +402,8 @@ fn renaming_keeps_unicode_names_open_tabs_and_listings_in_step() {
     fs::write(&old, "fn main() {}").unwrap();
     let mut app = AppState::new();
     add_folder_state(&mut app, root.clone());
-    app.workspace.open_path(old.clone(), "fn main() {}".into());
+    app.workspace
+        .test_open_view(old.clone(), "fn main() {}".into());
     let state = live(app);
 
     begin_rename(&state, old.clone(), ExplorerTargetKind::File);

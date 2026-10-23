@@ -34,3 +34,7 @@ pub(crate) mod syntax_worker;
 pub mod launch;
 pub(crate) mod update;
 pub mod window_geometry;
+
+pub(crate) mod markdown_worker;
+
+pub mod markdown_resources;

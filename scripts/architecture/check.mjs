@@ -92,6 +92,7 @@ export function allowed(file, dependency) {
   if(root==='loom_editor_core')return true;
   if(own==='app'||file==='src/main.rs')return true;
   if(own==='domain')return root==='domain'||(['src/domain/workspace_session.rs','src/domain/window_geometry.rs','src/domain/language/descriptor.rs'].includes(file)&&['serde','serde_json'].includes(root));
+  if(file==='src/features/markdown.rs'||file.startsWith('src/features/markdown/'))return ['features','domain','unicode_segmentation'].includes(root)||(file==='src/features/markdown/parser.rs'&&root==='pulldown_cmark');
   if(file.startsWith('src/features/keymap/'))return ['features','domain','serde_json','input','Movement'].includes(root);
   if(file.startsWith('src/infrastructure/lsp/'))return ['infrastructure','features','domain','serde_json','std::process','std::thread','requests'].includes(root)||((file==='src/infrastructure/lsp/client_tests.rs'||file==='src/infrastructure/lsp/manager_tests.rs')&&['std::fs','ring','tar','flate2'].includes(root))||(file==='src/infrastructure/lsp/job.rs'&&['windows_sys','libc'].includes(root));
   if(file==='src/infrastructure/window_geometry.rs')return ['infrastructure','domain','lgui','windows_sys','std::process'].includes(root);
@@ -125,6 +126,9 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/session_filesystem.rs')return ['infrastructure','domain','serde','serde_json','std::fs','std::process'].includes(root);
   if(['src/ui/editor/view.rs','src/ui/components/text.rs'].includes(file)&&root==='unicode_width')return true;
   if(file==='src/ui/explorer/context_menu.rs'&&root==='unicode_width')return true;
+  if(file==='src/infrastructure/markdown_worker.rs')return ['infrastructure','domain','features','std::thread'].includes(root);
+  if(file==='src/infrastructure/markdown_resources.rs')return ['infrastructure','features','image','ureq','std::fs'].includes(root);
+  if(file==='src/ui/markdown/native.rs')return ['ui','features','skia_safe','unicode_segmentation','unicode_width'].includes(root);
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
   // Native parsers: only the grammar table names grammar crates; the engine files use the runtime.
   if(file==='src/features/syntax/grammars.rs')return ['features','domain','tree_sitter'].includes(root);
@@ -172,6 +176,14 @@ export function violations(sources, policy) {
     if(file.startsWith('src/') && /#\[path\s*=\s*"[^"]*tests\/language-runtime\//.test(source)) {
       problems.push(file+': host modules must not reference external native test files');
     }
+    if(file.startsWith('src/')&&/#\s*\[\s*path\s*=\s*"[^"]*tests[\\/]markdown-p0[\\/]/.test(source))problems.push(file+': production sources must not import Markdown P0 prototypes');
+    const markdownRules=file==='src/features/markdown.rs'||file.startsWith('src/features/markdown/');
+    const markdownView=file==='src/ui/markdown.rs'||file.startsWith('src/ui/markdown/')||file==='src/ui/markdown_binding.rs';
+    if(markdownRules||markdownView) {
+      if(policy.exceptions[file]||terminalStandardServices(ts)||ts.some(t=>['AppState','AppContext','AppRuntime','Workspace','ApplicationHandle','FileLoader','TerminalHandle','Child','State','Mutex','RwLock'].includes(t))||deps.some(d=>['crate::app','crate::model','crate::infrastructure','std::fs','std::process','std::thread','std::net'].includes(d)))problems.push(file+': Markdown rules/views require narrow values and semantic ports without root/native capabilities');
+      if(ts.some((t,i)=>t==='super'&&ts[i+1]==='::'&&ts[i+2]==='super')||/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(file+': Markdown modules cannot include or escape to adapter sources');
+    }
+    if(markdownRules&&ts.some(t=>['UiRect','UiId','FileId','PaneId','ViewId','DocumentStamp','KeyboardEvent'].includes(t)))problems.push(file+': Markdown syntax models must remain independent of GUI and workspace identities');
     if(layer(file)==='ui'&&ts.includes('AppContext'))problems.push(file+': UI cannot receive application command contexts');
     if(file==='src/app/state.rs'&&ts.some(t=>['attach_runtime','runtime','AppRuntime','AppContext','Weak'].includes(t)))problems.push(file+': AppState must remain capability-free');
     if(file==='src/app/context.rs') {const fields=structFields(source,'AppContext');if(JSON.stringify(fields)!==JSON.stringify(['model','runtime'])||!ts.join(' ').match(/runtime : Weak < AppRuntime >/))problems.push(file+': command context must carry only model and weak runtime');}

@@ -3,7 +3,7 @@
 //! through the keymap, the mouse through its rows.
 use super::docs;
 use super::view::card_origin;
-use crate::features::markdown::Block;
+use crate::ui::markdown::card::Document;
 use crate::ui::theme;
 use lgui::core::{CursorIcon, EventPolicy, UiEventContext, WheelUnit, clip};
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
@@ -48,7 +48,7 @@ pub(crate) struct View {
     /// palette, when there is none.
     pub anchor: Option<usize>,
     /// Documentation of the selected row, shown beside the list.
-    pub docs: Option<Arc<[Block]>>,
+    pub docs: Option<Document>,
 }
 
 pub(crate) enum Event {
@@ -329,6 +329,7 @@ pub(crate) fn render(
                     docs_rect.left + docs::PAD,
                     docs_rect.top + docs::PAD,
                     Some(&interaction),
+                    (doc_h - 2.0 * docs::PAD).max(1.0),
                 ))),
         );
         rect = UiRect::new(

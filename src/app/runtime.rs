@@ -16,6 +16,7 @@ pub(crate) struct AppRuntime {
 
 #[derive(Default)]
 struct Services {
+    markdown: Option<Arc<super::markdown_service::MarkdownService>>,
     highlighter: Option<super::syntax::Highlighter>,
     language_services: Option<Arc<super::language_services::LanguageServices>>,
     file_loader: Option<FileLoader>,
@@ -24,6 +25,26 @@ struct Services {
 }
 
 impl AppRuntime {
+    pub(crate) fn markdown(&self) -> Option<Arc<super::markdown_service::MarkdownService>> {
+        self.services.lock().unwrap().markdown.clone()
+    }
+    pub(crate) fn install_markdown(&self, service: super::markdown_service::MarkdownService) {
+        let previous = self
+            .services
+            .lock()
+            .unwrap()
+            .markdown
+            .replace(Arc::new(service));
+        if let Some(previous) = previous {
+            previous.shutdown();
+        }
+    }
+    pub(crate) fn clear_markdown(&self) {
+        let previous = self.services.lock().unwrap().markdown.take();
+        if let Some(previous) = previous {
+            previous.shutdown();
+        }
+    }
     pub(crate) fn highlighter(&self) -> Option<super::syntax::Highlighter> {
         self.services.lock().unwrap().highlighter.clone()
     }
@@ -124,6 +145,9 @@ impl Drop for AppRuntime {
     fn drop(&mut self) {
         self.terminals.shutdown();
         let services = self.services.get_mut().unwrap();
+        if let Some(markdown) = services.markdown.take() {
+            markdown.shutdown();
+        }
         if let Some(highlighter) = services.highlighter.take() {
             highlighter.shutdown();
         }

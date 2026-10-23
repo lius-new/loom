@@ -1,5 +1,5 @@
 //! Read-only document/layout snapshot and tab command port.
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{PaneId, ViewId};
 use crate::ui::chrome::tab_state::UiState;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,9 +43,9 @@ impl Snapshot {
 }
 pub enum Command {
     Wheel(PaneId, f32, f32),
-    Press(PaneId, FileId, usize, f32, f32),
-    Menu(PaneId, FileId, (f32, f32)),
-    Close(PaneId, FileId),
+    Press(PaneId, ViewId, usize, f32, f32),
+    Menu(PaneId, ViewId, (f32, f32)),
+    Close(PaneId, ViewId),
     CancelPending(u64),
     Track(PaneId, f32, f32),
     Thumb(PaneId, f32),

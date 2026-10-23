@@ -2,7 +2,7 @@
 use crate::app::context::AppContext;
 use crate::app::state::AppState;
 use crate::app::workspace_commands::{self as workspace_actions, TabCloseScope};
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{PaneId, ViewId};
 use crate::domain::pane_layout::Direction;
 use crate::features::explorer::{ExplorerContextTarget, ExplorerTargetKind};
 use crate::ui::chrome::menu_binding::{Binding, Frame};
@@ -20,8 +20,8 @@ fn close_scope(action: Action) -> Option<TabCloseScope> {
         _ => None,
     }
 }
-fn action_enabled(app: &AppState, pane: PaneId, target: FileId, action: Action) -> bool {
-    let Some(meta) = app.workspace.meta(target) else {
+fn action_enabled(app: &AppState, pane: PaneId, target: ViewId, action: Action) -> bool {
+    let Some(meta) = app.workspace.view_meta(target) else {
         return false;
     };
     if let Some(scope) = close_scope(action) {
@@ -32,6 +32,10 @@ fn action_enabled(app: &AppState, pane: PaneId, target: FileId, action: Action) 
         return false;
     }
     match action {
+        Action::ToggleMarkdown
+        | Action::MarkdownToSide
+        | Action::MarkdownSource
+        | Action::MarkdownLarger => crate::app::markdown_view::eligible(app, target),
         // Only files can be shown in two panes at once.
         Action::SplitRight | Action::SplitDown => app.workspace.is_file(target),
         Action::KeepOpen => app
@@ -39,9 +43,18 @@ fn action_enabled(app: &AppState, pane: PaneId, target: FileId, action: Action) 
             .pane(pane)
             .is_some_and(|pane| pane.is_preview(target)),
         Action::ReloadFromDisk => {
-            app.workspace.has_disk_conflict(target) && !app.workspace.is_missing_on_disk(target)
+            app.workspace
+                .view_document(target)
+                .is_some_and(|id| app.workspace.has_disk_conflict(id))
+                && !app
+                    .workspace
+                    .view_document(target)
+                    .is_some_and(|id| app.workspace.is_missing_on_disk(id))
         }
-        Action::KeepEditorVersion => app.workspace.has_disk_conflict(target),
+        Action::KeepEditorVersion => app
+            .workspace
+            .view_document(target)
+            .is_some_and(|id| app.workspace.has_disk_conflict(id)),
         Action::CopyPath => true,
         Action::CopyRelativePath => app.explorer.model.root_for_path(&meta.path).is_some(),
         Action::RevealInTree => {
@@ -54,7 +67,7 @@ fn action_enabled(app: &AppState, pane: PaneId, target: FileId, action: Action) 
 pub fn execute(
     state: &AppContext,
     pane: PaneId,
-    target: FileId,
+    target: ViewId,
     action: Action,
     cx: &mut UiEventContext,
 ) {
@@ -67,7 +80,11 @@ pub fn execute(
     {
         return;
     }
-    let Some(action_path) = app.workspace.meta(target).map(|meta| meta.path.clone()) else {
+    let Some(action_path) = app
+        .workspace
+        .view_meta(target)
+        .map(|meta| meta.path.clone())
+    else {
         return;
     };
     drop(app);
@@ -77,6 +94,26 @@ pub fn execute(
         return;
     }
     match action {
+        Action::ToggleMarkdown
+        | Action::MarkdownToSide
+        | Action::MarkdownSource
+        | Action::MarkdownLarger => {
+            state.update(|app| {
+                app.workspace.activate(pane, target);
+                app.apply(match action {
+                    Action::ToggleMarkdown => {
+                        crate::features::keymap::action::Action::ToggleMarkdown
+                    }
+                    Action::MarkdownToSide => {
+                        crate::features::keymap::action::Action::MarkdownPreviewToSide
+                    }
+                    Action::MarkdownSource => {
+                        crate::features::keymap::action::Action::MarkdownOpenSource
+                    }
+                    _ => crate::features::keymap::action::Action::MarkdownLargePreview,
+                });
+            });
+        }
         Action::KeepOpen => {
             state.update(|app| {
                 app.workspace.promote_preview(pane, target);
@@ -95,14 +132,18 @@ pub fn execute(
         }
         Action::ReloadFromDisk => {
             state.update(|app| {
-                if let Err(error) = app.workspace.accept_disk_version(target) {
+                if let Err(error) = app
+                    .workspace
+                    .accept_disk_version(app.workspace.view_document(target).unwrap())
+                {
                     app.show_error(error);
                 }
             });
         }
         Action::KeepEditorVersion => {
             state.update(|app| {
-                app.workspace.keep_editor_version(target);
+                app.workspace
+                    .keep_editor_version(app.workspace.view_document(target).unwrap());
             });
         }
         Action::CopyPath | Action::CopyRelativePath => {
@@ -114,7 +155,9 @@ pub fn execute(
             );
         }
         Action::RevealInTree => {
-            crate::app::explorer::reveal_file(state, target);
+            if let Some(id) = state.get().workspace.view_document(target) {
+                crate::app::explorer::reveal_file(state, id);
+            }
         }
         Action::RevealInFileExplorer => {
             crate::app::explorer::reveal_item(
@@ -137,7 +180,7 @@ pub fn binding(state: &AppContext) -> Binding {
         move || {
             let app = reader.get();
             let menu = app.editor.tabs.tab_context_menu.as_ref()?;
-            app.workspace.meta(menu.target)?;
+            app.workspace.view_meta(menu.target)?;
             Some(Frame {
                 position: menu.position,
                 pane: menu.pane,
@@ -204,7 +247,7 @@ mod tests {
         let mut app = AppState::new();
         let only = app
             .workspace
-            .open_path(PathBuf::from("workspace/only.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/only.rs"), String::new());
 
         assert!(action_enabled(
             &app,
@@ -243,10 +286,10 @@ mod tests {
         let mut app = AppState::new();
         let permanent = app
             .workspace
-            .open_path(PathBuf::from("workspace/permanent.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/permanent.rs"), String::new());
         let preview = app
             .workspace
-            .preview_path(PathBuf::from("workspace/preview.rs"), String::new());
+            .test_preview_view(PathBuf::from("workspace/preview.rs"), String::new());
 
         assert!(!action_enabled(
             &app,
@@ -267,7 +310,7 @@ mod tests {
         let mut app = AppState::new();
         let file = app
             .workspace
-            .open_path(PathBuf::from("workspace/src/main.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/src/main.rs"), String::new());
 
         assert!(!action_enabled(
             &app,
@@ -306,7 +349,7 @@ mod tests {
         let path = root.join("note.txt");
         std::fs::write(&path, "before").unwrap();
         let mut app = AppState::new();
-        let target = app.workspace.open_path(path.clone(), "before".into());
+        let target = app.workspace.test_open_view(path.clone(), "before".into());
         assert!(!action_enabled(
             &app,
             app.workspace.active_pane(),
@@ -330,7 +373,8 @@ mod tests {
             .replace_selection(" editor", EditKind::Typing)
             .unwrap();
         std::fs::write(&path, "after and longer").unwrap();
-        app.workspace.reconcile_document(target);
+        app.workspace
+            .reconcile_document(app.workspace.test_document(target));
         assert!(action_enabled(
             &app,
             app.workspace.active_pane(),
@@ -355,9 +399,9 @@ mod tests {
             .restore(vec![PathBuf::from("workspace")], Vec::new());
         let target = app
             .workspace
-            .open_path(PathBuf::from("workspace/first.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/first.rs"), String::new());
         app.workspace
-            .open_path(PathBuf::from("workspace/second.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/second.rs"), String::new());
 
         for action in [
             Action::Close,

@@ -2,7 +2,7 @@
 //! No application behaviour or architecture is changed by this module.
 
 use std::hint::black_box;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -40,13 +40,16 @@ fn phase0_split_session_fixture_preserves_order_and_terminal_metadata() {
         panic!("first child must be a pane");
     };
     assert_eq!(
-        items,
+        items
+            .iter()
+            .map(|v| v.path().to_path_buf())
+            .collect::<Vec<_>>(),
         &[
             PathBuf::from("workspace/main.rs"),
             PathBuf::from("workspace/中文.txt")
         ]
     );
-    assert_eq!(active.as_deref(), Some(Path::new("workspace/中文.txt")));
+    assert_eq!(*active, Some(1));
     assert_eq!(
         session.terminal_tabs,
         [ShellKind::PowerShell, ShellKind::Cmd, ShellKind::Bash]

@@ -140,7 +140,8 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
     let target = &pending.target;
     let same_document = app.workspace.active_pane() == target.pane
         && super::target(app, target.pane).is_some_and(|now| {
-            now.stamp == target.stamp
+            now.same_view(target)
+                && now.stamp == target.stamp
                 && now.cursor == target.cursor
                 && now.selection == target.selection
         });

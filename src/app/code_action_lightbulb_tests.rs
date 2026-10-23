@@ -42,7 +42,7 @@ impl Case {
             // Ready can be published before the initial findings arrive.
             h.until("initial diagnostics", |h| {
                 let app = h.state.get();
-                let id = app.workspace.active().unwrap();
+                let id = app.workspace.active_document().unwrap();
                 let doc = &app.workspace.documents[&id];
                 h.runtime
                     .language_services()
@@ -62,7 +62,7 @@ impl Case {
     fn wait_diagnostics(&mut self, range: std::ops::Range<usize>) {
         self.h.until("diagnostics for the current text", |h| {
             let app = h.state.get();
-            let id = app.workspace.active().unwrap();
+            let id = app.workspace.active_document().unwrap();
             let doc = &app.workspace.documents[&id];
             h.runtime
                 .language_services()
@@ -124,7 +124,7 @@ fn open(h: &LanguageHarness, old: u64) -> bool {
 fn saved(h: &LanguageHarness) {
     let app = h.state.get();
     let path = app.workspace.active_path().unwrap().to_path_buf();
-    let id = app.workspace.active().unwrap();
+    let id = app.workspace.active_document().unwrap();
     let text = app.workspace.documents[&id].buffer.text_snapshot();
     h.runtime.language_services().unwrap().saved(path, text);
 }
@@ -143,7 +143,7 @@ fn code_action_lightbulb_refreshes_on_diagnostics_without_a_caret_or_text_change
     saved(&c.h);
     c.h.until("diagnostic publication", |h| {
         let app = h.state.get();
-        let id = app.workspace.active().unwrap();
+        let id = app.workspace.active_document().unwrap();
         let doc = &app.workspace.documents[&id];
         h.runtime
             .language_services()
@@ -512,7 +512,7 @@ fn code_action_lightbulb_rejects_old_clicks_after_cursor_selection_language_and_
     assert!(!open(&c.h, old));
     let old = c.wait_bulb();
     c.h.state.update(|app| {
-        let id = app.workspace.active().unwrap();
+        let id = app.workspace.active_document().unwrap();
         app.workspace
             .documents
             .get_mut(&id)

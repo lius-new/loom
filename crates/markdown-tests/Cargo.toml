@@ -1,0 +1,9 @@
+[package]
+name = "loom-markdown-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+pulldown-cmark = { version = "=0.13.5", default-features = false }
+unicode-segmentation = "1.13"

@@ -54,9 +54,13 @@ fn open_tree_file_with(
     read: impl FnOnce(&Path) -> Result<String, String>,
 ) -> bool {
     if let Some(id) = app.workspace.file_id_for_path(&path)
-        && app.workspace.active_items().contains(&id)
+        && app
+            .workspace
+            .active_items()
+            .iter()
+            .any(|v| app.workspace.view_document(*v) == Some(id))
     {
-        app.workspace.set_active(id);
+        app.workspace.activate_document(id);
         if clicks > 1 {
             app.workspace.promote_active_preview();
         }
@@ -136,7 +140,8 @@ fn finish_file_drag_with(
     match drop {
         TabDrop::Insert { pane, index } => {
             workspace.activate_pane(pane);
-            let id = workspace.open_path(drag.path, contents);
+            workspace.open_path(drag.path, contents);
+            let id = workspace.active().unwrap();
             // `index` is an insertion point; `move_tab` takes a final index.
             if let Some(position) = workspace
                 .pane(pane)
@@ -220,7 +225,7 @@ pub fn reveal_file(state: &AppContext, id: FileId) {
             app.show_toast("File is outside the workspace.");
             return;
         };
-        app.workspace.set_active(id);
+        app.workspace.activate_document(id);
         app.drawer.visible = true;
         if let Some(index) = row {
             app.explorer.ui.scroll = index.saturating_sub(1) as f32 * TREE_ROW_H;
@@ -579,7 +584,7 @@ pub(crate) fn open_launch_paths(
         } else {
             if loader.is_some() {
                 if let Some(id) = app.workspace.file_id_for_path(&path) {
-                    app.workspace.set_active(id);
+                    app.workspace.activate_document(id);
                 } else {
                     crate::app::file_loading::request(
                         app,

@@ -573,3 +573,98 @@ pub(crate) fn tile(window: Range<usize>, mut captures: Vec<Capture>) -> Vec<Toke
     }
     spans
 }
+
+/// Bounded snippets reuse the grammar/query resources without inventing file or
+/// workspace identities. Only visible fenced blocks enter this adapter.
+pub(crate) struct SnippetHighlighter {
+    resources: Arc<dyn super::Resources>,
+    generation: u64,
+    parser: Option<(String, Parser)>,
+    queries: HashMap<String, Option<CompiledQuery>>,
+    cached: std::collections::VecDeque<(String, String, Vec<TokenSpan>)>,
+}
+impl SnippetHighlighter {
+    pub fn new(resources: Arc<dyn super::Resources>) -> Self {
+        let generation = resources.generation();
+        Self {
+            resources,
+            generation,
+            parser: None,
+            queries: HashMap::new(),
+            cached: std::collections::VecDeque::new(),
+        }
+    }
+    pub fn generation(&self) -> u64 {
+        self.resources.generation()
+    }
+    pub fn highlight(&mut self, language: &str, text: &str, cancel: &AtomicBool) -> Vec<TokenSpan> {
+        if text.len() > 16 * 1024 || cancel.load(Ordering::Acquire) {
+            return Vec::new();
+        }
+        let generation = self.resources.generation();
+        if generation != self.generation {
+            self.cached.clear();
+            self.queries.clear();
+            self.parser = None;
+            self.generation = generation;
+        }
+        let registry = Registry::builtin();
+        let name = language
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let resolved = registry
+            .language_by_name(&name)
+            .map(|id| registry.default_resolved(id))
+            .unwrap_or_else(|| {
+                registry.resolve_path(std::path::Path::new(&format!("snippet.{name}")))
+            });
+        let Some(grammar) = resolved.grammar else {
+            return Vec::new();
+        };
+        let grammar = registry.grammar_name(grammar).to_owned();
+        if let Some(index) = self
+            .cached
+            .iter()
+            .position(|(g, source, _)| g == &grammar && source == text)
+        {
+            let entry = self.cached.remove(index).unwrap();
+            let spans = entry.2.clone();
+            self.cached.push_back(entry);
+            return spans;
+        }
+        if self
+            .parser
+            .as_ref()
+            .is_none_or(|(name, _)| *name != grammar)
+        {
+            let Ok(parser) = self.resources.parser(&grammar) else {
+                return Vec::new();
+            };
+            self.parser = Some((grammar.clone(), parser));
+        }
+        if !self.queries.contains_key(&grammar) {
+            if self.queries.len() >= 8 {
+                self.queries.clear();
+            }
+            self.queries.insert(
+                grammar.clone(),
+                queries::compile(self.resources.as_ref(), &grammar).ok(),
+            );
+        }
+        let Some(query) = self.queries.get(&grammar).and_then(Option::as_ref) else {
+            return Vec::new();
+        };
+        let Some(tree) = parse(&mut self.parser.as_mut().unwrap().1, text, None, cancel) else {
+            return Vec::new();
+        };
+        let spans = highlight(&tree, text, query, 0..text.len(), cancel).unwrap_or_default();
+        if self.cached.len() >= 16 {
+            self.cached.pop_front();
+        }
+        self.cached
+            .push_back((grammar, text.to_owned(), spans.clone()));
+        spans
+    }
+}

@@ -31,6 +31,9 @@ window.
   preserved LF/CRLF line endings, per-tab undo history, split panes, IME input
   and an optional Vim mode. Files up to 64 MiB open on a background
   worker; long lines and large files stay responsive.
+- **Markdown** — live reading and side previews of unsaved buffers, shared with
+  hover/completion/signature documentation; logical copy, outline, code, tables
+  and bounded images. See [Markdown reading](docs/markdown.md).
 - **Sessions** — tabs, panes, selections and terminals come back exactly as you
   left them after a restart.
 - **Workspace search** — search every folder with case, whole-word, regex and
@@ -105,6 +108,8 @@ the first build; no system CMake or manual Skia download is required. See
 [Building Loom](docs/building.md) for offline builds, tests, CI and packaging.
 
 ## Documentation
+
+- [Markdown reading](docs/markdown.md) and [architecture](docs/architecture/markdown.md)
 
 - [Editing](docs/editing.md) — mouse, keyboard shortcuts, files, sessions and large files
 - [Language packages](docs/languages.md) — independent, demand-loaded packages and user installation

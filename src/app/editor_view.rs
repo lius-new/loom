@@ -85,11 +85,12 @@ pub(crate) fn snapshot(
         .pane(pane)
         .and_then(|value| value.active())
         .and_then(|id| {
-            let meta = app.workspace.meta(id)?;
+            let document = app.workspace.view_document(id)?;
+            let meta = app.workspace.meta(document)?;
             let value = app.workspace.editor(pane)?;
             Some(ViewDocument {
                 id,
-                stamp: app.workspace.documents.get(&id)?.stamp(id),
+                stamp: app.workspace.documents.get(&document)?.stamp(document),
                 meta: DocumentMeta {
                     path: meta.path.clone(),
                     lang: meta.lang,
@@ -118,9 +119,15 @@ pub(crate) fn snapshot(
         .unwrap_or(0..0);
     let state = app.editor;
     let vim_view = state.vim.is_enabled()
-        && document
-            .as_ref()
-            .is_some_and(|doc| state.vim.view() == Some((pane, doc.id)));
+        && document.as_ref().is_some_and(|doc| {
+            state.vim.view()
+                == Some(loom_editor_core::vim::ViewKey {
+                    pane,
+                    document: doc.stamp.document,
+                    view: doc.id,
+                    input_generation: app.workspace.view(doc.id).map_or(0, |v| v.input_generation),
+                })
+        });
     let selections = document
         .as_ref()
         .map(|doc| {
@@ -182,9 +189,14 @@ pub(crate) fn snapshot(
         caret_dragging: state.caret_dragging,
         preedit: state
             .ime
-            .filter(|value| value.pane == pane)
+            .filter(|value| {
+                app.workspace.pane_of(value.document) == Some(pane)
+                    && app.workspace.view(value.document).is_some_and(|v| {
+                        v.accepts_text() && v.input_generation == value.input_generation
+                    })
+            })
             .map(|value| Preedit {
-                pane: value.pane,
+                pane,
                 document: value.document,
                 text: value.text,
                 cursor: value.cursor,
@@ -216,6 +228,18 @@ pub(crate) fn binding(
     pane: PaneId,
     rect: UiRect,
 ) -> Binding {
+    let input_owner = state
+        .get()
+        .workspace
+        .pane(pane)
+        .and_then(|p| p.active())
+        .and_then(|id| {
+            state
+                .get()
+                .workspace
+                .view(id)
+                .map(|v| (id, v.input_generation))
+        });
     let reader = state.clone();
     let read_git = git.clone();
     let dispatcher = state.clone();
@@ -233,7 +257,7 @@ pub(crate) fn binding(
                     .card_for(pane, &document.stamp)
                     .map(|card| crate::ui::editor_binding::HoverView {
                         anchor: card.anchor.clone(),
-                        blocks: card.blocks.clone(),
+                        docs: card.documentation.clone().into(),
                     });
             }
             if let Some(document) = &view.document {
@@ -265,16 +289,61 @@ pub(crate) fn binding(
             {
                 view.diagnostics = found;
             }
+            if let Some(document) = &view.document {
+                if let Some(service) = reader.services().and_then(|runtime| runtime.markdown()) {
+                    let generation = reader
+                        .get()
+                        .workspace
+                        .view(document.id)
+                        .map_or(0, |view| view.input_generation);
+                    let mut slots = std::collections::HashSet::new();
+                    if let Some(hover) = view.hover.as_mut() {
+                        slots.insert(1);
+                        hover.docs =
+                            service.bind_card(document.id, generation, 1, hover.docs.clone());
+                    }
+                    if let Some(popup) = view.popup.as_mut() {
+                        if let Some(docs) = popup.docs.take() {
+                            slots.insert(2);
+                            popup.docs = Some(service.bind_card(document.id, generation, 2, docs));
+                        }
+                    }
+                    if let Some((_, signature)) = view.signature.as_mut() {
+                        if let Some(docs) = signature.docs.take() {
+                            slots.insert(3);
+                            signature.docs =
+                                Some(service.bind_card(document.id, generation, 3, docs));
+                        }
+                    }
+                    service.retain_cards(document.id, &slots);
+                }
+            }
             view
         },
         move |event| {
+            let current = dispatcher
+                .get()
+                .workspace
+                .pane(pane)
+                .and_then(|p| p.active())
+                .and_then(|id| {
+                    dispatcher
+                        .get()
+                        .workspace
+                        .view(id)
+                        .filter(|v| v.presentation == crate::domain::view::Presentation::Source)
+                        .map(|v| (id, v.input_generation))
+                });
+            if current != input_owner || current.is_none() {
+                return;
+            }
             if let Event::Peek { line } = event {
                 let app = dispatcher.get();
                 if let Some(meta) = app
                     .workspace
                     .pane(pane)
                     .and_then(|value| value.active())
-                    .and_then(|id| app.workspace.meta(id))
+                    .and_then(|id| app.workspace.view_meta(id))
                 {
                     let store = git.get();
                     if let Some(repo) = store.repository_for_path(&meta.path)
@@ -432,7 +501,7 @@ pub(crate) fn binding(
                     .workspace
                     .pane(pane)
                     .and_then(|value| value.active())
-                    .and_then(|id| app.workspace.meta(id))?;
+                    .and_then(|id| app.workspace.view_meta(id))?;
                 let peek = app
                     .editor
                     .editor_hunk_peek
@@ -732,6 +801,7 @@ mod tests {
         app.workspace.editor_mut(left).unwrap().select_range(0..3);
         app.workspace.set_scroll(left, 17.0, 48.0);
         let right = app.workspace.split(left, Direction::Right).unwrap();
+        let right_view = app.workspace.active().unwrap();
         app.workspace.editor_mut(right).unwrap().select_range(5..9);
         app.workspace.set_scroll(right, 30.0, 200.0);
         dispatch(
@@ -756,7 +826,7 @@ mod tests {
             scene.document.as_ref().unwrap().editor().selection(),
             Some(5..9)
         );
-        assert!(scene.preedit_for(right, id).is_some());
+        assert!(scene.preedit_for(right, right_view).is_some());
     }
 
     #[test]

@@ -196,7 +196,8 @@ pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
                         || source.as_ref().is_some_and(|source| {
                             app.workspace.active_pane() != source.pane
                                 || super::target(app, source.pane).is_none_or(|now| {
-                                    now.stamp != source.stamp
+                                    !now.same_view(source)
+                                        || now.stamp != source.stamp
                                         || now.cursor != source.cursor
                                         || now.selection != source.selection
                                 })
@@ -238,7 +239,7 @@ fn arrive(
     }
     match (app.workspace.file_id_for_path(&place.path), text) {
         (Some(id), _) => {
-            app.workspace.reveal(id);
+            app.workspace.activate_document(id);
         }
         (None, Some(text)) => {
             app.workspace.open_path(place.path.clone(), text);

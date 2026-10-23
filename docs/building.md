@@ -71,7 +71,7 @@ the application after staging or updating catalogs; both are read at startup.
 sudo apt install build-essential \
     libfreetype-dev libfontconfig-dev \
     libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
-    libwayland-dev libxkbcommon-dev
+    libwayland-dev libxkbcommon-dev fonts-noto-cjk fonts-noto-color-emoji
 ```
 
 A running X11 or Wayland desktop session is required to open the window.

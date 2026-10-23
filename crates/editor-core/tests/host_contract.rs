@@ -78,7 +78,15 @@ fn vim_save_and_quit_are_host_requests_without_file_or_window_access() {
     let mut editor = EditorMut::new(&mut buffer, &mut selection, Vec::new());
     let mut vim = Vim::default();
     vim.options.enabled = true;
-    vim.enter_view((PaneId::new(1), FileId::new(1)), &mut editor);
+    vim.enter_view(
+        loom_editor_core::vim::ViewKey {
+            pane: PaneId::new(1),
+            document: FileId::new(1),
+            view: loom_editor_core::identity::ViewId::new(1),
+            input_generation: 0,
+        },
+        &mut editor,
+    );
     let mut host = RecordingHost::default();
     vim.feed_keys(&mut editor, &Key::parse(":w<CR>:q<CR>"), &mut host);
     assert_eq!(

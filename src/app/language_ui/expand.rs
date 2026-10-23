@@ -13,6 +13,8 @@ use std::sync::Arc;
 struct Pending {
     handle: Arc<RequestHandle>,
     pane: PaneId,
+    view: crate::domain::identity::ViewId,
+    input_generation: u64,
     stamp: DocumentStamp,
     text: Arc<String>,
 }
@@ -69,6 +71,8 @@ pub fn grow(ctx: &AppContext, app: &mut AppState) {
     app.editor.language.expansion.pending = Some(Pending {
         handle,
         pane,
+        view: t.view,
+        input_generation: t.input_generation,
         stamp: t.stamp,
         text: t.text.clone(),
     });
@@ -107,10 +111,12 @@ pub fn shrink(app: &mut AppState) {
             editor.set_cursor(at);
         }
     }
+    drop(editor);
     let stamp = app
         .workspace
         .pane(pane)
         .and_then(|p| p.active())
+        .and_then(|view| app.workspace.view_document(view))
         .and_then(|id| app.workspace.documents.get(&id).map(|d| d.stamp(id)));
     let selection = app.workspace.editor(pane).and_then(|e| e.selection());
     if let Some(stamp) = stamp {
@@ -137,7 +143,11 @@ pub fn tick(app: &mut AppState) -> bool {
                 .collect()
         })
         .unwrap_or_default();
-    let Some(t) = target(app, pending.pane).filter(|t| t.stamp == pending.stamp) else {
+    let Some(t) = target(app, pending.pane).filter(|t| {
+        t.view == pending.view
+            && t.input_generation == pending.input_generation
+            && t.stamp == pending.stamp
+    }) else {
         return false;
     };
     if chain.is_empty() {

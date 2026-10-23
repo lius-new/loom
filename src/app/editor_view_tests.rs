@@ -160,6 +160,13 @@ fn real_layout_keeps_scrolled_carets_hits_ime_and_selection_in_agreement() {
             let state =
                 AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()))
                     .with_runtime(&view_runtime);
+            if view_runtime.markdown().is_none() {
+                view_runtime.install_markdown(crate::app::markdown_service::MarkdownService::new(
+                    state.clone(),
+                    application.clone(),
+                    Arc::new(TestClipboard::default()),
+                ));
+            }
             if view_runtime.highlighter().is_none() {
                 view_runtime.install_highlighter(crate::app::syntax::Highlighter::new(
                     state.clone(),
@@ -391,11 +398,11 @@ fn large_file_interaction_baseline() {
             edits.elapsed()
         );
         state.update(|app| {
-            assert!(app.workspace.is_dirty(app.workspace.active().unwrap()));
+            assert!(app.workspace.is_view_dirty(app.workspace.active().unwrap()));
             for _ in 0..20 {
                 assert!(app.workspace.active_editor_mut().unwrap().undo().is_some());
             }
-            assert!(!app.workspace.is_dirty(app.workspace.active().unwrap()));
+            assert!(!app.workspace.is_view_dirty(app.workspace.active().unwrap()));
         });
         assert_eq!(
             state.get().workspace.active_editor().unwrap().text(),
@@ -995,7 +1002,7 @@ fn editing_commands_promote_a_preview_while_navigation_does_not() {
     let mut app = AppState::new();
     let preview = app
         .workspace
-        .preview_path("preview.txt".into(), "hello".into());
+        .test_preview_view("preview.txt".into(), "hello".into());
     let clipboard = TestClipboard::default();
 
     apply_command(
@@ -1019,7 +1026,7 @@ fn a_failed_cut_does_not_promote_or_modify_a_preview() {
     let mut app = AppState::new();
     let preview = app
         .workspace
-        .preview_path("preview.txt".into(), "hello".into());
+        .test_preview_view("preview.txt".into(), "hello".into());
     app.workspace.active_editor_mut().unwrap().select_all();
     let unavailable = TestClipboard {
         fail: true,
@@ -1136,7 +1143,7 @@ fn switching_documents_cancels_drag_and_keeps_undo_histories_independent() {
         point: (100.0, 500.0),
     });
     app.workspace
-        .open_path("second.txt".into(), "second".into());
+        .test_open_view("second.txt".into(), "second".into());
     normal::insert(&mut app.workspace.active_editor_mut().unwrap(), "B");
     assert!(drag_scroll_tick(
         &mut app,
@@ -1162,7 +1169,7 @@ fn a_late_composition_commit_lands_in_the_view_it_started_in() {
 
     let second = app
         .workspace
-        .open_path("second.txt".into(), "second".into());
+        .test_open_view("second.txt".into(), "second".into());
     assert!(app.editor.preedit_for(left, second).is_none());
     insert_text(&mut app, "你", rect);
     assert_eq!(app.workspace.active(), Some(second));
@@ -1183,8 +1190,8 @@ fn a_commit_for_a_closed_view_is_dropped() {
     let first = app.workspace.active().unwrap();
     update_composition(&mut app, "ni", None);
     app.workspace
-        .open_path("second.txt".into(), "second".into());
-    app.workspace.close(first);
+        .test_open_view("second.txt".into(), "second".into());
+    app.workspace.test_close_document(first);
     insert_text(&mut app, "你", rect);
     assert_eq!(app.workspace.active_editor().unwrap().text(), "second");
 }
@@ -1200,9 +1207,52 @@ fn an_emptied_composition_moves_to_the_view_that_starts_the_next_one() {
         .workspace
         .split(left, crate::model::pane_layout::Direction::Right)
         .unwrap();
+    let copied = app.workspace.active().unwrap();
+    assert_ne!(copied, first);
     update_composition(&mut app, "hao", None);
-    assert!(app.editor.preedit_for(right, first).is_some());
+    assert!(app.editor.preedit_for(right, copied).is_some());
     assert!(app.editor.preedit_for(left, first).is_none());
+}
+
+#[test]
+fn p1_late_ime_commit_targets_its_source_view_even_after_a_pane_move() {
+    let mut app = document("abc");
+    let left = app.workspace.active_pane();
+    let source = app.workspace.active().unwrap();
+    update_composition(&mut app, "ni", None);
+    let right = app
+        .workspace
+        .split(left, crate::model::pane_layout::Direction::Right)
+        .unwrap();
+    let copied = app.workspace.active().unwrap();
+    app.workspace.editor_mut(right).unwrap().set_cursor(3);
+    app.workspace.move_item(left, source, right, 0);
+    app.workspace.activate(right, copied);
+    insert_text(&mut app, "你", UiRect::new(0.0, 0.0, 600.0, 400.0));
+    assert_eq!(
+        app.workspace.view(source).unwrap().source.selection.cursor,
+        3
+    );
+    assert_eq!(
+        app.workspace.view(copied).unwrap().source.selection.cursor,
+        6
+    );
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "你abc");
+    assert_eq!(app.workspace.active(), Some(copied));
+}
+
+#[test]
+fn p1_ime_commit_is_rejected_after_source_reader_source_round_trip() {
+    use crate::domain::view::Presentation;
+    let mut app = document("abc");
+    let source = app.workspace.active().unwrap();
+    update_composition(&mut app, "ni", None);
+    app.workspace
+        .set_presentation(source, Presentation::Markdown);
+    app.workspace.set_presentation(source, Presentation::Source);
+    insert_text(&mut app, "你", UiRect::new(0.0, 0.0, 600.0, 400.0));
+    assert_eq!(app.workspace.active_editor().unwrap().text(), "abc");
+    assert!(!app.workspace.active_editor().unwrap().can_undo());
 }
 
 #[test]
@@ -1394,6 +1444,13 @@ fn diagnostics_from_a_server_are_underlined_in_the_editor() {
     let view: AppView = Arc::new(move |cx| {
         let state = AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()))
             .with_runtime(&view_runtime);
+        if view_runtime.markdown().is_none() {
+            view_runtime.install_markdown(crate::app::markdown_service::MarkdownService::new(
+                state.clone(),
+                application.clone(),
+                Arc::new(TestClipboard::default()),
+            ));
+        }
         if view_runtime.highlighter().is_none() {
             view_runtime.install_highlighter(crate::app::syntax::Highlighter::new(
                 state.clone(),
@@ -1612,6 +1669,13 @@ impl LanguageHarness {
             let state =
                 AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()))
                     .with_runtime(&view_runtime);
+            if view_runtime.markdown().is_none() {
+                view_runtime.install_markdown(crate::app::markdown_service::MarkdownService::new(
+                    state.clone(),
+                    application.clone(),
+                    Arc::new(TestClipboard::default()),
+                ));
+            }
             if view_runtime.highlighter().is_none() {
                 view_runtime.install_highlighter(crate::app::syntax::Highlighter::new(
                     state.clone(),
@@ -1678,11 +1742,13 @@ impl LanguageHarness {
     }
 
     fn has_text(&self, wanted: &str) -> bool {
-        self.session
-            .tree()
-            .nodes()
-            .iter()
-            .any(|node| node.text.as_deref() == Some(wanted))
+        self.session.tree().nodes().iter().any(|node| {
+            node.text.as_deref().or_else(|| {
+                node.semantics
+                    .as_ref()
+                    .and_then(|semantics| semantics.value.as_deref())
+            }) == Some(wanted)
+        })
     }
 
     /// Whether a list row shows `label`: its matched and unmatched parts are
@@ -1848,7 +1914,13 @@ fn dragging_across_the_hover_card_selects_its_text_and_copy_takes_it() {
             .tree()
             .nodes()
             .iter()
-            .find(|node| node.text.as_deref() == Some(wanted))
+            .find(|node| {
+                node.text.as_deref().or_else(|| {
+                    node.semantics
+                        .as_ref()
+                        .and_then(|semantics| semantics.value.as_deref())
+                }) == Some(wanted)
+            })
             .map(|node| node.layout_rect)
             .expect("the card text is drawn")
     };
@@ -2601,7 +2673,8 @@ fn the_other_occurrences_of_a_symbol_are_tinted_once_the_caret_rests() {
     let pane = h.state.get().workspace.active_pane();
     let app = h.state.get();
     let id = app.workspace.active().unwrap();
-    let stamp = app.workspace.documents[&id].stamp(id);
+    let document = app.workspace.view_document(id).unwrap();
+    let stamp = app.workspace.documents[&document].stamp(document);
     assert!(
         app.editor
             .language

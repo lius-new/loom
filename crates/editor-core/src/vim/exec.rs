@@ -16,7 +16,7 @@ use super::register::{Register, RegisterKind, Store};
 use super::search;
 use super::{
     Change, CommandLine, Host, InsertSession, Key, LastSearch, LastVisual, Mode, PendingSearch,
-    Request, Vim, VisualExtent, VisualKind,
+    Request, ViewKey, Vim, VisualExtent, VisualKind,
 };
 
 /// Macro playback nested deeper than this stops, so a register that plays
@@ -1352,7 +1352,7 @@ impl Vim {
 
     fn remember_visual(&mut self, editor: &EditorMut<'_>, kind: VisualKind) {
         let selection = editor.selection_state();
-        if let Some((_, document)) = self.view {
+        if let Some(ViewKey { document, .. }) = self.view {
             self.last_visual = Some(LastVisual {
                 document,
                 kind,
@@ -1365,7 +1365,7 @@ impl Vim {
     fn reselect_visual(&mut self, editor: &mut EditorMut<'_>) {
         let Some(last) = self
             .last_visual
-            .filter(|last| Some(last.document) == self.view.map(|view| view.1))
+            .filter(|last| Some(last.document) == self.view.map(|view| view.document))
         else {
             self.failed = true;
             return;
@@ -1859,7 +1859,7 @@ impl Vim {
     // ---- Marks, jumps and macros -------------------------------------------------
 
     fn set_mark(&mut self, offset: usize, name: char) {
-        let Some((_, document)) = self.view else {
+        let Some(ViewKey { document, .. }) = self.view else {
             return;
         };
         if name.is_ascii_lowercase() || name == '\'' || name == '`' {
@@ -1874,7 +1874,7 @@ impl Vim {
     }
 
     fn mark(&mut self, buffer: &TextBuffer, name: char) -> Option<usize> {
-        let (_, document) = self.view?;
+        let ViewKey { document, .. } = self.view?;
         let name = if name == '`' { '\'' } else { name };
         match self.marks.get(&(document, name)) {
             Some(&offset) => Some(normal_position(buffer, offset.min(buffer.len()))),
@@ -1886,7 +1886,7 @@ impl Vim {
     }
 
     pub(crate) fn push_jump(&mut self, offset: usize) {
-        let Some((_, document)) = self.view else {
+        let Some(ViewKey { document, .. }) = self.view else {
             return;
         };
         self.marks.insert((document, '\''), offset);
@@ -1901,7 +1901,7 @@ impl Vim {
     }
 
     fn jump(&mut self, editor: &mut EditorMut<'_>, steps: isize) {
-        let Some((_, document)) = self.view else {
+        let Some(ViewKey { document, .. }) = self.view else {
             return;
         };
         let cursor = editor.cursor();

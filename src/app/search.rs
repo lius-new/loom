@@ -612,7 +612,7 @@ mod tests {
             app.workspace.active_editor().unwrap().selected_text(),
             Some("中文")
         );
-        assert!(app.workspace.is_dirty(app.workspace.active().unwrap()));
+        assert!(app.workspace.is_view_dirty(app.workspace.active().unwrap()));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "old disk\n");
         stop_new();
         let _ = std::fs::remove_dir_all(root);

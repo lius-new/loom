@@ -15,6 +15,10 @@ const SEP_H: f32 = 5.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     KeepOpen,
+    ToggleMarkdown,
+    MarkdownToSide,
+    MarkdownSource,
+    MarkdownLarger,
     SplitRight,
     SplitDown,
     ReloadFromDisk,
@@ -36,6 +40,11 @@ pub(crate) enum Entry {
 }
 
 pub(crate) const ENTRIES: &[Entry] = &[
+    Entry::Item("Toggle Markdown Preview", Action::ToggleMarkdown),
+    Entry::Item("Markdown Preview to Side", Action::MarkdownToSide),
+    Entry::Item("Open Markdown Source", Action::MarkdownSource),
+    Entry::Item("Preview Larger Document", Action::MarkdownLarger),
+    Entry::Separator,
     Entry::Item("Keep Open", Action::KeepOpen),
     Entry::Separator,
     Entry::Item("Split Right", Action::SplitRight),

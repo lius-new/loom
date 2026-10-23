@@ -1,7 +1,7 @@
 //! A snippet being filled in: Tab moves between its tab stops, typing in one
 //! updates its mirrors, and leaving it ends the session.
 use super::AppState;
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{FileId, PaneId, ViewId};
 use crate::features::language_service::snippet::Snippet;
 use crate::model::text::{Assoc, Edit, EditKind, Selection};
 use std::ops::Range;
@@ -22,6 +22,8 @@ pub struct Stop {
 pub struct Session {
     pub pane: PaneId,
     pub document: FileId,
+    pub view: ViewId,
+    pub input_generation: u64,
     stops: Vec<Stop>,
     /// Which stop is active.
     current: usize,
@@ -47,7 +49,11 @@ fn revision(app: &mut AppState) -> u64 {
 
 fn current(app: &AppState, session: &Session) -> bool {
     app.workspace.active_pane() == session.pane
-        && app.workspace.active() == Some(session.document)
+        && app.workspace.active() == Some(session.view)
+        && app
+            .workspace
+            .view(session.view)
+            .is_some_and(|v| v.accepts_text() && v.input_generation == session.input_generation)
         && app
             .workspace
             .documents
@@ -257,10 +263,7 @@ pub fn accept_choice(app: &mut AppState) -> bool {
     }
     session.stops[session.current].applied = false;
     session.stops[session.current].raw = None;
-    let Some(mut editor) = app
-        .workspace
-        .view_editor_mut(session.pane, session.document)
-    else {
+    let Some(mut editor) = app.workspace.view_editor_mut(session.pane, session.view) else {
         return false;
     };
     editor.begin_group();
@@ -284,10 +287,7 @@ pub fn accept_choice(app: &mut AppState) -> bool {
             }
         }
     }
-    if let Some(mut editor) = app
-        .workspace
-        .view_editor_mut(session.pane, session.document)
-    {
+    if let Some(mut editor) = app.workspace.view_editor_mut(session.pane, session.view) {
         editor.end_group();
     }
     if valid {
@@ -319,9 +319,13 @@ impl Session {
 /// `version`. The first stop is selected.
 pub fn begin(app: &mut AppState, pane: PaneId, origin: usize, snippet: &Snippet, version: u64) {
     end(app);
-    let Some(id) = app.workspace.pane(pane).and_then(|p| p.active()) else {
+    let Some(view) = app.workspace.pane(pane).and_then(|p| p.active()) else {
         return;
     };
+    let Some(id) = app.workspace.view_document(view) else {
+        return;
+    };
+    let input_generation = app.workspace.view(view).unwrap().input_generation;
     let Some(document) = app.workspace.documents.get(&id) else {
         return;
     };
@@ -372,6 +376,8 @@ pub fn begin(app: &mut AppState, pane: PaneId, origin: usize, snippet: &Snippet,
     let mut session = Session {
         pane,
         document: id,
+        view,
+        input_generation,
         stops,
         current: 0,
         version,
@@ -405,10 +411,7 @@ fn select(app: &mut AppState, session: &Session) {
     else {
         return;
     };
-    if let Some(mut editor) = app
-        .workspace
-        .view_editor_mut(session.pane, session.document)
-    {
+    if let Some(mut editor) = app.workspace.view_editor_mut(session.pane, session.view) {
         if range.is_empty() {
             editor.set_cursor(range.start);
         } else {
@@ -440,10 +443,7 @@ pub fn step(app: &mut AppState, forward: bool) -> bool {
         }
         stop.applied = true;
     }
-    if let Some(mut editor) = app
-        .workspace
-        .view_editor_mut(session.pane, session.document)
-    {
+    if let Some(mut editor) = app.workspace.view_editor_mut(session.pane, session.view) {
         editor.begin_group();
     }
     let mut valid = true;
@@ -457,10 +457,7 @@ pub fn step(app: &mut AppState, forward: bool) -> bool {
             }
         }
     }
-    if let Some(mut editor) = app
-        .workspace
-        .view_editor_mut(session.pane, session.document)
-    {
+    if let Some(mut editor) = app.workspace.view_editor_mut(session.pane, session.view) {
         editor.end_group();
     }
     if !valid {
@@ -501,7 +498,11 @@ pub fn observe(app: &mut AppState) {
         return;
     };
     if app.workspace.active_pane() != session.pane
-        || app.workspace.active() != Some(session.document)
+        || app.workspace.active() != Some(session.view)
+        || app
+            .workspace
+            .view(session.view)
+            .is_none_or(|v| !v.accepts_text() || v.input_generation != session.input_generation)
     {
         return;
     }
@@ -520,7 +521,7 @@ pub fn observe(app: &mut AppState) {
     };
     let cursor = app
         .workspace
-        .view_editor_mut(session.pane, session.document)
+        .view_editor_mut(session.pane, session.view)
         .map(|editor| editor.cursor());
     if version == session.version {
         if !current(app, &session) {
@@ -544,7 +545,7 @@ pub fn observe(app: &mut AppState) {
     }
     let cursor = app
         .workspace
-        .view_editor_mut(session.pane, session.document)
+        .view_editor_mut(session.pane, session.view)
         .map(|editor| editor.cursor());
     if cursor.is_some_and(|c| session.contains(c)) {
         app.editor.language.snippet = Some(session);
@@ -681,10 +682,7 @@ fn mirror(app: &mut AppState, session: &mut Session) -> Result<bool, ()> {
                 .map(move |(r, range)| (s, r, range.start))
         })
         .collect();
-    let Some(mut editor) = app
-        .workspace
-        .view_editor_mut(session.pane, session.document)
-    else {
+    let Some(mut editor) = app.workspace.view_editor_mut(session.pane, session.view) else {
         return Err(());
     };
     let cursor = editor.cursor();
@@ -1064,7 +1062,7 @@ mod tests {
                     app.workspace.open_path("other.rs".into(), "other".into());
                 }
                 2 => {
-                    let id = app.workspace.active().unwrap();
+                    let id = app.workspace.active_document().unwrap();
                     app.workspace
                         .documents
                         .get_mut(&id)
@@ -1073,7 +1071,7 @@ mod tests {
                         .language_generation += 1;
                 }
                 3 => {
-                    let id = app.workspace.active().unwrap();
+                    let id = app.workspace.active_document().unwrap();
                     app.workspace
                         .documents
                         .get_mut(&id)

@@ -110,6 +110,7 @@ fn ime_commit_is_its_own_undo_step() {
     let pane = app.workspace.active_pane();
     let document = app.workspace.active().unwrap();
     app.editor.ime = Some(crate::app::state::editor::ImeSession {
+        input_generation: 0,
         pane,
         document,
         text: String::new(),
@@ -244,11 +245,11 @@ fn saving_and_undoing_back_to_saved_text_tracks_dirty_state() {
     let mut app = document("saved");
     let id = app.workspace.active().unwrap();
     insert_text(&mut app, "x", RECT);
-    assert!(app.workspace.is_dirty(id));
+    assert!(app.workspace.is_view_dirty(id));
     run(&mut app, Command::Undo);
-    assert!(!app.workspace.is_dirty(id));
+    assert!(!app.workspace.is_view_dirty(id));
     run(&mut app, Command::Redo);
-    assert!(app.workspace.is_dirty(id));
+    assert!(app.workspace.is_view_dirty(id));
 }
 
 #[test]

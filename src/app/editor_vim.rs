@@ -63,12 +63,20 @@ pub fn sync_view(app: &mut AppState) {
         return;
     }
     let pane = app.workspace.active_pane();
-    let current = app.workspace.active().map(|document| (pane, document));
+    let current = app.workspace.active().and_then(|id| {
+        let view = app.workspace.view(id).filter(|v| v.accepts_text())?;
+        Some(vim::ViewKey {
+            pane,
+            document: view.document()?,
+            view: id,
+            input_generation: view.input_generation,
+        })
+    });
     if app.editor.vim.view() == current {
         return;
     }
-    if let Some((old_pane, old_document)) = app.editor.vim.view() {
-        let mut editor = app.workspace.view_editor_mut(old_pane, old_document);
+    if let Some(previous) = app.editor.vim.view() {
+        let mut editor = app.workspace.view_editor_mut(previous.pane, previous.view);
         app.editor.vim.leave_view(editor.as_mut());
     }
     if let Some(view) = current
@@ -81,8 +89,7 @@ pub fn sync_view(app: &mut AppState) {
 /// Turn Vim on or off from Settings.
 pub fn set_enabled(app: &mut AppState, enabled: bool) {
     let view = app.editor.vim.view();
-    let mut editor =
-        view.and_then(|(pane, document)| app.workspace.view_editor_mut(pane, document));
+    let mut editor = view.and_then(|key| app.workspace.view_editor_mut(key.pane, key.view));
     app.editor.vim.set_enabled(enabled, editor.as_mut());
     drop(editor);
     sync_view(app);
@@ -316,7 +323,7 @@ fn perform(state: &AppContext, requests: Vec<Request>, rect: UiRect) {
     for request in requests {
         match request {
             Request::Save => {
-                let document = state.get().workspace.active();
+                let document = state.get().workspace.active_document();
                 crate::app::language_ui::save::save(
                     state,
                     rect,
@@ -329,14 +336,14 @@ fn perform(state: &AppContext, requests: Vec<Request>, rect: UiRect) {
             }
             Request::Quit { force } => quit(state, force),
             Request::SaveAndQuit => {
-                let document = state.get().workspace.active();
+                let document = state.get().workspace.active_document();
                 crate::app::language_ui::save::save(
                     state,
                     rect,
                     std::sync::Arc::new(move |state| {
                         if let Some(document) = document
                             && crate::app::workspace_commands::save_document(state, document)
-                            && state.get().workspace.active() == Some(document)
+                            && state.get().workspace.active_document() == Some(document)
                         {
                             quit(state, false);
                         }
@@ -359,8 +366,12 @@ fn quit(state: &AppContext, force: bool) {
         let Some(document) = app.workspace.active() else {
             return;
         };
-        let shared = app.workspace.tabs_of(document).len() > 1;
-        if !force && !shared && app.workspace.is_dirty(document) {
+        let shared = app
+            .workspace
+            .tabs_of(app.workspace.view_document(document).unwrap())
+            .len()
+            > 1;
+        if !force && !shared && app.workspace.is_view_dirty(document) {
             app.editor
                 .vim
                 .show_message("E37: No write since last change (add ! to override)", true);
@@ -368,8 +379,7 @@ fn quit(state: &AppContext, force: bool) {
         }
         sync_view(app);
         let view = app.editor.vim.view();
-        let mut editor =
-            view.and_then(|(pane, document)| app.workspace.view_editor_mut(pane, document));
+        let mut editor = view.and_then(|key| app.workspace.view_editor_mut(key.pane, key.view));
         app.editor.vim.leave_view(editor.as_mut());
         drop(editor);
         app.workspace.close_item(pane, document);
@@ -382,6 +392,26 @@ mod tests {
     use super::*;
     use crate::model::pane_layout::Direction;
     use lgui::services::ClipboardError;
+
+    #[test]
+    fn p1_source_presentation_generation_ends_vim_insert_even_after_round_trip() {
+        use crate::domain::view::Presentation;
+        let mut app = AppState::new();
+        app.workspace.open_path("mode.md".into(), "abc".into());
+        let view = app.workspace.active().unwrap();
+        app.editor.vim.options.enabled = true;
+        keys(&mut app, "i");
+        assert_eq!(app.editor.vim.mode(), vim::Mode::Insert);
+        app.workspace.set_presentation(view, Presentation::Markdown);
+        app.workspace.set_presentation(view, Presentation::Source);
+        sync_view(&mut app);
+        assert_eq!(app.editor.vim.mode(), vim::Mode::Normal);
+        assert_eq!(app.editor.vim.view().unwrap().input_generation, 2);
+        app.workspace.set_presentation(view, Presentation::Markdown);
+        sync_view(&mut app);
+        assert!(app.editor.vim.view().is_none());
+        assert!(!is_active(&app));
+    }
 
     struct NoClipboard;
 
@@ -436,7 +466,7 @@ mod tests {
         app.workspace.activate_pane(right);
         sync_view(&mut app);
         assert_eq!(app.editor.vim.mode(), vim::Mode::Normal);
-        assert_eq!(app.editor.vim.view().map(|view| view.0), Some(right));
+        assert_eq!(app.editor.vim.view().map(|view| view.pane), Some(right));
         assert_eq!(text(&app), "one\ntwo!?");
         keys(&mut app, "ggI> <Esc>");
         assert_eq!(text(&app), "> one\ntwo!?");

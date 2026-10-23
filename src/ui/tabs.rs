@@ -11,7 +11,8 @@ use lgui::core::{
 use lgui::prelude::{Element, TextStyle, UiRect, VisualStyle, panel, text};
 use lgui::text::{self, TextLayoutRequest};
 
-use crate::domain::document::{FileId, FileMeta};
+use crate::domain::document::FileMeta;
+use crate::domain::identity::ViewId;
 use crate::domain::pane_layout::{Direction, PaneId};
 use crate::domain::workspace::AppPage;
 use crate::ui::chrome::tab_state::TabDrop;
@@ -240,7 +241,7 @@ impl TabBadge {
     }
 }
 
-fn tab_badge(app: &Frame<'_>, id: FileId, meta: &FileMeta) -> TabBadge {
+fn tab_badge(app: &Frame<'_>, id: ViewId, meta: &FileMeta) -> TabBadge {
     if let Some(page) = app.workspace.page(id) {
         let icon = match page {
             AppPage::Settings => "settings",
@@ -272,23 +273,31 @@ pub(crate) fn tab_name_style(active: bool, preview: bool) -> TextStyle {
     if preview { style.italic() } else { style }
 }
 
-pub(crate) fn tab_state_mark(app: &Frame<'_>, id: FileId) -> Option<(&'static str, Color)> {
-    if app.workspace.is_missing_on_disk(id) {
+pub(crate) fn tab_state_mark(app: &Frame<'_>, id: ViewId) -> Option<(&'static str, Color)> {
+    if app
+        .workspace
+        .view_document(id)
+        .is_some_and(|id| app.workspace.is_missing_on_disk(id))
+    {
         Some((DISK_STATE_MARK, theme::c().error))
-    } else if app.workspace.has_disk_conflict(id) {
+    } else if app
+        .workspace
+        .view_document(id)
+        .is_some_and(|id| app.workspace.has_disk_conflict(id))
+    {
         Some((DISK_STATE_MARK, theme::c().warning))
-    } else if app.workspace.is_dirty(id) {
+    } else if app.workspace.is_view_dirty(id) {
         Some((DIRTY_MARK, theme::c().accent))
     } else {
         None
     }
 }
 
-pub(crate) fn pane_items<'a>(app: &Frame<'a>, pane: PaneId) -> &'a [FileId] {
+pub(crate) fn pane_items<'a>(app: &Frame<'a>, pane: PaneId) -> &'a [ViewId] {
     app.workspace.pane(pane).map_or(&[], |pane| pane.items())
 }
 
-pub(crate) fn pane_active(app: &Frame<'_>, pane: PaneId) -> Option<FileId> {
+pub(crate) fn pane_active(app: &Frame<'_>, pane: PaneId) -> Option<ViewId> {
     app.workspace.pane(pane).and_then(|pane| pane.active())
 }
 
@@ -297,7 +306,7 @@ pub(crate) fn natural_tab_widths(app: &Frame<'_>, pane: PaneId) -> Vec<f32> {
     let mut widths: Vec<f32> = pane_items(app, pane)
         .iter()
         .filter_map(|id| {
-            let meta = app.workspace.meta(*id)?;
+            let meta = app.workspace.view_meta(*id)?;
             let badge = tab_badge(app, *id, meta);
             let state_slot = if let Some((mark, _)) = tab_state_mark(app, *id) {
                 measure(mark, theme::SMALL, 400) + GAP
@@ -509,7 +518,7 @@ pub fn render_tooltip(
 ) -> Option<Element> {
     let (pane, hovered) = app.editor.tabs.tab_hovered?;
     let rect = strips.iter().find(|(id, _)| *id == pane)?.1;
-    let path = app.workspace.meta(hovered)?.path.clone();
+    let path = app.workspace.view_meta(hovered)?.path.clone();
     let path = super::display_path(&path);
     let index = pane_items(app, pane).iter().position(|id| *id == hovered)?;
     let layout = tab_layout(rect, app, pane, false);
@@ -625,7 +634,7 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
         let Some(&id) = open_files.get(index) else {
             continue;
         };
-        let Some(m) = s.workspace.meta(id) else {
+        let Some(m) = s.workspace.view_meta(id) else {
             continue;
         };
         let Some(layout_item) = layout.items.get(index) else {
@@ -704,16 +713,21 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
             cx.stop_propagation();
         });
 
-        tab_el = tab_el.child(if s.workspace.loading_indicator(id) {
-            let top = pill.top + (pill.height() - BADGE_ICON) / 2.0;
-            crate::ui::components::loading_indicator::render(
-                UiRect::new(badge_left, top, badge_left + BADGE_ICON, top + BADGE_ICON),
-                theme::c().text_muted,
-                format!("tabs.restore.{}-{id:?}", pane.get()),
-            )
-        } else {
-            badge.render(badge_left, pill, &format!("{}-{id:?}", pane.get()))
-        });
+        tab_el = tab_el.child(
+            if s.workspace
+                .view_document(id)
+                .is_some_and(|id| s.workspace.loading_indicator(id))
+            {
+                let top = pill.top + (pill.height() - BADGE_ICON) / 2.0;
+                crate::ui::components::loading_indicator::render(
+                    UiRect::new(badge_left, top, badge_left + BADGE_ICON, top + BADGE_ICON),
+                    theme::c().text_muted,
+                    format!("tabs.restore.{}-{id:?}", pane.get()),
+                )
+            } else {
+                badge.render(badge_left, pill, &format!("{}-{id:?}", pane.get()))
+            },
+        );
         tab_el = tab_el.child(text(
             UiRect::new(name_left, pill.top, name_left + name_slot_w, pill.bottom),
             display_name,

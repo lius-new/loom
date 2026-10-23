@@ -130,7 +130,13 @@ fn drawn_words(h: &LanguageHarness) -> String {
         .tree()
         .nodes()
         .iter()
-        .filter_map(|node| node.text.as_deref())
+        .filter_map(|node| {
+            node.text.as_deref().or_else(|| {
+                node.semantics
+                    .as_ref()
+                    .and_then(|semantics| semantics.value.as_deref())
+            })
+        })
         .collect::<Vec<_>>()
         .join(" ")
         .split_whitespace()
@@ -149,6 +155,9 @@ fn overload_keys_cycle_locally_and_keep_parameter_docs_caret_and_completion_navi
     c.h.act(Action::PreviousSignature);
     assert_eq!(position(&c.h), Some((2, 2)));
     assert!(c.h.has_text("😀: str"));
+    c.h.until("native signature documentation", |h| {
+        drawn_words(h).contains("Text overload")
+    });
     let drawn = drawn_words(&c.h);
     assert!(
         drawn.contains("String input") && drawn.contains("Text overload"),
@@ -298,12 +307,18 @@ fn retriggers_echo_the_selected_wire_signature_and_preserve_selection_across_reo
     c.replace(reordered);
     c.refresh();
     assert_eq!(position(&c.h), Some((1, 2)));
+    c.h.until("native signature documentation", |h| {
+        drawn_words(h).contains("Text overload")
+    });
     assert!(drawn_words(&c.h).contains("Text overload"));
     let mut removed = signatures();
     removed["signatures"].as_array_mut().unwrap().truncate(1);
     c.replace(removed);
     c.refresh();
     assert_eq!(position(&c.h), None);
+    c.h.until("native integer signature documentation", |h| {
+        drawn_words(h).contains("Integer overload")
+    });
     assert!(drawn_words(&c.h).contains("Integer overload"));
     assert_ne!(key(&c.h, "alt-down"), Some(Action::NextSignature));
     c.h.type_text(")");
@@ -412,7 +427,7 @@ fn a_posted_trigger_cannot_reopen_dismissed_help_or_move_to_another_document_or_
         .unwrap()
         .revision;
     changed_language.h.state.update(|app| {
-        let id = app.workspace.active().unwrap();
+        let id = app.workspace.active_document().unwrap();
         app.workspace
             .documents
             .get_mut(&id)
@@ -445,8 +460,12 @@ fn signature_controls_stay_inside_narrow_cards_and_do_not_overlap_the_label() {
         let (_, mut view) =
             crate::app::language_ui::signature_view(&c.h.state.get(), PaneId::new(1)).unwrap();
         view.label = view.label.repeat(30);
-        view.docs =
-            Some(crate::features::markdown::parse(&"Long documentation.\n\n".repeat(30)).into());
+        view.docs = Some(
+            crate::features::markdown::content::Markup::markdown(
+                "Long documentation.\n\n".repeat(30),
+            )
+            .into(),
+        );
         let anchor = UiRect::new(
             area.right - 10.0,
             area.top + 20.0,

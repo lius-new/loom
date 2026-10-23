@@ -157,7 +157,7 @@ fn run(state: &AppContext, services: &Services, command: Command) {
             let loader = state.services().and_then(|r| r.file_loader());
             state.update(move |app| match app.workspace.file_id_for_path(&path) {
                 Some(id) => {
-                    app.workspace.set_active(id);
+                    app.workspace.activate_document(id);
                     app.workspace.promote_active_preview();
                 }
                 None => {
@@ -353,7 +353,9 @@ mod tests {
     #[test]
     fn opening_the_explorer_menu_replaces_the_tab_menu() {
         let (root, mut app) = workspace("explorer-view-menu", &["a.rs"]);
-        let id = app.workspace.open_path(root.join("a.rs"), String::new());
+        let id = app
+            .workspace
+            .test_open_view(root.join("a.rs"), String::new());
         app.editor.tabs.tab_context_menu = Some(TabContextMenuState {
             position: (1.0, 1.0),
             pane: app.workspace.active_pane(),

@@ -9,6 +9,7 @@ use std::ops::Range;
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub item: CompletionItem,
+    pub documentation: Option<crate::features::markdown::content::Markup>,
     /// The server instance that produced it, for `completionItem/resolve`.
     pub instance: u64,
     /// The server's place in the listing; lower is preferred.
@@ -80,6 +81,7 @@ impl Completion {
             for item in list.items {
                 if seen.insert((item.label.clone(), item.kind)) {
                     completion.entries.push(Entry {
+                        documentation: item_documentation(&item),
                         item,
                         instance,
                         rank,
@@ -102,6 +104,7 @@ impl Completion {
                 .any(|e| e.item.label == item.label && e.item.kind == item.kind)
             {
                 self.entries.push(Entry {
+                    documentation: item_documentation(&item),
                     item,
                     instance,
                     rank,
@@ -248,6 +251,20 @@ pub fn commits(entry: &Entry, typed: char) -> bool {
         .any(|c| c.chars().eq([typed]))
 }
 
+pub fn item_documentation(
+    item: &CompletionItem,
+) -> Option<crate::features::markdown::content::Markup> {
+    use crate::features::markdown::content::Markup;
+    let mut parts = Vec::new();
+    if let Some(detail) = &item.detail {
+        parts.push(Markup::code(detail, ""));
+    }
+    if let Some(documentation) = &item.documentation {
+        parts.push(documentation.clone());
+    }
+    Markup::join(&parts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +406,7 @@ mod tests {
 
     fn entry(json: serde_json::Value) -> Entry {
         Entry {
+            documentation: item_documentation(&reply::completion_item(&json, Utf16).unwrap()),
             item: reply::completion_item(&json, Utf16).unwrap(),
             instance: 1,
             rank: 0,

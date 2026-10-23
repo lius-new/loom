@@ -74,25 +74,31 @@ fn items(value: &Value) -> impl Iterator<Item = &Value> {
 
 /// Markdown for any of the protocol's ways to say "text with a format": a plain
 /// string, `MarkupContent`, a `MarkedString` code block, or a list of them.
-pub fn markup(value: &Value) -> Option<String> {
+pub fn markup(value: &Value) -> Option<crate::features::markdown::content::Markup> {
     match value {
-        Value::String(text) => Some(text.clone()),
+        Value::String(text) => Some(crate::features::markdown::content::Markup::markdown(
+            text.clone(),
+        )),
         Value::Object(object) => {
             let body = object.get("value")?.as_str()?;
             match (object.get("kind"), object.get("language")) {
                 // `plaintext` content is escaped only by being shown as it is; callers
                 // that render Markdown should treat the whole string as Markdown.
-                (Some(_), _) => Some(body.to_owned()),
-                (None, Some(language)) => Some(format!(
-                    "```{}\n{body}\n```",
-                    language.as_str().unwrap_or_default()
+                (Some(kind), _) => Some(if kind.as_str() == Some("plaintext") {
+                    crate::features::markdown::content::Markup::plain(body)
+                } else {
+                    crate::features::markdown::content::Markup::markdown(body)
+                }),
+                (None, Some(language)) => Some(crate::features::markdown::content::Markup::code(
+                    body,
+                    language.as_str().unwrap_or_default(),
                 )),
-                (None, None) => Some(body.to_owned()),
+                (None, None) => Some(crate::features::markdown::content::Markup::markdown(body)),
             }
         }
         Value::Array(parts) => {
-            let parts: Vec<String> = parts.iter().filter_map(markup).collect();
-            (!parts.is_empty()).then(|| parts.join("\n\n"))
+            let parts = parts.iter().filter_map(markup).collect::<Vec<_>>();
+            crate::features::markdown::content::Markup::join(&parts)
         }
         _ => None,
     }
@@ -100,7 +106,7 @@ pub fn markup(value: &Value) -> Option<String> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hover {
-    pub markdown: String,
+    pub markdown: crate::features::markdown::content::Markup,
     pub span: Option<Span>,
 }
 
@@ -402,7 +408,7 @@ pub struct CompletionItem {
     pub label_detail: Option<String>,
     pub kind: Option<u32>,
     pub detail: Option<String>,
-    pub documentation: Option<String>,
+    pub documentation: Option<crate::features::markdown::content::Markup>,
     pub deprecated: bool,
     pub preselect: bool,
     pub sort_text: Option<String>,
@@ -562,13 +568,13 @@ pub struct Parameter {
     /// The part of the signature label this parameter covers, as character
     /// offsets into the label.
     pub label: Range<usize>,
-    pub documentation: Option<String>,
+    pub documentation: Option<crate::features::markdown::content::Markup>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Signature {
     pub label: String,
-    pub documentation: Option<String>,
+    pub documentation: Option<crate::features::markdown::content::Markup>,
     pub parameters: Vec<Parameter>,
     pub active_parameter: Option<usize>,
 }

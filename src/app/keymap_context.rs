@@ -5,6 +5,7 @@ pub use crate::features::keymap::context_stack::*;
 fn surface_name(surface: MainSurface) -> &'static str {
     match surface {
         MainSurface::Editor => "editor",
+        MainSurface::Markdown => "markdown",
         MainSurface::Diff => "diff",
         MainSurface::Settings => "settings",
         MainSurface::Keymap => "keymap",
@@ -39,7 +40,11 @@ pub fn facts(app: &AppState) -> ContextFacts {
         other_input: app.explorer.ui.create_input.focused
             || (app.keymap_ui.search.focused && app.main_surface() == MainSurface::Keymap),
         terminal: app.terminal.ui.terminal_focused,
-        editor: app.editor.focused && app.main_surface() == MainSurface::Editor,
+        editor: app.editor.focused
+            && matches!(
+                app.main_surface(),
+                MainSurface::Editor | MainSurface::Markdown
+            ),
         vim_active: crate::app::editor_vim::is_active(app),
         popup: app
             .editor

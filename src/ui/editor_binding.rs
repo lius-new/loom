@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use lgui::core::PointerButton;
 use lgui::prelude::{Element, UiRect};
-use loom_editor_core::identity::{FileId, PaneId};
+use loom_editor_core::identity::{PaneId, ViewId};
 use loom_editor_core::text::{Editor, Selection, TextBuffer};
 use loom_editor_core::vim::CursorShape;
 
@@ -19,7 +19,7 @@ pub(crate) struct DocumentMeta {
     pub lang: ResolvedLanguage,
 }
 pub(crate) struct ViewDocument {
-    pub id: FileId,
+    pub id: ViewId,
     /// Names the exact document lifetime, text and language this view shows.
     pub stamp: DocumentStamp,
     pub meta: DocumentMeta,
@@ -34,7 +34,7 @@ impl ViewDocument {
 }
 pub(crate) struct Preedit {
     pub pane: PaneId,
-    pub document: FileId,
+    pub document: ViewId,
     pub text: String,
     pub cursor: Option<Range<usize>>,
 }
@@ -83,7 +83,7 @@ pub(crate) struct ViewState {
 #[derive(Clone)]
 pub(crate) struct HoverView {
     pub anchor: Range<usize>,
-    pub blocks: Arc<[crate::features::markdown::Block]>,
+    pub docs: crate::ui::markdown::card::Document,
 }
 pub(crate) struct QuickFixView {
     pub revision: u64,
@@ -98,7 +98,7 @@ pub(crate) struct OverviewMark {
     pub change: LineChange,
 }
 impl ViewState {
-    pub fn preedit_for(&self, pane: PaneId, document: FileId) -> Option<&Preedit> {
+    pub fn preedit_for(&self, pane: PaneId, document: ViewId) -> Option<&Preedit> {
         self.preedit.as_ref().filter(|value| {
             value.pane == pane && value.document == document && !value.text.is_empty()
         })
@@ -136,7 +136,7 @@ pub(crate) enum Event {
         revision: u64,
     },
     PointerDown {
-        document: FileId,
+        document: ViewId,
         point: (f32, f32),
         button: PointerButton,
         code_left: f32,

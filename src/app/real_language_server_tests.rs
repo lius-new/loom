@@ -127,7 +127,7 @@ fn harness(typescript: bool) -> LanguageHarness {
 
 fn reload(h: &mut LanguageHarness, text: &str) {
     h.state.update(|app| {
-        let id = app.workspace.active().unwrap();
+        let id = app.workspace.active_document().unwrap();
         app.workspace
             .documents
             .get_mut(&id)
@@ -141,7 +141,7 @@ fn reload(h: &mut LanguageHarness, text: &str) {
 
 fn diagnostics(h: &LanguageHarness) -> Option<Vec<String>> {
     let app = h.state.get();
-    let id = app.workspace.active()?;
+    let id = app.workspace.active_document()?;
     let doc = &app.workspace.documents[&id];
     h.runtime
         .language_services()?

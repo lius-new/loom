@@ -65,6 +65,12 @@ impl HighlightId {
 
     pub const COUNT: usize = CLASS_NAMES.len();
 
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+    pub fn all() -> impl Iterator<Item = Self> {
+        (0..Self::COUNT).map(|index| Self(index as u8))
+    }
     pub fn name(self) -> &'static str {
         CLASS_NAMES[self.0 as usize]
     }

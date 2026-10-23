@@ -159,7 +159,7 @@ mod tests {
         EditorLayout {
             root: SavedPaneNode::Pane {
                 items: vec!["first.txt".into(), "large.json".into(), "last.txt".into()],
-                active: Some("large.json".into()),
+                active: Some(1),
             },
             active_pane: 0,
         }
@@ -257,7 +257,7 @@ mod tests {
                 .workspace
                 .file_id_for_path(Path::new("last.txt"))
                 .unwrap();
-            app.workspace.set_active(id);
+            app.workspace.activate_document(id);
         });
         h.session
             .render_view(&h.view, UiRect::new(0.0, 0.0, 800.0, 400.0), UiScale::ONE);
@@ -271,7 +271,7 @@ mod tests {
         let app = h.state.get();
         assert_eq!(
             app.workspace
-                .meta(app.workspace.active().unwrap())
+                .meta(app.workspace.active_document().unwrap())
                 .unwrap()
                 .name,
             "last.txt"
@@ -281,7 +281,7 @@ mod tests {
             .workspace
             .file_id_for_path(Path::new("large.json"))
             .unwrap();
-        assert!(app.workspace.is_file(id));
+        assert!(app.workspace.documents.contains_key(&id));
         assert!(!app.workspace.is_dirty(id));
         restore.shutdown();
     }
@@ -290,7 +290,7 @@ mod tests {
     fn closing_restoring_tab_prevents_resurrection_and_updates_session() {
         let mut app = AppState::new();
         crate::app::workspace_commands::hydrate_editor_layout(&mut app, Some(layout()));
-        let id = app.workspace.active().unwrap();
+        let id = app.workspace.active_document().unwrap();
         let path = PathBuf::from("large.json");
         app.workspace.close(id);
         assert!(app.workspace.file_id_for_path(&path).is_none());
@@ -305,7 +305,10 @@ mod tests {
             panic!()
         };
         assert_eq!(
-            items,
+            items
+                .iter()
+                .map(|v| v.path().to_path_buf())
+                .collect::<Vec<_>>(),
             vec![PathBuf::from("first.txt"), PathBuf::from("last.txt")]
         );
         let new = app
@@ -329,10 +332,12 @@ mod tests {
         use crate::model::pane_layout::Direction;
         let mut app = AppState::new();
         crate::app::workspace_commands::hydrate_editor_layout(&mut app, Some(layout()));
-        let id = app.workspace.active().unwrap();
+        let id = app.workspace.active_document().unwrap();
         let left = app.workspace.active_pane();
         let right = app.workspace.split_empty(left, Direction::Right).unwrap();
-        assert!(app.workspace.copy_item(left, id, right, 0));
+        let source = app.workspace.active().unwrap();
+        assert!(app.workspace.copy_item(left, source, right, 0));
+        let copied = app.workspace.active().unwrap();
         let other = app.workspace.open_path("other.txt".into(), "other".into());
         let before = crate::app::workspace_commands::saved_app_editor_layout(&app);
         assert!(finish(
@@ -344,13 +349,13 @@ mod tests {
                 "restored".into()
             ))
         ));
-        assert_eq!(app.workspace.active(), Some(other));
+        assert_eq!(app.workspace.active_document(), Some(other));
         assert_eq!(
             crate::app::workspace_commands::saved_app_editor_layout(&app),
             before
         );
         assert_eq!(app.workspace.editor(left).unwrap().text(), "restored");
-        app.workspace.activate(right, id);
+        app.workspace.activate(right, copied);
         assert_eq!(app.workspace.active_editor().unwrap().text(), "restored");
     }
 
@@ -358,7 +363,7 @@ mod tests {
     fn failed_restore_skips_unreadable_tab_and_preserves_remaining_order() {
         let mut app = AppState::new();
         crate::app::workspace_commands::hydrate_editor_layout(&mut app, Some(layout()));
-        let id = app.workspace.active().unwrap();
+        let id = app.workspace.active_document().unwrap();
         assert!(finish(
             &mut app,
             id,
@@ -399,7 +404,7 @@ mod tests {
             ))
         });
         entered.recv_timeout(Duration::from_secs(2)).unwrap();
-        let id = h.state.get().workspace.active().unwrap();
+        let id = h.state.get().workspace.active_document().unwrap();
         h.state.update(|app| {
             assert!(
                 app.workspace
@@ -409,7 +414,7 @@ mod tests {
         release.send(()).unwrap();
         h.pump_until(|app| app.workspace.loading_files().is_empty());
         let app = h.state.get();
-        assert_eq!(app.workspace.active(), Some(id));
+        assert_eq!(app.workspace.active_document(), Some(id));
         assert_eq!(
             app.workspace.active_editor().unwrap().text(),
             "renamed.json"
@@ -458,7 +463,7 @@ mod tests {
             Ok(PreparedTextFile::new(path.to_path_buf(), "ready".into()))
         });
         entered.recv_timeout(Duration::from_secs(2)).unwrap();
-        let id = h.state.get().workspace.active().unwrap();
+        let id = h.state.get().workspace.active_document().unwrap();
         assert!(!h.state.get().workspace.loading_indicator(id));
         h.pump_until(|app| app.workspace.loading_indicator(id));
         restore.shutdown();

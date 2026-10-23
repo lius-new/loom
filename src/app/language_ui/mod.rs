@@ -24,7 +24,7 @@ pub(crate) mod snippet_session;
 use super::context::AppContext;
 use super::state::AppState;
 use crate::domain::document::DocumentStamp;
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{FileId, PaneId, ViewId};
 use crate::features::language_service::sync::Stamp;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -33,6 +33,8 @@ use std::sync::Arc;
 /// All transient language-server interaction state of the editor.
 #[derive(Clone, Default)]
 pub struct LanguageUi {
+    /// Ownership of transient source interactions; document services remain shared.
+    interaction_view: Option<(ViewId, u64)>,
     pub file_changes: Vec<crate::infrastructure::lsp::manager::FileChange>,
     pub peek: Option<peek::Peek>,
     pub peek_revision: u64,
@@ -94,8 +96,9 @@ impl LanguageUi {
 /// Opens a link clicked in documentation. The text comes from a language
 /// server, so only web pages open, and only because the person clicked.
 pub(crate) fn open_link(state: &AppContext, url: String) {
-    if (url.starts_with("https://") || url.starts_with("http://"))
-        && !url.contains('\0')
+    if (url.to_ascii_lowercase().starts_with("https://")
+        || url.to_ascii_lowercase().starts_with("http://"))
+        && !url.contains(['\0', '\r', '\n'])
         && let Err(error) = crate::infrastructure::update::open_page(&url)
     {
         state.update(|app| app.show_error(format!("Could not open link: {error}")));
@@ -138,6 +141,8 @@ pub(crate) fn docs_selection(app: &AppState) -> Option<String> {
 #[derive(Clone)]
 pub(crate) struct Target {
     pub pane: PaneId,
+    pub view: ViewId,
+    pub input_generation: u64,
     pub document: FileId,
     pub path: PathBuf,
     pub stamp: DocumentStamp,
@@ -147,6 +152,11 @@ pub(crate) struct Target {
 }
 
 impl Target {
+    pub fn same_view(&self, other: &Self) -> bool {
+        self.view == other.view
+            && self.input_generation == other.input_generation
+            && self.pane == other.pane
+    }
     /// The state the servers know the document in.
     pub fn lsp_stamp(&self) -> Stamp {
         lsp_stamp(&self.stamp)
@@ -162,11 +172,15 @@ pub(crate) fn lsp_stamp(stamp: &DocumentStamp) -> Stamp {
 
 /// The text document `pane` shows, if it is one a server can be asked about.
 pub(crate) fn target(app: &AppState, pane: PaneId) -> Option<Target> {
-    let id = app.workspace.pane(pane)?.active()?;
+    let view = app.workspace.pane(pane)?.active()?;
+    let state = app.workspace.view(view).filter(|v| v.accepts_text())?;
+    let id = state.document()?;
     let document = app.workspace.documents.get(&id).filter(|d| d.is_text())?;
     let editor = app.workspace.editor(pane)?;
     Some(Target {
         pane,
+        view,
+        input_generation: state.input_generation,
         document: id,
         path: document.meta.path.clone(),
         stamp: document.stamp(id),
@@ -188,6 +202,27 @@ pub(crate) fn services(
 /// Runs after every state update: starts, follows or ends the features that
 /// watch the document. It must stay cheap when nothing relevant happened.
 pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
+    let owner = target(app, app.workspace.active_pane()).map(|t| (t.view, t.input_generation));
+    let language = &mut app.editor.language;
+    if language.interaction_view.is_some() && language.interaction_view != owner {
+        language.hover = Default::default();
+        language.highlights = Default::default();
+        language.inlay = Default::default();
+        language.expansion = Default::default();
+        language.lightbulb = Default::default();
+        language.quickfix = Default::default();
+        language.completion = None;
+        language.completion_timer = None;
+        language.signature = None;
+        language.signature_timer = None;
+        language.signature_selection = None;
+        language.snippet = None;
+        if language.popup.as_ref().is_some_and(|p| !p.kind.is_panel()) {
+            language.popup = None;
+            language.docs_selection = None;
+        }
+    }
+    language.interaction_view = owner;
     if let Some(panel) = app.editor.language.popup.as_mut()
         && panel.kind.is_panel()
         && panel.pane != app.workspace.active_pane()
@@ -251,7 +286,7 @@ pub(crate) fn signature_view(
         crate::ui::editor::signature::View {
             label: view.label,
             active: view.active,
-            docs: view.docs,
+            docs: view.docs.map(Into::into),
             position: view.position,
             revision: session.revision,
         },

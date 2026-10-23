@@ -74,3 +74,13 @@ pub(crate) fn config_path(file_name: &str) -> Option<PathBuf> {
             .map(|path| path.join(".config").join("loom").join(file_name))
     }
 }
+
+/// Read for a subsequent update. Invalid/future data is preserved, not replaced.
+pub(crate) fn read_session<T: DeserializeOwned + Default>(path: &Path) -> io::Result<T> {
+    match fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(T::default()),
+        Err(error) => Err(error),
+    }
+}

@@ -1,6 +1,6 @@
 //! Transient pointer and IME state; selections and history live in each buffer.
 use super::CloseRequest;
-use crate::model::document::FileId;
+use crate::domain::identity::ViewId;
 use crate::model::pane_layout::PaneId;
 use lgui::core::KeyModifiers;
 use std::{
@@ -17,7 +17,7 @@ pub enum SelectionUnit {
 }
 #[derive(Clone)]
 pub struct DragSelection {
-    pub document: FileId,
+    pub document: ViewId,
     pub origin: Range<usize>,
     pub unit: SelectionUnit,
     pub point: (f32, f32),
@@ -26,6 +26,10 @@ pub use crate::ui::chrome::diff_binding::DiffSplit;
 
 #[derive(Clone, Default)]
 pub struct EditorState {
+    /// Current Markdown publications changed; no service handle lives here.
+    pub markdown_revision: u64,
+    pub markdown_views:
+        std::collections::HashMap<ViewId, crate::features::markdown::reader::InteractionState>,
     /// Changes only when a current background highlight result becomes ready.
     pub syntax_revision: u64,
     pub tabs: crate::ui::chrome::tab_state::UiState,
@@ -67,7 +71,7 @@ pub struct EditorState {
     pub drag: Option<DragSelection>,
     /// A press can place the caret smoothly; only a real drag must follow immediately.
     pub caret_dragging: bool,
-    pub last_click: Option<(Instant, FileId, f32, f32, u8)>,
+    pub last_click: Option<(Instant, ViewId, f32, f32, u8)>,
     pub last_tree_click: Option<(Instant, PathBuf, f32, f32, u8)>,
 
     pub menu: Option<(f32, f32)>,
@@ -81,7 +85,8 @@ pub struct EditorState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImeSession {
     pub pane: PaneId,
-    pub document: FileId,
+    pub input_generation: u64,
+    pub document: ViewId,
     /// Composition text; it is not part of the document until committed.
     pub text: String,
     pub cursor: Option<Range<usize>>,
@@ -89,7 +94,7 @@ pub struct ImeSession {
 
 impl EditorState {
     /// The composition text to draw in `pane` showing `document`, if any.
-    pub fn preedit_for(&self, pane: PaneId, document: FileId) -> Option<&ImeSession> {
+    pub fn preedit_for(&self, pane: PaneId, document: ViewId) -> Option<&ImeSession> {
         self.ime.as_ref().filter(|session| {
             session.pane == pane && session.document == document && !session.text.is_empty()
         })
@@ -103,7 +108,7 @@ impl EditorState {
     }
 }
 impl EditorState {
-    pub fn click_count(&mut self, document: FileId, x: f32, y: f32) -> u8 {
+    pub fn click_count(&mut self, document: ViewId, x: f32, y: f32) -> u8 {
         next_click_count(&mut self.last_click, document, x, y)
     }
 
@@ -111,7 +116,7 @@ impl EditorState {
         next_click_count(&mut self.last_tree_click, path.to_path_buf(), x, y)
     }
 
-    pub fn tab_click_count(&mut self, document: FileId, x: f32, y: f32) -> u8 {
+    pub fn tab_click_count(&mut self, document: ViewId, x: f32, y: f32) -> u8 {
         next_click_count(&mut self.tabs.last_tab_click, document, x, y)
     }
 }
@@ -143,7 +148,7 @@ mod tests {
     #[test]
     fn editor_tree_and_tab_click_sequences_are_independent() {
         let mut interaction = EditorState::default();
-        let document = FileId::new(1);
+        let document = ViewId::new(1);
         let path = Path::new("src/main.rs");
 
         assert_eq!(interaction.tree_click_count(path, 10.0, 20.0), 1);

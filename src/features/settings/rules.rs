@@ -51,6 +51,8 @@ pub struct Settings {
     #[serde(default = "default_true")]
     pub smooth_caret: bool,
     #[serde(default)]
+    pub markdown: super::markdown::MarkdownSettings,
+    #[serde(default)]
     pub git_inline_blame: bool,
     #[serde(default)]
     pub git_split_diff: bool,
@@ -124,6 +126,7 @@ impl Default for Settings {
             terminal_profiles: Vec::new(),
             terminal_cursor_blink: true,
             smooth_caret: true,
+            markdown: Default::default(),
             git_inline_blame: false,
             git_split_diff: false,
             git_tree_view: false,
@@ -346,7 +349,11 @@ fn accept(
     let mut merged = defaults.clone();
     overlay_map(&mut merged, &candidate);
     match serde_json::from_value::<Settings>(Value::Object(merged)) {
-        Ok(settings) => match settings.lsp.validate() {
+        Ok(settings) => match settings
+            .lsp
+            .validate()
+            .and_then(|()| settings.markdown.validate())
+        {
             Ok(()) => *accepted = candidate,
             Err(error) => errors.push(error),
         },
@@ -459,6 +466,7 @@ mod tests {
             }],
             terminal_cursor_blink: false,
             smooth_caret: false,
+            markdown: Default::default(),
             git_inline_blame: true,
             git_split_diff: true,
             git_tree_view: true,

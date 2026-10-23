@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 use crate::app::workspace::{AppPage, Workspace};
 use crate::features::keymap::action::Action;
 use crate::features::terminal::ShellKind;
-use crate::model::document::FileId;
 use crate::model::pane_layout::{Direction, PaneId};
 use crate::ui::theme::ThemeId;
 
@@ -29,7 +28,7 @@ pub enum CloseContinuation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CloseRequest {
     /// Tabs to close, as (pane, document).
-    pub targets: Vec<(PaneId, FileId)>,
+    pub targets: Vec<(PaneId, crate::domain::identity::ViewId)>,
     pub continuation: CloseContinuation,
 }
 
@@ -46,6 +45,7 @@ pub enum MainSurface {
     /// An empty pane next to other panes.
     Empty,
     Editor,
+    Markdown,
     Diff,
     Settings,
     Keymap,
@@ -94,6 +94,7 @@ impl AppState {
                     shell_options: crate::infrastructure::terminal::profiles::options(&[]),
                     terminal_cursor_blink: true,
                     smooth_caret: true,
+                    markdown: Default::default(),
                     check_for_updates: true,
                     editor_font: crate::ui::fonts::FontSettings::EDITOR,
                     terminal_font: crate::ui::fonts::FontSettings::TERMINAL,
@@ -126,7 +127,13 @@ impl AppState {
     /// Build the application state and restore the last file-tree session.
     pub fn restored() -> Self {
         let mut app = Self::new();
-        let session = crate::app::workspace_session::load();
+        let session = match crate::app::workspace_session::load_checked() {
+            Ok(session) => session,
+            Err(error) => {
+                app.show_error(format!("Could not restore workspace session: {error}"));
+                Default::default()
+            }
+        };
         app.terminal.ui.terminal_workspace_root = session.terminal_workspace_root;
         app.terminal_chrome.show_terminal =
             session.show_terminal && !session.terminal_tabs.is_empty();
@@ -158,6 +165,7 @@ impl AppState {
             terminal_profiles: self.preferences.values().terminal_profiles.clone(),
             terminal_cursor_blink: self.preferences.values().terminal_cursor_blink,
             smooth_caret: self.preferences.values().smooth_caret,
+            markdown: self.preferences.values().markdown,
             check_for_updates: self.preferences.values().check_for_updates,
             git_inline_blame: self.git.ui.inline_blame,
             git_split_diff: self.git.ui.split_diff,
@@ -192,6 +200,7 @@ impl AppState {
         self.preferences.values_mut().terminal_profiles = settings.terminal_profiles;
         self.preferences.values_mut().terminal_cursor_blink = settings.terminal_cursor_blink;
         self.preferences.values_mut().smooth_caret = settings.smooth_caret;
+        self.preferences.values_mut().markdown = settings.markdown;
         self.preferences.values_mut().check_for_updates = settings.check_for_updates;
         self.preferences.values_mut().file_associations = settings.file_associations;
         self.preferences.values_mut().language_servers = settings.language_servers;
@@ -426,6 +435,26 @@ impl AppState {
     /// view or a platform service are performed by `key_actions` instead.
     pub fn apply(&mut self, action: Action) {
         match action {
+            Action::MarkdownLargePreview => {
+                if let Some(view) = self
+                    .workspace
+                    .active()
+                    .filter(|id| crate::app::markdown_view::eligible(self, *id))
+                {
+                    self.editor.markdown_views.entry(view).or_default().large = true;
+                    self.workspace
+                        .set_presentation(view, crate::domain::view::Presentation::Markdown);
+                }
+            }
+            Action::ToggleMarkdown => {
+                crate::app::markdown_view::toggle(self);
+            }
+            Action::MarkdownPreviewToSide => {
+                crate::app::markdown_view::side(self);
+            }
+            Action::MarkdownOpenSource => {
+                crate::app::markdown_view::source(self, None);
+            }
             Action::CloneRepository => {
                 if !self.git.model.cloning() {
                     self.git.ui.clone_visible = true;
@@ -614,13 +643,21 @@ impl AppState {
             }
         } else if self.workspace.diff(pane).is_some() {
             MainSurface::Diff
+        } else if self
+            .workspace
+            .pane(pane)
+            .and_then(|pane| pane.active())
+            .and_then(|id| self.workspace.view(id))
+            .is_some_and(|view| view.presentation == crate::domain::view::Presentation::Markdown)
+        {
+            MainSurface::Markdown
         } else if self.workspace.editor(pane).is_some() {
             MainSurface::Editor
         } else if self
             .workspace
             .pane(pane)
             .and_then(|p| p.active())
-            .is_some_and(|id| self.workspace.is_loading(id))
+            .is_some_and(|id| self.workspace.is_file(id))
             || self.workspace.pane_count() > 1
         {
             MainSurface::Empty
@@ -703,7 +740,7 @@ mod tests {
         assert_eq!(app.main_surface(), MainSurface::Settings);
 
         let settings = app.workspace.active().unwrap();
-        app.workspace.close(settings);
+        app.workspace.test_close_document(settings);
         assert_eq!(app.main_surface(), MainSurface::WorkspaceHome);
 
         let diff = app.workspace.open_diff(DiffDocument::from_unified(
@@ -714,7 +751,7 @@ mod tests {
         ));
         assert_eq!(app.main_surface(), MainSurface::Diff);
 
-        app.workspace.close(diff);
+        app.workspace.test_close_document(diff);
         app.explorer.model.restore(Vec::new(), Vec::new());
         assert_eq!(app.main_surface(), MainSurface::Welcome);
     }

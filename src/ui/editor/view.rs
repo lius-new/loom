@@ -546,7 +546,7 @@ pub(crate) fn render(
             anchor.and_then(|anchor| {
                 info_card_actions(
                     &found,
-                    Some(&hover.blocks),
+                    Some(&hover.docs),
                     anchor,
                     hover_area,
                     s.quickfix.as_ref(),
@@ -1021,7 +1021,7 @@ pub(crate) fn card_origin(anchor: UiRect, area: UiRect, width: f32, height: f32)
 #[cfg(test)]
 pub(crate) fn info_card(
     found: &[&Diagnostic],
-    docs: Option<&[crate::features::markdown::Block]>,
+    docs: Option<&crate::ui::markdown::card::Document>,
     anchor: UiRect,
     area: UiRect,
 ) -> Option<(UiRect, Element)> {
@@ -1030,7 +1030,7 @@ pub(crate) fn info_card(
 
 fn info_card_actions(
     found: &[&Diagnostic],
-    docs: Option<&[crate::features::markdown::Block]>,
+    docs: Option<&crate::ui::markdown::card::Document>,
     anchor: UiRect,
     area: UiRect,
     fixes: Option<&crate::ui::editor_binding::QuickFixView>,
@@ -1163,7 +1163,6 @@ fn info_card_actions(
     let mut content = clip(body, 0.0, 0.0);
     // The selectable text of the card, in reading order: the diagnostics, then the docs.
     let mut texts: Vec<Element> = Vec::new();
-    let mut below: Option<Element> = None;
     let mut y = body.top;
     for (index, (severity, lines, origin)) in entries.iter().enumerate() {
         if index > 0 {
@@ -1266,7 +1265,7 @@ fn info_card_actions(
         }
         .interaction()
     });
-    let on_link = interaction.as_ref().and_then(|i| i.on_link.clone());
+    let docs_interaction = interaction.clone();
     let on_select = interaction.and_then(|i| i.on_select);
     if let Some(fixes) = fixes
         && let Some(binding) = binding
@@ -1304,23 +1303,24 @@ fn info_card_actions(
             ));
             y += separator;
         }
-        let parts = super::docs::parts(layout, body.left, y, on_link.as_ref());
-        below = Some(parts.below);
-        texts.extend(parts.content);
-        content = content.child(parts.above);
+        let documentation = super::docs::render(
+            layout,
+            body.left,
+            y,
+            docs_interaction.as_ref(),
+            (body.bottom - y).max(1.0),
+        );
+        content = content.child(documentation);
     }
-    // Backgrounds, then the text (selectable as one region when the card is
-    // interactive), then everything that must stay clickable above it.
+    // Metadata uses its own text selection; the shared reader controls the
+    // documentation selection, links and copy independently.
     let mut layers = clip(body, 0.0, 0.0);
-    if let Some(below) = below {
-        layers = layers.child(below);
-    }
     match on_select {
         Some(on_select) => {
             layers = layers.child(
                 selection_region(body)
                     .selection_color(theme::c().accent)
-                    .on_select(move |cx, text| on_select(cx, text))
+                    .on_select(move |_cx, text| on_select(text))
                     .children(texts),
             );
         }

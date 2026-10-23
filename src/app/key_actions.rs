@@ -235,6 +235,20 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
     if let Some(done) = crate::app::language_ui::keys::perform(env, action) {
         return done;
     }
+    if let Some(service) = env.state.services().and_then(|runtime| runtime.markdown()) {
+        match service.card_key_action(action, env.application.clipboard().as_ref()) {
+            Ok(true) => return true,
+            Err(error) => {
+                env.state
+                    .update(|app| app.show_error(format!("Clipboard: {error}")));
+                return true;
+            }
+            _ => {}
+        }
+    }
+    if crate::app::markdown_view::key_action(&env.state, action, env.application.clipboard()) {
+        return true;
+    }
     match action {
         Action::NoAction => false,
         Action::SearchToggleCase

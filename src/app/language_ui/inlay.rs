@@ -24,6 +24,8 @@ const MAX_HINTS: usize = 3000;
 struct Pending {
     handle: Arc<RequestHandle>,
     pane: PaneId,
+    view: crate::domain::identity::ViewId,
+    input_generation: u64,
     stamp: DocumentStamp,
     text: Arc<String>,
     lines: std::ops::Range<usize>,
@@ -125,6 +127,8 @@ fn request(ctx: &AppContext, app: &mut AppState) {
     app.editor.language.inlay.pending = Some(Pending {
         handle,
         pane,
+        view: t.view,
+        input_generation: t.input_generation,
         stamp: t.stamp,
         text: t.text.clone(),
         lines: first..last + 1,
@@ -141,6 +145,13 @@ pub fn tick(app: &mut AppState) -> bool {
         return false;
     }
     app.editor.language.inlay.pending = None;
+    if target(app, pending.pane).is_none_or(|t| {
+        t.view != pending.view
+            || t.input_generation != pending.input_generation
+            || t.stamp != pending.stamp
+    }) {
+        return false;
+    }
     let index = LineIndex::new(&pending.text);
     let mut hints: Vec<Hint> = Vec::new();
     for part in &progress.parts {

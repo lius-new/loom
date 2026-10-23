@@ -1,7 +1,7 @@
 //! The signature help card: the signature of the call being typed, with the
 //! parameter the caret is on in bold.
 use super::docs;
-use crate::features::markdown::Block;
+use crate::ui::markdown::card::Document;
 use crate::ui::{fonts, theme};
 use lgui::core::{CursorIcon, EventPolicy, UiEventContext, clip};
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, scroll_view, selection_region, text};
@@ -18,7 +18,7 @@ pub(crate) struct View {
     pub label: String,
     /// The active parameter as character offsets into the label.
     pub active: Option<Range<usize>>,
-    pub docs: Option<Arc<[Block]>>,
+    pub docs: Option<Document>,
     /// Which signature of how many.
     pub position: Option<(usize, usize)>,
     pub revision: u64,
@@ -161,8 +161,8 @@ pub(crate) fn render(
             theme::sans(theme::c().text_faint, theme::SMALL),
         ));
     }
-    // The label and the docs are one selectable region, clipped to the card;
-    // the docs' backgrounds go under it and their links above.
+    // The source label keeps its own selection; documentation is a controlled
+    // reading surface with full logical selection and copy.
     let region_rect = UiRect::new(
         card.left + PAD,
         label_top.min(card.bottom),
@@ -170,26 +170,25 @@ pub(crate) fn render(
         card.bottom - PAD,
     );
     let interaction = actions.interaction();
-    let mut texts: Vec<Element> = vec![label_line.into()];
+    let texts: Vec<Element> = vec![label_line.into()];
     let mut layers = clip(region_rect, 0.0, 0.0);
     let mut links = None;
     if let Some(layout) = &docs {
-        let parts = docs::parts(
+        let documentation = docs::render(
             layout,
             card.left + PAD,
             label_top + ROW + 6.0,
-            interaction.on_link.as_ref(),
+            Some(&interaction),
+            (card.bottom - PAD - label_top - ROW - 6.0).max(1.0),
         );
-        layers = layers.child(parts.below);
-        texts.extend(parts.content);
-        links = Some(parts.above);
+        links = Some(documentation);
     }
     let on_select = interaction.on_select.clone();
     let mut region = selection_region(region_rect)
         .selection_color(theme::c().accent)
         .children(texts);
     if let Some(on_select) = on_select {
-        region = region.on_select(move |cx, text| on_select(cx, text));
+        region = region.on_select(move |_cx, text| on_select(text));
     }
     layers = layers.child(region);
     if let Some(links) = links {

@@ -3,14 +3,13 @@
 use super::snippet_session;
 use super::{AppContext, AppState, Target, services, target};
 use crate::app::ui_timer;
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{FileId, PaneId, ViewId};
 use crate::features::language_service::completion::{
     Completion, Entry, Shown, commits, filter, insertion, word_start,
 };
 use crate::features::language_service::reply;
 use crate::features::language_service::request::Feature;
 use crate::features::language_service::snippet;
-use crate::features::markdown::{self, Block};
 use crate::infrastructure::lsp::manager::{RequestHandle, RequestSpec};
 use crate::model::text::{Assoc, Edit, EditKind, Selection};
 use serde_json::json;
@@ -24,6 +23,8 @@ const DEBOUNCE: Duration = Duration::from_millis(30);
 pub struct Session {
     pub pane: PaneId,
     pub document: FileId,
+    pub view: ViewId,
+    pub input_generation: u64,
     pub incarnation: u64,
     /// The text the servers were asked about, to read their ranges in.
     pub requested: Arc<String>,
@@ -85,7 +86,11 @@ pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
     };
     let mut ended = false;
     if let Some(session) = &app.editor.language.completion {
-        if session.document != t.document || session.incarnation != t.stamp.incarnation {
+        if session.document != t.document
+            || session.view != t.view
+            || session.input_generation != t.input_generation
+            || session.incarnation != t.stamp.incarnation
+        {
             ended = true;
         } else if session.last_version != t.stamp.version || session.last_cursor != t.cursor {
             ended = !follow(app, &t);
@@ -206,6 +211,8 @@ pub fn words(app: &mut AppState) {
     app.editor.language.completion = Some(Session {
         pane,
         document: t.document,
+        view: t.view,
+        input_generation: t.input_generation,
         incarnation: t.stamp.incarnation,
         requested: t.text.clone(),
         manual: false,
@@ -280,12 +287,12 @@ pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Opti
                 .extra(json!({ "context": context })),
         ),
     );
-    let same = app
-        .editor
-        .language
-        .completion
-        .as_ref()
-        .is_some_and(|s| s.document == t.document && s.data.word_start == start);
+    let same = app.editor.language.completion.as_ref().is_some_and(|s| {
+        s.document == t.document
+            && s.view == t.view
+            && s.input_generation == t.input_generation
+            && s.data.word_start == start
+    });
     if same {
         if let Some(session) = app.editor.language.completion.as_mut() {
             session.resolving = None;
@@ -298,6 +305,8 @@ pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Opti
     app.editor.language.completion = Some(Session {
         pane,
         document: t.document,
+        view: t.view,
+        input_generation: t.input_generation,
         incarnation: t.stamp.incarnation,
         requested: t.text.clone(),
         manual,
@@ -408,6 +417,8 @@ fn replace_candidates(session: &mut Session, mut data: Completion, typed: &str) 
             && item.raw == entry.item.raw
         {
             entry.item = (*item).clone();
+            entry.documentation =
+                crate::features::language_service::completion::item_documentation(&entry.item);
             entry.resolved = true;
         }
     }
@@ -498,6 +509,8 @@ fn tick_resolve(app: &mut AppState) -> bool {
         // Keep the unresolved source identity for matching later snapshots.
         item.raw = entry.item.raw.clone();
         entry.item = item;
+        entry.documentation =
+            crate::features::language_service::completion::item_documentation(&entry.item);
         entry.resolved = true;
     }
     true
@@ -582,16 +595,10 @@ pub fn view(session: &Session) -> crate::ui::editor::popup::View {
             }
         })
         .collect();
-    let docs: Option<Arc<[Block]>> = session.selected_entry().and_then(|entry| {
-        let mut source = String::new();
-        if let Some(detail) = &entry.item.detail {
-            source.push_str(&format!("```\n{detail}\n```\n\n"));
-        }
-        if let Some(documentation) = &entry.item.documentation {
-            source.push_str(documentation);
-        }
-        (!source.trim().is_empty()).then(|| markdown::parse(&source).into())
-    });
+    let docs = session
+        .selected_entry()
+        .and_then(|entry| entry.documentation.clone())
+        .map(Into::into);
     View {
         panel: false,
         rows: rows.into(),
@@ -649,6 +656,9 @@ pub fn accept(app: &mut AppState, then: Option<char>) -> bool {
     let Some(t) = target(app, pane) else {
         return false;
     };
+    if t.view != session.view || t.input_generation != session.input_generation {
+        return false;
+    }
     // A committing character is already in the text; the item replaces the word
     // before it and the character goes back after.
     let cursor = match then {

@@ -158,10 +158,13 @@ pub fn tick(state: &AppContext, app: &mut AppState) {
     app.editor.language.lists = None;
     let t = &pending.target;
     let same_document = app.workspace.active_pane() == t.pane
-        && app.workspace.pane(t.pane).and_then(|p| p.active()) == Some(t.document);
+        && app.workspace.pane(t.pane).and_then(|p| p.active()) == Some(t.view);
     if !same_document
         || target(app, t.pane).is_none_or(|now| {
-            now.stamp != t.stamp || now.cursor != t.cursor || now.selection != t.selection
+            !now.same_view(t)
+                || now.stamp != t.stamp
+                || now.cursor != t.cursor
+                || now.selection != t.selection
         })
     {
         return;
@@ -296,7 +299,8 @@ pub fn tick(state: &AppContext, app: &mut AppState) {
                         let app = next.get();
                         let current = app.workspace.active_pane() == source.pane
                             && target(&app, source.pane).is_some_and(|now| {
-                                now.stamp == source.stamp
+                                now.same_view(&source)
+                                    && now.stamp == source.stamp
                                     && now.cursor == source.cursor
                                     && now.selection == source.selection
                             });

@@ -1,5 +1,5 @@
 //! Tab pointer/drag/menu values, independent of the root application.
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{PaneId, ViewId};
 use crate::domain::pane_layout::Direction;
 use std::{collections::HashMap, path::PathBuf, time::Instant};
 /// Where a dragged tab lands outside its own strip.
@@ -17,7 +17,7 @@ pub enum TabDrop {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabDragState {
     pub pane: PaneId,
-    pub source: FileId,
+    pub source: ViewId,
     pub pointer_origin_x: f32,
     pub pointer_origin_y: f32,
     /// Final index while reordering within the source strip.
@@ -54,7 +54,7 @@ pub struct FileDragState {
 pub struct TabContextMenuState {
     pub position: (f32, f32),
     pub pane: PaneId,
-    pub target: FileId,
+    pub target: ViewId,
     pub hovered: Option<usize>,
 }
 #[derive(Clone, Default)]
@@ -62,10 +62,10 @@ pub struct UiState {
     pub file_drag: Option<FileDragState>,
     pub tab_context_menu: Option<TabContextMenuState>,
     pub tab_drag: Option<TabDragState>,
-    pub tab_hovered: Option<(PaneId, FileId)>,
+    pub tab_hovered: Option<(PaneId, ViewId)>,
     pub tab_scroll: HashMap<PaneId, f32>,
     pub tab_scrollbar_drag_offset: f32,
     pub tab_scrollbar_dragging: Option<PaneId>,
     pub tab_strip_hovered: Option<PaneId>,
-    pub last_tab_click: Option<(Instant, FileId, f32, f32, u8)>,
+    pub last_tab_click: Option<(Instant, ViewId, f32, f32, u8)>,
 }

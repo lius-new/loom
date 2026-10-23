@@ -62,6 +62,7 @@ pub struct EditorMut<'a> {
     buffer: &'a mut TextBuffer,
     selection: &'a mut Selection,
     peers: Vec<&'a mut Selection>,
+    anchors: Vec<(&'a mut usize, Assoc)>,
 }
 
 impl Deref for EditorMut<'_> {
@@ -81,7 +82,15 @@ impl<'a> EditorMut<'a> {
             buffer,
             selection,
             peers,
+            anchors: Vec::new(),
         }
+    }
+
+    /// Attach positions that follow every edit, including undo/redo and long
+    /// grouped commands. This does not depend on the bounded revision journal.
+    pub fn with_anchors(mut self, anchors: Vec<(&'a mut usize, Assoc)>) -> Self {
+        self.anchors = anchors;
+        self
     }
 
     pub fn as_ref(&self) -> Editor<'_> {
@@ -212,6 +221,12 @@ impl<'a> EditorMut<'a> {
     }
 
     fn move_peers(&mut self, changes: &ChangeSet) {
+        for (anchor, assoc) in &mut self.anchors {
+            **anchor = self
+                .buffer
+                .clamp(Selection::caret(changes.map(**anchor, *assoc)))
+                .cursor;
+        }
         for peer in &mut self.peers {
             peer.transform(changes);
             **peer = self.buffer.clamp(**peer);

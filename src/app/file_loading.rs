@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::app::state::{AppState, TabDrop};
 use crate::app::workspace::{OpenMode, PreparedTextFile};
-use crate::model::document::FileId;
+use crate::domain::identity::ViewId;
 use crate::model::pane_layout::PaneId;
 use lgui::ApplicationHandle;
 
@@ -18,9 +18,12 @@ pub struct PendingFile {
     pub pane: PaneId,
     pub mode: OpenMode,
     pub drop: Option<TabDrop>,
+    pub markdown: bool,
+    pub markdown_fragment: Option<String>,
     pub indicator: bool,
     started: Instant,
-    active: Option<FileId>,
+    active: Option<ViewId>,
+    input_generation: Option<u64>,
     origin_pane: PaneId,
     folders: Vec<PathBuf>,
     remaining: Vec<PathBuf>,
@@ -133,9 +136,17 @@ pub fn request(
         pane,
         mode,
         drop,
+        markdown: false,
+        markdown_fragment: None,
         indicator: false,
         started: Instant::now(),
         active: app.workspace.pane(pane).and_then(|p| p.active()),
+        input_generation: app
+            .workspace
+            .pane(pane)
+            .and_then(|p| p.active())
+            .and_then(|id| app.workspace.view(id))
+            .map(|v| v.input_generation),
         origin_pane,
         folders: app.explorer.model.roots().to_vec(),
         remaining: Vec::new(),
@@ -183,6 +194,11 @@ pub(crate) fn request_files(
 
 fn valid(app: &AppState, pending: &PendingFile) -> bool {
     app.explorer.model.roots() == pending.folders
+        && pending
+            .active
+            .and_then(|id| app.workspace.view(id))
+            .map(|v| v.input_generation)
+            == pending.input_generation
         && app.workspace.active_pane() == pending.origin_pane
         && app
             .workspace
@@ -240,7 +256,8 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
                 pending.pane
             };
             app.workspace.activate_pane(pane);
-            let id = app.workspace.open_prepared_text(prepared, pending.mode);
+            app.workspace.open_prepared_text(prepared, pending.mode);
+            let id = app.workspace.active().expect("opened view");
             if let Some(TabDrop::Insert { index, .. }) = pending.drop {
                 if let Some(position) = app
                     .workspace
@@ -263,6 +280,13 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
             app.chrome.workspace_home_hover = None;
             app.editor.drag = None;
             app.editor.ime = None;
+            if pending.markdown {
+                crate::app::markdown_view::finish_navigation(
+                    app,
+                    id,
+                    pending.markdown_fragment.clone(),
+                );
+            }
         }
     }
     true
@@ -279,6 +303,49 @@ mod tests {
         session::UiSession,
     };
     use std::sync::{Arc, Mutex, mpsc};
+
+    #[test]
+    fn p1_pending_open_rejects_a_changed_presentation_on_the_same_view() {
+        use crate::domain::view::Presentation;
+        let mut app = AppState::new();
+        app.workspace.open_path("current.md".into(), "keep".into());
+        let pane = app.workspace.active_pane();
+        let active = app.workspace.active();
+        let pending = PendingFile {
+            generation: 17,
+            path: "next.md".into(),
+            pane,
+            mode: OpenMode::Permanent,
+            drop: None,
+            markdown: false,
+            markdown_fragment: None,
+            indicator: false,
+            started: Instant::now(),
+            active,
+            input_generation: Some(0),
+            origin_pane: pane,
+            folders: Vec::new(),
+            remaining: Vec::new(),
+        };
+        assert!(valid(&app, &pending));
+        app.editor.pending_file = Some(pending);
+        app.workspace
+            .set_presentation(active.unwrap(), Presentation::Markdown);
+        app.workspace
+            .set_presentation(active.unwrap(), Presentation::Source);
+        assert!(finish(
+            &mut app,
+            17,
+            Ok(PreparedTextFile::new("next.md".into(), "late".into()))
+        ));
+        assert_eq!(app.workspace.active(), active);
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "keep");
+        assert!(
+            app.workspace
+                .file_id_for_path(std::path::Path::new("next.md"))
+                .is_none()
+        );
+    }
 
     struct Harness {
         state: AppContext,
@@ -372,7 +439,7 @@ mod tests {
             .workspace
             .active_items()
             .iter()
-            .map(|id| app.workspace.meta(*id).unwrap().path.clone())
+            .map(|id| app.workspace.view_meta(*id).unwrap().path.clone())
             .collect();
         assert_eq!(
             paths,
@@ -413,10 +480,10 @@ mod tests {
         assert_eq!(app.workspace.active_pane(), target);
         let original_file = app.workspace.pane(original).unwrap().active().unwrap();
         assert_eq!(
-            app.workspace.meta(original_file).unwrap().path,
+            app.workspace.view_meta(original_file).unwrap().path,
             PathBuf::from("current.txt")
         );
-        assert!(app.workspace.is_dirty(original_file));
+        assert!(app.workspace.is_view_dirty(original_file));
         assert_eq!(
             app.workspace.editor(original).unwrap().text(),
             "unsaved Keep this screen"
@@ -624,7 +691,7 @@ mod tests {
         let expected = crate::app::workspace_session::EditorLayout {
             root: crate::app::workspace_session::SavedPaneNode::Pane {
                 items: vec!["current.txt".into(), "single-click.json".into()],
-                active: Some("single-click.json".into()),
+                active: Some(1),
             },
             active_pane: 0,
         };
@@ -704,9 +771,12 @@ mod tests {
                             pane,
                             mode: OpenMode::Permanent,
                             drop: None,
+                            markdown: false,
+                            markdown_fragment: None,
                             indicator: row == 1,
                             started: Instant::now(),
                             active: None,
+                            input_generation: None,
                             origin_pane: pane,
                             folders: Vec::new(),
                             remaining: Vec::new(),

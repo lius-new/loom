@@ -106,3 +106,13 @@ pub(crate) mod update;
 
 #[cfg(test)]
 mod language_panel_install_tests;
+
+mod markdown_assets;
+mod markdown_cards;
+mod markdown_drag;
+mod markdown_render;
+pub(crate) mod markdown_service;
+mod markdown_view;
+
+#[cfg(test)]
+mod markdown_tests;

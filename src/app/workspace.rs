@@ -1,5 +1,5 @@
 //! Application composition of the pure workspace and its platform adapters.
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{FileId, PaneId, ViewId};
 use crate::domain::pane_layout::Direction;
 use crate::domain::workspace as domain;
 use crate::features::git::DiffRequest;
@@ -9,8 +9,8 @@ pub use domain::{AppPage, OpenMode, ReconcileResult};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 pub(crate) type Core = domain::Workspace<DiffDocument, DiffRequest>;
-pub(crate) type PreparedTextFile = domain::PreparedTextFile<DiffDocument, DiffRequest>;
-pub type PreparedDiskUpdate = domain::PreparedDiskUpdate<DiffDocument, DiffRequest>;
+pub(crate) type PreparedTextFile = domain::PreparedTextFile;
+pub type PreparedDiskUpdate = domain::PreparedDiskUpdate;
 #[derive(Clone)]
 pub struct Workspace {
     pub(crate) core: Core,
@@ -38,6 +38,7 @@ impl Workspace {
                 domain::Retired::Document(value) => {
                     crate::infrastructure::ui_dispatch::retire(value)
                 }
+                domain::Retired::Diff(value) => crate::infrastructure::ui_dispatch::retire(value),
                 domain::Retired::Update(value) => crate::infrastructure::ui_dispatch::retire(value),
             }
         }
@@ -202,7 +203,7 @@ impl Workspace {
         }
         moved
     }
-    pub fn close_item(&mut self, pane: PaneId, id: FileId) {
+    pub fn close_item(&mut self, pane: PaneId, id: ViewId) {
         self.transaction(|core| core.close_item(pane, id))
     }
 
@@ -250,7 +251,7 @@ impl Workspace {
     pub fn split_with_item(
         &mut self,
         from: PaneId,
-        id: FileId,
+        id: ViewId,
         target: PaneId,
         direction: Direction,
         copy: bool,
@@ -258,14 +259,14 @@ impl Workspace {
         self.transaction(|core| core.split_with_item(from, id, target, direction, copy))
     }
 
-    pub fn move_item(&mut self, from: PaneId, id: FileId, to: PaneId, index: usize) -> bool {
+    pub fn move_item(&mut self, from: PaneId, id: ViewId, to: PaneId, index: usize) -> bool {
         self.transaction(|core| core.move_item(from, id, to, index))
     }
 
-    pub fn copy_item(&mut self, from: PaneId, id: FileId, to: PaneId, index: usize) -> bool {
+    pub fn copy_item(&mut self, from: PaneId, id: ViewId, to: PaneId, index: usize) -> bool {
         self.transaction(|core| core.copy_item(from, id, to, index))
     }
-    pub fn move_tab(&mut self, pane: PaneId, id: FileId, index: usize) -> bool {
+    pub fn move_tab(&mut self, pane: PaneId, id: ViewId, index: usize) -> bool {
         self.core.move_tab(pane, id, index)
     }
     pub fn move_active_item(&mut self, direction: Direction) -> bool {

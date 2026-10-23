@@ -38,7 +38,7 @@ pub(crate) fn perform_with(state: &AppContext, rect: UiRect, action: Action) -> 
             Some(true)
         }
         Action::Save => {
-            let document = state.get().workspace.active();
+            let document = state.get().workspace.active_document();
             save::save(
                 state,
                 rect,

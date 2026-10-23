@@ -19,7 +19,7 @@ use crate::app::workspace_session::saved_editor_layout;
 pub(crate) use crate::app::workspace_session::{
     hydrate_editor_layout, save_editor_session, saved_app_editor_layout,
 };
-use crate::domain::identity::PaneId;
+use crate::domain::identity::{PaneId, ViewId};
 #[cfg(test)]
 use crate::domain::workspace_session::{EditorLayout, SavedAxis, SavedChild, SavedPaneNode};
 use crate::model::document::FileId;
@@ -34,7 +34,7 @@ pub enum TabCloseScope {
 }
 
 pub fn save_active_document(state: &AppContext) -> bool {
-    let Some(id) = state.get().workspace.active() else {
+    let Some(id) = state.get().workspace.active_document() else {
         return false;
     };
     save_document(state, id)
@@ -70,11 +70,11 @@ pub fn save_document(state: &AppContext, id: FileId) -> bool {
     }
 }
 
-pub fn request_close_tab(state: &AppContext, pane: PaneId, id: FileId) {
+pub fn request_close_tab(state: &AppContext, pane: PaneId, id: ViewId) {
     state.update(move |app| request_close_tab_in(app, pane, id));
 }
 
-pub(crate) fn request_close_tab_in(app: &mut AppState, pane: PaneId, id: FileId) {
+pub(crate) fn request_close_tab_in(app: &mut AppState, pane: PaneId, id: ViewId) {
     request_close_tabs_in(app, vec![(pane, id)]);
 }
 
@@ -94,35 +94,35 @@ pub(crate) fn request_close_pane_in(app: &mut AppState, pane: PaneId) {
 pub fn tab_close_targets(
     app: &AppState,
     pane: PaneId,
-    target: FileId,
+    target: ViewId,
     scope: TabCloseScope,
-) -> Vec<(PaneId, FileId)> {
+) -> Vec<(PaneId, ViewId)> {
     let Some(open) = app.workspace.pane(pane).map(|pane| pane.items()) else {
         return Vec::new();
     };
     let Some(target_index) = open.iter().position(|id| *id == target) else {
         return Vec::new();
     };
-    let ids: Vec<FileId> = match scope {
+    let ids: Vec<ViewId> = match scope {
         TabCloseScope::Tab => vec![target],
         TabCloseScope::Others => open.iter().copied().filter(|id| *id != target).collect(),
         TabCloseScope::Right => open.iter().copied().skip(target_index + 1).collect(),
         TabCloseScope::Saved => open
             .iter()
             .copied()
-            .filter(|id| !app.workspace.is_dirty(*id))
+            .filter(|id| !app.workspace.is_view_dirty(*id))
             .collect(),
         TabCloseScope::All => open.to_vec(),
     };
     ids.into_iter().map(|id| (pane, id)).collect()
 }
 
-pub fn request_close_tabs(state: &AppContext, pane: PaneId, target: FileId, scope: TabCloseScope) {
+pub fn request_close_tabs(state: &AppContext, pane: PaneId, target: ViewId, scope: TabCloseScope) {
     let targets = tab_close_targets(&state.get(), pane, target, scope);
     state.update(move |app| request_close_tabs_in(app, targets));
 }
 
-fn request_close_tabs_in(app: &mut AppState, targets: Vec<(PaneId, FileId)>) {
+fn request_close_tabs_in(app: &mut AppState, targets: Vec<(PaneId, ViewId)>) {
     let mut existing = Vec::with_capacity(targets.len());
     for (pane, id) in targets {
         if app.workspace.pane(pane).is_some_and(|p| p.contains(id))
@@ -226,9 +226,9 @@ pub(crate) fn dirty_test_file(
     path: PathBuf,
     original: &str,
     change: &str,
-) -> FileId {
+) -> ViewId {
     fs::write(&path, original).unwrap();
-    let id = app.workspace.open_path(path, original.to_owned());
+    let id = app.workspace.test_open_view(path, original.to_owned());
     app.workspace
         .active_editor_mut()
         .unwrap()
@@ -322,12 +322,12 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    fn tabs(app: &AppState, ids: &[FileId]) -> Vec<(PaneId, FileId)> {
+    fn tabs(app: &AppState, ids: &[ViewId]) -> Vec<(PaneId, ViewId)> {
         let pane = app.workspace.active_pane();
         ids.iter().map(|id| (pane, *id)).collect()
     }
 
-    fn close_tab(app: &mut AppState, id: FileId) {
+    fn close_tab(app: &mut AppState, id: ViewId) {
         let pane = app.workspace.active_pane();
         request_close_tab_in(app, pane, id);
     }
@@ -337,11 +337,11 @@ mod tests {
         let mut app = AppState::new();
         let id = app
             .workspace
-            .open_path(PathBuf::from("workspace/clean.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/clean.rs"), String::new());
 
         close_tab(&mut app, id);
 
-        assert!(app.workspace.meta(id).is_none());
+        assert!(app.workspace.view_meta(id).is_none());
         assert!(app.editor.close_request.is_none());
     }
 
@@ -351,7 +351,7 @@ mod tests {
         let left = app.workspace.active_pane();
         let id = app
             .workspace
-            .open_path(PathBuf::from("workspace/shared.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/shared.rs"), String::new());
         let right = app
             .workspace
             .split(left, crate::model::pane_layout::Direction::Right)
@@ -362,9 +362,10 @@ mod tests {
             .replace_selection("changed", EditKind::Typing)
             .unwrap();
 
-        request_close_tab_in(&mut app, right, id);
+        let copy = app.workspace.pane(right).unwrap().active().unwrap();
+        request_close_tab_in(&mut app, right, copy);
         assert!(app.editor.close_request.is_none());
-        assert!(app.workspace.is_dirty(id));
+        assert!(app.workspace.is_view_dirty(id));
 
         request_close_tab_in(&mut app, left, id);
         assert_eq!(
@@ -378,7 +379,7 @@ mod tests {
         let mut app = AppState::new();
         let id = app
             .workspace
-            .open_path(PathBuf::from("workspace/dirty.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/dirty.rs"), String::new());
         app.workspace
             .active_editor_mut()
             .unwrap()
@@ -387,7 +388,7 @@ mod tests {
 
         close_tab(&mut app, id);
 
-        assert!(app.workspace.meta(id).is_some());
+        assert!(app.workspace.view_meta(id).is_some());
         assert_eq!(
             app.editor.close_request,
             Some(CloseRequest {
@@ -404,10 +405,10 @@ mod tests {
         let mut app = AppState::new();
         let clean = app
             .workspace
-            .open_path(PathBuf::from("workspace/clean.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/clean.rs"), String::new());
         let dirty = app
             .workspace
-            .open_path(PathBuf::from("workspace/dirty.rs"), String::new());
+            .test_open_view(PathBuf::from("workspace/dirty.rs"), String::new());
         app.workspace
             .active_editor_mut()
             .unwrap()
@@ -415,7 +416,7 @@ mod tests {
             .unwrap();
 
         app.apply(Action::CloseActiveItem);
-        assert!(app.workspace.meta(dirty).is_some());
+        assert!(app.workspace.view_meta(dirty).is_some());
         assert_eq!(
             app.editor
                 .close_request
@@ -427,7 +428,7 @@ mod tests {
         // A pending request is never replaced by another keyboard close.
         app.workspace.set_active(clean);
         app.apply(Action::CloseActiveItem);
-        assert!(app.workspace.meta(clean).is_some());
+        assert!(app.workspace.view_meta(clean).is_some());
         assert_eq!(
             app.editor
                 .close_request
@@ -438,7 +439,7 @@ mod tests {
 
         app.editor.close_request = None;
         app.apply(Action::CloseActiveItem);
-        assert!(app.workspace.meta(clean).is_none());
+        assert!(app.workspace.view_meta(clean).is_none());
         assert!(app.editor.close_request.is_none());
     }
 
@@ -447,10 +448,10 @@ mod tests {
         let mut app = AppState::new();
         let first = app
             .workspace
-            .open_path(PathBuf::from("first.rs"), String::new());
+            .test_open_view(PathBuf::from("first.rs"), String::new());
         let second = app
             .workspace
-            .open_path(PathBuf::from("second.rs"), String::new());
+            .test_open_view(PathBuf::from("second.rs"), String::new());
         app.workspace
             .active_editor_mut()
             .unwrap()
@@ -458,10 +459,10 @@ mod tests {
             .unwrap();
         let third = app
             .workspace
-            .open_path(PathBuf::from("third.rs"), String::new());
+            .test_open_view(PathBuf::from("third.rs"), String::new());
         let fourth = app
             .workspace
-            .open_path(PathBuf::from("fourth.rs"), String::new());
+            .test_open_view(PathBuf::from("fourth.rs"), String::new());
 
         assert_eq!(
             tab_close_targets(
@@ -515,10 +516,10 @@ mod tests {
         let mut app = AppState::new();
         let clean = app
             .workspace
-            .open_path(PathBuf::from("clean.rs"), String::new());
+            .test_open_view(PathBuf::from("clean.rs"), String::new());
         let dirty = app
             .workspace
-            .open_path(PathBuf::from("dirty.rs"), String::new());
+            .test_open_view(PathBuf::from("dirty.rs"), String::new());
         app.workspace
             .active_editor_mut()
             .unwrap()
@@ -528,8 +529,8 @@ mod tests {
         let targets = tabs(&app, &[clean, dirty]);
         request_close_tabs_in(&mut app, targets);
 
-        assert!(app.workspace.meta(clean).is_some());
-        assert!(app.workspace.meta(dirty).is_some());
+        assert!(app.workspace.view_meta(clean).is_some());
+        assert!(app.workspace.view_meta(dirty).is_some());
         assert_eq!(
             app.editor.close_request,
             Some(CloseRequest {
@@ -555,22 +556,33 @@ mod tests {
         let result = save_close_request_in(&mut app).unwrap();
 
         assert_eq!(result, Some(CloseContinuation::ExitApplication));
-        assert!(app.workspace.meta(first).is_some());
-        assert!(app.workspace.meta(second).is_some());
-        assert!(!app.workspace.is_dirty(first));
-        assert!(!app.workspace.is_dirty(second));
+        assert!(app.workspace.view_meta(first).is_some());
+        assert!(app.workspace.view_meta(second).is_some());
+        assert!(!app.workspace.is_view_dirty(first));
+        assert!(!app.workspace.is_view_dirty(second));
         let saved = saved_app_editor_layout(&app).unwrap();
+        let SavedPaneNode::Pane { items, active } = saved.root else {
+            panic!("one pane")
+        };
         assert_eq!(
-            saved.root,
-            SavedPaneNode::Pane {
-                items: vec![first_path.clone(), second_path.clone()],
-                active: Some(second_path.clone())
-            }
+            items
+                .iter()
+                .map(|v| v.path().to_path_buf())
+                .collect::<Vec<_>>(),
+            vec![first_path.clone(), second_path.clone()]
         );
+        assert_eq!(active, Some(1));
+        let cursors = items
+            .iter()
+            .map(|item| match item {
+                crate::domain::workspace_session::SavedView::Text { source, .. } => source.cursor,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(cursors, vec![13, 14]);
         assert!(app.editor.close_request.is_none());
         assert_eq!(fs::read_to_string(first_path).unwrap(), "first updated");
         assert_eq!(fs::read_to_string(second_path).unwrap(), "second updated");
-        let _ = fs::remove_dir_all(root);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -580,7 +592,9 @@ mod tests {
         let first_path = root.join("first.txt");
         let first = dirty_test_file(&mut app, first_path.clone(), "first", " updated");
         let missing_path = root.join("missing-parent").join("second.txt");
-        let second = app.workspace.open_path(missing_path, "second".to_owned());
+        let second = app
+            .workspace
+            .test_open_view(missing_path, "second".to_owned());
         app.workspace
             .active_editor_mut()
             .unwrap()
@@ -598,10 +612,10 @@ mod tests {
         let error = save_close_request_in(&mut app).unwrap_err();
 
         assert!(error.contains("Could not save"));
-        assert!(app.workspace.meta(first).is_some());
-        assert!(app.workspace.meta(second).is_some());
-        assert!(!app.workspace.is_dirty(first));
-        assert!(app.workspace.is_dirty(second));
+        assert!(app.workspace.view_meta(first).is_some());
+        assert!(app.workspace.view_meta(second).is_some());
+        assert!(!app.workspace.is_view_dirty(first));
+        assert!(app.workspace.is_view_dirty(second));
         assert!(app.editor.close_request.is_some());
         assert_eq!(fs::read_to_string(first_path).unwrap(), "first updated");
         let _ = fs::remove_dir_all(root);
@@ -612,7 +626,7 @@ mod tests {
         let mut app = AppState::new();
         let first = app
             .workspace
-            .open_path(PathBuf::from("first.txt"), String::new());
+            .test_open_view(PathBuf::from("first.txt"), String::new());
         app.workspace
             .active_editor_mut()
             .unwrap()
@@ -620,7 +634,7 @@ mod tests {
             .unwrap();
         let second = app
             .workspace
-            .open_path(PathBuf::from("second.txt"), String::new());
+            .test_open_view(PathBuf::from("second.txt"), String::new());
         app.workspace
             .active_editor_mut()
             .unwrap()
@@ -634,8 +648,8 @@ mod tests {
         let result = discard_close_request_in(&mut app);
 
         assert_eq!(result, Some(CloseContinuation::CloseTabs));
-        assert!(app.workspace.meta(first).is_none());
-        assert!(app.workspace.meta(second).is_none());
+        assert!(app.workspace.view_meta(first).is_none());
+        assert!(app.workspace.view_meta(second).is_none());
         assert!(app.editor.close_request.is_none());
     }
 
@@ -644,7 +658,7 @@ mod tests {
         let mut app = AppState::new();
         let id = app
             .workspace
-            .open_path(PathBuf::from("dirty.txt"), String::new());
+            .test_open_view(PathBuf::from("dirty.txt"), String::new());
         app.workspace
             .active_editor_mut()
             .unwrap()
@@ -657,8 +671,8 @@ mod tests {
 
         cancel_close_request_in(&mut app);
 
-        assert!(app.workspace.meta(id).is_some());
-        assert!(app.workspace.is_dirty(id));
+        assert!(app.workspace.view_meta(id).is_some());
+        assert!(app.workspace.is_view_dirty(id));
         assert!(app.editor.close_request.is_none());
     }
 
@@ -669,8 +683,12 @@ mod tests {
         let second = PathBuf::from("second.rs");
         let layout = EditorLayout {
             root: SavedPaneNode::Pane {
-                items: vec![first.clone(), PathBuf::from("missing.rs"), second.clone()],
-                active: Some(first.clone()),
+                items: vec![
+                    first.clone().into(),
+                    PathBuf::from("missing.rs").into(),
+                    second.clone().into(),
+                ],
+                active: Some(0),
             },
             active_pane: 0,
         };
@@ -684,17 +702,20 @@ mod tests {
     #[test]
     fn unclosed_single_click_preview_restores_in_order_and_closed_tabs_stay_closed() {
         let mut app = AppState::new();
-        app.workspace.open_path("first.rs".into(), String::new());
-        let closed = app.workspace.open_path("closed.rs".into(), String::new());
-        app.workspace.close(closed);
         app.workspace
-            .preview_path("preview.json".into(), String::new());
+            .test_open_view("first.rs".into(), String::new());
+        let closed = app
+            .workspace
+            .test_open_view("closed.rs".into(), String::new());
+        app.workspace.test_close_document(closed);
+        app.workspace
+            .test_preview_view("preview.json".into(), String::new());
         let saved = saved_app_editor_layout(&app).unwrap();
         assert_eq!(
             saved.root,
             SavedPaneNode::Pane {
                 items: vec!["first.rs".into(), "preview.json".into()],
-                active: Some("preview.json".into())
+                active: Some(1)
             }
         );
         let serialized = serde_json::to_string(&saved).unwrap();
@@ -711,7 +732,7 @@ mod tests {
         assert!(
             restored
                 .workspace
-                .file_id_for_path(Path::new("closed.rs"))
+                .test_view_for_path(Path::new("closed.rs"))
                 .is_none()
         );
         assert_eq!(saved_app_editor_layout(&restored), Some(saved));
@@ -731,7 +752,7 @@ mod tests {
             discard_close_request_in(&mut app),
             Some(CloseContinuation::ExitApplication)
         );
-        assert!(app.workspace.meta(id).is_some());
+        assert!(app.workspace.view_meta(id).is_some());
         let layout = saved_app_editor_layout(&app);
         let mut restored = AppState::new();
         hydrate_editor_layout_with(&mut restored, layout, read_text_file);
@@ -744,19 +765,22 @@ mod tests {
     fn split_layout_round_trips_through_the_session_format() {
         let mut app = AppState::new();
         let left = app.workspace.active_pane();
-        app.workspace.open_path(PathBuf::from("a.rs"), "a".into());
-        app.workspace.open_path(PathBuf::from("b.rs"), "b".into());
+        app.workspace
+            .test_open_view(PathBuf::from("a.rs"), "a".into());
+        app.workspace
+            .test_open_view(PathBuf::from("b.rs"), "b".into());
         let right = app
             .workspace
             .split(left, crate::model::pane_layout::Direction::Right)
             .unwrap();
         app.workspace
-            .preview_path(PathBuf::from("preview.rs"), String::new());
+            .test_preview_view(PathBuf::from("preview.rs"), String::new());
         app.workspace.open_settings();
         app.workspace
             .split(right, crate::model::pane_layout::Direction::Down)
             .unwrap();
-        app.workspace.open_path(PathBuf::from("c.rs"), "c".into());
+        app.workspace
+            .test_open_view(PathBuf::from("c.rs"), "c".into());
         app.workspace.activate_pane(right);
 
         let saved = saved_editor_layout(&app.workspace).unwrap();
@@ -769,8 +793,8 @@ mod tests {
                     SavedChild {
                         size: 0.5,
                         node: SavedPaneNode::Pane {
-                            items: vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")],
-                            active: Some(PathBuf::from("b.rs")),
+                            items: vec![PathBuf::from("a.rs").into(), PathBuf::from("b.rs").into()],
+                            active: Some(1),
                         },
                     },
                     SavedChild {
@@ -782,8 +806,8 @@ mod tests {
                                     size: 0.5,
                                     node: SavedPaneNode::Pane {
                                         items: vec![
-                                            PathBuf::from("b.rs"),
-                                            PathBuf::from("preview.rs")
+                                            PathBuf::from("b.rs").into(),
+                                            PathBuf::from("preview.rs").into()
                                         ],
                                         active: None,
                                     },
@@ -791,8 +815,8 @@ mod tests {
                                 SavedChild {
                                     size: 0.5,
                                     node: SavedPaneNode::Pane {
-                                        items: vec![PathBuf::from("c.rs")],
-                                        active: Some(PathBuf::from("c.rs")),
+                                        items: vec![PathBuf::from("c.rs").into()],
+                                        active: Some(0),
                                     },
                                 },
                             ],
@@ -834,14 +858,14 @@ mod tests {
                     SavedChild {
                         size: 0.3,
                         node: SavedPaneNode::Pane {
-                            items: vec![PathBuf::from("gone.rs")],
+                            items: vec![PathBuf::from("gone.rs").into()],
                             active: None,
                         },
                     },
                     SavedChild {
                         size: 0.7,
                         node: SavedPaneNode::Pane {
-                            items: vec![PathBuf::from("kept.rs")],
+                            items: vec![PathBuf::from("kept.rs").into()],
                             active: None,
                         },
                     },

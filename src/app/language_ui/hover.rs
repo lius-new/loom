@@ -3,10 +3,10 @@
 use super::{AppContext, AppState, Target, services, target};
 use crate::app::ui_timer::{self, Timer};
 use crate::domain::document::DocumentStamp;
-use crate::domain::identity::PaneId;
+use crate::domain::identity::{PaneId, ViewId};
 use crate::features::language_service::reply;
 use crate::features::language_service::request::Feature;
-use crate::features::markdown::{self, Block};
+use crate::features::markdown::content::Markup;
 use crate::infrastructure::lsp::manager::{RequestHandle, RequestSpec};
 use std::ops::Range;
 use std::sync::Arc;
@@ -16,6 +16,8 @@ use std::time::Duration;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rest {
     pub pane: PaneId,
+    pub view: ViewId,
+    pub input_generation: u64,
     pub word: Range<usize>,
     pub stamp: DocumentStamp,
 }
@@ -34,7 +36,7 @@ pub struct Card {
     pub rest: Rest,
     /// The text the card describes (the server's range, else the word).
     pub anchor: Range<usize>,
-    pub blocks: Arc<[Block]>,
+    pub documentation: Markup,
 }
 
 #[derive(Clone, Default)]
@@ -47,7 +49,16 @@ pub struct Hover {
     pub selection: Option<String>,
     /// A press that began on the card is still held.
     pub pressing: bool,
-    view: Option<(PaneId, DocumentStamp, usize, (u32, u32))>,
+    view: Option<SourceViewSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SourceViewSnapshot {
+    view: ViewId,
+    input_generation: u64,
+    stamp: DocumentStamp,
+    cursor: usize,
+    scroll: (u32, u32),
 }
 
 pub fn observe(app: &mut AppState) {
@@ -58,7 +69,13 @@ pub fn observe(app: &mut AppState) {
     let pane = app.workspace.active_pane();
     let now = target(app, pane).map(|t| {
         let (x, y) = app.workspace.scroll(pane);
-        (pane, t.stamp, t.cursor, (x.to_bits(), y.to_bits()))
+        SourceViewSnapshot {
+            view: t.view,
+            input_generation: t.input_generation,
+            stamp: t.stamp,
+            cursor: t.cursor,
+            scroll: (x.to_bits(), y.to_bits()),
+        }
     });
     if app.editor.language.hover.view.is_some() && app.editor.language.hover.view != now {
         clear(app);
@@ -125,6 +142,8 @@ pub fn pointer_over(app: &mut AppState, pane: PaneId, offset: Option<usize>) -> 
     };
     let rest = Rest {
         pane,
+        view: target.view,
+        input_generation: target.input_generation,
         word,
         stamp: target.stamp,
     };
@@ -164,7 +183,9 @@ pub fn fire(state: &AppContext, rest: &Rest) {
     if app.editor.language.hover.rest.as_ref() != Some(rest) {
         return;
     }
-    let Some(target) = target(&app, rest.pane).filter(|t| t.stamp == rest.stamp) else {
+    let Some(target) = target(&app, rest.pane).filter(|t| {
+        t.view == rest.view && t.input_generation == rest.input_generation && t.stamp == rest.stamp
+    }) else {
         return;
     };
     let Some(services) = services(state) else {
@@ -217,15 +238,17 @@ pub fn tick(app: &mut AppState) -> bool {
         .map(|span| span.bytes(&pending.text))
         .filter(|range| !range.is_empty())
         .unwrap_or_else(|| pending.rest.word.clone());
-    let source = found
-        .iter()
-        .map(|hover| hover.markdown.trim())
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
+    let source = Markup::join(
+        &found
+            .iter()
+            .map(|hover| hover.markdown.clone())
+            .collect::<Vec<_>>(),
+    )
+    .expect("nonempty hover");
     hover.card = Some(Card {
         rest: pending.rest,
         anchor,
-        blocks: markdown::parse(&source).into(),
+        documentation: source,
     });
     true
 }

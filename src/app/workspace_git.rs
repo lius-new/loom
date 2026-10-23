@@ -1,98 +1,105 @@
 //! Git payload adaptation stays outside the pure workspace rules.
 use super::workspace::*;
-use crate::domain::document::{DiskState, FileMeta};
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::document::FileMeta;
+use crate::domain::identity::{PaneId, ViewId};
 use crate::features::git::diff_document::DiffDocument;
 use crate::features::git::{DiffContent, DiffRequest, DiffTarget, GitResult, PollTarget};
 use std::path::Path;
 use std::sync::Arc;
-type OpenDocument = crate::domain::workspace::OpenDocument<DiffDocument, DiffRequest>;
 impl Workspace {
-    pub fn open_diff(&mut self, diff: DiffDocument) -> FileId {
+    pub fn open_diff(&mut self, diff: DiffDocument) -> ViewId {
         self.open_prepared_diff(Arc::new(diff))
     }
 
-    pub fn open_prepared_file_changes(&mut self, diff: Arc<DiffDocument>) -> FileId {
-        if let Some((&id, document)) = self.core.documents.iter_mut().find(|(_, document)| {
-            document.diff.as_ref().is_some_and(|current| {
-                current.repository_root == diff.repository_root
-                    && current.sections.is_none()
-                    && current.revision.is_none()
-            })
+    pub fn open_prepared_file_changes(&mut self, diff: Arc<DiffDocument>) -> ViewId {
+        if let Some((_, document)) = self.core.diffs.iter_mut().find(|(_, document)| {
+            let current = &document.content;
+            current.repository_root == diff.repository_root
+                && current.sections.is_none()
+                && current.revision.is_none()
         }) {
-            let changed_file = document
-                .diff
-                .as_ref()
-                .is_none_or(|current| !current.same_view(&diff));
+            let changed_file = {
+                let current = &document.content;
+                !current.same_view(&diff)
+            };
             document.meta.name = diff.title();
             document.meta.path = diff.absolute_path();
             document.focused_diff = None;
             if changed_file {
-                for view in document.views.values_mut() {
-                    view.scroll_x = 0.0;
-                    view.scroll_y = 0.0;
+                if let Some(view) = self.core.views.get_mut(&document.view) {
+                    view.source.scroll_x = 0.0;
+                    view.source.scroll_y = 0.0;
                 }
             }
-            crate::infrastructure::ui_dispatch::retire(document.diff.replace(diff));
+            crate::infrastructure::ui_dispatch::retire(std::mem::replace(
+                &mut document.content,
+                diff,
+            ));
+            let id = document.view;
             self.reveal(id);
             return id;
         }
         self.open_prepared_diff(diff)
     }
 
-    pub fn open_prepared_commit_changes(&mut self, diff: Arc<DiffDocument>) -> FileId {
-        if let Some((&id, document)) = self.core.documents.iter_mut().find(|(_, document)| {
-            document.diff.as_ref().is_some_and(|current| {
-                current.repository_root == diff.repository_root
-                    && current.sections.is_some()
-                    && current.revision.is_some()
-            })
+    pub fn open_prepared_commit_changes(&mut self, diff: Arc<DiffDocument>) -> ViewId {
+        if let Some((_, document)) = self.core.diffs.iter_mut().find(|(_, document)| {
+            let current = &document.content;
+            current.repository_root == diff.repository_root
+                && current.sections.is_some()
+                && current.revision.is_some()
         }) {
-            let changed_commit = document
-                .diff
-                .as_ref()
-                .is_none_or(|current| current.revision != diff.revision);
+            let changed_commit = {
+                let current = &document.content;
+                current.revision != diff.revision
+            };
             document.meta.name = diff.title();
             document.meta.path = diff.absolute_path();
             if changed_commit {
                 document.collapsed_diffs.clear();
                 document.focused_diff = None;
-                for view in document.views.values_mut() {
-                    view.scroll_x = 0.0;
-                    view.scroll_y = 0.0;
+                if let Some(view) = self.core.views.get_mut(&document.view) {
+                    view.source.scroll_x = 0.0;
+                    view.source.scroll_y = 0.0;
                 }
             }
-            crate::infrastructure::ui_dispatch::retire(document.diff.replace(diff));
+            crate::infrastructure::ui_dispatch::retire(std::mem::replace(
+                &mut document.content,
+                diff,
+            ));
+            let id = document.view;
             self.reveal(id);
             return id;
         }
         self.open_prepared_diff(diff)
     }
 
-    pub fn commit_changes_id(&self, repository_root: &Path, revision: &str) -> Option<FileId> {
-        self.core.documents.iter().find_map(|(&id, document)| {
-            document
-                .diff
-                .as_ref()
-                .is_some_and(|diff| {
-                    diff.repository_root == repository_root
-                        && diff.sections.is_some()
-                        && diff.revision.as_deref() == Some(revision)
-                })
-                .then_some(id)
+    pub fn commit_changes_id(&self, repository_root: &Path, revision: &str) -> Option<ViewId> {
+        self.core.diffs.iter().find_map(|(_, document)| {
+            {
+                let diff = &document.content;
+                diff.repository_root == repository_root
+                    && diff.sections.is_some()
+                    && diff.revision.as_deref() == Some(revision)
+            }
+            .then_some(document.view)
         })
     }
 
-    pub fn open_prepared_diff(&mut self, diff: Arc<DiffDocument>) -> FileId {
-        if let Some((&id, document)) = self.core.documents.iter_mut().find(|(_, document)| {
-            document
-                .diff
-                .as_ref()
-                .is_some_and(|current| current.same_view(&diff))
-        }) {
+    pub fn open_prepared_diff(&mut self, diff: Arc<DiffDocument>) -> ViewId {
+        if let Some((_, document)) = self
+            .core
+            .diffs
+            .iter_mut()
+            .find(|(_, document)| document.content.same_view(&diff))
+        {
             document.meta.name = diff.title();
             document.meta.path = diff.absolute_path();
-            crate::infrastructure::ui_dispatch::retire(document.diff.replace(diff));
+            crate::infrastructure::ui_dispatch::retire(std::mem::replace(
+                &mut document.content,
+                diff,
+            ));
+            let id = document.view;
             self.reveal(id);
             return id;
         }
@@ -104,65 +111,30 @@ impl Workspace {
         &mut self,
         pane: PaneId,
         diff: Arc<DiffDocument>,
-    ) -> Option<FileId> {
-        let existing = self
-            .core
-            .panes
-            .get(&pane)?
-            .items
-            .iter()
-            .copied()
-            .find(|id| {
-                self.core.documents[id]
-                    .diff
-                    .as_ref()
-                    .is_some_and(|current| current.same_view(&diff))
-            });
-        self.activate_pane(pane);
-        if let Some(id) = existing {
-            let document = self.core.documents.get_mut(&id).unwrap();
-            document.meta.name = diff.title();
-            document.meta.path = diff.absolute_path();
-            crate::infrastructure::ui_dispatch::retire(document.diff.replace(diff));
-            self.set_active(id);
-            Some(id)
+    ) -> Option<ViewId> {
+        self.core.panes.get(&pane)?;
+        let id = self.open_prepared_diff(diff);
+        let from = self.pane_of(id)?;
+        if from != pane {
+            self.move_item(from, id, pane, usize::MAX);
         } else {
-            Some(self.insert_prepared_diff(pane, diff))
+            self.activate(pane, id);
         }
+        Some(id)
     }
 
-    fn insert_prepared_diff(&mut self, pane: PaneId, diff: Arc<DiffDocument>) -> FileId {
-        let id = self.allocate_file_id();
-        let absolute_path = diff.absolute_path();
-        let mut meta = FileMeta::from_path(absolute_path.clone());
+    fn insert_prepared_diff(&mut self, pane: PaneId, diff: Arc<DiffDocument>) -> ViewId {
+        let mut meta = FileMeta::from_path(diff.absolute_path());
         meta.name = diff.title();
-        let mut document = OpenDocument::new(
-            meta,
-            String::new(),
-            DiskState {
-                modified_time: None,
-                size: 0,
-                content_hash: 0,
-            },
-        );
-        document.diff = Some(diff);
-        self.core.insert_document(id, document);
-        self.insert_item(pane, id, usize::MAX, None);
-        self.core.panes.get_mut(&pane).unwrap().active = Some(id);
-        id
+        self.core.insert_diff(pane, meta, diff)
     }
 
     pub fn git_poll_target(&self) -> PollTarget {
         let mut diffs = self
-            .documents
+            .diffs
             .values()
             // A commit's diff never changes, so it is not refreshed.
-            .filter_map(|document| {
-                document
-                    .diff
-                    .as_ref()
-                    .filter(|diff| diff.revision.is_none())
-            })
+            .filter_map(|document| Some(&document.content).filter(|diff| diff.revision.is_none()))
             .map(|diff| DiffRequest {
                 repository_root: diff.repository_root.clone(),
                 path: diff.path.clone(),
@@ -183,10 +155,9 @@ impl Workspace {
         diffs: &std::collections::BTreeMap<DiffRequest, GitResult<DiffContent>>,
     ) -> bool {
         let mut changed = false;
-        for document in self.core.documents.values_mut() {
-            let Some(current) = &document.diff else {
-                continue;
-            };
+        let core = &mut self.core;
+        for document in core.diffs.values_mut() {
+            let current = &document.content;
             let request = DiffRequest {
                 repository_root: current.repository_root.clone(),
                 path: current.path.clone(),
@@ -197,7 +168,7 @@ impl Workspace {
             };
             let next = DiffDocument::from_content(request, content.clone());
             if **current != next {
-                document.diff = Some(Arc::new(next));
+                document.content = Arc::new(next);
                 changed = true;
             }
         }
@@ -210,10 +181,9 @@ impl Workspace {
         split: bool,
     ) -> Vec<Arc<DiffDocument>> {
         let mut retired = Vec::new();
-        for document in self.core.documents.values_mut() {
-            let Some(current) = &document.diff else {
-                continue;
-            };
+        let core = &mut self.core;
+        for document in core.diffs.values_mut() {
+            let current = &document.content;
             let request = DiffRequest {
                 repository_root: current.repository_root.clone(),
                 path: current.path.clone(),
@@ -227,8 +197,8 @@ impl Workspace {
                 {
                     let old_layout = current.changes_layout(split, &document.collapsed_diffs);
                     let new_layout = next.changes_layout(split, &document.collapsed_diffs);
-                    for view in document.views.values_mut() {
-                        let row = view.scroll_y / crate::ui::diff_editor::row_h();
+                    if let Some(view) = core.views.get_mut(&document.view) {
+                        let row = view.source.scroll_y / crate::ui::diff_editor::row_h();
                         if let Some(old) = old_layout
                             .sections
                             .iter()
@@ -240,25 +210,30 @@ impl Workspace {
                                 .iter()
                                 .find(|item| new_sections[item.index].request() == request)
                             {
-                                view.scroll_y = (new.top as f32 + row - old.top as f32).max(0.0)
+                                view.source.scroll_y = (new.top as f32 + row - old.top as f32)
+                                    .max(0.0)
                                     * crate::ui::diff_editor::row_h();
                             }
                         }
                     }
                 }
-                retired.push(document.diff.replace(next.clone()).unwrap());
+                retired.push(std::mem::replace(&mut document.content, next.clone()));
             }
         }
         retired
     }
 
     pub fn focus_diff_section(&mut self, request: &DiffRequest, split: bool) {
-        let pane = self.core.active_pane;
         let Some(id) = self.active() else { return };
-        let Some(document) = self.core.documents.get_mut(&id) else {
+        let Some(crate::domain::view::ViewTarget::Diff(diff_id)) =
+            self.core.views.get(&id).map(|v| v.target)
+        else {
             return;
         };
-        let Some(diff) = &document.diff else { return };
+        let Some(document) = self.core.diffs.get_mut(&diff_id) else {
+            return;
+        };
+        let diff = &document.content;
         let Some(sections) = &diff.sections else {
             return;
         };
@@ -269,15 +244,15 @@ impl Workspace {
             .sections
             .iter()
             .find(|item| sections[item.index].request() == *request)
-            && let Some(view) = document.views.get_mut(&pane)
+            && let Some(view) = self.core.views.get_mut(&id)
         {
-            view.scroll_y = section.top as f32 * crate::ui::diff_editor::row_h();
+            view.source.scroll_y = section.top as f32 * crate::ui::diff_editor::row_h();
         }
     }
 
     pub fn active_diff_focus(&self) -> Option<&DiffRequest> {
-        let document = self.core.documents.get(&self.active()?)?;
-        document.diff.as_ref()?.sections.as_ref()?;
+        let document = self.core.diff_record(self.active()?)?;
+        document.content.sections.as_ref()?;
         document.focused_diff.as_ref()
     }
 
@@ -286,13 +261,12 @@ impl Workspace {
         repository_root: &Path,
         path: &Path,
         target: DiffTarget,
-    ) -> Option<FileId> {
-        self.core.documents.iter().find_map(|(&id, document)| {
+    ) -> Option<ViewId> {
+        self.core.diffs.iter().find_map(|(_, document)| {
             document
-                .diff
-                .as_ref()
-                .is_some_and(|diff| diff.matches(repository_root, path, target))
-                .then_some(id)
+                .content
+                .matches(repository_root, path, target)
+                .then_some(document.view)
         })
     }
 }

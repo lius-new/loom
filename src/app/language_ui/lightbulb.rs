@@ -9,6 +9,8 @@ use std::{ops::Range, sync::Arc, time::Duration};
 #[derive(Clone, PartialEq, Eq)]
 struct Seen {
     pane: PaneId,
+    view: crate::domain::identity::ViewId,
+    input_generation: u64,
     stamp: DocumentStamp,
     cursor: usize,
     selection: Option<Range<usize>>,
@@ -39,6 +41,8 @@ fn current(ctx: &AppContext, app: &AppState) -> Option<(Target, Seen)> {
     workspace.sort_by(|a, b| a.0.cmp(&b.0));
     let seen = Seen {
         pane: t.pane,
+        view: t.view,
+        input_generation: t.input_generation,
         stamp: t.stamp,
         cursor: t.cursor,
         selection: t.selection.clone(),

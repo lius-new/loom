@@ -132,8 +132,8 @@ fn retargeting_metadata_keeps_identity_views_and_shared_history() {
             .file_id_for_path(std::path::Path::new("virtual.txt"))
             .is_none()
     );
-    assert_eq!(workspace.pane(left).unwrap().active(), Some(id));
-    assert_eq!(workspace.pane(right).unwrap().active(), Some(id));
+    assert_eq!(workspace.pane_document(left), Some(id));
+    assert_eq!(workspace.pane_document(right), Some(id));
     assert_eq!(workspace.scroll(right), (7.0, 20.0));
     workspace.editor_mut(right).unwrap().undo();
     assert_eq!(workspace.editor(left).unwrap().text(), "base");
@@ -363,8 +363,8 @@ mod associations {
         let right = workspace.split(left, Direction::Right).unwrap();
         workspace.set_language_rules(rules(&["/p"], &[("*.custom", "rust")], &[]));
         // One document, one metadata record: both panes read the same value.
-        assert_eq!(workspace.pane(left).and_then(|p| p.active()), Some(id));
-        assert_eq!(workspace.pane(right).and_then(|p| p.active()), Some(id));
+        assert_eq!(workspace.pane_document(left), Some(id));
+        assert_eq!(workspace.pane_document(right), Some(id));
         assert_eq!(language(&workspace, id), "rust");
         assert_eq!(workspace.documents.len(), 1);
     }

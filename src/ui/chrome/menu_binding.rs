@@ -1,29 +1,29 @@
 //! Tab menu target frame and commands; the app resolves current targets.
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{PaneId, ViewId};
 use crate::ui::tab_context_menu::Action;
 use lgui::core::UiEventContext;
 use std::sync::Arc;
 pub struct Frame {
     pub position: (f32, f32),
     pub pane: PaneId,
-    pub target: FileId,
+    pub target: ViewId,
     pub hovered: Option<usize>,
     pub enabled: Vec<Action>,
 }
-type Execute = dyn Fn(PaneId, FileId, Action, &mut UiEventContext) + Send + Sync;
+type Execute = dyn Fn(PaneId, ViewId, Action, &mut UiEventContext) + Send + Sync;
 #[derive(Clone)]
 pub struct Binding {
     read: Arc<dyn Fn() -> Option<Frame> + Send + Sync>,
-    hover: Arc<dyn Fn(PaneId, FileId, Option<usize>) + Send + Sync>,
-    dismiss: Arc<dyn Fn(PaneId, FileId) + Send + Sync>,
+    hover: Arc<dyn Fn(PaneId, ViewId, Option<usize>) + Send + Sync>,
+    dismiss: Arc<dyn Fn(PaneId, ViewId) + Send + Sync>,
     execute: Arc<Execute>,
 }
 impl Binding {
     pub fn new(
         read: impl Fn() -> Option<Frame> + Send + Sync + 'static,
-        hover: impl Fn(PaneId, FileId, Option<usize>) + Send + Sync + 'static,
-        dismiss: impl Fn(PaneId, FileId) + Send + Sync + 'static,
-        execute: impl Fn(PaneId, FileId, Action, &mut UiEventContext) + Send + Sync + 'static,
+        hover: impl Fn(PaneId, ViewId, Option<usize>) + Send + Sync + 'static,
+        dismiss: impl Fn(PaneId, ViewId) + Send + Sync + 'static,
+        execute: impl Fn(PaneId, ViewId, Action, &mut UiEventContext) + Send + Sync + 'static,
     ) -> Self {
         Self {
             read: Arc::new(read),
@@ -35,13 +35,13 @@ impl Binding {
     pub fn frame(&self) -> Option<Frame> {
         (self.read)()
     }
-    pub fn hover(&self, p: PaneId, t: FileId, h: Option<usize>) {
+    pub fn hover(&self, p: PaneId, t: ViewId, h: Option<usize>) {
         (self.hover)(p, t, h)
     }
-    pub fn dismiss(&self, p: PaneId, t: FileId) {
+    pub fn dismiss(&self, p: PaneId, t: ViewId) {
         (self.dismiss)(p, t)
     }
-    pub fn execute(&self, p: PaneId, t: FileId, a: Action, cx: &mut UiEventContext) {
+    pub fn execute(&self, p: PaneId, t: ViewId, a: Action, cx: &mut UiEventContext) {
         (self.execute)(p, t, a, cx);
     }
 }

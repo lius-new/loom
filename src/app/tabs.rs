@@ -1,7 +1,7 @@
 //! Tab commands and cross-pane transactions; UI retains geometry and painting.
 use crate::app::context::AppContext;
 use crate::app::state::{AppState, MainSurface, TabContextMenuState, TabDragState, TabDrop};
-use crate::domain::identity::{FileId, PaneId};
+use crate::domain::identity::{PaneId, ViewId};
 #[cfg(test)]
 use crate::domain::pane_layout::Direction;
 use crate::ui::chrome::tabs_binding::{Binding, Command, EditorFrame, Frame, Pending, Snapshot};
@@ -137,14 +137,14 @@ pub fn run(state: &AppContext, command: Command) {
     });
 }
 
-fn pane_items(app: &AppState, pane: PaneId) -> &[FileId] {
+fn pane_items(app: &AppState, pane: PaneId) -> &[ViewId] {
     app.workspace
         .pane(pane)
         .map(|pane| pane.items())
         .unwrap_or(&[])
 }
 
-fn pane_active(app: &AppState, pane: PaneId) -> Option<FileId> {
+fn pane_active(app: &AppState, pane: PaneId) -> Option<ViewId> {
     crate::ui::tabs::pane_active(&frame(app), pane)
 }
 
@@ -452,7 +452,7 @@ mod tests {
                 app.drawer.visible = true;
                 for index in 0..20 {
                     app.workspace
-                        .open_path(PathBuf::from(format!("file{index}.rs")), String::new());
+                        .test_open_view(PathBuf::from(format!("file{index}.rs")), String::new());
                 }
                 let first = app.workspace.active_items()[0];
                 app.workspace.set_active(first);
@@ -622,13 +622,13 @@ mod tests {
         let mut app = AppState::new();
         let first = app
             .workspace
-            .open_path(PathBuf::from("first.rs"), String::new());
+            .test_open_view(PathBuf::from("first.rs"), String::new());
         let second = app
             .workspace
-            .open_path(PathBuf::from("second.rs"), String::new());
+            .test_open_view(PathBuf::from("second.rs"), String::new());
         let third = app
             .workspace
-            .open_path(PathBuf::from("third.rs"), String::new());
+            .test_open_view(PathBuf::from("third.rs"), String::new());
         app.workspace.set_active(first);
         app.editor.tabs.tab_drag = Some(TabDragState {
             pane: app.workspace.active_pane(),
@@ -682,7 +682,7 @@ mod tests {
         for count in [100, 500] {
             let mut app = AppState::new();
             for index in 0..count {
-                app.workspace.open_path(
+                app.workspace.test_open_view(
                     PathBuf::from(format!("dir{}/file-{index}.rs", index % 7)),
                     String::new(),
                 );
@@ -711,10 +711,10 @@ mod tests {
         let mut app = AppState::new();
         let first = app
             .workspace
-            .open_path(PathBuf::from("first.rs"), String::new());
+            .test_open_view(PathBuf::from("first.rs"), String::new());
         let second = app
             .workspace
-            .open_path(PathBuf::from("second.rs"), String::new());
+            .test_open_view(PathBuf::from("second.rs"), String::new());
         app.workspace.set_active(first);
         app.editor.tabs.tab_drag = Some(TabDragState {
             pane: app.workspace.active_pane(),
@@ -754,7 +754,7 @@ mod tests {
         );
     }
 
-    fn drag_from(app: &mut AppState, pane: PaneId, source: FileId, x: f32, y: f32) {
+    fn drag_from(app: &mut AppState, pane: PaneId, source: ViewId, x: f32, y: f32) {
         app.editor.tabs.tab_drag = Some(TabDragState {
             pane,
             source,
@@ -772,11 +772,13 @@ mod tests {
         let left = app.workspace.active_pane();
         let keep = app
             .workspace
-            .open_path(PathBuf::from("keep.rs"), String::new());
+            .test_open_view(PathBuf::from("keep.rs"), String::new());
         let moved = app
             .workspace
-            .open_path(PathBuf::from("moved.rs"), String::new());
+            .test_open_view(PathBuf::from("moved.rs"), String::new());
         let right = app.workspace.split(left, Direction::Right).unwrap();
+        let copied = app.workspace.active().unwrap();
+        assert_ne!(copied, moved);
         let regions = [
             region(left, UiRect::new(0.0, 0.0, 600.0, theme::TABS_H)),
             region(right, UiRect::new(600.0, 0.0, 1200.0, theme::TABS_H)),
@@ -794,7 +796,7 @@ mod tests {
         assert!(finish_pointer_interaction(&mut app));
 
         assert_eq!(app.workspace.pane(left).unwrap().items(), &[moved]);
-        assert_eq!(app.workspace.pane(right).unwrap().items(), &[moved, keep]);
+        assert_eq!(app.workspace.pane(right).unwrap().items(), &[copied, keep]);
         assert_eq!(app.workspace.active_pane(), right);
     }
 
@@ -804,10 +806,10 @@ mod tests {
         let pane = app.workspace.active_pane();
         let first = app
             .workspace
-            .open_path(PathBuf::from("first.rs"), String::new());
+            .test_open_view(PathBuf::from("first.rs"), String::new());
         let second = app
             .workspace
-            .open_path(PathBuf::from("second.rs"), String::new());
+            .test_open_view(PathBuf::from("second.rs"), String::new());
         let regions = [region(pane, UiRect::new(0.0, 0.0, 900.0, theme::TABS_H))];
         drag_from(&mut app, pane, second, 200.0, 10.0);
 
@@ -833,7 +835,7 @@ mod tests {
         let pane = app.workspace.active_pane();
         let only = app
             .workspace
-            .open_path(PathBuf::from("only.rs"), String::new());
+            .test_open_view(PathBuf::from("only.rs"), String::new());
         let regions = [region(pane, UiRect::new(0.0, 0.0, 900.0, theme::TABS_H))];
         drag_from(&mut app, pane, only, 40.0, 10.0);
 

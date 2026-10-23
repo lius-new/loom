@@ -1,0 +1,978 @@
+//! File reading host. Documents, commands and I/O stay outside the reusable UI.
+use crate::app::{
+    context::AppContext,
+    markdown_render::{self, Rendered, Status},
+    state::AppState,
+};
+use crate::domain::{
+    identity::{PaneId, ViewId},
+    pane_layout::Direction,
+    view::{Presentation, ReaderPosition},
+};
+use crate::features::markdown::model::*;
+use crate::infrastructure::markdown_worker::ParseStatus;
+use crate::ui::{
+    markdown::{
+        native::Ink,
+        reader::{self, Binding, ReaderEvent, ReaderFrame},
+    },
+    theme,
+};
+use lgui::core::{
+    CursorIcon, EventPolicy, ImageFit, ImageRequest, PointerButton, UiElement, UiFocusHandle, UiId,
+    UiImageSource,
+};
+use lgui::prelude::{Element, UiRect, VisualStyle, group, panel, text};
+use std::sync::Arc;
+
+pub fn eligible(app: &AppState, view: ViewId) -> bool {
+    app.workspace
+        .view_meta(view)
+        .and_then(|meta| meta.path.extension())
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| {
+            ["md", "markdown", "mdown", "mkd"]
+                .iter()
+                .any(|ext| value.eq_ignore_ascii_case(ext))
+        })
+        && app.workspace.view_document(view).is_some()
+}
+fn reset_input(app: &mut AppState) {
+    for state in app.editor.markdown_views.values_mut() {
+        state.pressed = None;
+        state.drag_point = None;
+        state.dragging = false;
+    }
+    app.editor.ime = None;
+    app.editor.drag = None;
+    app.editor.menu = None;
+    app.editor.language.close_popups();
+}
+pub fn toggle(app: &mut AppState) -> bool {
+    let Some(id) = app.workspace.active() else {
+        return false;
+    };
+    if !eligible(app, id) {
+        return false;
+    }
+    let value = if app
+        .workspace
+        .view(id)
+        .is_some_and(|view| view.presentation == Presentation::Markdown)
+    {
+        Presentation::Source
+    } else {
+        Presentation::Markdown
+    };
+    reset_input(app);
+    app.workspace.set_presentation(id, value)
+}
+pub fn side(app: &mut AppState) -> bool {
+    let Some(current) = app.workspace.active() else {
+        return false;
+    };
+    if !eligible(app, current) {
+        return false;
+    }
+    if app
+        .workspace
+        .view(current)
+        .is_some_and(|view| view.presentation == Presentation::Markdown)
+    {
+        if app
+            .workspace
+            .view(current)
+            .and_then(|view| view.associated_source)
+            .and_then(|id| app.workspace.view(id))
+            .is_some_and(|view| view.accepts_text())
+        {
+            return true;
+        }
+        source(app, None);
+    }
+    let Some(source) = app.workspace.active() else {
+        return false;
+    };
+    if let Some(existing) = app
+        .workspace
+        .views
+        .values()
+        .find(|view| {
+            view.associated_source == Some(source) && view.presentation == Presentation::Markdown
+        })
+        .map(|view| view.id)
+    {
+        if let Some(pane) = app.workspace.pane_of(existing) {
+            app.workspace.activate(pane, existing);
+            reset_input(app);
+            return true;
+        }
+    }
+    let pane = app.workspace.active_pane();
+    let Some(new) = app.workspace.split_empty(pane, Direction::Right) else {
+        return false;
+    };
+    if !app.workspace.copy_item(pane, source, new, 0) {
+        return false;
+    }
+    let id = app.workspace.active().unwrap();
+    app.workspace.set_presentation(id, Presentation::Markdown);
+    app.workspace.views.get_mut(&id).unwrap().associated_source = Some(source);
+    reset_input(app);
+    true
+}
+pub fn source(app: &mut AppState, at: Option<usize>) -> bool {
+    let Some(current) = app.workspace.active() else {
+        return false;
+    };
+    let Some(document) = app.workspace.view_document(current) else {
+        return false;
+    };
+    let related = app
+        .workspace
+        .view(current)
+        .and_then(|view| view.associated_source)
+        .filter(|id| {
+            app.workspace
+                .view(*id)
+                .is_some_and(|view| view.document() == Some(document) && view.accepts_text())
+        });
+    let id = related
+        .or_else(|| {
+            app.workspace
+                .views
+                .values()
+                .find(|view| view.document() == Some(document) && view.accepts_text())
+                .map(|view| view.id)
+        })
+        .unwrap_or(current);
+    app.workspace.set_presentation(id, Presentation::Source);
+    if let Some(pane) = app.workspace.pane_of(id) {
+        app.workspace.activate(pane, id);
+        if let Some(at) = at {
+            if let Some(mut editor) = app.workspace.editor_mut(pane) {
+                editor.set_cursor(at);
+            }
+        }
+    }
+    reset_input(app);
+    true
+}
+fn button(rect: UiRect, label: &'static str, action: impl Fn() + Send + Sync + 'static) -> Element {
+    panel(rect, VisualStyle::default())
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .child(text(rect, label, theme::sans(theme::c().accent, 12.0)))
+        .on_click(move |cx: &mut lgui::core::UiEventContext| {
+            action();
+            cx.stop_propagation();
+        })
+}
+pub fn render(
+    pane: PaneId,
+    rect: UiRect,
+    state: AppContext,
+    id: UiId,
+    focus: UiFocusHandle,
+    clipboard: lgui::services::ClipboardHandle,
+) -> Element {
+    let app = state.get();
+    let Some(view) = app
+        .workspace
+        .pane(pane)
+        .and_then(|pane| pane.active())
+        .and_then(|id| app.workspace.view(id))
+        .copied()
+    else {
+        return group(rect);
+    };
+    let header = UiRect::new(rect.left, rect.top, rect.right, rect.top + 28.0);
+    let outline = app
+        .editor
+        .markdown_views
+        .get(&view.id)
+        .is_some_and(|state| state.outline);
+    let mut body = UiRect::new(
+        rect.left
+            + if outline {
+                200.0_f32.min(rect.width() * 0.4)
+            } else {
+                0.0
+            },
+        header.bottom,
+        rect.right,
+        rect.bottom,
+    );
+    let margin =
+        ((body.width() - app.preferences.values().markdown.max_width as f32) * 0.5).max(0.0);
+    body.left += margin;
+    body.right -= margin;
+    let source_state = state.clone();
+    let mut root = lgui::core::clip(header, 0.0, 0.0)
+        .child(panel(header, VisualStyle::filled(theme::c().surface)))
+        .child(button(
+            UiRect::new(rect.left + 10.0, rect.top, rect.left + 110.0, header.bottom),
+            "Open Source",
+            move || {
+                source_state.update(|app| {
+                    app.workspace.activate(pane, view.id);
+                    let at = app
+                        .workspace
+                        .view(view.id)
+                        .map(|view| view.reader.source_byte);
+                    source(app, at);
+                })
+            },
+        ));
+    let remote_state = state.clone();
+    root = root.child(button(
+        UiRect::new(
+            rect.left + 120.0,
+            rect.top,
+            rect.left + 280.0,
+            header.bottom,
+        ),
+        "Load Remote Images",
+        move || {
+            remote_state.update(|app| {
+                if let Some(path) = app
+                    .workspace
+                    .view_meta(view.id)
+                    .map(|meta| meta.path.clone())
+                {
+                    app.editor
+                        .markdown_views
+                        .entry(view.id)
+                        .or_default()
+                        .remote_base = Some(path);
+                }
+            })
+        },
+    ));
+    let outline_state = state.clone();
+    root = root.child(button(
+        UiRect::new(
+            rect.left + 290.0,
+            rect.top,
+            rect.left + 350.0,
+            header.bottom,
+        ),
+        "Outline",
+        move || {
+            outline_state.update(|app| {
+                let value = app.editor.markdown_views.entry(view.id).or_default();
+                value.outline = !value.outline;
+            })
+        },
+    ));
+    let sync_state = state.clone();
+    root = root.child(button(
+        UiRect::new(
+            rect.left + 360.0,
+            rect.top,
+            rect.left + 450.0,
+            header.bottom,
+        ),
+        "Sync Scroll",
+        move || {
+            sync_state.update(|app| {
+                let value = app.editor.markdown_views.entry(view.id).or_default();
+                value.sync_scroll = !value.sync_scroll;
+            })
+        },
+    ));
+    let larger = state.clone();
+    root = root.child(button(
+        UiRect::new(
+            rect.left + 460.0,
+            rect.top,
+            rect.left + 570.0,
+            header.bottom,
+        ),
+        "Larger Preview",
+        move || {
+            larger.update(|app| {
+                app.apply(crate::features::keymap::action::Action::MarkdownLargePreview)
+            })
+        },
+    ));
+    let mut root = group(rect).child(root);
+    let Some(service) = state.services().and_then(|runtime| runtime.markdown()) else {
+        return root;
+    };
+    let status = match service.query(&app, view.id) {
+        Some(ParseStatus::Ready(publication)) => {
+            if let Err(failure) = &publication.outcome {
+                Status::Failed(format!(
+                    "Markdown preview unavailable: {:?}. The complete source remains available.",
+                    failure.reason
+                ))
+            } else {
+                let ink = Ink::current();
+                service.render.request(markdown_render::Request {
+                    view: crate::infrastructure::markdown_worker::Consumer::Document(view.id),
+                    key: markdown_render::RequestKey {
+                        parse: publication.revision,
+                        width: body.width().max(1.0),
+                        height: body.height().max(1.0),
+                        position: view.reader,
+                        ink,
+                        density: 2.0,
+                        font_size: app.preferences.values().markdown.font_size as f32,
+                        line_height: (app.preferences.values().markdown.line_height as f32)
+                            .max(app.preferences.values().markdown.font_size as f32 * 1.2),
+                        fragment: app
+                            .editor
+                            .markdown_views
+                            .get(&view.id)
+                            .and_then(|value| value.fragment.clone()),
+                        horizontal: {
+                            let mut entries = app
+                                .editor
+                                .markdown_views
+                                .get(&view.id)
+                                .filter(|value| value.revision == publication.revision)
+                                .map(|value| {
+                                    value
+                                        .horizontal
+                                        .iter()
+                                        .map(|(id, value)| (*id, *value))
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+                            entries.sort_by_key(|(id, _)| id.0);
+                            entries
+                        },
+                        base: app
+                            .workspace
+                            .view_meta(view.id)
+                            .map(|meta| meta.path.clone()),
+                        remote: app
+                            .editor
+                            .markdown_views
+                            .get(&view.id)
+                            .and_then(|value| value.remote_base.as_ref())
+                            .is_some_and(|path| {
+                                app.workspace
+                                    .view_meta(view.id)
+                                    .is_some_and(|meta| meta.path == *path)
+                            }),
+                    },
+                    publication,
+                })
+            }
+        }
+        Some(ParseStatus::Declined(failure)) => Status::Failed(format!(
+            "Markdown preview limit: {:?}. Use Open Source to read the complete document.",
+            failure.reason
+        )),
+        Some(ParseStatus::Stopped) => Status::Failed("Markdown service stopped".into()),
+        _ => Status::Pending,
+    };
+    match status {
+        Status::Ready(result) => {
+            let read_state = state.clone();
+            let read_result = result.clone();
+            let emit_state = state.clone();
+            let emit_result = result.clone();
+            let paint_result = result.clone();
+            let image_result = result.clone();
+            let binding = Binding::new(
+                move || frame_for(&read_state.get(), view.id, &read_result),
+                move |action| {
+                    event(
+                        &emit_state,
+                        pane,
+                        view.id,
+                        view.input_generation,
+                        &emit_result,
+                        action,
+                        clipboard.clone(),
+                    )
+                },
+                move |_, paragraph, bounds, _| paint(&paint_result, paragraph, bounds),
+            )
+            .with_images(move |frame, image, bounds| {
+                paint_image(&image_result, frame, image, bounds)
+            });
+            root = root.child(reader::render(id, body, binding, focus));
+            if outline {
+                root = root.child(outline_panel(
+                    &state,
+                    view.id,
+                    &result,
+                    UiRect::new(rect.left, header.bottom, body.left, rect.bottom),
+                ));
+            }
+        }
+        Status::Pending => {
+            root = root.child(status_surface(
+                id,
+                body,
+                "Preparing Markdown preview…".into(),
+                focus,
+                state.clone(),
+                pane,
+            ));
+        }
+        Status::Failed(message) => {
+            root = root.child(status_surface(
+                id,
+                body,
+                message,
+                focus,
+                state.clone(),
+                pane,
+            ));
+        }
+    }
+    root
+}
+pub(super) fn paint(result: &Rendered, paragraph: usize, bounds: UiRect) -> Element {
+    let mut root = group(bounds);
+    for tile in result
+        .tiles
+        .iter()
+        .filter(|tile| tile.paragraph == paragraph)
+    {
+        let rect = UiRect::new(
+            bounds.left + tile.left,
+            bounds.top + tile.top,
+            bounds.left + tile.left + tile.width,
+            bounds.top + tile.top + tile.height,
+        );
+        let source = UiImageSource::bytes(
+            format!("markdown-png-{}", Arc::as_ptr(&tile.png) as usize),
+            0,
+            tile.png.clone(),
+        );
+        let request = ImageRequest::new(source)
+            .cache_policy(lgui::memory::ImageCachePolicy::WhileVisible)
+            .namespace("markdown-reader");
+        let id = UiId::owned(format!(
+            "markdown-tile-{}-{paragraph}-{}",
+            result.frame.layout,
+            tile.top.to_bits()
+        ));
+        root = root.child(Element::new(move |_| {
+            UiElement::requested_image(id, rect, request, ImageFit::Fill)
+        }));
+    }
+    root
+}
+pub(super) fn event(
+    state: &AppContext,
+    pane: PaneId,
+    view: ViewId,
+    generation: u64,
+    result: &Arc<Rendered>,
+    action: ReaderEvent,
+    clipboard: lgui::services::ClipboardHandle,
+) {
+    let Some(service) = state.services().and_then(|runtime| runtime.markdown()) else {
+        return;
+    };
+    let current_frame = service.render.is_current(
+        crate::infrastructure::markdown_worker::Consumer::Document(view),
+        result.frame,
+    );
+    let mut effects = crate::features::markdown::reader::Effects::default();
+    let activate = matches!(action, ReaderEvent::PointerDown { .. });
+    state.update(|app| {
+        if !app.workspace.view(view).is_some_and(|value| {
+            value.presentation == Presentation::Markdown && value.input_generation == generation
+        }) || app.workspace.pane(pane).and_then(|pane| pane.active()) != Some(view)
+        {
+            return;
+        }
+        if let ReaderEvent::Focus(focused) = action {
+            app.editor.focused = focused;
+            app.editor.ime = None;
+            if focused {
+                app.workspace.activate_pane(pane);
+            } else {
+                crate::features::markdown::reader::cancel_gesture(
+                    app.editor.markdown_views.entry(view).or_default(),
+                );
+            }
+            return;
+        }
+        if activate {
+            app.editor.focused = true;
+            app.editor.ime = None;
+            app.workspace.activate(pane, view);
+        }
+        if !current_frame
+            || service.query(app, view).and_then(|value| match value {
+                ParseStatus::Ready(publication) => Some(publication.revision),
+                _ => None,
+            }) != Some(result.frame.parse)
+        {
+            if action.ends_gesture() {
+                crate::features::markdown::reader::cancel_gesture(
+                    app.editor.markdown_views.entry(view).or_default(),
+                );
+                if matches!(action, ReaderEvent::Focus(false)) {
+                    app.editor.focused = false;
+                }
+            }
+            return;
+        }
+        let mut frame = frame_for(app, view, result);
+        let interaction = app.editor.markdown_views.entry(view).or_default();
+        if interaction.fragment.take().is_some() {
+            frame.viewport = result.viewport;
+        }
+        let (viewport, output) =
+            crate::features::markdown::reader::reduce(interaction, &frame, action);
+        let sync = interaction.sync_scroll;
+        effects = output;
+        if let Some(focused) = effects.focus {
+            app.editor.focused = focused;
+            app.editor.ime = None;
+            if focused {
+                app.workspace.activate_pane(pane);
+            }
+        }
+        if activate {
+            app.workspace.activate(pane, view);
+        }
+        let anchor = viewport.anchor(&result.layout);
+        app.workspace.set_reader_position(
+            view,
+            ReaderPosition {
+                source_byte: anchor.source.0,
+                block_fraction: anchor.fraction,
+            },
+        );
+        if sync {
+            if let Some(source) = app
+                .workspace
+                .view(view)
+                .and_then(|value| value.associated_source)
+            {
+                let line = app
+                    .workspace
+                    .view_document(source)
+                    .and_then(|id| app.workspace.documents.get(&id))
+                    .map_or(0, |doc| doc.buffer.line_of(anchor.source.0));
+                if let Some(source) = app.workspace.views.get_mut(&source) {
+                    source.source.scroll_y = line as f32 * crate::ui::fonts::editor().line_h;
+                }
+            }
+        }
+    });
+    if let Some(copy) = effects.copy {
+        if let Err(error) = clipboard.write_text(&copy) {
+            state.update(|app| app.show_error(format!("Clipboard: {error}")));
+        }
+    }
+    if let Some(node) = effects.link {
+        open_link(state, pane, view, result, node);
+    }
+    service.schedule_drag(crate::infrastructure::markdown_worker::Consumer::Document(
+        view,
+    ));
+}
+pub(super) fn frame_for(app: &AppState, view: ViewId, result: &Rendered) -> ReaderFrame {
+    let interaction = app
+        .editor
+        .markdown_views
+        .get(&view)
+        .cloned()
+        .unwrap_or_default();
+    let mut viewport = result.viewport;
+    if interaction.fragment.is_none() {
+        if let Some(view) = app.workspace.view(view) {
+            viewport.restore(
+                &result.layout,
+                crate::features::markdown::reader::ReadingAnchor {
+                    source: SourceByte(view.reader.source_byte),
+                    fraction: view.reader.block_fraction,
+                },
+            );
+        }
+    }
+    ReaderFrame {
+        key: result.frame,
+        document: result.layout.document.clone(),
+        layout: result.layout.clone(),
+        viewport,
+        selection: interaction.selection,
+        geometry: markdown_render::geometry_for(result, viewport, &interaction.horizontal),
+        geometry_key: result.frame,
+        horizontal: if interaction.revision == result.frame.parse {
+            interaction.horizontal
+        } else {
+            Default::default()
+        },
+        focused: app.editor.focused,
+        extend_selection: app.editor.modifiers.shift(),
+    }
+}
+fn open_link(state: &AppContext, pane: PaneId, view: ViewId, result: &Rendered, node: NodeId) {
+    let Some(NodeKind::Link { destination, .. }) =
+        result.layout.document.node(node).map(|node| &node.kind)
+    else {
+        return;
+    };
+    let base = state
+        .get()
+        .workspace
+        .view_meta(view)
+        .map(|meta| meta.path.clone());
+    use crate::features::markdown::resources::{Address, resolve};
+    match resolve(base.as_deref(), destination) {
+        Some(Address::Web(url)) => crate::app::language_ui::open_link(state, url),
+        Some(Address::Anchor(fragment)) => {
+            if let Some((_, node)) =
+                crate::features::markdown::resources::headings(&result.layout.document)
+                    .iter()
+                    .find(|(slug, _)| *slug == fragment)
+            {
+                let at = result.layout.document.nodes[node.0].source.start.0;
+                state.update(|app| {
+                    app.editor.markdown_views.entry(view).or_default().fragment = None;
+                    app.workspace.set_reader_position(
+                        view,
+                        ReaderPosition {
+                            source_byte: at,
+                            block_fraction: 0.0,
+                        },
+                    );
+                });
+            } else {
+                state.update(|app| app.show_error(format!("Heading not found: {fragment}")));
+            }
+        }
+        Some(Address::Local { path, fragment }) => {
+            let loader = state.services().and_then(|runtime| runtime.file_loader());
+            state.update(|app| {
+                app.workspace.activate_pane(pane);
+                if let Some(document) = app.workspace.file_id_for_path(&path) {
+                    app.workspace.activate_document(document);
+                    if let Some(view) = app.workspace.active() {
+                        finish_navigation(app, view, fragment);
+                    }
+                } else if crate::app::file_loading::request(
+                    app,
+                    path,
+                    crate::app::workspace::OpenMode::Permanent,
+                    None,
+                    loader.as_ref(),
+                ) {
+                    if let Some(pending) = app.editor.pending_file.as_mut() {
+                        pending.markdown = true;
+                        pending.markdown_fragment = fragment;
+                    }
+                }
+            });
+        }
+        None => state.update(|app| app.show_error("Unsupported Markdown link")),
+    }
+}
+pub fn finish_navigation(app: &mut AppState, view: ViewId, fragment: Option<String>) {
+    if eligible(app, view) {
+        app.workspace.set_presentation(view, Presentation::Markdown);
+        app.editor.markdown_views.entry(view).or_default().fragment = fragment;
+    }
+}
+pub fn sync_sources(app: &mut AppState) {
+    let Some(active) = app
+        .workspace
+        .active()
+        .and_then(|id| app.workspace.view(id))
+        .copied()
+        .filter(|view| view.accepts_text())
+    else {
+        return;
+    };
+    let Some(document) = active
+        .document()
+        .and_then(|id| app.workspace.documents.get(&id))
+    else {
+        return;
+    };
+    let height = crate::ui::fonts::editor().line_h.max(1.0);
+    let line = (active.source.scroll_y / height).max(0.0) as usize;
+    let source = document
+        .buffer
+        .line_start(line.min(document.buffer.line_count().saturating_sub(1)));
+    let previews = app
+        .workspace
+        .views
+        .values()
+        .filter(|view| {
+            view.associated_source == Some(active.id)
+                && view.presentation == Presentation::Markdown
+                && app
+                    .editor
+                    .markdown_views
+                    .get(&view.id)
+                    .is_some_and(|state| state.sync_scroll)
+        })
+        .map(|view| view.id)
+        .collect::<Vec<_>>();
+    for id in previews {
+        app.workspace.set_reader_position(
+            id,
+            ReaderPosition {
+                source_byte: source,
+                block_fraction: 0.0,
+            },
+        );
+    }
+}
+fn outline_panel(state: &AppContext, view: ViewId, result: &Rendered, rect: UiRect) -> Element {
+    let top = state
+        .get()
+        .editor
+        .markdown_views
+        .get(&view)
+        .map_or(0.0, |value| value.outline_top);
+    let row = 24.0;
+    let count = result.layout.document.headings.len();
+    let max = (count as f32 * row - rect.height()).max(0.0);
+    let top = top.clamp(0.0, max);
+    let mut root = lgui::core::clip(rect, 0.0, 0.0)
+        .child(panel(rect, VisualStyle::filled(theme::c().sidebar)));
+    let first = (top / row) as usize;
+    let end = (first + (rect.height() / row).ceil() as usize + 1).min(count);
+    for index in first..end {
+        let heading = &result.layout.document.headings[index];
+        let title = result
+            .layout
+            .document
+            .text(heading.display.clone())
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        let target = heading.source.start.0;
+        let y = rect.top + index as f32 * row - top;
+        let click = state.clone();
+        let bounds = UiRect::new(
+            rect.left + 6.0 + (heading.level.saturating_sub(1)) as f32 * 8.0,
+            y,
+            rect.right - 4.0,
+            y + row,
+        );
+        root = root.child(
+            panel(bounds, VisualStyle::default())
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .child(text(bounds, title, theme::sans(theme::c().text_soft, 12.0)))
+                .on_click(move |cx: &mut lgui::core::UiEventContext| {
+                    click.update(|app| {
+                        app.editor.markdown_views.entry(view).or_default().fragment = None;
+                        app.workspace.set_reader_position(
+                            view,
+                            ReaderPosition {
+                                source_byte: target,
+                                block_fraction: 0.0,
+                            },
+                        );
+                    });
+                    cx.stop_propagation();
+                }),
+        );
+    }
+    let scroll = state.clone();
+    root.event_policy(EventPolicy::INTERACTIVE)
+        .on_wheel(move |cx, delta| {
+            let amount = match delta.unit {
+                lgui::core::WheelUnit::Lines => -delta.y * row * 3.0,
+                lgui::core::WheelUnit::Pixels => -delta.y,
+            };
+            scroll.update(|app| {
+                app.editor
+                    .markdown_views
+                    .entry(view)
+                    .or_default()
+                    .outline_top = (top + amount).clamp(0.0, max)
+            });
+            cx.stop_propagation();
+        })
+}
+pub fn key_action(
+    state: &AppContext,
+    action: crate::features::keymap::action::Action,
+    clipboard: lgui::services::ClipboardHandle,
+) -> bool {
+    use crate::features::keymap::action::Action;
+    let app = state.get();
+    if app.main_surface() != crate::app::state::MainSurface::Markdown || !app.editor.focused {
+        return false;
+    }
+    let Some(view) = app
+        .workspace
+        .active()
+        .and_then(|id| app.workspace.view(id))
+        .copied()
+    else {
+        return false;
+    };
+    let Some(result) = state
+        .services()
+        .and_then(|runtime| runtime.markdown())
+        .and_then(|service| {
+            service
+                .render
+                .latest(crate::infrastructure::markdown_worker::Consumer::Document(
+                    view.id,
+                ))
+        })
+    else {
+        return false;
+    };
+    let command = match action {
+        Action::Copy => ReaderEvent::Copy { key: result.frame },
+        Action::SelectAll => ReaderEvent::SelectAll { key: result.frame },
+        Action::Cancel => ReaderEvent::ClearSelection { key: result.frame },
+        _ => return action.editor_command(1).is_some(),
+    };
+    let pane = app.workspace.active_pane();
+    drop(app);
+    event(
+        state,
+        pane,
+        view.id,
+        view.input_generation,
+        &result,
+        command,
+        clipboard,
+    );
+    true
+}
+
+fn paint_image(
+    result: &Rendered,
+    frame: &ReaderFrame,
+    image: &crate::features::markdown::layout::ImageBox,
+    bounds: UiRect,
+) -> Element {
+    let alt = frame
+        .document
+        .text(image.display.clone())
+        .unwrap_or("Image");
+    let accessible_alt = alt.to_owned();
+    let resource_id = UiId::owned(format!(
+        "markdown-resource-{}-{}",
+        result.frame.layout, image.node.0
+    ));
+    match result.images.get(&image.node).map(|asset| &asset.outcome) {
+        Some(Ok(image)) => {
+            let source = UiImageSource::bytes(
+                format!("md-image-{}", Arc::as_ptr(&image.encoded) as usize),
+                0,
+                image.encoded.clone(),
+            );
+            let request = ImageRequest::new(source)
+                .cache_policy(lgui::memory::ImageCachePolicy::WhileVisible)
+                .namespace("markdown-resources");
+            Element::new(move |_| {
+                UiElement::requested_image(resource_id, bounds, request, ImageFit::Contain)
+                    .semantics(
+                        lgui::core::Semantics::new(lgui::core::SemanticRole::Image)
+                            .name(accessible_alt),
+                    )
+            })
+        }
+        value => {
+            let message = value
+                .and_then(|value| value.as_ref().err())
+                .map_or("Image pending", String::as_str);
+            panel(bounds, VisualStyle::filled(theme::c().surface)).child(text(
+                bounds,
+                format!("{alt}\n{message}"),
+                theme::sans(theme::c().text_soft, 12.0),
+            ))
+        }
+    }
+}
+
+fn status_surface(
+    id: UiId,
+    rect: UiRect,
+    message: String,
+    focus: UiFocusHandle,
+    state: AppContext,
+    pane: PaneId,
+) -> Element {
+    let description = message.clone();
+    let mut root = Element::new(move |cx| {
+        UiElement::panel(id, rect, VisualStyle::filled(theme::c().bg))
+            .semantics(
+                lgui::core::Semantics::new(lgui::core::SemanticRole::Group)
+                    .name("Markdown preview")
+                    .description(description),
+            )
+            .children(cx.children)
+    })
+    .event_policy(EventPolicy::INTERACTIVE)
+    .child(text(rect, message, theme::sans(theme::c().text_soft, 14.0)));
+    for kind in [
+        lgui::core::UiEventKind::Input,
+        lgui::core::UiEventKind::CompositionStart,
+        lgui::core::UiEventKind::CompositionUpdate,
+        lgui::core::UiEventKind::CompositionEnd,
+    ] {
+        root = root.on_event_capture(kind, |cx, _| {
+            cx.prevent_default();
+            cx.stop_propagation();
+        });
+    }
+    root.on_pointer_down_with_button(move |cx, _, button| {
+        if button == PointerButton::Left {
+            focus.focus();
+            state.update(|app| {
+                app.workspace.activate_pane(pane);
+                app.editor.focused = true;
+                app.editor.ime = None;
+            });
+            cx.stop_propagation();
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn linked_preview_reuses_document_and_repeated_command_reuses_view() {
+        let mut app = AppState::new();
+        let doc = app
+            .workspace
+            .open_path("README.md".into(), "# unsaved".into());
+        let source_view = app.workspace.active().unwrap();
+        let source_pane = app.workspace.active_pane();
+        assert!(side(&mut app));
+        let preview = app.workspace.active().unwrap();
+        assert_ne!(preview, source_view);
+        assert_eq!(app.workspace.view_document(preview), Some(doc));
+        assert_eq!(app.workspace.documents.len(), 1);
+        assert_eq!(
+            app.pane_surface(app.workspace.active_pane()),
+            crate::app::state::MainSurface::Markdown
+        );
+        app.workspace.activate(source_pane, source_view);
+        assert!(side(&mut app));
+        assert_eq!(app.workspace.active(), Some(preview));
+        assert_eq!(app.workspace.views.len(), 2);
+        assert!(source(&mut app, Some(2)));
+        assert_eq!(app.workspace.active(), Some(source_view));
+        assert_eq!(app.workspace.active_editor().unwrap().cursor(), 2);
+    }
+    #[test]
+    fn toggling_is_read_only_and_keeps_view_identity() {
+        let mut app = AppState::new();
+        let doc = app.workspace.open_path("文档.MD".into(), "正文".into());
+        let view = app.workspace.active().unwrap();
+        assert!(toggle(&mut app));
+        assert!(app.workspace.active_editor_mut().is_none());
+        assert_eq!(app.workspace.active_document(), Some(doc));
+        assert_eq!(app.workspace.active(), Some(view));
+        assert!(toggle(&mut app));
+        assert!(app.workspace.active_editor_mut().is_some());
+        assert_eq!(app.workspace.active(), Some(view));
+    }
+}

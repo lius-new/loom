@@ -325,10 +325,7 @@ fn apply_steps(
                         app.workspace.open_path(planned.path.clone(), text)
                     }
                 };
-                let Some(pane) = app.workspace.pane_of(id) else {
-                    return Err("a changed file has no view".to_owned());
-                };
-                let Some(mut editor) = app.workspace.view_editor_mut(pane, id) else {
+                let Some(mut editor) = app.workspace.document_editor_mut(id) else {
                     return Err("a changed file cannot be edited".to_owned());
                 };
                 let cursor = editor.cursor();
@@ -404,9 +401,7 @@ fn apply_steps(
         }
     }
     for id in &documents {
-        if let Some(pane) = app.workspace.pane_of(*id)
-            && let Some(mut editor) = app.workspace.view_editor_mut(pane, *id)
-        {
+        if let Some(mut editor) = app.workspace.document_editor_mut(*id) {
             editor.end_transaction();
         }
     }
@@ -584,6 +579,7 @@ fn logical_exists(path: &std::path::Path, steps: &[Step]) -> bool {
 /// Undoes or redoes the change spanning several documents that the active one
 /// is part of. `None` when the active document's next step is not one.
 pub fn undo_redo(app: &mut AppState, undo: bool) -> Option<Result<(), String>> {
+    app.workspace.active_editor()?;
     let top = |app: &AppState, id: FileId| {
         app.workspace.documents.get(&id).and_then(|d| {
             if undo {
@@ -593,7 +589,7 @@ pub fn undo_redo(app: &mut AppState, undo: bool) -> Option<Result<(), String>> {
             }
         })
     };
-    let active = app.workspace.active()?;
+    let active = app.workspace.active_document()?;
     let transaction = top(app, active)?;
     let documents = app.editor.language.transactions.get(&transaction)?.clone();
     for id in &documents {
@@ -604,8 +600,7 @@ pub fn undo_redo(app: &mut AppState, undo: bool) -> Option<Result<(), String>> {
         }
     }
     for id in documents {
-        let pane = app.workspace.pane_of(id)?;
-        let mut editor = app.workspace.view_editor_mut(pane, id)?;
+        let mut editor = app.workspace.document_editor_mut(id)?;
         if undo {
             editor.undo();
         } else {
@@ -768,7 +763,7 @@ mod tests {
         apply_now(&mut app, &request, HashMap::new()).unwrap();
         // Edit the first file after the transaction.
         let first = app.workspace.file_id_for_path(&paths[0]).unwrap();
-        app.workspace.reveal(first);
+        app.workspace.activate_document(first);
         {
             let mut editor = app.workspace.active_editor_mut().unwrap();
             editor.set_cursor(2);
@@ -778,7 +773,7 @@ mod tests {
         assert_eq!(undo_redo(&mut app, true), None);
         // From the other file the transaction is blocked.
         let second = app.workspace.file_id_for_path(&paths[1]).unwrap();
-        app.workspace.reveal(second);
+        app.workspace.activate_document(second);
         let refused = undo_redo(&mut app, true).unwrap();
         assert!(refused.unwrap_err().contains("edited since"));
         assert_eq!(text_of(&app, &paths[1]), "Yb");

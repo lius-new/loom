@@ -359,8 +359,9 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
     }
     app.editor.language.refactor = None;
     let target = &pending.target;
-    let same_document = app.workspace.active_pane() == target.pane
-        && app.workspace.pane(target.pane).and_then(|p| p.active()) == Some(target.document);
+    let same_document = super::target(app, target.pane).is_some_and(|now| now.same_view(target))
+        && app.workspace.active_pane() == target.pane
+        && app.workspace.pane(target.pane).and_then(|p| p.active()) == Some(target.view);
     let mut effects = Vec::new();
     match &pending.wanted {
         Wanted::PrepareRename => {
@@ -465,7 +466,8 @@ pub fn tick(app: &mut AppState) -> Vec<Effect> {
         Wanted::OnType => {
             // Only while the text is as it was when asked: typing on makes the
             // answer wrong.
-            let now = super::target(app, target.pane).filter(|t| t.stamp == target.stamp);
+            let now = super::target(app, target.pane)
+                .filter(|t| t.same_view(target) && t.stamp == target.stamp);
             if let (Some(part), Some(link), Some(_)) = (
                 progress.usable(Feature::OnTypeFormatting).first(),
                 uri::file_uri(&target.path),

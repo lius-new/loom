@@ -36,8 +36,15 @@ pub use key::Key;
 pub use register::Clipboard;
 use register::Registers;
 
-/// One editor view: a document shown in a pane.
-pub type ViewId = (PaneId, FileId);
+/// Source interaction ownership. Marks remain keyed by document; mode state
+/// belongs to one presentation and is invalidated when that presentation changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewKey {
+    pub pane: PaneId,
+    pub document: FileId,
+    pub view: crate::identity::ViewId,
+    pub input_generation: u64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VisualKind {
@@ -270,7 +277,7 @@ struct LastVisual {
 pub struct Vim {
     pub options: Options,
     mode: Mode,
-    view: Option<ViewId>,
+    view: Option<ViewKey>,
     /// Keys of the Normal or Visual mode command being typed.
     keys: Vec<Key>,
     command_line: Option<CommandLine>,
@@ -310,7 +317,7 @@ impl Vim {
     }
 
     /// The view the current mode belongs to.
-    pub fn view(&self) -> Option<ViewId> {
+    pub fn view(&self) -> Option<ViewKey> {
         self.view
     }
 
@@ -375,7 +382,7 @@ impl Vim {
 
     /// Make `view` the active one. Called before Vim handles input for it; a
     /// different view first leaves the previous one.
-    pub fn enter_view(&mut self, view: ViewId, editor: &mut EditorMut<'_>) {
+    pub fn enter_view(&mut self, view: ViewKey, editor: &mut EditorMut<'_>) {
         if self.view == Some(view) {
             return;
         }
