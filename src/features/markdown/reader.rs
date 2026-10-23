@@ -172,7 +172,8 @@ pub struct InteractionState {
     pub pressed: Option<(u64, DisplayByte, Option<NodeId>)>,
     pub dragging: bool,
     pub outline: bool,
-    pub sync_scroll: bool,
+    /// Source scroll and reader byte as of the last source/preview sync.
+    pub synced: Option<(f32, usize)>,
     pub remote_base: Option<std::path::PathBuf>,
     pub fragment: Option<String>,
     pub outline_top: f32,

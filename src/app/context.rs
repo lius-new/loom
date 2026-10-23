@@ -53,6 +53,9 @@ impl AppContext {
         self.model.try_update(|app| {
             let before = app.editor.pending_file.as_ref().map(|p| p.generation);
             let changed = change(app);
+            if changed {
+                super::markdown_view::sync_sources(app);
+            }
             self.invalidate_cancelled(before, app);
             self.sync_document_services(app);
             super::language_ui::observe(self, app);

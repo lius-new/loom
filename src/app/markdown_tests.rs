@@ -246,6 +246,89 @@ fn current_buffer_reparses_and_old_publications_cannot_drive_new_events() {
 }
 
 #[test]
+fn a_split_editor_and_preview_of_one_document_sync_without_association() {
+    use crate::domain::view::ReaderPosition;
+    let text = (0..100).map(|n| format!("line {n}\n")).collect::<String>();
+    let mut app = AppState::new();
+    app.workspace.open_path("pair.md".into(), text.clone());
+    let source = app.workspace.active().unwrap();
+    let pane = app.workspace.active_pane();
+    let right = app
+        .workspace
+        .split_empty(pane, crate::domain::pane_layout::Direction::Right)
+        .unwrap();
+    assert!(app.workspace.copy_item(pane, source, right, 0));
+    let preview = app.workspace.active().unwrap();
+    app.workspace
+        .set_presentation(preview, Presentation::Markdown);
+    assert_eq!(app.workspace.view(preview).unwrap().associated_source, None);
+
+    let height = crate::ui::fonts::editor().line_h.max(1.0);
+    app.workspace
+        .views
+        .get_mut(&source)
+        .unwrap()
+        .source
+        .scroll_y = 30.0 * height;
+    super::markdown_view::sync_sources(&mut app);
+    assert_eq!(
+        app.workspace.view(preview).unwrap().reader.source_byte,
+        text.find("line 30").unwrap()
+    );
+    app.workspace.set_reader_position(
+        preview,
+        ReaderPosition {
+            source_byte: text.find("line 70").unwrap(),
+            block_fraction: 0.0,
+        },
+    );
+    super::markdown_view::sync_sources(&mut app);
+    assert_eq!(
+        app.workspace.view(source).unwrap().source.scroll_y,
+        70.0 * height
+    );
+}
+#[test]
+fn associated_source_and_preview_follow_whichever_side_moves() {
+    let text = (0..200).map(|n| format!("line {n}\n")).collect::<String>();
+    let mut app = AppState::new();
+    app.workspace.open_path("sync.md".into(), text.clone());
+    let source = app.workspace.active().unwrap();
+    assert!(super::markdown_view::side(&mut app));
+    let preview = app.workspace.active().unwrap();
+    let height = crate::ui::fonts::editor().line_h.max(1.0);
+
+    app.workspace
+        .views
+        .get_mut(&source)
+        .unwrap()
+        .source
+        .scroll_y = 50.0 * height;
+    super::markdown_view::sync_sources(&mut app);
+    let moved = app.workspace.view(preview).unwrap().reader.source_byte;
+    assert_eq!(moved, text.find("line 50").unwrap());
+
+    let target = text.find("line 120").unwrap();
+    app.workspace.set_reader_position(
+        preview,
+        crate::domain::view::ReaderPosition {
+            source_byte: target,
+            block_fraction: 0.0,
+        },
+    );
+    super::markdown_view::sync_sources(&mut app);
+    assert_eq!(
+        app.workspace.view(source).unwrap().source.scroll_y,
+        120.0 * height
+    );
+    super::markdown_view::sync_sources(&mut app);
+    assert_eq!(
+        app.workspace.view(preview).unwrap().reader.source_byte,
+        target
+    );
+}
+
+#[test]
 fn side_preview_association_survives_session_with_runtime_ids_reallocated() {
     let mut app = AppState::new();
     app.workspace

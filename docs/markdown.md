@@ -21,11 +21,13 @@ anchor in source. Repeating side preview reuses its association. Copying a tab
 creates a separate view; moving it preserves its identity. Closing or converting
 the associated source safely detaches the preview.
 
-The reader toolbar provides **Outline**, **Sync Scroll**, **Load Remote Images**
-and **Larger Preview**. In a narrow pane, scroll the toolbar horizontally to
-reach the remaining controls. Outline entries navigate by source anchors. Sync Scroll
-follows the focused member of an associated source/preview pair, preventing a
-feedback loop. Session restore keeps view modes, positions and associations.
+The reader toolbar provides **Outline**, **Load Remote Images** and **Larger
+Preview**. In a narrow pane, scroll the toolbar horizontally to reach the
+remaining controls. Outline entries navigate by source anchors. A
+source/preview pair scrolls together: an editor and a preview of the same
+document in different panes need no explicit association. Whichever side moved
+drives the other, with no focus requirement and no feedback loop. Session
+restore keeps view modes, positions and associations.
 
 ## Reading and copying
 

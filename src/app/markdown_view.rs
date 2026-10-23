@@ -213,7 +213,7 @@ pub fn render(
     let mut root = group(UiRect::new(
         rect.left,
         rect.top,
-        rect.left + 580.0_f32.max(header.width()),
+        rect.left + 480.0_f32.max(header.width()),
         header.bottom,
     ))
     .child(button(
@@ -271,28 +271,12 @@ pub fn render(
             })
         },
     ));
-    let sync_state = state.clone();
+    let larger = state.clone();
     root = root.child(button(
         UiRect::new(
             rect.left + 360.0,
             rect.top,
-            rect.left + 450.0,
-            header.bottom,
-        ),
-        "Sync Scroll",
-        move || {
-            sync_state.update(|app| {
-                let value = app.editor.markdown_views.entry(view.id).or_default();
-                value.sync_scroll = !value.sync_scroll;
-            })
-        },
-    ));
-    let larger = state.clone();
-    root = root.child(button(
-        UiRect::new(
-            rect.left + 460.0,
-            rect.top,
-            rect.left + 570.0,
+            rect.left + 470.0,
             header.bottom,
         ),
         "Larger Preview",
@@ -304,7 +288,7 @@ pub fn render(
         },
     ));
     let toolbar = panel(header, VisualStyle::filled(theme::c().surface)).child(
-        lgui::prelude::scroll_view(header, (580.0_f32.max(header.width()), 28.0))
+        lgui::prelude::scroll_view(header, (480.0_f32.max(header.width()), 28.0))
             .horizontal()
             .child(root),
     );
@@ -545,7 +529,6 @@ pub(super) fn event(
         }
         let (viewport, output) =
             crate::features::markdown::reader::reduce(interaction, &frame, action);
-        let sync = interaction.sync_scroll;
         effects = output;
         if let Some(focused) = effects.focus {
             app.editor.focused = focused;
@@ -565,22 +548,6 @@ pub(super) fn event(
                 block_fraction: anchor.fraction,
             },
         );
-        if sync {
-            if let Some(source) = app
-                .workspace
-                .view(view)
-                .and_then(|value| value.associated_source)
-            {
-                let line = app
-                    .workspace
-                    .view_document(source)
-                    .and_then(|id| app.workspace.documents.get(&id))
-                    .map_or(0, |doc| doc.buffer.line_of(anchor.source.0));
-                if let Some(source) = app.workspace.views.get_mut(&source) {
-                    source.source.scroll_y = line as f32 * crate::ui::fonts::editor().line_h;
-                }
-            }
-        }
     });
     if let Some(copy) = effects.copy {
         if let Err(error) = clipboard.write_text(&copy) {
@@ -697,50 +664,100 @@ pub fn finish_navigation(app: &mut AppState, view: ViewId, fragment: Option<Stri
         app.editor.markdown_views.entry(view).or_default().fragment = fragment;
     }
 }
+/// Keeps every associated source/preview pair at the same place. Whichever
+/// side moved since the last pass drives the other, so neither needs focus and
+/// the two cannot feed back into each other.
 pub fn sync_sources(app: &mut AppState) {
-    let Some(active) = app
+    // A preview pairs with the visible editor of the same document in another
+    // pane: its recorded source first, otherwise any such editor.
+    let mut panes = app
         .workspace
-        .active()
-        .and_then(|id| app.workspace.view(id))
-        .copied()
-        .filter(|view| view.accepts_text())
-    else {
-        return;
-    };
-    let Some(document) = active
-        .document()
-        .and_then(|id| app.workspace.documents.get(&id))
-    else {
-        return;
-    };
-    let height = crate::ui::fonts::editor().line_h.max(1.0);
-    let line = (active.source.scroll_y / height).max(0.0) as usize;
-    let source = document
-        .buffer
-        .line_start(line.min(document.buffer.line_count().saturating_sub(1)));
-    let previews = app
-        .workspace
-        .views
-        .values()
-        .filter(|view| {
-            view.associated_source == Some(active.id)
-                && view.presentation == Presentation::Markdown
-                && app
-                    .editor
-                    .markdown_views
-                    .get(&view.id)
-                    .is_some_and(|state| state.sync_scroll)
-        })
-        .map(|view| view.id)
+        .panes
+        .iter()
+        .filter_map(|(id, pane)| pane.active.map(|view| (id.get(), view)))
         .collect::<Vec<_>>();
-    for id in previews {
-        app.workspace.set_reader_position(
-            id,
-            ReaderPosition {
-                source_byte: source,
-                block_fraction: 0.0,
-            },
-        );
+    panes.sort_by_key(|(id, _)| *id);
+    let active = panes.into_iter().map(|(_, view)| view).collect::<Vec<_>>();
+    let mut pairs = Vec::new();
+    for &id in &active {
+        let Some(view) = app.workspace.view(id).copied() else {
+            continue;
+        };
+        if view.presentation != Presentation::Markdown {
+            continue;
+        }
+        let Some(document) = view.document() else {
+            continue;
+        };
+        let editors = active.iter().copied().filter(|other| {
+            app.workspace
+                .view(*other)
+                .is_some_and(|other| other.accepts_text() && other.document() == Some(document))
+        });
+        let editors = editors.collect::<Vec<_>>();
+        let source = view
+            .associated_source
+            .filter(|source| editors.contains(source))
+            .or_else(|| editors.first().copied());
+        if let Some(source) = source {
+            pairs.push((id, source));
+        }
+    }
+    let height = crate::ui::fonts::editor().line_h.max(1.0);
+    for (preview, source) in pairs {
+        let Some(source_view) = app
+            .workspace
+            .view(source)
+            .copied()
+            .filter(|view| view.accepts_text())
+        else {
+            continue;
+        };
+        let Some(document) = source_view
+            .document()
+            .and_then(|id| app.workspace.documents.get(&id))
+        else {
+            continue;
+        };
+        let Some(reader) = app.workspace.view(preview).map(|view| view.reader) else {
+            continue;
+        };
+        let scroll = source_view.source.scroll_y;
+        let last = app
+            .editor
+            .markdown_views
+            .get(&preview)
+            .and_then(|state| state.synced);
+        let reader_moved = last.is_some_and(|(_, byte)| byte != reader.source_byte);
+        let source_moved = last.is_none_or(|(y, _)| y != scroll);
+        if reader_moved {
+            let line = document.buffer.line_of(reader.source_byte);
+            let target = line as f32 * height;
+            if let Some(view) = app.workspace.views.get_mut(&source) {
+                view.source.scroll_y = target;
+            }
+        } else if source_moved {
+            let line = (scroll / height).max(0.0) as usize;
+            let byte = document
+                .buffer
+                .line_start(line.min(document.buffer.line_count().saturating_sub(1)));
+            app.workspace.set_reader_position(
+                preview,
+                ReaderPosition {
+                    source_byte: byte,
+                    block_fraction: 0.0,
+                },
+            );
+        }
+        let scroll = app
+            .workspace
+            .view(source)
+            .map_or(scroll, |view| view.source.scroll_y);
+        let byte = app
+            .workspace
+            .view(preview)
+            .map_or(reader.source_byte, |view| view.reader.source_byte);
+        app.editor.markdown_views.entry(preview).or_default().synced = Some((scroll, byte));
     }
 }
 fn outline_panel(state: &AppContext, view: ViewId, result: &Rendered, rect: UiRect) -> Element {
