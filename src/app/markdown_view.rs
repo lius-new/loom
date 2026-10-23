@@ -203,6 +203,8 @@ pub fn render(
         rect.right,
         rect.bottom,
     );
+    let body_area = body;
+    let app_hovered = app.editor.editor_hovered == Some(pane);
     let margin =
         ((body.width() - app.preferences.values().markdown.max_width as f32) * 0.5).max(0.0);
     body.left += margin;
@@ -306,7 +308,13 @@ pub fn render(
             .horizontal()
             .child(root),
     );
-    let mut root = group(rect).child(toolbar);
+    // The centered reading column is narrower than the pane; fill the margins.
+    let mut root = group(rect)
+        .child(panel(
+            UiRect::new(rect.left, header.bottom, rect.right, rect.bottom),
+            VisualStyle::filled(theme::c().bg),
+        ))
+        .child(toolbar);
     let Some(service) = state.services().and_then(|runtime| runtime.markdown()) else {
         return root;
     };
@@ -405,7 +413,14 @@ pub fn render(
             .with_images(move |frame, image, bounds| {
                 paint_image(&image_result, frame, image, bounds)
             });
-            root = root.child(reader::render(id, body, binding, focus));
+            root = root.child(reader::render_in(
+                id,
+                UiRect::new(body_area.left, body.top, body_area.right, body.bottom),
+                body,
+                app_hovered,
+                binding,
+                focus,
+            ));
             if outline {
                 root = root.child(outline_panel(
                     &state,

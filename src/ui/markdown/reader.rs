@@ -1,6 +1,7 @@
 //! Controlled reading surface. Native paragraph painting is supplied through a
 //! narrow port; this module owns neither parsing nor text/native resources.
 use crate::features::markdown::layout::Decoration;
+use crate::ui::components::scrollbar;
 use crate::ui::theme;
 use lgui::core::{
     CursorIcon, EventPolicy, KeyState, LogicalKey, NamedKey, PointerButton, SemanticRole,
@@ -94,15 +95,28 @@ fn translated(
 /// Only visible paragraphs and bounded visible glyph rectangles enter the scene.
 /// Selection/copy remains a full-document logical range outside this scene.
 pub fn render(id: UiId, rect: UiRect, binding: Binding, focus: UiFocusHandle) -> Element {
+    let emphasized = false;
+    render_in(id, rect, rect, emphasized, binding, focus)
+}
+/// `area` is the whole pane; `rect` is the (possibly narrower, centered)
+/// reading column. Wheel input and the vertical scrollbar use the pane edge.
+pub fn render_in(
+    id: UiId,
+    area: UiRect,
+    rect: UiRect,
+    emphasized: bool,
+    binding: Binding,
+    focus: UiFocusHandle,
+) -> Element {
     let frame = binding.get();
     let semantic_scope = id.to_string();
     let mut root = Element::new(move |cx| {
-        UiElement::panel(id, rect, VisualStyle::filled(theme::c().bg))
+        UiElement::panel(id, area, VisualStyle::filled(theme::c().bg))
             .semantics(Semantics::new(SemanticRole::Group).name("Markdown document"))
             .children(cx.children)
     })
     .event_policy(EventPolicy::INTERACTIVE)
-    .cursor(CursorIcon::Text);
+    .cursor(CursorIcon::Default);
     for kind in [
         UiEventKind::Input,
         UiEventKind::CompositionStart,
@@ -114,7 +128,11 @@ pub fn render(id: UiId, rect: UiRect, binding: Binding, focus: UiFocusHandle) ->
             cx.stop_propagation();
         });
     }
-    let mut content = clip(rect, 0.0, 0.0).key("markdown-reading-content");
+    let mut scrollbar_layer = None;
+    // I-beam only over the reading column, as in the editor; margins and scrollbars keep the arrow.
+    let mut content = clip(rect, 0.0, 0.0)
+        .key("markdown-reading-content")
+        .cursor(CursorIcon::Text);
     for image in &frame.layout.images {
         let bounds = translated(image.rect, rect, frame.viewport.top);
         if bounds.bottom > rect.top && bounds.top < rect.bottom {
@@ -461,7 +479,7 @@ pub fn render(id: UiId, rect: UiRect, binding: Binding, focus: UiFocusHandle) ->
         content = content.child(surface);
         let track = UiRect::new(
             bounds.left,
-            bounds.bottom - 7.0,
+            bounds.bottom - scrollbar::SIZE,
             bounds.right,
             bounds.bottom,
         );
@@ -471,96 +489,57 @@ pub fn render(id: UiId, rect: UiRect, binding: Binding, focus: UiFocusHandle) ->
             .copied()
             .unwrap_or(0.0)
             .clamp(0.0, max);
-        let thumb =
-            (track.width() * track.width() / block.extent).clamp(20.0, track.width().max(20.0));
-        let x = track.left + (track.width() - thumb).max(0.0) * current / max;
-        let down = binding.clone();
-        let drag = binding.clone();
-        content = content.child(
-            panel(track, VisualStyle::filled(theme::c().surface))
-                .event_policy(EventPolicy::INTERACTIVE)
-                .child(panel(
-                    UiRect::new(x, track.top, x + thumb, track.bottom),
-                    VisualStyle::filled(theme::c().scrollbar).radius(3.0),
-                ))
-                .on_pointer_down_with_button(move |cx, pointer, button| {
-                    if button != PointerButton::Left {
-                        return;
-                    }
-                    let frame = down.get();
-                    let previous = frame.horizontal.get(&node).copied().unwrap_or(0.0);
-                    let target = ((pointer.point.x - track.left - thumb * 0.5)
-                        / (track.width() - thumb).max(1.0))
-                    .clamp(0.0, 1.0)
-                        * max;
-                    down.send(ReaderEvent::HorizontalScroll {
-                        key: frame.key,
-                        node,
-                        delta: target - previous,
-                    });
-                    cx.stop_propagation();
-                })
-                .on_pointer_drag(move |cx, pointer| {
-                    let frame = drag.get();
-                    let previous = frame.horizontal.get(&node).copied().unwrap_or(0.0);
-                    let target = ((pointer.point.x - track.left - thumb * 0.5)
-                        / (track.width() - thumb).max(1.0))
-                    .clamp(0.0, 1.0)
-                        * max;
-                    drag.send(ReaderEvent::HorizontalScroll {
-                        key: frame.key,
-                        node,
-                        delta: target - previous,
-                    });
-                    cx.stop_propagation();
-                }),
-        );
+        let on_scroll = binding.clone();
+        content = content.child(axis_scrollbar(
+            false,
+            track,
+            block.extent,
+            track.width(),
+            current,
+            max,
+            emphasized,
+            move |position| {
+                let frame = on_scroll.get();
+                let previous = frame.horizontal.get(&node).copied().unwrap_or(0.0);
+                on_scroll.send(ReaderEvent::HorizontalScroll {
+                    key: frame.key,
+                    node,
+                    delta: position - previous,
+                });
+            },
+        ));
     }
     if frame.layout.height > frame.viewport.height {
         let max = (frame.layout.height - frame.viewport.height).max(1.0);
-        let track = UiRect::new(rect.right - 7.0, rect.top, rect.right, rect.bottom);
-        let thumb = (rect.height() * rect.height() / frame.layout.height)
-            .clamp(20.0, rect.height().max(20.0));
-        let top = rect.top + (rect.height() - thumb).max(0.0) * frame.viewport.top / max;
-        let down = binding.clone();
-        let drag = binding.clone();
-        content = content.child(
-            panel(track, VisualStyle::default())
-                .event_policy(EventPolicy::INTERACTIVE)
-                .child(panel(
-                    UiRect::new(track.left, top, track.right, top + thumb),
-                    VisualStyle::filled(theme::c().scrollbar).radius(3.0),
-                ))
-                .on_pointer_down_with_button(move |cx, pointer, button| {
-                    if button != PointerButton::Left {
-                        return;
-                    }
-                    let frame = down.get();
-                    let target = ((pointer.point.y - track.top - thumb * 0.5)
-                        / (track.height() - thumb).max(1.0))
-                    .clamp(0.0, 1.0)
-                        * max;
-                    down.send(ReaderEvent::Scroll {
-                        key: frame.key,
-                        delta: target - frame.viewport.top,
-                    });
-                    cx.stop_propagation();
-                })
-                .on_pointer_drag(move |cx, pointer| {
-                    let frame = drag.get();
-                    let target = ((pointer.point.y - track.top - thumb * 0.5)
-                        / (track.height() - thumb).max(1.0))
-                    .clamp(0.0, 1.0)
-                        * max;
-                    drag.send(ReaderEvent::Scroll {
-                        key: frame.key,
-                        delta: target - frame.viewport.top,
-                    });
-                    cx.stop_propagation();
-                }),
+        let track = UiRect::new(
+            area.right - scrollbar::SIZE,
+            area.top,
+            area.right,
+            area.bottom,
         );
+        let on_scroll = binding.clone();
+        // Drawn on the root, not the clipped column, so it sits at the pane edge.
+        scrollbar_layer = Some(axis_scrollbar(
+            true,
+            track,
+            frame.layout.height,
+            track.height(),
+            frame.viewport.top,
+            max,
+            emphasized,
+            move |position| {
+                let frame = on_scroll.get();
+                on_scroll.send(ReaderEvent::Scroll {
+                    key: frame.key,
+                    delta: position - frame.viewport.top,
+                });
+            },
+        ));
     }
     root = root.child(content);
+    if let Some(layer) = scrollbar_layer {
+        root = root.child(layer);
+    }
     let down = binding.clone();
     let down_focus = focus.clone();
     root = root.on_pointer_down_with_button(move |cx, pointer, button| {
@@ -683,4 +662,96 @@ pub fn render(id: UiId, rect: UiRect, binding: Binding, focus: UiFocusHandle) ->
     let focused = binding.clone();
     root = root.on_focus(move |_| focused.send(ReaderEvent::Focus(true)));
     root.on_blur(move |_| binding.send(ReaderEvent::Focus(false)))
+}
+/// Pointer offset inside the thumb while a scrollbar is held. Only one pointer
+/// drags at a time, and the element tree is rebuilt on every scroll step.
+static GRAB: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+fn grab() -> f32 {
+    f32::from_bits(GRAB.load(std::sync::atomic::Ordering::Relaxed))
+}
+fn set_grab(value: f32) {
+    GRAB.store(value.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+/// Overlay scrollbar that behaves like the editor's: dimmer at rest, brighter
+/// while the pane is hovered, the thumb keeps the grab offset, and a click on
+/// the track centers the thumb and continues as a drag.
+#[allow(clippy::too_many_arguments)]
+fn axis_scrollbar(
+    vertical: bool,
+    track: UiRect,
+    content: f32,
+    viewport: f32,
+    scroll: f32,
+    max: f32,
+    emphasized: bool,
+    on_scroll: impl Fn(f32) + Clone + Send + Sync + 'static,
+) -> Element {
+    let (start, length) = if vertical {
+        (track.top, track.height())
+    } else {
+        (track.left, track.width())
+    };
+    let thumb = (length * viewport / content.max(1.0))
+        .max(scrollbar::MIN_THUMB_LENGTH)
+        .min(length);
+    let travel = (length - thumb).max(0.0);
+    let thumb_start = start + travel * (scroll / max.max(1.0)).clamp(0.0, 1.0);
+    let pick = move |x: f32, y: f32| if vertical { y } else { x };
+    let to_scroll = move |thumb_start: f32| {
+        if travel <= 0.0 {
+            0.0
+        } else {
+            (thumb_start.clamp(0.0, travel) / travel * max).clamp(0.0, max)
+        }
+    };
+    let (down, drag, held) = (on_scroll.clone(), on_scroll.clone(), on_scroll);
+    let track_hit = scrollbar::track(track)
+        .event_policy(EventPolicy::INTERACTIVE)
+        .on_pointer_down_with_button(move |cx, pointer, button| {
+            if button != PointerButton::Left {
+                return;
+            }
+            set_grab(thumb * 0.5);
+            down(to_scroll(
+                pick(pointer.point.x, pointer.point.y) - start - thumb * 0.5,
+            ));
+            cx.stop_propagation();
+        })
+        .on_pointer_drag(move |cx, pointer| {
+            drag(to_scroll(
+                pick(pointer.point.x, pointer.point.y) - start - grab(),
+            ));
+            cx.stop_propagation();
+        });
+    let rect = if vertical {
+        UiRect::new(
+            track.left + scrollbar::INSET,
+            thumb_start,
+            track.right - scrollbar::INSET,
+            thumb_start + thumb,
+        )
+    } else {
+        UiRect::new(
+            thumb_start,
+            track.top + scrollbar::INSET,
+            thumb_start + thumb,
+            track.bottom - scrollbar::INSET,
+        )
+    };
+    let thumb_hit = scrollbar::thumb(rect, if emphasized { 0xb8 } else { 0x68 })
+        .event_policy(EventPolicy::INTERACTIVE)
+        .on_pointer_down_with_button(move |cx, pointer, button| {
+            if button != PointerButton::Left {
+                return;
+            }
+            set_grab(pick(pointer.point.x, pointer.point.y) - thumb_start);
+            cx.stop_propagation();
+        })
+        .on_pointer_drag(move |cx, pointer| {
+            held(to_scroll(
+                pick(pointer.point.x, pointer.point.y) - start - grab(),
+            ));
+            cx.stop_propagation();
+        });
+    lgui::core::group(track).child(track_hit).child(thumb_hit)
 }
