@@ -415,6 +415,16 @@
       "migrated_in": "R6.3",
       "from": "git_details_scroll"
     },
+    "details_height": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git drawer details resizing",
+      "reason": "Keep the user-selected height of the drawer details area"
+    },
+    "details_resize_offset": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git drawer details resizing",
+      "reason": "Track the pointer offset while dragging the drawer details divider"
+    },
     "scrollbar_dragging": {
       "owner": "ui/git/state",
       "migrated_in": "R6.3",
