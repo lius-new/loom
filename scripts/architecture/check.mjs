@@ -45,7 +45,7 @@ export function dependencies(source) {
         }
       } else if(/^[a-zA-Z_]\w*$/.test(ts[i+2]??''))found.add('crate::'+ts[i+2]);
     }
-    if(['lgui','image','notify','conpty','portable_pty','windows_sys','libc','libloading'].includes(ts[i])&&ts[i+1]==='::')found.add(ts[i]);
+    if(['lgui','image','notify','conpty','portable_pty','windows_sys','libc','libloading','resvg'].includes(ts[i])&&ts[i+1]==='::')found.add(ts[i]);
     if(/^tree_sitter\w*$/.test(ts[i])&&ts[i+1]==='::')found.add(ts[i]);
     if(ts[i]==='std'&&ts[i+1]==='::'&&['fs','process','thread','net'].includes(ts[i+2]))found.add('std::'+ts[i+2]);
     if(ts[i]==='std'&&ts[i+1]==='::'&&ts[i+2]==='{') {
@@ -129,7 +129,7 @@ export function allowed(file, dependency) {
   if(file==='src/ui/outline/view.rs'&&root==='unicode_width')return true;
   if(file==='src/features/outline/lsp.rs')return ['features','domain','serde_json'].includes(root);
   if(file==='src/infrastructure/markdown_worker.rs')return ['infrastructure','domain','features','std::thread'].includes(root);
-  if(file==='src/infrastructure/markdown_resources.rs')return ['infrastructure','features','image','ureq','std::fs'].includes(root);
+  if(file==='src/infrastructure/markdown_resources.rs')return ['infrastructure','features','image','resvg','ureq','std::fs'].includes(root);
   if(file==='src/ui/markdown/native.rs')return ['ui','features','skia_safe','unicode_segmentation','unicode_width'].includes(root);
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
   // Native parsers: only the grammar table names grammar crates; the engine files use the runtime.

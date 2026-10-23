@@ -148,3 +148,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+## resvg
+
+SVG images in Markdown previews are drawn with resvg, usvg and tiny-skia
+(https://github.com/linebender/resvg; resvg and usvg are licensed under
+Apache-2.0 OR MIT, tiny-skia under BSD-3-Clause), plus fontdb and rustybuzz
+(MIT) for text. Loom enables only the `text` and `system-fonts` features.

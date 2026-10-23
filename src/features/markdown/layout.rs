@@ -469,6 +469,96 @@ impl<B: ParagraphBackend> Placer<'_, B> {
         });
         Ok(paragraph)
     }
+    /// A wrapped text run between images; returns the y below it.
+    fn text_block(
+        &mut self,
+        id: NodeId,
+        range: DisplayRange,
+        x: f32,
+        y: f32,
+        width: f32,
+        alignment: ColumnAlignment,
+    ) -> Result<f32, LayoutFailure> {
+        let begin = self.out.paragraphs.len();
+        let index = self.paragraph(id, range, x, y, width, true, alignment)?;
+        let height = self.out.paragraphs[index]
+            .summary
+            .height
+            .max(self.out.style.line_height);
+        self.out.boxes.push(FlowBox {
+            node: id,
+            source: self.out.paragraphs[index].source.clone(),
+            top: y,
+            height,
+            paragraphs: begin..begin + 1,
+        });
+        Ok(y + height + self.out.style.gap)
+    }
+    /// Places `row` left to right, wrapping when a line is full, and aligns each
+    /// line inside `width`. Returns the y below the last line and empties `row`.
+    fn image_row(
+        &mut self,
+        row: &mut Vec<(NodeId, f32, f32, DisplayRange)>,
+        x: f32,
+        mut y: f32,
+        width: f32,
+        block_alignment: ColumnAlignment,
+    ) -> f32 {
+        const SPACING: f32 = 4.0;
+        let mut start = 0;
+        while start < row.len() {
+            let mut end = start;
+            let mut used = 0.0;
+            while end < row.len() {
+                let next = if end > start {
+                    SPACING + row[end].1
+                } else {
+                    row[end].1
+                };
+                if end > start && used + next > width {
+                    break;
+                }
+                used += next;
+                end += 1;
+            }
+            let height = row[start..end].iter().map(|r| r.2).fold(0.0, f32::max);
+            let alignment = row[start..end]
+                .iter()
+                .map(|r| self.out.document.alignment(r.0))
+                .find(|a| !matches!(a, ColumnAlignment::Left | ColumnAlignment::None))
+                .unwrap_or(block_alignment);
+            let mut left = x + match alignment {
+                ColumnAlignment::Center => ((width - used) / 2.0).max(0.0),
+                ColumnAlignment::Right => (width - used).max(0.0),
+                _ => 0.0,
+            };
+            for (image, w, h, range) in &row[start..end] {
+                let at = self.out.paragraphs.len();
+                self.out.images.push(ImageBox {
+                    node: *image,
+                    rect: TextRect {
+                        left,
+                        top: y,
+                        right: left + w,
+                        bottom: y + h,
+                    },
+                    display: range.clone(),
+                });
+                self.out.boxes.push(FlowBox {
+                    node: *image,
+                    source: self.out.document.nodes[image.0].source.clone(),
+                    top: y,
+                    height: *h,
+                    paragraphs: at..at,
+                });
+                left += w + SPACING;
+            }
+            y += height + self.out.style.gap;
+            start = end;
+        }
+        row.clear();
+        y
+    }
     fn table(&mut self, id: NodeId, x: f32, mut y: f32, width: f32) -> Result<f32, LayoutFailure> {
         let table_top = y;
         let columns = match &self.out.document.nodes[id.0].kind {
@@ -736,6 +826,7 @@ pub fn layout_with_images(
             }
             // Images are flow objects. Split inline text at their canonical alt
             // ranges; copy/mapping remains in the unmodified logical document.
+            let block_alignment = placer.out.document.alignment(id);
             let mut image_nodes = Vec::new();
             let mut visit = vec![id];
             while let Some(child) = visit.pop() {
@@ -749,6 +840,9 @@ pub fn layout_with_images(
             image_nodes.sort_by_key(|image| placer.out.document.nodes[image.0].display.start);
             if !code && !image_nodes.is_empty() {
                 let mut cursor = range.start;
+                // Images with only white space between them share a line, like
+                // inline images in a browser, and wrap when the line is full.
+                let mut row: Vec<(NodeId, f32, f32, DisplayRange)> = Vec::new();
                 for image in image_nodes {
                     let image_range = placer.out.document.nodes[image.0].display.clone();
                     if cursor < image_range.start
@@ -758,56 +852,30 @@ pub fn layout_with_images(
                             .text(cursor..image_range.start)
                             .is_some_and(|text| !text.trim().is_empty())
                     {
-                        let begin = placer.out.paragraphs.len();
-                        let index = placer.paragraph(
+                        y = placer.image_row(&mut row, x, y, width, block_alignment);
+                        y = placer.text_block(
                             id,
                             cursor..image_range.start,
                             x,
                             y,
                             width,
-                            true,
-                            ColumnAlignment::Left,
+                            block_alignment,
                         )?;
-                        let height = placer.out.paragraphs[index]
-                            .summary
-                            .height
-                            .max(style.line_height);
-                        placer.out.boxes.push(FlowBox {
-                            node: id,
-                            source: placer.out.paragraphs[index].source.clone(),
-                            top: y,
-                            height,
-                            paragraphs: begin..begin + 1,
-                        });
-                        y += height + style.gap;
                     }
                     let size = placer.images.get(&image).copied().unwrap_or(ImageSize {
                         width: width.min(240.0),
                         height: 64.0,
                     });
                     let factor = (width / size.width.max(1.0)).min(1.0);
-                    let w = size.width.max(1.0) * factor;
-                    let h = size.height.max(1.0) * factor;
-                    placer.out.images.push(ImageBox {
-                        node: image,
-                        rect: TextRect {
-                            left: x,
-                            top: y,
-                            right: x + w,
-                            bottom: y + h,
-                        },
-                        display: image_range.clone(),
-                    });
-                    placer.out.boxes.push(FlowBox {
-                        node: image,
-                        source: placer.out.document.nodes[image.0].source.clone(),
-                        top: y,
-                        height: h,
-                        paragraphs: placer.out.paragraphs.len()..placer.out.paragraphs.len(),
-                    });
-                    y += h + style.gap;
+                    row.push((
+                        image,
+                        size.width.max(1.0) * factor,
+                        size.height.max(1.0) * factor,
+                        image_range.clone(),
+                    ));
                     cursor = image_range.end;
                 }
+                y = placer.image_row(&mut row, x, y, width, block_alignment);
                 if cursor < range.end
                     && placer
                         .out
@@ -815,28 +883,7 @@ pub fn layout_with_images(
                         .text(cursor..range.end)
                         .is_some_and(|text| !text.trim().is_empty())
                 {
-                    let begin = placer.out.paragraphs.len();
-                    let index = placer.paragraph(
-                        id,
-                        cursor..range.end,
-                        x,
-                        y,
-                        width,
-                        true,
-                        ColumnAlignment::Left,
-                    )?;
-                    let height = placer.out.paragraphs[index]
-                        .summary
-                        .height
-                        .max(style.line_height);
-                    placer.out.boxes.push(FlowBox {
-                        node: id,
-                        source: placer.out.paragraphs[index].source.clone(),
-                        top: y,
-                        height,
-                        paragraphs: begin..begin + 1,
-                    });
-                    y += height + style.gap;
+                    y = placer.text_block(id, cursor..range.end, x, y, width, block_alignment)?;
                 }
                 continue;
             }
@@ -847,14 +894,23 @@ pub fn layout_with_images(
                 y + pad + if code { 18.0 } else { 0.0 },
                 (width - pad * 2.0).max(1.0),
                 !code,
-                ColumnAlignment::Left,
+                block_alignment,
             )?;
-            let height = placer.out.paragraphs[index]
+            let mut height = placer.out.paragraphs[index]
                 .summary
                 .height
                 .max(style.line_height)
                 + pad * 2.0
                 + if code { 18.0 } else { 0.0 };
+            // Level 1 and 2 headings carry a hairline underneath, as on GitHub.
+            if matches!(node.kind, NodeKind::Heading { level: 1 | 2 }) {
+                placer.out.decorations.push(Decoration::Rule {
+                    y: y + height + 3.0,
+                    left: x,
+                    right: x + width,
+                });
+                height += 8.0;
+            }
             if code {
                 placer.out.horizontal.push(ScrollBlock {
                     node: id,

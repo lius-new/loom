@@ -29,7 +29,7 @@ app file/card hosts -> infrastructure parse worker -> features MarkdownDocument
 | ui/markdown/reader + card | Controlled projection, visible semantic/hit geometry, value callbacks | AppContext, service lookup, filesystem/network and hidden clipboard access |
 | ui/markdown/native | Private native paragraph adapter and bounded raster tiles | Root state and platform navigation |
 | infrastructure/markdown_worker | Parse scheduling, cancellation, result retention and memory ledger | Root state and GUI projections |
-| infrastructure/markdown_resources | Bounded PNG/JPEG file/HTTP loading and decoder validation | Application model |
+| infrastructure/markdown_resources | Bounded PNG/JPEG/SVG file/HTTP loading, decoder validation and SVG rasterization (resvg) | Application model |
 | app/markdown_service/render/assets/cards/view/drag | Runtime lifetime, host validation, layouts/resources, clipboard/navigation, drag timer and narrow UI bindings | Sharing native paragraphs across threads or serializing runtime state |
 
 The architecture gate enforces the pure/module boundaries and registered
@@ -121,9 +121,11 @@ Heading slugs preserve alphanumeric graphemes and globally disambiguate collisio
 
 Image loading checks encoded size and dimensions before bounded decoding. The
 asset cache retains encoded+decoded cost, watches successful/missing local files
-and invalidates layouts on changes. Remote HTTP(S) and UNC loading require per-view
-document permission. Cards have no base path and perform no resource I/O.
-HTML is literal; SVG/math/Mermaid are not executable extension hooks.
+and invalidates layouts on changes. Documents load remote HTTP(S) and UNC images
+automatically. Cards have no base path and perform no resource I/O.
+HTML blocks inside the closed subset in features/markdown/html.rs become ordinary
+nodes plus an alignment side table; any other HTML block stays literal. SVG/math/
+Mermaid are not executable extension hooks.
 
 To add syntax, extend stable NodeKind/diagnostics, then the parser adapter,
 canonical copy/mapping tests and structural layout. To add a rendering backend,

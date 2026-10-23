@@ -54,12 +54,14 @@ separate logical region. Cards do not load images or other external resources.
 | CommonMark | Paragraphs, headings, emphasis, strong, links, code, quotes, ordered/unordered lists and thematic breaks |
 | Explicit extensions | Tables, task list markers and strikethrough |
 | Chinese, combining marks, Emoji, tabs | Whole paragraph native shaping; grapheme-safe selection; four-column code tabs |
-| HTML | Displayed literally, including tags; never executed |
-| PNG/JPEG | Local images relative to the document; bounded decoding; alternative text and visible failure state |
-| Inline images | Promoted to separate flow objects; alt text remains in logical copy |
+| HTML blocks | A small subset is rendered: `h1`–`h6`, `p`, `div`/`center` and similar containers, `align`, `a`, `img`, `br`, `hr`, bold/italic/strike/code. A block using anything else (tables, `pre`, `details`, lists, SVG) is displayed literally. Never executed; comments and scripts are dropped |
+| Inline HTML | Displayed literally, including tags |
+| PNG/JPEG/SVG | Local and remote images relative to the document; bounded decoding; alternative text and visible failure state. An SVG is drawn once into a PNG at its own size (system fonts for its text); it never reads other files and never runs scripts |
+| Inline images | Promoted to flow objects; images separated only by white space share a line and wrap together, as badge rows do. Alt text remains in logical copy |
+| Headings | Levels 1 and 2 have a hairline underneath |
 | Links | HTTP(S), local files and percent-encoded heading fragments; local files open through the normal file loader |
 | Fenced code highlighting | Visible blocks request existing language packages; unknown or unavailable grammars remain readable |
-| SVG, math and Mermaid | No active renderer; image fallback or literal syntax |
+| Math and Mermaid | No active renderer; literal syntax |
 
 Images in a Markdown file load automatically, including remote HTTP(S) and UNC
 paths. Documentation cards from language servers never load remote images or

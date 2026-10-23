@@ -142,7 +142,7 @@ mod image_tests {
                 .unwrap_err()
                 .contains("dimensions")
         );
-        std::fs::write(directory.join("invalid.svg"), "<svg/>").unwrap();
+        std::fs::write(directory.join("invalid.svg"), "<svg><g></svg>").unwrap();
         assert!(load(Some(&base), "invalid.svg", false).is_err());
         let budget = crate::infrastructure::markdown_worker::MemoryBudget::default();
         let mut assets = crate::app::markdown_assets::Assets::new(budget.clone());
