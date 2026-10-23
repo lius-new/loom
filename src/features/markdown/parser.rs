@@ -1,4 +1,5 @@
 //! The only adapter allowed to depend on pulldown-cmark's event types.
+use crate::features::markdown::html;
 use crate::features::markdown::model::*;
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::ops::Range;
@@ -35,6 +36,7 @@ impl Builder {
                 mapping: Vec::new(),
                 headings: Vec::new(),
                 diagnostics: Vec::new(),
+                alignments: Vec::new(),
                 source_order: Vec::new(),
                 progress: ParseProgress::default(),
             },
@@ -160,6 +162,99 @@ impl Builder {
         }
         Ok(frame.node)
     }
+    /// Records that the innermost open node is centered or right-aligned.
+    fn mark_alignment(&mut self, align: ColumnAlignment) {
+        if matches!(align, ColumnAlignment::Left | ColumnAlignment::None) {
+            return;
+        }
+        if let Some(frame) = self.stack.last() {
+            self.document.alignments.push((frame.node, align));
+        }
+    }
+    /// Builds the nodes of an interpreted HTML block. `parts` maps offsets in
+    /// the planned text to source offsets as (planned start, source start, length).
+    fn apply_html(
+        &mut self,
+        ops: Vec<html::Op>,
+        parts: &[(usize, usize, usize)],
+    ) -> Result<(), ParseFailure> {
+        let map = |range: Range<usize>| -> Range<usize> {
+            let find = |at: usize| parts.iter().rev().find(|part| part.0 <= at).copied();
+            let start = find(range.start).map_or(0, |(from, source, length)| {
+                source + (range.start - from).min(length)
+            });
+            let end = find(range.end.saturating_sub(1).max(range.start))
+                .map_or(start, |(from, source, length)| {
+                    source + (range.end - from).min(length)
+                });
+            start..end.max(start)
+        };
+        let mut open: Vec<bool> = Vec::new();
+        let mut last_end = 0;
+        for op in ops {
+            match op {
+                html::Op::Open { kind, align, range } => {
+                    let block = matches!(kind, NodeKind::Paragraph | NodeKind::Heading { .. });
+                    let range = map(range);
+                    last_end = last_end.max(range.end);
+                    self.start(kind, range)?;
+                    if block {
+                        self.mark_alignment(align);
+                    }
+                    open.push(block);
+                }
+                html::Op::Close => {
+                    let block = open.pop().unwrap_or(false);
+                    let id = self.finish_node()?;
+                    let node = &mut self.document.nodes[id.0];
+                    node.source.end = SourceByte(last_end.max(node.source.start.0));
+                    if block {
+                        self.newline(last_end)?;
+                    }
+                }
+                html::Op::Text { text, range } => {
+                    let range = map(range);
+                    last_end = last_end.max(range.end);
+                    self.leaf(NodeKind::Text, &text, range, false)?;
+                }
+                html::Op::Code { text, range } => {
+                    let range = map(range);
+                    last_end = last_end.max(range.end);
+                    self.leaf(NodeKind::Code, &text, range, false)?;
+                }
+                html::Op::Image {
+                    destination,
+                    title,
+                    alt,
+                    align,
+                    range,
+                } => {
+                    let range = map(range);
+                    last_end = last_end.max(range.end);
+                    self.start(NodeKind::Image { destination, title }, range.clone())?;
+                    self.mark_alignment(align);
+                    self.leaf(NodeKind::Text, &alt, range, false)?;
+                    self.finish_node()?;
+                }
+                html::Op::HardBreak { range } => {
+                    let range = map(range);
+                    last_end = last_end.max(range.end);
+                    self.leaf(NodeKind::HardBreak, "\n", range, false)?;
+                }
+                html::Op::Rule { range } => {
+                    let range = map(range);
+                    last_end = last_end.max(range.end);
+                    self.newline(range.start)?;
+                    self.leaf(NodeKind::ThematicBreak, "", range.clone(), true)?;
+                    self.newline(range.end)?;
+                }
+            }
+        }
+        while open.pop().is_some() {
+            self.finish_node()?;
+        }
+        Ok(())
+    }
     fn budget(&self) -> Result<(), ParseFailure> {
         // Includes capacity growth, snapshots, arena links, attributes and the
         // eventual reverse mapping index. It does not bound upstream first-pass memory.
@@ -170,7 +265,9 @@ impl Builder {
             + self.document.mapping.capacity()
                 * (std::mem::size_of::<MappingSegment>() + std::mem::size_of::<usize>())
             + self.document.headings.capacity() * std::mem::size_of::<Heading>()
-            + self.document.diagnostics.capacity() * std::mem::size_of::<Diagnostic>();
+            + self.document.diagnostics.capacity() * std::mem::size_of::<Diagnostic>()
+            + self.document.alignments.capacity()
+                * std::mem::size_of::<(NodeId, ColumnAlignment)>();
         if estimated > self.limits.retained_bytes {
             Err(self.failure(ParseStop::RetainedBudget))
         } else {
@@ -229,6 +326,7 @@ pub fn parse_document(
     // pulldown's constructor has no cancellation hook. Admission happens before
     // construction; cancellation is checked again before every projected event.
     let parser = Parser::new_ext(source.as_str(), options);
+    let mut html_block: Option<(Range<usize>, Vec<(String, Range<usize>)>)> = None;
     for (event, span) in parser.into_offset_iter() {
         if cancelled() {
             return Err(out.failure(ParseStop::Cancelled));
@@ -253,13 +351,9 @@ pub fn parse_document(
                     };
                     out.start(NodeKind::CodeBlock { language, fenced }, span)?;
                 }
-                Tag::HtmlBlock => {
-                    out.document.diagnostics.push(Diagnostic {
-                        kind: DiagnosticKind::LiteralHtml,
-                        source: SourceByte(span.start)..SourceByte(span.end),
-                    });
-                    out.start(NodeKind::Html { block: true }, span)?;
-                }
+                // Collected whole: the supported subset becomes real nodes,
+                // anything else stays literal when the block ends.
+                Tag::HtmlBlock => html_block = Some((span, Vec::new())),
                 Tag::List(start) => {
                     out.newline(span.start)?;
                     out.start(NodeKind::List { start }, span)?;
@@ -354,6 +448,30 @@ pub fn parse_document(
                     out.start(NodeKind::Unsupported, span)?;
                 }
             },
+            Event::End(TagEnd::HtmlBlock) => {
+                let (block, parts) = html_block.take().unwrap_or((span.clone(), Vec::new()));
+                let mut text = String::new();
+                let mut offsets = Vec::with_capacity(parts.len());
+                for (part, range) in &parts {
+                    offsets.push((text.len(), range.start, part.len()));
+                    text.push_str(part);
+                }
+                match html::plan(&text) {
+                    Some(ops) => out.apply_html(ops, &offsets)?,
+                    None => {
+                        out.document.diagnostics.push(Diagnostic {
+                            kind: DiagnosticKind::LiteralHtml,
+                            source: SourceByte(block.start)..SourceByte(block.end),
+                        });
+                        out.start(NodeKind::Html { block: true }, block)?;
+                        for (part, range) in parts {
+                            out.leaf(NodeKind::Html { block: false }, &part, range, false)?;
+                        }
+                        let id = out.finish_node()?;
+                        out.newline(out.document.nodes[id.0].source.end.0)?;
+                    }
+                }
+            }
             Event::End(tag) => {
                 let id = out.finish_node()?;
                 if matches!(
@@ -374,6 +492,11 @@ pub fn parse_document(
             }
             Event::Text(text) => out.leaf(NodeKind::Text, &text, span, false)?,
             Event::Code(text) => out.leaf(NodeKind::Code, &text, span, false)?,
+            Event::Html(text) if html_block.is_some() => {
+                if let Some((_, parts)) = html_block.as_mut() {
+                    parts.push((text.into_string(), span));
+                }
+            }
             Event::Html(text) | Event::InlineHtml(text) => {
                 out.leaf(NodeKind::Html { block: false }, &text, span, false)?
             }

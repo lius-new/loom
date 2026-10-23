@@ -1,5 +1,6 @@
 //! Shared Markdown documents, projection, layout and controlled reading contracts.
 pub mod content;
+pub mod html;
 pub mod layout;
 pub mod model;
 pub mod parser;

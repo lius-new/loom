@@ -91,7 +91,7 @@ impl ParseFailure {
 }
 
 /// Local to one immutable result; never persist it or reuse it with another result.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColumnAlignment {
@@ -225,11 +225,19 @@ pub struct MarkdownDocument {
     pub mapping: Vec<MappingSegment>,
     pub headings: Vec<Heading>,
     pub diagnostics: Vec<Diagnostic>,
+    /// Blocks and images aligned by HTML attributes, in node order.
+    pub alignments: Vec<(NodeId, ColumnAlignment)>,
     /// Mapping indices sorted by source start for reverse lookup.
     pub(crate) source_order: Vec<usize>,
     pub progress: ParseProgress,
 }
 impl MarkdownDocument {
+    /// How an HTML-aligned block or image is placed; left unless marked.
+    pub fn alignment(&self, id: NodeId) -> ColumnAlignment {
+        self.alignments
+            .binary_search_by_key(&id, |(node, _)| *node)
+            .map_or(ColumnAlignment::Left, |at| self.alignments[at].1)
+    }
     pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id.0)
     }
@@ -255,6 +263,7 @@ impl MarkdownDocument {
             + self.source_order.capacity() * std::mem::size_of::<usize>()
             + self.headings.capacity() * std::mem::size_of::<Heading>()
             + self.diagnostics.capacity() * std::mem::size_of::<Diagnostic>()
+            + self.alignments.capacity() * std::mem::size_of::<(NodeId, ColumnAlignment)>()
     }
     pub fn source_at(&self, offset: DisplayByte) -> Option<SourceRange> {
         if !self.display_text.is_char_boundary(offset.0) {

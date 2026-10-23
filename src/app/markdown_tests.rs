@@ -493,7 +493,7 @@ fn production_markdown_evidence() {
         .map(std::path::PathBuf::from)
         .expect("set LOOM_MARKDOWN_EVIDENCE_DIR");
     std::fs::create_dir_all(&output).unwrap();
-    let rich = "# 通用 Markdown 预览\n\n中文无需空格即可自然换行。English **bold** *italic* e\u{301} 😀 [OpenAI](https://openai.com)。\n\n> 阅读界面与源码编辑共享同一份文本，视图各自保留位置。\n\n- [x] 文档与卡片复用\n- [ ] 下一项任务\n\n| Capability | 状态 |\n|:---|---:|\n| 逻辑复制 | 支持 |\n| 中文 / Emoji | 支持 |\n\n\x60\x60\x60rust\nfn main() {\n\tprintln!(\"Hello 中文 😀\");\n}\n\x60\x60\x60\n\n<div>HTML is displayed literally.</div>\n";
+    let rich = "# 通用 Markdown 预览\n\n中文无需空格即可自然换行。English **bold** *italic* e\u{301} 😀 [OpenAI](https://openai.com)。\n\n> 阅读界面与源码编辑共享同一份文本，视图各自保留位置。\n\n- [x] 文档与卡片复用\n- [ ] 下一项任务\n\n| Capability | 状态 |\n|:---|---:|\n| 逻辑复制 | 支持 |\n| 中文 / Emoji | 支持 |\n\n\x60\x60\x60rust\nfn main() {\n\tprintln!(\"Hello 中文 😀\");\n}\n\x60\x60\x60\n\n<pre>HTML outside the supported subset is displayed literally.</pre>\n";
     let mut visual = Reader::new(rich.into());
     visual.rect = UiRect::new(0.0, 0.0, 960.0, 760.0);
     visual.wait(|r| r.text_rect("通用").is_some());

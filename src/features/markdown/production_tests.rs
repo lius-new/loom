@@ -12,10 +12,10 @@ fn parse(source: &str) -> MarkdownDocument {
 }
 #[test]
 fn projection_keeps_unicode_html_and_complete_copy() {
-    let source="# 中文 e\u{301} 😀\r\n\r\nA &amp; **bold** and \\*literal\\*.\r\n\r\n<div>literal</div>\n\n- [x] first\n- second\n\n|a|b|\n|-|-|\n|中|😀|\n".replace("\\u{301}","\u{301}");
+    let source="# 中文 e\u{301} 😀\r\n\r\nA &amp; **bold** and \\*literal\\*.\r\n\r\n<pre>literal</pre>\n\n- [x] first\n- second\n\n|a|b|\n|-|-|\n|中|😀|\n".replace("\\u{301}","\u{301}");
     let doc = parse(&source);
     assert!(doc.display_text.contains("A & bold and *literal*."));
-    assert!(doc.display_text.contains("<div>literal</div>"));
+    assert!(doc.display_text.contains("<pre>literal</pre>"));
     assert!(doc.display_text.contains("a\tb\n"));
     assert!(doc.display_text.contains("中\t😀"));
     assert_eq!(doc.headings.len(), 1);
@@ -492,4 +492,66 @@ fn layout_publication_can_advance_without_dropping_same_parse_logical_input() {
             })
             .is_none()
     );
+}
+
+#[test]
+fn readme_style_html_header_becomes_centered_blocks_and_images() {
+    let source = "<p align=\"center\">\n  <img src=\"logo.png\" alt=\"Loom\" width=\"96\">\n</p>\n\n<h1 align=\"center\">Loom</h1>\n\n<p align=\"center\">\n  A <b>fast</b> editor.\n</p>\n\nPlain **text**.\n";
+    let doc = parse(source);
+    assert_eq!(
+        doc.display_text,
+        "Loom\nLoom\nA fast editor.\nPlain text.\n"
+    );
+    let kinds = doc
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| match &node.kind {
+            NodeKind::Paragraph => Some(("paragraph", NodeId(index))),
+            NodeKind::Heading { .. } => Some(("heading", NodeId(index))),
+            NodeKind::Image { .. } => Some(("image", NodeId(index))),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let shown = kinds
+        .iter()
+        .map(|(name, id)| format!("{name}:{:?}", doc.alignment(*id)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        shown,
+        [
+            "paragraph:Center",
+            "image:Center",
+            "heading:Center",
+            "paragraph:Center",
+            "paragraph:Left",
+        ]
+    );
+    assert_eq!(doc.headings.len(), 1);
+    assert!(doc.diagnostics.is_empty());
+    for node in &doc.nodes {
+        assert!(source.is_char_boundary(node.source.start.0));
+        assert!(source.is_char_boundary(node.source.end.0));
+        assert!(node.source.start.0 <= node.source.end.0);
+    }
+    for (at, _) in doc.display_text.char_indices() {
+        assert!(doc.source_at(DisplayByte(at)).is_some());
+    }
+}
+
+#[test]
+fn html_outside_the_subset_stays_literal_with_a_diagnostic() {
+    let doc = parse("<table><tr><td>x</td></tr></table>\n\nafter\n");
+    assert!(doc.display_text.contains("<table>"));
+    assert_eq!(doc.diagnostics.len(), 1);
+}
+
+#[test]
+fn html_with_multibyte_text_keeps_exact_source_mapping() {
+    let source = "<h2 align=\"center\">概览（说明）</h2>\n";
+    let doc = parse(source);
+    assert_eq!(doc.display_text, "概览（说明）\n");
+    let at = source.find('说').unwrap();
+    let mapped = doc.source_at(DisplayByte(doc.display_text.find('说').unwrap()));
+    assert_eq!(mapped.map(|range| range.start.0), Some(at));
 }
