@@ -180,47 +180,15 @@ pub fn render(
     else {
         return group(rect);
     };
-    let header = UiRect::new(rect.left, rect.top, rect.right, rect.top + 28.0);
-    let outline = app
-        .editor
-        .markdown_views
-        .get(&view.id)
-        .is_some_and(|state| state.outline);
-    let mut body = UiRect::new(
-        rect.left
-            + if outline {
-                200.0_f32.min(rect.width() * 0.4)
-            } else {
-                0.0
-            },
-        header.bottom,
-        rect.right,
-        rect.bottom,
-    );
+    let mut body = rect;
     let body_area = body;
     let app_hovered = app.editor.editor_hovered == Some(pane);
     let margin =
         ((body.width() - app.preferences.values().markdown.max_width as f32) * 0.5).max(0.0);
     body.left += margin;
     body.right -= margin;
-    let outline_state = state.clone();
-    let toolbar = panel(header, VisualStyle::filled(theme::c().surface)).child(button(
-        UiRect::new(rect.left + 10.0, rect.top, rect.left + 70.0, header.bottom),
-        "Outline",
-        move || {
-            outline_state.update(|app| {
-                let value = app.editor.markdown_views.entry(view.id).or_default();
-                value.outline = !value.outline;
-            })
-        },
-    ));
     // The centered reading column is narrower than the pane; fill the margins.
-    let mut root = group(rect)
-        .child(panel(
-            UiRect::new(rect.left, header.bottom, rect.right, rect.bottom),
-            VisualStyle::filled(theme::c().bg),
-        ))
-        .child(toolbar);
+    let mut root = group(rect).child(panel(rect, VisualStyle::filled(theme::c().bg)));
     let Some(service) = state.services().and_then(|runtime| runtime.markdown()) else {
         return root;
     };
@@ -318,14 +286,6 @@ pub fn render(
                 binding,
                 focus,
             ));
-            if outline {
-                root = root.child(outline_panel(
-                    &state,
-                    view.id,
-                    &result,
-                    UiRect::new(rect.left, header.bottom, body.left, rect.bottom),
-                ));
-            }
         }
         Status::Pending => {
             root = root.child(status_surface(
@@ -678,76 +638,6 @@ pub fn sync_sources(app: &mut AppState) {
             .map_or(reader.source_byte, |view| view.reader.source_byte);
         app.editor.markdown_views.entry(preview).or_default().synced = Some((scroll, byte));
     }
-}
-fn outline_panel(state: &AppContext, view: ViewId, result: &Rendered, rect: UiRect) -> Element {
-    let top = state
-        .get()
-        .editor
-        .markdown_views
-        .get(&view)
-        .map_or(0.0, |value| value.outline_top);
-    let row = 24.0;
-    let count = result.layout.document.headings.len();
-    let max = (count as f32 * row - rect.height()).max(0.0);
-    let top = top.clamp(0.0, max);
-    let mut root = lgui::core::clip(rect, 0.0, 0.0)
-        .child(panel(rect, VisualStyle::filled(theme::c().sidebar)));
-    let first = (top / row) as usize;
-    let end = (first + (rect.height() / row).ceil() as usize + 1).min(count);
-    for index in first..end {
-        let heading = &result.layout.document.headings[index];
-        let title = result
-            .layout
-            .document
-            .text(heading.display.clone())
-            .unwrap_or("")
-            .trim()
-            .to_owned();
-        let target = heading.source.start.0;
-        let y = rect.top + index as f32 * row - top;
-        let click = state.clone();
-        let bounds = UiRect::new(
-            rect.left + 6.0 + (heading.level.saturating_sub(1)) as f32 * 8.0,
-            y,
-            rect.right - 4.0,
-            y + row,
-        );
-        root = root.child(
-            panel(bounds, VisualStyle::default())
-                .event_policy(EventPolicy::INTERACTIVE)
-                .cursor(CursorIcon::Pointer)
-                .child(text(bounds, title, theme::sans(theme::c().text_soft, 12.0)))
-                .on_click(move |cx: &mut lgui::core::UiEventContext| {
-                    click.update(|app| {
-                        app.editor.markdown_views.entry(view).or_default().fragment = None;
-                        app.workspace.set_reader_position(
-                            view,
-                            ReaderPosition {
-                                source_byte: target,
-                                block_fraction: 0.0,
-                            },
-                        );
-                    });
-                    cx.stop_propagation();
-                }),
-        );
-    }
-    let scroll = state.clone();
-    root.event_policy(EventPolicy::INTERACTIVE)
-        .on_wheel(move |cx, delta| {
-            let amount = match delta.unit {
-                lgui::core::WheelUnit::Lines => -delta.y * row * 3.0,
-                lgui::core::WheelUnit::Pixels => -delta.y,
-            };
-            scroll.update(|app| {
-                app.editor
-                    .markdown_views
-                    .entry(view)
-                    .or_default()
-                    .outline_top = (top + amount).clamp(0.0, max)
-            });
-            cx.stop_propagation();
-        })
 }
 pub fn key_action(
     state: &AppContext,

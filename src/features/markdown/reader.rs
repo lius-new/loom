@@ -171,11 +171,9 @@ pub struct InteractionState {
     pub selection: Option<LogicalSelection>,
     pub pressed: Option<(u64, DisplayByte, Option<NodeId>)>,
     pub dragging: bool,
-    pub outline: bool,
     /// Source scroll and reader byte as of the last source/preview sync.
     pub synced: Option<(f32, usize)>,
     pub fragment: Option<String>,
-    pub outline_top: f32,
     pub drag_point: Option<(f32, f32)>,
     pub revision: u64,
     pub horizontal: std::collections::HashMap<NodeId, f32>,
