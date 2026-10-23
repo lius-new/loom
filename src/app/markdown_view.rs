@@ -755,7 +755,22 @@ fn status_surface(
             .children(cx.children)
     })
     .event_policy(EventPolicy::INTERACTIVE)
-    .child(text(rect, message, theme::sans(theme::c().text_soft, 14.0)));
+    .child({
+        // Centered both ways, whether it is a short wait note or a long reason.
+        let mut style = theme::sans(theme::c().text_soft, 14.0);
+        style.align = lgui::prelude::TextAlign::Center;
+        style.vertical_align = lgui::text::TextVerticalAlign::Center;
+        text(
+            UiRect::new(
+                rect.left + 24.0,
+                rect.top,
+                (rect.right - 24.0).max(rect.left + 24.0),
+                rect.bottom,
+            ),
+            message,
+            style,
+        )
+    });
     for kind in [
         lgui::core::UiEventKind::Input,
         lgui::core::UiEventKind::CompositionStart,
