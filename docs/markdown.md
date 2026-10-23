@@ -13,7 +13,6 @@ Open a .md, .markdown, .mdown or .mkd file and use:
 | markdown::TogglePreview | Ctrl+Shift+V | Toggle the current tab between source and reading |
 | markdown::OpenPreviewToSide | Ctrl+K, V | Open or focus the explicitly associated side preview |
 | markdown::OpenSource | Configurable | Focus the associated source view |
-| markdown::PreviewLargerDocument | Configurable | Explicitly raise the source admission limit to 2 MiB |
 
 Use Command instead of Ctrl on macOS. The tab context menu also provides these
 actions. **Open Source** in the reader toolbar locates the current reading
@@ -21,8 +20,8 @@ anchor in source. Repeating side preview reuses its association. Copying a tab
 creates a separate view; moving it preserves its identity. Closing or converting
 the associated source safely detaches the preview.
 
-The reader toolbar provides **Outline**, **Load Remote Images** and **Larger
-Preview**. In a narrow pane, scroll the toolbar horizontally to reach the
+The reader toolbar provides **Open Source**, **Load Remote Images** and
+**Outline**. In a narrow pane, scroll the toolbar horizontally to reach the
 remaining controls. Outline entries navigate by source anchors. A
 source/preview pair scrolls together: an editor and a preview of the same
 document in different panes need no explicit association. Whichever side moved
@@ -84,7 +83,7 @@ Text uses system font fallback. Install Noto CJK and Noto Color Emoji on Linux
 for Chinese and color Emoji coverage. Font size accepts 10–32, line height 14–80, and maximum reading width 320–1800
 logical pixels. Effective line height is at least 1.2 times the font size.
 
-Automatic preview admits source up to 512 KiB; Larger Preview admits 2 MiB.
+Preview admits source up to 2 MiB; larger files show Open Source instead.
 Event, depth, output and retained-memory limits also apply. A native paragraph
 is limited to 16 KiB. Oversized blocks/cells show an explicit fallback while
 other content remains readable; Open Source displays the full source and

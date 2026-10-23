@@ -435,17 +435,6 @@ impl AppState {
     /// view or a platform service are performed by `key_actions` instead.
     pub fn apply(&mut self, action: Action) {
         match action {
-            Action::MarkdownLargePreview => {
-                if let Some(view) = self
-                    .workspace
-                    .active()
-                    .filter(|id| crate::app::markdown_view::eligible(self, *id))
-                {
-                    self.editor.markdown_views.entry(view).or_default().large = true;
-                    self.workspace
-                        .set_presentation(view, crate::domain::view::Presentation::Markdown);
-                }
-            }
             Action::ToggleMarkdown => {
                 crate::app::markdown_view::toggle(self);
             }

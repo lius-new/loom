@@ -116,7 +116,6 @@ actions! {
 
     ToggleMarkdown => "markdown::TogglePreview", "Switch the current Markdown view between source and reading";
     MarkdownPreviewToSide => "markdown::OpenPreviewToSide", "Open or focus the associated Markdown reading view";
-    MarkdownLargePreview => "markdown::PreviewLargerDocument", "Explicitly preview with the larger bounded Markdown policy";
     MarkdownOpenSource => "markdown::OpenSource", "Focus the corresponding source view";
     Save => "editor::Save", "Save the active file";
     Undo => "editor::Undo", "Undo";

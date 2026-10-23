@@ -42,16 +42,6 @@ pub struct ParseLimits {
 impl ParseLimits {
     pub const fn automatic() -> Self {
         Self {
-            source_bytes: 512 * 1024,
-            display_bytes: 2 * 1024 * 1024,
-            retained_bytes: 16 * 1024 * 1024,
-            events: 100_000,
-            nodes: 100_000,
-            depth: 64,
-        }
-    }
-    pub const fn explicit() -> Self {
-        Self {
             source_bytes: 2 * 1024 * 1024,
             display_bytes: 4 * 1024 * 1024,
             retained_bytes: 16 * 1024 * 1024,

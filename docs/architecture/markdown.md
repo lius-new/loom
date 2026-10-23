@@ -142,7 +142,7 @@ separate from syntax flags and resource permissions.
 
 | Retained/work limit | Initial setting |
 | --- | --- |
-| Source / events | Automatic 512 KiB / 100k; explicit 2 MiB / 200k |
+| Source / events | 2 MiB / 200k |
 | Depth / parsed result | 64 / 16 MiB |
 | Native paragraph | 16 KiB; observable fallback preserves canonical copy |
 | Parent cache / parse-layout-image children | 128 MiB / 32–32–64 MiB |

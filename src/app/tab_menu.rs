@@ -32,10 +32,9 @@ fn action_enabled(app: &AppState, pane: PaneId, target: ViewId, action: Action) 
         return false;
     }
     match action {
-        Action::ToggleMarkdown
-        | Action::MarkdownToSide
-        | Action::MarkdownSource
-        | Action::MarkdownLarger => crate::app::markdown_view::eligible(app, target),
+        Action::ToggleMarkdown | Action::MarkdownToSide | Action::MarkdownSource => {
+            crate::app::markdown_view::eligible(app, target)
+        }
         // Only files can be shown in two panes at once.
         Action::SplitRight | Action::SplitDown => app.workspace.is_file(target),
         Action::KeepOpen => app
@@ -94,10 +93,7 @@ pub fn execute(
         return;
     }
     match action {
-        Action::ToggleMarkdown
-        | Action::MarkdownToSide
-        | Action::MarkdownSource
-        | Action::MarkdownLarger => {
+        Action::ToggleMarkdown | Action::MarkdownToSide | Action::MarkdownSource => {
             state.update(|app| {
                 app.workspace.activate(pane, target);
                 app.apply(match action {
@@ -107,10 +103,7 @@ pub fn execute(
                     Action::MarkdownToSide => {
                         crate::features::keymap::action::Action::MarkdownPreviewToSide
                     }
-                    Action::MarkdownSource => {
-                        crate::features::keymap::action::Action::MarkdownOpenSource
-                    }
-                    _ => crate::features::keymap::action::Action::MarkdownLargePreview,
+                    _ => crate::features::keymap::action::Action::MarkdownOpenSource,
                 });
             });
         }

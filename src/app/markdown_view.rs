@@ -213,7 +213,7 @@ pub fn render(
     let mut root = group(UiRect::new(
         rect.left,
         rect.top,
-        rect.left + 480.0_f32.max(header.width()),
+        rect.left + 360.0_f32.max(header.width()),
         header.bottom,
     ))
     .child(button(
@@ -271,24 +271,8 @@ pub fn render(
             })
         },
     ));
-    let larger = state.clone();
-    root = root.child(button(
-        UiRect::new(
-            rect.left + 360.0,
-            rect.top,
-            rect.left + 470.0,
-            header.bottom,
-        ),
-        "Larger Preview",
-        move || {
-            larger.update(|app| {
-                app.workspace.activate(pane, view.id);
-                app.apply(crate::features::keymap::action::Action::MarkdownLargePreview)
-            })
-        },
-    ));
     let toolbar = panel(header, VisualStyle::filled(theme::c().surface)).child(
-        lgui::prelude::scroll_view(header, (480.0_f32.max(header.width()), 28.0))
+        lgui::prelude::scroll_view(header, (360.0_f32.max(header.width()), 28.0))
             .horizontal()
             .child(root),
     );

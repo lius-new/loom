@@ -177,7 +177,6 @@ pub struct InteractionState {
     pub remote_base: Option<std::path::PathBuf>,
     pub fragment: Option<String>,
     pub outline_top: f32,
-    pub large: bool,
     pub drag_point: Option<(f32, f32)>,
     pub revision: u64,
     pub horizontal: std::collections::HashMap<NodeId, f32>,

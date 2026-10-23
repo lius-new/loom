@@ -129,16 +129,7 @@ impl MarkdownService {
                     .documents
                     .get(&id)
                     .filter(|document| document.is_text())?;
-                let limits = if app
-                    .editor
-                    .markdown_views
-                    .get(&view.id)
-                    .is_some_and(|state| state.large)
-                {
-                    ParseLimits::explicit()
-                } else {
-                    ParseLimits::automatic()
-                };
+                let limits = ParseLimits::automatic();
                 if document.buffer.len() > limits.source_bytes {
                     return None;
                 }
@@ -182,16 +173,7 @@ impl MarkdownService {
             .documents
             .get(&id)
             .filter(|document| document.is_text())?;
-        let limits = if app
-            .editor
-            .markdown_views
-            .get(&view.id)
-            .is_some_and(|state| state.large)
-        {
-            ParseLimits::explicit()
-        } else {
-            ParseLimits::automatic()
-        };
+        let limits = ParseLimits::automatic();
         if document.buffer.len() > limits.source_bytes {
             return Some(ParseStatus::Declined(ParseFailure {
                 reason: ParseStop::SourceBudget,
