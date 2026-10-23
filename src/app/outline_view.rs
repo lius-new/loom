@@ -18,11 +18,6 @@ pub(crate) fn render(rect: UiRect, state: &AppContext, code_rect: UiRect) -> Ele
         state,
     );
     let rows = ui.outline.rows(&ui.collapsed, ui.sorted);
-    let file = ui
-        .path
-        .as_ref()
-        .and_then(|path| path.file_name())
-        .map(|name| name.to_string_lossy().into_owned());
     let markdown = ui
         .path
         .as_deref()
@@ -45,7 +40,6 @@ pub(crate) fn render(rect: UiRect, state: &AppContext, code_rect: UiRect) -> Ele
                 reveal: ui.reveal.as_deref(),
             },
         },
-        file: file.as_deref(),
         sorted: ui.sorted,
         scroll: ui.scroll,
         hovered: ui.hovered,

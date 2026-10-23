@@ -73,8 +73,6 @@ pub enum Body<'a> {
 
 pub struct Frame<'a> {
     pub body: Body<'a>,
-    /// Name of the described file.
-    pub file: Option<&'a str>,
     pub sorted: bool,
     pub scroll: f32,
     pub hovered: Option<usize>,
@@ -199,13 +197,6 @@ fn toolbar_row(rect: UiRect, frame: &Frame<'_>, commands: &Commands) -> Element 
                 )),
         );
     }
-    if let Some(file) = frame.file {
-        row = row.child(text(
-            UiRect::new(left + 8.0, rect.top + 6.0, rect.right - 10.0, rect.bottom),
-            file.to_owned(),
-            theme::sans(theme::c().text_faint, 12.0),
-        ));
-    }
     row.child(crate::ui::components::divider::bottom(rect))
 }
 
@@ -246,9 +237,11 @@ fn tree(
         rows.iter()
             .position(|row| outline.node(row.node).is_some_and(|node| node.key == key))
     }) {
+        // Pinned ancestors cover one row each above the revealed row.
         let top = index as f32 * ROW_H;
-        if top < scroll {
-            scroll = top;
+        let covered = f32::from(rows[index].depth) * ROW_H;
+        if top - covered < scroll {
+            scroll = (top - covered).max(0.0);
         } else if top + ROW_H > scroll + list.height() {
             scroll = top + ROW_H - list.height();
         }
@@ -275,6 +268,7 @@ fn tree(
         };
         let top = list.top + index as f32 * ROW_H - scroll;
         body = body.child(row_element(
+            "body",
             list,
             top,
             index,
@@ -287,6 +281,35 @@ fn tree(
     }
     bar = bar.child(body);
 
+    // Branches scrolled off the top stay pinned, deepest first so that a branch
+    // being pushed out slides beneath its parent.
+    let mut pinned = clip(list, 0.0, 0.0);
+    for (index, offset) in sticky(rows, scroll).into_iter().rev() {
+        let row = &rows[index];
+        let Some(node) = outline.node(row.node) else {
+            continue;
+        };
+        let top = list.top + offset;
+        pinned = pinned.child(
+            panel(
+                UiRect::new(list.left, top, list.right, top + ROW_H),
+                VisualStyle::filled(theme::c().sidebar),
+            )
+            .child(row_element(
+                "sticky",
+                list,
+                top,
+                index,
+                row,
+                node,
+                current == Some(node.key.as_str()),
+                frame.hovered == Some(index),
+                commands,
+            )),
+        );
+    }
+    bar = bar.child(pinned);
+
     if max_scroll > 0.0 {
         bar = bar.child(vertical_scrollbar(
             list, content_h, scroll, max_scroll, frame, commands,
@@ -295,8 +318,52 @@ fn tree(
     bar
 }
 
+/// The expanded branches to pin and where, as offsets below the list's top: a
+/// branch pins at the slot of its depth once scrolled past it, and is pushed up
+/// by the first row after its subtree.
+fn sticky(rows: &[Row], scroll: f32) -> Vec<(usize, f32)> {
+    if scroll <= 0.0 {
+        return Vec::new();
+    }
+    let open = |row: &Row| row.has_children && row.expanded;
+    let mut ends = vec![rows.len(); rows.len()];
+    let mut stack: Vec<usize> = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        while let Some(&branch) = stack.last() {
+            if rows[branch].depth < row.depth {
+                break;
+            }
+            ends[branch] = index;
+            stack.pop();
+        }
+        if open(row) {
+            stack.push(index);
+        }
+    }
+    let deepest = rows.iter().map(|row| row.depth).max().unwrap_or(0);
+    let reach = (f32::from(deepest) + 1.0) * ROW_H;
+    let mut pinned = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        let natural = index as f32 * ROW_H - scroll;
+        if natural > reach {
+            break;
+        }
+        let slot = f32::from(row.depth) * ROW_H;
+        if !open(row) || natural >= slot {
+            continue;
+        }
+        let pushed = ends[index] as f32 * ROW_H - scroll - ROW_H;
+        let top = slot.min(pushed);
+        if top > -ROW_H {
+            pinned.push((index, top));
+        }
+    }
+    pinned
+}
+
 #[allow(clippy::too_many_arguments)]
 fn row_element(
+    layer: &str,
     list: UiRect,
     top: f32,
     index: usize,
@@ -329,7 +396,7 @@ fn row_element(
     let hover = commands.clone();
     let node_index = row.node;
     let mut element = panel(rect, style)
-        .key(format!("outline-row-{index}"))
+        .key(format!("outline-{layer}-row-{index}"))
         .event_policy(EventPolicy::INTERACTIVE)
         .cursor(CursorIcon::Pointer)
         .semantics(Semantics::new(SemanticRole::Button).name(node.name.clone()))
@@ -354,7 +421,7 @@ fn row_element(
                     }
                 })
                 .child(crate::ui::drawer::drawer_icon(
-                    UiId::owned(format!("outline-chevron-{index}")),
+                    UiId::owned(format!("outline-{layer}-chevron-{index}")),
                     if row.expanded {
                         "chevron-down"
                     } else {
@@ -366,7 +433,7 @@ fn row_element(
         );
     }
 
-    element = element.child(kind_badge(index, node.kind, icon));
+    element = element.child(kind_badge(layer, index, node.kind, icon));
 
     let color = if node.deprecated {
         theme::c().text_faint
@@ -392,7 +459,7 @@ fn row_element(
 }
 
 /// The tinted symbol icon; headings get a small `H1`..`H6` tag instead.
-fn kind_badge(index: usize, kind: Kind, rect: UiRect) -> Element {
+fn kind_badge(layer: &str, index: usize, kind: Kind, rect: UiRect) -> Element {
     if let Kind::Heading(level) = kind {
         return text(
             UiRect::new(rect.left, rect.top + 1.0, rect.right + 2.0, rect.bottom),
@@ -403,8 +470,12 @@ fn kind_badge(index: usize, kind: Kind, rect: UiRect) -> Element {
     }
     let (icon, class) = kind_style(kind);
     precompiled(
-        UiElement::icon(UiId::owned(format!("outline-kind-{index}")), rect, icon)
-            .icon_style(IconStyle::new(theme::syntax_color(class))),
+        UiElement::icon(
+            UiId::owned(format!("outline-{layer}-kind-{index}")),
+            rect,
+            icon,
+        )
+        .icon_style(IconStyle::new(theme::syntax_color(class))),
     )
 }
 
@@ -506,4 +577,68 @@ fn vertical_scrollbar(
     .on_pointer_up(move |_cx, _pointer| thumb_up.dispatch(Command::ScrollbarRelease));
 
     lgui::core::group(track).child(track_hit).child(thumb_hit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::outline::{Item, Kind};
+    use std::collections::HashSet;
+
+    fn item(name: &str, at: usize, children: Vec<Item>) -> Item {
+        Item {
+            name: name.to_owned(),
+            detail: None,
+            kind: Kind::Function,
+            deprecated: false,
+            full: at..at + 1,
+            select: at..at,
+            children,
+        }
+    }
+
+    // Rows: 0 a, 1 b, 2 c, 3 d, 4 e, 5 f (a > b > c, d; e > f)
+    fn rows() -> Vec<Row> {
+        let outline = Outline::new(vec![
+            item(
+                "a",
+                0,
+                vec![
+                    item("b", 1, vec![item("c", 2, vec![])]),
+                    item("d", 3, vec![]),
+                ],
+            ),
+            item("e", 4, vec![item("f", 5, vec![])]),
+        ]);
+        outline.rows(&HashSet::new(), false)
+    }
+
+    #[test]
+    fn nothing_is_pinned_at_the_top() {
+        assert!(sticky(&rows(), 0.0).is_empty());
+    }
+
+    #[test]
+    fn scrolled_branches_pin_at_the_slot_of_their_depth() {
+        // Scrolled one row: a is above the list and b has reached its slot.
+        let pinned = sticky(&rows(), ROW_H);
+        assert_eq!(pinned, [(0, 0.0), (1, ROW_H)]);
+    }
+
+    #[test]
+    fn a_branch_is_pushed_out_by_the_row_after_its_subtree() {
+        // Row 3 (d) at the top: a pinned; b's subtree ended, so b is not pinned.
+        let pinned = sticky(&rows(), 3.0 * ROW_H);
+        assert_eq!(pinned, [(0, 0.0)]);
+        // Row 4 (e) is 8px from the top: a, whose subtree ends at row 4, slides up.
+        let pinned = sticky(&rows(), 4.0 * ROW_H - 8.0);
+        assert_eq!(pinned, [(0, 8.0 - ROW_H)]);
+    }
+
+    #[test]
+    fn collapsed_branches_are_never_pinned() {
+        let outline = Outline::new(vec![item("a", 0, vec![item("b", 1, vec![])])]);
+        let rows = outline.rows(&outline.branch_keys(), false);
+        assert!(sticky(&rows, 10.0).is_empty());
+    }
 }

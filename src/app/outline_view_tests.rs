@@ -281,7 +281,6 @@ fn outline_preview_picture() {
                     current: current.as_deref(),
                     reveal: None,
                 },
-                file: Some("workspace.rs"),
                 sorted: false,
                 scroll: 0.0,
                 hovered: Some(1),
