@@ -1268,7 +1268,15 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     }
 
     pub fn file_id_for_path(&self, path: &Path) -> Option<FileId> {
-        self.paths.get(path).copied()
+        if let Some(id) = self.paths.get(path) {
+            return Some(*id);
+        }
+        // `\\?\D:\dir` (from `fs::canonicalize`, as the file tree reports) and
+        // `D:\dir` (from the shell or a dialog) name the same file.
+        let wanted = comparable(path);
+        self.paths
+            .iter()
+            .find_map(|(open, id)| (comparable(open) == wanted).then_some(*id))
     }
 
     pub fn is_dirty(&self, id: FileId) -> bool {
@@ -1695,6 +1703,17 @@ fn parent_components(path: &Path) -> Vec<String> {
             (!value.is_empty() && value != "\\" && value != "/").then(|| value.into_owned())
         })
         .collect()
+}
+
+/// A path without the Windows verbatim prefix, for comparing spellings.
+fn comparable(path: &Path) -> &Path {
+    let Some(value) = path.to_str() else {
+        return path;
+    };
+    match value.strip_prefix(r"\\?\") {
+        Some(local) if local.as_bytes().get(1) == Some(&b':') => Path::new(local),
+        _ => path,
+    }
 }
 
 fn parent_suffix(parts: &[String], depth: usize) -> String {

@@ -939,3 +939,12 @@ impl Workspace {
         }
     }
 }
+
+#[test]
+fn verbatim_and_plain_spellings_open_one_document() {
+    let mut workspace = Workspace::new();
+    let plain = workspace.open_path(PathBuf::from(r"D:\proj\notes.md"), "text".into());
+    let verbatim = workspace.open_path(PathBuf::from(r"\\?\D:\proj\notes.md"), "text".into());
+    assert_eq!(plain, verbatim);
+    assert_eq!(workspace.open_paths().len(), 1);
+}
