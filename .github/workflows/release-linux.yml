@@ -9,7 +9,7 @@ on:
       version:
         description: Version from Cargo.toml, without the leading v
         required: true
-        default: "0.1.3"
+        default: "0.1.4"
       publish:
         description: Upload the packages to the GitHub release draft
         type: boolean
