@@ -151,6 +151,7 @@ mod panel_virtualization_tests {
             let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.git.ui.hovered = true;
+                app.git.ui.scroll_hover = Some(ScrollRegion::Details);
                 history(&mut app);
                 prepare(&mut app);
                 app
@@ -1090,7 +1091,7 @@ mod panel_virtualization_tests {
             assert!(region.scroll(&state.get().git) > 0.0);
             let other = match region {
                 ScrollRegion::Changes => ScrollRegion::Details,
-                ScrollRegion::Details => ScrollRegion::Changes,
+                ScrollRegion::Details | ScrollRegion::Navigator => ScrollRegion::Changes,
             };
             assert_eq!(other.scroll(&state.get().git), 0.0);
             send(InputEvent::PointerUp {
@@ -1958,6 +1959,7 @@ mod panel_virtualization_tests {
                 let state = cx.state_with(|| {
                     let mut app = GitPanelState::default();
                     app.ui.hovered = true;
+                    app.ui.scroll_hover = Some(ScrollRegion::Details);
                     app.ui.collapsed_sections.remove(&HISTORY);
                     let request = app
                         .model

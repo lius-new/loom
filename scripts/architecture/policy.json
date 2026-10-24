@@ -519,6 +519,21 @@
       "migrated_in": "Git history branches",
       "reason": "Which branch folders the navigator has folded shut"
     },
+    "navigator_scrollbar_dragging": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "The navigator's scrollbar thumb is being dragged"
+    },
+    "navigator_scrollbar_drag_offset": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "Pointer offset within the navigator's scrollbar thumb"
+    },
+    "scroll_hover": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "The scrollable region under the pointer"
+    },
     "history_nav": {
       "owner": "ui/git/state",
       "migrated_in": "Git history branches",

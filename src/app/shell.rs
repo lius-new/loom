@@ -909,6 +909,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             st_git_hover.try_update(move |app| {
                 let mut changed = app.git.ui.hovered != hovered;
                 app.git.ui.hovered = hovered;
+                if !hovered && app.git.ui.scroll_hover.take().is_some() {
+                    changed = true;
+                }
                 // Leaving the drawer drops its row hover; the drawer only
                 // tracks moves inside itself.
                 if !hovered && app.git.ui.hover.is_some() {

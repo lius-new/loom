@@ -36,10 +36,12 @@ pub(crate) fn drawer_regions(body: UiRect, _changes_height: f32) -> (UiRect, UiR
     )
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScrollRegion {
     Changes,
     Details,
+    /// The history navigator's reference list.
+    Navigator,
 }
 
 impl ScrollRegion {
@@ -63,6 +65,7 @@ impl ScrollRegion {
         match self {
             Self::Changes => "git-changes-viewport",
             Self::Details => "git-details-viewport",
+            Self::Navigator => "git-navigator-viewport",
         }
     }
 
@@ -70,6 +73,7 @@ impl ScrollRegion {
         match self {
             Self::Changes => app.ui.scroll,
             Self::Details => app.ui.details_scroll,
+            Self::Navigator => app.ui.history_branch_scroll,
         }
     }
 
@@ -77,6 +81,7 @@ impl ScrollRegion {
         match self {
             Self::Changes => app.ui.scroll = value,
             Self::Details => app.ui.details_scroll = value,
+            Self::Navigator => app.ui.history_branch_scroll = value,
         }
         app.ui.clear_hover_cards();
     }
@@ -87,6 +92,10 @@ impl ScrollRegion {
             Self::Details => (
                 app.ui.details_scrollbar_dragging,
                 app.ui.details_scrollbar_drag_offset,
+            ),
+            Self::Navigator => (
+                app.ui.navigator_scrollbar_dragging,
+                app.ui.navigator_scrollbar_drag_offset,
             ),
         }
     }
@@ -100,6 +109,10 @@ impl ScrollRegion {
             Self::Details => {
                 app.ui.details_scrollbar_dragging = dragging;
                 app.ui.details_scrollbar_drag_offset = offset;
+            }
+            Self::Navigator => {
+                app.ui.navigator_scrollbar_dragging = dragging;
+                app.ui.navigator_scrollbar_drag_offset = offset;
             }
         }
     }
@@ -142,7 +155,8 @@ pub(crate) fn scroll_region(
             }
         });
     let app = state.get();
-    if max_scroll > 0.0 && (app.ui.hovered || region.drag(&app).0) {
+    // Only the region under the pointer shows its bar, not every one in the drawer and panel.
+    if max_scroll > 0.0 && (app.ui.scroll_hover == Some(region) || region.drag(&app).0) {
         viewport = viewport.child(git_vertical_scrollbar(
             rect,
             content_bottom,
@@ -450,6 +464,7 @@ pub fn render(
     let changes_rect = content_rect;
     let changes_scroll = scroll;
     let changes_max_scroll = max_scroll;
+    let scroll_area = changes_rect;
     let hover_regions = [(changes_rect, changes_scroll, changes_hover)];
     // One hit test per move finds the hovered row, so rows need no hover
     // state of their own and the pointer never leaves a stale highlight.
@@ -475,6 +490,7 @@ pub fn render(
                     })
                 });
             let next = target.as_ref().map(|(_, hover)| (*hover).clone());
+            let region = scroll_area.contains(point).then_some(ScrollRegion::Changes);
             let mut entered = false;
             hover_state.try_update(|app| {
                 let changed = app.ui.hover != next;
@@ -483,7 +499,9 @@ pub fn render(
                     app.ui.clear_hover_cards();
                 }
                 app.ui.hover = next;
-                changed
+                let region_changed = app.ui.scroll_hover != region;
+                app.ui.scroll_hover = region;
+                changed || region_changed
             });
             if entered && let Some((anchor, hover)) = target {
                 match hover {

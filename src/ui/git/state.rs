@@ -34,6 +34,8 @@ pub enum HistoryPane {
 pub struct GitUiState {
     /// Pointer is inside the Source Control drawer.
     pub hovered: bool,
+    /// The scrollable region under the pointer, the only one to show its bar.
+    pub scroll_hover: Option<crate::ui::git::panel::ScrollRegion>,
     /// The drawer row under the pointer, which shows its action buttons.
     pub hover: Option<GitHover>,
     pub scroll: f32,
@@ -53,6 +55,8 @@ pub struct GitUiState {
     pub scrollbar_drag_offset: f32,
     pub details_scrollbar_dragging: bool,
     pub details_scrollbar_drag_offset: f32,
+    pub navigator_scrollbar_dragging: bool,
+    pub navigator_scrollbar_drag_offset: f32,
     pub commit_input: InputState,
     pub file_filter: InputState,
     /// Branches listed beside the history, for the repository they were read from.
@@ -103,6 +107,7 @@ impl Default for GitUiState {
     fn default() -> Self {
         Self {
             hovered: false,
+            scroll_hover: None,
             hover: None,
             scroll: 0.0,
             details_scroll: 0.0,
@@ -115,6 +120,8 @@ impl Default for GitUiState {
             scrollbar_drag_offset: 0.0,
             details_scrollbar_dragging: false,
             details_scrollbar_drag_offset: 0.0,
+            navigator_scrollbar_dragging: false,
+            navigator_scrollbar_drag_offset: 0.0,
             commit_input: InputState::default(),
             file_filter: InputState::default(),
             history_branches: None,

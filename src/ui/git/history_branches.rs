@@ -4,14 +4,14 @@
 use std::collections::{BTreeMap, HashSet};
 
 use lgui::core::{
-    CursorIcon, EventPolicy, PointerButton, SemanticRole, Semantics, UiElement, UiId, WheelUnit,
-    clip,
+    CursorIcon, EventPolicy, PointerButton, SemanticRole, Semantics, UiElement, UiId,
 };
 use lgui::prelude::{Color, Element, UiRect, VisualStyle, panel, text};
 
 use crate::features::git::{BranchInfo, RepositorySnapshot, StashInfo, TagInfo};
 use crate::ui::git::commands::{Binding, Command, Snapshot};
 use crate::ui::git::menu::{GitMenu, GitMenuTarget};
+use crate::ui::git::panel::{ScrollRegion, scroll_region};
 use crate::ui::git::state::NavView;
 use crate::ui::{tabs, theme};
 
@@ -134,6 +134,7 @@ enum Create {
     Stash,
 }
 
+#[derive(Clone)]
 enum Entry<'a> {
     Heading(&'static str, Option<Create>),
     Folder {
@@ -221,17 +222,49 @@ fn entries<'a>(
 pub(crate) const LOCAL: &str = "g:local";
 pub(crate) const REMOTE: &str = "g:remote";
 
-pub(crate) fn content_height(
-    branches: &[BranchInfo],
-    repository: &RepositorySnapshot,
-    collapsed: &HashSet<String>,
-    view: NavView,
-) -> f32 {
-    entries(branches, repository, collapsed, None, view)
-        .iter()
-        .map(Entry::height)
-        .sum::<f32>()
-        + PAD
+impl Entry<'_> {
+    /// How deep the entry sits in the branch tree; other kinds are flat.
+    fn depth(&self) -> usize {
+        match self {
+            Self::Folder { depth, .. } | Self::Branch { depth, .. } => *depth,
+            _ => 0,
+        }
+    }
+}
+
+/// The folders to pin as `(row, top)`: each one scrolled above its slot whose
+/// contents still reach it, stacked by depth and pushed up as its contents end.
+fn pinned_folders(
+    rows: &[Entry<'_>],
+    tops: &[f32],
+    rows_bottom: f32,
+    view_top: f32,
+) -> Vec<(usize, f32)> {
+    let mut pinned = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        let Entry::Folder { depth, .. } = row else {
+            continue;
+        };
+        let slot = view_top + *depth as f32 * ROW_H;
+        let end = rows[index + 1..]
+            .iter()
+            .position(|next| next.depth() <= *depth)
+            .map_or(rows_bottom, |offset| tops[index + 1 + offset]);
+        if tops[index] < slot && end > slot {
+            pinned.push((index, slot.min(end - ROW_H)));
+        }
+    }
+    pinned
+}
+
+/// The part of the navigator that scrolls: below the rail's width and the heading.
+pub(crate) fn body_rect(rect: UiRect) -> UiRect {
+    UiRect::new(
+        rect.left + RAIL_W,
+        rect.top + PAD + HEADING_H,
+        rect.right,
+        rect.bottom,
+    )
 }
 
 pub(crate) fn render(
@@ -248,9 +281,14 @@ pub(crate) fn render(
     store: &Snapshot,
 ) -> Element {
     let list = UiRect::new(rect.left + RAIL_W, rect.top, rect.right, rect.bottom);
-    let max_scroll =
-        (content_height(branches, repository, collapsed, view) - list.height()).max(0.0);
-    let scroll = scroll.clamp(0.0, max_scroll);
+    // The title and its create button stay put; only what is below them scrolls.
+    let heading = UiRect::new(
+        list.left,
+        list.top + PAD,
+        list.right,
+        list.top + PAD + HEADING_H,
+    );
+    let body = UiRect::new(list.left, heading.bottom, list.right, list.bottom);
     let current = branches
         .iter()
         .find(|branch| branch.current)
@@ -258,16 +296,36 @@ pub(crate) fn render(
     // Choosing a stash leaves the history on its branch, which stops being the
     // selection; the stash is.
     let selected = scope.or(current).filter(|_| stash.is_none());
-    let mut layer = clip(list, 0.0, 0.0);
-    let mut y = list.top + PAD - scroll;
+    let mut title = None;
+    let mut rows = Vec::new();
     for entry in entries(branches, repository, collapsed, selected, view) {
-        let height = entry.height();
-        let row = UiRect::new(list.left, y, list.right, y + height);
-        y += height;
-        if row.bottom < list.top || row.top > list.bottom {
-            continue;
+        if let Entry::Heading(name, create) = entry {
+            title = Some(heading_row(
+                heading, name, create, repository, tag_target, state, store,
+            ));
+        } else {
+            rows.push(entry);
         }
-        layer = layer.child(match entry {
+    }
+    // Row tops in content space, before scrolling.
+    let mut tops = Vec::with_capacity(rows.len());
+    let mut y = body.top;
+    for row in &rows {
+        tops.push(y);
+        y += row.height();
+    }
+    let rows_bottom = y;
+    let content_bottom = rows_bottom + PAD;
+    let max_scroll = (content_bottom - body.bottom).max(0.0);
+    let scroll = scroll.clamp(0.0, max_scroll);
+    let (view_top, view_bottom) = (body.top + scroll, body.bottom + scroll);
+
+    // A folder scrolled past the top stays pinned there, below the folders
+    // that contain it, for as long as its contents are in view.
+    let pinned = pinned_folders(&rows, &tops, rows_bottom, view_top);
+
+    let build = |entry: Entry<'_>, row: UiRect| -> Element {
+        match entry {
             Entry::Heading(title, create) => {
                 heading_row(row, title, create, repository, tag_target, state, store)
             }
@@ -322,9 +380,33 @@ pub(crate) fn render(
                 theme::mono(theme::c().text_ghost, theme::SMALL),
             )
             .into(),
-        });
+        }
+    };
+
+    let mut content = Vec::new();
+    for (index, entry) in rows.iter().enumerate() {
+        let top = tops[index];
+        let height = entry.height();
+        if top + height < view_top
+            || top > view_bottom
+            || pinned.iter().any(|(pinned, _)| *pinned == index)
+        {
+            continue;
+        }
+        content.push(build(
+            entry.clone(),
+            UiRect::new(list.left, top, list.right, top + height),
+        ));
     }
-    let wheel_state = state.clone();
+    // Drawn last and opaque, so what scrolls beneath cannot show through.
+    for (index, top) in pinned {
+        let slot = UiRect::new(list.left, top, list.right, top + ROW_H);
+        content.push(
+            panel(slot, VisualStyle::filled(theme::c().sidebar))
+                .child(build(rows[index].clone(), slot))
+                .into(),
+        );
+    }
     panel(rect, VisualStyle::default())
         .key("git-history-branches")
         .child(rail(
@@ -337,17 +419,17 @@ pub(crate) fn render(
             ],
             state,
         ))
-        .child(layer)
-        .on_wheel(move |cx, delta| {
-            let step = match delta.unit {
-                WheelUnit::Lines => delta.y * ROW_H * 3.0,
-                WheelUnit::Pixels => delta.y,
-            };
-            wheel_state.update(|app| {
-                app.ui.history_branch_scroll = (scroll - step).clamp(0.0, max_scroll);
-            });
-            cx.stop_propagation();
-        })
+        .child(scroll_region(
+            body,
+            content,
+            content_bottom,
+            scroll,
+            max_scroll,
+            state.clone(),
+            ScrollRegion::Navigator,
+        ))
+        .children(title)
+        .into()
 }
 
 /// A selectable row: its background follows the selection and the pointer.
@@ -743,6 +825,47 @@ mod tests {
         assert_eq!(
             shape(&out),
             ["Remote/ 2", " origin/ 2", "  feature/ 1 (folded)", "  main"]
+        );
+    }
+
+    #[test]
+    fn scrolled_past_folders_pin_by_depth_until_their_contents_end() {
+        let leaf = branch("a", false);
+        let folder = |name: &str, depth| Entry::Folder {
+            key: name.into(),
+            name: name.into(),
+            depth,
+            expanded: true,
+            count: 1,
+            holds_selection: false,
+        };
+        let branch_row = |depth| Entry::Branch {
+            info: &leaf,
+            depth,
+            display: "a".into(),
+        };
+        // Local/ (0), feature/ (1), a, b (2), main (1), Remote/ (0)
+        let rows = [
+            folder("Local", 0),
+            folder("feature", 1),
+            branch_row(2),
+            branch_row(2),
+            branch_row(1),
+            folder("Remote", 0),
+        ];
+        let tops: Vec<f32> = (0..rows.len()).map(|i| i as f32 * ROW_H).collect();
+        let bottom = rows.len() as f32 * ROW_H;
+        // Nothing scrolled away yet.
+        assert!(pinned_folders(&rows, &tops, bottom, 0.0).is_empty());
+        // Local and feature are above the top, still holding rows in view; feature
+        // is pushed up because its last row ends 88px down.
+        let pinned = pinned_folders(&rows, &tops, bottom, 2.5 * ROW_H);
+        assert_eq!(pinned, vec![(0, 2.5 * ROW_H), (1, 3.0 * ROW_H)]);
+        // Past feature's last row, only Local stays pinned.
+        let pinned = pinned_folders(&rows, &tops, bottom, 4.2 * ROW_H);
+        assert_eq!(
+            pinned.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+            vec![0]
         );
     }
 

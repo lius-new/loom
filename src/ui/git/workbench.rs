@@ -404,6 +404,15 @@ pub fn render(
         }
     }
 
+    // Only the scrollable region under the pointer shows its scrollbar.
+    let navigator_body = show_branches.then(|| {
+        history_branches::body_rect(UiRect::new(
+            panel_body.left,
+            panel_body.top,
+            list_left,
+            panel_body.bottom,
+        ))
+    });
     // One hit test per move finds the hovered row, as in Source Control.
     let hover_state = state.clone();
     let hover_root = repository.worktree_root.clone();
@@ -424,6 +433,13 @@ pub fn render(
                 None
             };
             let next = target.as_ref().map(|(_, hover)| (*hover).clone());
+            let region = if body.contains(point) {
+                Some(ScrollRegion::Details)
+            } else if navigator_body.is_some_and(|rect| rect.contains(point)) {
+                Some(ScrollRegion::Navigator)
+            } else {
+                None
+            };
             let mut entered = false;
             hover_state.try_update(|app| {
                 let changed = app.ui.hover != next;
@@ -432,7 +448,9 @@ pub fn render(
                     app.ui.clear_hover_cards();
                 }
                 app.ui.hover = next;
-                changed
+                let region_changed = app.ui.scroll_hover != region;
+                app.ui.scroll_hover = region;
+                changed || region_changed
             });
             if entered && let Some((anchor, hover)) = target {
                 match hover {
