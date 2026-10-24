@@ -324,7 +324,7 @@ pub(super) fn paint(result: &Rendered, paragraph: usize, bounds: UiRect) -> Elem
             bounds.top + tile.top + tile.height,
         );
         let source = UiImageSource::bytes(
-            format!("markdown-png-{}", Arc::as_ptr(&tile.png) as usize),
+            format!("markdown-png-{:016x}-{}", tile.hash, tile.png.len()),
             0,
             tile.png.clone(),
         );

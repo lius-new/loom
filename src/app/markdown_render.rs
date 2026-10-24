@@ -49,6 +49,8 @@ pub struct Tile {
     pub width: f32,
     pub height: f32,
     pub density: f32,
+    /// Content hash of `png`; a pointer would collide once the allocation is reused.
+    pub hash: u64,
     pub png: Arc<Vec<u8>>,
 }
 pub struct Rendered {
@@ -567,6 +569,12 @@ fn render(
                     width,
                     height,
                     density,
+                    hash: {
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        png.hash(&mut hasher);
+                        hasher.finish()
+                    },
                     png,
                 });
                 y += height;
