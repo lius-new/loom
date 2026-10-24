@@ -816,6 +816,8 @@ pub fn layout_with_images(
                 NodeKind::CodeBlock { .. } | NodeKind::Html { block: true }
             );
             let pad = if code { style.padding } else { 0.0 };
+            // Vertical padding is tighter than horizontal; the copy button floats over the corner and takes no height.
+            let pad_y = if code { 10.0 } else { 0.0 };
             let start = placer.out.paragraphs.len();
             let mut range = node.display;
             if tight_item {
@@ -891,17 +893,18 @@ pub fn layout_with_images(
                 id,
                 range,
                 x + pad,
-                y + pad + if code { 18.0 } else { 0.0 },
+                y + pad_y,
                 (width - pad * 2.0).max(1.0),
                 !code,
                 block_alignment,
             )?;
-            let mut height = placer.out.paragraphs[index]
-                .summary
-                .height
-                .max(style.line_height)
-                + pad * 2.0
-                + if code { 18.0 } else { 0.0 };
+            let summary = &placer.out.paragraphs[index].summary;
+            // A fence's closing newline shapes an empty last line; it is not content.
+            let content = match summary.lines.last() {
+                Some(last) if code && summary.lines.len() > 1 && last.width <= 0.0 => last.top,
+                _ => summary.height,
+            };
+            let mut height = content.max(style.line_height) + pad_y * 2.0;
             // Level 1 and 2 headings carry a hairline underneath, as on GitHub.
             if matches!(node.kind, NodeKind::Heading { level: 1 | 2 }) {
                 placer.out.decorations.push(Decoration::Rule {

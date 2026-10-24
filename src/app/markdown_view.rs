@@ -372,6 +372,10 @@ pub(super) fn event(
     };
     let mut effects = crate::features::markdown::reader::Effects::default();
     let activate = matches!(action, ReaderEvent::PointerDown { .. });
+    let copied_node = match action {
+        ReaderEvent::CopyNode { node, .. } => Some(node),
+        _ => None,
+    };
     state.update(|app| {
         if !app.workspace.view(view).is_some_and(|value| {
             value.presentation == Presentation::Markdown && value.input_generation == generation
@@ -441,6 +445,14 @@ pub(super) fn event(
     if let Some(copy) = effects.copy {
         if let Err(error) = clipboard.write_text(&copy) {
             state.update(|app| app.show_error(format!("Clipboard: {error}")));
+        } else if let Some(node) = copied_node {
+            reader::mark_copied(node);
+            // Repaint once the "Copied" label has run out.
+            let refresh = state.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(reader::COPIED_FOR + std::time::Duration::from_millis(50));
+                refresh.try_update(|_| true);
+            });
         }
     }
     if let Some(node) = effects.link {

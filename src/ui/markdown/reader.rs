@@ -4,8 +4,9 @@ use crate::features::markdown::layout::Decoration;
 use crate::ui::components::scrollbar;
 use crate::ui::theme;
 use lgui::core::{
-    CursorIcon, EventPolicy, KeyState, LogicalKey, NamedKey, PointerButton, SemanticRole,
-    Semantics, UiElement, UiEventKind, UiFocusHandle, UiId, WheelUnit, clip,
+    CursorIcon, EventPolicy, KeyState, LogicalKey, NamedKey, PathStyle, Point, PointerButton,
+    SemanticRole, Semantics, Stroke, UiElement, UiEventKind, UiFocusHandle, UiId, UiPath,
+    UiPathCommand, WheelUnit, clip, path,
 };
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 use std::sync::Arc;
@@ -130,6 +131,8 @@ pub fn render_in(
     }
     let mut scrollbar_layer = None;
     // I-beam only over the reading column, as in the editor; margins and scrollbars keep the arrow.
+    // Drawn after the paragraph tiles, which would otherwise cover them.
+    let mut overlays: Vec<Element> = Vec::new();
     let mut content = clip(rect, 0.0, 0.0)
         .key("markdown-reading-content")
         .cursor(CursorIcon::Text);
@@ -178,34 +181,80 @@ pub fn render_in(
                     ));
                     let copy = binding.clone();
                     let node = *node;
+                    let copied = recently_copied(node);
                     let button = UiRect::new(
-                        (bounds.right - 52.0).max(bounds.left),
-                        bounds.top + 2.0,
-                        bounds.right - 4.0,
-                        bounds.top + 20.0,
+                        (bounds.right - 30.0).max(bounds.left),
+                        bounds.top + 6.0,
+                        bounds.right - 8.0,
+                        bounds.top + 28.0,
                     );
-                    content = content.child(
-                        panel(button, VisualStyle::default())
-                            .event_policy(EventPolicy {
-                                focus: false,
-                                ..EventPolicy::INTERACTIVE
-                            })
-                            .cursor(CursorIcon::Pointer)
-                            .semantics(Semantics::new(SemanticRole::Button).name("Copy code"))
-                            .child(text(
+                    let glyph = theme::c().text_soft;
+                    let (mx, my) = (
+                        (button.left + button.right) * 0.5,
+                        (button.top + button.bottom) * 0.5,
+                    );
+                    let mut icon = Vec::new();
+                    if copied {
+                        let point = |dx: f32, dy: f32| Point::new(mx + dx, my + dy);
+                        icon.push(path(
+                            button,
+                            UiPath::new([
+                                UiPathCommand::MoveTo(point(-4.5, 0.0)),
+                                UiPathCommand::LineTo(point(-1.5, 3.5)),
+                                UiPathCommand::LineTo(point(4.5, -3.5)),
+                            ]),
+                            PathStyle {
+                                fill: None,
+                                fill_alpha: 0,
+                                stroke: Some(Stroke::new(glyph, 1.6, 255)),
+                            },
+                        ));
+                    } else {
+                        // Two overlapping outlined squares on whole pixels, centered as one glyph.
+                        let square = |left: f32, top: f32, fill: lgui::prelude::Color| {
+                            panel(
+                                UiRect::new(left, top, left + 8.0, top + 9.0),
+                                VisualStyle::filled(fill)
+                                    .radius(2.0)
+                                    .stroked(Stroke::new(glyph, 1.4, 255)),
+                            )
+                        };
+                        icon.push(square(mx - 2.0, my - 6.0, theme::c().surface));
+                        icon.push(square(mx - 5.0, my - 3.0, theme::c().surface));
+                    }
+                    overlays.push(
+                        Element::new(move |cx| {
+                            let flags = cx.context.interaction_flags(&cx.id);
+                            let fill = if flags.pressed || flags.hovered {
+                                theme::c().active_line
+                            } else {
+                                theme::c().surface
+                            };
+                            UiElement::panel(
+                                cx.id.clone(),
                                 button,
-                                "Copy",
-                                theme::sans(theme::c().text_soft, 11.0),
-                            ))
-                            .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
-                            .on_click(move |cx: &mut lgui::core::UiEventContext| {
+                                VisualStyle::filled(fill).radius(6.0),
+                            )
+                            .semantics(Semantics::new(SemanticRole::Button).name("Copy code"))
+                            .children(cx.children)
+                        })
+                        .event_policy(EventPolicy {
+                            focus: false,
+                            ..EventPolicy::INTERACTIVE
+                        })
+                        .cursor(CursorIcon::Pointer)
+                        .children(icon)
+                        .on_pointer_down_with_button(|cx, _, _| cx.stop_propagation())
+                        .on_click(
+                            move |cx: &mut lgui::core::UiEventContext| {
                                 let frame = copy.get();
                                 copy.send(ReaderEvent::CopyNode {
                                     key: frame.key,
                                     node,
                                 });
                                 cx.stop_propagation();
-                            }),
+                            },
+                        ),
                     );
                 }
             }
@@ -355,6 +404,9 @@ pub fn render_in(
             content = content.child((binding.paint)(&frame, paragraph, bounds, rect));
         }
     }
+    for overlay in overlays {
+        content = content.child(overlay);
+    }
     // Semantic text uses the same visible glyph bounds as hit testing. These
     // transparent nodes do not shape or paint text a second time.
     if frame.geometry_key == frame.key {
@@ -424,6 +476,7 @@ pub fn render_in(
                             _ => None,
                         });
                     let word = word.to_owned();
+                    let is_link = linked.is_some();
                     let semantics = match linked {
                         Some(url) => Semantics::new(SemanticRole::Link)
                             .name(word.clone())
@@ -435,10 +488,15 @@ pub fn render_in(
                         "{semantic_scope}-text-{}-{start}",
                         geometry.paragraph
                     ));
-                    content = content.child(Element::new(move |_| {
+                    let semantic = Element::new(move |_| {
                         UiElement::panel(semantic_id, bounds, VisualStyle::default())
                             .semantics(semantics)
-                    }));
+                    });
+                    content = content.child(if is_link {
+                        semantic.cursor(CursorIcon::Pointer)
+                    } else {
+                        semantic
+                    });
                 }
             }
         }
@@ -754,4 +812,14 @@ fn axis_scrollbar(
             cx.stop_propagation();
         });
     lgui::core::group(track).child(track_hit).child(thumb_hit)
+}
+
+/// How long a code block's copy button reads "Copied" after a successful copy.
+pub const COPIED_FOR: std::time::Duration = std::time::Duration::from_millis(1400);
+static COPIED: std::sync::Mutex<Option<(usize, std::time::Instant)>> = std::sync::Mutex::new(None);
+pub fn mark_copied(node: crate::features::markdown::model::NodeId) {
+    *COPIED.lock().unwrap() = Some((node.0, std::time::Instant::now()));
+}
+fn recently_copied(node: crate::features::markdown::model::NodeId) -> bool {
+    matches!(*COPIED.lock().unwrap(), Some((copied, at)) if copied == node.0 && at.elapsed() < COPIED_FOR)
 }
