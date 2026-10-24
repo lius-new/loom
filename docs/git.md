@@ -51,6 +51,10 @@ live. Right-click a tag to push or delete it. A branch checked out in another
 worktree shows a folder icon whose menu opens the worktree, adds it to the
 workspace or deletes it. Narrower panels keep the four tabs.
 
+The detail pane lists a commit's or stash's changed files as a folder tree. Folders
+that hold a single folder join into one row, fold shut when clicked, and stay
+pinned at the top while their files scroll.
+
 Each group title has a **+** button: **BRANCHES** opens the branch picker, where a
 new name creates a branch and **New Worktree** checks it out in its own folder;
 **TAGS** tags the selected commit (HEAD when none is selected); **STASHES**

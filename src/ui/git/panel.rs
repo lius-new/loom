@@ -42,6 +42,8 @@ pub(crate) enum ScrollRegion {
     Details,
     /// The history navigator's reference list.
     Navigator,
+    /// The commit detail pane's changed-file tree.
+    CommitFiles,
 }
 
 impl ScrollRegion {
@@ -66,6 +68,7 @@ impl ScrollRegion {
             Self::Changes => "git-changes-viewport",
             Self::Details => "git-details-viewport",
             Self::Navigator => "git-navigator-viewport",
+            Self::CommitFiles => "git-commit-files-viewport",
         }
     }
 
@@ -74,6 +77,7 @@ impl ScrollRegion {
             Self::Changes => app.ui.scroll,
             Self::Details => app.ui.details_scroll,
             Self::Navigator => app.ui.history_branch_scroll,
+            Self::CommitFiles => app.ui.history_files_scroll,
         }
     }
 
@@ -82,6 +86,7 @@ impl ScrollRegion {
             Self::Changes => app.ui.scroll = value,
             Self::Details => app.ui.details_scroll = value,
             Self::Navigator => app.ui.history_branch_scroll = value,
+            Self::CommitFiles => app.ui.history_files_scroll = value,
         }
         app.ui.clear_hover_cards();
     }
@@ -96,6 +101,10 @@ impl ScrollRegion {
             Self::Navigator => (
                 app.ui.navigator_scrollbar_dragging,
                 app.ui.navigator_scrollbar_drag_offset,
+            ),
+            Self::CommitFiles => (
+                app.ui.files_scrollbar_dragging,
+                app.ui.files_scrollbar_drag_offset,
             ),
         }
     }
@@ -113,6 +122,10 @@ impl ScrollRegion {
             Self::Navigator => {
                 app.ui.navigator_scrollbar_dragging = dragging;
                 app.ui.navigator_scrollbar_drag_offset = offset;
+            }
+            Self::CommitFiles => {
+                app.ui.files_scrollbar_dragging = dragging;
+                app.ui.files_scrollbar_drag_offset = offset;
             }
         }
     }
@@ -1100,7 +1113,12 @@ pub(crate) fn render_hover_card(
 /// Break `text` into lines no wider than `width`: at spaces where possible,
 /// otherwise between characters, as CJK text needs.
 pub(crate) fn wrap_text(text: &str, width: f32) -> Vec<String> {
-    let fits = |line: &str| crate::ui::tabs::measure(line, theme::UI_SIZE, 400) <= width;
+    wrap_text_sized(text, width, theme::UI_SIZE)
+}
+
+/// `wrap_text` for text drawn in the monospace font at `size`.
+pub(crate) fn wrap_text_sized(text: &str, width: f32, size: f32) -> Vec<String> {
+    let fits = |line: &str| crate::ui::tabs::measure(line, size, 400) <= width;
     let mut lines = Vec::new();
     for paragraph in text.lines() {
         let mut line = String::new();

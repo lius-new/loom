@@ -68,6 +68,10 @@ pub struct GitUiState {
     pub history_stash: Option<String>,
     /// The navigator shows one kind of reference at a time.
     pub history_nav: NavView,
+    /// Scroll of the detail pane's changed-file tree, and its scrollbar drag.
+    pub history_files_scroll: f32,
+    pub files_scrollbar_dragging: bool,
+    pub files_scrollbar_drag_offset: f32,
     /// Branch folders folded shut in the navigator, as `b:` or `r:` plus the path.
     pub history_collapsed: HashSet<String>,
     /// User-chosen widths of the history's navigator and detail pane.
@@ -129,6 +133,9 @@ impl Default for GitUiState {
             history_branch_scroll: 0.0,
             history_stash: None,
             history_nav: NavView::default(),
+            history_files_scroll: 0.0,
+            files_scrollbar_dragging: false,
+            files_scrollbar_drag_offset: 0.0,
             history_collapsed: HashSet::from([crate::ui::git::history_branches::REMOTE.to_owned()]),
             history_branches_width: None,
             history_detail_width: None,

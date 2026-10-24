@@ -1091,7 +1091,9 @@ mod panel_virtualization_tests {
             assert!(region.scroll(&state.get().git) > 0.0);
             let other = match region {
                 ScrollRegion::Changes => ScrollRegion::Details,
-                ScrollRegion::Details | ScrollRegion::Navigator => ScrollRegion::Changes,
+                ScrollRegion::Details | ScrollRegion::Navigator | ScrollRegion::CommitFiles => {
+                    ScrollRegion::Changes
+                }
             };
             assert_eq!(other.scroll(&state.get().git), 0.0);
             send(InputEvent::PointerUp {

@@ -405,6 +405,19 @@ pub fn render(
     }
 
     // Only the scrollable region under the pointer shows its scrollbar.
+    let stash = app
+        .ui
+        .history_stash
+        .as_ref()
+        .and_then(|oid| repository.stashes.iter().find(|stash| stash.oid == *oid));
+    let detail_subject = stash
+        .map(Subject::Stash)
+        .or(selected.as_ref().map(Subject::Commit));
+    let detail_details = detail_subject.and_then(|subject| app.model.commit_detail(subject.oid()));
+    let detail_rect = UiRect::new(list_right, panel_body.top, rect.right, rect.bottom);
+    let detail_files = detail_subject
+        .filter(|_| show_detail)
+        .map(|subject| history_detail::files_rect(detail_rect, subject, detail_details));
     let navigator_body = show_branches.then(|| {
         history_branches::body_rect(UiRect::new(
             panel_body.left,
@@ -437,6 +450,8 @@ pub fn render(
                 Some(ScrollRegion::Details)
             } else if navigator_body.is_some_and(|rect| rect.contains(point)) {
                 Some(ScrollRegion::Navigator)
+            } else if detail_files.is_some_and(|rect| rect.contains(point)) {
+                Some(ScrollRegion::CommitFiles)
             } else {
                 None
             };
@@ -522,20 +537,15 @@ pub fn render(
     if show_detail {
         let files = app.model.history_commit().map(|expanded| &expanded.files);
         let none = None;
-        let stash = app
-            .ui
-            .history_stash
-            .as_ref()
-            .and_then(|oid| repository.stashes.iter().find(|stash| stash.oid == *oid));
         root = root.child(history_detail::render(
-            UiRect::new(list_right, panel_body.top, rect.right, rect.bottom),
-            stash
-                .map(Subject::Stash)
-                .or(selected.as_ref().map(Subject::Commit))
-                .map(|subject| (subject, files.unwrap_or(&none))),
+            detail_rect,
+            detail_subject.map(|subject| (subject, files.unwrap_or(&none))),
+            detail_details,
             &repository.worktree_root,
             &state,
             &editor_focus,
+            app.ui.history_files_scroll,
+            &app.ui.history_collapsed,
         ));
     }
     if show_branches {

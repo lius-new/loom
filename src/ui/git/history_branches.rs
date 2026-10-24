@@ -240,18 +240,33 @@ fn pinned_folders(
     rows_bottom: f32,
     view_top: f32,
 ) -> Vec<(usize, f32)> {
+    let items = rows
+        .iter()
+        .map(|row| (matches!(row, Entry::Folder { .. }), row.depth()))
+        .collect::<Vec<_>>();
+    pin_slots(&items, tops, rows_bottom, view_top, ROW_H)
+}
+
+/// Pin folders over a list of `(is_folder, depth)` rows with the given `tops`.
+pub(crate) fn pin_slots(
+    items: &[(bool, usize)],
+    tops: &[f32],
+    rows_bottom: f32,
+    view_top: f32,
+    row_h: f32,
+) -> Vec<(usize, f32)> {
     let mut pinned = Vec::new();
-    for (index, row) in rows.iter().enumerate() {
-        let Entry::Folder { depth, .. } = row else {
+    for (index, (is_folder, depth)) in items.iter().enumerate() {
+        if !is_folder {
             continue;
-        };
-        let slot = view_top + *depth as f32 * ROW_H;
-        let end = rows[index + 1..]
+        }
+        let slot = view_top + *depth as f32 * row_h;
+        let end = items[index + 1..]
             .iter()
-            .position(|next| next.depth() <= *depth)
+            .position(|(_, next)| next <= depth)
             .map_or(rows_bottom, |offset| tops[index + 1 + offset]);
         if tops[index] < slot && end > slot {
-            pinned.push((index, slot.min(end - ROW_H)));
+            pinned.push((index, slot.min(end - row_h)));
         }
     }
     pinned

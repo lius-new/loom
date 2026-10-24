@@ -1247,11 +1247,13 @@ pub fn toggle_commit(state: &AppContext, root: PathBuf, oid: String) {
     let mut expanded = false;
     state.update(|app| {
         app.git.ui.history_stash = None;
+        app.git.ui.history_files_scroll = 0.0;
         expanded = app.git.model.toggle_commit(toggled);
     });
     let Some(application) = application.filter(|_| expanded) else {
         return;
     };
+    load_commit_details(state, application.clone(), root.clone(), oid.clone());
     let worker_state = state.clone();
     let _ = thread::Builder::new()
         .name("loom-git-commit-files".into())
@@ -1261,6 +1263,30 @@ pub fn toggle_commit(state: &AppContext, root: PathBuf, oid: String) {
                 .map_err(|error| error.user_message());
             application.post(move || {
                 worker_state.update(move |app| app.git.model.set_commit_files(&oid, files));
+            });
+        });
+}
+
+/// Read the author, date, message and stats of `oid` for the detail pane,
+/// unless they are cached already.
+fn load_commit_details(
+    state: &AppContext,
+    application: lgui::ApplicationHandle,
+    root: PathBuf,
+    oid: String,
+) {
+    if state.get().git.model.commit_detail(&oid).is_some() {
+        return;
+    }
+    let worker_state = state.clone();
+    let _ = thread::Builder::new()
+        .name("loom-git-commit-details".into())
+        .spawn(move || {
+            let details = crate::infrastructure::git::service()
+                .and_then(|service| service.backend().commit_details(&root, &oid))
+                .map_err(|error| error.user_message());
+            application.post(move || {
+                worker_state.update(move |app| app.git.model.cache_commit_detail(oid, details));
             });
         });
 }
