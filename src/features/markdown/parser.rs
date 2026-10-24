@@ -5,6 +5,8 @@ use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagE
 use std::ops::Range;
 use std::sync::Arc;
 
+type HtmlBlock = (Range<usize>, Vec<(String, Range<usize>)>);
+
 struct Frame {
     node: NodeId,
     last_child: Option<NodeId>,
@@ -326,7 +328,7 @@ pub fn parse_document(
     // pulldown's constructor has no cancellation hook. Admission happens before
     // construction; cancellation is checked again before every projected event.
     let parser = Parser::new_ext(source.as_str(), options);
-    let mut html_block: Option<(Range<usize>, Vec<(String, Range<usize>)>)> = None;
+    let mut html_block: Option<HtmlBlock> = None;
     for (event, span) in parser.into_offset_iter() {
         if cancelled() {
             return Err(out.failure(ParseStop::Cancelled));
