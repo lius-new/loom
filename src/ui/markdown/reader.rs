@@ -816,10 +816,23 @@ fn axis_scrollbar(
 
 /// How long a code block's copy button reads "Copied" after a successful copy.
 pub const COPIED_FOR: std::time::Duration = std::time::Duration::from_millis(1400);
-static COPIED: std::sync::Mutex<Option<(usize, std::time::Instant)>> = std::sync::Mutex::new(None);
+/// Node (+1, so zero means none) and milliseconds since `EPOCH` of the last copy.
+static COPIED_NODE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static COPIED_AT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+fn elapsed_ms() -> u64 {
+    EPOCH
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
+}
 pub fn mark_copied(node: crate::features::markdown::model::NodeId) {
-    *COPIED.lock().unwrap() = Some((node.0, std::time::Instant::now()));
+    use std::sync::atomic::Ordering::Relaxed;
+    COPIED_AT.store(elapsed_ms(), Relaxed);
+    COPIED_NODE.store(node.0 + 1, Relaxed);
 }
 fn recently_copied(node: crate::features::markdown::model::NodeId) -> bool {
-    matches!(*COPIED.lock().unwrap(), Some((copied, at)) if copied == node.0 && at.elapsed() < COPIED_FOR)
+    use std::sync::atomic::Ordering::Relaxed;
+    COPIED_NODE.load(Relaxed) == node.0 + 1
+        && elapsed_ms().saturating_sub(COPIED_AT.load(Relaxed)) < COPIED_FOR.as_millis() as u64
 }
