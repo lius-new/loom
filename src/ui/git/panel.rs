@@ -211,7 +211,6 @@ pub fn render(
     let git = store.get();
     let mut root = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
-    let topline = UiRect::new(rect.left, rect.top, rect.right, rect.top + TOPLINE_H);
     root = root.child(crate::ui::git::drawer::header(
         UiRect::new(
             rect.left,
@@ -235,16 +234,14 @@ pub fn render(
         root = root.child(text(
             UiRect::new(
                 rect.left + 14.0,
-                rect.top + TOPLINE_H + 18.0,
+                rect.top + crate::ui::git::drawer::HEADER_H + 18.0,
                 rect.right - 14.0,
-                rect.top + TOPLINE_H + 58.0,
+                rect.top + crate::ui::git::drawer::HEADER_H + 58.0,
             ),
             message,
             theme::sans(theme::c().text_dim, theme::UI_SIZE),
         ));
-        return root
-            .child(crate::ui::components::divider::bottom(topline))
-            .child(git_resize_handle(rect, state, resizing));
+        return root.child(git_resize_handle(rect, state, resizing));
     };
 
     let prepared = git.presentation.repositories.get(&repository.id);
