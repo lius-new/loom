@@ -86,6 +86,7 @@ fn large_repository_prepare_and_panel_frame() {
             cx.focus_handle(UiId::new("bench-editor")),
             cx.focus_handle(UiId::new("bench-commit")),
             UiId::new("bench-commit"),
+            cx.focus_handle(UiId::new(crate::ui::git::drawer::FILTER_ID)),
         )
     });
     let context = ApplicationContext::empty(Default::default());

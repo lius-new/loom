@@ -380,6 +380,17 @@ pub fn discard_paths(
 /// Commit the staged changes. With nothing staged, offer to stage every
 /// tracked change first; amending needs no staged changes.
 pub fn commit(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
+    request_commit(state, store, false)
+}
+
+pub fn commit_and_push(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
+    if crate::ui::git::drawer::commit_reason(&state.get().git, &store.get()).is_some() {
+        return false;
+    }
+    request_commit(state, store, true)
+}
+
+fn request_commit(state: &AppContext, store: &State<GitStoreSnapshot>, push: bool) -> bool {
     let app = state.get();
     let message = app.git.ui.commit_input.text().trim().to_owned();
     let amend = app.git.ui.commit_amend;
@@ -423,7 +434,7 @@ pub fn commit(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
         });
         return false;
     }
-    commit_paths(state, store, repository, message, Vec::new())
+    commit_paths(state, store, repository, message, Vec::new(), push)
 }
 
 /// Stage every tracked change, then commit.
@@ -433,7 +444,7 @@ pub fn commit_all(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
         return false;
     };
     let [_, _, unstaged, _] = sections(store, &repository);
-    commit_paths(state, store, repository, message, unstaged)
+    commit_paths(state, store, repository, message, unstaged, false)
 }
 
 /// Stage `stage`, then commit with the drawer's options.
@@ -443,10 +454,16 @@ fn commit_paths(
     repository: RepositorySnapshot,
     message: String,
     stage: Vec<PathBuf>,
+    push: bool,
 ) -> bool {
     let app = state.get();
     let amend = app.git.ui.commit_amend;
     let signoff = app.git.ui.commit_signoff;
+    let publish = repository.upstream.is_none();
+    let branch = match &repository.head {
+        HeadState::Branch(name) => Some(name.clone()),
+        _ => None,
+    };
     drop(app);
     run_with(
         state,
@@ -461,10 +478,42 @@ fn commit_paths(
         move |service, root| {
             service.write(root, |backend| {
                 backend.stage(root, &stage)?;
-                backend.commit(root, &message, amend, signoff)
+                backend.commit(root, &message, amend, signoff)?;
+                // A rejected push must not turn a successful local commit into
+                // a failed commit or leave its message ready for duplication.
+                let push_error = if push {
+                    let result = if publish {
+                        backend.remotes(root).and_then(|remotes| {
+                            let remote = publish_remote(&remotes).ok_or_else(|| {
+                                GitError::new(
+                                    GitErrorKind::Other,
+                                    "Add a remote before publishing this branch.",
+                                )
+                            })?;
+                            let branch = branch.as_deref().ok_or_else(|| {
+                                GitError::new(
+                                    GitErrorKind::Other,
+                                    "Check out a branch before pushing.",
+                                )
+                            })?;
+                            backend.push(root, Some((remote, branch)), false)
+                        })
+                    } else {
+                        backend.push(root, None, false)
+                    };
+                    result.err().map(|error| error.user_message())
+                } else {
+                    None
+                };
+                Ok(push_error)
             })
         },
-        |app, _| app.git.ui.commit_amend = false,
+        |app, push_error| {
+            app.git.ui.commit_amend = false;
+            if let Some(error) = push_error {
+                app.show_error(format!("Committed locally, but push failed: {error}"));
+            }
+        },
     )
 }
 

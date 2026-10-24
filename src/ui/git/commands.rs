@@ -62,6 +62,7 @@ pub enum Command {
         anchor: lgui::prelude::UiRect,
     },
     Commit,
+    CommitAndPush,
     RequestCreateTag {
         root: PathBuf,
         branch: Option<String>,

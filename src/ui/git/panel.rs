@@ -14,28 +14,25 @@ use crate::features::git::{
     ChangeKind, CommitSummary, ConflictSide, DiffTarget, FileState, RepositorySnapshot,
     RepositoryState, StashInfo, TagInfo, WorktreeInfo,
 };
-use crate::ui::components::input::{
-    self, AccessInputOptions, InputBinding, InputState, InputStyle,
-};
+use crate::ui::components::input::{AccessInputOptions, InputBinding, InputState, InputStyle};
 use crate::ui::components::scrollbar;
 use crate::ui::git::commands::{Binding, Command, Snapshot};
 use crate::ui::git::menu::{GitMenu, GitMenuTarget};
 use crate::ui::git::state::GitPanelState;
 use crate::ui::theme;
 
-pub(crate) const TOPLINE_H: f32 = theme::TABS_H;
-pub(crate) const PROMPT_H: f32 = 32.0;
-pub(crate) const SECTION_H: f32 = 22.0;
+pub(crate) const TOPLINE_H: f32 = 40.0;
+pub(crate) const PROMPT_H: f32 = 196.0;
+pub(crate) const CHANGE_ROW_H: f32 = 32.0;
+pub(crate) const SECTION_H: f32 = 26.0;
 pub(crate) const ROW_H: f32 = 20.0;
 
-/// The changes end above the commit bar: the bar follows a short list and
-/// stays at the bottom, below a scrolling area, for a long one.
-pub(crate) fn drawer_regions(body: UiRect, changes_height: f32) -> (UiRect, UiRect) {
-    let changes_bottom = (body.top + changes_height).min((body.bottom - PROMPT_H).max(body.top));
-    let prompt_bottom = (changes_bottom + PROMPT_H).min(body.bottom);
+/// Keep the multiline composer anchored below the scrolling changes.
+pub(crate) fn drawer_regions(body: UiRect, _changes_height: f32) -> (UiRect, UiRect) {
+    let top = (body.bottom - PROMPT_H).max(body.top);
     (
-        UiRect::new(body.left, body.top, body.right, changes_bottom),
-        UiRect::new(body.left, changes_bottom, body.right, prompt_bottom),
+        UiRect::new(body.left, body.top, body.right, top),
+        UiRect::new(body.left, top, body.right, body.bottom),
     )
 }
 
@@ -163,6 +160,7 @@ struct SectionHeader {
     title: &'static str,
     collapsed: bool,
     buttons: Vec<RowButton>,
+    count: usize,
 }
 
 /// Paint headers above their rows, keeping each scrolled section in its own
@@ -189,6 +187,7 @@ fn append_section_headers(
             header.title,
             header.collapsed,
             header.buttons,
+            header.count,
             state.clone(),
         );
         content.push(element);
@@ -204,6 +203,7 @@ pub fn render(
     editor_focus: UiFocusHandle,
     commit_focus: UiFocusHandle,
     commit_id: UiId,
+    filter_focus: UiFocusHandle,
 ) -> Element {
     let app = state.get();
     let frame = state.frame();
@@ -211,115 +211,18 @@ pub fn render(
     let git = store.get();
     let mut root = panel(rect, VisualStyle::filled(theme::c().sidebar));
 
-    // Compact topline: the branch lives in the title bar badge, while this
-    // drawer only exposes change and sync state.
     let topline = UiRect::new(rect.left, rect.top, rect.right, rect.top + TOPLINE_H);
-    root = root.child(text(
+    root = root.child(crate::ui::git::drawer::header(
         UiRect::new(
-            rect.left + 12.0,
+            rect.left,
             rect.top,
-            rect.right - 12.0,
-            rect.top + TOPLINE_H,
+            rect.right,
+            (rect.top + crate::ui::git::drawer::HEADER_H).min(rect.bottom),
         ),
-        "CHANGES",
-        theme::mono_bold(theme::c().text_soft, theme::SMALL).tracking(0.8),
+        state.clone(),
+        store.clone(),
+        filter_focus,
     ));
-    let grouped = app.ui.tree_view;
-    let group_state = state.clone();
-    root = root.child(row_buttons(
-        lgui::prelude::group(topline),
-        UiRect::new(
-            topline.left,
-            topline.top + 4.0,
-            topline.right,
-            topline.bottom - 4.0,
-        ),
-        topline.right - 8.0,
-        vec![RowButton {
-            key: "git-group-by-folder".into(),
-            icon: if grouped { "list-flat" } else { "list-tree" },
-            name: if grouped {
-                "View as List"
-            } else {
-                "Group by Folder"
-            },
-            on_click: Box::new(move || {
-                group_state.update(|app| app.ui.tree_view = !app.ui.tree_view);
-            }),
-        }],
-    ));
-    // With several repositories, name the active one and offer the others.
-    if git.repositories.len() > 1
-        && let Some(repository) = git.active()
-    {
-        let name = repository_name(&repository.worktree_root);
-        let label_left =
-            rect.left + 12.0 + crate::ui::tabs::measure("CHANGES", theme::SMALL, 700) + 14.0;
-        let picker = UiRect::new(
-            label_left - 4.0,
-            topline.top + 4.0,
-            (label_left + crate::ui::tabs::measure(&name, theme::SMALL, 400) + 26.0)
-                .min(topline.right - 36.0),
-            topline.bottom - 4.0,
-        );
-        let picker_state = state.clone();
-        root = root.child(
-            Element::new(move |cx| {
-                let style = if cx.context.interaction_flags(&cx.id).hovered {
-                    VisualStyle::filled(theme::c().active_line).radius(3.0)
-                } else {
-                    VisualStyle::default()
-                };
-                UiElement::panel(cx.id, picker, style).children(cx.children)
-            })
-            .key("git-repository-picker")
-            .event_policy(EventPolicy::INTERACTIVE)
-            .semantics(Semantics::new(SemanticRole::Button).name("Choose repository"))
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                picker_state.update(|app| {
-                    app.ui.menu = Some(GitMenu {
-                        pos: (picker.left, picker.bottom + 2.0),
-                        target: GitMenuTarget::Repositories,
-                        hover: None,
-                    });
-                });
-            })
-            .child(
-                clip(
-                    UiRect::new(
-                        picker.left + 4.0,
-                        picker.top,
-                        picker.right - 18.0,
-                        picker.bottom,
-                    ),
-                    0.0,
-                    0.0,
-                )
-                .child(text(
-                    UiRect::new(
-                        picker.left + 4.0,
-                        picker.top,
-                        picker.left + 1000.0,
-                        picker.bottom,
-                    ),
-                    name,
-                    theme::mono(theme::c().text_muted, theme::SMALL),
-                )),
-            )
-            .child(crate::ui::drawer::drawer_icon(
-                "git-repository-picker-chevron",
-                "chevron-down",
-                UiRect::new(
-                    picker.right - 16.0,
-                    picker.top + (picker.height() - 12.0) / 2.0,
-                    picker.right - 4.0,
-                    picker.top + (picker.height() + 12.0) / 2.0,
-                ),
-                theme::c().text_dim,
-            )),
-        );
-    }
     let Some(repository) = git.active() else {
         let message = if git.initializing {
             "Detecting Git and scanning repositories…".to_owned()
@@ -346,7 +249,7 @@ pub fn render(
 
     let prepared = git.presentation.repositories.get(&repository.id);
     let sections = prepared.map(|prepared| &prepared.sections);
-    let mut banner_bottom = rect.top + TOPLINE_H;
+    let mut banner_bottom = (rect.top + crate::ui::git::drawer::HEADER_H).min(rect.bottom);
     if let Some(label) = operation_label(repository) {
         let banner = UiRect::new(
             rect.left,
@@ -375,6 +278,8 @@ pub fn render(
     let mut content = Vec::new();
     // Every section's rows, laid out before drawing so the content height
     // and scroll range are known.
+    let query = app.ui.file_filter.text().to_lowercase();
+    let show_section = |_filter: u8, empty: bool| !empty;
     let change_sections = [
         ("CONFLICTS", CONFLICTS),
         ("STAGED", STAGED),
@@ -383,25 +288,40 @@ pub fn render(
     ]
     .map(|(title, filter)| {
         let files = sections.map_or(&[][..], |sections| sections[filter as usize].as_slice());
-        (title, filter, files, change_rows(files, app.ui.tree_view))
+        let files = files
+            .iter()
+            .filter(|path| {
+                query.is_empty() || path.to_string_lossy().to_lowercase().contains(&query)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let rows = change_rows(&files, app.ui.tree_view)
+            .into_iter()
+            .map(|row| match row {
+                ChangeRow::Folder { path, files } => OwnedChangeRow::Folder { path, files },
+                ChangeRow::File { path, nested } => OwnedChangeRow::File {
+                    path: path.clone(),
+                    nested,
+                },
+            })
+            .collect::<Vec<_>>();
+        (title, filter, files, rows)
     });
     let section_height = |filter: u8, rows: usize| {
         SECTION_H
             + if app.ui.collapsed_sections.contains(&filter) {
                 0.0
             } else {
-                rows as f32 * ROW_H
+                rows as f32 * CHANGE_ROW_H
             }
     };
     let changes_height = 8.0
         + change_sections
             .iter()
-            .filter(|(_, _, files, _)| !files.is_empty())
+            .filter(|(_, filter, files, _)| show_section(*filter, files.is_empty()))
             .map(|(_, filter, _, rows)| section_height(*filter, rows.len()) + 10.0)
             .sum::<f32>();
     let (content_rect, prompt_rect) = drawer_regions(body_rect, changes_height);
-    let prompt_top = prompt_rect.top;
-    let prompt_bottom = prompt_rect.bottom;
     let max_scroll = (changes_height - content_rect.height()).max(0.0);
     let scroll = app.ui.scroll.clamp(0.0, max_scroll);
     let mut y = content_rect.top + 8.0;
@@ -410,7 +330,7 @@ pub fn render(
     let mut headers = Vec::new();
     for (title, filter, files, rows) in &change_sections {
         let (title, filter) = (*title, *filter);
-        if files.is_empty() {
+        if !show_section(filter, files.is_empty()) {
             continue;
         }
         let collapsed = app.ui.collapsed_sections.contains(&filter);
@@ -426,6 +346,7 @@ pub fn render(
             title,
             collapsed,
             buttons,
+            count: files.len(),
         });
         y += SECTION_H;
         if collapsed {
@@ -433,18 +354,19 @@ pub fn render(
             continue;
         }
         let rows_top = y;
-        let visible = visible_rows(
+        let visible = visible_rows_with_height(
             rows_top,
             content_rect.top + scroll,
             content_rect.bottom + scroll,
             rows.len(),
+            CHANGE_ROW_H,
         );
-        y += rows.len() as f32 * ROW_H;
+        y += rows.len() as f32 * CHANGE_ROW_H;
         for index in visible {
-            let row_y = rows_top + index as f32 * ROW_H;
-            let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
+            let row_y = rows_top + index as f32 * CHANGE_ROW_H;
+            let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + CHANGE_ROW_H);
             match &rows[index] {
-                ChangeRow::Folder { path, files } => {
+                OwnedChangeRow::Folder { path, files } => {
                     let hover = GitHover::Folder(filter, path.clone());
                     let hovered = app.ui.hover.as_ref() == Some(&hover);
                     hover_targets.push((row_rect, hover));
@@ -458,8 +380,8 @@ pub fn render(
                         &store,
                     ));
                 }
-                &ChangeRow::File { path, nested } => {
-                    let file_state = &repository.files[path];
+                OwnedChangeRow::File { path, nested } => {
+                    let file_state = repository.files.get(path).cloned().unwrap_or_default();
                     let hover = GitHover::File(filter, path.clone());
                     let hovered = app.ui.hover.as_ref() == Some(&hover);
                     hover_targets.push((row_rect, hover));
@@ -479,7 +401,7 @@ pub fn render(
                     content.push(file_row(
                         row_rect,
                         path.clone(),
-                        nested,
+                        *nested,
                         file_state.clone(),
                         filter,
                         target,
@@ -494,6 +416,28 @@ pub fn render(
             }
         }
         y += 10.0;
+    }
+    if change_sections
+        .iter()
+        .all(|(_, _, files, _)| files.is_empty())
+    {
+        content.push(
+            text(
+                UiRect::new(
+                    rect.left + 16.0,
+                    content_rect.top + 8.0,
+                    rect.right - 12.0,
+                    content_rect.top + 34.0,
+                ),
+                if !query.is_empty() {
+                    "No matching files."
+                } else {
+                    "Working tree clean."
+                },
+                theme::sans(theme::c().text_ghost, 11.0),
+            )
+            .into(),
+        );
     }
     let changes_bottom = y;
     append_section_headers(
@@ -574,87 +518,14 @@ pub fn render(
         state.clone(),
         ScrollRegion::Changes,
     ));
-    let field = UiRect::new(
-        rect.left + 12.0,
-        prompt_top + 4.0,
-        (rect.right - 12.0).max(rect.left + 12.0),
-        (prompt_bottom - 4.0).max(prompt_top + 4.0),
-    );
-    let button_w = 24.0_f32.min((field.width() - 3.0).max(0.0) / 3.0);
-    let options_rect = UiRect::new(
-        field.right - 1.0 - button_w,
-        field.top + 2.0,
-        field.right - 1.0,
-        field.bottom - 2.0,
-    );
-    let commit_button_rect = UiRect::new(
-        options_rect.left - 1.0 - button_w,
-        options_rect.top,
-        options_rect.left - 1.0,
-        options_rect.bottom,
-    );
-    let commit_field = theme::bordered(
-        field,
-        theme::c().surface,
-        if app.ui.commit_input.focused {
-            theme::c().accent
-        } else {
-            theme::c().border
-        },
-        4.0,
-        1.0,
-    )
-    .child(commit_input(
-        UiRect::new(
-            field.left + 2.0,
-            field.top + 1.0,
-            (commit_button_rect.left - 2.0).max(field.left + 2.0),
-            field.bottom - 1.0,
-        ),
-        state.clone(),
-        commit_focus,
-        commit_id,
-    ))
-    .child(commit_button(
-        commit_button_rect,
+    root = root.child(crate::ui::git::drawer::composer(
+        prompt_rect,
         state.clone(),
         store.clone(),
-    ))
-    .child(
-        panel(
-            UiRect::new(
-                options_rect.left - 1.0,
-                options_rect.top + 4.0,
-                options_rect.left,
-                options_rect.bottom - 4.0,
-            ),
-            VisualStyle::filled(theme::c().border),
-        )
-        .key("git-commit-actions-divider"),
-    )
-    .child(commit_options_button(options_rect, state.clone()));
-    root = root.child(clip(field, 0.0, 0.0).child(commit_field));
-    // The prompt follows the changes directly, so a clean tree is announced
-    // below it, as long as the details area leaves room.
-    let clean_top = prompt_bottom + 6.0;
-    if change_sections
-        .iter()
-        .all(|(_, _, files, _)| files.is_empty())
-        && clean_top + ROW_H <= body_rect.bottom
-    {
-        root = root.child(text(
-            UiRect::new(
-                rect.left + 14.0,
-                clean_top,
-                rect.right - 12.0,
-                clean_top + ROW_H,
-            ),
-            "Working tree clean.",
-            theme::mono(theme::c().text_ghost, theme::SMALL),
-        ));
-    }
+        commit_focus,
+        commit_id,
+    ));
     // Keep the header edge crisp and above scrolling rows and operation banners.
-    root = root.child(crate::ui::components::divider::bottom(topline));
     root = root.child(git_resize_handle(rect, state, resizing));
     root
 }
@@ -797,7 +668,7 @@ pub(crate) fn commit_input(
     } else {
         "Commit message"
     };
-    input::render_access(
+    crate::ui::components::multiline::render(
         rect,
         id,
         focus,
@@ -810,8 +681,8 @@ pub(crate) fn commit_input(
             label: "Commit message",
             placeholder,
             style: InputStyle {
-                text: theme::mono(theme::c().text, theme::SMALL),
-                placeholder: theme::mono(theme::c().text_muted, theme::SMALL),
+                text: theme::sans(theme::c().text, 12.0),
+                placeholder: theme::sans(theme::c().text_ghost, 12.0),
                 caret: theme::c().text_faint,
                 selection: theme::c().accent,
             },
@@ -831,26 +702,25 @@ pub(crate) fn commit_input_state_mut(app: &mut GitPanelState) -> &mut InputState
 }
 
 /// Opens the commit options menu: amend, sign-off and undo.
-pub(crate) fn commit_options_button(rect: UiRect, state: Binding) -> Element {
+pub(crate) fn commit_options_button(rect: UiRect, state: Binding, enabled: bool) -> Element {
     let app = state.get();
     let open = app
         .ui
         .menu
         .as_ref()
-        .is_some_and(|menu| menu.target == GitMenuTarget::Commit);
+        .is_some_and(|menu| menu.target == GitMenuTarget::Submit);
     // Amend and sign-off stay visible while the menu is closed.
-    let color = if app.ui.commit_amend || app.ui.commit_signoff {
-        theme::c().accent
-    } else {
-        theme::c().text_faint
-    };
     let click_state = state.clone();
     panel(
         rect,
         if open {
-            VisualStyle::filled(theme::c().active_line).radius(3.0)
+            VisualStyle::filled(theme::c().active_line)
         } else {
-            VisualStyle::default().radius(3.0)
+            VisualStyle::filled(if enabled {
+                theme::c().accent
+            } else {
+                theme::c().surface
+            })
         },
     )
     .key("git-commit-options")
@@ -861,7 +731,7 @@ pub(crate) fn commit_options_button(rect: UiRect, state: Binding) -> Element {
         click_state.update(|app| {
             app.ui.menu = Some(GitMenu {
                 pos: (rect.left, rect.top),
-                target: GitMenuTarget::Commit,
+                target: GitMenuTarget::Submit,
                 hover: None,
             });
         });
@@ -870,38 +740,69 @@ pub(crate) fn commit_options_button(rect: UiRect, state: Binding) -> Element {
         "git-commit-options-icon",
         "chevron-down",
         theme::icon_rect(rect),
-        color,
+        if enabled {
+            theme::c().on_accent
+        } else {
+            theme::c().text_ghost
+        },
     ))
 }
 
-pub(crate) fn commit_button(rect: UiRect, state: Binding, _store: Snapshot) -> Element {
+pub(crate) fn commit_button(rect: UiRect, state: Binding, store: Snapshot) -> Element {
     let app = state.get();
-    let has_message = app.ui.commit_amend || !app.ui.commit_input.text().trim().is_empty();
+    let reason = crate::ui::git::drawer::commit_reason(&app, &store.get());
+    let enabled = reason.is_none();
+    let amend = app.ui.commit_amend;
     let click_state = state.clone();
-    panel(rect, VisualStyle::default())
-        .key("git-commit-button")
-        .event_policy(EventPolicy::INTERACTIVE)
-        .semantics(
-            Semantics::new(SemanticRole::Button).name(if app.ui.commit_amend {
-                "Amend last commit"
+    let label = if amend { "Amend" } else { "Commit" };
+    let mut semantics = Semantics::new(SemanticRole::Button).name(if amend {
+        "Amend last commit"
+    } else {
+        "Commit changes"
+    });
+    semantics.state.disabled = !enabled;
+    if let Some(reason) = reason {
+        semantics = semantics.description(reason);
+    }
+    Element::new(move |cx| {
+        let hovered = cx.context.interaction_flags(&cx.id).hovered;
+        let fill = if enabled {
+            if hovered {
+                theme::c().accent_hover
             } else {
-                "Commit changes"
-            }),
-        )
-        .cursor(CursorIcon::Pointer)
-        .on_click(move || {
+                theme::c().accent
+            }
+        } else {
+            theme::c().surface
+        };
+        UiElement::panel(cx.id, rect, VisualStyle::filled(fill)).children(cx.children)
+    })
+    .key("git-commit-button")
+    .event_policy(EventPolicy::INTERACTIVE)
+    .semantics(semantics)
+    .cursor(if enabled {
+        CursorIcon::Pointer
+    } else {
+        CursorIcon::NotAllowed
+    })
+    .on_click(move || {
+        if enabled {
             click_state.dispatch(Command::Commit);
-        })
-        .child(crate::ui::drawer::drawer_icon(
-            "git-commit-button-icon",
-            "check",
-            theme::icon_rect(rect),
-            if has_message {
-                theme::c().text
+        }
+    })
+    .child(text(
+        rect,
+        label,
+        theme::sans_semibold(
+            if enabled {
+                theme::c().on_accent
             } else {
-                theme::c().text_faint
+                theme::c().text_ghost
             },
-        ))
+            12.0,
+        )
+        .centered(),
+    ))
 }
 
 /// Change-section indices in `RepositoryPresentation::sections`, plus stable
@@ -1222,6 +1123,11 @@ pub(crate) fn repository_name(root: &std::path::Path) -> String {
 
 /// A row of a change section.
 #[derive(Clone, Debug, PartialEq, Eq)]
+enum OwnedChangeRow {
+    Folder { path: PathBuf, files: Vec<PathBuf> },
+    File { path: PathBuf, nested: bool },
+}
+
 pub(crate) enum ChangeRow<'a> {
     /// A folder and the section's files directly in it.
     Folder { path: PathBuf, files: Vec<PathBuf> },
@@ -1356,18 +1262,24 @@ pub(crate) fn path_label(
     emphasized: bool,
 ) -> Element {
     let (name, folder) = split_path(path);
-    let name_style = theme::mono(
+    let name_style = theme::sans(
         if emphasized {
             theme::c().text
         } else {
             theme::c().text_soft
         },
-        theme::SMALL,
+        12.0,
     );
-    let folder_style = theme::mono(theme::c().text_ghost, theme::SMALL);
+    let folder_style = theme::sans(theme::c().text_ghost, 10.0);
     // Lay each text out at its natural width and let the viewport clip it.
     // Narrower rects make the text engine wrap at path separators instead.
-    let name_w = crate::ui::tabs::measure(&name, theme::SMALL, 400) + TEXT_PAD;
+    let name_w = crate::ui::components::text::SingleLineText::new(
+        &name,
+        UiRect::new(0.0, 0.0, 10000.0, viewport.height()),
+        name_style,
+    )
+    .width()
+        + TEXT_PAD;
     let mut label = clip(viewport, 0.0, 0.0).child(text(
         UiRect::new(
             viewport.left,
@@ -1380,7 +1292,13 @@ pub(crate) fn path_label(
     ));
     if let Some(folder) = folder.filter(|_| show_folder) {
         let left = viewport.left + name_w + 4.0;
-        let folder_w = crate::ui::tabs::measure(&folder, theme::SMALL, 400) + TEXT_PAD;
+        let folder_w = crate::ui::components::text::SingleLineText::new(
+            &folder,
+            UiRect::new(0.0, 0.0, 10000.0, viewport.height()),
+            folder_style,
+        )
+        .width()
+            + TEXT_PAD;
         label = label.child(text(
             UiRect::new(left, viewport.top, left + folder_w, viewport.bottom),
             folder,
@@ -1695,8 +1613,23 @@ pub(crate) fn section_header(
     title: &'static str,
     collapsed: bool,
     buttons: Vec<RowButton>,
+    count: usize,
     state: Binding,
 ) -> Element {
+    let visual_title = match filter {
+        CONFLICTS => "Conflicts",
+        STAGED => "Staged",
+        UNSTAGED => "Unstaged",
+        UNTRACKED => "Untracked",
+        _ => title,
+    };
+    let title_width = crate::ui::components::text::SingleLineText::new(
+        visual_title,
+        UiRect::new(0.0, 0.0, 1000.0, rect.height()),
+        theme::sans(theme::c().text_muted, 11.0),
+    )
+    .width();
+    let count_left = rect.left + 31.0 + title_width;
     let chevron_id = match filter {
         CONFLICTS => "git-section-conflicts-chevron",
         STAGED => "git-section-staged-chevron",
@@ -1747,8 +1680,13 @@ pub(crate) fn section_header(
         ))
         .child(text(
             UiRect::new(rect.left + 25.0, rect.top, rect.right - 12.0, rect.bottom),
-            title,
-            theme::mono(theme::c().text_ghost, theme::SMALL),
+            visual_title,
+            theme::sans(theme::c().text_muted, 11.0),
+        ))
+        .child(text(
+            UiRect::new(count_left, rect.top, count_left + 42.0, rect.bottom),
+            count.to_string(),
+            theme::sans(theme::c().text_ghost, 10.0),
         ));
     if buttons.is_empty() {
         section
@@ -2304,31 +2242,37 @@ pub(crate) fn file_row(
 ) -> Element {
     let staged = section == STAGED;
     let kind = file_state.display_kind();
-    let (indicator, indicator_color) = if file_state.conflict.is_some() {
-        ("!", theme::c().git.deleted)
-    } else if staged {
-        ("+", theme::c().git.staged)
+    let side_kind = if staged {
+        file_state.index
     } else {
-        match kind {
-            ChangeKind::Added => ("+", theme::c().git.added),
-            ChangeKind::Modified | ChangeKind::TypeChanged => ("~", theme::c().git.modified),
-            ChangeKind::Deleted => ("-", theme::c().git.deleted),
-            ChangeKind::Renamed => (">", theme::c().git.modified),
-            ChangeKind::Copied => ("+", theme::c().git.added),
-            ChangeKind::Untracked => ("?", theme::c().git.added),
-            ChangeKind::Unmerged => ("!", theme::c().git.deleted),
-            _ => (kind.indicator(), theme::c().text_dim),
-        }
+        file_state.worktree
     };
-    let actions = file_actions(section);
+    let side_kind = if side_kind == ChangeKind::Unmodified {
+        kind
+    } else {
+        side_kind
+    };
+    let indicator = side_kind.indicator();
+    let indicator_color = match side_kind {
+        ChangeKind::Added | ChangeKind::Untracked => theme::c().git.added,
+        ChangeKind::Deleted | ChangeKind::Unmerged => theme::c().git.deleted,
+        _ => theme::c().git.modified,
+    };
+    let actions = file_actions(section)
+        .iter()
+        .copied()
+        .filter(|action| {
+            section == CONFLICTS || !matches!(action, RowAction::Stage | RowAction::Unstage)
+        })
+        .collect::<Vec<_>>();
     // Reserve room for action buttons only while the row is hovered.
     let trailing_w = if hovered {
         BUTTON_W * actions.len() as f32 + 12.0
     } else {
-        12.0
+        32.0
     };
     let indent = if nested { 14.0 } else { 0.0 };
-    let name_left = rect.left + 30.0 + indent;
+    let name_left = rect.left + 58.0 + indent;
     let name_viewport = UiRect::new(name_left, rect.top, rect.right - trailing_w, rect.bottom);
     let row_key = format!("git-file-{target:?}-{}", path.display());
     let menu_state = state.clone();
@@ -2382,15 +2326,18 @@ pub(crate) fn file_row(
         }
         cx.stop_propagation();
     })
-    .child(text(
-        UiRect::new(
-            rect.left + 12.0 + indent,
-            rect.top,
-            rect.left + 24.0 + indent,
-            rect.bottom,
+    .child(crate::ui::drawer::drawer_icon(
+        UiId::owned(format!("{row_key}-file-icon")),
+        crate::ui::file_icons::icon_for_file(
+            &path.file_name().unwrap_or_default().to_string_lossy(),
         ),
-        indicator,
-        theme::mono_bold(indicator_color, theme::SMALL),
+        UiRect::new(
+            rect.left + 36.0 + indent,
+            rect.top + (rect.height() - 16.0) / 2.0,
+            rect.left + 52.0 + indent,
+            rect.top + (rect.height() + 16.0) / 2.0,
+        ),
+        theme::c().text_muted,
     ))
     .child(path_label(
         name_viewport,
@@ -2399,8 +2346,48 @@ pub(crate) fn file_row(
         !nested,
         active || hovered,
     ));
+    let stage_state = state.clone();
+    let stage_path = path.clone();
+    let enabled = store.get().operation.is_none() && section != CONFLICTS;
+    let mut row = row.child(crate::ui::git::drawer::checkbox(
+        UiRect::new(
+            rect.left + 10.0 + indent,
+            rect.top,
+            rect.left + 30.0 + indent,
+            rect.bottom,
+        ),
+        format!("{row_key}-staged"),
+        format!(
+            "{} {}",
+            if staged { "Unstage" } else { "Stage" },
+            path.display()
+        ),
+        staged,
+        enabled,
+        move || {
+            stage_state.dispatch(if staged {
+                Command::UnstagePaths {
+                    paths: vec![stage_path.clone()],
+                }
+            } else {
+                Command::StagePaths {
+                    paths: vec![stage_path.clone()],
+                }
+            });
+        },
+    ));
+    if active {
+        row = row.child(panel(
+            UiRect::new(rect.left, rect.top, rect.left + 2.0, rect.bottom),
+            VisualStyle::filled(theme::c().accent),
+        ));
+    }
     if !hovered {
-        return row;
+        return row.child(text(
+            UiRect::new(rect.right - 24.0, rect.top, rect.right - 8.0, rect.bottom),
+            indicator,
+            theme::mono(indicator_color, 10.0),
+        ));
     }
     let buttons = actions
         .iter()

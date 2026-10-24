@@ -23,12 +23,13 @@ const CURSOR_MARGIN: f32 = 8.0;
 #[derive(Clone)]
 pub struct InputState {
     buffer: TextBuffer,
-    selection: Selection,
+    pub(super) selection: Selection,
     pub focused: bool,
     pub scroll_x: f32,
+    pub scroll_y: f32,
     pub preedit: String,
     pub preedit_cursor: Option<Range<usize>>,
-    drag_anchor: Option<usize>,
+    pub(super) drag_anchor: Option<usize>,
 }
 
 impl Default for InputState {
@@ -46,6 +47,7 @@ impl InputState {
             selection,
             focused: false,
             scroll_x: 0.0,
+            scroll_y: 0.0,
             preedit: String::new(),
             preedit_cursor: None,
             drag_anchor: None,
@@ -56,7 +58,7 @@ impl InputState {
         self.buffer.text()
     }
 
-    fn editor(&mut self) -> EditorMut<'_> {
+    pub(super) fn editor(&mut self) -> EditorMut<'_> {
         EditorMut::new(&mut self.buffer, &mut self.selection, Vec::new())
     }
 
@@ -64,6 +66,7 @@ impl InputState {
         self.buffer = TextBuffer::new("");
         self.selection = Selection::default();
         self.scroll_x = 0.0;
+        self.scroll_y = 0.0;
         self.preedit.clear();
         self.preedit_cursor = None;
         self.drag_anchor = None;
@@ -116,12 +119,12 @@ where
         }
     }
 
-    fn get(&self) -> InputState {
+    pub(super) fn get(&self) -> InputState {
         let state = self.state.get();
         (self.read)(&state).clone()
     }
 
-    fn update(&self, update: impl FnOnce(&mut InputState)) {
+    pub(super) fn update(&self, update: impl FnOnce(&mut InputState)) {
         let write = self.write;
         self.state.update(move |state| update(write(state)));
     }

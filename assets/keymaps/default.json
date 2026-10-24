@@ -274,7 +274,6 @@
   {
     "context": "CommitMessage",
     "bindings": {
-      "enter": "git::Commit",
       "secondary-enter": "git::Commit"
     }
   },

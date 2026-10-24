@@ -37,7 +37,8 @@ pub fn facts(app: &AppState) -> ContextFacts {
                 || app.search.ui.exclude.focused
                 || app.search.ui.results_focused),
         search_results: app.search.ui.results_focused,
-        other_input: app.explorer.ui.create_input.focused
+        other_input: app.git.ui.file_filter.focused
+            || app.explorer.ui.create_input.focused
             || (app.keymap_ui.search.focused && app.main_surface() == MainSurface::Keymap),
         terminal: app.terminal.ui.terminal_focused,
         editor: app.editor.focused
@@ -386,6 +387,14 @@ mod tests {
     fn inputs_and_dialogs_own_their_keys() {
         let mut input = AppState::new();
         input.git.ui.commit_input.focused = true;
+        assert_eq!(
+            action(&input, named(NamedKey::Enter, KeyModifiers::empty())),
+            None
+        );
+        assert_eq!(
+            action(&input, named(NamedKey::Enter, secondary())),
+            Some(Action::GitCommit)
+        );
         assert_eq!(
             action(&input, named(NamedKey::Escape, KeyModifiers::empty())),
             None

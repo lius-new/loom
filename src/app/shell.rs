@@ -1162,6 +1162,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             editor_focus.clone(),
             commit_input_focus,
             commit_input_id,
+            cx.focus_handle(UiId::new(crate::ui::git::drawer::FILTER_ID)),
         ));
     }
     let explorer_services = super::explorer_view::Services {

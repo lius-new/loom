@@ -3,6 +3,7 @@
 pub mod divider;
 pub mod input;
 pub mod loading_indicator;
+pub mod multiline;
 pub mod progress_ring;
 pub mod resize_handle;
 pub mod scrollbar;

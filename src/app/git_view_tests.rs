@@ -86,6 +86,7 @@ mod panel_virtualization_tests {
             generation: 0,
         };
         let mut prepared = RepositoryPresentation::default();
+        prepared.dirty_count = paths.len();
         prepared.sections[UNSTAGED as usize] = paths;
         let snapshot = GitStoreSnapshot {
             repositories: Arc::new([(id, repository)].into_iter().collect()),
@@ -170,6 +171,7 @@ mod panel_virtualization_tests {
                 cx.focus_handle(UiId::new("git-test-editor")),
                 cx.focus_handle(UiId::new("git-test-commit")),
                 UiId::new("git-test-commit"),
+                cx.focus_handle(UiId::new(crate::ui::git::drawer::FILTER_ID)),
             ));
             if let Some(panel) = panel_rect {
                 root = root.child(crate::ui::git::workbench::render(
@@ -267,7 +269,11 @@ mod panel_virtualization_tests {
         assert!(named(&session, "UNSTAGED").is_some());
         // The commit form stays at the bottom below a long change list.
         let input = named(&session, "Commit message").unwrap();
-        assert_eq!(input.bottom + 5.0, viewport.bottom);
+        assert!(input.height() >= 70.0);
+        assert_eq!(
+            named(&session, "Commit changes").unwrap().bottom,
+            viewport.bottom - 10.0
+        );
         let (state, store) = exposed.lock().unwrap().clone().unwrap();
         store.update(|snapshot| {
             Arc::make_mut(&mut snapshot.presentation)
@@ -278,14 +284,236 @@ mod panel_virtualization_tests {
                 .clear();
         });
         session.render_view(&view, viewport, UiScale::ONE);
-        // A clean tree puts the form at the top, with the message beneath it.
-        assert_eq!(
-            named(&session, "Commit message").unwrap().top,
-            TOPLINE_H + 8.0 + 5.0
-        );
+        // Short and empty lists keep the same bottom-anchored composer.
+        assert_eq!(named(&session, "Commit message").unwrap(), input);
         assert!(text_nodes(&session).contains(&"Working tree clean.".to_owned()));
         let _ = state;
         save_drawer_preview(&session, &context, viewport, "git-drawer-no-changes");
+    }
+
+    #[test]
+    fn drawer_filter_staging_and_multiline_commit_match_the_reference() {
+        use crate::ui::git::commands::{Binding, Command, Frame};
+        use crate::ui::git::state::GitPanelState;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+
+        let viewport = UiRect::new(0.0, 0.0, 288.0, 650.0);
+        let (id, mut snapshot, _) = drawer_fixture();
+        let paths = ["src/ui/panel.rs", "src/ui/state.rs", "docs/git.md"].map(PathBuf::from);
+        let repo = Arc::make_mut(&mut snapshot.repositories)
+            .get_mut(&id)
+            .unwrap();
+        repo.files = Arc::new(
+            paths
+                .iter()
+                .enumerate()
+                .map(|(index, path)| {
+                    (
+                        path.clone(),
+                        FileState {
+                            index: if index == 1 {
+                                ChangeKind::Modified
+                            } else {
+                                ChangeKind::Unmodified
+                            },
+                            worktree: if index == 1 {
+                                ChangeKind::Unmodified
+                            } else {
+                                ChangeKind::Modified
+                            },
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+        );
+        let prepared = Arc::make_mut(&mut snapshot.presentation)
+            .repositories
+            .get_mut(&id)
+            .unwrap();
+        prepared.sections = Default::default();
+        prepared.sections[STAGED as usize] = vec![paths[1].clone()];
+        prepared.sections[UNSTAGED as usize] = vec![paths[0].clone(), paths[2].clone()];
+        prepared.dirty_count = 3;
+        let exposed = Arc::new(Mutex::new(None));
+        let output = exposed.clone();
+        let commands = Arc::new(Mutex::new(Vec::<String>::new()));
+        let captured = commands.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = cx.state_with(GitPanelState::default);
+            let viewport = cx.viewport();
+            let fixture = snapshot.clone();
+            let store = cx.state_with(move || fixture);
+            *output.lock().unwrap() = Some((state.clone(), store.clone()));
+            let requests = captured.clone();
+            let binding = Binding::new(state.clone().into(), Frame::default, move |command| {
+                let request = match command {
+                    Command::StagePaths { paths } => format!("stage:{}", paths[0].display()),
+                    Command::UnstagePaths { paths } => format!("unstage:{}", paths[0].display()),
+                    Command::Commit => "commit".into(),
+                    Command::CommitAndPush => "commit-push".into(),
+                    Command::PressChange { .. } => "drag".into(),
+                    _ => return true,
+                };
+                requests.lock().unwrap().push(request);
+                true
+            });
+            let focus = cx.focus_handle(UiId::new("drawer-test-editor"));
+            let mut root = render(
+                viewport,
+                binding.clone(),
+                store.clone().into(),
+                focus.clone(),
+                cx.focus_handle(UiId::new("drawer-test-commit")),
+                UiId::new("drawer-test-commit"),
+                cx.focus_handle(UiId::new(crate::ui::git::drawer::FILTER_ID)),
+            );
+            if let Some(menu) = state.get().ui.menu {
+                root = root.child(crate::ui::git::menu::render(
+                    viewport,
+                    &menu,
+                    binding,
+                    store.into(),
+                    focus,
+                ));
+            }
+            root
+        });
+        let context = ApplicationContext::empty(Default::default());
+        context
+            .resources()
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                crate::app::svg_icons(),
+            )));
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let (state, store) = exposed.lock().unwrap().clone().unwrap();
+        let input_before = named(&session, "Commit message").unwrap();
+        assert!(input_before.height() > 70.0);
+        let send = |session: &mut UiSession, event| {
+            dispatch_runtime_output(
+                session.handle_input(event),
+                &context,
+                &lgui::window::WindowId::new("drawer-design-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.runtime().run_effects();
+            let updates = session.apply_pending_updates();
+            let handlers = updates
+                .focus_events
+                .iter()
+                .flat_map(|event| session.tree().handler_events(event))
+                .collect::<Vec<_>>();
+            for event in handlers {
+                dispatch_event_handlers(
+                    &event,
+                    &context,
+                    &lgui::window::WindowId::new("drawer-design-test"),
+                );
+            }
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        let activate = |session: &mut UiSession, name: &str| {
+            let point = center(named(session, name).unwrap_or_else(|| panic!("Missing {name}")));
+            for event in [
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            ] {
+                send(session, event);
+            }
+        };
+        activate(&mut session, "Stage src/ui/panel.rs");
+        activate(&mut session, "Unstage src/ui/state.rs");
+        assert_eq!(
+            *commands.lock().unwrap(),
+            ["stage:src/ui/panel.rs", "unstage:src/ui/state.rs"]
+        );
+        state.update(|app| app.ui.file_filter.set_text("GIT.MD"));
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(named(&session, "Stage docs/git.md").is_some());
+        assert!(named(&session, "Stage src/ui/panel.rs").is_none());
+        assert_eq!(named(&session, "Commit message").unwrap(), input_before);
+        state.update(|app| app.ui.file_filter.clear());
+        session.render_view(&view, viewport, UiScale::ONE);
+        activate(&mut session, "Commit message");
+        send(
+            &mut session,
+            InputEvent::TextInput("feat: Git drawer".into()),
+        );
+        send(
+            &mut session,
+            InputEvent::Keyboard(KeyboardEvent {
+                key: LogicalKey::Named(NamedKey::Enter),
+                state: KeyState::Down,
+                ..Default::default()
+            }),
+        );
+        send(&mut session, InputEvent::TextInput("正文说明".into()));
+        assert_eq!(
+            state.get().ui.commit_input.text(),
+            "feat: Git drawer\n正文说明"
+        );
+        assert!(
+            !commands
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|command| command == "commit")
+        );
+        let input_node = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| {
+                node.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some("Commit message")
+            })
+            .unwrap();
+        assert!(input_node.semantics.as_ref().unwrap().state.multiline);
+        save_drawer_preview(&session, &context, viewport, "git-drawer-aligned");
+        activate(&mut session, "Commit changes");
+        assert_eq!(commands.lock().unwrap().last().unwrap(), "commit");
+        activate(&mut session, "Commit options");
+        activate(&mut session, "Commit and Push");
+        assert_eq!(commands.lock().unwrap().last().unwrap(), "commit-push");
+        state.update(|app| {
+            app.ui.menu = None;
+            app.ui.commit_input.clear();
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        let button = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|node| {
+                node.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some("Commit changes")
+            })
+            .unwrap();
+        assert!(button.semantics.as_ref().unwrap().state.disabled);
+        let before = commands.lock().unwrap().len();
+        activate(&mut session, "Commit changes");
+        assert_eq!(commands.lock().unwrap().len(), before);
+        state.update(|app| app.ui.commit_amend = true);
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(crate::ui::git::drawer::commit_reason(&state.get(), &store.get()).is_none());
+        save_drawer_preview(&session, &context, viewport, "git-drawer-amend");
+        let narrow = UiRect::new(0.0, 0.0, 160.0, 650.0);
+        session.render_view(&view, narrow, UiScale::ONE);
+        assert!(named(&session, "Commit options").unwrap().right <= narrow.right);
+        assert!(named(&session, "Commit message").unwrap().right <= narrow.right);
+        save_drawer_preview(&session, &context, narrow, "git-drawer-narrow");
     }
 
     #[test]
@@ -948,6 +1176,7 @@ mod panel_virtualization_tests {
                 cx.focus_handle(UiId::new("tag-hover-editor")),
                 cx.focus_handle(UiId::new("tag-hover-commit")),
                 UiId::new("tag-hover-commit"),
+                cx.focus_handle(UiId::new(crate::ui::git::drawer::FILTER_ID)),
             ));
             root = root.child(crate::ui::git::workbench::render(
                 panel_rect,
@@ -1167,6 +1396,7 @@ mod panel_virtualization_tests {
                 focus.clone(),
                 cx.focus_handle(UiId::new("tag-menu-commit")),
                 UiId::new("tag-menu-commit"),
+                cx.focus_handle(UiId::new(crate::ui::git::drawer::FILTER_ID)),
             )
             .child(crate::ui::git::workbench::render(
                 UiRect::new(

@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 
-use lgui::core::{CursorIcon, EventPolicy, UiEventContext, UiEventKind, UiFocusHandle};
+use lgui::core::{
+    CursorIcon, EventPolicy, SemanticRole, Semantics, UiEventContext, UiEventKind, UiFocusHandle,
+};
 use lgui::prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, text};
 use lgui::services::ServicesContextExt;
 
@@ -28,6 +30,7 @@ pub enum GitMenuTarget {
         section: u8,
     },
     Commit,
+    Submit,
     /// A commit in the history list.
     HistoryCommit {
         repository: PathBuf,
@@ -90,6 +93,7 @@ pub(crate) enum MenuAction {
     ToggleSignoff,
     UndoCommit,
     StashAll,
+    CommitAndPush,
     KeepCurrent,
     TakeIncoming,
     /// Make the `n`th repository, in snapshot order, active.
@@ -159,6 +163,18 @@ pub(crate) fn entries(
                 item("Reveal in File Explorer", MenuAction::Reveal),
             ]);
             entries
+        }
+        GitMenuTarget::Submit => {
+            let mut actions = vec![
+                if crate::ui::git::drawer::commit_reason(app, git).is_none() {
+                    item("Commit and Push", MenuAction::CommitAndPush)
+                } else {
+                    Entry::Message("Commit and Push".into())
+                },
+                Entry::Separator,
+            ];
+            actions.extend(entries(&GitMenuTarget::Commit, app, git));
+            actions
         }
         GitMenuTarget::Commit => vec![
             Entry::Item {
@@ -299,6 +315,7 @@ pub(crate) fn perform(
             | MenuAction::ToggleSignoff
             | MenuAction::UndoCommit
             | MenuAction::StashAll
+            | MenuAction::CommitAndPush
             | MenuAction::SelectRepository(_)
             | MenuAction::OpenCommitChanges
             | MenuAction::RevertCommit
@@ -385,6 +402,9 @@ pub(crate) fn perform(
         }
         MenuAction::StashAll => {
             state.dispatch(Command::StashAll);
+        }
+        MenuAction::CommitAndPush => {
+            state.dispatch(Command::CommitAndPush);
         }
         MenuAction::SelectRepository(index) => {
             let root = store
@@ -526,6 +546,7 @@ pub fn render(
             },
         )
         .event_policy(EventPolicy::INTERACTIVE)
+        .semantics(Semantics::new(SemanticRole::MenuItem).name(label.clone()))
         .cursor(CursorIcon::Pointer)
         .on_event(UiEventKind::PointerMove, move |_cx, _payload| {
             hover_state.try_update(move |app| {

@@ -16,9 +16,19 @@ cherry-pick recovery, submodules, LFS and sparse checkout. Git operations run
 outside the UI thread, are serialized per repository, classify common errors,
 and redact credentials from diagnostic output.
 
-Source Control lists the changes with the commit input beneath them. The input
-follows short change lists and stays at the bottom, below the scrolling changes,
-for long ones. A repository with no changes says **Working tree clean.**
+Source Control has a file filter and repository summary above the changes.
+Each file row shows its file-type icon and Git status. Check a file to stage it,
+or uncheck its staged row to unstage it. File rows still open diffs and drag into
+editor panes; the staging checkbox never starts a drag. Conflicts retain their
+explicit resolution actions.
+
+The commit composer stays at the bottom for both short and long change lists.
+It accepts multiline text: Enter inserts a newline and Ctrl+Enter (Command+Enter
+on macOS) commits. Amend is available beside the message label; the split
+button's menu offers **Commit and Push** plus the existing commit options.
+Commit is disabled when the message or staged changes are missing, conflicts
+remain, or Git is busy. Amend can reuse the previous message without staged
+changes. A repository with no changes says **Working tree clean.**
 
 ## Git panel
 

@@ -70,6 +70,7 @@ pub(crate) fn run(state: &AppContext, store: &State<GitStoreSnapshot>, command: 
             true
         }
         Command::Commit => super::git::commit(state, store),
+        Command::CommitAndPush => super::git::commit_and_push(state, store),
         Command::RequestCreateTag {
             root,
             branch,
