@@ -1245,7 +1245,10 @@ pub fn toggle_commit(state: &AppContext, root: PathBuf, oid: String) {
     let application = state.services().and_then(|runtime| runtime.application());
     let toggled = oid.clone();
     let mut expanded = false;
-    state.update(|app| expanded = app.git.model.toggle_commit(toggled));
+    state.update(|app| {
+        app.git.ui.history_stash = None;
+        expanded = app.git.model.toggle_commit(toggled);
+    });
     let Some(application) = application.filter(|_| expanded) else {
         return;
     };

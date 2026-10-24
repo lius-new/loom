@@ -9,11 +9,13 @@ use lgui::core::{
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 
 use crate::ui::git::commands::{Binding, Command, Snapshot};
+use crate::ui::git::history_detail::Subject;
 use crate::ui::git::panel::{
     GitHover, HISTORY, HistoryRow, ROW_H, STASHES, ScrollRegion, TAGS, WORKTREES, history_row,
     history_rows, scroll_region, stash_row, tag_row, visible_rows, visible_worktree_rows,
     worktree_row,
 };
+use crate::ui::git::state::HistoryPane;
 use crate::ui::git::{history_branches, history_detail};
 use crate::ui::theme;
 
@@ -29,8 +31,13 @@ const DETAIL_MIN_W: f32 = 720.0;
 /// Narrowest history list that shows its author and time columns.
 const COLUMNS_MIN_W: f32 = 420.0;
 const COLUMNS_H: f32 = 22.0;
+const LIST_MIN_W: f32 = 240.0;
+const BRANCHES_MIN_PANE_W: f32 = 120.0;
+const BRANCHES_MAX_PANE_W: f32 = 360.0;
+const DETAIL_MIN_PANE_W: f32 = 180.0;
+const DETAIL_MAX_PANE_W: f32 = 480.0;
 /// Narrowest panel that also shows the branch list.
-const BRANCHES_MIN_W: f32 = 900.0;
+pub(crate) const BRANCHES_MIN_W: f32 = 900.0;
 
 /// Reserve the bottom header even while collapsed. Expand its content only
 /// when there is enough room to preserve the editor above it.
@@ -64,6 +71,9 @@ pub fn render(
     let app = state.get();
     let git = store.get();
     let mut root = panel(rect, VisualStyle::filled(theme::c().sidebar)).key("git-panel");
+    // Wide enough for the navigator, which reaches stashes, tags and worktrees.
+    let wide = rect.width() >= BRANCHES_MIN_W;
+    let panel_tab = if wide { HISTORY } else { app.ui.panel_tab };
     let header = UiRect::new(rect.left, rect.top, rect.right, rect.top + HEADER_H);
     let body = UiRect::new(rect.left, header.bottom, rect.right, rect.bottom);
     let expanded = app.ui.panel_open && rect.height() > HEADER_H;
@@ -86,6 +96,8 @@ pub fn render(
             git.active().map(|repository| repository.tags.len()),
         ),
     ]
+    .into_iter()
+    .filter(|(_, tab, _)| !wide || *tab == HISTORY)
     .map(|(title, tab, count)| {
         let label = match count {
             Some(count) if count > 0 => format!("{title} {count}"),
@@ -93,7 +105,8 @@ pub fn render(
         };
         let width = crate::ui::tabs::measure(&label, theme::SMALL, 400) + TAB_PAD * 2.0 + 6.0;
         (tab, label, width)
-    });
+    })
+    .collect::<Vec<_>>();
     // The collapse button owns a fixed slot. Clip both painting and hit testing
     // before it, leaving room for scroll buttons only when tabs overflow.
     let tabs_right = (rect.right - 36.0).max(rect.left);
@@ -117,16 +130,19 @@ pub fn render(
         header.bottom,
     );
     let mut x = viewport.left;
-    let tabs = tabs.map(|(tab, label, width)| {
-        let width = width.min(viewport.width());
-        let rect = UiRect::new(x, header.top, x + width, header.bottom);
-        x += width + TAB_GAP;
-        (tab, label, rect)
-    });
+    let tabs = tabs
+        .into_iter()
+        .map(|(tab, label, width)| {
+            let width = width.min(viewport.width());
+            let rect = UiRect::new(x, header.top, x + width, header.bottom);
+            x += width + TAB_GAP;
+            (tab, label, rect)
+        })
+        .collect::<Vec<_>>();
     let max_scroll = (x - TAB_GAP - viewport.right).max(0.0);
     let selected_scroll = tabs
         .iter()
-        .find(|(tab, _, _)| *tab == app.ui.panel_tab)
+        .find(|(tab, _, _)| *tab == panel_tab)
         .map_or(0.0, |(_, _, rect)| {
             (rect.right - viewport.right).clamp(0.0, max_scroll)
         });
@@ -141,7 +157,7 @@ pub fn render(
             tab_rect,
             tab,
             label,
-            expanded && app.ui.panel_tab == tab,
+            expanded && panel_tab == tab,
             state.clone(),
         ));
     }
@@ -217,7 +233,7 @@ pub fn render(
         .model
         .history()
         .filter(|history| history.repository == repository.worktree_root);
-    let history_tab = app.ui.panel_tab == HISTORY;
+    let history_tab = panel_tab == HISTORY;
     let mut commit_rows = if history_tab {
         history_rows(history, app.model.history_commit())
     } else {
@@ -245,16 +261,28 @@ pub fn render(
         .map(|(_, branches)| branches.as_slice())
         .filter(|branches| !branches.is_empty());
     let show_branches = history_tab && body.width() >= BRANCHES_MIN_W && branches.is_some();
-    let list_left = if show_branches {
-        body.left + history_branches::WIDTH
+    // The dragged widths, kept clear of limits that would squeeze the list.
+    let spare = (body.width() - LIST_MIN_W).max(0.0);
+    let mut detail_w = if show_detail {
+        app.ui
+            .history_detail_width
+            .unwrap_or(history_detail::WIDTH)
+            .clamp(DETAIL_MIN_PANE_W, DETAIL_MAX_PANE_W)
     } else {
-        body.left
+        0.0
     };
-    let list_right = if show_detail {
-        body.right - history_detail::WIDTH
+    let mut branches_w = if show_branches {
+        app.ui
+            .history_branches_width
+            .unwrap_or(history_branches::WIDTH)
+            .clamp(BRANCHES_MIN_PANE_W, BRANCHES_MAX_PANE_W)
     } else {
-        body.right
+        0.0
     };
+    detail_w = detail_w.min((spare - branches_w).max(0.0));
+    branches_w = branches_w.min((spare - detail_w).max(0.0));
+    let list_left = body.left + branches_w;
+    let list_right = body.right - detail_w;
     let columns = history_tab && list_right - list_left >= COLUMNS_MIN_W;
     let body = if history_tab {
         UiRect::new(
@@ -266,7 +294,7 @@ pub fn render(
     } else {
         body
     };
-    let row_count = match app.ui.panel_tab {
+    let row_count = match panel_tab {
         STASHES => repository.stashes.len().max(1),
         TAGS => repository.tags.len().max(1),
         WORKTREES => repository.worktrees.len() * 2,
@@ -280,7 +308,7 @@ pub fn render(
 
     let mut content = Vec::new();
     let mut hover_targets = Vec::new();
-    match app.ui.panel_tab {
+    match panel_tab {
         STASHES => {
             let count = repository.stashes.len();
             if count == 0 {
@@ -457,27 +485,108 @@ pub fn render(
                 list_left,
                 panel_body.bottom,
             ),
-            &repository.worktree_root,
+            repository,
             branches,
             scope,
+            app.ui.history_stash.as_deref(),
+            selected
+                .as_ref()
+                .map(|commit| commit.oid.as_str())
+                .or(repository.head_oid.as_deref()),
+            &app.ui.history_collapsed,
             app.ui.history_branch_scroll,
             &state,
+            &store,
         ));
     }
     if show_detail {
         let files = app.model.history_commit().map(|expanded| &expanded.files);
         let none = None;
+        let stash = app
+            .ui
+            .history_stash
+            .as_ref()
+            .and_then(|oid| repository.stashes.iter().find(|stash| stash.oid == *oid));
         root = root.child(history_detail::render(
             UiRect::new(list_right, panel_body.top, rect.right, rect.bottom),
-            selected
-                .as_ref()
-                .map(|commit| (commit, files.unwrap_or(&none))),
+            stash
+                .map(Subject::Stash)
+                .or(selected.as_ref().map(Subject::Commit))
+                .map(|subject| (subject, files.unwrap_or(&none))),
             &repository.worktree_root,
             &state,
             &editor_focus,
         ));
     }
+    if show_branches {
+        root = root.child(pane_handle(
+            HistoryPane::Branches,
+            list_left,
+            panel_body,
+            app.ui.history_pane_resize,
+            state.clone(),
+        ));
+    }
+    if show_detail {
+        root = root.child(pane_handle(
+            HistoryPane::Detail,
+            list_right,
+            panel_body,
+            app.ui.history_pane_resize,
+            state.clone(),
+        ));
+    }
     root.child(resize_handle(rect, state))
+}
+
+/// A vertical strip on a history pane's edge that drags its width.
+fn pane_handle(
+    pane: HistoryPane,
+    x: f32,
+    body: UiRect,
+    resizing: Option<(HistoryPane, f32)>,
+    state: Binding,
+) -> Element {
+    let active = resizing.is_some_and(|(dragged, _)| dragged == pane);
+    let (left, right) = (body.left, body.right);
+    let drag_start = state.clone();
+    let drag_move = state.clone();
+    let drag_end = state;
+    crate::ui::components::resize_handle::render(
+        match pane {
+            HistoryPane::Branches => "git-history-branches-resize",
+            HistoryPane::Detail => "git-history-detail-resize",
+        },
+        UiRect::new(x - 3.0, body.top, x + 3.0, body.bottom),
+        UiRect::new(x, body.top, x + 1.0, body.bottom),
+        CursorIcon::ResizeHorizontal,
+        active,
+    )
+    .on_pointer_down_with_button(move |_cx, pointer, button| {
+        if button == PointerButton::Left {
+            drag_start.update(|app| {
+                app.ui.history_pane_resize = Some((pane, pointer.point.x - x));
+                app.ui.hover = None;
+                app.ui.clear_hover_cards();
+            });
+        }
+    })
+    .on_pointer_drag(move |_cx, pointer| {
+        drag_move.update(|app| {
+            if let Some((dragged, offset)) = app.ui.history_pane_resize
+                && dragged == pane
+            {
+                let edge = pointer.point.x - offset;
+                match pane {
+                    HistoryPane::Branches => app.ui.history_branches_width = Some(edge - left),
+                    HistoryPane::Detail => app.ui.history_detail_width = Some(right - edge),
+                }
+            }
+        });
+    })
+    .on_pointer_up(move |_cx, _pointer| {
+        drag_end.update(|app| app.ui.history_pane_resize = None);
+    })
 }
 
 /// Column titles above the history list.

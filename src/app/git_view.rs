@@ -101,8 +101,22 @@ pub(crate) fn run(state: &AppContext, store: &State<GitStoreSnapshot>, command: 
             }
             true
         }
+        Command::SelectHistoryStash { root, oid } => {
+            let shown = state
+                .get()
+                .git
+                .model
+                .history_commit()
+                .is_some_and(|commit| commit.oid == oid);
+            if !shown {
+                super::git::toggle_commit(state, root, oid.clone());
+            }
+            state.update(|app| app.git.ui.history_stash = Some(oid));
+            true
+        }
         Command::SelectHistoryBranch { root, name } => {
             state.update(|app| {
+                app.git.ui.history_stash = None;
                 app.git.ui.history_scope = name.map(|name| (root, name));
                 app.git.ui.details_scroll = 0.0;
             });

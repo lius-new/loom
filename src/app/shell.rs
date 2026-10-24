@@ -450,6 +450,23 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     } else {
         (editor_region, None)
     };
+    // The navigator replaces the stash, worktree and tag tabs, so the log is the
+    // one tab left and must be what loads.
+    let navigator = git_panel_rect
+        .is_some_and(|rect| rect.width() >= crate::ui::git::workbench::BRANCHES_MIN_W);
+    let navigator_state = state.clone();
+    cx.use_effect(navigator, move || {
+        if navigator {
+            navigator_state.update(|app| {
+                if app.git.ui.panel_tab != crate::ui::git::panel::HISTORY {
+                    let open = app.git.ui.panel_open;
+                    app.git.ui.select_panel_tab(crate::ui::git::panel::HISTORY);
+                    app.git.ui.set_panel(open);
+                }
+            });
+        }
+        || {}
+    });
     let focused_pane = s.workspace.active_pane();
     let pane_rects: Vec<_> = s
         .workspace

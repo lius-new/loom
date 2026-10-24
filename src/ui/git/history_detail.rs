@@ -3,12 +3,12 @@
 use std::path::{Path, PathBuf};
 
 use lgui::core::{
-    CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiFocusHandle, clip,
+    CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId, clip,
 };
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 use lgui::services::ServicesContextExt;
 
-use crate::features::git::{ChangeKind, CommitSummary};
+use crate::features::git::{ChangeKind, CommitSummary, StashInfo};
 use crate::ui::git::commands::{Binding, Command};
 use crate::ui::git::panel::{ROW_H, path_label, relative_time};
 use crate::ui::{tabs, theme};
@@ -16,38 +16,58 @@ use crate::ui::{tabs, theme};
 pub(crate) const WIDTH: f32 = 253.0;
 const PAD: f32 = 16.0;
 
+/// What the pane describes.
+#[derive(Clone, Copy)]
+pub(crate) enum Subject<'a> {
+    Commit(&'a CommitSummary),
+    Stash(&'a StashInfo),
+}
+
 type Files = Option<Result<Vec<(ChangeKind, PathBuf)>, String>>;
 
 pub(crate) fn render(
     rect: UiRect,
-    commit: Option<(&CommitSummary, &Files)>,
+    subject: Option<(Subject<'_>, &Files)>,
     repository: &Path,
     state: &Binding,
     editor_focus: &UiFocusHandle,
 ) -> Element {
-    let root = panel(rect, VisualStyle::default())
-        .key("git-history-detail")
-        .child(panel(
-            UiRect::new(rect.left, rect.top, rect.left + 1.0, rect.bottom),
-            VisualStyle::filled(theme::c().border),
-        ));
+    let root = panel(rect, VisualStyle::default()).key("git-history-detail");
     let left = rect.left + PAD;
     let right = (rect.right - PAD).max(left);
-    let Some((commit, files)) = commit else {
+    let Some((subject, files)) = subject else {
         return clip(rect, 0.0, 0.0).child(root.child(text(
             UiRect::new(left, rect.top + 12.0, right, rect.top + 12.0 + ROW_H),
-            "Select a commit to see its changes.",
+            "Select a commit or stash to see its changes.",
             theme::mono(theme::c().text_ghost, theme::SMALL),
         )));
     };
 
     let mut y = rect.top + 12.0;
-    let hash: String = commit.oid.chars().take(7).collect();
-    let copy_oid = commit.oid.clone();
+    let (oid, hash, title, meta) = match subject {
+        Subject::Commit(commit) => (
+            commit.oid.clone(),
+            commit.oid.chars().take(7).collect::<String>(),
+            commit.subject.clone(),
+            format!("{} · {}", commit.author, relative_time(commit.timestamp)),
+        ),
+        Subject::Stash(stash) => (
+            stash.oid.clone(),
+            format!("stash@{{{}}}", stash.index),
+            stash.message.clone(),
+            "Stash".to_owned(),
+        ),
+    };
+    let copy_oid = oid.clone();
     let copy_rect = UiRect::new(right - 20.0, y, right, y + 20.0);
+    let actions_w = if matches!(subject, Subject::Stash(_)) {
+        66.0
+    } else {
+        0.0
+    };
     let mut root = root
         .child(text(
-            UiRect::new(left, y, copy_rect.left, y + 20.0),
+            UiRect::new(left, y, copy_rect.left - actions_w, y + 20.0),
             hash,
             theme::mono(theme::c().accent, theme::SMALL + 1.0),
         ))
@@ -79,16 +99,42 @@ pub(crate) fn render(
                 theme::c().text_faint,
             )),
         );
+    if let Subject::Stash(stash) = subject {
+        let buttons = [
+            ("git-stash-apply", "Apply Stash", false),
+            ("git-stash-pop", "Pop Stash", true),
+        ];
+        for (index, (icon, name, pop)) in buttons.into_iter().enumerate() {
+            let rect = UiRect::new(
+                copy_rect.left - 66.0 + index as f32 * 22.0,
+                y,
+                copy_rect.left - 46.0 + index as f32 * 22.0,
+                y + 20.0,
+            );
+            let (state, oid) = (state.clone(), stash.oid.clone());
+            root = root.child(icon_button(rect, icon, name, move || {
+                state.dispatch(Command::ApplyStash {
+                    oid: oid.clone(),
+                    pop,
+                });
+            }));
+        }
+        let rect = UiRect::new(copy_rect.left - 22.0, y, copy_rect.left - 2.0, y + 20.0);
+        let (state, oid) = (state.clone(), stash.oid.clone());
+        root = root.child(icon_button(rect, "trash", "Drop Stash", move || {
+            state.dispatch(Command::RequestDropStash { oid: oid.clone() });
+        }));
+    }
     y += 26.0;
     root = root.child(text(
         UiRect::new(left, y, right, y + 20.0),
-        tabs::ellipsize_sans(&commit.subject, right - left, 12.0, 400),
+        tabs::ellipsize_sans(&title, right - left, 12.0, 400),
         theme::sans(theme::c().text, 12.0),
     ));
     y += 22.0;
     root = root.child(text(
         UiRect::new(left, y, right, y + 16.0),
-        format!("{} · {}", commit.author, relative_time(commit.timestamp)),
+        meta,
         theme::mono(theme::c().text_muted, theme::SMALL),
     ));
     y += 26.0;
@@ -130,7 +176,7 @@ pub(crate) fn render(
         for (index, (kind, path)) in files.iter().take(shown).enumerate() {
             root = root.child(file_row(
                 row_rect(index),
-                &commit.oid,
+                &oid,
                 *kind,
                 path,
                 repository,
@@ -141,7 +187,7 @@ pub(crate) fn render(
         if overflow && slots > 0 {
             root = root.child(more_row(
                 row_rect(shown),
-                &commit.oid,
+                &oid,
                 files.len() - shown,
                 repository,
                 state,
@@ -237,4 +283,36 @@ fn more_row(
             format!("+{hidden} more · View all changes"),
             theme::mono(theme::c().accent, theme::SMALL),
         ))
+}
+
+fn icon_button(
+    rect: UiRect,
+    icon: &'static str,
+    name: &'static str,
+    on_click: impl Fn() + Send + Sync + 'static,
+) -> Element {
+    Element::new(move |cx| {
+        let hovered = cx.context.interaction_flags(&cx.id).hovered;
+        UiElement::panel(
+            cx.id,
+            rect,
+            if hovered {
+                VisualStyle::filled(theme::c().surface).radius(3.0)
+            } else {
+                VisualStyle::default().radius(3.0)
+            },
+        )
+        .children(cx.children)
+    })
+    .key(format!("git-history-detail-{icon}"))
+    .event_policy(EventPolicy::INTERACTIVE)
+    .semantics(Semantics::new(SemanticRole::Button).name(name))
+    .cursor(CursorIcon::Pointer)
+    .on_click(on_click)
+    .child(crate::ui::drawer::drawer_icon(
+        UiId::owned(format!("git-history-detail-{icon}-icon")),
+        icon,
+        theme::icon_rect(rect),
+        theme::c().text_muted,
+    ))
 }

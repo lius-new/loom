@@ -56,12 +56,19 @@ pub(crate) fn history_key(
                 .as_ref()
                 .filter(|(root, _)| *root == repository.worktree_root)
                 .and_then(|(_, name)| {
+                    if let Some(tag) = name.strip_prefix("tag:") {
+                        return repository
+                            .tags
+                            .iter()
+                            .find(|info| info.name == tag)
+                            .and_then(|info| info.commit.clone());
+                    }
                     let (root, branches) = app.git.ui.history_branches.as_ref()?;
                     (*root == repository.worktree_root)
                         .then(|| branches.iter().find(|branch| branch.name == *name))
                         .flatten()
-                })
-                .map(|branch| branch.oid.clone());
+                        .map(|branch| branch.oid.clone())
+                });
             (
                 repository.worktree_root.clone(),
                 scoped.or_else(|| repository.head_oid.clone()),

@@ -597,6 +597,43 @@ mod panel_virtualization_tests {
     }
 
     #[test]
+    fn a_wide_git_panel_keeps_only_the_log_tab_for_the_navigator() {
+        use lgui::application::ApplicationContext;
+        use lgui::session::UiSession;
+        let viewport = UiRect::new(0.0, 0.0, 1200.0, 600.0);
+        let panel = UiRect::new(0.0, 300.0, 1200.0, 600.0);
+        let (_, snapshot, history) = drawer_fixture();
+        let exposed = Arc::new(std::sync::Mutex::new(None));
+        let view = render_view(
+            viewport,
+            Some(panel),
+            snapshot,
+            history,
+            |app| app.git.ui.set_panel(true),
+            exposed,
+        );
+        let context = ApplicationContext::empty(Default::default());
+        context
+            .resources()
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                crate::app::svg_icons(),
+            )));
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(named(&session, "Commits").is_some());
+        for tab in ["Stashes", "Worktrees", "Tags"] {
+            assert!(
+                named(&session, tab).is_none(),
+                "{tab} moved to the navigator"
+            );
+        }
+    }
+
+    #[test]
     fn narrow_git_panel_tabs_scroll_without_covering_the_collapse_button() {
         use lgui::application::ApplicationContext;
         use lgui::session::UiSession;

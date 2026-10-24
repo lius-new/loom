@@ -41,6 +41,20 @@ tab again, or the arrow at the right, collapses the content while keeping the
 tab bar available. `Ctrl+Shift+H` (or `Command+Shift+H`) also expands or collapses
 the panel. There is no title-bar toggle for the Git panel.
 
+When the panel is at least 900px wide, its only tab is **Commits** and a
+navigator fills the left side: branches, remotes, tags and stashes. Choose a
+branch or tag to show its commits; the current branch returns to HEAD. Choose a
+stash to list its files in the detail pane, where **Apply**, **Pop** and **Drop**
+live. Right-click a tag to push or delete it. A branch checked out in another
+worktree shows a folder icon whose menu opens the worktree, adds it to the
+workspace or deletes it. Narrower panels keep the four tabs.
+
+Each group title has a **+** button: **BRANCHES** opens the branch picker, where a
+new name creates a branch and **New Worktree** checks it out in its own folder;
+**TAGS** tags the selected commit (HEAD when none is selected); **STASHES**
+stashes the current changes. Branch names with `/` group into folders that fold
+shut, and a remote's branches sit under its name.
+
 Drag the expanded panel's top edge to resize it. Collapsing and reopening keeps
 the chosen height and tab. Hovering a commit or tag shows its details card, and
 the rows keep the same actions and context menus as before. History loads only
@@ -70,9 +84,8 @@ destination folder, defaulting to a sibling such as `../loom-feature-x`;
 **Browse…** changes its parent folder. Creation adds the worktree to the workspace
 and selects its repository.
 
-Source Control shows a **WORKTREES** section when a repository has multiple
-worktrees, with the branch, current worktree and lock status. Hover a row to open,
-add or delete it. Deletion asks for confirmation; modified or untracked files
+The **Worktrees** tab, shown in narrow panels, lists each worktree with its branch,
+current marker and lock status. Hover a row to open, add or delete it. Deletion asks for confirmation; modified or untracked files
 require a separate force-delete confirmation. The main, current and locked
 worktrees cannot be deleted from this section.
 

@@ -99,6 +99,11 @@ pub enum Command {
         root: PathBuf,
         name: Option<String>,
     },
+    /// Show a stash's files in the history's detail pane.
+    SelectHistoryStash {
+        root: PathBuf,
+        oid: String,
+    },
     ToggleCommit {
         root: PathBuf,
         oid: String,

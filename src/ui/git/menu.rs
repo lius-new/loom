@@ -40,6 +40,12 @@ pub enum GitMenuTarget {
         repository: PathBuf,
         name: String,
     },
+    /// A branch's linked worktree.
+    Worktree {
+        repository: PathBuf,
+        path: PathBuf,
+        removable: bool,
+    },
     TagPushRemotes {
         repository: PathBuf,
         name: String,
@@ -104,6 +110,9 @@ pub(crate) enum MenuAction {
     DeleteTag,
     ChooseTagRemote,
     PushTag(usize),
+    OpenWorktree,
+    AddWorktree,
+    RemoveWorktree,
 }
 
 pub(crate) enum Entry {
@@ -202,6 +211,19 @@ pub(crate) fn entries(
             Entry::Separator,
             item("Delete Tag…", MenuAction::DeleteTag),
         ],
+        GitMenuTarget::Worktree { removable, .. } => {
+            let mut entries = vec![
+                item("Open Worktree", MenuAction::OpenWorktree),
+                item("Add to Workspace", MenuAction::AddWorktree),
+            ];
+            if *removable {
+                entries.extend([
+                    Entry::Separator,
+                    item("Delete Worktree…", MenuAction::RemoveWorktree),
+                ]);
+            }
+            entries
+        }
         GitMenuTarget::TagPushRemotes { remotes, .. } => match remotes {
             None => vec![Entry::Message("Loading remotes…".into())],
             Some(Err(error)) => vec![Entry::Message(error.clone())],
@@ -322,7 +344,32 @@ pub(crate) fn perform(
             | MenuAction::CreateTag
             | MenuAction::ChooseTagRemote
             | MenuAction::PushTag(_)
+            | MenuAction::OpenWorktree
+            | MenuAction::AddWorktree
+            | MenuAction::RemoveWorktree
             | MenuAction::DeleteTag => {}
+        }
+        return;
+    }
+    if let GitMenuTarget::Worktree {
+        repository, path, ..
+    } = target
+    {
+        match action {
+            MenuAction::OpenWorktree => {
+                state.dispatch(Command::OpenWorktree { path: path.clone() });
+            }
+            MenuAction::AddWorktree => {
+                state.dispatch(Command::AddWorktreeFolder { path: path.clone() });
+            }
+            MenuAction::RemoveWorktree => {
+                state.dispatch(Command::RequestRemoveWorktree {
+                    repository: repository.clone(),
+                    path: path.clone(),
+                    force: false,
+                });
+            }
+            _ => {}
         }
         return;
     }

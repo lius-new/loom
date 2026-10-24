@@ -14,6 +14,13 @@ use crate::ui::git::menu::GitMenu;
 use crate::ui::git::panel::{CommitCard, GitHover, TagCard};
 use crate::ui::git::stash_switch::StashSwitchRequest;
 
+/// A history pane whose width the user can drag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryPane {
+    Branches,
+    Detail,
+}
+
 #[derive(Clone)]
 pub struct GitUiState {
     /// Pointer is inside the Source Control drawer.
@@ -44,6 +51,15 @@ pub struct GitUiState {
     /// The branch whose commits the history shows; None follows HEAD.
     pub history_scope: Option<(PathBuf, String)>,
     pub history_branch_scroll: f32,
+    /// The stash whose files the history's detail pane shows.
+    pub history_stash: Option<String>,
+    /// Branch folders folded shut in the navigator, as `b:` or `r:` plus the path.
+    pub history_collapsed: HashSet<String>,
+    /// User-chosen widths of the history's navigator and detail pane.
+    pub history_branches_width: Option<f32>,
+    pub history_detail_width: Option<f32>,
+    /// The pane edge being dragged, and the pointer's offset from it.
+    pub history_pane_resize: Option<(HistoryPane, f32)>,
     pub commit_amend: bool,
     pub commit_signoff: bool,
     pub expanded_repositories: HashSet<u64>,
@@ -93,6 +109,11 @@ impl Default for GitUiState {
             history_branches: None,
             history_scope: None,
             history_branch_scroll: 0.0,
+            history_stash: None,
+            history_collapsed: HashSet::new(),
+            history_branches_width: None,
+            history_detail_width: None,
+            history_pane_resize: None,
             commit_amend: false,
             commit_signoff: false,
             expanded_repositories: HashSet::new(),

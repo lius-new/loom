@@ -1640,7 +1640,7 @@ pub(crate) fn tag_row(
     tag_context_menu(row, repository, tag.name.clone(), state)
 }
 
-fn tag_context_menu(
+pub(crate) fn tag_context_menu(
     element: Element,
     repository: &std::path::Path,
     name: String,

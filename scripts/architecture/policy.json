@@ -499,6 +499,31 @@
       "migrated_in": "Git history branches",
       "reason": "Remember which branch the commit history follows"
     },
+    "history_branches_width": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "User-chosen width of the history navigator"
+    },
+    "history_detail_width": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "User-chosen width of the history detail pane"
+    },
+    "history_pane_resize": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "The history pane edge being dragged"
+    },
+    "history_collapsed": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "Which branch folders the navigator has folded shut"
+    },
+    "history_stash": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "The stash shown in the history detail pane"
+    },
     "history_branch_scroll": {
       "owner": "ui/git/state",
       "migrated_in": "Git history branches",
