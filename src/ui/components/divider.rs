@@ -16,6 +16,7 @@ pub fn top(rect: UiRect) -> Element {
 fn horizontal(rect: UiRect, bottom_edge: bool) -> Element {
     Element::new(move |cx| {
         let scale = cx.context.scale();
+        crate::ui::device_scale::observe(scale.factor());
         let width = scale.physical_length(1.0);
         let top = if bottom_edge {
             scale.physical_value(rect.bottom) - width

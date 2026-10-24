@@ -162,7 +162,7 @@ impl MarkdownService {
                 height: height.clamp(1.0, 2048.0),
                 position,
                 ink,
-                density: 2.0,
+                density: crate::ui::device_scale::observed(),
                 font_size: theme::UI_SIZE,
                 line_height: 18.0,
                 base: None,

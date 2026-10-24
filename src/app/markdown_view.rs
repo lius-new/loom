@@ -209,7 +209,7 @@ pub fn render(
                         height: body.height().max(1.0),
                         position: view.reader,
                         ink,
-                        density: 2.0,
+                        density: crate::ui::device_scale::observed(),
                         font_size: app.preferences.values().markdown.font_size as f32,
                         line_height: (app.preferences.values().markdown.line_height as f32)
                             .max(app.preferences.values().markdown.font_size as f32 * 1.2),
@@ -336,7 +336,23 @@ pub(super) fn paint(result: &Rendered, paragraph: usize, bounds: UiRect) -> Elem
             result.frame.layout,
             tile.top.to_bits()
         ));
-        root = root.child(Element::new(move |_| {
+        let density = tile.density;
+        root = root.child(Element::new(move |cx| {
+            // Skia samples the tile nearest: land every texel on one physical pixel.
+            let scale = cx.context.scale();
+            crate::ui::device_scale::observe(scale.factor());
+            let rect = if (scale.factor() - density).abs() < 0.01 {
+                let left = scale.physical_value(rect.left);
+                let top = scale.physical_value(rect.top);
+                scale.logical_rect(lgui::core::PhysicalRect::new(
+                    left,
+                    top,
+                    left + scale.physical_ui_value(rect.width()).ceil() as i32,
+                    top + scale.physical_ui_value(rect.height()).ceil() as i32,
+                ))
+            } else {
+                rect
+            };
             UiElement::requested_image(id, rect, request, ImageFit::Fill)
         }));
     }

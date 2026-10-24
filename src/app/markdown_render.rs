@@ -48,6 +48,7 @@ pub struct Tile {
     pub left: f32,
     pub width: f32,
     pub height: f32,
+    pub density: f32,
     pub png: Arc<Vec<u8>>,
 }
 pub struct Rendered {
@@ -565,6 +566,7 @@ fn render(
                     left,
                     width,
                     height,
+                    density,
                     png,
                 });
                 y += height;
