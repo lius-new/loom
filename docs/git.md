@@ -33,8 +33,9 @@ changes. A repository with no changes says **Working tree clean.**
 ## Git panel
 
 The Git panel's tab bar appears at the bottom of the active Git diff
-(Commit/Changes). Ordinary file editing, Settings and other pages do not show
-it or reserve space for it. Switching back restores its expansion state, tab
+(Commit/Changes), and under any open file while the Source Control drawer is
+open. With the drawer closed, ordinary file editing does not show it, and
+Settings and other pages never do or reserve space for it. Switching back restores its expansion state, tab
 and height. It is expanded by default. Click **History**,
 **Stashes**, **Worktrees** or **Tags** to expand its content. Clicking the active
 tab again, or the arrow at the right, collapses the content while keeping the

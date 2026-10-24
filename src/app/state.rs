@@ -634,10 +634,17 @@ impl AppState {
         self.pane_surface(self.workspace.active_pane())
     }
 
-    /// The bottom Git panel belongs to the focused Git diff, not file editing
-    /// or application pages. Its expansion preference survives switching views.
+    /// The bottom Git panel belongs to the focused Git diff, and to any open
+    /// document while the Source Control drawer is open. Welcome and application
+    /// pages never show it. Its expansion preference survives switching views.
     pub fn git_panel_visible(&self) -> bool {
         self.workspace.active_diff().is_some()
+            || (self.source_control.visible
+                && self.workspace.active().is_some()
+                && self
+                    .workspace
+                    .pane_page(self.workspace.active_pane())
+                    .is_none())
     }
 
     /// What one pane shows. Welcome and Workspace Home fill the editor area
@@ -792,6 +799,14 @@ mod tests {
         app.workspace.set_active(changes);
         assert!(app.git_panel_visible());
         app.workspace.open_settings();
+        assert!(!app.git_panel_visible());
+        // With the Source Control drawer open, a file shows the panel too, but
+        // an application page still does not.
+        app.source_control.visible = true;
+        assert!(!app.git_panel_visible());
+        app.workspace.set_active(file);
+        assert!(app.git_panel_visible());
+        app.source_control.visible = false;
         assert!(!app.git_panel_visible());
         app.workspace.open_diff(DiffDocument::commit_changes(
             "project".into(),
