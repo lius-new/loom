@@ -519,6 +519,11 @@
       "migrated_in": "Git history branches",
       "reason": "Which branch folders the navigator has folded shut"
     },
+    "history_nav": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "Which kind of reference the history navigator lists"
+    },
     "history_stash": {
       "owner": "ui/git/state",
       "migrated_in": "Git history branches",

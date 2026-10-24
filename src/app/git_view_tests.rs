@@ -590,7 +590,7 @@ mod panel_virtualization_tests {
         for section in [HISTORY, STASHES, WORKTREES, TAGS] {
             assert!(state.get().git.ui.collapsed_sections.contains(&section));
         }
-        for tab in ["Commits", "Stashes", "Worktrees", "Tags"] {
+        for tab in ["History", "Stashes", "Worktrees", "Tags"] {
             assert!(named(&session, tab).is_some());
         }
         assert!(named(&session, "Expand Git panel").is_some());
@@ -624,7 +624,7 @@ mod panel_virtualization_tests {
         );
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
-        assert!(named(&session, "Commits").is_some());
+        assert!(named(&session, "History").is_some());
         for tab in ["Stashes", "Worktrees", "Tags"] {
             assert!(
                 named(&session, tab).is_none(),
@@ -686,7 +686,7 @@ mod panel_virtualization_tests {
             session.render_view(&view, viewport, UiScale::ONE);
             let (state, _) = exposed.lock().unwrap().clone().unwrap();
             let hide = hit(&session, "Collapse Git panel").unwrap();
-            for tab in ["Commits", "Stashes", "Worktrees", "Tags"] {
+            for tab in ["History", "Stashes", "Worktrees", "Tags"] {
                 if let Some(rect) = hit(&session, tab) {
                     assert!(
                         rect.left >= panel.left && rect.right <= hide.left,
@@ -701,7 +701,7 @@ mod panel_virtualization_tests {
                 let point = Point::new(panel.left + 60.0, panel.top + 15.0);
                 for (delta, expected) in [
                     (WheelDelta::pixels(-10_000.0, 0.0), "Tags"),
-                    (WheelDelta::pixels(0.0, 10_000.0), "Commits"),
+                    (WheelDelta::pixels(0.0, 10_000.0), "History"),
                 ] {
                     dispatch_runtime_output(
                         session.handle_input(InputEvent::Wheel { point, delta }),
@@ -747,7 +747,7 @@ mod panel_virtualization_tests {
         let panel = panel.unwrap();
         assert_eq!(editor.bottom, panel.top);
         assert_eq!(panel.bottom, region.bottom);
-        assert_eq!(panel.height(), 260.0);
+        assert_eq!(panel.height(), 340.0);
         let (_, tall) = split(region, true, Some(10_000.0));
         assert_eq!(tall.unwrap().top, region.top + 160.0);
         let (_, short) = split(region, true, Some(1.0));
@@ -812,7 +812,7 @@ mod panel_virtualization_tests {
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
         let (state, store) = exposed.lock().unwrap().clone().unwrap();
-        let commits = named(&session, "Commits").unwrap();
+        let commits = named(&session, "History").unwrap();
         assert!(state.get().git.ui.panel_open);
         assert!(commits.top < viewport.bottom - 150.0);
         assert!(
@@ -829,7 +829,7 @@ mod panel_virtualization_tests {
                 .open_path("loom/main.rs".into(), "fn main() {}".into());
         });
         session.render_view(&view, viewport, UiScale::ONE);
-        assert!(named(&session, "Commits").is_none());
+        assert!(named(&session, "History").is_none());
         assert!(named(&session, "Collapse Git panel").is_none());
         assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_none());
         assert!(state.get().git.ui.panel_open);
@@ -839,13 +839,13 @@ mod panel_virtualization_tests {
         assert!(named(&session, "Collapse Git panel").is_some());
         assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_some());
         state.update(|app| app.git.ui.panel_resize_offset = Some(2.0));
-        let commits = named(&session, "Commits").unwrap();
+        let commits = named(&session, "History").unwrap();
         click(&mut session, &view, viewport, center(commits));
         assert!(!state.get().git.ui.panel_open);
         assert_eq!(state.get().git.ui.panel_resize_offset, None);
         assert_eq!(state.get().git.ui.panel_height, Some(180.0));
         assert!(named(&session, "Expand Git panel").is_some());
-        assert!(named(&session, "Commits").unwrap().top >= viewport.bottom - HEADER_H);
+        assert!(named(&session, "History").unwrap().top >= viewport.bottom - HEADER_H);
         assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_none());
 
         let stashes = named(&session, "Stashes").unwrap();

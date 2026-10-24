@@ -20,7 +20,7 @@ use crate::ui::git::{history_branches, history_detail};
 use crate::ui::theme;
 
 pub(crate) const HEADER_H: f32 = theme::TABS_H;
-const DEFAULT_H: f32 = 260.0;
+const DEFAULT_H: f32 = 340.0;
 const MIN_H: f32 = 120.0;
 const TAB_PAD: f32 = 12.0;
 const TAB_GAP: f32 = 2.0;
@@ -32,8 +32,8 @@ const DETAIL_MIN_W: f32 = 720.0;
 const COLUMNS_MIN_W: f32 = 420.0;
 const COLUMNS_H: f32 = 22.0;
 const LIST_MIN_W: f32 = 240.0;
-const BRANCHES_MIN_PANE_W: f32 = 120.0;
-const BRANCHES_MAX_PANE_W: f32 = 360.0;
+const BRANCHES_MIN_PANE_W: f32 = 148.0;
+const BRANCHES_MAX_PANE_W: f32 = 390.0;
 const DETAIL_MIN_PANE_W: f32 = 180.0;
 const DETAIL_MAX_PANE_W: f32 = 480.0;
 /// Narrowest panel that also shows the branch list.
@@ -78,8 +78,10 @@ pub fn render(
     let body = UiRect::new(rect.left, header.bottom, rect.right, rect.bottom);
     let expanded = app.ui.panel_open && rect.height() > HEADER_H;
     root = root.child(crate::ui::components::divider::top(header));
+    // Under the tabs, so the active tab's underline sits on top of it.
+    root = root.child(crate::ui::components::divider::bottom(header));
     let tabs = [
-        ("Commits", HISTORY, None),
+        ("History", HISTORY, None),
         (
             "Stashes",
             STASHES,
@@ -110,7 +112,7 @@ pub fn render(
     // The collapse button owns a fixed slot. Clip both painting and hit testing
     // before it, leaving room for scroll buttons only when tabs overflow.
     let tabs_right = (rect.right - 36.0).max(rect.left);
-    let tabs_left = (rect.left + 8.0).min(tabs_right);
+    let tabs_left = rect.left.min(tabs_right);
     let available = (tabs_right - tabs_left).max(0.0);
     let natural_width = tabs
         .iter()
@@ -209,7 +211,6 @@ pub fn render(
         state.clone(),
         expanded,
     ));
-    root = root.child(crate::ui::components::divider::bottom(header));
     if !expanded {
         return root;
     }
@@ -493,6 +494,7 @@ pub fn render(
                 .as_ref()
                 .map(|commit| commit.oid.as_str())
                 .or(repository.head_oid.as_deref()),
+            app.ui.history_nav,
             &app.ui.history_collapsed,
             app.ui.history_branch_scroll,
             &state,
@@ -671,13 +673,8 @@ fn tab_button(rect: UiRect, tab: u8, label: String, active: bool, state: Binding
         if active {
             node = node.child(UiElement::panel(
                 lgui::core::UiId::owned(format!("git-panel-tab-underline-{tab}")),
-                UiRect::new(
-                    rect.left + 6.0,
-                    rect.bottom - 5.0,
-                    rect.right - 6.0,
-                    rect.bottom - 3.0,
-                ),
-                VisualStyle::filled(c.accent).radius(1.0),
+                UiRect::new(rect.left, rect.bottom - 2.0, rect.right, rect.bottom),
+                VisualStyle::filled(c.accent),
             ));
         }
         node
@@ -686,7 +683,7 @@ fn tab_button(rect: UiRect, tab: u8, label: String, active: bool, state: Binding
     .event_policy(EventPolicy::INTERACTIVE)
     .semantics({
         let mut semantics = Semantics::new(SemanticRole::Button).name(match tab {
-            HISTORY => "Commits",
+            HISTORY => "History",
             STASHES => "Stashes",
             WORKTREES => "Worktrees",
             _ => "Tags",

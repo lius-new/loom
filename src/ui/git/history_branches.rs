@@ -12,9 +12,12 @@ use lgui::prelude::{Color, Element, UiRect, VisualStyle, panel, text};
 use crate::features::git::{BranchInfo, RepositorySnapshot, StashInfo, TagInfo};
 use crate::ui::git::commands::{Binding, Command, Snapshot};
 use crate::ui::git::menu::{GitMenu, GitMenuTarget};
+use crate::ui::git::state::NavView;
 use crate::ui::{tabs, theme};
 
-pub(crate) const WIDTH: f32 = 164.0;
+/// The icon rail down the navigator's left edge.
+pub(crate) const RAIL_W: f32 = 30.0;
+pub(crate) const WIDTH: f32 = 291.0;
 const ROW_H: f32 = 22.0;
 const HEADING_H: f32 = 24.0;
 const PAD: f32 = 8.0;
@@ -148,6 +151,7 @@ enum Entry<'a> {
     },
     Tag(&'a TagInfo),
     Stash(&'a StashInfo),
+    Empty(&'static str),
 }
 
 impl Entry<'_> {
@@ -164,34 +168,52 @@ fn entries<'a>(
     repository: &'a RepositorySnapshot,
     collapsed: &HashSet<String>,
     selected: Option<&str>,
+    view: NavView,
 ) -> Vec<Entry<'a>> {
-    let mut entries = vec![Entry::Heading("BRANCHES", Some(Create::Branch))];
-    group(
-        LOCAL,
-        "Local",
-        "b:",
-        branches.iter().filter(|branch| !branch.remote),
-        collapsed,
-        selected,
-        &mut entries,
-    );
-    // A remote's own HEAD alias repeats its default branch.
-    group(
-        REMOTE,
-        "Remote",
-        "r:",
-        branches
-            .iter()
-            .filter(|branch| branch.remote && !branch.name.ends_with("/HEAD")),
-        collapsed,
-        selected,
-        &mut entries,
-    );
-    // Always listed, so a repository without any can still create the first.
-    entries.push(Entry::Heading("TAGS", Some(Create::Tag)));
-    entries.extend(repository.tags.iter().map(Entry::Tag));
-    entries.push(Entry::Heading("STASHES", Some(Create::Stash)));
-    entries.extend(repository.stashes.iter().map(Entry::Stash));
+    let mut entries = Vec::new();
+    match view {
+        NavView::Branches => {
+            entries.push(Entry::Heading("BRANCHES", Some(Create::Branch)));
+            group(
+                LOCAL,
+                "Local",
+                "b:",
+                branches.iter().filter(|branch| !branch.remote),
+                collapsed,
+                selected,
+                &mut entries,
+            );
+            // A remote's own HEAD alias repeats its default branch.
+            group(
+                REMOTE,
+                "Remote",
+                "r:",
+                branches
+                    .iter()
+                    .filter(|branch| branch.remote && !branch.name.ends_with("/HEAD")),
+                collapsed,
+                selected,
+                &mut entries,
+            );
+            if entries.len() == 1 {
+                entries.push(Entry::Empty("No branches yet."));
+            }
+        }
+        NavView::Tags => {
+            entries.push(Entry::Heading("TAGS", Some(Create::Tag)));
+            if repository.tags.is_empty() {
+                entries.push(Entry::Empty("No tags yet."));
+            }
+            entries.extend(repository.tags.iter().map(Entry::Tag));
+        }
+        NavView::Stashes => {
+            entries.push(Entry::Heading("STASHES", Some(Create::Stash)));
+            if repository.stashes.is_empty() {
+                entries.push(Entry::Empty("No stashes."));
+            }
+            entries.extend(repository.stashes.iter().map(Entry::Stash));
+        }
+    }
     entries
 }
 
@@ -203,8 +225,9 @@ pub(crate) fn content_height(
     branches: &[BranchInfo],
     repository: &RepositorySnapshot,
     collapsed: &HashSet<String>,
+    view: NavView,
 ) -> f32 {
-    entries(branches, repository, collapsed, None)
+    entries(branches, repository, collapsed, None, view)
         .iter()
         .map(Entry::height)
         .sum::<f32>()
@@ -218,12 +241,15 @@ pub(crate) fn render(
     scope: Option<&str>,
     stash: Option<&str>,
     tag_target: Option<&str>,
+    view: NavView,
     collapsed: &HashSet<String>,
     scroll: f32,
     state: &Binding,
     store: &Snapshot,
 ) -> Element {
-    let max_scroll = (content_height(branches, repository, collapsed) - rect.height()).max(0.0);
+    let list = UiRect::new(rect.left + RAIL_W, rect.top, rect.right, rect.bottom);
+    let max_scroll =
+        (content_height(branches, repository, collapsed, view) - list.height()).max(0.0);
     let scroll = scroll.clamp(0.0, max_scroll);
     let current = branches
         .iter()
@@ -232,13 +258,13 @@ pub(crate) fn render(
     // Choosing a stash leaves the history on its branch, which stops being the
     // selection; the stash is.
     let selected = scope.or(current).filter(|_| stash.is_none());
-    let mut layer = clip(rect, 0.0, 0.0);
-    let mut y = rect.top + PAD - scroll;
-    for entry in entries(branches, repository, collapsed, selected) {
+    let mut layer = clip(list, 0.0, 0.0);
+    let mut y = list.top + PAD - scroll;
+    for entry in entries(branches, repository, collapsed, selected, view) {
         let height = entry.height();
-        let row = UiRect::new(rect.left, y, rect.right, y + height);
+        let row = UiRect::new(list.left, y, list.right, y + height);
         y += height;
-        if row.bottom < rect.top || row.top > rect.bottom {
+        if row.bottom < list.top || row.top > list.bottom {
             continue;
         }
         layer = layer.child(match entry {
@@ -290,11 +316,27 @@ pub(crate) fn render(
                 stash == Some(info.oid.as_str()),
                 state,
             ),
+            Entry::Empty(message) => text(
+                UiRect::new(row.left + 14.0, row.top, row.right - 8.0, row.bottom),
+                message,
+                theme::mono(theme::c().text_ghost, theme::SMALL),
+            )
+            .into(),
         });
     }
     let wheel_state = state.clone();
     panel(rect, VisualStyle::default())
         .key("git-history-branches")
+        .child(rail(
+            UiRect::new(rect.left, rect.top, rect.left + RAIL_W, rect.bottom),
+            view,
+            [
+                branches.iter().filter(|branch| !branch.remote).count(),
+                repository.tags.len(),
+                repository.stashes.len(),
+            ],
+            state,
+        ))
         .child(layer)
         .on_wheel(move |cx, delta| {
             let step = match delta.unit {
@@ -823,4 +865,62 @@ fn heading_row(
         )),
     );
     heading.into()
+}
+
+/// The icon strip that picks which kind of reference the navigator lists.
+fn rail(rect: UiRect, view: NavView, counts: [usize; 3], state: &Binding) -> Element {
+    let views = [
+        (NavView::Branches, "git-branch", "Branches"),
+        (NavView::Tags, "git-ref-tag", "Tags"),
+        (NavView::Stashes, "git-stash", "Stashes"),
+    ];
+    let mut rail = panel(rect, VisualStyle::default());
+    for (index, ((nav, icon, name), count)) in views.into_iter().zip(counts).enumerate() {
+        let selected = nav == view;
+        let top = rect.top + PAD + index as f32 * 32.0;
+        let button = UiRect::new(rect.left + 3.0, top, rect.right - 3.0, top + 28.0);
+        let color = if selected {
+            theme::c().accent
+        } else {
+            theme::c().text_muted
+        };
+        let click_state = state.clone();
+        let mut semantics = Semantics::new(SemanticRole::Button).name(format!("{name} ({count})"));
+        semantics.state.selected = selected;
+        rail = rail.child(
+            Element::new(move |cx| {
+                let hovered = cx.context.interaction_flags(&cx.id).hovered;
+                let fill = if selected {
+                    VisualStyle::filled(theme::c().active_line).radius(4.0)
+                } else if hovered {
+                    VisualStyle::filled(theme::c().surface).radius(4.0)
+                } else {
+                    VisualStyle::default().radius(4.0)
+                };
+                UiElement::panel(cx.id, button, fill).children(cx.children)
+            })
+            .key(format!("git-history-nav-{name}"))
+            .event_policy(EventPolicy::INTERACTIVE)
+            .semantics(semantics)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                click_state.update(|app| {
+                    app.ui.history_nav = nav;
+                    app.ui.history_branch_scroll = 0.0;
+                });
+            })
+            .child(crate::ui::drawer::drawer_icon(
+                UiId::owned(format!("git-history-nav-icon-{name}")),
+                icon,
+                theme::icon_rect(UiRect::new(
+                    button.left,
+                    button.top,
+                    button.right,
+                    button.bottom,
+                )),
+                color,
+            )),
+        );
+    }
+    rail.into()
 }

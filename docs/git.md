@@ -35,14 +35,16 @@ changes. A repository with no changes says **Working tree clean.**
 The Git panel's tab bar appears at the bottom of the active Git diff
 (Commit/Changes). Ordinary file editing, Settings and other pages do not show
 it or reserve space for it. Switching back restores its expansion state, tab
-and height. It is expanded by default. Click **Commits**,
+and height. It is expanded by default. Click **History**,
 **Stashes**, **Worktrees** or **Tags** to expand its content. Clicking the active
 tab again, or the arrow at the right, collapses the content while keeping the
 tab bar available. `Ctrl+Shift+H` (or `Command+Shift+H`) also expands or collapses
 the panel. There is no title-bar toggle for the Git panel.
 
-When the panel is at least 900px wide, its only tab is **Commits** and a
-navigator fills the left side: branches, remotes, tags and stashes. Choose a
+When the panel is at least 900px wide, its only tab is **History** and a
+navigator fills the left side. An icon rail along its edge switches between
+branches (Local and Remote folders), tags and stashes, each with its count; only
+the chosen kind is listed. Choose a
 branch or tag to show its commits; the current branch returns to HEAD. Choose a
 stash to list its files in the detail pane, where **Apply**, **Pop** and **Drop**
 live. Right-click a tag to push or delete it. A branch checked out in another
@@ -58,7 +60,7 @@ shut, and a remote's branches sit under its name.
 Drag the expanded panel's top edge to resize it. Collapsing and reopening keeps
 the chosen height and tab. Hovering a commit or tag shows its details card, and
 the rows keep the same actions and context menus as before. History loads only
-while the Commits tab is expanded.
+while the History tab is expanded.
 
 In narrow editor regions, the tabs scroll horizontally using the wheel or the
 header's arrow buttons. The collapse button stays fixed at the right edge.

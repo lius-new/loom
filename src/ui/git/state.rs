@@ -14,6 +14,15 @@ use crate::ui::git::menu::GitMenu;
 use crate::ui::git::panel::{CommitCard, GitHover, TagCard};
 use crate::ui::git::stash_switch::StashSwitchRequest;
 
+/// Which kind of reference the history navigator lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NavView {
+    #[default]
+    Branches,
+    Tags,
+    Stashes,
+}
+
 /// A history pane whose width the user can drag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryPane {
@@ -53,6 +62,8 @@ pub struct GitUiState {
     pub history_branch_scroll: f32,
     /// The stash whose files the history's detail pane shows.
     pub history_stash: Option<String>,
+    /// The navigator shows one kind of reference at a time.
+    pub history_nav: NavView,
     /// Branch folders folded shut in the navigator, as `b:` or `r:` plus the path.
     pub history_collapsed: HashSet<String>,
     /// User-chosen widths of the history's navigator and detail pane.
@@ -110,6 +121,7 @@ impl Default for GitUiState {
             history_scope: None,
             history_branch_scroll: 0.0,
             history_stash: None,
+            history_nav: NavView::default(),
             history_collapsed: HashSet::from([crate::ui::git::history_branches::REMOTE.to_owned()]),
             history_branches_width: None,
             history_detail_width: None,
