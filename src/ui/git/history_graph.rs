@@ -40,9 +40,18 @@ struct Pending<'a> {
     color: usize,
 }
 
+/// Lanes drawn side by side; more share the last one.
+const MAX_LANES: usize = 4;
+/// Distance between neighbouring lanes.
+const PITCH: f32 = 16.0;
+/// Corner radius where a lane turns.
+const ELBOW: f32 = 6.0;
+
 pub(crate) struct Graph {
     rows: Vec<Row>,
     lanes: usize,
+    /// The colour of the lane the open commit sits on; the others fade.
+    selected: Option<usize>,
 }
 
 fn tracks(pending: &[Option<Pending<'_>>]) -> Vec<Track> {
@@ -167,7 +176,18 @@ impl Graph {
                 pending.pop();
             }
         }
-        Self { rows, lanes }
+        let selected = history
+            .iter()
+            .zip(&rows)
+            .find_map(|(entry, row)| match entry {
+                HistoryRow::Commit(_, true) => row.node.map(|node| node.color),
+                _ => None,
+            });
+        Self {
+            rows,
+            lanes,
+            selected,
+        }
     }
 
     pub(crate) fn render(
@@ -178,12 +198,23 @@ impl Graph {
         hovered: bool,
     ) -> RenderedRow {
         let row = &self.rows[index];
-        let width = 20.0 + self.lanes.saturating_sub(1).min(2) as f32 * 10.0;
+        let lanes = self.lanes.clamp(1, MAX_LANES);
+        let width = 24.0 + (lanes - 1) as f32 * PITCH;
         let gutter = UiRect::new(rect.left, rect.top, rect.left + width, rect.bottom);
         let mut graph = group(gutter).key("commit-graph");
-        let spacing = (24.0 / self.lanes.saturating_sub(1).max(1) as f32).min(10.0);
-        let x = |lane| rect.left + 12.0 + lane as f32 * spacing;
+        let x = |lane: usize| rect.left + 12.0 + lane.min(MAX_LANES - 1) as f32 * PITCH;
         let middle = (rect.top + rect.bottom) / 2.0;
+        // What the open commit does not lead through fades back.
+        let alpha = |color: usize| match self.selected {
+            Some(selected) if selected != color => 90,
+            _ => 230,
+        };
+        let open = matches!(entry, HistoryRow::Commit(_, true));
+        let background = if hovered || open {
+            theme::c().surface
+        } else {
+            theme::c().sidebar
+        };
         for track in &row.above {
             graph = graph.child(
                 path(
@@ -192,24 +223,39 @@ impl Graph {
                         UiPathCommand::MoveTo(Point::new(x(track.lane), rect.top)),
                         UiPathCommand::LineTo(Point::new(x(track.lane), middle)),
                     ]),
-                    line_style(track.color),
+                    line_style(track.color, alpha(track.color)),
                 )
                 .key(format!("graph-above-{}", track.lane)),
             );
         }
         for (edge_index, edge) in row.edges.iter().enumerate() {
+            let (from, to) = (x(edge.from), x(edge.to));
+            // A lane that changes turns where the commit sits, then runs down.
+            let commands = if (from - to).abs() < 0.5 {
+                vec![
+                    UiPathCommand::MoveTo(Point::new(from, middle)),
+                    UiPathCommand::LineTo(Point::new(to, rect.bottom)),
+                ]
+            } else {
+                let direction = if to > from { 1.0 } else { -1.0 };
+                let radius = ELBOW
+                    .min((to - from).abs() / 2.0)
+                    .min((rect.bottom - middle) / 2.0);
+                vec![
+                    UiPathCommand::MoveTo(Point::new(from, middle)),
+                    UiPathCommand::LineTo(Point::new(to - direction * radius, middle)),
+                    UiPathCommand::QuadraticTo {
+                        control: Point::new(to, middle),
+                        to: Point::new(to, middle + radius),
+                    },
+                    UiPathCommand::LineTo(Point::new(to, rect.bottom)),
+                ]
+            };
             graph = graph.child(
                 path(
                     gutter,
-                    UiPath::new([
-                        UiPathCommand::MoveTo(Point::new(x(edge.from), middle)),
-                        UiPathCommand::CubicTo {
-                            control1: Point::new(x(edge.from), middle + rect.height() * 0.3),
-                            control2: Point::new(x(edge.to), middle + rect.height() * 0.2),
-                            to: Point::new(x(edge.to), rect.bottom),
-                        },
-                    ]),
-                    line_style(edge.color),
+                    UiPath::new(commands),
+                    line_style(edge.color, alpha(edge.color)),
                 )
                 .key(format!("graph-below-{edge_index}")),
             );
@@ -219,34 +265,45 @@ impl Graph {
                 .decorations
                 .iter()
                 .any(|value| value == "HEAD" || value.starts_with("HEAD -> "));
-            let radius = if current { 4.0_f32 } else { 3.0 }.min((spacing * 0.45).max(1.0));
-            let node_rect = UiRect::new(
-                x(node.lane) - radius,
-                middle - radius,
-                x(node.lane) + radius,
-                middle + radius,
-            );
-            graph = graph.child(precompiled(UiElement::ellipse(
-                UiId::owned(format!("git-history-node-{}", commit.oid)),
-                node_rect,
-                VisualStyle::filled(color(node.color)),
-            )));
-            if current || commit.parents.len() > 1 {
-                let inset = radius * 0.5;
-                graph = graph.child(precompiled(UiElement::ellipse(
-                    UiId::owned(format!("git-history-node-center-{}", commit.oid)),
+            let merge = commit.parents.len() > 1;
+            let faded = alpha(node.color) < 230;
+            let fill = |color: Color| {
+                let style = VisualStyle::filled(color);
+                if faded { style.alpha(110) } else { style }
+            };
+            let circle = |name: &str, radius: f32, style: VisualStyle| {
+                precompiled(UiElement::ellipse(
+                    UiId::owned(format!("git-history-node-{name}-{}", commit.oid)),
                     UiRect::new(
-                        node_rect.left + inset,
-                        node_rect.top + inset,
-                        node_rect.right - inset,
-                        node_rect.bottom - inset,
+                        x(node.lane) - radius,
+                        middle - radius,
+                        x(node.lane) + radius,
+                        middle + radius,
                     ),
-                    VisualStyle::filled(if hovered {
-                        theme::c().surface
-                    } else {
-                        theme::c().sidebar
-                    }),
-                )));
+                    style,
+                ))
+            };
+            let radius = if current {
+                6.0
+            } else if merge {
+                4.0
+            } else {
+                4.5
+            };
+            // The halo cuts the lines that pass behind the node.
+            graph = graph.child(circle(
+                "halo",
+                radius + 2.5,
+                VisualStyle::filled(background),
+            ));
+            graph = graph.child(circle("dot", radius, fill(color(node.color))));
+            if current {
+                graph = graph.child(circle(
+                    "ring",
+                    radius - 2.0,
+                    VisualStyle::filled(background),
+                ));
+                graph = graph.child(circle("core", 2.5, fill(color(node.color))));
             }
         }
         RenderedRow {
@@ -256,23 +313,27 @@ impl Graph {
     }
 }
 
+/// The main lane takes the accent; branches cycle through the other hues.
 fn color(index: usize) -> Color {
+    if index == 0 {
+        return theme::c().accent;
+    }
     let colors = [
-        theme::syntax_color(HighlightId::FUNCTION),
         theme::syntax_color(HighlightId::PROPERTY),
         theme::c().git.staged,
         theme::syntax_color(HighlightId::NUMBER),
         theme::syntax_color(HighlightId::KEYWORD),
         theme::syntax_color(HighlightId::TYPE),
+        theme::syntax_color(HighlightId::FUNCTION),
     ];
-    colors[index % colors.len()]
+    colors[(index - 1) % colors.len()]
 }
 
-fn line_style(index: usize) -> PathStyle {
+fn line_style(index: usize, alpha: u8) -> PathStyle {
     PathStyle {
         fill: None,
         fill_alpha: 0,
-        stroke: Some(Stroke::new(color(index), 1.5, 230)),
+        stroke: Some(Stroke::new(color(index), 1.5, alpha)),
     }
 }
 
@@ -358,6 +419,48 @@ mod tests {
         }));
         assert_eq!(graph.rows[3].node, Some(Track { lane: 0, color: 0 }));
         assert!(graph.rows[3].below.is_empty());
+    }
+
+    #[test]
+    fn the_open_commit_picks_the_lane_that_stays_bright() {
+        let mut topic = commit("topic", &["base"]);
+        if let HistoryRow::Commit(_, open) = &mut topic {
+            *open = true;
+        }
+        let history = [
+            commit("merge", &["main", "topic"]),
+            commit("main", &["base"]),
+            topic,
+            commit("base", &[]),
+        ];
+        let graph = Graph::new(&history);
+        assert_eq!(graph.selected, Some(1));
+        let closed = Graph::new(&[commit("only", &[])]);
+        assert_eq!(closed.selected, None);
+    }
+
+    #[test]
+    fn the_gutter_grows_with_lanes_up_to_a_limit() {
+        let history = [
+            commit("merge", &["a", "b", "c", "d", "e"]),
+            commit("a", &[]),
+            commit("b", &[]),
+            commit("c", &[]),
+            commit("d", &[]),
+            commit("e", &[]),
+        ];
+        let graph = Graph::new(&history);
+        assert!(graph.lanes > MAX_LANES);
+        let wide = graph.render(0, UiRect::new(0.0, 0.0, 300.0, 22.0), &history[0], false);
+        assert_eq!(wide.width, 24.0 + (MAX_LANES - 1) as f32 * PITCH);
+        let single = Graph::new(&[commit("only", &[])]);
+        let one = single.render(
+            0,
+            UiRect::new(0.0, 0.0, 300.0, 22.0),
+            &commit("only", &[]),
+            false,
+        );
+        assert_eq!(one.width, 24.0);
     }
 
     #[test]
