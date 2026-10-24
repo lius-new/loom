@@ -14,6 +14,7 @@ use crate::ui::git::panel::{
     history_rows, scroll_region, stash_row, tag_row, visible_rows, visible_worktree_rows,
     worktree_row,
 };
+use crate::ui::git::{history_branches, history_detail};
 use crate::ui::theme;
 
 pub(crate) const HEADER_H: f32 = theme::TABS_H;
@@ -23,6 +24,13 @@ const TAB_PAD: f32 = 12.0;
 const TAB_GAP: f32 = 2.0;
 /// Room that stays for the editor above the panel.
 const EDITOR_MIN_H: f32 = 160.0;
+/// Narrowest panel that still makes room for the commit detail pane.
+const DETAIL_MIN_W: f32 = 720.0;
+/// Narrowest history list that shows its author and time columns.
+const COLUMNS_MIN_W: f32 = 420.0;
+const COLUMNS_H: f32 = 22.0;
+/// Narrowest panel that also shows the branch list.
+const BRANCHES_MIN_W: f32 = 900.0;
 
 /// Reserve the bottom header even while collapsed. Expand its content only
 /// when there is enough room to preserve the editor above it.
@@ -209,10 +217,54 @@ pub fn render(
         .model
         .history()
         .filter(|history| history.repository == repository.worktree_root);
-    let commit_rows = if app.ui.panel_tab == HISTORY {
+    let history_tab = app.ui.panel_tab == HISTORY;
+    let mut commit_rows = if history_tab {
         history_rows(history, app.model.history_commit())
     } else {
         Vec::new()
+    };
+    // The detail pane lists a selected commit's files, so the list keeps commits only.
+    let panel_body = body;
+    let show_detail = history_tab && body.width() >= DETAIL_MIN_W;
+    let selected = commit_rows.iter().find_map(|row| match row {
+        HistoryRow::Commit(commit, true) => Some(commit.clone()),
+        _ => None,
+    });
+    if show_detail
+        && commit_rows
+            .iter()
+            .any(|row| matches!(row, HistoryRow::Commit(..)))
+    {
+        commit_rows.retain(|row| matches!(row, HistoryRow::Commit(..)));
+    }
+    let branches = app
+        .ui
+        .history_branches
+        .as_ref()
+        .filter(|(root, _)| *root == repository.worktree_root)
+        .map(|(_, branches)| branches.as_slice())
+        .filter(|branches| !branches.is_empty());
+    let show_branches = history_tab && body.width() >= BRANCHES_MIN_W && branches.is_some();
+    let list_left = if show_branches {
+        body.left + history_branches::WIDTH
+    } else {
+        body.left
+    };
+    let list_right = if show_detail {
+        body.right - history_detail::WIDTH
+    } else {
+        body.right
+    };
+    let columns = history_tab && list_right - list_left >= COLUMNS_MIN_W;
+    let body = if history_tab {
+        UiRect::new(
+            list_left,
+            body.top + if columns { COLUMNS_H } else { 0.0 },
+            list_right,
+            body.bottom,
+        )
+    } else {
+        body
     };
     let row_count = match app.ui.panel_tab {
         STASHES => repository.stashes.len().max(1),
@@ -296,7 +348,7 @@ pub fn render(
             let graph = crate::ui::git::history_graph::Graph::new(&commit_rows);
             for index in visible_rows(rows_top, view_top, view_bottom, commit_rows.len()) {
                 let top = rows_top + index as f32 * ROW_H;
-                let row_rect = UiRect::new(rect.left, top, rect.right, top + ROW_H);
+                let row_rect = UiRect::new(body.left, top, body.right, top + ROW_H);
                 let row = &commit_rows[index];
                 let hover = match row {
                     HistoryRow::Commit(commit, _) => Some(GitHover::Commit(commit.oid.clone())),
@@ -313,6 +365,7 @@ pub fn render(
                     row_rect,
                     row,
                     hovered,
+                    columns,
                     graph.render(index, row_rect, row, hovered),
                     &repository.worktree_root,
                     &state,
@@ -373,6 +426,14 @@ pub fn render(
             }
         }
     });
+    if columns {
+        root = root.child(columns_header(UiRect::new(
+            body.left,
+            panel_body.top,
+            body.right,
+            body.top,
+        )));
+    }
     root = root.child(scroll_region(
         body,
         content,
@@ -382,7 +443,75 @@ pub fn render(
         state.clone(),
         ScrollRegion::Details,
     ));
+    if let Some(branches) = branches.filter(|_| show_branches) {
+        let scope = app
+            .ui
+            .history_scope
+            .as_ref()
+            .filter(|(root, _)| *root == repository.worktree_root)
+            .map(|(_, name)| name.as_str());
+        root = root.child(history_branches::render(
+            UiRect::new(
+                panel_body.left,
+                panel_body.top,
+                list_left,
+                panel_body.bottom,
+            ),
+            &repository.worktree_root,
+            branches,
+            scope,
+            app.ui.history_branch_scroll,
+            &state,
+        ));
+    }
+    if show_detail {
+        let files = app.model.history_commit().map(|expanded| &expanded.files);
+        let none = None;
+        root = root.child(history_detail::render(
+            UiRect::new(list_right, panel_body.top, rect.right, rect.bottom),
+            selected
+                .as_ref()
+                .map(|commit| (commit, files.unwrap_or(&none))),
+            &repository.worktree_root,
+            &state,
+            &editor_focus,
+        ));
+    }
     root.child(resize_handle(rect, state))
+}
+
+/// Column titles above the history list.
+fn columns_header(rect: UiRect) -> Element {
+    let style = theme::mono(theme::c().text_ghost, theme::SMALL);
+    let author_left = crate::ui::git::panel::author_left(rect.right);
+    panel(rect, VisualStyle::default())
+        .child(text(
+            UiRect::new(rect.left + 28.0, rect.top, author_left, rect.bottom),
+            "Message",
+            style,
+        ))
+        .child(text(
+            UiRect::new(
+                author_left,
+                rect.top,
+                author_left + crate::ui::git::panel::AUTHOR_W,
+                rect.bottom,
+            ),
+            "Author",
+            style,
+        ))
+        .child(text(
+            UiRect::new(
+                rect.right - 12.0 - crate::ui::git::panel::TIME_W,
+                rect.top,
+                rect.right - 12.0,
+                rect.bottom,
+            ),
+            "Time",
+            theme::mono_right(theme::c().text_ghost, theme::SMALL),
+        ))
+        .child(crate::ui::components::divider::bottom(rect))
+        .into()
 }
 
 fn empty_row(top: f32, rect: UiRect, message: &str) -> Element {

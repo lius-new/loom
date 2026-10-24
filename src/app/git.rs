@@ -1928,6 +1928,28 @@ fn publish_remote(remotes: &[RemoteInfo]) -> Option<&str> {
         .map(|remote| remote.name.as_str())
 }
 
+/// Read `repository`'s branches for the history's branch list.
+pub fn load_history_branches(state: &AppContext, repository: PathBuf) {
+    let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
+        return;
+    };
+    let worker_state = state.clone();
+    let _ = thread::Builder::new()
+        .name("loom-git-history-branches".into())
+        .spawn(move || {
+            let Ok(branches) = crate::infrastructure::git::service()
+                .and_then(|service| service.backend().branches(&repository))
+            else {
+                return;
+            };
+            application.post(move || {
+                worker_state.update(move |app| {
+                    app.git.ui.history_branches = Some((repository, branches));
+                });
+            });
+        });
+}
+
 /// List `repository`'s branches into the open branch picker opened as
 /// `sequence`. Read-only, so it runs beside any write operation.
 pub fn load_branches(state: &AppContext, repository: PathBuf, sequence: u64) {

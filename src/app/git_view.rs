@@ -92,15 +92,20 @@ pub(crate) fn run(state: &AppContext, store: &State<GitStoreSnapshot>, command: 
         Command::LoadMoreHistory { root } => {
             if store.get().active().is_some_and(|repository| {
                 repository.worktree_root == root
-                    && state
-                        .get()
-                        .git
-                        .model
-                        .history()
-                        .is_some_and(|history| history.head == repository.head_oid)
+                    && state.get().git.model.history().is_some_and(|history| {
+                        crate::app::git_poll::history_key(&state.get(), &store.get())
+                            .is_some_and(|(_, head)| history.head == head)
+                    })
             }) {
                 super::git::load_more_history(state, root);
             }
+            true
+        }
+        Command::SelectHistoryBranch { root, name } => {
+            state.update(|app| {
+                app.git.ui.history_scope = name.map(|name| (root, name));
+                app.git.ui.details_scroll = 0.0;
+            });
             true
         }
         Command::ToggleCommit { root, oid } => {

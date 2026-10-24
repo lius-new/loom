@@ -302,8 +302,17 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     // Keep the history of the active repository's HEAD while it is shown.
     let history_key = super::git_poll::history_key(&s, &git_store.get());
     let history_state = state.clone();
-    cx.use_effect(history_key.clone(), move || {
+    // A moved HEAD also moves the branch list the history can be scoped to.
+    let branch_key = (
+        history_key.clone(),
+        git_store
+            .get()
+            .active()
+            .and_then(|repository| repository.head_oid.clone()),
+    );
+    cx.use_effect(branch_key, move || {
         if let Some((root, head)) = history_key {
+            crate::app::git::load_history_branches(&history_state, root.clone());
             crate::app::git::load_history(&history_state, root, head);
         }
         || {}

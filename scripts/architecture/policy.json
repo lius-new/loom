@@ -489,6 +489,21 @@
       "migrated_in": "R6.3",
       "from": "git_commit_input"
     },
+    "history_branches": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "Cache the branch list shown beside the commit history"
+    },
+    "history_scope": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "Remember which branch the commit history follows"
+    },
+    "history_branch_scroll": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history branches",
+      "reason": "Scroll position of the history branch list"
+    },
     "file_filter": {
       "owner": "ui/git/state",
       "migrated_in": "Git drawer design",

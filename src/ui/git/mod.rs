@@ -7,6 +7,8 @@ pub mod commands;
 pub mod confirm;
 pub(crate) mod drawer;
 pub(crate) mod history_badges;
+pub(crate) mod history_branches;
+pub(crate) mod history_detail;
 pub(crate) mod history_graph;
 pub mod hunk_peek;
 pub mod menu;

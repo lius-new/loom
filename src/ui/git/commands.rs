@@ -94,6 +94,11 @@ pub enum Command {
     LoadMoreHistory {
         root: PathBuf,
     },
+    /// Show the history of `name`, or of HEAD with `None`.
+    SelectHistoryBranch {
+        root: PathBuf,
+        name: Option<String>,
+    },
     ToggleCommit {
         root: PathBuf,
         oid: String,

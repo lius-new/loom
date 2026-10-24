@@ -49,9 +49,22 @@ pub(crate) fn history_key(
                     .contains(&crate::ui::git::panel::HISTORY)
         })
         .map(|repository| {
+            let scoped = app
+                .git
+                .ui
+                .history_scope
+                .as_ref()
+                .filter(|(root, _)| *root == repository.worktree_root)
+                .and_then(|(_, name)| {
+                    let (root, branches) = app.git.ui.history_branches.as_ref()?;
+                    (*root == repository.worktree_root)
+                        .then(|| branches.iter().find(|branch| branch.name == *name))
+                        .flatten()
+                })
+                .map(|branch| branch.oid.clone());
             (
                 repository.worktree_root.clone(),
-                repository.head_oid.clone(),
+                scoped.or_else(|| repository.head_oid.clone()),
             )
         })
 }

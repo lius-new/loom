@@ -3,6 +3,9 @@
 //! lives in `features::git::model`.
 use std::collections::HashSet;
 
+use std::path::PathBuf;
+
+use crate::features::git::BranchInfo;
 use crate::features::git::model::GitModel;
 use crate::ui::components::input::InputState;
 use crate::ui::git::branch_picker::BranchPicker;
@@ -36,6 +39,11 @@ pub struct GitUiState {
     pub details_scrollbar_drag_offset: f32,
     pub commit_input: InputState,
     pub file_filter: InputState,
+    /// Branches listed beside the history, for the repository they were read from.
+    pub history_branches: Option<(PathBuf, Vec<BranchInfo>)>,
+    /// The branch whose commits the history shows; None follows HEAD.
+    pub history_scope: Option<(PathBuf, String)>,
+    pub history_branch_scroll: f32,
     pub commit_amend: bool,
     pub commit_signoff: bool,
     pub expanded_repositories: HashSet<u64>,
@@ -82,6 +90,9 @@ impl Default for GitUiState {
             details_scrollbar_drag_offset: 0.0,
             commit_input: InputState::default(),
             file_filter: InputState::default(),
+            history_branches: None,
+            history_scope: None,
+            history_branch_scroll: 0.0,
             commit_amend: false,
             commit_signoff: false,
             expanded_repositories: HashSet::new(),

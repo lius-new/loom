@@ -364,12 +364,7 @@ pub fn composer(
             ))
             .child(git_panel::commit_options_button(options, state, enabled))
             .child(panel(
-                UiRect::new(
-                    options.left,
-                    button_top,
-                    options.left + 0.5,
-                    button_bottom,
-                ),
+                UiRect::new(options.left, button_top, options.left + 0.5, button_bottom),
                 if enabled {
                     VisualStyle::filled(theme::c().on_accent).alpha(70)
                 } else {

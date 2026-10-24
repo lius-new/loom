@@ -1371,10 +1371,38 @@ pub(crate) fn history_rows(
     rows
 }
 
+/// Width of the history list's author and time columns.
+pub(crate) const AUTHOR_W: f32 = 96.0;
+pub(crate) const TIME_W: f32 = 72.0;
+const COLUMN_GAP: f32 = 12.0;
+
+/// Where the author column starts, counted back from the row's right edge.
+pub(crate) fn author_left(right: f32) -> f32 {
+    right - 12.0 - TIME_W - COLUMN_GAP - AUTHOR_W
+}
+
+/// How long ago `timestamp` (Unix seconds) was, for the history's time column.
+pub(crate) fn relative_time(timestamp: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64);
+    let seconds = (now - timestamp).max(0);
+    let (value, unit) = match seconds {
+        0..=59 => return "just now".to_owned(),
+        60..=3599 => (seconds / 60, "min"),
+        3600..=86_399 => (seconds / 3600, "h"),
+        86_400..=2_591_999 => (seconds / 86_400, "d"),
+        2_592_000..=31_535_999 => (seconds / 2_592_000, "mo"),
+        _ => (seconds / 31_536_000, "y"),
+    };
+    format!("{value} {unit} ago")
+}
+
 pub(crate) fn history_row(
     rect: UiRect,
     row: &HistoryRow,
     hovered: bool,
+    columns: bool,
     graph: super::history_graph::RenderedRow,
     repository: &std::path::Path,
     state: &Binding,
@@ -1386,7 +1414,7 @@ pub(crate) fn history_row(
         rect.right,
         rect.bottom,
     );
-    let background = if hovered {
+    let background = if hovered || matches!(row, HistoryRow::Commit(_, true)) {
         VisualStyle::filled(theme::c().surface)
     } else {
         VisualStyle::default()
@@ -1406,8 +1434,20 @@ pub(crate) fn history_row(
             let menu_state = state.clone();
             let menu_root = repository.to_path_buf();
             let menu_oid = commit.oid.clone();
+            let author_left = author_left(rect.right);
+            // Badges keep their right edge; the columns take the row's end.
+            let badge_area = if columns {
+                UiRect::new(
+                    content.left,
+                    rect.top,
+                    author_left - COLUMN_GAP + 12.0,
+                    rect.bottom,
+                )
+            } else {
+                content
+            };
             let (badges, subject_right) =
-                super::history_badges::render(content, &commit.oid, &commit.decorations);
+                super::history_badges::render(badge_area, &commit.oid, &commit.decorations);
             let subject = crate::ui::tabs::ellipsize(
                 &commit.subject,
                 (subject_right - content.left).max(0.0),
@@ -1477,6 +1517,31 @@ pub(crate) fn history_row(
                 );
             for badge in badges {
                 row = row.child(badge);
+            }
+            if columns {
+                row = row
+                    .child(
+                        clip(
+                            UiRect::new(author_left, rect.top, author_left + AUTHOR_W, rect.bottom),
+                            0.0,
+                            0.0,
+                        )
+                        .child(text(
+                            UiRect::new(author_left, rect.top, author_left + AUTHOR_W, rect.bottom),
+                            crate::ui::tabs::ellipsize(&commit.author, AUTHOR_W, theme::SMALL, 400),
+                            theme::mono(theme::c().text_muted, theme::SMALL),
+                        )),
+                    )
+                    .child(text(
+                        UiRect::new(
+                            rect.right - 12.0 - TIME_W,
+                            rect.top,
+                            rect.right - 12.0,
+                            rect.bottom,
+                        ),
+                        relative_time(commit.timestamp),
+                        theme::mono_right(theme::c().text_ghost, theme::SMALL),
+                    ));
             }
             row
         }
