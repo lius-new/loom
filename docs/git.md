@@ -16,12 +16,28 @@ cherry-pick recovery, submodules, LFS and sparse checkout. Git operations run
 outside the UI thread, are serialized per repository, classify common errors,
 and redact credentials from diagnostic output.
 
-Source Control keeps file changes in the upper area. **WORKTREES**, **STASHES**
-and **COMMITS** start collapsed in a separate area anchored at the bottom.
-The commit input follows short change lists and stays below the scrollable
-changes area for long lists. Expanding the bottom sections scrolls their
-contents independently while preserving room for changes above, including
-when the repository has no changes.
+Source Control lists the changes with the commit input beneath them. The input
+follows short change lists and stays at the bottom, below the scrolling changes,
+for long ones. A repository with no changes says **Working tree clean.**
+
+## Git panel
+
+The Git panel's tab bar appears at the bottom of the active Git diff
+(Commit/Changes). Ordinary file editing, Settings and other pages do not show
+it or reserve space for it. Switching back restores its expansion state, tab
+and height. It is expanded by default. Click **Commits**,
+**Stashes**, **Worktrees** or **Tags** to expand its content. Clicking the active
+tab again, or the arrow at the right, collapses the content while keeping the
+tab bar available. `Ctrl+Shift+H` (or `Command+Shift+H`) also expands or collapses
+the panel. There is no title-bar toggle for the Git panel.
+
+Drag the expanded panel's top edge to resize it. Collapsing and reopening keeps
+the chosen height and tab. Hovering a commit or tag shows its details card, and
+the rows keep the same actions and context menus as before. History loads only
+while the Commits tab is expanded.
+
+In narrow editor regions, the tabs scroll horizontally using the wheel or the
+header's arrow buttons. The collapse button stays fixed at the right edge.
 
 ## Diffs
 

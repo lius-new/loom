@@ -431,10 +431,16 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let source_control_left = s.source_control.visible;
     // Each pane is a tab strip above its surface; the focused pane's rects
     // drive the editor-wide handlers (selection auto-scroll, menus, keys).
-    let editor_area = application_layout
+    let editor_region = application_layout
         .content_rect(&application_snapshot, &Content::Editor)
         .map(UiRect::from)
         .unwrap_or(content_area);
+    // The bottom Git panel is only part of the active Commit/Changes view.
+    let (editor_area, git_panel_rect) = if s.git_panel_visible() {
+        crate::ui::git::workbench::split(editor_region, s.git.ui.panel_open, s.git.ui.panel_height)
+    } else {
+        (editor_region, None)
+    };
     let focused_pane = s.workspace.active_pane();
     let pane_rects: Vec<_> = s
         .workspace
@@ -872,7 +878,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let st_git_hover = state.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
-            let hovered = source_control_left && source_control_rect.contains(pointer.point);
+            let hovered = (source_control_left && source_control_rect.contains(pointer.point))
+                || git_panel_rect.is_some_and(|rect| rect.contains(pointer.point));
             st_git_hover.try_update(move |app| {
                 let mut changed = app.git.ui.hovered != hovered;
                 app.git.ui.hovered = hovered;
@@ -1139,6 +1146,14 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     for sash in s.workspace.layout().sashes(editor_area.into()) {
         root = root.child(super::pane_chrome::render(sash, state.clone()));
     }
+    if let Some(rect) = git_panel_rect {
+        root = root.child(crate::ui::git::workbench::render(
+            rect,
+            super::git_view::binding(&state, &git_store),
+            git_store.clone().into(),
+            editor_focus.clone(),
+        ));
+    }
     if source_control_left {
         root = root.child(git_panel::render(
             source_control_rect,
@@ -1230,7 +1245,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     {
         root = root.child(tooltip);
     }
-    if s.explorer.ui.menu.is_none()
+    if s.git_panel_visible()
+        && s.explorer.ui.menu.is_none()
         && s.git.ui.menu.is_none()
         && s.git.ui.confirm.is_none()
         && s.git.ui.branch_picker.is_none()

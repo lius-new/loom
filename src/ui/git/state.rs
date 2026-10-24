@@ -18,12 +18,18 @@ pub struct GitUiState {
     /// The drawer row under the pointer, which shows its action buttons.
     pub hover: Option<GitHover>,
     pub scroll: f32,
-    /// Independent scroll of the Worktrees/Stashes/Tags/Commits area.
+    /// Scroll of the Git panel's list.
     pub details_scroll: f32,
-    /// User-selected height of the bottom sections; None keeps automatic sizing.
-    pub details_height: Option<f32>,
-    /// Pointer's offset from the divider while dragging it.
-    pub details_resize_offset: Option<f32>,
+    /// Expand the Git panel's content below the editor; its header stays visible.
+    pub panel_open: bool,
+    /// The panel's tab: one of HISTORY, STASHES, WORKTREES or TAGS.
+    pub panel_tab: u8,
+    /// Manual header scroll; None keeps the selected tab visible.
+    pub panel_tab_scroll: Option<f32>,
+    /// User-selected height of the panel; None keeps the default.
+    pub panel_height: Option<f32>,
+    /// Pointer's offset from the panel's top edge while dragging it.
+    pub panel_resize_offset: Option<f32>,
     pub scrollbar_dragging: bool,
     pub scrollbar_drag_offset: f32,
     pub details_scrollbar_dragging: bool,
@@ -64,8 +70,11 @@ impl Default for GitUiState {
             hover: None,
             scroll: 0.0,
             details_scroll: 0.0,
-            details_height: None,
-            details_resize_offset: None,
+            panel_open: true,
+            panel_tab: crate::ui::git::panel::HISTORY,
+            panel_tab_scroll: None,
+            panel_height: None,
+            panel_resize_offset: None,
             scrollbar_dragging: false,
             scrollbar_drag_offset: 0.0,
             details_scrollbar_dragging: false,
@@ -78,7 +87,6 @@ impl Default for GitUiState {
                 crate::ui::git::panel::WORKTREES,
                 crate::ui::git::panel::STASHES,
                 crate::ui::git::panel::TAGS,
-                crate::ui::git::panel::HISTORY,
             ]
             .into_iter()
             .collect(),
@@ -103,6 +111,40 @@ impl Default for GitUiState {
 }
 
 impl GitUiState {
+    /// Expand or collapse the Git panel. Only the open tab's section counts as
+    /// expanded, which is what loading history and tag cards look at.
+    pub fn set_panel(&mut self, open: bool) {
+        self.panel_open = open;
+        if !open {
+            self.panel_resize_offset = None;
+            self.details_scrollbar_dragging = false;
+            self.hover = None;
+            self.clear_hover_cards();
+        }
+        self.sync_panel_sections();
+    }
+
+    pub fn select_panel_tab(&mut self, tab: u8) {
+        self.panel_tab = tab;
+        self.panel_tab_scroll = None;
+        self.panel_open = true;
+        self.details_scroll = 0.0;
+        self.hover = None;
+        self.clear_hover_cards();
+        self.sync_panel_sections();
+    }
+
+    fn sync_panel_sections(&mut self) {
+        use crate::ui::git::panel::{HISTORY, STASHES, TAGS, WORKTREES};
+        for section in [HISTORY, STASHES, TAGS, WORKTREES] {
+            if self.panel_open && section == self.panel_tab {
+                self.collapsed_sections.remove(&section);
+            } else {
+                self.collapsed_sections.insert(section);
+            }
+        }
+    }
+
     pub fn reset_scroll(&mut self) {
         self.scroll = 0.0;
         self.details_scroll = 0.0;

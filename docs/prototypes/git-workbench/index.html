@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Loom Git 工作台：基于 Tailwind CSS 的交互设计原型。">
+  <title>Loom · Git 工作台预览</title>
+  <link rel="stylesheet" href="./tailwind.css">
+  <script defer src="./app.js"></script>
+</head>
+<body>
+<div class="h-screen min-h-[640px] min-w-[720px] flex flex-col overflow-hidden">
+  <header class="h-12 shrink-0 flex items-center border-b line bg-[#1c1f24] px-4 gap-4">
+    <div class="flex items-center gap-2.5 w-[170px] shrink-0"><span data-icon="loom" aria-hidden="true" class="w-6 h-6 bg-accent rounded-md text-[#18382b] grid place-items-center"></span><span class="text-[15px] tracking-tight font-semibold text-[#e9ecef]">loom</span><span class="h-3 border-l line mx-1"></span><span class="text-[#9ca6b4]">workspace</span></div>
+    <div class="relative"><button id="branchTrigger" aria-haspopup="true" aria-expanded="false" class="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-[#ffffff05]"><span data-icon="branch" class="text-accent"></span><span id="currentBranch">feature/git-workbench</span><span data-icon="chevron" class="muted icon-sm"></span></button>
+      <div id="branchMenu" hidden class="popover absolute left-0 top-10 w-[310px] z-40 p-1.5"><div class="px-2 py-2 text-[#e3e7ec] font-medium">分支</div><input id="branchSearch" class="w-full bg-[#191c22] border line rounded-md px-2.5 py-2 mb-2" placeholder="搜索分支…" aria-label="搜索分支"><div id="branchList"></div></div>
+    </div>
+    <div class="flex-1"></div><div class="flex items-center gap-1"><button id="fetchBtn" class="icon-button" title="获取远程更新" aria-label="获取远程更新"><span data-icon="refresh"></span></button><button id="pullBtn" class="tool-btn" title="拉取 · 1 个提交" aria-label="拉取 · 1 个提交"><span data-icon="download"></span><span id="pullLabel" class="font-mono text-[11px]">1</span></button><button id="pushBtn" class="tool-btn !text-accent" title="推送 · 2 个提交" aria-label="推送 · 2 个提交"><span data-icon="upload"></span><span id="pushLabel" class="font-mono text-[12px]">2</span></button></div>
+  </header>
+  <div class="flex flex-1 min-h-0">
+    <aside class="workspace-sidebar w-[290px] shrink-0 border-r line bg-[#1d2026] flex flex-col min-h-0">
+      <div class="h-12 flex items-center justify-between px-4"><h1 class="text-[#e3e7eb] font-semibold text-[13px]">更改</h1><button id="viewTree" class="icon-button" aria-label="切换目录或列表视图" aria-pressed="false" title="目录视图"><span data-icon="tree"></span></button></div>
+      <div class="mx-3 mb-3 flex items-center gap-2 border line rounded-md px-2.5 bg-[#171a1f] text-[#737d8b]"><span data-icon="search" class="icon-sm"></span><input id="fileSearch" class="bg-transparent w-full py-2 text-[#c6cbd2] text-[12px]" aria-label="筛选改动文件" placeholder="筛选文件…"></div>
+      <div class="flex items-center gap-2 mx-4 text-[11px] tracking-wider mb-4 text-[#727d8c]"><span data-icon="folder" class="icon-sm"></span><span>LOOM</span><span class="ml-auto" id="fileTotal">5 个文件</span></div>
+      <div id="fileList" class="flex-1 min-h-0 scroll"></div>
+      <div class="border-t line p-3 bg-[#1b1e24]">
+        <div class="flex justify-between items-center mb-2.5 px-1"><label for="commitMessage" class="text-[12px] text-[#adb6c1]">提交信息</label><label class="flex items-center gap-1.5 text-[11px] text-[#8993a2] cursor-pointer"><input id="amend" type="checkbox" class="file-check !w-3 !h-3">Amend</label></div>
+        <textarea id="commitMessage" rows="3" class="w-full rounded-lg bg-[#14171c] border line p-3 text-[12px] leading-6 text-[#d5dce3]" placeholder="提交信息">feat: redesign git workbench</textarea>
+        <div class="flex items-center justify-between px-1 mt-2 mb-3 text-[11px]"><span id="commitSummary" class="text-[#8993a2]">1 个文件已暂存</span><span class="flex items-center gap-1 text-[#626d7c]" title="Ctrl + Enter 提交" aria-label="Ctrl + Enter 提交"><kbd>Ctrl</kbd><span data-icon="enter" class="icon-sm"></span></span></div>
+        <div class="relative flex"><button id="commitBtn" class="primary bg-accent text-[#163427] rounded-l-md px-3 py-2.5 font-semibold flex-1 flex justify-center gap-2 items-center"><span data-icon="check" class="icon-sm"></span><span id="commitBtnText">提交</span></button><button id="commitMenuBtn" aria-haspopup="true" aria-expanded="false" aria-label="更多提交方式" class="primary bg-accent text-[#163427] rounded-r-md px-2 border-l border-[#16342740] flex items-center"><span data-icon="chevron" class="icon-sm"></span></button><div id="commitMenu" hidden class="popover absolute right-0 bottom-12 w-[170px] z-40 p-1"><button id="commitPushBtn" class="w-full text-left px-3 py-2 rounded text-[12px] text-[#c4cdd5]">提交并推送</button></div></div>
+        <p id="commitHint" hidden role="status" class="text-[11px] text-[#c6a877] mt-2 mb-0 px-1"></p>
+      </div>
+    </aside>
+    <main class="flex-1 flex flex-col min-w-0 min-h-0 bg-[#171a1f]">
+      <div class="h-10 flex items-stretch border-b line bg-[#1b1e24] shrink-0"><div class="flex items-center gap-2 px-4 bg-[#171a1f] border-r line border-t-2 border-t-accent text-[#d8e0e8]"><span data-icon="diff" class="text-accent icon-sm"></span><span id="editorTab">panel.rs</span><span class="text-[#737e8b] text-[11px] ml-1">Diff</span><button id="closeDiff" class="ml-4 text-[#646e7c]" aria-label="关闭差异预览"><span data-icon="close" class="icon-sm"></span></button></div><div class="flex-1"></div><span id="diffStat" class="flex items-center gap-3 mr-4 font-mono text-[11px]"><span class="text-accent">+24</span><span class="text-[#d29090]">−12</span></span></div>
+      <section id="diffPanel" class="flex-1 min-h-0 flex flex-col">
+        <div class="h-12 px-4 flex items-center justify-between shrink-0 gap-2"><div class="flex items-center gap-1.5 text-[12px] min-w-0"><span class="text-[#6c7786]">loom</span><span class="text-[#414b58]">/</span><span id="fileBreadcrumb" class="truncate text-[#aeb7c2]">src / ui / git / panel.rs</span></div><div class="flex items-center gap-2 shrink-0"><span id="comparisonLabel" class="flex items-center gap-2 text-[11px] text-[#6e7c8a] mr-2"></span><div class="flex p-0.5 rounded-md bg-[#232830] text-[11px]"><button id="splitBtn" class="icon-button" title="并排视图" aria-label="并排视图" aria-pressed="true"><span data-icon="split"></span></button><button id="unifiedBtn" class="icon-button" title="统一视图" aria-label="统一视图" aria-pressed="false"><span data-icon="unified"></span></button></div><button id="diffOptions" class="tool-btn !p-1.5" title="切换忽略空白" aria-label="切换忽略空白" aria-pressed="false"><span data-icon="sliders" class="icon-sm"></span></button></div></div>
+        <div class="h-9 border-y line flex justify-between items-center px-4 bg-[#1b2026] text-[11px] shrink-0"><div class="flex items-center gap-2"><span data-icon="layers" class="icon-sm text-[#788697]"></span><span id="hunkLabel" class="text-[#8f9ba9]">1 / 2</span><button id="prevHunk" class="tool-btn !p-1" aria-label="上一处改动"><span data-icon="up" class="icon-sm"></span></button><button id="nextHunk" class="tool-btn !p-1" aria-label="下一处改动"><span data-icon="down" class="icon-sm"></span></button></div><div class="flex gap-1"><button id="discardBtn" class="icon-button" title="还原文件" aria-label="还原文件"><span data-icon="undo" class="icon-sm"></span></button><button id="stageHunkBtn" class="icon-button !text-accent" title="暂存此块" aria-label="暂存此块"><span data-icon="plus" class="icon-sm"></span><span id="stageHunkText" class="sr-only">暂存此块</span></button></div></div>
+        <div id="diffHeaders" class="grid grid-cols-2 text-[11px] text-[#7f8b9b] h-8 shrink-0 border-b line"><div class="pl-4 flex items-center justify-between pr-3 border-r line"><span>原始版本 <span class="text-[#535e6b] ml-2">HEAD · 8f3a21c</span></span><span class="text-[#616d7a]">只读</span></div><div class="pl-4 flex items-center justify-between pr-4"><span>工作区</span><span class="flex items-center gap-1.5"><span class="dot !w-1 !h-1"></span>本地更改</span></div></div>
+        <div id="diffCode" class="scroll flex-1 min-h-0"></div>
+        <div class="h-7 px-4 flex items-center justify-end gap-4 text-[11px] text-[#636f7e] border-t line shrink-0"><span>UTF-8</span><span>LF</span><span id="fileLanguage">Rust</span></div>
+      </section>
+      <div id="diffEmpty" hidden class="flex-1 flex flex-col items-center justify-center gap-3 text-[#657382]"><span data-icon="diff"></span><p id="diffEmptyText">未选择文件</p></div>
+      <div id="historyResizer" role="separator" aria-orientation="horizontal" aria-label="调整 Git 面板高度" tabindex="0" class="h-1 shrink-0 cursor-row-resize bg-[#ffffff12] hover:bg-accent/40 focus-visible:bg-accent/60"></div>
+      <section id="historyPanel" class="h-[258px] shrink-0 bg-[#1b1e24] flex flex-col">
+        <div class="h-10 border-b line flex items-center px-4 gap-6 shrink-0"><span class="font-semibold text-[#d7dfe6]">Git</span><button data-history-tab="log" class="h-full text-[12px] selected-tab">提交历史</button><button data-history-tab="stash" class="h-full text-[12px] text-[#7c8796]">Stashes <span class="text-[10px] ml-1">2</span></button><button data-history-tab="worktree" class="h-full text-[12px] text-[#7c8796]">Worktrees <span class="text-[10px] ml-1">2</span></button><div class="flex-1"></div><button id="historyScope" class="tool-btn !text-[11px] !py-1"><span data-icon="filter" class="icon-sm"></span><span id="scopeLabel">当前分支</span></button><button id="minimizeHistory" class="tool-btn !p-1" aria-label="隐藏历史面板"><span data-icon="minus" class="icon-sm"></span></button></div>
+        <div id="historyBody" class="flex flex-1 min-h-0"></div>
+      </section>
+    </main>
+  </div>
+  <footer class="h-[26px] bg-[#1c2026] border-t line shrink-0 flex items-center px-2 gap-2 text-[11px] text-[#7c8998]"><button id="toggleHistory" class="flex items-center gap-1.5 px-2 h-5 rounded text-accent" title="显示或隐藏 Git 面板" aria-label="显示或隐藏 Git 面板" aria-pressed="true"><span data-icon="history" class="icon-sm"></span><span id="statusText">Git</span></button><div class="flex-1"></div></footer>
+</div>
+<div id="toast" role="status" hidden class="fixed bottom-11 left-1/2 -translate-x-1/2 rounded-lg border border-[#82d8b430] bg-[#25362e] px-5 py-3 text-[#c6ebd9] shadow-2xl z-50 flex items-center gap-2"><span data-icon="check" class="text-accent"></span><span id="toastText"></span></div>
+<dialog id="modal" class="m-auto w-[470px] max-w-[90vw] rounded-xl border border-[#ffffff18] bg-[#22262e] text-[#c6cbd2] p-0 shadow-2xl backdrop:bg-black/60"><form method="dialog"><div class="p-5 border-b line flex justify-between items-center"><h2 id="modalTitle" class="text-[15px] text-[#e2e8ee] font-semibold"></h2><button value="cancel" class="tool-btn !p-1" aria-label="关闭对话框"><span data-icon="close"></span></button></div><div id="modalContent" class="p-5 text-[12px] leading-7"></div><div class="p-4 border-t line flex justify-end gap-2"><button value="cancel" class="tool-btn px-4">取消</button><button id="modalConfirm" value="confirm" class="primary rounded-md bg-accent text-[#163427] px-4 py-2 font-semibold">确认</button></div></form></dialog>
+</body>
+</html>

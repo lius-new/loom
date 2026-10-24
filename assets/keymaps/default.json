@@ -21,6 +21,7 @@
       "secondary-b": "workspace::ToggleDrawer",
       "secondary-shift-f": "workspace::OpenSearch",
       "secondary-shift-g": "workspace::ToggleSourceControl",
+      "secondary-shift-h": "workspace::ToggleGitPanel",
       "secondary-`": "workspace::ToggleTerminal",
       "secondary-,": "workspace::OpenSettings",
       "secondary-k secondary-s": "workspace::OpenKeymap",

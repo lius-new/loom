@@ -28,42 +28,14 @@ pub(crate) const PROMPT_H: f32 = 32.0;
 pub(crate) const SECTION_H: f32 = 22.0;
 pub(crate) const ROW_H: f32 = 20.0;
 
-/// Keep the section headers and commit bar accessible when resizing details.
-fn details_height_bounds(body: UiRect, detail_headers: usize) -> (f32, f32) {
-    let available = (body.height() - PROMPT_H).max(0.0);
-    let min = (detail_headers as f32 * SECTION_H).min(available);
-    let max = (available - SECTION_H * 2.0).max(min);
-    (min, max)
-}
-
-/// The secondary sections stay anchored at the bottom. Until resized, expanded
-/// details use a 45% height budget, with room for the section headers.
-pub(crate) fn drawer_regions(
-    body: UiRect,
-    changes_height: f32,
-    details_height: f32,
-    detail_headers: usize,
-    preferred_details_height: Option<f32>,
-) -> (UiRect, UiRect, UiRect) {
-    let available = body.height().max(0.0);
-    let content_available = (available - PROMPT_H).max(0.0);
-    let headers_height = detail_headers as f32 * SECTION_H;
-    let limit = (content_available * 0.45).max(headers_height);
-    let height = if let Some(height) = preferred_details_height {
-        let (min, max) = details_height_bounds(body, detail_headers);
-        height.clamp(min, max)
-    } else {
-        details_height.min(limit).clamp(0.0, content_available)
-    };
-    let top = body.bottom - height;
-    // Short lists end naturally above the commit bar; long lists scroll in the
-    // remaining space while the commit bar stays accessible below them.
-    let changes_bottom = (body.top + changes_height).min((top - PROMPT_H).max(body.top));
-    let prompt_bottom = (changes_bottom + PROMPT_H).min(top);
+/// The changes end above the commit bar: the bar follows a short list and
+/// stays at the bottom, below a scrolling area, for a long one.
+pub(crate) fn drawer_regions(body: UiRect, changes_height: f32) -> (UiRect, UiRect) {
+    let changes_bottom = (body.top + changes_height).min((body.bottom - PROMPT_H).max(body.top));
+    let prompt_bottom = (changes_bottom + PROMPT_H).min(body.bottom);
     (
         UiRect::new(body.left, body.top, body.right, changes_bottom),
         UiRect::new(body.left, changes_bottom, body.right, prompt_bottom),
-        UiRect::new(body.left, top, body.right, body.bottom),
     )
 }
 
@@ -413,11 +385,6 @@ pub fn render(
         let files = sections.map_or(&[][..], |sections| sections[filter as usize].as_slice());
         (title, filter, files, change_rows(files, app.ui.tree_view))
     });
-    let history = app
-        .model
-        .history()
-        .filter(|history| history.repository == repository.worktree_root);
-    let history_rows = history_rows(history, app.model.history_commit());
     let section_height = |filter: u8, rows: usize| {
         SECTION_H
             + if app.ui.collapsed_sections.contains(&filter) {
@@ -432,30 +399,10 @@ pub fn render(
             .filter(|(_, _, files, _)| !files.is_empty())
             .map(|(_, filter, _, rows)| section_height(*filter, rows.len()) + 10.0)
             .sum::<f32>();
-    let details_height = if repository.stashes.is_empty() {
-        0.0
-    } else {
-        section_height(STASHES, repository.stashes.len())
-    } + if repository.worktrees.len() > 1 {
-        section_height(WORKTREES, repository.worktrees.len() * 2)
-    } else {
-        0.0
-    } + section_height(TAGS, repository.tags.len().max(1))
-        + section_height(HISTORY, history_rows.len());
-    let detail_headers = 2
-        + usize::from(!repository.stashes.is_empty())
-        + usize::from(repository.worktrees.len() > 1);
-    let (content_rect, prompt_rect, details_rect) = drawer_regions(
-        body_rect,
-        changes_height,
-        details_height,
-        detail_headers,
-        app.ui.details_height,
-    );
+    let (content_rect, prompt_rect) = drawer_regions(body_rect, changes_height);
     let prompt_top = prompt_rect.top;
     let prompt_bottom = prompt_rect.bottom;
     let max_scroll = (changes_height - content_rect.height()).max(0.0);
-    let details_max_scroll = (details_height - details_rect.height()).max(0.0);
     let scroll = app.ui.scroll.clamp(0.0, max_scroll);
     let mut y = content_rect.top + 8.0;
     // Rows the pointer can hover, in content coordinates (before scrolling).
@@ -562,194 +509,7 @@ pub fn render(
     let changes_rect = content_rect;
     let changes_scroll = scroll;
     let changes_max_scroll = max_scroll;
-    let content_rect = details_rect;
-    let scroll = app.ui.details_scroll.clamp(0.0, details_max_scroll);
-    let mut y = content_rect.top;
-    if repository.worktrees.len() > 1 {
-        let collapsed = app.ui.collapsed_sections.contains(&WORKTREES);
-        let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
-        headers.push(SectionHeader {
-            rect: section_rect,
-            filter: WORKTREES,
-            title: "WORKTREES",
-            collapsed,
-            buttons: Vec::new(),
-        });
-        y += SECTION_H;
-        if !collapsed {
-            let rows_top = y;
-            let visible = visible_worktree_rows(
-                rows_top,
-                content_rect.top + scroll,
-                content_rect.bottom + scroll,
-                repository.worktrees.len(),
-            );
-            y += repository.worktrees.len() as f32 * ROW_H * 2.0;
-            for index in visible {
-                let worktree = &repository.worktrees[index];
-                let top = rows_top + index as f32 * ROW_H * 2.0;
-                let row_rect = UiRect::new(rect.left, top, content_rect.right, top + ROW_H * 2.0);
-                let hover = GitHover::Worktree(worktree.path.clone());
-                let hovered = app.ui.hover.as_ref() == Some(&hover);
-                hover_targets.push((row_rect, hover));
-                content.push(worktree_row(
-                    row_rect,
-                    worktree,
-                    repository,
-                    index == 0,
-                    hovered,
-                    git.operation.is_none(),
-                    state.clone(),
-                    store.clone(),
-                ));
-            }
-        }
-    }
-    if !repository.stashes.is_empty() {
-        let collapsed = app.ui.collapsed_sections.contains(&STASHES);
-        let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
-        headers.push(SectionHeader {
-            rect: section_rect,
-            filter: STASHES,
-            title: "STASHES",
-            collapsed,
-            buttons: Vec::new(),
-        });
-        y += SECTION_H;
-        if !collapsed {
-            let rows_top = y;
-            let visible = visible_rows(
-                rows_top,
-                content_rect.top + scroll,
-                content_rect.bottom + scroll,
-                repository.stashes.len(),
-            );
-            y += repository.stashes.len() as f32 * ROW_H;
-            for index in visible {
-                let stash = &repository.stashes[index];
-                let row_y = rows_top + index as f32 * ROW_H;
-                let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
-                let hover = GitHover::Stash(stash.oid.clone());
-                let hovered = app.ui.hover.as_ref() == Some(&hover);
-                hover_targets.push((row_rect, hover));
-                content.push(stash_row(
-                    row_rect,
-                    stash,
-                    hovered,
-                    state.clone(),
-                    store.clone(),
-                ));
-            }
-        }
-    }
-    {
-        let collapsed = app.ui.collapsed_sections.contains(&TAGS);
-        headers.push(SectionHeader {
-            rect: UiRect::new(rect.left, y, content_rect.right, y + SECTION_H),
-            filter: TAGS,
-            title: "TAGS",
-            collapsed,
-            buttons: Vec::new(),
-        });
-        y += SECTION_H;
-        if !collapsed {
-            let rows_top = y;
-            let count = repository.tags.len().max(1);
-            let visible = visible_rows(
-                rows_top,
-                content_rect.top + scroll,
-                content_rect.bottom + scroll,
-                count,
-            );
-            y += count as f32 * ROW_H;
-            for index in visible {
-                let row_y = rows_top + index as f32 * ROW_H;
-                let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
-                if let Some(tag) = repository.tags.get(index) {
-                    let hover = GitHover::Tag(tag.name.clone());
-                    let hovered = app.ui.hover.as_ref() == Some(&hover);
-                    hover_targets.push((row_rect, hover));
-                    content.push(tag_row(
-                        row_rect,
-                        tag,
-                        hovered,
-                        &repository.worktree_root,
-                        &state,
-                    ));
-                } else {
-                    content.push(
-                        text(
-                            UiRect::new(rect.left + 26.0, row_y, rect.right - 12.0, row_y + ROW_H),
-                            "No tags yet.",
-                            theme::mono(theme::c().text_ghost, theme::SMALL),
-                        )
-                        .into(),
-                    );
-                }
-            }
-        }
-    }
-    {
-        let collapsed = app.ui.collapsed_sections.contains(&HISTORY);
-        let section_rect = UiRect::new(rect.left, y, content_rect.right, y + SECTION_H);
-        headers.push(SectionHeader {
-            rect: section_rect,
-            filter: HISTORY,
-            title: "COMMITS",
-            collapsed,
-            buttons: Vec::new(),
-        });
-        y += SECTION_H;
-        if !collapsed {
-            let rows_top = y;
-            let visible = visible_rows(
-                rows_top,
-                content_rect.top + scroll,
-                content_rect.bottom + scroll,
-                history_rows.len(),
-            );
-            let graph = super::history_graph::Graph::new(&history_rows);
-            y += history_rows.len() as f32 * ROW_H;
-            for index in visible {
-                let row_y = rows_top + index as f32 * ROW_H;
-                let row_rect = UiRect::new(rect.left, row_y, content_rect.right, row_y + ROW_H);
-                let row = &history_rows[index];
-                let hover = match row {
-                    HistoryRow::Commit(commit, _) => Some(GitHover::Commit(commit.oid.clone())),
-                    HistoryRow::File { oid, path, .. } => {
-                        Some(GitHover::CommitFile(oid.clone(), path.clone()))
-                    }
-                    HistoryRow::Message(_) => None,
-                };
-                let hovered = hover.is_some() && app.ui.hover == hover;
-                if let Some(hover) = hover {
-                    hover_targets.push((row_rect, hover));
-                }
-                content.push(history_row(
-                    row_rect,
-                    row,
-                    hovered,
-                    graph.render(index, row_rect, row, hovered),
-                    &repository.worktree_root,
-                    &state,
-                    &editor_focus,
-                ));
-            }
-        }
-    }
-    let details_bottom = y;
-    append_section_headers(
-        details_rect,
-        scroll,
-        headers,
-        &mut content,
-        &mut hover_targets,
-        &state,
-    );
-    let hover_regions = [
-        (changes_rect, changes_scroll, changes_hover),
-        (details_rect, scroll, hover_targets),
-    ];
+    let hover_regions = [(changes_rect, changes_scroll, changes_hover)];
     // One hit test per move finds the hovered row, so rows need no hover
     // state of their own and the pointer never leaves a stale highlight.
     let hover_state = state.clone();
@@ -805,25 +565,15 @@ pub fn render(
             }
         }
     });
-    root = root
-        .child(scroll_region(
-            changes_rect,
-            changes_content,
-            changes_bottom,
-            changes_scroll,
-            changes_max_scroll,
-            state.clone(),
-            ScrollRegion::Changes,
-        ))
-        .child(scroll_region(
-            details_rect,
-            content,
-            details_bottom,
-            scroll,
-            details_max_scroll,
-            state.clone(),
-            ScrollRegion::Details,
-        ));
+    root = root.child(scroll_region(
+        changes_rect,
+        changes_content,
+        changes_bottom,
+        changes_scroll,
+        changes_max_scroll,
+        state.clone(),
+        ScrollRegion::Changes,
+    ));
     let field = UiRect::new(
         rect.left + 12.0,
         prompt_top + 4.0,
@@ -884,12 +634,23 @@ pub fn render(
     )
     .child(commit_options_button(options_rect, state.clone()));
     root = root.child(clip(field, 0.0, 0.0).child(commit_field));
-    if details_rect.height() > 0.0 {
-        root = root.child(git_details_resize_handle(
-            body_rect,
-            details_rect.top,
-            detail_headers,
-            state.clone(),
+    // The prompt follows the changes directly, so a clean tree is announced
+    // below it, as long as the details area leaves room.
+    let clean_top = prompt_bottom + 6.0;
+    if change_sections
+        .iter()
+        .all(|(_, _, files, _)| files.is_empty())
+        && clean_top + ROW_H <= body_rect.bottom
+    {
+        root = root.child(text(
+            UiRect::new(
+                rect.left + 14.0,
+                clean_top,
+                rect.right - 12.0,
+                clean_top + ROW_H,
+            ),
+            "Working tree clean.",
+            theme::mono(theme::c().text_ghost, theme::SMALL),
         ));
     }
     // Keep the header edge crisp and above scrolling rows and operation banners.
@@ -988,46 +749,6 @@ pub(crate) fn git_vertical_scrollbar(
     .on_pointer_up(move |_cx, _pointer| {
         drag_end.update(|app| region.set_drag(app, false, 0.0));
         region.load_more_at_bottom(&drag_end, max_scroll);
-    })
-}
-
-fn git_details_resize_handle(
-    body: UiRect,
-    top: f32,
-    detail_headers: usize,
-    state: Binding,
-) -> Element {
-    let active = state.get().ui.details_resize_offset.is_some();
-    let (min, max) = details_height_bounds(body, detail_headers);
-    let drag_start = state.clone();
-    let drag_move = state.clone();
-    let drag_end = state;
-    crate::ui::components::resize_handle::render(
-        "git-details-resize-handle",
-        UiRect::new(body.left, top - 4.0, body.right, top + 4.0),
-        UiRect::new(body.left, top, body.right, top + 1.0),
-        CursorIcon::ResizeVertical,
-        active,
-    )
-    .on_pointer_down_with_button(move |_cx, pointer, button| {
-        if button == PointerButton::Left {
-            drag_start.update(|app| {
-                app.ui.details_resize_offset = Some(pointer.point.y - top);
-                app.ui.hover = None;
-                app.ui.clear_hover_cards();
-            });
-        }
-    })
-    .on_pointer_drag(move |_cx, pointer| {
-        drag_move.update(|app| {
-            if let Some(offset) = app.ui.details_resize_offset {
-                app.ui.details_height =
-                    Some((body.bottom - pointer.point.y + offset).clamp(min, max));
-            }
-        });
-    })
-    .on_pointer_up(move |_cx, _pointer| {
-        drag_end.update(|app| app.ui.details_resize_offset = None);
     })
 }
 

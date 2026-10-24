@@ -459,6 +459,12 @@ impl AppState {
                     self.git.ui.hovered = false;
                 }
             }
+            Action::ToggleGitPanel => {
+                if self.git_panel_visible() {
+                    let open = !self.git.ui.panel_open;
+                    self.git.ui.set_panel(open);
+                }
+            }
             Action::MenuSelectNext => {
                 crate::ui::git::branch_picker::move_selection(&mut self.git, 1)
             }
@@ -628,6 +634,12 @@ impl AppState {
         self.pane_surface(self.workspace.active_pane())
     }
 
+    /// The bottom Git panel belongs to the focused Git diff, not file editing
+    /// or application pages. Its expansion preference survives switching views.
+    pub fn git_panel_visible(&self) -> bool {
+        self.workspace.active_diff().is_some()
+    }
+
     /// What one pane shows. Welcome and Workspace Home fill the editor area
     /// only while it is a single empty pane.
     pub fn pane_surface(&self, pane: PaneId) -> MainSurface {
@@ -752,6 +764,44 @@ mod tests {
     }
 
     #[test]
+    fn git_panel_only_belongs_to_the_focused_git_view() {
+        let mut app = AppState::new();
+        assert!(!app.git_panel_visible());
+        app.workspace
+            .open_path("project/main.rs".into(), String::new());
+        let file = app.workspace.active().unwrap();
+        app.git.ui.set_panel(true);
+        assert!(!app.git_panel_visible());
+        app.apply(Action::ToggleGitPanel);
+        assert!(
+            app.git.ui.panel_open,
+            "Hidden panel shortcuts must not change its preference"
+        );
+
+        let changes = app.workspace.open_diff(DiffDocument::from_content(
+            crate::features::git::DiffRequest {
+                repository_root: "project".into(),
+                path: PathBuf::new(),
+                target: DiffTarget::Changes,
+            },
+            crate::features::git::DiffContent::Changes(Vec::new()),
+        ));
+        assert!(app.git_panel_visible());
+        app.workspace.set_active(file);
+        assert!(!app.git_panel_visible());
+        app.workspace.set_active(changes);
+        assert!(app.git_panel_visible());
+        app.workspace.open_settings();
+        assert!(!app.git_panel_visible());
+        app.workspace.open_diff(DiffDocument::commit_changes(
+            "project".into(),
+            "abc1234".into(),
+            crate::features::git::DiffContent::Changes(Vec::new()),
+        ));
+        assert!(app.git_panel_visible());
+    }
+
+    #[test]
     fn standalone_file_uses_editor_then_returns_to_welcome() {
         let mut app = AppState::new();
         let file = app
@@ -800,10 +850,12 @@ mod tests {
         assert_eq!(app.editor.diff_split.ratio, 0.5);
         assert!(app.editor.diff_split.drag.is_none());
         assert!(
-            app.git
+            !app.git
                 .ui
                 .collapsed_sections
                 .contains(&crate::ui::git::panel::HISTORY)
         );
+        assert!(app.git.ui.panel_open);
+        assert!(!app.git_panel_visible());
     }
 }

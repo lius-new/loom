@@ -19,20 +19,15 @@ mod panel_virtualization_tests {
     use crate::ui::git::panel::*;
     use lgui::prelude::State;
 
-    #[test]
-    fn bottom_sections_stay_pinned_and_scroll_independently_from_changes() {
+    /// A repository with 10,000 unstaged files, a stash, a tag, two
+    /// worktrees and forty commits.
+    fn drawer_fixture() -> (
+        crate::features::git::RepositoryId,
+        GitStoreSnapshot,
+        impl Fn(&mut AppState) + Send + Sync + 'static,
+    ) {
         use crate::features::git::RepositoryId;
         use crate::features::git::snapshot::{GitPresentation, RepositoryPresentation};
-        use lgui::application::{AppView, ApplicationContext};
-        use lgui::core::{
-            InputEvent, Point, PointerData, UiScale, WheelDelta, dispatch_runtime_output,
-        };
-        use lgui::session::UiSession;
-        use std::sync::{Arc, Mutex};
-
-        let viewport = UiRect::new(0.0, 0.0, 340.0, 600.0);
-        let exposed = Arc::new(Mutex::new(None::<(AppContext, State<GitStoreSnapshot>)>));
-        let output = exposed.clone();
         let id = RepositoryId(1);
         let paths = (0..10_000)
             .map(|index| PathBuf::from(format!("src/file{index:05}.rs")))
@@ -101,63 +96,156 @@ mod panel_virtualization_tests {
             }),
             ..Default::default()
         };
-        let view: AppView = Arc::new(move |cx| {
+        let history = move |app: &mut AppState| {
+            app.git.model.set_history(GitHistory {
+                repository: "loom".into(),
+                head: None,
+                commits: Ok((0..40)
+                    .map(|index| CommitSummary {
+                        oid: format!("abc{index:05}"),
+                        parents: match index {
+                            0 => vec!["abc00001".into(), "abc00002".into()],
+                            1 => vec!["abc00003".into()],
+                            2 => vec!["abc00004".into()],
+                            3 | 4 => vec!["abc00005".into()],
+                            6 => vec!["abc00007".into(), "abc00008".into()],
+                            7 | 8 => vec!["abc00009".into()],
+                            39 => Vec::new(),
+                            _ => vec![format!("abc{:05}", index + 1)],
+                        },
+                        author: "lius-new".into(),
+                        author_email: "dev@example.com".into(),
+                        timestamp: 0,
+                        subject: format!("Improve editor behavior {index}"),
+                        decorations: match index {
+                            0 => vec!["HEAD -> refs/heads/main".into()],
+                            2 => vec![
+                                "refs/remotes/origin/main".into(),
+                                "refs/remotes/origin/HEAD".into(),
+                            ],
+                            4 => vec!["tag: refs/tags/v1.0.0".into()],
+                            6 => vec!["refs/heads/feature/editor-incremental-highlighting".into()],
+                            8 => vec![
+                                "refs/heads/feature/ui".into(),
+                                "refs/remotes/origin/feature/ui".into(),
+                            ],
+                            _ => Vec::new(),
+                        },
+                    })
+                    .collect()),
+            });
+        };
+        (id, snapshot, history)
+    }
+
+    fn render_view(
+        viewport: UiRect,
+        panel_rect: Option<UiRect>,
+        snapshot: GitStoreSnapshot,
+        history: impl Fn(&mut AppState) + Send + Sync + 'static,
+        prepare: impl Fn(&mut AppState) + Send + Sync + 'static,
+        output: Arc<std::sync::Mutex<Option<(AppContext, State<GitStoreSnapshot>)>>>,
+    ) -> lgui::application::AppView {
+        Arc::new(move |cx| {
             let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 app.git.ui.hovered = true;
-                app.git.model.set_history(GitHistory {
-                    repository: "loom".into(),
-                    head: None,
-                    commits: Ok((0..40)
-                        .map(|index| CommitSummary {
-                            oid: format!("abc{index:05}"),
-                            parents: match index {
-                                0 => vec!["abc00001".into(), "abc00002".into()],
-                                1 => vec!["abc00003".into()],
-                                2 => vec!["abc00004".into()],
-                                3 | 4 => vec!["abc00005".into()],
-                                6 => vec!["abc00007".into(), "abc00008".into()],
-                                7 | 8 => vec!["abc00009".into()],
-                                39 => Vec::new(),
-                                _ => vec![format!("abc{:05}", index + 1)],
-                            },
-                            author: "lius-new".into(),
-                            author_email: "dev@example.com".into(),
-                            timestamp: 0,
-                            subject: format!("Improve editor behavior {index}"),
-                            decorations: match index {
-                                0 => vec!["HEAD -> refs/heads/main".into()],
-                                2 => vec![
-                                    "refs/remotes/origin/main".into(),
-                                    "refs/remotes/origin/HEAD".into(),
-                                ],
-                                4 => vec!["tag: refs/tags/v1.0.0".into()],
-                                6 => vec![
-                                    "refs/heads/feature/editor-incremental-highlighting".into(),
-                                ],
-                                8 => vec![
-                                    "refs/heads/feature/ui".into(),
-                                    "refs/remotes/origin/feature/ui".into(),
-                                ],
-                                _ => Vec::new(),
-                            },
-                        })
-                        .collect()),
-                });
+                history(&mut app);
+                prepare(&mut app);
                 app
             }));
             let fixture = snapshot.clone();
             let store = cx.state_with(move || fixture);
             *output.lock().unwrap() = Some((state.clone(), store.clone()));
-            render(
-                viewport,
+            let drawer = UiRect::new(
+                viewport.left,
+                viewport.top,
+                viewport.right.min(340.0),
+                panel_rect.map_or(viewport.bottom, |panel| panel.top),
+            );
+            let mut root = lgui::prelude::group(viewport).child(render(
+                drawer,
                 crate::app::git_view::binding(&state, &store),
                 store.clone().into(),
                 cx.focus_handle(UiId::new("git-test-editor")),
                 cx.focus_handle(UiId::new("git-test-commit")),
                 UiId::new("git-test-commit"),
-            )
-        });
+            ));
+            if let Some(panel) = panel_rect {
+                root = root.child(crate::ui::git::workbench::render(
+                    panel,
+                    crate::app::git_view::binding(&state, &store),
+                    store.clone().into(),
+                    cx.focus_handle(UiId::new("git-test-editor")),
+                ));
+            }
+            root
+        })
+    }
+
+    fn text_nodes(session: &lgui::session::UiSession) -> Vec<String> {
+        session
+            .tree()
+            .nodes()
+            .iter()
+            .filter_map(|node| node.text.as_ref().map(|value| value.to_string()))
+            .collect()
+    }
+
+    fn named(session: &lgui::session::UiSession, name: &str) -> Option<UiRect> {
+        let node = session.tree().nodes().iter().find(|node| {
+            node.semantics
+                .as_ref()
+                .and_then(|semantics| semantics.name.as_deref())
+                == Some(name)
+        })?;
+        Some(session.tree().hit_for_id(&node.id).unwrap().rect)
+    }
+
+    fn click(
+        session: &mut lgui::session::UiSession,
+        view: &lgui::application::AppView,
+        viewport: UiRect,
+        point: Point,
+    ) {
+        use lgui::application::ApplicationContext;
+        let context = ApplicationContext::empty(Default::default());
+        for input in [
+            InputEvent::PointerDown {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+            InputEvent::PointerUp {
+                pointer: PointerData::mouse(point),
+                button: PointerButton::Left,
+            },
+        ] {
+            dispatch_runtime_output(
+                session.handle_input(input),
+                &context,
+                &lgui::window::WindowId::new("git-panel-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(view, viewport, UiScale::ONE);
+        }
+    }
+
+    fn center(rect: UiRect) -> Point {
+        Point::new(
+            (rect.left + rect.right) / 2.0,
+            (rect.top + rect.bottom) / 2.0,
+        )
+    }
+
+    #[test]
+    fn the_drawer_keeps_changes_and_the_commit_form_without_bottom_sections() {
+        use lgui::application::ApplicationContext;
+        use lgui::session::UiSession;
+        let viewport = UiRect::new(0.0, 0.0, 340.0, 600.0);
+        let (id, snapshot, history) = drawer_fixture();
+        let exposed = Arc::new(std::sync::Mutex::new(None));
+        let view = render_view(viewport, None, snapshot, history, |_| {}, exposed.clone());
         let context = ApplicationContext::empty(Default::default());
         context
             .resources()
@@ -170,388 +258,17 @@ mod panel_virtualization_tests {
         );
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
+        for section in ["COMMITS", "TAGS", "STASHES", "WORKTREES"] {
+            assert!(
+                named(&session, section).is_none(),
+                "{section} belongs to the Git panel"
+            );
+        }
+        assert!(named(&session, "UNSTAGED").is_some());
+        // The commit form stays at the bottom below a long change list.
+        let input = named(&session, "Commit message").unwrap();
+        assert_eq!(input.bottom + 5.0, viewport.bottom);
         let (state, store) = exposed.lock().unwrap().clone().unwrap();
-        let assert_scrollbar_edge = |session: &UiSession, y: f32| {
-            // Check the complete drawer, including the body's horizontal layout.
-            let hit = session
-                .tree()
-                .hit_test(Point::new(viewport.right - 9.0, y))
-                .expect("Scrollbar near the drawer's right edge");
-            let thumb = session.tree().node(&hit.id).unwrap().layout_rect;
-            assert_eq!(thumb.right, viewport.right - 2.0);
-            assert_eq!(thumb.width(), 8.0);
-        };
-        assert_scrollbar_edge(&session, TOPLINE_H + 12.0);
-        let find = |session: &UiSession, name: &str| {
-            let node = session
-                .tree()
-                .nodes()
-                .iter()
-                .find(|node| {
-                    node.semantics
-                        .as_ref()
-                        .and_then(|semantics| semantics.name.as_deref())
-                        == Some(name)
-                })
-                .unwrap_or_else(|| panic!("Missing section {name}"));
-            session.tree().hit_for_id(&node.id).unwrap().rect
-        };
-        let footer_top = viewport.bottom;
-        let worktrees = find(&session, "WORKTREES");
-        let stashes = find(&session, "STASHES");
-        let commits = find(&session, "COMMITS");
-        assert_eq!(worktrees.top, footer_top - SECTION_H * 4.0);
-        assert_eq!(stashes.top, worktrees.bottom);
-        assert_eq!(find(&session, "TAGS").top, stashes.bottom);
-        assert_eq!(find(&session, "TAGS").bottom, commits.top);
-        assert_eq!(commits.bottom, footer_top);
-        assert!(find(&session, "UNSTAGED").top < worktrees.top);
-        let commit_input = find(&session, "Commit message");
-        assert_eq!(commit_input.bottom + 5.0, worktrees.top);
-        assert_eq!(commit_input.height(), 22.0);
-        let keyed_rect = |key: &'static str| {
-            session
-                .tree()
-                .nodes()
-                .iter()
-                .find(|node| node.id == UiId::new(key))
-                .unwrap_or_else(|| panic!("Missing element {key}"))
-                .layout_rect
-        };
-        let check = keyed_rect("git-commit-button-icon");
-        let arrow = keyed_rect("git-commit-options-icon");
-        let divider = session
-            .tree()
-            .nodes()
-            .iter()
-            .map(|node| node.layout_rect)
-            .find(|rect| {
-                rect.width() == 1.0
-                    && rect.left >= check.right
-                    && rect.right <= arrow.left
-                    && rect.top >= check.top
-                    && rect.bottom <= check.bottom
-            })
-            .expect("Divider between commit icons");
-        let commit = find(&session, "Commit changes");
-        let options = find(&session, "Commit options");
-        assert_eq!(commit.width(), options.width());
-        assert_eq!(check.left - commit.left, divider.left - check.right);
-        assert_eq!(divider.left - check.right, arrow.left - divider.right);
-        assert_eq!(arrow.left - divider.right, options.right - arrow.right);
-        assert_eq!(options.right, viewport.right - 12.0 - 1.0);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-long-changes");
-        assert!(
-            session.tree().nodes().len() < 600,
-            "Large lists must stay virtualized"
-        );
-        let send = |session: &mut UiSession, input| {
-            dispatch_runtime_output(
-                session.handle_input(input),
-                &context,
-                &lgui::window::WindowId::new("git-drawer-test"),
-                |action| session.handle_default_action(action),
-                |_| {},
-            );
-        };
-        let collapse_sticky = |session: &mut UiSession, name: &str, filter: u8, top: f32| {
-            let header = find(session, name);
-            assert_eq!(header.top, top);
-            let point = Point::new(header.left + 40.0, header.top + SECTION_H / 2.0);
-            send(session, InputEvent::PointerMove(PointerData::mouse(point)));
-            session.render_view(&view, viewport, UiScale::ONE);
-            assert_eq!(state.get().git.ui.hover, Some(GitHover::Section(filter)));
-            for input in [
-                InputEvent::PointerDown {
-                    pointer: PointerData::mouse(point),
-                    button: PointerButton::Left,
-                },
-                InputEvent::PointerUp {
-                    pointer: PointerData::mouse(point),
-                    button: PointerButton::Left,
-                },
-            ] {
-                send(session, input);
-            }
-            session.render_view(&view, viewport, UiScale::ONE);
-            assert!(state.get().git.ui.collapsed_sections.contains(&filter));
-            assert!(state.get().editor.tabs.file_drag.is_none());
-        };
-        send(
-            &mut session,
-            InputEvent::Wheel {
-                point: Point::new(80.0, 150.0),
-                delta: WheelDelta::lines(0.0, -4.0),
-            },
-        );
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(state.get().git.ui.scroll > 0.0);
-        assert_eq!(find(&session, "UNSTAGED").top, TOPLINE_H);
-        assert_eq!(state.get().git.ui.details_scroll, 0.0);
-        assert_eq!(find(&session, "WORKTREES"), worktrees);
-        assert_eq!(find(&session, "COMMITS"), commits);
-        assert_eq!(find(&session, "Commit message"), commit_input);
-        let changes_scroll = state.get().git.ui.scroll;
-        let point = Point::new(100.0, commits.top + SECTION_H / 2.0);
-        for input in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-        ] {
-            send(&mut session, input);
-        }
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(!state.get().git.ui.collapsed_sections.contains(&HISTORY));
-        let expanded = find(&session, "COMMITS");
-        let details_top = find(&session, "WORKTREES").top;
-        assert_scrollbar_edge(&session, find(&session, "WORKTREES").top + 12.0);
-        assert!(expanded.top >= TOPLINE_H + (footer_top - TOPLINE_H) * 0.55);
-        send(
-            &mut session,
-            InputEvent::Wheel {
-                point: Point::new(100.0, expanded.bottom + ROW_H),
-                delta: WheelDelta::lines(0.0, -3.0),
-            },
-        );
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(state.get().git.ui.details_scroll > 0.0);
-        assert_eq!(state.get().git.ui.scroll, changes_scroll);
-        assert_eq!(find(&session, "WORKTREES").top, details_top);
-        assert_eq!(find(&session, "STASHES").top, details_top + SECTION_H);
-        assert_eq!(find(&session, "TAGS").top, details_top + SECTION_H * 2.0);
-        assert_eq!(find(&session, "COMMITS").top, details_top + SECTION_H * 3.0);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-sticky-commits");
-        collapse_sticky(
-            &mut session,
-            "COMMITS",
-            HISTORY,
-            details_top + SECTION_H * 3.0,
-        );
-        assert_eq!(state.get().git.ui.details_scroll, 0.0);
-        collapse_sticky(&mut session, "UNSTAGED", UNSTAGED, TOPLINE_H);
-
-        // Multiple change sections keep separate stacked slots while scrolling.
-        store.update(|snapshot| {
-            let prepared = Arc::make_mut(&mut snapshot.presentation)
-                .repositories
-                .get_mut(&id)
-                .unwrap();
-            prepared.sections[STAGED as usize] = prepared.sections[UNSTAGED as usize][..3].to_vec();
-        });
-        let transition_scroll = 8.0 + SECTION_H + ROW_H * 3.0 + 10.0 - SECTION_H / 2.0;
-        state.update(|app| {
-            app.git.ui.collapsed_sections.remove(&UNSTAGED);
-            app.git.ui.scroll = transition_scroll;
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        let incoming = find(&session, "UNSTAGED");
-        assert_eq!(incoming.top, TOPLINE_H + SECTION_H);
-        assert_eq!(find(&session, "STAGED").top, TOPLINE_H);
-        assert_eq!(find(&session, "STAGED").bottom, incoming.top);
-        state.update(|app| app.git.ui.scroll += SECTION_H);
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert_eq!(find(&session, "STAGED").top, TOPLINE_H);
-        assert_eq!(find(&session, "UNSTAGED").top, TOPLINE_H + SECTION_H);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-stacked-changes");
-        collapse_sticky(&mut session, "STAGED", STAGED, TOPLINE_H);
-        assert_eq!(find(&session, "UNSTAGED").top, TOPLINE_H + SECTION_H);
-        store.update(|snapshot| {
-            Arc::make_mut(&mut snapshot.presentation)
-                .repositories
-                .get_mut(&id)
-                .unwrap()
-                .sections[STAGED as usize]
-                .clear();
-        });
-
-        // Worktrees use the same pinning and collapse interaction as commits.
-        let original_worktrees = store.get().repositories[&id].worktrees.clone();
-        store.update(|snapshot| {
-            let repository = Arc::make_mut(&mut snapshot.repositories)
-                .get_mut(&id)
-                .unwrap();
-            repository.worktrees = Arc::new(
-                (0..40)
-                    .map(|index| WorktreeInfo {
-                        path: format!("loom-worktree-{index}").into(),
-                        ..original_worktrees[1].clone()
-                    })
-                    .collect(),
-            );
-        });
-        state.update(|app| {
-            app.git.ui.collapsed_sections.remove(&WORKTREES);
-            app.git.ui.details_scroll = 0.0;
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        let worktrees_top = find(&session, "WORKTREES").top;
-        send(
-            &mut session,
-            InputEvent::Wheel {
-                point: Point::new(100.0, worktrees_top + SECTION_H + ROW_H),
-                delta: WheelDelta::lines(0.0, -3.0),
-            },
-        );
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(state.get().git.ui.details_scroll > 0.0);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-sticky-worktrees");
-        state.update(|app| {
-            app.git.ui.collapsed_sections.remove(&STASHES);
-            app.git.ui.collapsed_sections.remove(&TAGS);
-            app.git.ui.collapsed_sections.remove(&HISTORY);
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        send(
-            &mut session,
-            InputEvent::Wheel {
-                point: Point::new(100.0, worktrees_top + SECTION_H * 4.0),
-                delta: WheelDelta::pixels(0.0, -1800.0),
-            },
-        );
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert_eq!(find(&session, "WORKTREES").top, worktrees_top);
-        assert_eq!(find(&session, "STASHES").top, worktrees_top + SECTION_H);
-        assert_eq!(
-            find(&session, "COMMITS").top,
-            worktrees_top + SECTION_H * 3.0
-        );
-        assert_eq!(find(&session, "TAGS").top, worktrees_top + SECTION_H * 2.0);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-stacked-details");
-        collapse_sticky(&mut session, "WORKTREES", WORKTREES, worktrees_top);
-        assert_eq!(state.get().git.ui.details_scroll, 0.0);
-        store.update(|snapshot| {
-            Arc::make_mut(&mut snapshot.repositories)
-                .get_mut(&id)
-                .unwrap()
-                .worktrees = original_worktrees.clone();
-        });
-
-        // Visual fixtures use a short list to expose the empty space between
-        // the primary changes and the sections pinned at the bottom.
-        store.update(|snapshot| {
-            let presentation = Arc::make_mut(&mut snapshot.presentation);
-            presentation.repositories.get_mut(&id).unwrap().sections[UNSTAGED as usize].truncate(5);
-        });
-        state.update(|app| {
-            app.git.ui.scroll = 0.0;
-            app.git.ui.details_scroll = 0.0;
-            app.git.ui.collapsed_sections.insert(STASHES);
-            app.git.ui.collapsed_sections.insert(TAGS);
-            app.git.ui.collapsed_sections.insert(HISTORY);
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        let short_input = find(&session, "Commit message");
-        assert_eq!(
-            short_input.top,
-            TOPLINE_H + 8.0 + SECTION_H + 5.0 * ROW_H + 10.0 + 5.0
-        );
-        assert!(short_input.bottom < find(&session, "WORKTREES").top);
-        let point = Point::new(short_input.left + 30.0, short_input.top + PROMPT_H / 2.0);
-        for input in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-            InputEvent::TextInput("Improve search UI".into()),
-        ] {
-            send(&mut session, input);
-        }
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert_eq!(state.get().git.ui.commit_input.text(), "Improve search UI");
-        save_drawer_preview(&session, &context, viewport, "git-drawer-collapsed");
-        state.update(|app| {
-            app.git.ui.collapsed_sections.remove(&HISTORY);
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-commits");
-        let badge = find(&session, "Current branch: main");
-        let badge_point = Point::new(
-            badge.left + badge.width() / 2.0,
-            badge.top + badge.height() / 2.0,
-        );
-        for input in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(badge_point),
-                button: PointerButton::Left,
-            },
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(badge_point),
-                button: PointerButton::Left,
-            },
-        ] {
-            send(&mut session, input);
-        }
-        assert_eq!(
-            state.get().git.model.history_commit().unwrap().oid,
-            "abc00000"
-        );
-        state.update(|app| {
-            app.git.model.set_commit_files(
-                "abc00000",
-                Ok(vec![
-                    (ChangeKind::Modified, "src/editor.rs".into()),
-                    (ChangeKind::Added, "src/graph.rs".into()),
-                ]),
-            )
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-graph-expanded");
-        let node_id = UiId::owned("git-history-node-abc00000");
-        let node_rect = session.tree().hit_for_id(&node_id).unwrap().rect;
-        let point = Point::new(
-            (node_rect.left + node_rect.right) / 2.0,
-            (node_rect.top + node_rect.bottom) / 2.0,
-        );
-        for input in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-        ] {
-            send(&mut session, input);
-        }
-        assert!(state.get().git.model.history_commit().is_none());
-        state.update(|app| {
-            app.git.ui.collapsed_sections.insert(HISTORY);
-            app.git.ui.collapsed_sections.remove(&TAGS);
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(find(&session, "Tag: v1.0.0").top >= find(&session, "TAGS").bottom);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-tags");
-        store.update(|snapshot| {
-            Arc::make_mut(&mut snapshot.repositories)
-                .get_mut(&id)
-                .unwrap()
-                .tags = Arc::default();
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(
-            session
-                .tree()
-                .nodes()
-                .iter()
-                .any(|node| node.text.as_deref() == Some("No tags yet."))
-        );
-        state.update(|app| {
-            app.git.ui.collapsed_sections.insert(TAGS);
-            app.git.ui.collapsed_sections.insert(HISTORY);
-            app.git.ui.collapsed_sections.remove(&WORKTREES);
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-worktrees");
         store.update(|snapshot| {
             Arc::make_mut(&mut snapshot.presentation)
                 .repositories
@@ -560,216 +277,339 @@ mod panel_virtualization_tests {
                 .sections[UNSTAGED as usize]
                 .clear();
         });
-        state.update(|app| {
-            app.git.ui.commit_input.clear();
-            app.git.ui.commit_input.focused = false;
-            app.git.ui.collapsed_sections.insert(WORKTREES);
-        });
         session.render_view(&view, viewport, UiScale::ONE);
-        assert_eq!(find(&session, "Commit message").top, TOPLINE_H + 8.0 + 5.0);
+        // A clean tree puts the form at the top, with the message beneath it.
+        assert_eq!(
+            named(&session, "Commit message").unwrap().top,
+            TOPLINE_H + 8.0 + 5.0
+        );
+        assert!(text_nodes(&session).contains(&"Working tree clean.".to_owned()));
+        let _ = state;
         save_drawer_preview(&session, &context, viewport, "git-drawer-no-changes");
-        // A clean repository with only Commits must retain the same upper
-        // area budget, input bounds and spacing when its history expands.
-        store.update(|snapshot| {
-            let repository = Arc::make_mut(&mut snapshot.repositories)
-                .get_mut(&id)
-                .unwrap();
-            repository.worktrees = Arc::default();
-            repository.stashes = Arc::default();
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        let empty_input = find(&session, "Commit message");
-        save_drawer_preview(&session, &context, viewport, "git-drawer-clean-collapsed");
-        let commits = find(&session, "COMMITS");
-        let point = Point::new(commits.left + 40.0, commits.top + SECTION_H / 2.0);
-        for input in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(point),
-                button: PointerButton::Left,
-            },
-        ] {
-            send(&mut session, input);
-        }
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(!state.get().git.ui.collapsed_sections.contains(&HISTORY));
-        assert_eq!(find(&session, "Commit message"), empty_input);
-        let content_available = viewport.height() - TOPLINE_H - PROMPT_H;
-        assert!(find(&session, "COMMITS").top >= TOPLINE_H + PROMPT_H + content_available * 0.55);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-clean-expanded");
-        for height in [120.0, 300.0, 900.0] {
-            let body = UiRect::new(0.0, TOPLINE_H, 340.0, height);
-            let (changes, prompt, details) = drawer_regions(body, 5000.0, 1500.0, 3, None);
-            assert_eq!(changes.bottom, prompt.top);
-            assert_eq!(prompt.bottom, details.top);
-            assert_eq!(prompt.height(), PROMPT_H);
-            assert_eq!(details.bottom, body.bottom);
-            assert!(changes.height() >= 0.0 && details.height() >= 0.0);
-        }
-        // Production uses the application layout, which disables the drawer's
-        // own width handle. Its placeholder must not mask any hover cursors.
-        state.update(|app| {
-            app.layout.application_layout = Some(
-                crate::domain::application_layout::ApplicationLayout::initial(
-                    viewport.into(),
-                    220.0,
-                    220.0,
-                    240.0,
-                ),
-            );
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        // The divider captures the pointer outside its strip, preserves the
-        // grab offset, and keeps the chosen height when sections collapse.
-        let divider_top = session
-            .tree()
-            .node(&UiId::owned("resize-line-git-details-resize-handle"))
-            .unwrap()
-            .layout_rect
-            .top;
-        let grab = Point::new(100.0, divider_top - 2.0);
-        let divider = session.tree().hit_test(grab).unwrap().id;
-        for offset in [-3.0, 0.0, 3.0] {
-            let point = Point::new(100.0, divider_top + offset);
-            send(
-                &mut session,
-                InputEvent::PointerMove(PointerData::mouse(point)),
-            );
-            session.render_view(&view, viewport, UiScale::ONE);
-            assert_eq!(
-                session.tree().cursor_at(point),
-                Some(CursorIcon::ResizeVertical)
-            );
-            assert_eq!(state.get().git.ui.details_resize_offset, None);
-        }
-        let input = find(&session, "Commit message");
-        assert_eq!(
-            session
-                .tree()
-                .cursor_at(Point::new(input.left + 10.0, input.top + 10.0)),
-            Some(CursorIcon::Text),
-        );
-        for input in [
-            InputEvent::PointerDown {
-                pointer: PointerData::mouse(grab),
-                button: PointerButton::Right,
-            },
-            InputEvent::PointerMove(PointerData::mouse(Point::new(100.0, 250.0))),
-            InputEvent::PointerUp {
-                pointer: PointerData::mouse(Point::new(100.0, 250.0)),
-                button: PointerButton::Right,
-            },
-        ] {
-            send(&mut session, input);
-        }
-        assert_eq!(state.get().git.ui.details_height, None);
-        assert_eq!(state.get().git.ui.details_resize_offset, None);
-        let drag_to = |session: &mut UiSession, y: f32| {
-            let top = session.tree().node(&divider).unwrap().layout_rect.top;
-            let grab = Point::new(100.0, top + 2.0);
-            send(
-                session,
-                InputEvent::PointerDown {
-                    pointer: PointerData::mouse(grab),
-                    button: PointerButton::Left,
-                },
-            );
-            session.render_view(&view, viewport, UiScale::ONE);
-            assert!(state.get().git.ui.details_resize_offset.is_some());
-            assert_eq!(
-                session
-                    .tree()
-                    .node(&UiId::owned("resize-line-git-details-resize-handle"))
-                    .unwrap()
-                    .style
-                    .fill,
-                Some(theme::c().accent),
-            );
-            // Grab two pixels above the divider; this offset must not jump.
-            let point = Point::new(100.0, y - 2.0);
-            send(session, InputEvent::PointerMove(PointerData::mouse(point)));
-            session.render_view(&view, viewport, UiScale::ONE);
-            send(
-                session,
-                InputEvent::PointerUp {
-                    pointer: PointerData::mouse(point),
-                    button: PointerButton::Left,
-                },
-            );
-            session.render_view(&view, viewport, UiScale::ONE);
-            assert_eq!(state.get().git.ui.details_resize_offset, None);
-            assert_eq!(
-                session
-                    .tree()
-                    .node(&UiId::owned("resize-line-git-details-resize-handle"))
-                    .unwrap()
-                    .style
-                    .fill,
-                Some(theme::c().border),
-            );
-        };
-        drag_to(&mut session, viewport.bottom - 300.0);
-        assert_eq!(state.get().git.ui.details_height, Some(300.0));
-        assert_eq!(find(&session, "TAGS").top, viewport.bottom - 300.0);
-        assert_eq!(find(&session, "Commit message"), empty_input);
-        save_drawer_preview(&session, &context, viewport, "git-drawer-resized-details");
-        state.update(|app| {
-            app.git.ui.collapsed_sections.insert(HISTORY);
-        });
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert_eq!(find(&session, "TAGS").top, viewport.bottom - 300.0);
-        drag_to(&mut session, -1000.0);
-        assert_eq!(
-            find(&session, "TAGS").top,
-            TOPLINE_H + PROMPT_H + SECTION_H * 2.0,
-        );
-        drag_to(&mut session, viewport.bottom + 1000.0);
-        assert_eq!(
-            find(&session, "TAGS").top,
-            viewport.bottom - SECTION_H * 2.0
-        );
-        // Releasing ends the resize even after dragging beyond the drawer.
-        let height = state.get().git.ui.details_height;
-        send(
-            &mut session,
-            InputEvent::PointerMove(PointerData::mouse(grab)),
-        );
-        assert_eq!(state.get().git.ui.details_height, height);
-        state.update(|app| {
-            app.git.ui.scroll = 100.0;
-            app.git.ui.details_scroll = 200.0;
-        });
-        crate::app::git::select_repository(&state, &store, PathBuf::from("loom"));
-        assert_eq!(state.get().git.ui.scroll, 0.0);
-        assert_eq!(state.get().git.ui.details_scroll, 0.0);
     }
 
     #[test]
-    fn resized_details_fit_short_drawers_and_preserve_the_requested_height() {
-        for bottom in [20.0_f32, 60.0, 120.0, 300.0, 900.0] {
-            let body = UiRect::new(0.0, TOPLINE_H, 340.0, bottom.max(TOPLINE_H));
-            for height in [0.0, 300.0, 10_000.0] {
-                let (changes, prompt, details) =
-                    drawer_regions(body, 5000.0, 1500.0, 4, Some(height));
-                assert!(changes.height() >= 0.0);
-                assert!(prompt.height() >= 0.0);
-                assert!(details.height() >= 0.0);
-                assert_eq!(changes.bottom, prompt.top);
-                assert_eq!(prompt.bottom, details.top);
-                assert_eq!(details.bottom, body.bottom);
-                assert_eq!(prompt.height(), body.height().min(PROMPT_H));
-                assert!(
-                    details.height() >= (SECTION_H * 4.0).min((body.height() - PROMPT_H).max(0.0))
-                );
-                if bottom == 900.0 && height == 300.0 {
-                    assert_eq!(details.height(), 300.0);
-                    assert_eq!(changes.height(), body.height() - PROMPT_H - 300.0);
+    fn the_git_panel_switches_between_history_stashes_worktrees_and_tags() {
+        use lgui::application::ApplicationContext;
+        use lgui::session::UiSession;
+        let viewport = UiRect::new(0.0, 0.0, 800.0, 600.0);
+        let panel = UiRect::new(0.0, 300.0, 800.0, 600.0);
+        let (_, snapshot, history) = drawer_fixture();
+        let exposed = Arc::new(std::sync::Mutex::new(None));
+        let view = render_view(
+            viewport,
+            Some(panel),
+            snapshot,
+            history,
+            |app| app.git.ui.set_panel(true),
+            exposed.clone(),
+        );
+        let context = ApplicationContext::empty(Default::default());
+        context
+            .resources()
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                crate::app::svg_icons(),
+            )));
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let (state, _) = exposed.lock().unwrap().clone().unwrap();
+        // History is the default tab; opening the panel expands only that section.
+        assert_eq!(state.get().git.ui.panel_tab, HISTORY);
+        assert!(!state.get().git.ui.collapsed_sections.contains(&HISTORY));
+        assert!(state.get().git.ui.collapsed_sections.contains(&TAGS));
+        assert!(
+            text_nodes(&session)
+                .iter()
+                .any(|line| line.contains("Improve editor behavior 0"))
+        );
+        save_drawer_preview(&session, &context, viewport, "git-panel-commits");
+        for (tab, expected) in [
+            ("Stashes", "WIP: search panel"),
+            ("Tags", "v1.0.0"),
+            ("Worktrees", "loom-search"),
+        ] {
+            let target = named(&session, tab)
+                .or_else(|| {
+                    // Counts are part of the tab's text, not its name.
+                    None
+                })
+                .unwrap_or_else(|| panic!("Missing tab {tab}"));
+            click(&mut session, &view, viewport, center(target));
+            assert!(
+                text_nodes(&session)
+                    .iter()
+                    .any(|line| line.contains(expected)),
+                "{tab} lists {expected}: {:?}",
+                text_nodes(&session)
+            );
+            assert!(
+                target.top >= panel.top
+                    && target.bottom <= panel.top + crate::ui::git::workbench::HEADER_H
+            );
+        }
+        assert_eq!(state.get().git.ui.panel_tab, WORKTREES);
+        assert!(!state.get().git.ui.collapsed_sections.contains(&WORKTREES));
+        assert!(state.get().git.ui.collapsed_sections.contains(&HISTORY));
+        save_drawer_preview(&session, &context, viewport, "git-panel-worktrees");
+        // Collapse the content while leaving every tab available.
+        let hide = named(&session, "Collapse Git panel").unwrap();
+        click(&mut session, &view, viewport, center(hide));
+        assert!(!state.get().git.ui.panel_open);
+        for section in [HISTORY, STASHES, WORKTREES, TAGS] {
+            assert!(state.get().git.ui.collapsed_sections.contains(&section));
+        }
+        for tab in ["Commits", "Stashes", "Worktrees", "Tags"] {
+            assert!(named(&session, tab).is_some());
+        }
+        assert!(named(&session, "Expand Git panel").is_some());
+    }
+
+    #[test]
+    fn narrow_git_panel_tabs_scroll_without_covering_the_collapse_button() {
+        use lgui::application::ApplicationContext;
+        use lgui::session::UiSession;
+
+        fn hit(session: &UiSession, name: &str) -> Option<UiRect> {
+            let node = session.tree().nodes().iter().find(|node| {
+                node.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name)
+            })?;
+            let mut rect = session.tree().hit_for_id(&node.id)?.rect;
+            let mut parent = node.parent.as_ref();
+            while let Some(id) = parent {
+                let ancestor = session.tree().node(id)?;
+                if let Some(clip) = ancestor.clip_rect {
+                    let hit = session.tree().hit_for_id(id)?.rect;
+                    let clip = clip.translate(
+                        hit.left - ancestor.hit_rect.left,
+                        hit.top - ancestor.hit_rect.top,
+                    );
+                    rect = UiRect::new(
+                        rect.left.max(clip.left),
+                        rect.top.max(clip.top),
+                        rect.right.min(clip.right),
+                        rect.bottom.min(clip.bottom),
+                    );
+                }
+                parent = ancestor.parent.as_ref();
+            }
+            (rect.right > rect.left && rect.bottom > rect.top).then_some(rect)
+        }
+
+        for width in [200.0, 300.0, 800.0] {
+            let viewport = UiRect::new(0.0, 0.0, 900.0, 600.0);
+            let panel = UiRect::new(40.0, 300.0, 40.0 + width, 600.0);
+            let (_, snapshot, history) = drawer_fixture();
+            let exposed = Arc::new(std::sync::Mutex::new(None));
+            let view = render_view(
+                viewport,
+                Some(panel),
+                snapshot,
+                history,
+                |app| app.git.ui.set_panel(true),
+                exposed.clone(),
+            );
+            let context = ApplicationContext::empty(Default::default());
+            let _fonts = lgui::backend::install_text_environment(
+                &context,
+                lgui::render_skia::skia_text_system_handle(),
+            );
+            let mut session = UiSession::new();
+            session.render_view(&view, viewport, UiScale::ONE);
+            let (state, _) = exposed.lock().unwrap().clone().unwrap();
+            let hide = hit(&session, "Collapse Git panel").unwrap();
+            for tab in ["Commits", "Stashes", "Worktrees", "Tags"] {
+                if let Some(rect) = hit(&session, tab) {
+                    assert!(
+                        rect.left >= panel.left && rect.right <= hide.left,
+                        "{tab} overlaps the collapse button in a {width}px panel: {rect:?}"
+                    );
                 }
             }
+            if width == 800.0 {
+                assert!(hit(&session, "Next Git tabs").is_none());
+            } else {
+                // Both wheel axes scroll the header, never the list below it.
+                let point = Point::new(panel.left + 60.0, panel.top + 15.0);
+                for (delta, expected) in [
+                    (WheelDelta::pixels(-10_000.0, 0.0), "Tags"),
+                    (WheelDelta::pixels(0.0, 10_000.0), "Commits"),
+                ] {
+                    dispatch_runtime_output(
+                        session.handle_input(InputEvent::Wheel { point, delta }),
+                        &context,
+                        &lgui::window::WindowId::new("git-panel-test"),
+                        |action| session.handle_default_action(action),
+                        |_| {},
+                    );
+                    session.render_view(&view, viewport, UiScale::ONE);
+                    assert!(
+                        hit(&session, expected).is_some(),
+                        "Wheel scroll must reveal {expected}"
+                    );
+                    assert_eq!(state.get().git.ui.details_scroll, 0.0);
+                }
+                for _ in 0..4 {
+                    if hit(&session, "Tags").is_some() {
+                        break;
+                    }
+                    let next = hit(&session, "Next Git tabs").unwrap();
+                    click(&mut session, &view, viewport, center(next));
+                }
+            }
+            let tags = hit(&session, "Tags").expect("Tags must be reachable");
+            click(&mut session, &view, viewport, center(tags));
+            assert_eq!(state.get().git.ui.panel_tab, TAGS);
+            assert!(text_nodes(&session).iter().any(|line| line == "v1.0.0"));
+            let hide_after_scroll = hit(&session, "Collapse Git panel").unwrap();
+            assert_eq!(hide_after_scroll, hide);
+            click(&mut session, &view, viewport, center(hide_after_scroll));
+            assert!(!state.get().git.ui.panel_open);
         }
+    }
+
+    #[test]
+    fn the_git_panel_splits_the_editor_region_and_drags_to_resize() {
+        use crate::ui::git::workbench::{HEADER_H, split};
+        let region = UiRect::new(0.0, 32.0, 1000.0, 700.0);
+        let (collapsed_editor, collapsed) = split(region, false, None);
+        assert_eq!(collapsed.unwrap().height(), HEADER_H);
+        assert_eq!(collapsed_editor.bottom, region.bottom - HEADER_H);
+        let (editor, panel) = split(region, true, None);
+        let panel = panel.unwrap();
+        assert_eq!(editor.bottom, panel.top);
+        assert_eq!(panel.bottom, region.bottom);
+        assert_eq!(panel.height(), 260.0);
+        let (_, tall) = split(region, true, Some(10_000.0));
+        assert_eq!(tall.unwrap().top, region.top + 160.0);
+        let (_, short) = split(region, true, Some(1.0));
+        assert_eq!(short.unwrap().height(), 120.0);
+        // If expanded content does not fit, its header still stays available.
+        let small = UiRect::new(0.0, 0.0, 800.0, 250.0);
+        let (editor, panel) = split(small, true, None);
+        assert_eq!(panel.unwrap().height(), HEADER_H);
+        assert_eq!(editor.height(), small.height() - HEADER_H);
+        let tiny = UiRect::new(0.0, 0.0, 800.0, HEADER_H - 1.0);
+        assert_eq!(split(tiny, true, None), (tiny, None));
+    }
+
+    #[test]
+    fn git_panel_collapse_keeps_the_header_and_restores_its_height() {
+        use crate::features::keymap::action::Action;
+        use crate::ui::git::workbench::{HEADER_H, split};
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::session::UiSession;
+
+        let viewport = UiRect::new(0.0, 0.0, 800.0, 600.0);
+        let (_, snapshot, history) = drawer_fixture();
+        let exposed = Arc::new(std::sync::Mutex::new(None));
+        let output = exposed.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(|| {
+                let mut app = AppState::new();
+                history(&mut app);
+                app.git.ui.panel_height = Some(180.0);
+                app.workspace.open_diff(
+                    crate::features::git::diff_document::DiffDocument::from_content(
+                        DiffRequest {
+                            repository_root: "loom".into(),
+                            path: PathBuf::new(),
+                            target: DiffTarget::Changes,
+                        },
+                        DiffContent::Changes(Vec::new()),
+                    ),
+                );
+                app
+            }));
+            let fixture = snapshot.clone();
+            let store = cx.state_with(move || fixture);
+            *output.lock().unwrap() = Some((state.clone(), store.clone()));
+            let app = state.get();
+            if !app.git_panel_visible() {
+                return lgui::prelude::group(viewport);
+            }
+            let (_, panel) = split(viewport, app.git.ui.panel_open, app.git.ui.panel_height);
+            crate::ui::git::workbench::render(
+                panel.unwrap(),
+                crate::app::git_view::binding(&state, &store),
+                store.into(),
+                cx.focus_handle(UiId::new("collapse-test-editor")),
+            )
+        });
+        let context = ApplicationContext::empty(Default::default());
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let (state, store) = exposed.lock().unwrap().clone().unwrap();
+        let commits = named(&session, "Commits").unwrap();
+        assert!(state.get().git.ui.panel_open);
+        assert!(commits.top < viewport.bottom - 150.0);
+        assert!(
+            text_nodes(&session)
+                .iter()
+                .any(|line| line.contains("Improve editor behavior"))
+        );
+        assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_some());
+        // Normal editing gets all the editor space and pauses history loading,
+        // without changing the Git panel's remembered expansion or height.
+        let changes = state.get().workspace.active().unwrap();
+        state.update(|app| {
+            app.workspace
+                .open_path("loom/main.rs".into(), "fn main() {}".into());
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(named(&session, "Commits").is_none());
+        assert!(named(&session, "Collapse Git panel").is_none());
+        assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_none());
+        assert!(state.get().git.ui.panel_open);
+        assert_eq!(state.get().git.ui.panel_height, Some(180.0));
+        state.update(|app| app.workspace.set_active(changes));
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(named(&session, "Collapse Git panel").is_some());
+        assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_some());
+        state.update(|app| app.git.ui.panel_resize_offset = Some(2.0));
+        let commits = named(&session, "Commits").unwrap();
+        click(&mut session, &view, viewport, center(commits));
+        assert!(!state.get().git.ui.panel_open);
+        assert_eq!(state.get().git.ui.panel_resize_offset, None);
+        assert_eq!(state.get().git.ui.panel_height, Some(180.0));
+        assert!(named(&session, "Expand Git panel").is_some());
+        assert!(named(&session, "Commits").unwrap().top >= viewport.bottom - HEADER_H);
+        assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_none());
+
+        let stashes = named(&session, "Stashes").unwrap();
+        click(&mut session, &view, viewport, center(stashes));
+        assert_eq!(state.get().git.ui.panel_tab, STASHES);
+        assert!(
+            text_nodes(&session)
+                .iter()
+                .any(|line| line == "WIP: search panel")
+        );
+        let collapse = named(&session, "Collapse Git panel").unwrap();
+        click(&mut session, &view, viewport, center(collapse));
+        let expand = named(&session, "Expand Git panel").unwrap();
+        click(&mut session, &view, viewport, center(expand));
+        assert_eq!(state.get().git.ui.panel_tab, STASHES);
+        assert!(state.get().git.ui.panel_open);
+        assert_eq!(state.get().git.ui.panel_height, Some(180.0));
+
+        state.update(|app| app.apply(Action::ToggleGitPanel));
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(named(&session, "Expand Git panel").is_some());
+        state.update(|app| app.apply(Action::ToggleGitPanel));
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert!(named(&session, "Collapse Git panel").is_some());
+        assert!(
+            text_nodes(&session)
+                .iter()
+                .any(|line| line == "WIP: search panel")
+        );
     }
 
     fn save_drawer_preview(
@@ -1022,7 +862,8 @@ mod panel_virtualization_tests {
         use lgui::session::UiSession;
         use std::sync::Mutex;
         let viewport = UiRect::new(0.0, 0.0, 900.0, 600.0);
-        let drawer = UiRect::new(600.0, 0.0, 900.0, 600.0);
+        let drawer = UiRect::new(600.0, 0.0, 900.0, 300.0);
+        let panel_rect = UiRect::new(600.0, 300.0, 900.0, 600.0);
         let tag = TagInfo {
             name: "releases/v2.0".into(),
             commit: Some("abc0123456789".into()),
@@ -1073,7 +914,7 @@ mod panel_virtualization_tests {
             let viewport = cx.viewport();
             let state = cx.state_with(|| {
                 let mut app = GitPanelState::default();
-                app.ui.collapsed_sections.remove(&TAGS);
+                app.ui.select_panel_tab(TAGS);
                 app
             });
             *output.lock().unwrap() = Some(state.clone());
@@ -1102,11 +943,17 @@ mod panel_virtualization_tests {
             });
             let mut root = panel(viewport, VisualStyle::filled(theme::c().bg)).child(render(
                 drawer,
-                binding,
+                binding.clone(),
                 store.clone().into(),
                 cx.focus_handle(UiId::new("tag-hover-editor")),
                 cx.focus_handle(UiId::new("tag-hover-commit")),
                 UiId::new("tag-hover-commit"),
+            ));
+            root = root.child(crate::ui::git::workbench::render(
+                panel_rect,
+                binding.clone(),
+                store.clone().into(),
+                cx.focus_handle(UiId::new("tag-hover-editor")),
             ));
             if let Some(card) = tag_card::render(viewport, &state.get(), &repository) {
                 root = root.child(card);
@@ -1224,7 +1071,7 @@ mod panel_virtualization_tests {
         let view: AppView = Arc::new(move |cx| {
             let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
-                app.git.ui.collapsed_sections.remove(&TAGS);
+                app.git.ui.select_panel_tab(TAGS);
                 app.git.model.set_history(GitHistory {
                     repository: "repo".into(),
                     head: Some("abc00000".into()),
@@ -1314,13 +1161,24 @@ mod panel_virtualization_tests {
                 }
             });
             let mut root = render(
-                viewport,
+                UiRect::new(0.0, 0.0, viewport.right, viewport.height() / 2.0),
                 binding.clone(),
                 store.clone().into(),
                 focus.clone(),
                 cx.focus_handle(UiId::new("tag-menu-commit")),
                 UiId::new("tag-menu-commit"),
-            );
+            )
+            .child(crate::ui::git::workbench::render(
+                UiRect::new(
+                    0.0,
+                    viewport.height() / 2.0,
+                    viewport.right,
+                    viewport.bottom,
+                ),
+                binding.clone(),
+                store.clone().into(),
+                focus.clone(),
+            ));
             if let Some(picker) = state.get().git.ui.branch_picker {
                 root = root.child(crate::ui::git::branch_picker::render(
                     viewport,
@@ -1497,9 +1355,7 @@ mod panel_virtualization_tests {
             *requests.lock().unwrap(),
             vec![("create".into(), "repo".into(), "releases/v2.0".into())]
         );
-        state.update(|app| {
-            app.git.ui.collapsed_sections.remove(&HISTORY);
-        });
+        state.update(|app| app.git.ui.select_panel_tab(HISTORY));
         session.render_view(&view, viewport, UiScale::ONE);
         click(&mut session, "Earlier change", PointerButton::Right);
         assert!(
@@ -1537,6 +1393,8 @@ mod panel_virtualization_tests {
             &("create".into(), "repo".into(), "releases/previous".into())
         );
         assert_eq!(requests.lock().unwrap().len(), 2);
+        state.update(|app| app.git.ui.select_panel_tab(TAGS));
+        session.render_view(&view, viewport, UiScale::ONE);
         click(&mut session, "Tag: v1.0", PointerButton::Right);
         assert!(
             matches!(state.get().git.ui.menu.unwrap().target, GitMenuTarget::Tags { name, .. } if name == "v1.0")

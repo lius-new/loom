@@ -439,15 +439,30 @@
       "migrated_in": "R6.3",
       "from": "git_details_scroll"
     },
-    "details_height": {
+    "panel_open": {
       "owner": "ui/git/state",
-      "migrated_in": "Git drawer details resizing",
-      "reason": "Keep the user-selected height of the drawer details area"
+      "migrated_in": "Git panel",
+      "reason": "Expand the Git panel content while retaining its bottom header"
     },
-    "details_resize_offset": {
+    "panel_tab": {
       "owner": "ui/git/state",
-      "migrated_in": "Git drawer details resizing",
-      "reason": "Track the pointer offset while dragging the drawer details divider"
+      "migrated_in": "Git panel",
+      "reason": "Remember which of history, stashes, worktrees and tags the Git panel lists"
+    },
+    "panel_height": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git panel",
+      "reason": "Keep the user-selected height of the Git panel"
+    },
+    "panel_tab_scroll": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git panel header overflow",
+      "reason": "Scroll Git tabs within their viewport while keeping the collapse button fixed"
+    },
+    "panel_resize_offset": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git panel",
+      "reason": "Track the pointer offset while dragging the Git panel's top edge"
     },
     "scrollbar_dragging": {
       "owner": "ui/git/state",

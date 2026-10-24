@@ -32,8 +32,8 @@ pub(crate) fn poll_target(app: &AppState) -> PollTarget {
     target
 }
 
-/// The repository and HEAD whose history Source Control shows, while the
-/// drawer and its history section are open.
+/// The active repository's history, only while a Git diff and its Commits
+/// panel are visible. Remembered expansion in an ordinary editor does no work.
 pub(crate) fn history_key(
     app: &AppState,
     store: &GitStoreSnapshot,
@@ -41,7 +41,7 @@ pub(crate) fn history_key(
     store
         .active()
         .filter(|_| {
-            app.source_control.visible
+            app.git_panel_visible()
                 && !app
                     .git
                     .ui
