@@ -418,8 +418,7 @@ pub(crate) fn render(
         let slot = UiRect::new(list.left, top, list.right, top + ROW_H);
         content.push(
             panel(slot, VisualStyle::filled(theme::c().sidebar))
-                .child(build(rows[index].clone(), slot))
-                .into(),
+                .child(build(rows[index].clone(), slot)),
         );
     }
     panel(rect, VisualStyle::default())
@@ -444,7 +443,6 @@ pub(crate) fn render(
             ScrollRegion::Navigator,
         ))
         .children(title)
-        .into()
 }
 
 /// A selectable row: its background follows the selection and the pointer.
@@ -751,6 +749,157 @@ fn folder_row(
     ))
 }
 
+/// A group title, with the button that creates a new member of the group.
+fn heading_row(
+    rect: UiRect,
+    title: &'static str,
+    create: Option<Create>,
+    repository: &RepositorySnapshot,
+    tag_target: Option<&str>,
+    state: &Binding,
+    store: &Snapshot,
+) -> Element {
+    let mut heading = panel(rect, VisualStyle::default()).child(text(
+        UiRect::new(rect.left + 14.0, rect.top, rect.right - 30.0, rect.bottom),
+        title,
+        theme::mono(theme::c().text_ghost, theme::SMALL),
+    ));
+    let Some(create) = create else {
+        return heading;
+    };
+    let idle = store.get().operation.is_none();
+    let (name, enabled) = match create {
+        Create::Branch => ("New Branch or Worktree", idle),
+        Create::Tag => ("New Tag at Selected Commit", idle && tag_target.is_some()),
+        Create::Stash => ("Stash Changes", idle && !repository.files.is_empty()),
+    };
+    let button = UiRect::new(
+        rect.right - 26.0,
+        rect.top + 2.0,
+        rect.right - 6.0,
+        rect.bottom - 2.0,
+    );
+    let (state, store) = (state.clone(), store.clone());
+    let root = repository.worktree_root.clone();
+    let target = tag_target.map(str::to_owned);
+    let mut semantics = Semantics::new(SemanticRole::Button).name(name);
+    semantics.state.disabled = !enabled;
+    heading = heading.child(
+        Element::new(move |cx| {
+            let hovered = enabled && cx.context.interaction_flags(&cx.id).hovered;
+            UiElement::panel(
+                cx.id,
+                button,
+                if hovered {
+                    VisualStyle::filled(theme::c().surface).radius(3.0)
+                } else {
+                    VisualStyle::default().radius(3.0)
+                },
+            )
+            .children(cx.children)
+        })
+        .key(format!("git-history-create-{title}"))
+        .event_policy(EventPolicy::INTERACTIVE)
+        .semantics(semantics)
+        .cursor(if enabled {
+            CursorIcon::Pointer
+        } else {
+            CursorIcon::Default
+        })
+        .on_click(move || {
+            if !enabled {
+                return;
+            }
+            match create {
+                Create::Branch => {
+                    crate::ui::git::branch_picker::open(&state, &store, rect.left);
+                }
+                Create::Tag => {
+                    if let Some(target) = &target {
+                        state.dispatch(Command::RequestCreateTag {
+                            root: root.clone(),
+                            branch: None,
+                            target: target.clone(),
+                        });
+                    }
+                }
+                Create::Stash => {
+                    state.dispatch(Command::StashAll);
+                }
+            }
+        })
+        .child(crate::ui::drawer::drawer_icon(
+            UiId::owned(format!("git-history-create-icon-{title}")),
+            "plus",
+            theme::icon_rect(button),
+            if enabled {
+                theme::c().text_muted
+            } else {
+                theme::c().text_ghost
+            },
+        )),
+    );
+    heading
+}
+
+/// The icon strip that picks which kind of reference the navigator lists.
+fn rail(rect: UiRect, view: NavView, counts: [usize; 3], state: &Binding) -> Element {
+    let views = [
+        (NavView::Branches, "git-branch", "Branches"),
+        (NavView::Tags, "git-ref-tag", "Tags"),
+        (NavView::Stashes, "git-stash", "Stashes"),
+    ];
+    let mut rail = panel(rect, VisualStyle::default());
+    for (index, ((nav, icon, name), count)) in views.into_iter().zip(counts).enumerate() {
+        let selected = nav == view;
+        let top = rect.top + PAD + index as f32 * 32.0;
+        let button = UiRect::new(rect.left + 3.0, top, rect.right - 3.0, top + 28.0);
+        let color = if selected {
+            theme::c().accent
+        } else {
+            theme::c().text_muted
+        };
+        let click_state = state.clone();
+        let mut semantics = Semantics::new(SemanticRole::Button).name(format!("{name} ({count})"));
+        semantics.state.selected = selected;
+        rail = rail.child(
+            Element::new(move |cx| {
+                let hovered = cx.context.interaction_flags(&cx.id).hovered;
+                let fill = if selected {
+                    VisualStyle::filled(theme::c().active_line).radius(4.0)
+                } else if hovered {
+                    VisualStyle::filled(theme::c().surface).radius(4.0)
+                } else {
+                    VisualStyle::default().radius(4.0)
+                };
+                UiElement::panel(cx.id, button, fill).children(cx.children)
+            })
+            .key(format!("git-history-nav-{name}"))
+            .event_policy(EventPolicy::INTERACTIVE)
+            .semantics(semantics)
+            .cursor(CursorIcon::Pointer)
+            .on_click(move || {
+                click_state.update(|app| {
+                    app.ui.history_nav = nav;
+                    app.ui.history_branch_scroll = 0.0;
+                });
+            })
+            .child(crate::ui::drawer::drawer_icon(
+                UiId::owned(format!("git-history-nav-icon-{name}")),
+                icon,
+                theme::icon_rect(UiRect::new(
+                    button.left,
+                    button.top,
+                    button.right,
+                    button.bottom,
+                )),
+                color,
+            )),
+        );
+    }
+    rail
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -910,155 +1059,4 @@ mod tests {
             ));
         }
     }
-}
-
-/// A group title, with the button that creates a new member of the group.
-fn heading_row(
-    rect: UiRect,
-    title: &'static str,
-    create: Option<Create>,
-    repository: &RepositorySnapshot,
-    tag_target: Option<&str>,
-    state: &Binding,
-    store: &Snapshot,
-) -> Element {
-    let mut heading = panel(rect, VisualStyle::default()).child(text(
-        UiRect::new(rect.left + 14.0, rect.top, rect.right - 30.0, rect.bottom),
-        title,
-        theme::mono(theme::c().text_ghost, theme::SMALL),
-    ));
-    let Some(create) = create else {
-        return heading.into();
-    };
-    let idle = store.get().operation.is_none();
-    let (name, enabled) = match create {
-        Create::Branch => ("New Branch or Worktree", idle),
-        Create::Tag => ("New Tag at Selected Commit", idle && tag_target.is_some()),
-        Create::Stash => ("Stash Changes", idle && !repository.files.is_empty()),
-    };
-    let button = UiRect::new(
-        rect.right - 26.0,
-        rect.top + 2.0,
-        rect.right - 6.0,
-        rect.bottom - 2.0,
-    );
-    let (state, store) = (state.clone(), store.clone());
-    let root = repository.worktree_root.clone();
-    let target = tag_target.map(str::to_owned);
-    let mut semantics = Semantics::new(SemanticRole::Button).name(name);
-    semantics.state.disabled = !enabled;
-    heading = heading.child(
-        Element::new(move |cx| {
-            let hovered = enabled && cx.context.interaction_flags(&cx.id).hovered;
-            UiElement::panel(
-                cx.id,
-                button,
-                if hovered {
-                    VisualStyle::filled(theme::c().surface).radius(3.0)
-                } else {
-                    VisualStyle::default().radius(3.0)
-                },
-            )
-            .children(cx.children)
-        })
-        .key(format!("git-history-create-{title}"))
-        .event_policy(EventPolicy::INTERACTIVE)
-        .semantics(semantics)
-        .cursor(if enabled {
-            CursorIcon::Pointer
-        } else {
-            CursorIcon::Default
-        })
-        .on_click(move || {
-            if !enabled {
-                return;
-            }
-            match create {
-                Create::Branch => {
-                    crate::ui::git::branch_picker::open(&state, &store, rect.left);
-                }
-                Create::Tag => {
-                    if let Some(target) = &target {
-                        state.dispatch(Command::RequestCreateTag {
-                            root: root.clone(),
-                            branch: None,
-                            target: target.clone(),
-                        });
-                    }
-                }
-                Create::Stash => {
-                    state.dispatch(Command::StashAll);
-                }
-            }
-        })
-        .child(crate::ui::drawer::drawer_icon(
-            UiId::owned(format!("git-history-create-icon-{title}")),
-            "plus",
-            theme::icon_rect(button),
-            if enabled {
-                theme::c().text_muted
-            } else {
-                theme::c().text_ghost
-            },
-        )),
-    );
-    heading.into()
-}
-
-/// The icon strip that picks which kind of reference the navigator lists.
-fn rail(rect: UiRect, view: NavView, counts: [usize; 3], state: &Binding) -> Element {
-    let views = [
-        (NavView::Branches, "git-branch", "Branches"),
-        (NavView::Tags, "git-ref-tag", "Tags"),
-        (NavView::Stashes, "git-stash", "Stashes"),
-    ];
-    let mut rail = panel(rect, VisualStyle::default());
-    for (index, ((nav, icon, name), count)) in views.into_iter().zip(counts).enumerate() {
-        let selected = nav == view;
-        let top = rect.top + PAD + index as f32 * 32.0;
-        let button = UiRect::new(rect.left + 3.0, top, rect.right - 3.0, top + 28.0);
-        let color = if selected {
-            theme::c().accent
-        } else {
-            theme::c().text_muted
-        };
-        let click_state = state.clone();
-        let mut semantics = Semantics::new(SemanticRole::Button).name(format!("{name} ({count})"));
-        semantics.state.selected = selected;
-        rail = rail.child(
-            Element::new(move |cx| {
-                let hovered = cx.context.interaction_flags(&cx.id).hovered;
-                let fill = if selected {
-                    VisualStyle::filled(theme::c().active_line).radius(4.0)
-                } else if hovered {
-                    VisualStyle::filled(theme::c().surface).radius(4.0)
-                } else {
-                    VisualStyle::default().radius(4.0)
-                };
-                UiElement::panel(cx.id, button, fill).children(cx.children)
-            })
-            .key(format!("git-history-nav-{name}"))
-            .event_policy(EventPolicy::INTERACTIVE)
-            .semantics(semantics)
-            .cursor(CursorIcon::Pointer)
-            .on_click(move || {
-                click_state.update(|app| {
-                    app.ui.history_nav = nav;
-                    app.ui.history_branch_scroll = 0.0;
-                });
-            })
-            .child(crate::ui::drawer::drawer_icon(
-                UiId::owned(format!("git-history-nav-icon-{name}")),
-                icon,
-                theme::icon_rect(UiRect::new(
-                    button.left,
-                    button.top,
-                    button.right,
-                    button.bottom,
-                )),
-                color,
-            )),
-        );
-    }
-    rail.into()
 }

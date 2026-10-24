@@ -650,7 +650,6 @@ fn columns_header(rect: UiRect) -> Element {
             theme::mono_right(theme::c().text_ghost, theme::SMALL),
         ))
         .child(crate::ui::components::divider::bottom(rect))
-        .into()
 }
 
 fn empty_row(top: f32, rect: UiRect, message: &str) -> Element {

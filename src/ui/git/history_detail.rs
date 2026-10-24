@@ -524,8 +524,7 @@ fn file_tree(
                 UiRect::new(body.left, slot.top, body.right, slot.bottom),
                 VisualStyle::filled(theme::c().sidebar),
             )
-            .child(build(rows[index].clone(), slot))
-            .into(),
+            .child(build(rows[index].clone(), slot)),
         );
     }
     scroll_region(

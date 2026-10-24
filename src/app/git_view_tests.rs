@@ -85,8 +85,10 @@ mod panel_virtualization_tests {
             features: Default::default(),
             generation: 0,
         };
-        let mut prepared = RepositoryPresentation::default();
-        prepared.dirty_count = paths.len();
+        let mut prepared = RepositoryPresentation {
+            dirty_count: paths.len(),
+            ..Default::default()
+        };
         prepared.sections[UNSTAGED as usize] = paths;
         let snapshot = GitStoreSnapshot {
             repositories: Arc::new([(id, repository)].into_iter().collect()),
@@ -139,13 +141,16 @@ mod panel_virtualization_tests {
         (id, snapshot, history)
     }
 
+    /// The state and store a test view exposes to the test.
+    type Exposed = Arc<std::sync::Mutex<Option<(AppContext, State<GitStoreSnapshot>)>>>;
+
     fn render_view(
         viewport: UiRect,
         panel_rect: Option<UiRect>,
         snapshot: GitStoreSnapshot,
         history: impl Fn(&mut AppState) + Send + Sync + 'static,
         prepare: impl Fn(&mut AppState) + Send + Sync + 'static,
-        output: Arc<std::sync::Mutex<Option<(AppContext, State<GitStoreSnapshot>)>>>,
+        output: Exposed,
     ) -> lgui::application::AppView {
         Arc::new(move |cx| {
             let state = AppContext::detached(cx.state_with(|| {
@@ -561,12 +566,7 @@ mod panel_virtualization_tests {
             ("Tags", "v1.0.0"),
             ("Worktrees", "loom-search"),
         ] {
-            let target = named(&session, tab)
-                .or_else(|| {
-                    // Counts are part of the tab's text, not its name.
-                    None
-                })
-                .unwrap_or_else(|| panic!("Missing tab {tab}"));
+            let target = named(&session, tab).unwrap_or_else(|| panic!("Missing tab {tab}"));
             click(&mut session, &view, viewport, center(target));
             assert!(
                 text_nodes(&session)
