@@ -46,12 +46,19 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// Whether `name` is one of the branches in this folder or below it.
+    fn contains(&self, name: &str) -> bool {
+        self.leaves.iter().any(|(_, info)| info.name == name)
+            || self.folders.values().any(|child| child.contains(name))
+    }
+
     fn flatten(
         &self,
         kind: &str,
         path: &str,
         depth: usize,
         collapsed: &HashSet<String>,
+        selected: Option<&str>,
         out: &mut Vec<Entry<'a>>,
     ) {
         for (name, child) in &self.folders {
@@ -68,9 +75,10 @@ impl<'a> Node<'a> {
                 depth,
                 expanded,
                 count: child.count,
+                holds_selection: !expanded && selected.is_some_and(|name| child.contains(name)),
             });
             if expanded {
-                child.flatten(kind, &path, depth + 1, collapsed, out);
+                child.flatten(kind, &path, depth + 1, collapsed, selected, out);
             }
         }
         let mut leaves = self.leaves.clone();
@@ -83,10 +91,14 @@ impl<'a> Node<'a> {
     }
 }
 
-fn tree<'a>(
+/// A top-level `Local` or `Remote` folder, holding its branches as a tree.
+fn group<'a>(
+    key: &str,
+    name: &str,
     kind: &str,
     branches: impl Iterator<Item = &'a BranchInfo>,
     collapsed: &HashSet<String>,
+    selected: Option<&str>,
     out: &mut Vec<Entry<'a>>,
 ) {
     let mut root = Node::default();
@@ -94,7 +106,21 @@ fn tree<'a>(
         let segments = branch.name.split('/').collect::<Vec<_>>();
         root.insert(&segments, branch);
     }
-    root.flatten(kind, "", 0, collapsed, out);
+    if root.count == 0 {
+        return;
+    }
+    let expanded = !collapsed.contains(key);
+    out.push(Entry::Folder {
+        key: key.to_owned(),
+        name: name.to_owned(),
+        depth: 0,
+        expanded,
+        count: root.count,
+        holds_selection: !expanded && selected.is_some_and(|name| root.contains(name)),
+    });
+    if expanded {
+        root.flatten(kind, "", 1, collapsed, selected, out);
+    }
 }
 
 /// What a heading's `+` button creates.
@@ -113,6 +139,7 @@ enum Entry<'a> {
         depth: usize,
         expanded: bool,
         count: usize,
+        holds_selection: bool,
     },
     Branch {
         info: &'a BranchInfo,
@@ -136,23 +163,30 @@ fn entries<'a>(
     branches: &'a [BranchInfo],
     repository: &'a RepositorySnapshot,
     collapsed: &HashSet<String>,
+    selected: Option<&str>,
 ) -> Vec<Entry<'a>> {
     let mut entries = vec![Entry::Heading("BRANCHES", Some(Create::Branch))];
-    tree(
+    group(
+        LOCAL,
+        "Local",
         "b:",
         branches.iter().filter(|branch| !branch.remote),
         collapsed,
+        selected,
         &mut entries,
     );
     // A remote's own HEAD alias repeats its default branch.
-    let remotes = branches
-        .iter()
-        .filter(|branch| branch.remote && !branch.name.ends_with("/HEAD"))
-        .collect::<Vec<_>>();
-    if !remotes.is_empty() {
-        entries.push(Entry::Heading("REMOTES", None));
-        tree("r:", remotes.into_iter(), collapsed, &mut entries);
-    }
+    group(
+        REMOTE,
+        "Remote",
+        "r:",
+        branches
+            .iter()
+            .filter(|branch| branch.remote && !branch.name.ends_with("/HEAD")),
+        collapsed,
+        selected,
+        &mut entries,
+    );
     // Always listed, so a repository without any can still create the first.
     entries.push(Entry::Heading("TAGS", Some(Create::Tag)));
     entries.extend(repository.tags.iter().map(Entry::Tag));
@@ -161,12 +195,16 @@ fn entries<'a>(
     entries
 }
 
+/// Folder keys of the two branch groups; remotes start folded.
+pub(crate) const LOCAL: &str = "g:local";
+pub(crate) const REMOTE: &str = "g:remote";
+
 pub(crate) fn content_height(
     branches: &[BranchInfo],
     repository: &RepositorySnapshot,
     collapsed: &HashSet<String>,
 ) -> f32 {
-    entries(branches, repository, collapsed)
+    entries(branches, repository, collapsed, None)
         .iter()
         .map(Entry::height)
         .sum::<f32>()
@@ -196,7 +234,7 @@ pub(crate) fn render(
     let selected = scope.or(current).filter(|_| stash.is_none());
     let mut layer = clip(rect, 0.0, 0.0);
     let mut y = rect.top + PAD - scroll;
-    for entry in entries(branches, repository, collapsed) {
+    for entry in entries(branches, repository, collapsed, selected) {
         let height = entry.height();
         let row = UiRect::new(rect.left, y, rect.right, y + height);
         y += height;
@@ -213,7 +251,17 @@ pub(crate) fn render(
                 depth,
                 expanded,
                 count,
-            } => folder_row(row, key, name, depth, expanded, count, state),
+                holds_selection,
+            } => folder_row(
+                row,
+                key,
+                name,
+                depth,
+                expanded,
+                count,
+                holds_selection,
+                state,
+            ),
             Entry::Branch {
                 info,
                 depth,
@@ -510,6 +558,7 @@ fn folder_row(
     depth: usize,
     expanded: bool,
     count: usize,
+    holds_selection: bool,
     state: &Binding,
 ) -> Element {
     let inner = inner(rect);
@@ -549,6 +598,17 @@ fn folder_row(
         UiRect::new(left + 18.0, inner.top, inner.right, inner.bottom),
         tabs::ellipsize(&label, inner.right - left - 22.0, theme::SMALL, 400),
         theme::mono(theme::c().text_muted, theme::SMALL),
+    ))
+    // The selected branch is folded away; keep a trace of where it is.
+    .child(text(
+        UiRect::new(
+            inner.right - 16.0,
+            inner.top,
+            inner.right - 4.0,
+            inner.bottom,
+        ),
+        if holds_selection { "\u{25cf}" } else { "" },
+        theme::mono(theme::c().accent, theme::SMALL),
     ))
 }
 
@@ -597,17 +657,26 @@ mod tests {
             branch("fix/deep/x", false),
         ];
         let mut out = Vec::new();
-        tree("b:", branches.iter(), &HashSet::new(), &mut out);
+        group(
+            LOCAL,
+            "Local",
+            "b:",
+            branches.iter(),
+            &HashSet::new(),
+            None,
+            &mut out,
+        );
         assert_eq!(
             shape(&out),
             [
-                "feature/ 2",
-                " a",
-                " b",
-                "fix/ 1",
-                " deep/ 1",
-                "  x",
-                "main"
+                "Local/ 4",
+                " feature/ 2",
+                "  a",
+                "  b",
+                " fix/ 1",
+                "  deep/ 1",
+                "   x",
+                " main"
             ]
         );
     }
@@ -620,8 +689,46 @@ mod tests {
         ];
         let collapsed = HashSet::from(["r:origin/feature".to_owned()]);
         let mut out = Vec::new();
-        tree("r:", branches.iter(), &collapsed, &mut out);
-        assert_eq!(shape(&out), ["origin/ 2", " feature/ 1 (folded)", " main"]);
+        group(
+            REMOTE,
+            "Remote",
+            "r:",
+            branches.iter(),
+            &collapsed,
+            None,
+            &mut out,
+        );
+        assert_eq!(
+            shape(&out),
+            ["Remote/ 2", " origin/ 2", "  feature/ 1 (folded)", "  main"]
+        );
+    }
+
+    #[test]
+    fn a_folded_group_marks_that_it_holds_the_selected_branch() {
+        let branches = [branch("origin/main", true), branch("origin/dev", true)];
+        let collapsed = HashSet::from([REMOTE.to_owned()]);
+        for (selected, marked) in [
+            (Some("origin/dev"), true),
+            (Some("other"), false),
+            (None, false),
+        ] {
+            let mut out = Vec::new();
+            group(
+                REMOTE,
+                "Remote",
+                "r:",
+                branches.iter(),
+                &collapsed,
+                selected,
+                &mut out,
+            );
+            assert_eq!(out.len(), 1);
+            assert!(matches!(
+                out[0],
+                Entry::Folder { holds_selection, .. } if holds_selection == marked
+            ));
+        }
     }
 }
 

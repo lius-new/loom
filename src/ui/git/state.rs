@@ -110,7 +110,7 @@ impl Default for GitUiState {
             history_scope: None,
             history_branch_scroll: 0.0,
             history_stash: None,
-            history_collapsed: HashSet::new(),
+            history_collapsed: HashSet::from([crate::ui::git::history_branches::REMOTE.to_owned()]),
             history_branches_width: None,
             history_detail_width: None,
             history_pane_resize: None,
