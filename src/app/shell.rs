@@ -60,6 +60,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let loading_application = application.as_ref().clone();
     let loading_runtime = runtime.clone();
     let loading_clipboard = application_context.clipboard();
+    let cache_hooks = application_context.memory().cache_hooks();
+    cx.use_effect((), move || {
+        cache_hooks.set_observer(Some(std::sync::Arc::new(
+            crate::infrastructure::render_cache_policy::RenderCachePolicy,
+        )));
+        || {}
+    });
     cx.use_effect((), move || {
         let restore = crate::app::workspace_restore::SessionRestore::new(
             loading_state.clone(),
