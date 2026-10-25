@@ -16,13 +16,16 @@ pub(crate) fn read_directory(directory: &Path) -> Arc<Vec<DirEntry>> {
 
 impl DirectoryPort for ExplorerFilesystem {
     fn read_directory(&self, directory: &Path) -> Arc<Vec<DirEntry>> {
+        let parent: Arc<Path> = Arc::from(directory);
         let mut entries = match fs::read_dir(directory) {
             Ok(iter) => iter
                 .flatten()
-                .map(|entry| DirEntry {
-                    is_dir: entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false),
-                    name: entry.file_name().to_string_lossy().into_owned(),
-                    path: entry.path(),
+                .map(|entry| {
+                    DirEntry::new(
+                        &parent,
+                        entry.file_name().to_string_lossy().into_owned(),
+                        entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false),
+                    )
                 })
                 .collect::<Vec<_>>(),
             Err(_) => Vec::new(),

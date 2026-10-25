@@ -10,7 +10,7 @@
 //! The view reads only the Explorer projection and its frame inputs; anything
 //! touching other features goes out as a [`Command`].
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use lgui::core::{
     CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiEventKind, UiEventPayload,
@@ -46,11 +46,61 @@ struct StickyDirectory {
     is_expanded: bool,
 }
 
-#[derive(Clone, Debug)]
+/// One row for sticky-header lookups. `dir` is the directory the row belongs
+/// to (the directory itself for a directory row), as an index into
+/// [`TreeIndex::dirs`].
+#[derive(Clone, Copy, Debug)]
 struct TreeRowMeta {
     y: f32,
     depth: usize,
-    sticky_path: Vec<StickyDirectory>,
+    dir: u32,
+}
+
+/// A directory recorded while building the tree, linked to its parent so an
+/// ancestry is walked rather than copied for every row.
+#[derive(Clone, Debug)]
+struct DirMeta {
+    directory: StickyDirectory,
+    parent: Option<u32>,
+}
+
+/// Rows and directories seen by one tree pass, as flat vectors.
+#[derive(Clone, Debug, Default)]
+struct TreeIndex {
+    rows: Vec<TreeRowMeta>,
+    dirs: Vec<DirMeta>,
+}
+
+impl TreeIndex {
+    fn push_dir(&mut self, directory: StickyDirectory, parent: Option<u32>) -> u32 {
+        self.dirs.push(DirMeta { directory, parent });
+        (self.dirs.len() - 1) as u32
+    }
+
+    /// Directories from the root down to `dir`.
+    fn chain(&self, dir: u32) -> Vec<u32> {
+        let mut chain = vec![dir];
+        let mut current = dir;
+        while let Some(parent) = self.dirs[current as usize].parent {
+            chain.push(parent);
+            current = parent;
+        }
+        chain.reverse();
+        chain
+    }
+
+    /// Whether `dir` is `ancestor` or inside it.
+    fn within(&self, ancestor: u32, mut dir: u32) -> bool {
+        loop {
+            if dir == ancestor {
+                return true;
+            }
+            match self.dirs[dir as usize].parent {
+                Some(parent) => dir = parent,
+                None => return false,
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -68,7 +118,19 @@ struct TreeContext<'a> {
     input: &'a EditInput,
     rect: UiRect,
     content_right: f32,
+    /// Content-space `y` range whose rows get UI nodes; rows outside it only
+    /// advance the layout cursor.
+    visible: (f32, f32),
 }
+
+impl TreeContext<'_> {
+    fn row_visible(&self, y: f32, height: f32) -> bool {
+        y + height > self.visible.0 && y < self.visible.1
+    }
+}
+
+/// Rows built beyond each viewport edge so short scrolls need no rebuild.
+const OVERSCAN: f32 = ROW_H * 8.0;
 
 pub fn render(
     rect: UiRect,
@@ -134,6 +196,31 @@ pub fn render(
         let max_scroll_x = (content_right - content_rect.right).max(0.0);
         let scroll_x = s.ui.scroll_x.clamp(0.0, max_scroll_x);
 
+        // Only rows near the viewport get UI nodes. The scroll offset is clamped
+        // by the content height, which is known only after a pass, so a pass
+        // built for a stale offset is redone once for the clamped one.
+        let build = |scroll_hint: f32| {
+            let tree = TreeContext {
+                panel: &s,
+                state: &state,
+                frame,
+                commands: &commands,
+                input: &input,
+                rect: content_rect,
+                content_right,
+                visible: (
+                    content_rect.top + scroll_hint - OVERSCAN,
+                    content_rect.bottom + scroll_hint + OVERSCAN,
+                ),
+            };
+            build_roots(&tree, &roots)
+        };
+        let (mut tree_els, mut rows, mut content_bottom) = build(s.ui.scroll);
+        let max_scroll = (content_bottom - content_rect.bottom).max(0.0);
+        let scroll = s.ui.scroll.clamp(0.0, max_scroll);
+        if scroll != s.ui.scroll {
+            (tree_els, rows, content_bottom) = build(scroll);
+        }
         let tree = TreeContext {
             panel: &s,
             state: &state,
@@ -142,75 +229,8 @@ pub fn render(
             input: &input,
             rect: content_rect,
             content_right,
+            visible: (0.0, 0.0),
         };
-        let mut y = content_rect.top;
-        let indent = content_rect.left + INDENT;
-        let mut rows = Vec::new();
-        let mut tree_els = Vec::new();
-
-        // Collect every root and its descendants into one scrollable list.
-        // Each root starts a fresh ancestry; sticky roots stack while nested
-        // directories follow the currently visible project's path.
-        for (root_path, key, root_name) in roots {
-            let is_expanded = s.model.is_expanded(&key);
-            let root = StickyDirectory {
-                key: key.clone(),
-                name: root_name.clone(),
-                depth: 0,
-                source_y: y,
-                is_expanded,
-            };
-            let mut path = vec![root];
-            rows.push(TreeRowMeta {
-                y,
-                depth: 0,
-                sticky_path: path.clone(),
-            });
-            if s.model
-                .rename_request()
-                .is_some_and(|request| request.path == root_path)
-            {
-                tree_els.push(rename_row(&tree, y, indent, is_expanded));
-            } else {
-                tree_els.push(dir_row(
-                    &tree,
-                    &key,
-                    &root_name,
-                    indent,
-                    y,
-                    0.0,
-                    is_expanded,
-                    false,
-                    s.ui.hovered_path.as_deref() == Some(key.as_str()),
-                    theme::c().text_soft,
-                ));
-            }
-            y += ROW_H;
-
-            if s.model
-                .create_request()
-                .is_some_and(|request| request.parent == root_path)
-            {
-                tree_els.push(create_row(&tree, y, indent));
-                y += CREATE_ROW_H;
-            }
-
-            if is_expanded {
-                let children_top = y;
-                let guide_x = indent + TREE_ICON_SIZE / 2.0;
-                tree_els.extend(build_tree(&tree, &key, &mut y, 1, &mut path, &mut rows));
-                if y > children_top {
-                    tree_els.push(panel(
-                        UiRect::new(guide_x, children_top, guide_x + 1.0, y),
-                        VisualStyle::filled(theme::c().border),
-                    ));
-                }
-            }
-        }
-        let content_bottom = y;
-
-        let max_scroll = (content_bottom - content_rect.bottom).max(0.0);
-        let scroll = s.ui.scroll.clamp(0.0, max_scroll);
 
         let st = state.clone();
         bar = bar.on_event(UiEventKind::Wheel, move |_cx, payload| {
@@ -805,72 +825,178 @@ fn file_row(
         ))
 }
 
-/// Renders the cached entries for `dir_key`, advancing `y` by one row per
-/// entry. Child directories render only when expanded.
+/// Collects every root and its descendants into one scrollable list, returning
+/// the visible-window elements, the metadata of all rows and the content
+/// bottom. Each root starts a fresh ancestry; sticky roots stack while nested
+/// directories follow the currently visible project's path.
+fn build_roots(
+    tree: &TreeContext<'_>,
+    roots: &[(PathBuf, String, String)],
+) -> (Vec<Element>, TreeIndex, f32) {
+    let s = tree.panel;
+    let content_rect = tree.rect;
+    let mut y = content_rect.top;
+    let indent = content_rect.left + INDENT;
+    let mut index = TreeIndex::default();
+    let mut tree_els = Vec::new();
+
+    for (root_path, key, root_name) in roots {
+        let is_expanded = s.model.is_expanded(key);
+        let root = index.push_dir(
+            StickyDirectory {
+                key: key.clone(),
+                name: root_name.clone(),
+                depth: 0,
+                source_y: y,
+                is_expanded,
+            },
+            None,
+        );
+        index.rows.push(TreeRowMeta {
+            y,
+            depth: 0,
+            dir: root,
+        });
+        let renaming = s
+            .model
+            .rename_request()
+            .is_some_and(|request| request.path == *root_path);
+        if renaming {
+            tree_els.push(rename_row(tree, y, indent, is_expanded));
+        } else if tree.row_visible(y, ROW_H) {
+            tree_els.push(dir_row(
+                tree,
+                key,
+                root_name,
+                indent,
+                y,
+                0.0,
+                is_expanded,
+                false,
+                s.ui.hovered_path.as_deref() == Some(key.as_str()),
+                theme::c().text_soft,
+            ));
+        }
+        y += ROW_H;
+
+        if s.model
+            .create_request()
+            .is_some_and(|request| request.parent == *root_path)
+        {
+            tree_els.push(create_row(tree, y, indent));
+            y += CREATE_ROW_H;
+        }
+
+        if is_expanded {
+            let children_top = y;
+            let guide_x = indent + TREE_ICON_SIZE / 2.0;
+            let mut dir_path = root_path.clone();
+            tree_els.extend(build_tree(tree, &mut dir_path, &mut y, 1, root, &mut index));
+            if y > children_top && tree.row_visible(children_top, y - children_top) {
+                tree_els.push(panel(
+                    UiRect::new(guide_x, children_top, guide_x + 1.0, y),
+                    VisualStyle::filled(theme::c().border),
+                ));
+            }
+        }
+    }
+    (tree_els, index, y)
+}
+
+/// Renders the cached entries of the directory at `dir_path`, advancing `y` by
+/// one row per entry. Child directories render only when expanded. Rows
+/// outside the tree's visible window advance `y` without creating UI nodes,
+/// and rows below it are not even recorded, so a pass allocates in proportion
+/// to the window and to the rows above it rather than to the whole tree.
+/// `dir_path` is extended and restored in place instead of building a path
+/// per entry. `parent` is the index of the directory being listed.
 fn build_tree(
     tree: &TreeContext<'_>,
-    dir_key: &str,
+    dir_path: &mut PathBuf,
     y: &mut f32,
     depth: usize,
-    path: &mut Vec<StickyDirectory>,
-    rows: &mut Vec<TreeRowMeta>,
+    parent: u32,
+    index: &mut TreeIndex,
 ) -> Vec<Element> {
     let mut els = Vec::new();
     let model = &tree.panel.model;
 
-    let Some(entries) = model.listing(dir_key) else {
+    let Some(entries) = model.listing(&dir_path.to_string_lossy()) else {
         return els;
     };
 
     for entry in entries.iter() {
         let is_dir = entry.is_dir;
-        let name = entry.name.clone();
-        let key = entry.path.to_string_lossy().into_owned();
+        // From here until the `pop` below, `dir_path` is this entry's path.
+        dir_path.push(&entry.name);
         let indent = tree.rect.left + INDENT + depth as f32 * INDENT;
         let renaming = model
             .rename_request()
-            .is_some_and(|request| request.path == entry.path);
+            .is_some_and(|request| request.path == *dir_path);
+        let recorded = *y < tree.visible.1;
+        let visible = tree.row_visible(*y, ROW_H);
 
+        let mut children_parent = parent;
+        let mut is_expanded = false;
         if is_dir {
-            let is_expanded = model.is_expanded(&key);
-            path.push(StickyDirectory {
-                key: key.clone(),
-                name: name.clone(),
-                depth,
-                source_y: *y,
-                is_expanded,
-            });
-            rows.push(TreeRowMeta {
-                y: *y,
-                depth,
-                sticky_path: path.clone(),
-            });
+            is_expanded = model.is_expanded(&dir_path.to_string_lossy());
+            if recorded {
+                children_parent = index.push_dir(
+                    StickyDirectory {
+                        key: dir_path.to_string_lossy().into_owned(),
+                        name: entry.name.clone(),
+                        depth,
+                        source_y: *y,
+                        is_expanded,
+                    },
+                    Some(parent),
+                );
+                index.rows.push(TreeRowMeta {
+                    y: *y,
+                    depth,
+                    dir: children_parent,
+                });
+            }
             if renaming {
                 els.push(rename_row(tree, *y, indent, is_expanded));
-            } else {
+            } else if visible {
+                let directory = &index.dirs[children_parent as usize].directory;
                 els.push(dir_row(
                     tree,
-                    &key,
-                    &name,
+                    &directory.key,
+                    &directory.name,
                     indent,
                     *y,
                     0.0,
                     is_expanded,
                     false,
-                    tree.panel.ui.hovered_path.as_deref() == Some(key.as_str()),
-                    tree_label_color((tree.frame.decorate)(&entry.path), theme::c().text_soft),
+                    tree.panel.ui.hovered_path.as_deref() == Some(directory.key.as_str()),
+                    tree_label_color(
+                        (tree.frame.decorate)(dir_path.as_path()),
+                        theme::c().text_soft,
+                    ),
                 ));
             }
         } else {
-            rows.push(TreeRowMeta {
-                y: *y,
-                depth,
-                sticky_path: path.clone(),
-            });
+            if recorded {
+                index.rows.push(TreeRowMeta {
+                    y: *y,
+                    depth,
+                    dir: parent,
+                });
+            }
             if renaming {
                 els.push(rename_row(tree, *y, indent, false));
-            } else {
-                els.push(file_row(tree, &entry.path, name, &key, indent, *y));
+            } else if visible {
+                let key = dir_path.to_string_lossy().into_owned();
+                els.push(file_row(
+                    tree,
+                    dir_path.as_path(),
+                    entry.name.clone(),
+                    &key,
+                    indent,
+                    *y,
+                ));
             }
         }
 
@@ -879,28 +1005,33 @@ fn build_tree(
         if is_dir
             && model
                 .create_request()
-                .is_some_and(|request| request.parent.as_path() == entry.path.as_path())
+                .is_some_and(|request| request.parent == *dir_path)
         {
             els.push(create_row(tree, *y, indent));
             *y += CREATE_ROW_H;
         }
 
-        if is_dir && model.is_expanded(&key) {
+        if is_dir && is_expanded {
             // Indent guide under an expanded folder's icon: spans from the
             // folder row bottom to the bottom of its last child.
             let children_top = *y;
             let guide_x = indent + TREE_ICON_SIZE / 2.0;
-            els.extend(build_tree(tree, &key, y, depth + 1, path, rows));
-            if *y > children_top {
+            els.extend(build_tree(
+                tree,
+                dir_path,
+                y,
+                depth + 1,
+                children_parent,
+                index,
+            ));
+            if *y > children_top && tree.row_visible(children_top, *y - children_top) {
                 els.push(panel(
                     UiRect::new(guide_x, children_top, guide_x + 1.0, *y),
                     VisualStyle::filled(theme::c().border),
                 ));
             }
         }
-        if is_dir {
-            path.pop();
-        }
+        dir_path.pop();
     }
 
     els
@@ -912,29 +1043,32 @@ fn build_tree(
 fn tree_content_right(root_key: &str, root_name: &str, s: &ExplorerPanelState, left: f32) -> f32 {
     let mut right = row_content_right(left, 0, root_name);
     if s.model.is_expanded(root_key) {
-        extend_content_right(root_key, 1, s, left, &mut right);
+        extend_content_right(&mut PathBuf::from(root_key), 1, s, left, &mut right);
     }
     right
 }
 
+/// Walks the expanded directories below `dir_path`, extending and restoring
+/// the one path buffer rather than allocating a path per directory.
 fn extend_content_right(
-    dir_key: &str,
+    dir_path: &mut PathBuf,
     depth: usize,
     s: &ExplorerPanelState,
     left: f32,
     right: &mut f32,
 ) {
-    let Some(entries) = s.model.listing(dir_key) else {
+    let Some(entries) = s.model.listing(&dir_path.to_string_lossy()) else {
         return;
     };
 
     for entry in entries.iter() {
         *right = right.max(row_content_right(left, depth, &entry.name));
         if entry.is_dir {
-            let key = entry.path.to_string_lossy();
-            if s.model.is_expanded(key.as_ref()) {
-                extend_content_right(key.as_ref(), depth + 1, s, left, right);
+            dir_path.push(&entry.name);
+            if s.model.is_expanded(&dir_path.to_string_lossy()) {
+                extend_content_right(dir_path, depth + 1, s, left, right);
             }
+            dir_path.pop();
         }
     }
 }
@@ -946,46 +1080,41 @@ fn row_content_right(left: f32, depth: usize, name: &str) -> f32 {
 
 /// Keep scrolled project roots in stacked slots, followed by the current
 /// project's directory ancestry. Sibling directories still replace one another.
-fn sticky_rows(rows: &[TreeRowMeta], viewport_top: f32, scroll: f32) -> Vec<StickyRow> {
+fn sticky_rows(index: &TreeIndex, viewport_top: f32, scroll: f32) -> Vec<StickyRow> {
     if scroll <= 0.0 {
         return Vec::new();
     }
 
     let mut pinned = Vec::new();
-    let mut active_path = Vec::new();
-    for row in rows {
+    let mut active: Option<u32> = None;
+    for row in &index.rows {
         if row.depth == 0 {
             let slot_top = viewport_top + pinned.len() as f32 * ROW_H;
             if row.y - scroll > slot_top {
                 break;
             }
-            if let Some(directory) = row.sticky_path.first() {
-                pinned.push(StickyRow {
-                    directory: directory.clone(),
-                    top: slot_top,
-                });
-                active_path = row.sticky_path.clone();
-            }
+            pinned.push(StickyRow {
+                directory: index.dirs[row.dir as usize].directory.clone(),
+                top: slot_top,
+            });
+            active = Some(row.dir);
             continue;
         }
         let slot_top = viewport_top + (pinned.len().saturating_sub(1) + row.depth) as f32 * ROW_H;
         if row.y - scroll <= slot_top {
-            active_path = row.sticky_path.clone();
+            active = Some(row.dir);
         }
     }
 
     let previous_roots = pinned.len().saturating_sub(1);
-    pinned.extend(active_path.into_iter().skip(1).map(|directory| {
+    let chain = active.map(|dir| index.chain(dir)).unwrap_or_default();
+    pinned.extend(chain.into_iter().skip(1).map(|dir| {
+        let directory = index.dirs[dir as usize].directory.clone();
         let slot_top = viewport_top + (previous_roots + directory.depth) as f32 * ROW_H;
-        let boundary_top = rows
+        let boundary_top = index
+            .rows
             .iter()
-            .find(|row| {
-                row.y > directory.source_y
-                    && !row
-                        .sticky_path
-                        .iter()
-                        .any(|ancestor| ancestor.key == directory.key)
-            })
+            .find(|row| row.y > directory.source_y && !index.within(dir, row.dir))
             .map(|row| row.y - scroll - ROW_H)
             .unwrap_or(slot_top);
         StickyRow {
@@ -1133,24 +1262,47 @@ mod tests {
         }
     }
 
-    fn row(y: f32, depth: usize, sticky_path: &[StickyDirectory]) -> TreeRowMeta {
-        TreeRowMeta {
-            y,
-            depth,
-            sticky_path: sticky_path.to_vec(),
+    type TestRow = (f32, usize, Vec<StickyDirectory>);
+
+    fn row(y: f32, depth: usize, path: &[StickyDirectory]) -> TestRow {
+        (y, depth, path.to_vec())
+    }
+
+    /// Builds an index from rows given with their full directory ancestry,
+    /// sharing a directory between rows by its key.
+    fn index_of(rows: Vec<TestRow>) -> TreeIndex {
+        let mut index = TreeIndex::default();
+        for (y, depth, path) in rows {
+            let mut parent = None;
+            for directory in &path {
+                let existing = index
+                    .dirs
+                    .iter()
+                    .position(|dir| dir.directory.key == directory.key);
+                parent = Some(match existing {
+                    Some(position) => position as u32,
+                    None => index.push_dir(directory.clone(), parent),
+                });
+            }
+            index.rows.push(TreeRowMeta {
+                y,
+                depth,
+                dir: parent.unwrap(),
+            });
         }
+        index
     }
 
     #[test]
     fn pins_the_current_directory_and_its_ancestors() {
         let root = directory("root", 0, 8.0);
         let src = directory("src", 1, 28.0);
-        let rows = vec![
+        let rows = index_of(vec![
             row(8.0, 0, std::slice::from_ref(&root)),
             row(28.0, 1, &[root.clone(), src.clone()]),
             row(48.0, 2, &[root.clone(), src.clone()]),
             row(68.0, 2, &[root.clone(), src.clone()]),
-        ];
+        ]);
 
         let sticky = sticky_rows(&rows, 0.0, 48.0);
 
@@ -1166,13 +1318,13 @@ mod tests {
         let root = directory("root", 0, 8.0);
         let src = directory("src", 1, 28.0);
         let tests = directory("tests", 1, 88.0);
-        let rows = vec![
+        let rows = index_of(vec![
             row(8.0, 0, std::slice::from_ref(&root)),
             row(28.0, 1, &[root.clone(), src.clone()]),
             row(48.0, 2, &[root.clone(), src.clone()]),
             row(68.0, 2, &[root.clone(), src.clone()]),
             row(88.0, 1, &[root.clone(), tests.clone()]),
-        ];
+        ]);
 
         let being_pushed = sticky_rows(&rows, 0.0, 55.0);
         assert_eq!(being_pushed[1].directory.key, "src");
@@ -1186,7 +1338,7 @@ mod tests {
     #[test]
     fn waits_until_a_directory_reaches_its_sticky_slot() {
         let root = directory("root", 0, 8.0);
-        let rows = vec![row(8.0, 0, std::slice::from_ref(&root))];
+        let rows = index_of(vec![row(8.0, 0, std::slice::from_ref(&root))]);
 
         assert!(sticky_rows(&rows, 0.0, 7.0).is_empty());
         assert_eq!(sticky_rows(&rows, 0.0, 8.0).len(), 1);
@@ -1199,7 +1351,7 @@ mod tests {
         let second = directory("second", 0, 88.0);
         let lib = directory("second/lib", 1, 108.0);
         let third = directory("third", 0, 168.0);
-        let rows = vec![
+        let rows = index_of(vec![
             row(8.0, 0, std::slice::from_ref(&first)),
             row(28.0, 1, &[first.clone(), src.clone()]),
             row(48.0, 2, &[first.clone(), src.clone()]),
@@ -1209,7 +1361,7 @@ mod tests {
             row(128.0, 2, &[second.clone(), lib.clone()]),
             row(148.0, 2, &[second.clone(), lib.clone()]),
             row(168.0, 0, std::slice::from_ref(&third)),
-        ];
+        ]);
         let signature = |scroll| {
             sticky_rows(&rows, 0.0, scroll)
                 .into_iter()
@@ -1241,27 +1393,28 @@ mod tests {
     #[test]
     fn horizontal_range_uses_only_visible_tree_rows() {
         let root_key = "root";
-        let nested_key = "root/src";
+        let nested = Path::new("root").join("src").to_string_lossy().into_owned();
+        let nested_key = nested.as_str();
         let long_name = "a_very_long_nested_file_name.rs";
         let mut state = ExplorerPanelState::default();
         state.model.set_expanded(root_key, true);
         state.model.set_expanded(nested_key, true);
         state.model.insert_listing(
             root_key.to_string(),
-            vec![DirEntry {
-                name: "src".to_string(),
-                path: nested_key.into(),
-                is_dir: true,
-            }]
+            vec![DirEntry::new(
+                &std::sync::Arc::from(Path::new(root_key)),
+                "src".to_string(),
+                true,
+            )]
             .into(),
         );
         state.model.insert_listing(
             nested_key.to_string(),
-            vec![DirEntry {
-                name: long_name.to_string(),
-                path: format!("{nested_key}/{long_name}").into(),
-                is_dir: false,
-            }]
+            vec![DirEntry::new(
+                &std::sync::Arc::from(Path::new(nested_key)),
+                long_name.to_string(),
+                false,
+            )]
             .into(),
         );
 

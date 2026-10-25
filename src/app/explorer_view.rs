@@ -278,6 +278,208 @@ mod tests {
 
     const VIEWPORT: UiRect = UiRect::new(0.0, 0.0, 800.0, 600.0);
 
+    #[cfg(windows)]
+    fn process_memory() -> (usize, usize, usize, usize) {
+        #[repr(C)]
+        struct Counters {
+            size: u32,
+            faults: u32,
+            values: [usize; 9],
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn K32GetProcessMemoryInfo(
+                process: windows_sys::Win32::Foundation::HANDLE,
+                counters: *mut Counters,
+                size: u32,
+            ) -> i32;
+        }
+        let mut counters = Counters {
+            size: std::mem::size_of::<Counters>() as u32,
+            faults: 0,
+            values: [0; 9],
+        };
+        unsafe {
+            assert_ne!(
+                K32GetProcessMemoryInfo(
+                    windows_sys::Win32::System::Threading::GetCurrentProcess(),
+                    &mut counters,
+                    std::mem::size_of::<Counters>() as u32,
+                ),
+                0,
+            );
+        }
+        use windows_sys::Win32::System::Memory::{GetProcessHeaps, HEAP_SUMMARY, HeapSummary};
+        let mut allocated = 0;
+        let mut committed = 0;
+        unsafe {
+            let mut heaps =
+                vec![std::ptr::null_mut(); GetProcessHeaps(0, std::ptr::null_mut()) as usize];
+            let count = GetProcessHeaps(heaps.len() as u32, heaps.as_mut_ptr()) as usize;
+            assert!(count <= heaps.len());
+            for heap in heaps.into_iter().take(count) {
+                let mut summary = HEAP_SUMMARY {
+                    cb: std::mem::size_of::<HEAP_SUMMARY>() as u32,
+                    ..Default::default()
+                };
+                if HeapSummary(heap, 0, &mut summary) != 0 {
+                    allocated += summary.cbAllocated;
+                    committed += summary.cbCommitted;
+                }
+            }
+        }
+        (counters.values[1], counters.values[8], allocated, committed)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "isolated Explorer expansion/collapse memory investigation"]
+    fn explorer_memory_profile() {
+        use crate::features::explorer::DirEntry;
+        use lgui::core::PhysicalRect;
+        use lgui::icons::IconRegistration;
+        use lgui::render_skia::SkiaSoftwareSurface;
+        use lgui::renderer::{FrameInfo, FrameReason};
+
+        fn report(stage: &str, h: &Harness, surface: &SkiaSoftwareSurface) {
+            let (working, private, heap_allocated, heap_committed) = process_memory();
+            let (components, host) = lgui::backend::session_memory_usage(&h.session);
+            let app = h.state.get();
+            let listing_bytes = app
+                .explorer
+                .model
+                .listings()
+                .map(|(key, entries)| {
+                    key.capacity()
+                        + entries.capacity() * std::mem::size_of::<DirEntry>()
+                        + entries
+                            .iter()
+                            .map(|entry| entry.name.capacity())
+                            .sum::<usize>()
+                })
+                .sum::<usize>();
+            println!(
+                "EXPLORER_MEMORY {}",
+                serde_json::json!({
+                    "stage": stage, "working": working, "private": private,
+                    "heap_allocated": heap_allocated, "heap_committed": heap_committed,
+                    "nodes": h.session.tree().nodes().len(),
+                    "tree_bytes": h.session.tree().estimated_bytes(),
+                    "components": format!("{components:?}"), "host": format!("{host:?}"),
+                    "listing_bytes": listing_bytes,
+                    "renderer": format!("{:?}", surface.cache_stats()),
+                })
+            );
+        }
+        fn draw(h: &Harness, surface: &mut SkiaSoftwareSurface) {
+            let frame = FrameInfo::new(
+                PhysicalRect::new(0, 0, 800, 600),
+                &[],
+                UiScale::ONE,
+                FrameReason::SceneChange,
+                true,
+            );
+            lgui::assets::backend::with_render_resources(
+                &h.services.application,
+                lgui::RenderResources::new(),
+                || {
+                    surface.draw(&h.session.tree().scene(), &frame).unwrap();
+                },
+            );
+        }
+        let roots = [PathBuf::from("project-a"), PathBuf::from("project-b")];
+        let mut app = AppState::new();
+        app.explorer.model.restore(roots.to_vec(), vec![]);
+        for root in &roots {
+            app.explorer.model.insert_listing(
+                root.to_string_lossy().into_owned(),
+                Arc::new(
+                    (0..50)
+                        .map(|i| {
+                            DirEntry::new(
+                                &Arc::from(root.as_path()),
+                                format!("directory-{i:03}"),
+                                true,
+                            )
+                        })
+                        .collect(),
+                ),
+            );
+            app.explorer
+                .model
+                .set_expanded(&root.to_string_lossy(), true);
+        }
+        let mut h = harness(app);
+        h.services
+            .application
+            .resources()
+            .provide(IconRegistration(Arc::new(crate::app::svg_icons())));
+        // Preserve the production's unbounded rendering policy during diagnosis.
+        let mut surface = SkiaSoftwareSurface::new(usize::MAX);
+        draw(&h, &mut surface);
+        report("initial", &h, &surface);
+        for directory in 0..100 {
+            let parent = roots[directory / 50].join(format!("directory-{:03}", directory % 50));
+            h.state.update(|app| {
+                app.explorer.model.insert_listing(
+                    parent.to_string_lossy().into_owned(),
+                    Arc::new(
+                        (0..40)
+                            .map(|i| {
+                                DirEntry::new(
+                                    &Arc::from(parent.as_path()),
+                                    format!("source-file-{i:03}.rs"),
+                                    false,
+                                )
+                            })
+                            .collect(),
+                    ),
+                );
+                app.explorer
+                    .model
+                    .set_expanded(&parent.to_string_lossy(), true);
+            });
+            h.render();
+            draw(&h, &mut surface);
+            if [9, 24, 49, 99].contains(&directory) {
+                report(&format!("expanded-{}", directory + 1), &h, &surface);
+            }
+        }
+        for cycle in 0..3 {
+            for expanded in [false, true] {
+                h.state.update(|app| {
+                    for root in &roots {
+                        app.explorer
+                            .model
+                            .set_expanded(&root.to_string_lossy(), expanded);
+                    }
+                });
+                h.render();
+                draw(&h, &mut surface);
+                report(&format!("cycle-{cycle}-expanded-{expanded}"), &h, &surface);
+            }
+        }
+        surface.trim(lgui::renderer::MemoryPressure::Critical);
+        report("renderer-trimmed", &h, &surface);
+        h.state.update(|app| {
+            for root in &roots {
+                app.explorer
+                    .model
+                    .set_expanded(&root.to_string_lossy(), false);
+            }
+        });
+        h.render();
+        draw(&h, &mut surface);
+        report("collapsed-before-host-clear", &h, &surface);
+        h.session.clear_host();
+        h.render();
+        draw(&h, &mut surface);
+        report("collapsed-after-host-clear", &h, &surface);
+        drop(surface);
+        drop(h);
+        println!("EXPLORER_MEMORY dropped {:?}", process_memory());
+    }
+
     /// A live root state plus the services the Explorer commands use. Each
     /// frame renders the real drawer and, when open, its context menu.
     fn harness(app: AppState) -> Harness {
@@ -531,10 +733,12 @@ mod tests {
             app.explorer.model.insert_listing(
                 key,
                 (0..60)
-                    .map(|index| DirEntry {
-                        name: format!("file-{index}.rs"),
-                        path: root.join(format!("file-{index}.rs")),
-                        is_dir: false,
+                    .map(|index| {
+                        DirEntry::new(
+                            &Arc::from(root.as_path()),
+                            format!("file-{index}.rs"),
+                            false,
+                        )
                     })
                     .collect::<Vec<_>>()
                     .into(),

@@ -83,6 +83,27 @@ impl TreeCache {
             .insert(key(directory), port.read_directory(directory));
     }
 
+    /// Read `directory`, then every directory below it still marked expanded,
+    /// so reopening a collapsed branch restores its nested expansion.
+    pub fn load_with_expanded_below(&mut self, port: &dyn DirectoryPort, directory: &Path) {
+        let entries = port.read_directory(directory);
+        let nested = entries
+            .iter()
+            .filter(|entry| entry.is_dir && self.expanded.contains(&key(&entry.path())))
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        self.listings.insert(key(directory), entries);
+        for child in nested {
+            self.load_with_expanded_below(port, &child);
+        }
+    }
+
+    /// Drop the cached listings at or below `path`, keeping expansion state.
+    pub fn unload_under(&mut self, path: &Path) {
+        self.listings
+            .retain(|cached, _| !Path::new(cached).starts_with(path));
+    }
+
     /// Drop listings and expansion at or below `path`.
     pub fn remove_under(&mut self, path: &Path) {
         self.listings
@@ -123,11 +144,11 @@ impl TreeCache {
     ) -> Option<usize> {
         let entries = self.listings.get(directory_key)?;
         for entry in entries.iter() {
-            if entry.path == target {
+            if entry.path() == target {
                 return Some(*index);
             }
             *index += 1;
-            let key = key(&entry.path);
+            let key = key(&entry.path());
             if entry.is_dir
                 && self.expanded.contains(&key)
                 && let Some(found) = self.visible_descendant_index(&key, target, index)

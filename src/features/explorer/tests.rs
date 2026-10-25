@@ -33,6 +33,7 @@ impl MemoryDirectories {
 
 impl DirectoryPort for MemoryDirectories {
     fn read_directory(&self, directory: &Path) -> Arc<Vec<DirEntry>> {
+        let parent: Arc<Path> = Arc::from(directory);
         let mut entries = self
             .directories
             .get(directory)
@@ -40,11 +41,7 @@ impl DirectoryPort for MemoryDirectories {
             .flatten()
             .map(|child| {
                 let name = child.trim_end_matches('/');
-                DirEntry {
-                    name: name.to_owned(),
-                    path: directory.join(name),
-                    is_dir: child.ends_with('/'),
-                }
+                DirEntry::new(&parent, name.to_owned(), child.ends_with('/'))
             })
             .collect::<Vec<_>>();
         tree::sort_entries(&mut entries);
@@ -536,7 +533,7 @@ fn completed_create_expands_every_new_folder() {
 }
 
 #[test]
-fn toggling_a_directory_reads_it_once_and_keeps_it_cached() {
+fn collapsing_a_directory_drops_its_listing_and_reopening_rereads_it() {
     let mut port = MemoryDirectories::default()
         .dir("ws", &["src/"])
         .dir("ws/src", &["main.rs"]);
@@ -547,8 +544,35 @@ fn toggling_a_directory_reads_it_once_and_keeps_it_cached() {
     port = port.dir("ws/src", &["changed.rs"]);
     model.toggle_directory(&port, "ws/src");
     assert!(!model.is_expanded("ws/src"));
+    assert!(model.listing("ws/src").is_none());
     model.toggle_directory(&port, "ws/src");
-    assert_eq!(names_of(&model, "ws/src"), ["main.rs"]);
+    assert_eq!(names_of(&model, "ws/src"), ["changed.rs"]);
+}
+
+#[test]
+fn collapsing_drops_nested_listings_and_reopening_restores_nested_expansion() {
+    let port = MemoryDirectories::default()
+        .dir("ws", &["src/"])
+        .dir("ws/src", &["inner/", "a.rs"])
+        .dir("ws/src/inner", &["deep.rs"]);
+    let mut model = model(&port, &["ws"]);
+    // Keys are built the way listings build them, with the platform separator.
+    let src = Path::new("ws").join("src").to_string_lossy().into_owned();
+    let inner = Path::new("ws")
+        .join("src")
+        .join("inner")
+        .to_string_lossy()
+        .into_owned();
+    model.toggle_directory(&port, &src);
+    model.toggle_directory(&port, &inner);
+
+    model.toggle_directory(&port, &src);
+    assert!(model.listing(&src).is_none());
+    assert!(model.listing(&inner).is_none());
+
+    model.toggle_directory(&port, &src);
+    assert!(model.is_expanded(&inner));
+    assert_eq!(names_of(&model, &inner), ["deep.rs"]);
 }
 
 fn names_of(model: &ExplorerModel, key: &str) -> Vec<String> {

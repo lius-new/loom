@@ -574,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn collapsing_during_preparation_keeps_the_collapse_and_applies_the_listing() {
+    fn collapsing_during_preparation_keeps_the_collapse_and_stays_unloaded() {
         let root = temp_directory("race-collapse");
         let sub = root.join("sub");
         fs::create_dir(&sub).unwrap();
@@ -589,9 +589,9 @@ mod tests {
             .model
             .toggle_directory(&ExplorerFilesystem, &key(&sub));
 
-        assert_eq!(apply_prepared_batch(&mut app, prepared), (true, false));
+        assert_eq!(apply_prepared_batch(&mut app, prepared), (false, false));
         assert!(!app.explorer.model.is_expanded(&key(&sub)));
-        assert_eq!(names(&app, &sub), ["new.txt"]);
+        assert!(app.explorer.model.listing(&key(&sub)).is_none());
         fs::remove_dir_all(root).unwrap();
     }
 

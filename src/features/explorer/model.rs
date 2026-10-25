@@ -206,15 +206,16 @@ impl ExplorerModel {
         }
     }
 
-    /// Expand or collapse a directory row, reading it on first expansion.
+    /// Expand or collapse a directory row. Collapsing drops the cached
+    /// listings below it, so only visible branches stay in memory and under
+    /// refresh; expanding reads them again, restoring nested expansion.
     pub fn toggle_directory(&mut self, port: &dyn DirectoryPort, key: &str) {
         if self.tree.is_expanded(key) {
             self.tree.collapse(key);
+            self.tree.unload_under(Path::new(key));
         } else {
             self.tree.expand(key.to_owned());
-            if !self.tree.is_loaded(key) {
-                self.tree.load(port, Path::new(key));
-            }
+            self.tree.load_with_expanded_below(port, Path::new(key));
         }
     }
 
