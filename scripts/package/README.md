@@ -119,9 +119,11 @@ two macOS targets. Inno Setup and MinGit remain packaging-specific dependencies.
 
 The installer is built with Inno Setup and modelled on Zed's Windows installer
 (`windows/installer.iss`): modern wizard that follows the system light/dark
-mode, English or Simplified Chinese chosen from the system language, a
-destination page, an additional-tasks page and a finish page that can launch
-Loom.
+mode, an English-only interface with no language selection dialog, a welcome
+page explaining the per-user install, a destination page (also shown on upgrades),
+an installation-options page and a finish page that can launch Loom. The options
+page starts installation directly with an Install button; there is no separate
+ready-to-install confirmation page. Silent updates skip these interactive pages.
 
 - `Loom-<version>-windows-x86_64-setup.exe`: per-user install into
   `%LOCALAPPDATA%\Programs\Loom`, no elevation. Tasks, all selected by default:

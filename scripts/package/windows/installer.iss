@@ -9,6 +9,7 @@
 
 #define AppName "Loom"
 #define AppExeName "Loom.exe"
+#define AppLogo AddBackslash(ExtractFileDir(AppIcon)) + "source\app-icon-transparent-256.png"
 
 [Setup]
 ; Never change the AppId: it identifies the installation across upgrades.
@@ -24,6 +25,9 @@ VersionInfoVersion={#VersionQuad}
 VersionInfoProductName={#AppName}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
+; Keep the interactive entry point and destination visible, including upgrades.
+DisableWelcomePage=no
+DisableDirPage=no
 DisableProgramGroupPage=yes
 DisableReadyPage=yes
 PrivilegesRequired=lowest
@@ -36,8 +40,10 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 WizardStyle=modern dynamic
-ShowLanguageDialog=auto
+ShowLanguageDialog=no
 SetupIconFile={#AppIcon}
+WizardImageFile={#AppLogo}
+WizardSmallImageFile={#AppLogo}
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
 OutputDir={#OutputDir}
@@ -51,28 +57,30 @@ ChangesEnvironment=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+[Messages]
+english.WelcomeLabel1=Welcome to the [name] installer
+english.WelcomeLabel2=This will install [name/ver] for the current user.
+english.WizardSelectTasks=Installation options
+english.SelectTasksDesc=Choose shortcuts and Windows integration.
+english.SelectTasksLabel2=Choose the options you want for [name], then click Install.
 
 [CustomMessages]
+english.DesktopIcon=Create a desktop shortcut
 english.StartMenuIcon=Create a Start menu shortcut
-chinesesimplified.StartMenuIcon=创建开始菜单快捷方式
-english.Other=Other:
-chinesesimplified.Other=其他:
-english.AddContextMenuFiles=Add "Open with %1" action to Windows Explorer file context menu
-chinesesimplified.AddContextMenuFiles=将“通过 %1 打开”操作添加到 Windows 资源管理器文件上下文菜单
-english.AddContextMenuFolders=Add "Open with %1" action to Windows Explorer directory context menu
-chinesesimplified.AddContextMenuFolders=将“通过 %1 打开”操作添加到 Windows 资源管理器目录上下文菜单
+english.Shortcuts=Shortcuts:
+english.WindowsIntegration=Windows integration:
+english.AddContextMenuFiles=Add "Open with %1" to file context menus
+english.AddContextMenuFolders=Add "Open with %1" to folder context menus
 english.AddToPath=Add to PATH (requires shell restart)
-chinesesimplified.AddToPath=添加到 PATH (重启终端后生效)
 english.OpenWith=Open with %1
-chinesesimplified.OpenWith=通过 %1 打开
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "startmenuicon"; Description: "{cm:StartMenuIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "addcontextmenufiles"; Description: "{cm:AddContextMenuFiles,{#AppName}}"; GroupDescription: "{cm:Other}"
-Name: "addcontextmenufolders"; Description: "{cm:AddContextMenuFolders,{#AppName}}"; GroupDescription: "{cm:Other}"
-Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:Other}"
+Name: "desktopicon"; Description: "{cm:DesktopIcon}"; GroupDescription: "{cm:Shortcuts}"
+Name: "startmenuicon"; Description: "{cm:StartMenuIcon}"; GroupDescription: "{cm:Shortcuts}"
+Name: "addcontextmenufiles"; Description: "{cm:AddContextMenuFiles,{#AppName}}"; GroupDescription: "{cm:WindowsIntegration}"
+Name: "addcontextmenufolders"; Description: "{cm:AddContextMenuFolders,{#AppName}}"; GroupDescription: "{cm:WindowsIntegration}"
+Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:WindowsIntegration}"
 
 [InstallDelete]
 ; Replace the managed Git runtime wholesale so files dropped by a newer
@@ -118,6 +126,30 @@ Filename: "{app}\{#AppExeName}"; Flags: nowait; Check: RelaunchRequested
 [Code]
 const
   EnvironmentKey = 'Environment';
+
+procedure LayoutWizardLogo(Image: TBitmapImage; Page: TNewNotebookPage);
+var
+  AreaWidth, LogoSize: Integer;
+begin
+  { Keep the square app icon centered and proportional at the current DPI. }
+  AreaWidth := Image.Width;
+  LogoSize := AreaWidth * 3 div 4;
+  Image.SetBounds((AreaWidth - LogoSize) div 2,
+    (Page.ClientHeight - LogoSize) div 2, LogoSize, LogoSize);
+end;
+
+procedure InitializeWizard;
+begin
+  LayoutWizardLogo(WizardForm.WizardBitmapImage, WizardForm.WelcomePage);
+  LayoutWizardLogo(WizardForm.WizardBitmapImage2, WizardForm.FinishedPage);
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  { The options page starts installation directly because the ready page is hidden. }
+  if CurPageID = wpSelectTasks then
+    WizardForm.NextButton.Caption := SetupMessage(msgButtonInstall);
+end;
 
 function RelaunchRequested: Boolean;
 begin

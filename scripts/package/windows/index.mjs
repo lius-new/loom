@@ -81,7 +81,7 @@ export async function setup() {
   step(`Installing Inno Setup ${INNO_SETUP.version}`);
   const installer = await download(INNO_SETUP);
   installInnoSetup(installer);
-  for (const required of ['ISCC.exe', path.join('Languages', 'ChineseSimplified.isl')]) {
+  for (const required of ['ISCC.exe', 'Default.isl']) {
     if (!fs.existsSync(path.join(innoDir(), required))) {
       fail(`Inno Setup is missing ${required}: ${innoDir()}`);
     }
