@@ -2,9 +2,9 @@
 
 ## Shells
 
-On Windows, Loom offers installed PowerShell, Command Prompt and Bash (with
-Git Bash preferred). On Linux and macOS, the system default follows `$SHELL`,
-then the account's login shell, then `/bin/sh`.
+On Windows, Loom offers installed PowerShell, Command Prompt, Bash (with
+Git Bash preferred) and registered WSL distributions. On Linux and macOS, the
+system default follows `$SHELL`, then the account's login shell, then `/bin/sh`.
 
 ## Custom terminals
 
@@ -15,6 +15,23 @@ An unavailable saved default is kept, and new terminals use the first available
 shell until its path is fixed. Restored terminals whose shell is unavailable
 start a fallback shell with a notice, and launch their own shell again the next
 time they start after it is repaired. Deleting the default terminal resets the default.
+
+## WSL on Windows
+
+Installed WSL distributions appear automatically as `WSL · Debian`, for example,
+in Settings → Terminal and the terminal shell menu. Select a row in Settings to
+make that distribution the default. The list refreshes when Loom starts, when
+Settings opens and when the terminal shell menu opens. Detection reads the Windows
+registry without starting WSL. No executable path or arguments need to be entered.
+
+For custom launch arguments or a specific Linux user, you can still add a custom
+terminal with `C:\Windows\System32\wsl.exe` as its executable and arguments such
+as `-d Debian --user myuser`.
+
+WSL does not receive Loom's automatic shell integration, so directory changes
+inside WSL are not automatically reported to Loom. A localhost proxy warning
+from WSL concerns its network configuration and is separate from launching
+the terminal.
 
 ## Working directories
 

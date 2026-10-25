@@ -30,6 +30,7 @@ struct TerminalInner {
     parser: Mutex<vt100::Parser>,
     process: Mutex<Option<RunningProcess>>,
     shell: Mutex<ShellKind>,
+    detected_name: Mutex<Option<String>>,
     status: Mutex<TerminalStatus>,
     selection: Mutex<Option<Selection>>,
     mouse: Mutex<crate::features::terminal::mouse::TerminalMouse>,
@@ -54,6 +55,11 @@ impl TerminalController {
                 parser: Mutex::new(vt100::Parser::new(24, 80, SCROLLBACK_ROWS)),
                 process: Mutex::new(None),
                 shell: Mutex::new(shell),
+                detected_name: Mutex::new(if matches!(shell, ShellKind::Wsl(_)) {
+                    super::profiles::builtin(shell).map(|option| option.name)
+                } else {
+                    None
+                }),
                 status: Mutex::new(TerminalStatus::Idle),
                 selection: Mutex::new(None),
                 mouse: Mutex::new(crate::features::terminal::mouse::TerminalMouse::default()),
@@ -98,6 +104,7 @@ impl TerminalController {
         lock(&self.inner.profile)
             .as_ref()
             .map(|p| p.name.clone())
+            .or_else(|| lock(&self.inner.detected_name).clone())
             .unwrap_or_else(|| self.shell().label().into())
     }
 
@@ -105,6 +112,7 @@ impl TerminalController {
         lock(&self.inner.profile)
             .as_ref()
             .map(|p| p.name.clone())
+            .or_else(|| lock(&self.inner.detected_name).clone())
             .unwrap_or_else(|| self.shell().short_label().into())
     }
 
@@ -181,6 +189,10 @@ impl TerminalController {
         let available = selected
             .clone()
             .filter(crate::features::terminal::profiles::ShellOption::available);
+        *lock(&self.inner.detected_name) = selected
+            .as_ref()
+            .filter(|_| matches!(shell, ShellKind::Wsl(_)))
+            .map(|option| option.name.clone());
         let launch = available.clone().or_else(|| {
             crate::infrastructure::terminal::profiles::defaults()
                 .into_iter()

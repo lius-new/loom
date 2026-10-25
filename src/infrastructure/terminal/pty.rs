@@ -147,6 +147,15 @@ fn configure_std_command(
 #[cfg(windows)]
 fn quote_windows_argument(arg: &std::ffi::OsStr) -> std::ffi::OsString {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    // WSL parses switches from the raw command line and treats a quoted
+    // switch as a Linux command. Only quote arguments that need it.
+    if !arg.is_empty()
+        && !arg
+            .encode_wide()
+            .any(|unit| matches!(unit, 9..=13 | 32 | 34))
+    {
+        return arg.to_os_string();
+    }
     let mut quoted = vec![34u16];
     let mut slashes = 0;
     for unit in arg.encode_wide() {
@@ -287,4 +296,71 @@ pub(super) fn terminate_process(process: &mut RunningProcess) {
 #[cfg(not(windows))]
 pub(super) fn terminate_process(process: &mut RunningProcess) {
     let _ = process.killer.kill();
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::ffi::{OsStr, OsString};
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    #[test]
+    fn wsl_switches_remain_unquoted_in_the_conpty_command_line() {
+        let mut command = std::process::Command::new("wsl.exe");
+        let _integration = configure_std_command(
+            &mut command,
+            Path::new("wsl.exe"),
+            &["-d".into(), "Debian".into(), "--cd".into(), "~".into()],
+            None,
+        )
+        .unwrap();
+        // conpty joins these strings directly, without further escaping.
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["-d", "Debian", "--cd", "~"].map(OsStr::new)
+        );
+    }
+
+    #[test]
+    fn windows_arguments_round_trip_through_the_system_parser() {
+        let args = [
+            "",
+            "-d",
+            "Debian",
+            "hello world",
+            "with\ttab",
+            "with\"quote",
+            r"C:\Program Files\shell\",
+            r"C:\plain\",
+            r#"backslash\"quote"#,
+            "中文目录",
+        ];
+        let mut command_line = OsString::from("program.exe");
+        for arg in args {
+            command_line.push(" ");
+            command_line.push(quote_windows_argument(OsStr::new(arg)));
+        }
+        let command_line = command_line.encode_wide().chain([0]).collect::<Vec<_>>();
+        let mut count = 0;
+        unsafe {
+            let argv = windows_sys::Win32::UI::Shell::CommandLineToArgvW(
+                command_line.as_ptr(),
+                &mut count,
+            );
+            assert!(!argv.is_null());
+            let parsed = std::slice::from_raw_parts(argv, count as usize)
+                .iter()
+                .skip(1)
+                .map(|&value| {
+                    let mut len = 0;
+                    while *value.add(len) != 0 {
+                        len += 1;
+                    }
+                    OsString::from_wide(std::slice::from_raw_parts(value, len))
+                })
+                .collect::<Vec<_>>();
+            windows_sys::Win32::Foundation::LocalFree(argv.cast());
+            assert_eq!(parsed, args.map(OsString::from));
+        }
+    }
 }

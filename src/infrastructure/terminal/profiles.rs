@@ -27,10 +27,24 @@ pub fn defaults() -> Vec<ShellOption> {
     let kinds = &ShellKind::ALL[..];
     #[cfg(not(windows))]
     let kinds = &[ShellKind::System][..];
-    kinds.iter().filter_map(|kind| builtin(*kind)).collect()
+    let options = kinds.iter().filter_map(|kind| builtin(*kind)).collect();
+    #[cfg(windows)]
+    {
+        let mut options: Vec<ShellOption> = options;
+        options.extend(super::wsl::options());
+        options
+    }
+    #[cfg(not(windows))]
+    options
 }
 
 pub fn builtin(kind: ShellKind) -> Option<ShellOption> {
+    if matches!(kind, ShellKind::Wsl(_)) {
+        #[cfg(windows)]
+        return super::wsl::options().into_iter().find(|o| o.kind == kind);
+        #[cfg(not(windows))]
+        return None;
+    }
     let program = match kind {
         ShellKind::PowerShell => ["pwsh.exe", "powershell.exe", "pwsh", "powershell"]
             .iter()
@@ -52,7 +66,7 @@ pub fn builtin(kind: ShellKind) -> Option<ShellOption> {
                 .or_else(|| resolve_program(Path::new("bash")))
         }
         ShellKind::System => system_shell(),
-        ShellKind::Custom(_) => None,
+        ShellKind::Custom(_) | ShellKind::Wsl(_) => None,
     }?;
     Some(ShellOption {
         kind,
@@ -159,7 +173,7 @@ fn candidates(kind: ShellKind) -> &'static [&'static str] {
         ShellKind::PowerShell => &["pwsh.exe", "powershell.exe", "pwsh", "powershell"],
         ShellKind::Cmd => &["cmd.exe", "cmd"],
         ShellKind::Bash => &["bash.exe", "bash"],
-        ShellKind::System | ShellKind::Custom(_) => &[],
+        ShellKind::System | ShellKind::Custom(_) | ShellKind::Wsl(_) => &[],
     }
 }
 pub(crate) fn shell_command(kind: ShellKind) -> PathBuf {

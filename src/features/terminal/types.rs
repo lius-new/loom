@@ -27,6 +27,8 @@ pub enum ShellKind {
     Cmd,
     Bash,
     System,
+    /// Stable fingerprint of a registered WSL distribution's GUID.
+    Wsl(u64),
     Custom(u64),
 }
 
@@ -49,6 +51,7 @@ impl ShellKind {
             Self::Cmd => "Command Prompt",
             Self::Bash => "Bash",
             Self::System => "System default",
+            Self::Wsl(_) => "WSL",
             Self::Custom(_) => "Custom terminal",
         }
     }
@@ -59,6 +62,7 @@ impl ShellKind {
             Self::Cmd => "cmd",
             Self::Bash => "bash",
             Self::System => "shell",
+            Self::Wsl(_) => "wsl",
             Self::Custom(_) => "custom",
         }
     }

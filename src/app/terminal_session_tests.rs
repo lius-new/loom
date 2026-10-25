@@ -553,7 +553,9 @@ mod tests {
                         .replace('\\', "/")
                         .replace('\'', "'\\''")
                 ),
-                ShellKind::System | ShellKind::Custom(_) => unreachable!("Windows builtin test"),
+                ShellKind::System | ShellKind::Custom(_) | ShellKind::Wsl(_) => {
+                    unreachable!("Windows builtin test")
+                }
             };
             controller.write(command.as_bytes());
             wait_for_directory(&controller, &changed, shell);
@@ -968,7 +970,9 @@ mod tests {
                 ShellKind::PowerShell => b"ping.exe -n 4 127.0.0.1 | Out-Null\r",
                 ShellKind::Cmd => b"ping.exe -n 4 127.0.0.1 >nul\r",
                 ShellKind::Bash => b"ping.exe -n 4 127.0.0.1 >/dev/null\r",
-                ShellKind::System | ShellKind::Custom(_) => unreachable!("Windows builtin test"),
+                ShellKind::System | ShellKind::Custom(_) | ShellKind::Wsl(_) => {
+                    unreachable!("Windows builtin test")
+                }
             };
             controller.write(command);
             let deadline = Instant::now() + Duration::from_secs(10);
