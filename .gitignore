@@ -3,3 +3,4 @@
 # Packaging toolchain, downloads, staging and artifacts (scripts/package).
 /.packaging/
 /scripts/language-packs/node_modules/
+/docs/prototypes/git-workbench/node_modules/

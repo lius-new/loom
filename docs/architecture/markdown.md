@@ -1,8 +1,7 @@
 # Shared Markdown architecture
 
 This is the maintained design for file reading and in-memory documentation.
-The root MARKDOWN_DESIGN.tmp.md retains implementation history and acceptance
-records. User behavior and limits are in [Markdown reading](../markdown.md).
+User behavior and limits are in [Markdown reading](../markdown.md).
 
 ## Boundaries and ownership
 

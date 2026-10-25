@@ -1,6 +1,0 @@
-{
-  "name": "loom-git-workbench-preview",
-  "private": true,
-  "scripts": { "build": "tailwindcss -i ./styles.css -o ./tailwind.css --minify", "preview": "node server.mjs" },
-  "devDependencies": { "@tailwindcss/cli": "4.1.18", "tailwindcss": "4.1.18" }
-}
