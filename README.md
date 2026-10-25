@@ -113,6 +113,7 @@ the first build; no system CMake or manual Skia download is required. See
 
 - [Editing](docs/editing.md) — mouse, keyboard shortcuts, files, sessions and large files
 - [Language packages](docs/languages.md) — independent, demand-loaded packages and user installation
+- [Language services architecture](docs/architecture/language-services.md), [LSP architecture](docs/architecture/lsp.md) and [remaining work](docs/language-services-todo.md)
 - [Workspace search](docs/search.md)
 - [Outline](docs/outline.md) — the structure of the current file
 - [Terminal](docs/terminal.md)

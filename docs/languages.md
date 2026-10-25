@@ -7,6 +7,10 @@ SOURCE.md, grammar crate, source edit or editor rebuild is required. Plain text
 works without installed resources. All languages, including JSON and Markdown,
 load modules and queries only when displayed content needs them.
 
+Implementation boundaries and highlighting contracts are in
+[Language services architecture](architecture/language-services.md). See
+[remaining work](language-services-todo.md) for implementation and acceptance gaps.
+
 ## Installation and discovery
 
 At startup Loom scans immediate child directories in these locations:

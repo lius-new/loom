@@ -71,6 +71,8 @@ reported; the other rules still apply.
 
 ## Language servers
 
+Implementation and ownership are described in [LSP architecture](architecture/lsp.md).
+
 Loom ships no language servers and does not look for them on your PATH. The
 servers it can run are the ones in the catalog published with each release
 (`lsp-servers/lsp-servers.toml` beside the application), which describes how to
