@@ -23,8 +23,8 @@ use crate::ui::theme;
 
 pub(crate) const TOPLINE_H: f32 = 40.0;
 pub(crate) const PROMPT_H: f32 = 196.0;
-/// The composer while an operation is unfinished: no message box, so less room.
-pub(crate) const OPERATION_PROMPT_H: f32 = 142.0;
+/// The composer while an operation is unfinished: a title and one button.
+pub(crate) const OPERATION_PROMPT_H: f32 = 84.0;
 pub(crate) const CHANGE_ROW_H: f32 = 24.0;
 pub(crate) const SECTION_H: f32 = 26.0;
 pub(crate) const ROW_H: f32 = 20.0;

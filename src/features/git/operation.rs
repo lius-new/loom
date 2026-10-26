@@ -45,21 +45,6 @@ pub fn title(text: OperationText, step: Option<(u32, u32)>) -> String {
     }
 }
 
-/// What to tell the user in place of the commit message. \n separates lines.
-pub fn status_message(text: OperationText, conflicted: usize) -> String {
-    if text.continue_label.is_none() {
-        "Mark commits good or bad from the terminal.\nEnd the bisect when you are done.".into()
-    } else if conflicted == 0 {
-        "No conflicts left.\nContinue to finish this step.".into()
-    } else {
-        format!(
-            "{conflicted} conflicted {} left.\nResolve and mark {} resolved to continue.",
-            if conflicted == 1 { "file" } else { "files" },
-            if conflicted == 1 { "it" } else { "them" },
-        )
-    }
-}
-
 /// Why the primary button is disabled, or `None` when it can act.
 pub fn primary_reason(text: OperationText, conflicted: usize, busy: bool) -> Option<&'static str> {
     if busy {
@@ -107,13 +92,5 @@ mod tests {
             primary_reason(merge, 0, true),
             Some("Git operation in progress")
         );
-    }
-
-    #[test]
-    fn the_status_names_what_is_left() {
-        let rebase = operation_text(RepositoryState::RebaseInProgress).unwrap();
-        assert!(status_message(rebase, 1).starts_with("1 conflicted file left."));
-        assert!(status_message(rebase, 2).starts_with("2 conflicted files left."));
-        assert!(status_message(rebase, 0).starts_with("No conflicts left."));
     }
 }

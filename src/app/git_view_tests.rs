@@ -332,7 +332,6 @@ mod panel_virtualization_tests {
         let texts = text_nodes(&session);
         assert!(!texts.iter().any(|value| value == "REBASING 1/2"));
         assert!(texts.contains(&"Rebasing 1/2".to_owned()), "{texts:?}");
-        assert!(texts.contains(&"1 conflicted file left.".to_owned()));
         assert!(named(&session, "Commit message").is_none());
         assert!(named(&session, "Commit changes").is_none());
         assert!(named(&session, "Amend last commit").is_none());
@@ -350,7 +349,6 @@ mod panel_virtualization_tests {
         });
         session.render_view(&view, viewport, UiScale::ONE);
         assert_eq!(disabled(&session, "Continue Rebase"), Some(false));
-        assert!(text_nodes(&session).contains(&"No conflicts left.".to_owned()));
         save_drawer_preview(&session, &context, viewport, "git-operation-ready");
 
         // A bisect is ended, not continued.

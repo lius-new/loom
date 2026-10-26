@@ -1,6 +1,6 @@
 //! Controls shared by the Git drawer's filter, file rows and commit composer.
 use crate::features::git::GitStoreSnapshot;
-use crate::features::git::operation::{operation_text, primary_reason, status_message, title};
+use crate::features::git::operation::{operation_text, primary_reason, title};
 use crate::ui::components::input::{self, AccessInputOptions, InputBinding, InputStyle};
 use crate::ui::git::{
     commands::{Binding, Snapshot},
@@ -309,55 +309,15 @@ pub fn composer(
     }
     let button_bottom = inner.bottom;
     let button_top = (button_bottom - 32.0).max(label.bottom);
-    // No staged count or shortcut hint while an operation is unfinished.
-    let summary_top = if operation.is_some() {
-        button_top - 3.0
-    } else {
-        (button_top - 28.0).max(label.bottom)
-    };
+    let summary_top = (button_top - 28.0).max(label.bottom);
     let field = UiRect::new(
         inner.left,
         label.bottom + 5.0,
         inner.right,
         (summary_top - 5.0).max(label.bottom + 5.0),
     );
-    if let Some((_, wording)) = operation {
-        // A card with the operation's accent edge, so the area reads as
-        // deliberate rather than as an empty form.
-        root = root
-            .child(theme::bordered(
-                field,
-                theme::c().bg,
-                theme::c().border,
-                6.0,
-                1.0,
-            ))
-            .child(panel(
-                UiRect::new(
-                    field.left,
-                    field.top + 6.0,
-                    field.left + 2.0,
-                    field.bottom - 6.0,
-                ),
-                VisualStyle::filled(theme::c().warning),
-            ));
-        let message = status_message(wording, conflicted);
-        for (index, line) in message.lines().enumerate() {
-            let top = field.top + 9.0 + index as f32 * 18.0;
-            root = root.child(text(
-                UiRect::new(field.left + 12.0, top, field.right - 8.0, top + 18.0),
-                line.to_owned(),
-                theme::sans(
-                    if index == 0 {
-                        theme::c().text
-                    } else {
-                        theme::c().text_muted
-                    },
-                    11.0,
-                ),
-            ));
-        }
-    } else {
+    // Mid-operation the message box is gone; only the title and button remain.
+    if operation.is_none() {
         root = root.child(
             theme::bordered(
                 field,
