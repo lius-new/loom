@@ -257,15 +257,6 @@ pub(crate) fn render(
                 }),
             );
         }
-        content = content.child(conflict_actions(
-            &s.conflicts,
-            &visible_lines,
-            rect,
-            code_top,
-            scroll_y,
-            pane,
-            &state,
-        ));
         let st_gutter_hover = state.clone();
         if focused_pane
             && visible_lines.contains(&cursor_line)
@@ -533,6 +524,17 @@ pub(crate) fn render(
         }
 
         content = content.child(clip(code_viewport, -scroll_x, -scroll_y).child(code));
+        // Above the code layer, which would otherwise take the pointer and
+        // its text cursor away from the buttons.
+        content = content.child(conflict_actions(
+            &s.conflicts,
+            &visible_lines,
+            rect,
+            code_top,
+            scroll_y,
+            pane,
+            &state,
+        ));
         root = root.child(content);
 
         // The pointer over an underline opens its message, as in VS Code and

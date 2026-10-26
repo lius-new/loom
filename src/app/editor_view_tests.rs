@@ -835,6 +835,65 @@ fn smooth_caret_keeps_input_and_ime_logical_and_snaps_during_drag_or_context_cha
 }
 
 #[test]
+fn conflict_buttons_take_the_pointer_cursor_over_the_code() {
+    use crate::features::git::conflict::ConflictRegion;
+    use lgui::application::AppView;
+    use lgui::core::{Point, UiScale};
+    use lgui::session::UiSession;
+    use std::sync::Arc;
+
+    let viewport = UiRect::new(0.0, 0.0, 700.0, 300.0);
+    let view: AppView = Arc::new(move |cx| {
+        let state = AppContext::detached(
+            cx.state(document("a\n<<<<<<< x\nL\n=======\nR\n>>>>>>> y\nafter\n")),
+        );
+        let id = cx.use_stable_id();
+        let focus = cx.focus_handle(id.clone());
+        let git_store = cx.state(GitStoreSnapshot {
+            conflicts: BTreeMap::from([(
+                "editing-test.txt".into(),
+                Arc::from(vec![ConflictRegion {
+                    start: 2,
+                    current: 3..4,
+                    separator: 4,
+                    incoming: 5..6,
+                    end: 6,
+                }]),
+            )])
+            .into(),
+            ..Default::default()
+        });
+        group(viewport).child(render(
+            PaneId::new(1),
+            viewport,
+            state,
+            git_store,
+            id,
+            focus,
+        ))
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, viewport, UiScale::ONE);
+
+    // The last button ends 8px left of the scrollbar, on the opening line.
+    let line_h = crate::ui::fonts::editor().line_h;
+    let button = Point::new(
+        viewport.right - crate::ui::editor::view::SCROLLBAR_SIZE - 8.0 - 6.0,
+        line_h + 2.0 + line_h / 2.0,
+    );
+    assert_eq!(
+        session.tree().cursor_at(button),
+        Some(CursorIcon::Pointer),
+        "the text layer must not cover the buttons"
+    );
+    // Beside the buttons the code keeps its text cursor.
+    assert_eq!(
+        session.tree().cursor_at(Point::new(150.0, 10.0 * line_h)),
+        Some(CursorIcon::Text)
+    );
+}
+
+#[test]
 fn scrollbar_release_survives_editor_child_reordering() {
     use lgui::application::{AppView, ApplicationContext};
     use lgui::core::{
