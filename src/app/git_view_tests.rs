@@ -327,6 +327,7 @@ mod panel_virtualization_tests {
         });
         session.render_view(&view, viewport, UiScale::ONE);
 
+        save_drawer_preview(&session, &context, viewport, "git-operation-conflicts");
         // Nothing at the top; the form's place reports the operation.
         let texts = text_nodes(&session);
         assert!(!texts.iter().any(|value| value == "REBASING 1/2"));
@@ -350,6 +351,7 @@ mod panel_virtualization_tests {
         session.render_view(&view, viewport, UiScale::ONE);
         assert_eq!(disabled(&session, "Continue Rebase"), Some(false));
         assert!(text_nodes(&session).contains(&"No conflicts left.".to_owned()));
+        save_drawer_preview(&session, &context, viewport, "git-operation-ready");
 
         // A bisect is ended, not continued.
         store.update(|snapshot| {

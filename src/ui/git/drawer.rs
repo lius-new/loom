@@ -309,7 +309,12 @@ pub fn composer(
     }
     let button_bottom = inner.bottom;
     let button_top = (button_bottom - 32.0).max(label.bottom);
-    let summary_top = (button_top - 28.0).max(label.bottom);
+    // No staged count or shortcut hint while an operation is unfinished.
+    let summary_top = if operation.is_some() {
+        button_top - 3.0
+    } else {
+        (button_top - 28.0).max(label.bottom)
+    };
     let field = UiRect::new(
         inner.left,
         label.bottom + 5.0,
@@ -317,11 +322,30 @@ pub fn composer(
         (summary_top - 5.0).max(label.bottom + 5.0),
     );
     if let Some((_, wording)) = operation {
+        // A card with the operation's accent edge, so the area reads as
+        // deliberate rather than as an empty form.
+        root = root
+            .child(theme::bordered(
+                field,
+                theme::c().bg,
+                theme::c().border,
+                6.0,
+                1.0,
+            ))
+            .child(panel(
+                UiRect::new(
+                    field.left,
+                    field.top + 6.0,
+                    field.left + 2.0,
+                    field.bottom - 6.0,
+                ),
+                VisualStyle::filled(theme::c().warning),
+            ));
         let message = status_message(wording, conflicted);
         for (index, line) in message.lines().enumerate() {
-            let top = field.top + 4.0 + index as f32 * 18.0;
+            let top = field.top + 9.0 + index as f32 * 18.0;
             root = root.child(text(
-                UiRect::new(field.left, top, field.right, top + 18.0),
+                UiRect::new(field.left + 12.0, top, field.right - 8.0, top + 18.0),
                 line.to_owned(),
                 theme::sans(
                     if index == 0 {
@@ -360,8 +384,8 @@ pub fn composer(
             theme::sans(theme::c().text_muted, 10.0),
         ));
     }
-    // Ctrl+Enter commits, or continues the operation.
-    if operation.is_none_or(|(_, wording)| wording.continue_label.is_some()) {
+    // Ctrl+Enter commits (and continues an operation, which needs no hint).
+    if operation.is_none() {
         root = root
             .child(text(
                 UiRect::new(

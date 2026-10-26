@@ -23,13 +23,24 @@ use crate::ui::theme;
 
 pub(crate) const TOPLINE_H: f32 = 40.0;
 pub(crate) const PROMPT_H: f32 = 196.0;
+/// The composer while an operation is unfinished: no message box, so less room.
+pub(crate) const OPERATION_PROMPT_H: f32 = 142.0;
 pub(crate) const CHANGE_ROW_H: f32 = 24.0;
 pub(crate) const SECTION_H: f32 = 26.0;
 pub(crate) const ROW_H: f32 = 20.0;
 
 /// Keep the multiline composer anchored below the scrolling changes.
-pub(crate) fn drawer_regions(body: UiRect, _changes_height: f32) -> (UiRect, UiRect) {
-    let top = (body.bottom - PROMPT_H).max(body.top);
+pub(crate) fn drawer_regions(
+    body: UiRect,
+    _changes_height: f32,
+    operation: bool,
+) -> (UiRect, UiRect) {
+    let height = if operation {
+        OPERATION_PROMPT_H
+    } else {
+        PROMPT_H
+    };
+    let top = (body.bottom - height).max(body.top);
     (
         UiRect::new(body.left, body.top, body.right, top),
         UiRect::new(body.left, top, body.right, body.bottom),
@@ -334,7 +345,11 @@ pub fn render(
             .filter(|(_, filter, files, _)| show_section(*filter, files.is_empty()))
             .map(|(_, filter, _, rows)| section_height(*filter, rows.len()) + 10.0)
             .sum::<f32>();
-    let (content_rect, prompt_rect) = drawer_regions(body_rect, changes_height);
+    let (content_rect, prompt_rect) = drawer_regions(
+        body_rect,
+        changes_height,
+        crate::features::git::operation::operation_text(repository.repository_state).is_some(),
+    );
     let max_scroll = (changes_height - content_rect.height()).max(0.0);
     let scroll = app.ui.scroll.clamp(0.0, max_scroll);
     let mut y = content_rect.top + 8.0;
