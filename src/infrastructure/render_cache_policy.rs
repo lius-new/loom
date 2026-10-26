@@ -108,7 +108,7 @@ mod tests {
         }
 
         fn visit_entries(&self, visit: &mut dyn FnMut(&EntryInfo)) {
-            self.entries.iter().for_each(|entry| visit(entry));
+            self.entries.iter().for_each(visit);
         }
 
         fn evict(&mut self, ids: &[EntryId]) -> usize {
