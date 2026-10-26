@@ -4,8 +4,10 @@ use lgui::prelude::{State, UiRect};
 
 use super::language_ui::target;
 use crate::app::context::AppContext;
+use crate::domain::identity::PaneId;
 use crate::features::git::GitStoreSnapshot;
-use crate::features::git::conflict::ConflictRegion;
+use crate::features::git::conflict::{ConflictRegion, Resolution, resolution_edit};
+use loom_editor_core::text::{Edit, EditKind, Selection};
 
 /// The conflict that starts after (or, going backwards, before) one-based
 /// `line`, wrapping around.
@@ -61,6 +63,39 @@ pub(crate) fn go_to(
     true
 }
 
+/// Keeps one side of `region` in the pane's file as a single undo step. The
+/// region is where Git reported it, moved for unsaved edits; if the text no
+/// longer has its markers there, nothing changes.
+pub(crate) fn resolve(
+    state: &AppContext,
+    pane: PaneId,
+    rect: UiRect,
+    region: &ConflictRegion,
+    resolution: Resolution,
+) {
+    state.update(|app| {
+        let Some(mut editor) = app.workspace.editor_mut(pane) else {
+            return;
+        };
+        let text = editor.buffer().text_snapshot();
+        let Some((range, replacement)) = resolution_edit(&text, region, resolution) else {
+            app.show_toast("The file changed since Git looked. Save it and try again");
+            return;
+        };
+        let start = range.start;
+        let end = start + replacement.len();
+        let applied = editor.edit(
+            EditKind::Other,
+            vec![Edit::replace(range, replacement)],
+            |_, _| Selection::caret(end),
+        );
+        drop(editor);
+        if applied.is_ok() {
+            crate::app::editor::reveal_cursor(app, rect);
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,6 +108,69 @@ mod tests {
             incoming: start + 3..start + 4,
             end: start + 4,
         }
+    }
+
+    const FILE: &str = "keep\n<<<<<<< HEAD\nX\n=======\nY\n>>>>>>> topic\nafter\n";
+
+    fn open_file(text: &str) -> AppContext {
+        let state = crate::app::test_support::live(crate::app::state::AppState::new());
+        state.update(|app| {
+            app.workspace.open_path("f.txt".into(), text.into());
+        });
+        state
+    }
+
+    fn text(state: &AppContext) -> String {
+        let app = state.get();
+        app.workspace
+            .editor(app.workspace.active_pane())
+            .unwrap()
+            .buffer()
+            .text_snapshot()
+            .to_string()
+    }
+
+    fn conflict() -> ConflictRegion {
+        ConflictRegion {
+            start: 2,
+            current: 3..4,
+            separator: 4,
+            incoming: 5..6,
+            end: 6,
+        }
+    }
+
+    fn resolve_in(state: &AppContext, region: &ConflictRegion, resolution: Resolution) {
+        let pane = state.get().workspace.active_pane();
+        resolve(
+            state,
+            pane,
+            UiRect::new(0.0, 0.0, 400.0, 300.0),
+            region,
+            resolution,
+        );
+    }
+
+    #[test]
+    fn accepting_a_side_is_one_undo_step() {
+        let state = open_file(FILE);
+        resolve_in(&state, &conflict(), Resolution::Incoming);
+        assert_eq!(text(&state), "keep\nY\nafter\n");
+        state.update(|app| {
+            app.workspace.active_editor_mut().unwrap().undo();
+        });
+        assert_eq!(text(&state), FILE);
+    }
+
+    #[test]
+    fn a_conflict_that_moved_changes_nothing() {
+        let state = open_file(FILE);
+        let moved = ConflictRegion {
+            start: 3,
+            ..conflict()
+        };
+        resolve_in(&state, &moved, Resolution::Current);
+        assert_eq!(text(&state), FILE);
     }
 
     #[test]

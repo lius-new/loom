@@ -413,6 +413,10 @@ pub(crate) fn binding(
                 });
                 return;
             }
+            if let Event::ResolveConflict { region, resolution } = event {
+                super::git_conflict::resolve(&dispatcher, pane, rect, &region, resolution);
+                return;
+            }
             if let Event::CodeActions { revision } = event {
                 dispatcher.try_update(|app| {
                     super::language_ui::lightbulb::open(&dispatcher, app, pane, revision)
@@ -737,6 +741,7 @@ pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Ev
         | Event::Popup(_)
         | Event::SnippetChoice { .. }
         | Event::CodeActions { .. }
+        | Event::ResolveConflict { .. }
         | Event::QuickFix { .. }
         | Event::PeekOpen { .. }
         | Event::PeekClose { .. }
@@ -878,6 +883,59 @@ mod tests {
         );
         assert_eq!(scene.overview_marks.len(), 1);
         assert_eq!(scene.overview_marks[0].lines, 400);
+    }
+
+    #[test]
+    fn snapshot_moves_git_conflicts_for_unsaved_edits() {
+        use crate::features::git::conflict::ConflictRegion;
+        let mut app = document(
+            "a
+<<<<<<< x
+L
+=======
+R
+>>>>>>> y
+",
+        );
+        let pane = app.workspace.active_pane();
+        let region = ConflictRegion {
+            start: 2,
+            current: 3..4,
+            separator: 4,
+            incoming: 5..6,
+            end: 6,
+        };
+        let git = || GitStoreSnapshot {
+            conflicts: BTreeMap::from([(
+                "first.txt".into(),
+                std::sync::Arc::from(vec![region.clone()]),
+            )])
+            .into(),
+            ..Default::default()
+        };
+        let saved = snapshot(app.clone(), git(), pane, RECT);
+        assert_eq!(saved.conflicts.as_ref(), [region.clone()]);
+
+        // A line typed above moves the conflict down; one typed inside drops it.
+        app.workspace
+            .editor_mut(pane)
+            .unwrap()
+            .replace(
+                0..0,
+                "new
+",
+                loom_editor_core::text::EditKind::Other,
+            )
+            .unwrap();
+        let above = snapshot(app.clone(), git(), pane, RECT);
+        assert_eq!(above.conflicts[0].start, 3);
+        let inside = app.workspace.editor(pane).unwrap().buffer().line_start(4);
+        app.workspace
+            .editor_mut(pane)
+            .unwrap()
+            .replace(inside..inside, "x", loom_editor_core::text::EditKind::Other)
+            .unwrap();
+        assert!(snapshot(app, git(), pane, RECT).conflicts.is_empty());
     }
 
     #[test]

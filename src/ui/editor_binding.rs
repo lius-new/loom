@@ -157,6 +157,11 @@ pub(crate) enum Event {
     Peek {
         line: usize,
     },
+    /// A conflict's action bar kept one side of it.
+    ResolveConflict {
+        region: crate::features::git::conflict::ConflictRegion,
+        resolution: crate::features::git::conflict::Resolution,
+    },
     /// The pointer moved over the code area.
     HoverMove {
         point: (f32, f32),

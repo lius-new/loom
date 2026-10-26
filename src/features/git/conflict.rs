@@ -53,6 +53,50 @@ impl ConflictRegion {
     }
 }
 
+/// What to keep of a conflict.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resolution {
+    Current,
+    Incoming,
+    /// The current side, then the incoming side.
+    Both,
+}
+
+/// The edit that resolves `region` in `text`: the byte range to replace and
+/// what to put there. `None` when `text` no longer has the opening, separator
+/// and closing lines where Git reported them, because the file changed since
+/// Git looked and the position cannot be trusted.
+pub fn resolution_edit(
+    text: &str,
+    region: &ConflictRegion,
+    resolution: Resolution,
+) -> Option<(Range<usize>, String)> {
+    let mut starts = vec![0];
+    starts.extend(
+        text.match_indices('\n')
+            .map(|(at, _)| at + 1)
+            .filter(|at| *at < text.len()),
+    );
+    // Where one-based line `n` begins; one past the last line is the end.
+    let begin = |n: usize| starts.get(n.checked_sub(1)?).copied().or(Some(text.len()));
+    let line = |n: usize| Some(&text[begin(n)?..begin(n + 1)?]);
+    let side = |lines: &Range<usize>| Some(&text[begin(lines.start)?..begin(lines.end)?]);
+
+    if !line(region.start)?.starts_with("<<<<<<<")
+        || !(line(region.separator)?.starts_with("=======")
+            || line(region.separator)?.starts_with("|||||||"))
+        || !line(region.end)?.starts_with(">>>>>>>")
+    {
+        return None;
+    }
+    let replacement = match resolution {
+        Resolution::Current => side(&region.current)?.to_owned(),
+        Resolution::Incoming => side(&region.incoming)?.to_owned(),
+        Resolution::Both => format!("{}{}", side(&region.current)?, side(&region.incoming)?),
+    };
+    Some((begin(region.start)?..begin(region.end + 1)?, replacement))
+}
+
 /// Moves the regions Git found in the saved text `saved` to where those
 /// lines are in the unsaved `current` text. A region the edits touch is
 /// dropped: Git's answer no longer describes it until the file is saved.
@@ -283,6 +327,56 @@ mod tests {
         assert!(shifted(&regions, saved, inside).is_empty());
         // Saved text equal to the buffer changes nothing.
         assert_eq!(shifted(&regions, saved, saved), regions);
+    }
+
+    const FILE: &str = "keep\n<<<<<<< HEAD\nX\nX2\n=======\nY\n>>>>>>> topic\nafter\n";
+
+    fn file_region() -> ConflictRegion {
+        ConflictRegion {
+            start: 2,
+            current: 3..5,
+            separator: 5,
+            incoming: 6..7,
+            end: 7,
+        }
+    }
+
+    fn resolved(resolution: Resolution) -> String {
+        let (range, text) = resolution_edit(FILE, &file_region(), resolution).unwrap();
+        format!("{}{text}{}", &FILE[..range.start], &FILE[range.end..])
+    }
+
+    #[test]
+    fn each_resolution_keeps_its_side_and_drops_the_markers() {
+        assert_eq!(resolved(Resolution::Current), "keep\nX\nX2\nafter\n");
+        assert_eq!(resolved(Resolution::Incoming), "keep\nY\nafter\n");
+        assert_eq!(resolved(Resolution::Both), "keep\nX\nX2\nY\nafter\n");
+    }
+
+    #[test]
+    fn a_resolution_is_refused_when_the_markers_moved() {
+        let moved = format!("extra\n{FILE}");
+        assert!(resolution_edit(&moved, &file_region(), Resolution::Current).is_none());
+        let past_the_end = ConflictRegion {
+            end: 40,
+            ..file_region()
+        };
+        assert!(resolution_edit(FILE, &past_the_end, Resolution::Current).is_none());
+    }
+
+    #[test]
+    fn a_conflict_closing_the_file_without_a_newline_resolves() {
+        let text = "<<<<<<< a\nX\n=======\nY\n>>>>>>> b";
+        let region = ConflictRegion {
+            start: 1,
+            current: 2..3,
+            separator: 3,
+            incoming: 4..5,
+            end: 5,
+        };
+        let (range, replacement) = resolution_edit(text, &region, Resolution::Incoming).unwrap();
+        assert_eq!(range, 0..text.len());
+        assert_eq!(replacement, "Y\n");
     }
 
     #[test]

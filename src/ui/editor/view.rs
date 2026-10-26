@@ -19,10 +19,11 @@ use super::gutter;
 use super::syntax;
 use crate::domain::identity::PaneId;
 use crate::domain::line_change::LineChange;
-use crate::features::git::conflict::{ConflictPart, ConflictRegion};
+use crate::features::git::conflict::{ConflictPart, ConflictRegion, Resolution};
 use crate::features::language_service::diagnostics::{Diagnostic, Severity};
 use crate::ui::editor_binding::{Binding, Event, PeekPlacement, ViewState};
 use crate::ui::fonts;
+use crate::ui::git::action_button;
 use crate::ui::theme;
 use loom_editor_core::text::TextBuffer;
 use loom_editor_core::vim::CursorShape;
@@ -256,6 +257,15 @@ pub(crate) fn render(
                 }),
             );
         }
+        content = content.child(conflict_actions(
+            &s.conflicts,
+            &visible_lines,
+            rect,
+            code_top,
+            scroll_y,
+            pane,
+            &state,
+        ));
         let st_gutter_hover = state.clone();
         if focused_pane
             && visible_lines.contains(&cursor_line)
@@ -897,6 +907,59 @@ fn conflict_lines(
         }
     }
     lines
+}
+
+/// What each action bar offers, in order.
+const CONFLICT_ACTIONS: [(Resolution, &str); 3] = [
+    (Resolution::Current, "Accept Current"),
+    (Resolution::Incoming, "Accept Incoming"),
+    (Resolution::Both, "Accept Both"),
+];
+const CONFLICT_ACTION_GAP: f32 = 4.0;
+
+/// The buttons that keep one side of each conflict, on its opening line at the
+/// right edge where the marker text rarely reaches.
+fn conflict_actions(
+    regions: &[ConflictRegion],
+    visible: &Range<usize>,
+    rect: UiRect,
+    code_top: f32,
+    scroll_y: f32,
+    pane: PaneId,
+    state: &Binding,
+) -> Element {
+    let mut bar = group(rect);
+    let widths: Vec<f32> = CONFLICT_ACTIONS
+        .iter()
+        .map(|(_, label)| action_button::width(label))
+        .collect();
+    for region in regions {
+        if !visible.contains(&(region.start - 1)) {
+            continue;
+        }
+        let line_h = fonts::editor().line_h;
+        let top = code_top + (region.start - 1) as f32 * line_h - scroll_y + 2.0;
+        let mut right = rect.right - SCROLLBAR_SIZE - 8.0;
+        for ((resolution, label), width) in CONFLICT_ACTIONS.iter().zip(&widths).rev() {
+            let st = state.clone();
+            let region = region.clone();
+            let resolution = *resolution;
+            bar = bar.child(action_button::render(
+                UiRect::new(right - width, top, right, top + line_h - 4.0),
+                format!("conflict-{}-{}-{label}", pane.get(), region.start),
+                label,
+                format!("{label} for the conflict at line {}", region.start),
+                move || {
+                    st.send(Event::ResolveConflict {
+                        region: region.clone(),
+                        resolution,
+                    })
+                },
+            ));
+            right -= width + CONFLICT_ACTION_GAP;
+        }
+    }
+    bar
 }
 
 fn conflict_decoration(part: ConflictPart) -> gutter::GutterDecoration {
