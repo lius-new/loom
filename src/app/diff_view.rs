@@ -456,6 +456,93 @@ mod tests {
         );
     }
 
+    /// The text a view shows for `document`.
+    fn texts_of(document: DiffDocument) -> Vec<String> {
+        use lgui::application::AppView;
+        use lgui::core::UiScale;
+        use lgui::session::UiSession;
+        use std::sync::Arc;
+        let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(|| {
+                let mut app = AppState::new();
+                app.workspace.open_diff(document.clone());
+                app
+            }));
+            let store = cx.state_with(GitStoreSnapshot::default);
+            let id = cx.use_stable_id();
+            render(
+                state.get().workspace.active_pane(),
+                viewport,
+                state,
+                store,
+                cx.focus_handle(id),
+            )
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        session
+            .tree()
+            .nodes()
+            .iter()
+            .filter_map(|node| node.text.as_ref().map(|text| text.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn an_unresolved_conflict_that_matches_head_says_so_instead_of_no_changes() {
+        use crate::features::git::diff::parse_unified;
+        use crate::features::git::{ChangeDiff, ChangeGroup, DiffContent, DiffRequest};
+        let empty = |target| {
+            DiffDocument::from_unified(
+                "repo".into(),
+                "a.txt".into(),
+                target,
+                parse_unified("").unwrap(),
+            )
+        };
+        let conflict = texts_of(empty(DiffTarget::HeadToWorktree));
+        assert!(
+            conflict
+                .iter()
+                .any(|text| text.starts_with("Matches the current version, still unresolved")),
+            "{conflict:?}"
+        );
+        // An ordinary empty diff keeps its message.
+        let ordinary = texts_of(empty(DiffTarget::IndexToWorktree));
+        assert!(
+            ordinary
+                .iter()
+                .any(|text| text.starts_with("No textual changes"))
+        );
+
+        // The same in the repository-wide Changes tab.
+        let section = |group, target| {
+            DiffDocument::from_content(
+                DiffRequest {
+                    repository_root: "repo".into(),
+                    path: PathBuf::new(),
+                    target: DiffTarget::Changes,
+                },
+                DiffContent::Changes(vec![ChangeDiff {
+                    path: "a.txt".into(),
+                    target,
+                    group,
+                    content: Ok(DiffContent::Unified(parse_unified("").unwrap())),
+                }]),
+            )
+        };
+        let changes = texts_of(section(ChangeGroup::Conflicts, DiffTarget::HeadToWorktree));
+        assert!(
+            changes.contains(
+                &"Matches the current version. Mark it as resolved to finish.".to_owned()
+            ),
+            "{changes:?}"
+        );
+        let unstaged = texts_of(section(ChangeGroup::Unstaged, DiffTarget::IndexToWorktree));
+        assert!(unstaged.contains(&"No textual changes.".to_owned()));
+    }
+
     #[test]
     fn inline_diff_expands_tabs_before_rendering() {
         diff_expands_tabs_before_rendering(false);

@@ -149,6 +149,10 @@ pub fn render(
         let label = format!("{} — {source_label}", document.path.display());
         let message = if document.binary {
             format!("Binary file changed: {label}")
+        } else if document.target == DiffTarget::HeadToWorktree {
+            // Only unmerged files are compared with HEAD. An empty diff means
+            // the text is the current side's, not that nothing is left to do.
+            format!("Matches the current version, still unresolved: {label}")
         } else {
             format!("No textual changes: {label}")
         };
@@ -681,6 +685,8 @@ fn render_changes(
             let message = section.error.clone().unwrap_or_else(|| {
                 if document.binary {
                     "Binary file changed.".into()
+                } else if section.group == crate::features::git::ChangeGroup::Conflicts {
+                    "Matches the current version. Mark it as resolved to finish.".into()
                 } else {
                     "No textual changes.".into()
                 }
