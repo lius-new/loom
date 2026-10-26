@@ -322,6 +322,11 @@
       "migrated_in": "R5.2",
       "from": "tree_scroll_x"
     },
+    "reveal": {
+      "owner": "ui/explorer/state",
+      "migrated_in": "Explorer auto reveal",
+      "reason": "Tree row to bring into sight until the user scrolls"
+    },
     "scrollbar_dragging": {
       "owner": "ui/explorer/state",
       "migrated_in": "R5.2",
@@ -563,6 +568,16 @@
       "owner": "ui/git/state",
       "migrated_in": "Git history summary scrolling",
       "reason": "Pointer offset within the summary's scrollbar thumb"
+    },
+    "history_summary_height": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history summary resizing",
+      "reason": "User-chosen height of the commit summary under the changed files"
+    },
+    "history_summary_resize": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history summary resizing",
+      "reason": "Pointer offset from the summary's top edge while its divider is dragged"
     },
     "history_nav": {
       "owner": "ui/git/state",
@@ -920,6 +935,10 @@
     "smooth_caret": {
       "owner": "features/settings/model: Values DTO",
       "migrated_in": "R8.2"
+    },
+    "explorer_auto_reveal": {
+      "owner": "features/settings/model: Values DTO",
+      "migrated_in": "Explorer auto reveal"
     },
     "editor_font": {
       "owner": "features/settings/model: Values DTO",

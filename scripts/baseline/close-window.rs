@@ -82,7 +82,10 @@ mod windows {
         }
         let actual = String::from_utf16_lossy(&buffer[..length as usize]);
         let expected = std::fs::canonicalize(executable).map_err(|e| e.to_string())?;
-        if normalized(Path::new(&actual)) != normalized(&expected) {
+        // The image name keeps the path the child was started with, which can
+        // be an 8.3 short name (`RUNNER~1`); canonicalize expands those too.
+        let actual = std::fs::canonicalize(&actual).unwrap_or_else(|_| actual.into());
+        if normalized(&actual) != normalized(&expected) {
             return Err("Process executable does not match the smoke child".into());
         }
         // Keep the process handle open while locating and messaging its window.
