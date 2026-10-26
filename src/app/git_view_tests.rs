@@ -758,6 +758,7 @@ mod panel_virtualization_tests {
             );
         });
         session.render_view(&view, viewport, UiScale::ONE);
+        let summary_top = named(&session, "Copy commit hash").unwrap().top;
         for (name, color, deleted) in [
             ("added.rs", theme::c().git.added_text, false),
             ("modified.rs", theme::c().git.modified, false),
@@ -769,6 +770,10 @@ mod panel_virtualization_tests {
                 .find(|node| node.text.as_deref() == Some(name))
                 .unwrap();
             assert_eq!(label.text_style.unwrap().color, color);
+            assert!(
+                label.layout_rect.bottom < summary_top,
+                "changes precede the summary"
+            );
             assert_eq!(
                 nodes.iter().any(|node| node.style.fill == Some(color)
                     && node.layout_rect.left == label.layout_rect.left
@@ -779,6 +784,80 @@ mod panel_virtualization_tests {
             );
         }
         save_drawer_preview(&session, &context, viewport, "git-history-change-labels");
+        // Ids are hashed, so find a detail-pane thumb by geometry: 8px wide, right of the
+        // history list, and below or above the summary's top edge.
+        let has_thumb = |session: &UiSession, region: ScrollRegion| {
+            session.tree().nodes().iter().any(|node| {
+                let rect = node.layout_rect;
+                rect.width() == 8.0
+                    && rect.left > 700.0
+                    && match region {
+                        ScrollRegion::CommitSummary => rect.top >= summary_top,
+                        _ => rect.bottom < summary_top,
+                    }
+            })
+        };
+        assert!(!has_thumb(&session, ScrollRegion::CommitSummary));
+        let send = |session: &mut UiSession, input| {
+            dispatch_runtime_output(
+                session.handle_input(input),
+                &context,
+                &lgui::window::WindowId::new("history-summary-scroll-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        let summary_point = Point::new(700.0, summary_top + 8.0);
+        send(
+            &mut session,
+            InputEvent::PointerMove(PointerData::mouse(summary_point)),
+        );
+        assert_eq!(
+            state.get().git.ui.scroll_hover,
+            Some(ScrollRegion::CommitSummary)
+        );
+        assert!(has_thumb(&session, ScrollRegion::CommitSummary));
+        send(
+            &mut session,
+            InputEvent::Wheel {
+                point: summary_point,
+                delta: WheelDelta::pixels(0.0, -10000.0),
+            },
+        );
+        let summary_scroll = state.get().git.ui.history_summary_scroll;
+        assert!(summary_scroll > 0.0);
+        assert_eq!(state.get().git.ui.history_files_scroll, 0.0);
+        save_drawer_preview(&session, &context, viewport, "git-history-summary-scrolled");
+        state.update(|app| {
+            app.git.model.set_commit_files(
+                "abc00000",
+                Ok((0..30)
+                    .map(|index| (ChangeKind::Modified, format!("src/file-{index}.rs").into()))
+                    .collect()),
+            )
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        let files_point = Point::new(700.0, panel.top + 80.0);
+        send(
+            &mut session,
+            InputEvent::PointerMove(PointerData::mouse(files_point)),
+        );
+        assert!(!has_thumb(&session, ScrollRegion::CommitSummary));
+        assert!(has_thumb(&session, ScrollRegion::CommitFiles));
+        send(
+            &mut session,
+            InputEvent::Wheel {
+                point: files_point,
+                delta: WheelDelta::pixels(0.0, -60.0),
+            },
+        );
+        assert!(state.get().git.ui.history_files_scroll > 0.0);
+        assert_eq!(state.get().git.ui.history_summary_scroll, summary_scroll);
+        assert_eq!(state.get().git.ui.details_scroll, 0.0);
+        crate::app::git::toggle_commit(&state, "loom".into(), "abc00001".into());
+        assert_eq!(state.get().git.ui.history_summary_scroll, 0.0);
+        assert_eq!(state.get().git.ui.history_files_scroll, 0.0);
         for (tab, expected) in [
             ("Stashes", "WIP: search panel"),
             ("Tags", "v1.0.0"),
@@ -1397,7 +1476,11 @@ mod panel_virtualization_tests {
         use lgui::session::UiSession;
         use std::sync::{Arc, Mutex};
 
-        for region in [ScrollRegion::Changes, ScrollRegion::Details] {
+        for region in [
+            ScrollRegion::Changes,
+            ScrollRegion::Details,
+            ScrollRegion::CommitSummary,
+        ] {
             let exposed = Arc::new(Mutex::new(None::<AppContext>));
             let output = exposed.clone();
             let viewport = UiRect::new(0.0, 0.0, 300.0, 300.0);
@@ -1455,9 +1538,10 @@ mod panel_virtualization_tests {
             assert!(region.scroll(&state.get().git) > 0.0);
             let other = match region {
                 ScrollRegion::Changes => ScrollRegion::Details,
-                ScrollRegion::Details | ScrollRegion::Navigator | ScrollRegion::CommitFiles => {
-                    ScrollRegion::Changes
-                }
+                ScrollRegion::Details
+                | ScrollRegion::Navigator
+                | ScrollRegion::CommitFiles
+                | ScrollRegion::CommitSummary => ScrollRegion::Changes,
             };
             assert_eq!(other.scroll(&state.get().git), 0.0);
             send(InputEvent::PointerUp {

@@ -44,6 +44,8 @@ pub(crate) enum ScrollRegion {
     Navigator,
     /// The commit detail pane's changed-file tree.
     CommitFiles,
+    /// The compact commit summary below the changed-file tree.
+    CommitSummary,
 }
 
 impl ScrollRegion {
@@ -69,6 +71,7 @@ impl ScrollRegion {
             Self::Details => "git-details-viewport",
             Self::Navigator => "git-navigator-viewport",
             Self::CommitFiles => "git-commit-files-viewport",
+            Self::CommitSummary => "git-commit-summary-viewport",
         }
     }
 
@@ -78,6 +81,7 @@ impl ScrollRegion {
             Self::Details => app.ui.details_scroll,
             Self::Navigator => app.ui.history_branch_scroll,
             Self::CommitFiles => app.ui.history_files_scroll,
+            Self::CommitSummary => app.ui.history_summary_scroll,
         }
     }
 
@@ -87,6 +91,7 @@ impl ScrollRegion {
             Self::Details => app.ui.details_scroll = value,
             Self::Navigator => app.ui.history_branch_scroll = value,
             Self::CommitFiles => app.ui.history_files_scroll = value,
+            Self::CommitSummary => app.ui.history_summary_scroll = value,
         }
         app.ui.clear_hover_cards();
     }
@@ -105,6 +110,10 @@ impl ScrollRegion {
             Self::CommitFiles => (
                 app.ui.files_scrollbar_dragging,
                 app.ui.files_scrollbar_drag_offset,
+            ),
+            Self::CommitSummary => (
+                app.ui.summary_scrollbar_dragging,
+                app.ui.summary_scrollbar_drag_offset,
             ),
         }
     }
@@ -126,6 +135,10 @@ impl ScrollRegion {
             Self::CommitFiles => {
                 app.ui.files_scrollbar_dragging = dragging;
                 app.ui.files_scrollbar_drag_offset = offset;
+            }
+            Self::CommitSummary => {
+                app.ui.summary_scrollbar_dragging = dragging;
+                app.ui.summary_scrollbar_drag_offset = offset;
             }
         }
     }

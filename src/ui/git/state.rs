@@ -72,6 +72,14 @@ pub struct GitUiState {
     pub history_files_scroll: f32,
     pub files_scrollbar_dragging: bool,
     pub files_scrollbar_drag_offset: f32,
+    /// Independent scroll and scrollbar drag of the compact commit summary.
+    pub history_summary_scroll: f32,
+    pub summary_scrollbar_dragging: bool,
+    pub summary_scrollbar_drag_offset: f32,
+    /// User-chosen height of the summary under the changed files, and the pointer's offset
+    /// from its top edge while dragging.
+    pub history_summary_height: Option<f32>,
+    pub history_summary_resize: Option<f32>,
     /// Branch folders folded shut in the navigator, as `b:` or `r:` plus the path.
     pub history_collapsed: HashSet<String>,
     /// User-chosen widths of the history's navigator and detail pane.
@@ -136,6 +144,11 @@ impl Default for GitUiState {
             history_files_scroll: 0.0,
             files_scrollbar_dragging: false,
             files_scrollbar_drag_offset: 0.0,
+            history_summary_scroll: 0.0,
+            summary_scrollbar_dragging: false,
+            summary_scrollbar_drag_offset: 0.0,
+            history_summary_height: None,
+            history_summary_resize: None,
             history_collapsed: HashSet::from([crate::ui::git::history_branches::REMOTE.to_owned()]),
             history_branches_width: None,
             history_detail_width: None,
@@ -178,6 +191,7 @@ impl GitUiState {
         if !open {
             self.panel_resize_offset = None;
             self.details_scrollbar_dragging = false;
+            self.summary_scrollbar_dragging = false;
             self.hover = None;
             self.clear_hover_cards();
         }
@@ -208,6 +222,8 @@ impl GitUiState {
     pub fn reset_scroll(&mut self) {
         self.scroll = 0.0;
         self.details_scroll = 0.0;
+        self.history_summary_scroll = 0.0;
+        self.summary_scrollbar_dragging = false;
         self.hover = None;
         self.clear_hover_cards();
     }

@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use lgui::core::{
-    CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiFocusHandle, UiId, clip,
+    CursorIcon, EventPolicy, PointerButton, SemanticRole, Semantics, UiElement, UiFocusHandle,
+    UiId, clip,
 };
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 use lgui::services::ServicesContextExt;
@@ -26,8 +27,12 @@ const INDENT: f32 = 12.0;
 type Details<'a> = Option<&'a Result<CommitDetails, String>>;
 
 const LINE_H: f32 = 15.0;
-/// Room that always stays for the file tree under the header.
-const MIN_FILES_H: f32 = 110.0;
+const FILES_TOP: f32 = 12.0 + ROW_H;
+const SUMMARY_GAP: f32 = 6.0;
+const MAX_SUMMARY_H: f32 = 120.0;
+const MIN_SUMMARY_H: f32 = 48.0;
+/// Room the file tree keeps when the summary is dragged taller.
+const MIN_FILES_H: f32 = 60.0;
 /// The hash row and the gap under it.
 const TOP_ROW_H: f32 = 26.0;
 
@@ -48,40 +53,38 @@ impl Line {
 
 struct Layout {
     lines: Vec<Line>,
-    /// Where the file tree starts, counted from the pane's top.
-    files_top: f32,
 }
 
 fn plural(count: usize, word: &str) -> String {
     format!("{count} {word}{}", if count == 1 { "" } else { "s" })
 }
 
-/// Everything above the file tree, sized to the pane so that the tree always
-/// keeps room and the message takes what is left.
+/// All summary text is retained; its compact viewport scrolls independently.
 fn layout(rect: UiRect, subject: Subject<'_>, details: Details<'_>) -> Layout {
     let inner = (rect.width() - PAD * 2.0).max(0.0);
     let c = theme::c();
-    let fit = |value: String| tabs::ellipsize(&value, inner, theme::SMALL, 400);
+    let wrapped = |value: String, color| {
+        wrap_text_sized(&value, inner, theme::SMALL)
+            .into_iter()
+            .map(|line| Line::Text(vec![(line, color)]))
+            .collect::<Vec<_>>()
+    };
     let mut meta: Vec<Line> = Vec::new();
     match details {
         None => meta.push(Line::Text(vec![("Loading details…".into(), c.text_ghost)])),
-        Some(Err(error)) => meta.push(Line::Text(vec![(fit(error.clone()), c.error_text)])),
+        Some(Err(error)) => meta.extend(wrapped(error.clone(), c.error_text)),
         Some(Ok(details)) => {
             if let Subject::Commit(commit) = subject {
-                meta.push(Line::Text(vec![(
-                    fit(format!("{} <{}>", details.author, details.author_email)),
+                meta.extend(wrapped(
+                    format!("{} <{}>", details.author, details.author_email),
                     c.text_bright,
-                )]));
-                meta.push(Line::Text(vec![(
-                    fit(format!(
-                        "{} · {}",
-                        details.date,
-                        relative_time(commit.timestamp)
-                    )),
+                ));
+                meta.extend(wrapped(
+                    format!("{} · {}", details.date, relative_time(commit.timestamp)),
                     c.text_muted,
-                )]));
+                ));
             } else {
-                meta.push(Line::Text(vec![(fit(details.date.clone()), c.text_muted)]));
+                meta.extend(wrapped(details.date.clone(), c.text_muted));
             }
             if details.files_changed > 0 {
                 let mut stats = vec![(plural(details.files_changed, "file"), c.text_soft)];
@@ -103,7 +106,7 @@ fn layout(rect: UiRect, subject: Subject<'_>, details: Details<'_>) -> Layout {
             .filter(|name| !name.is_empty())
             .collect::<Vec<_>>();
         if !refs.is_empty() {
-            meta.push(Line::Text(vec![(fit(refs.join(", ")), c.accent)]));
+            meta.extend(wrapped(refs.join(", "), c.accent));
         }
         if !commit.parents.is_empty() {
             let parents = commit
@@ -112,10 +115,7 @@ fn layout(rect: UiRect, subject: Subject<'_>, details: Details<'_>) -> Layout {
                 .map(|oid| oid.chars().take(7).collect::<String>())
                 .collect::<Vec<_>>()
                 .join(" ");
-            meta.push(Line::Text(vec![(
-                fit(format!("parent {parents}")),
-                c.text_dim,
-            )]));
+            meta.extend(wrapped(format!("parent {parents}"), c.text_dim));
         }
     }
 
@@ -124,18 +124,7 @@ fn layout(rect: UiRect, subject: Subject<'_>, details: Details<'_>) -> Layout {
         (Subject::Commit(commit), _) => commit.subject.clone(),
         (Subject::Stash(stash), _) => stash.message.clone(),
     };
-    // What the message may take: the pane less the fixed parts and the tree.
-    let fixed =
-        12.0 + TOP_ROW_H + 6.0 + meta.iter().map(Line::height).sum::<f32>() + 6.0 + 5.0 + ROW_H;
-    let budget = ((rect.height() - fixed - MIN_FILES_H) / LINE_H).floor();
-    let max_lines = (budget as isize).clamp(2, 14) as usize;
-    let mut wrapped = wrap_text_sized(&message.replace('\t', "    "), inner, theme::SMALL);
-    if wrapped.len() > max_lines {
-        wrapped.truncate(max_lines);
-        if let Some(last) = wrapped.last_mut() {
-            last.push('…');
-        }
-    }
+    let wrapped = wrap_text_sized(&message.replace('\t', "    "), inner, theme::SMALL);
     // The subject paragraph stands out from the body under it.
     let mut subject_done = false;
     let mut lines = Vec::new();
@@ -149,19 +138,32 @@ fn layout(rect: UiRect, subject: Subject<'_>, details: Details<'_>) -> Layout {
     lines.push(Line::Gap);
     lines.extend(meta);
 
-    let files_top =
-        12.0 + TOP_ROW_H + lines.iter().map(Line::height).sum::<f32>() + 6.0 + 5.0 + ROW_H;
-    Layout { lines, files_top }
+    Layout { lines }
 }
 
 /// The scrolling file tree inside the detail pane `rect`.
-pub(crate) fn files_rect(rect: UiRect, subject: Subject<'_>, details: Details<'_>) -> UiRect {
+pub(crate) fn files_rect(rect: UiRect, summary_height: Option<f32>) -> UiRect {
+    let top = (rect.top + FILES_TOP).min(rect.bottom);
     UiRect::new(
         rect.left,
-        (rect.top + layout(rect, subject, details).files_top).min(rect.bottom),
+        top,
         rect.right,
-        rect.bottom,
+        (summary_rect(rect, summary_height).top - SUMMARY_GAP).max(top),
     )
+}
+
+/// Give changes most of the pane by default; a dragged height stays clear of the file tree.
+pub(crate) fn summary_rect(rect: UiRect, dragged: Option<f32>) -> UiRect {
+    let pane = rect.height().max(0.0);
+    let height = match dragged {
+        Some(height) => height.clamp(
+            MIN_SUMMARY_H,
+            (pane - FILES_TOP - MIN_FILES_H).max(MIN_SUMMARY_H),
+        ),
+        None => (pane * 0.30).min(MAX_SUMMARY_H),
+    }
+    .floor();
+    UiRect::new(rect.left, rect.bottom - height, rect.right, rect.bottom)
 }
 
 /// What the pane describes.
@@ -203,7 +205,34 @@ pub(crate) fn render(
         )));
     };
 
-    let mut y = rect.top + 12.0;
+    let summary_height = state.get().ui.history_summary_height;
+    let layout = layout(rect, subject, details);
+    let heading = match files {
+        None => "Loading files…".to_owned(),
+        Some(Err(error)) => error.clone(),
+        Some(Ok(files)) => plural(files.len(), "changed file"),
+    };
+    let mut root = root.child(text(
+        UiRect::new(left, rect.top + 12.0, right, rect.top + FILES_TOP),
+        heading,
+        theme::mono(theme::c().text_ghost, theme::SMALL),
+    ));
+    if let Some(Ok(files)) = files {
+        root = root.child(file_tree(
+            files_rect(rect, summary_height),
+            files,
+            subject.oid(),
+            repository,
+            state,
+            editor_focus,
+            scroll,
+            collapsed,
+        ));
+    }
+    let summary_viewport = summary_rect(rect, summary_height);
+    let summary_top = summary_viewport.top - 1.0;
+    root = root.child(summary_handle(rect, summary_top, left, right, state));
+    let mut y = summary_viewport.top + 8.0;
     let (oid, hash) = match subject {
         Subject::Commit(commit) => (
             commit.oid.clone(),
@@ -218,7 +247,7 @@ pub(crate) fn render(
     } else {
         0.0
     };
-    let mut root = root
+    let mut summary = panel(summary_viewport, VisualStyle::default())
         .child(text(
             UiRect::new(left, y, copy_rect.left - actions_w, y + 20.0),
             hash,
@@ -265,7 +294,7 @@ pub(crate) fn render(
                 y + 20.0,
             );
             let (state, oid) = (state.clone(), stash.oid.clone());
-            root = root.child(icon_button(rect, icon, name, move || {
+            summary = summary.child(icon_button(rect, icon, name, move || {
                 state.dispatch(Command::ApplyStash {
                     oid: oid.clone(),
                     pop,
@@ -274,18 +303,17 @@ pub(crate) fn render(
         }
         let rect = UiRect::new(copy_rect.left - 22.0, y, copy_rect.left - 2.0, y + 20.0);
         let (state, oid) = (state.clone(), stash.oid.clone());
-        root = root.child(icon_button(rect, "trash", "Drop Stash", move || {
+        summary = summary.child(icon_button(rect, "trash", "Drop Stash", move || {
             state.dispatch(Command::RequestDropStash { oid: oid.clone() });
         }));
     }
-    let layout = layout(rect, subject, details);
     y += TOP_ROW_H;
     for line in &layout.lines {
         if let Line::Text(parts) = line {
             let mut x = left;
             for (piece, color) in parts {
                 let width = tabs::measure(piece, theme::SMALL, 400) + 1.0;
-                root = root.child(text(
+                summary = summary.child(text(
                     UiRect::new(x, y, (x + width).min(right), y + LINE_H),
                     piece.clone(),
                     theme::mono(*color, theme::SMALL),
@@ -295,44 +323,52 @@ pub(crate) fn render(
         }
         y += line.height();
     }
-    y += 6.0;
-    root = root.child(panel(
-        UiRect::new(left, y, right, y + 1.0),
-        VisualStyle::filled(theme::c().border),
+    let content_bottom = y + 8.0;
+    let max_scroll = (content_bottom - summary_viewport.bottom).max(0.0);
+    let scroll = state.get().ui.history_summary_scroll.clamp(0.0, max_scroll);
+    root = root.child(scroll_region(
+        summary_viewport,
+        vec![summary],
+        content_bottom,
+        scroll,
+        max_scroll,
+        state.clone(),
+        ScrollRegion::CommitSummary,
     ));
-    y += 5.0;
-
-    let heading = match files {
-        None => "Loading files…".to_owned(),
-        Some(Err(error)) => error.clone(),
-        Some(Ok(files)) => format!(
-            "{} changed file{}",
-            files.len(),
-            if files.len() == 1 { "" } else { "s" }
-        ),
-    };
-    root = root.child(text(
-        UiRect::new(left, y, right, y + ROW_H),
-        heading,
-        theme::mono(theme::c().text_ghost, theme::SMALL),
-    ));
-    y += ROW_H;
-
-    if let Some(Ok(files)) = files {
-        let body = UiRect::new(rect.left, y, rect.right, rect.bottom);
-        debug_assert!((body.top - files_rect(rect, subject, details).top).abs() < 0.01);
-        root = root.child(file_tree(
-            body,
-            files,
-            &oid,
-            repository,
-            state,
-            editor_focus,
-            scroll,
-            collapsed,
-        ));
-    }
     clip(rect, 0.0, 0.0).child(root)
+}
+
+/// The rule above the summary; dragging it resizes the summary.
+fn summary_handle(rect: UiRect, top: f32, left: f32, right: f32, state: &Binding) -> Element {
+    let active = state.get().ui.history_summary_resize.is_some();
+    let bottom = rect.bottom;
+    let (drag_start, drag_move, drag_end) = (state.clone(), state.clone(), state.clone());
+    crate::ui::components::resize_handle::render(
+        "git-history-summary-resize",
+        UiRect::new(left, top - 3.0, right, top + 4.0),
+        UiRect::new(left, top, right, top + 1.0),
+        CursorIcon::ResizeVertical,
+        active,
+    )
+    .on_pointer_down_with_button(move |_cx, pointer, button| {
+        if button == PointerButton::Left {
+            drag_start.update(|app| {
+                app.ui.history_summary_resize = Some(pointer.point.y - top);
+                app.ui.hover = None;
+                app.ui.clear_hover_cards();
+            });
+        }
+    })
+    .on_pointer_drag(move |_cx, pointer| {
+        drag_move.update(|app| {
+            if let Some(offset) = app.ui.history_summary_resize {
+                app.ui.history_summary_height = Some(bottom - (pointer.point.y - offset) - 1.0);
+            }
+        });
+    })
+    .on_pointer_up(move |_cx, _pointer| {
+        drag_end.update(|app| app.ui.history_summary_resize = None);
+    })
 }
 
 /// The changed files as a folder tree.
@@ -754,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn the_header_shows_the_whole_commit_and_leaves_room_for_files() {
+    fn the_bottom_summary_shows_the_commit_and_leaves_room_for_files_above() {
         let commit = CommitSummary {
             oid: "0123456789abcdef".into(),
             parents: vec!["fedcba9876543210".into()],
@@ -808,10 +844,31 @@ Another body line."
         );
         assert!(lines.iter().any(|line| line.contains("main")));
         assert!(lines.iter().any(|line| line.starts_with("parent fedcba9")));
-        // A short pane trims the message, never the file tree.
+        // Pane height changes geometry, never the retained summary text.
         let cramped = layout(short, subject, Some(&details));
-        assert!(cramped.files_top + MIN_FILES_H <= short.height() + 40.0);
-        assert!(cramped.files_top < full.files_top);
+        assert_eq!(text_of(&cramped), lines);
+        for rect in [short, tall] {
+            assert!(files_rect(rect, None).height() > summary_rect(rect, None).height());
+            assert!(files_rect(rect, None).bottom < summary_rect(rect, None).top);
+            assert!(summary_rect(rect, None).height() <= MAX_SUMMARY_H);
+        }
+        assert_eq!(files_rect(short, None).top, files_rect(tall, None).top);
+        // A dragged height is honoured but never starves the file tree or collapses.
+        assert_eq!(summary_rect(tall, Some(200.0)).height(), 200.0);
+        assert_eq!(summary_rect(tall, Some(1.0)).height(), MIN_SUMMARY_H);
+        assert!(files_rect(tall, Some(9999.0)).height() >= MIN_FILES_H - SUMMARY_GAP);
+        let tiny = UiRect::new(0.0, 0.0, 253.0, 80.0);
+        assert_eq!(files_rect(tiny, None).top, FILES_TOP);
+        let mut long = details.as_ref().unwrap().clone();
+        long.message = (0..50)
+            .map(|index| format!("Body line {index}\n"))
+            .collect();
+        let long = Ok(long);
+        assert!(
+            text_of(&layout(short, subject, Some(&long)))
+                .iter()
+                .any(|line| line.contains("Body line 49"))
+        );
         // Before the details arrive the header says so.
         let waiting = text_of(&layout(tall, subject, None));
         assert!(waiting.iter().any(|line| line.contains("Loading details")));

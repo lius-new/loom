@@ -549,6 +549,21 @@
       "migrated_in": "Git history branches",
       "reason": "Pointer offset within the file tree's scrollbar thumb"
     },
+    "history_summary_scroll": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history summary scrolling",
+      "reason": "Independent scroll position of the compact commit or stash summary"
+    },
+    "summary_scrollbar_dragging": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history summary scrolling",
+      "reason": "The summary's scrollbar thumb is being dragged"
+    },
+    "summary_scrollbar_drag_offset": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history summary scrolling",
+      "reason": "Pointer offset within the summary's scrollbar thumb"
+    },
     "history_nav": {
       "owner": "ui/git/state",
       "migrated_in": "Git history branches",

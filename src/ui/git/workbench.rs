@@ -430,7 +430,10 @@ pub fn render(
     let detail_rect = UiRect::new(list_right, panel_body.top, rect.right, rect.bottom);
     let detail_files = detail_subject
         .filter(|_| show_detail)
-        .map(|subject| history_detail::files_rect(detail_rect, subject, detail_details));
+        .map(|_| history_detail::files_rect(detail_rect, app.ui.history_summary_height));
+    let detail_summary = detail_subject
+        .filter(|_| show_detail)
+        .map(|_| history_detail::summary_rect(detail_rect, app.ui.history_summary_height));
     let navigator_body = show_branches.then(|| {
         history_branches::body_rect(UiRect::new(
             panel_body.left,
@@ -465,6 +468,8 @@ pub fn render(
                 Some(ScrollRegion::Navigator)
             } else if detail_files.is_some_and(|rect| rect.contains(point)) {
                 Some(ScrollRegion::CommitFiles)
+            } else if detail_summary.is_some_and(|rect| rect.contains(point)) {
+                Some(ScrollRegion::CommitSummary)
             } else {
                 None
             };

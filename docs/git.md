@@ -62,7 +62,11 @@ live. Right-click a tag to push or delete it. A branch checked out in another
 worktree shows a folder icon whose menu opens the worktree, adds it to the
 workspace or deletes it. Narrower panels keep the four tabs.
 
-The detail pane lists a commit's or stash's changed files as a folder tree. Folders
+The detail pane puts the changed files first, with the commit or stash summary
+below a divider at the bottom. The summary takes at most 30% of the pane and 120px;
+its full text scrolls independently instead of being truncated. Both regions use
+the Git panel's overlay scrollbars, shown on overflow while hovered or dragged.
+Folders
 that hold a single folder join into one row, fold shut when clicked, and stay
 pinned at the top while their files scroll.
 Filenames and status letters use the same change colors and deletion strike-through

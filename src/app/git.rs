@@ -1248,6 +1248,8 @@ pub fn toggle_commit(state: &AppContext, root: PathBuf, oid: String) {
     state.update(|app| {
         app.git.ui.history_stash = None;
         app.git.ui.history_files_scroll = 0.0;
+        app.git.ui.history_summary_scroll = 0.0;
+        app.git.ui.summary_scrollbar_dragging = false;
         expanded = app.git.model.toggle_commit(toggled);
     });
     let Some(application) = application.filter(|_| expanded) else {
