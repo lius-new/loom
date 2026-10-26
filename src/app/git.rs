@@ -456,6 +456,24 @@ pub fn discard_paths(
 /// Commit the staged changes. With nothing staged, offer to stage every
 /// tracked change first; amending needs no staged changes.
 pub fn commit(state: &AppContext, store: &State<GitStoreSnapshot>) -> bool {
+    // Mid-operation the commit button is Continue, and so is its shortcut.
+    if let Some(repository) = active_repository(store)
+        && let Some(wording) =
+            crate::features::git::operation::operation_text(repository.repository_state)
+    {
+        if wording.continue_label.is_none() {
+            return false;
+        }
+        let conflicted = repository
+            .files
+            .values()
+            .any(|file| file.conflict.is_some());
+        if conflicted {
+            state.update(|app| app.show_toast("Resolve and stage the conflicted files first."));
+            return false;
+        }
+        return continue_operation(state, store);
+    }
     request_commit(state, store, false)
 }
 

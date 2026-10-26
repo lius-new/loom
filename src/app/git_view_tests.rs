@@ -247,6 +247,123 @@ mod panel_virtualization_tests {
     }
 
     #[test]
+    fn the_submit_menu_offers_only_the_way_out_during_an_operation() {
+        use crate::ui::git::menu::{Entry, GitMenuTarget, entries};
+        use crate::ui::git::state::GitPanelState;
+        let (id, mut snapshot, _) = drawer_fixture();
+        let labels = |snapshot: &GitStoreSnapshot| {
+            entries(&GitMenuTarget::Submit, &GitPanelState::default(), snapshot)
+                .into_iter()
+                .map(|entry| match entry {
+                    Entry::Item { label, .. } => label,
+                    Entry::Message(message) => message,
+                    Entry::Separator => "-".to_owned(),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(labels(&snapshot).contains(&"Commit and Push".to_owned()));
+        for (state, expected) in [
+            (RepositoryState::RebaseInProgress, "Abort Rebase"),
+            (RepositoryState::MergeInProgress, "Abort Merge"),
+            (RepositoryState::Bisecting, "End Bisect"),
+        ] {
+            Arc::make_mut(&mut snapshot.repositories)
+                .get_mut(&id)
+                .unwrap()
+                .repository_state = state;
+            assert_eq!(labels(&snapshot), [expected]);
+        }
+    }
+
+    #[test]
+    fn an_unfinished_operation_replaces_the_commit_form_with_its_status() {
+        use crate::features::git::ConflictKind;
+        use lgui::application::ApplicationContext;
+        use lgui::session::UiSession;
+        let viewport = UiRect::new(0.0, 0.0, 340.0, 600.0);
+        let (id, snapshot, history) = drawer_fixture();
+        let exposed = Arc::new(std::sync::Mutex::new(None));
+        let view = render_view(viewport, None, snapshot, history, |_| {}, exposed.clone());
+        let context = ApplicationContext::empty(Default::default());
+        context
+            .resources()
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                crate::app::svg_icons(),
+            )));
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        let mut session = UiSession::new();
+        let (_, store) = {
+            session.render_view(&view, viewport, UiScale::ONE);
+            exposed.lock().unwrap().clone().unwrap()
+        };
+        let disabled = |session: &UiSession, name: &str| {
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| {
+                    node.semantics
+                        .as_ref()
+                        .and_then(|semantics| semantics.name.as_deref())
+                        == Some(name)
+                })
+                .and_then(|node| node.semantics.as_ref())
+                .map(|semantics| semantics.state.disabled)
+        };
+        let conflicted = PathBuf::from("src/file00000.rs");
+        store.update(|snapshot| {
+            let repository = Arc::make_mut(&mut snapshot.repositories)
+                .get_mut(&id)
+                .unwrap();
+            repository.repository_state = RepositoryState::RebaseInProgress;
+            repository.operation_step = Some((1, 2));
+            Arc::make_mut(&mut repository.files)
+                .get_mut(&conflicted)
+                .unwrap()
+                .conflict = Some(ConflictKind::BothModified);
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+
+        // Nothing at the top; the form's place reports the operation.
+        let texts = text_nodes(&session);
+        assert!(!texts.iter().any(|value| value == "REBASING 1/2"));
+        assert!(texts.contains(&"Rebasing 1/2".to_owned()), "{texts:?}");
+        assert!(texts.contains(&"1 conflicted file left.".to_owned()));
+        assert!(named(&session, "Commit message").is_none());
+        assert!(named(&session, "Commit changes").is_none());
+        assert!(named(&session, "Amend last commit").is_none());
+        // The button is Continue, waiting for the conflict.
+        assert_eq!(disabled(&session, "Continue Rebase"), Some(true));
+
+        store.update(|snapshot| {
+            let repository = Arc::make_mut(&mut snapshot.repositories)
+                .get_mut(&id)
+                .unwrap();
+            Arc::make_mut(&mut repository.files)
+                .get_mut(&conflicted)
+                .unwrap()
+                .conflict = None;
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(disabled(&session, "Continue Rebase"), Some(false));
+        assert!(text_nodes(&session).contains(&"No conflicts left.".to_owned()));
+
+        // A bisect is ended, not continued.
+        store.update(|snapshot| {
+            Arc::make_mut(&mut snapshot.repositories)
+                .get_mut(&id)
+                .unwrap()
+                .repository_state = RepositoryState::Bisecting;
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        assert_eq!(disabled(&session, "End Bisect"), Some(false));
+        assert!(named(&session, "Continue Rebase").is_none());
+    }
+
+    #[test]
     fn the_drawer_keeps_changes_and_the_commit_form_without_bottom_sections() {
         use lgui::application::ApplicationContext;
         use lgui::session::UiSession;

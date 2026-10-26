@@ -371,6 +371,56 @@ mod tests {
         (state, store, session)
     }
     #[test]
+    fn the_commit_shortcut_does_not_commit_while_an_operation_has_conflicts() {
+        use crate::features::git::{
+            ChangeKind, ConflictKind, FileState, RepositoryId, RepositorySnapshot, RepositoryState,
+        };
+        let (state, store, _session) = live();
+        let id = RepositoryId(1);
+        let repository = RepositorySnapshot {
+            id,
+            worktree_root: "repo".into(),
+            git_dir: "repo/.git".into(),
+            common_dir: "repo/.git".into(),
+            head: crate::features::git::HeadState::Branch("main".into()),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            files: Arc::new(
+                [(
+                    "a.txt".into(),
+                    FileState {
+                        worktree: ChangeKind::Unmerged,
+                        conflict: Some(ConflictKind::BothModified),
+                        ..Default::default()
+                    },
+                )]
+                .into(),
+            ),
+            ignored: Default::default(),
+            repository_state: RepositoryState::RebaseInProgress,
+            operation_step: Some((1, 1)),
+            head_oid: None,
+            stashes: Default::default(),
+            tags: Default::default(),
+            worktrees: Default::default(),
+            features: Default::default(),
+            generation: 0,
+        };
+        store.update(|snapshot| {
+            Arc::make_mut(&mut snapshot.repositories).insert(id, repository);
+            snapshot.active_repository = Some(id);
+        });
+        assert!(!crate::app::git::commit(&state, &store));
+        // It says why, instead of asking for a commit message.
+        let toast = state.get().chrome.toast.map(|toast| toast.message);
+        assert_eq!(
+            toast.as_deref(),
+            Some("Resolve and stage the conflicted files first.")
+        );
+    }
+
+    #[test]
     fn projected_form_edits_preserve_workspace_chrome_and_snapshot() {
         let (state, store, _session) = live();
         let view = binding(&state, &store);

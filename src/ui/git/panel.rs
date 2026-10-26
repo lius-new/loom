@@ -286,32 +286,8 @@ pub fn render(
 
     let prepared = git.presentation.repositories.get(&repository.id);
     let sections = prepared.map(|prepared| &prepared.sections);
-    let mut banner_bottom = (rect.top + crate::ui::git::drawer::HEADER_H).min(rect.bottom);
-    if let Some(label) = operation_label(repository) {
-        let banner = UiRect::new(
-            rect.left,
-            banner_bottom,
-            rect.right,
-            banner_bottom + BANNER_H,
-        );
-        let conflicts = sections.is_some_and(|sections| !sections[CONFLICTS as usize].is_empty());
-        root = root.child(operation_banner(
-            banner,
-            label,
-            repository.repository_state,
-            conflicts,
-            git.operation.is_none(),
-            state.clone(),
-            store.clone(),
-        ));
-        banner_bottom = banner.bottom;
-    }
-    let body_rect = UiRect::new(
-        rect.left,
-        banner_bottom.min(rect.bottom),
-        rect.right,
-        rect.bottom,
-    );
+    let body_top = (rect.top + crate::ui::git::drawer::HEADER_H).min(rect.bottom);
+    let body_rect = UiRect::new(rect.left, body_top, rect.right, rect.bottom);
     let mut content = Vec::new();
     // Every section's rows, laid out before drawing so the content height
     // and scroll range are known.
@@ -792,15 +768,74 @@ pub(crate) fn commit_options_button(rect: UiRect, state: Binding, enabled: bool)
 pub(crate) fn commit_button(rect: UiRect, state: Binding, store: Snapshot) -> Element {
     let app = state.get();
     let reason = crate::ui::git::drawer::commit_reason(&app, &store.get());
-    let enabled = reason.is_none();
     let amend = app.ui.commit_amend;
     let click_state = state.clone();
-    let label = if amend { "Amend" } else { "Commit" };
-    let mut semantics = Semantics::new(SemanticRole::Button).name(if amend {
-        "Amend last commit"
-    } else {
-        "Commit changes"
-    });
+    primary_button(
+        rect,
+        PrimaryButton {
+            key: "git-commit-button",
+            label: if amend { "Amend" } else { "Commit" },
+            name: if amend {
+                "Amend last commit"
+            } else {
+                "Commit changes"
+            },
+            reason,
+        },
+        move || {
+            click_state.dispatch(Command::Commit);
+        },
+    )
+}
+
+/// The button that finishes an operation in progress: Continue, or End for a
+/// bisect.
+pub(crate) fn operation_button(
+    rect: UiRect,
+    state: Binding,
+    label: &'static str,
+    continues: bool,
+    reason: Option<&'static str>,
+) -> Element {
+    primary_button(
+        rect,
+        PrimaryButton {
+            key: "git-operation-button",
+            label,
+            name: label,
+            reason,
+        },
+        move || {
+            state.dispatch(if continues {
+                Command::ContinueOperation
+            } else {
+                Command::RequestAbort
+            });
+        },
+    )
+}
+
+pub(crate) struct PrimaryButton {
+    key: &'static str,
+    label: &'static str,
+    name: &'static str,
+    /// Why it cannot be used now; `None` when it can.
+    reason: Option<&'static str>,
+}
+
+fn primary_button(
+    rect: UiRect,
+    button: PrimaryButton,
+    on_click: impl Fn() + Send + Sync + 'static,
+) -> Element {
+    let PrimaryButton {
+        key,
+        label,
+        name,
+        reason,
+    } = button;
+    let enabled = reason.is_none();
+    let mut semantics = Semantics::new(SemanticRole::Button).name(name);
     semantics.state.disabled = !enabled;
     if let Some(reason) = reason {
         semantics = semantics.description(reason);
@@ -818,7 +853,7 @@ pub(crate) fn commit_button(rect: UiRect, state: Binding, store: Snapshot) -> El
         };
         UiElement::panel(cx.id, rect, VisualStyle::filled(fill)).children(cx.children)
     })
-    .key("git-commit-button")
+    .key(key)
     .event_policy(EventPolicy::INTERACTIVE)
     .semantics(semantics)
     .cursor(if enabled {
@@ -828,7 +863,7 @@ pub(crate) fn commit_button(rect: UiRect, state: Binding, store: Snapshot) -> El
     })
     .on_click(move || {
         if enabled {
-            click_state.dispatch(Command::Commit);
+            on_click();
         }
     })
     .child(text(
@@ -1156,8 +1191,6 @@ pub(crate) fn wrap_text_sized(text: &str, width: f32, size: f32) -> Vec<String> 
     }
     lines
 }
-
-pub(crate) const BANNER_H: f32 = 30.0;
 
 /// The folder name shown for a repository.
 pub(crate) fn repository_name(root: &std::path::Path) -> String {
@@ -2095,7 +2128,7 @@ pub(crate) enum StashAction {
     Drop,
 }
 
-/// The banner label for an operation in progress, with rebase progress.
+/// The title bar label for an operation in progress, with its progress.
 pub(crate) fn operation_label(repository: &RepositorySnapshot) -> Option<String> {
     let label = match repository.repository_state {
         RepositoryState::MergeInProgress => "MERGING",
@@ -2111,112 +2144,6 @@ pub(crate) fn operation_label(repository: &RepositorySnapshot) -> Option<String>
         Some((step, total)) => format!("{label} {step}/{total}"),
         None => label.to_owned(),
     })
-}
-
-/// The operation in progress, with Continue (not while conflicts remain or
-/// another Git command runs) and Abort.
-pub(crate) fn operation_banner(
-    rect: UiRect,
-    label: String,
-    operation: RepositoryState,
-    conflicts: bool,
-    idle: bool,
-    state: Binding,
-    _store: Snapshot,
-) -> Element {
-    let mut banner = panel(rect, VisualStyle::filled(theme::c().surface))
-        .child(panel(
-            UiRect::new(rect.left, rect.top, rect.left + 2.0, rect.bottom),
-            VisualStyle::filled(theme::c().warning),
-        ))
-        .child(panel(
-            UiRect::new(rect.left, rect.bottom - 1.0, rect.right, rect.bottom),
-            VisualStyle::filled(theme::c().border),
-        ));
-    let mut right = rect.right - 8.0;
-    let abort_label = if operation == RepositoryState::Bisecting {
-        "End"
-    } else {
-        "Abort"
-    };
-    let abort_state = state.clone();
-    let (abort, abort_left) = text_button(right, rect, abort_label, false, idle, move || {
-        abort_state.dispatch(Command::RequestAbort);
-    });
-    banner = banner.child(abort);
-    right = abort_left - 6.0;
-    // Bisect has no continue; its steps run from the terminal.
-    if operation != RepositoryState::Bisecting {
-        let (button, left) = text_button(
-            right,
-            rect,
-            "Continue",
-            true,
-            idle && !conflicts,
-            move || {
-                state.dispatch(Command::ContinueOperation);
-            },
-        );
-        banner = banner.child(button);
-        right = left - 6.0;
-    }
-    let label_w = crate::ui::tabs::measure(&label, theme::SMALL, 700) + 6.0;
-    banner = banner.child(text(
-        UiRect::new(
-            rect.left + 12.0,
-            rect.top,
-            rect.left + 12.0 + label_w,
-            rect.bottom,
-        ),
-        label,
-        theme::mono_bold(theme::c().warning, theme::SMALL),
-    ));
-    if conflicts {
-        banner = banner.child(text(
-            UiRect::new(rect.left + 18.0 + label_w, rect.top, right, rect.bottom),
-            "Resolve conflicts",
-            theme::mono(theme::c().text_dim, theme::SMALL),
-        ));
-    }
-    banner
-}
-
-/// A small text button ending at `right`, vertically centered in `bar`.
-/// Returns it and its left edge.
-pub(crate) fn text_button(
-    right: f32,
-    bar: UiRect,
-    label: &'static str,
-    primary: bool,
-    enabled: bool,
-    on_click: impl Fn() + Send + Sync + 'static,
-) -> (Element, f32) {
-    let width = crate::ui::tabs::measure(label, theme::SMALL, 600) + 16.0;
-    let top = bar.top + (bar.height() - 20.0) / 2.0;
-    let rect = UiRect::new(right - width, top, right, top + 20.0);
-    let (fill, color) = match (primary, enabled) {
-        (_, false) => (theme::c().sidebar, theme::c().text_ghost),
-        (true, true) => (theme::c().accent, theme::c().on_accent),
-        (false, true) => (theme::c().sidebar, theme::c().text_soft),
-    };
-    let mut style = theme::mono_bold(color, theme::SMALL);
-    style.align = lgui::prelude::TextAlign::Center;
-    let button = theme::bordered(rect, fill, theme::c().border, 3.0, 1.0)
-        .key(format!("git-banner-{label}"))
-        .event_policy(EventPolicy::INTERACTIVE)
-        .semantics(Semantics::new(SemanticRole::Button).name(label))
-        .cursor(if enabled {
-            CursorIcon::Pointer
-        } else {
-            CursorIcon::NotAllowed
-        })
-        .on_click(move || {
-            if enabled {
-                on_click();
-            }
-        })
-        .child(text(rect, label, style));
-    (button, rect.left)
 }
 
 pub(crate) const BUTTON_W: f32 = 20.0;

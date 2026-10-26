@@ -9,6 +9,7 @@ use lgui::core::{
 use lgui::prelude::{Color, Element, ShadowStyle, UiRect, VisualStyle, panel, text};
 use lgui::services::ServicesContextExt;
 
+use crate::features::git::operation::operation_text;
 use crate::features::git::{ConflictSide, DiffRequest, DiffTarget, GitStoreSnapshot};
 use crate::ui::git::commands::{Binding, Command, Snapshot};
 use crate::ui::git::panel::{CONFLICTS, STAGED, UNTRACKED};
@@ -100,6 +101,8 @@ pub(crate) enum MenuAction {
     UndoCommit,
     StashAll,
     CommitAndPush,
+    /// Give up the merge, rebase, cherry-pick or revert in progress, or end a bisect.
+    AbortOperation,
     KeepCurrent,
     TakeIncoming,
     /// Make the `n`th repository, in snapshot order, active.
@@ -172,6 +175,21 @@ pub(crate) fn entries(
                 item("Reveal in File Explorer", MenuAction::Reveal),
             ]);
             entries
+        }
+        // The commit message is unused mid-operation, so the button's menu
+        // offers the way out instead of commit options.
+        GitMenuTarget::Submit
+            if git.active().is_some_and(|repository| {
+                operation_text(repository.repository_state).is_some()
+            }) =>
+        {
+            let wording = git
+                .active()
+                .and_then(|repository| operation_text(repository.repository_state));
+            vec![item(
+                wording.map_or("Abort", |wording| wording.abort_label),
+                MenuAction::AbortOperation,
+            )]
         }
         GitMenuTarget::Submit => {
             let mut actions = vec![
@@ -338,6 +356,7 @@ pub(crate) fn perform(
             | MenuAction::UndoCommit
             | MenuAction::StashAll
             | MenuAction::CommitAndPush
+            | MenuAction::AbortOperation
             | MenuAction::SelectRepository(_)
             | MenuAction::OpenCommitChanges
             | MenuAction::RevertCommit
@@ -452,6 +471,9 @@ pub(crate) fn perform(
         }
         MenuAction::CommitAndPush => {
             state.dispatch(Command::CommitAndPush);
+        }
+        MenuAction::AbortOperation => {
+            state.dispatch(Command::RequestAbort);
         }
         MenuAction::SelectRepository(index) => {
             let root = store

@@ -8,7 +8,7 @@ use lgui::core::{
 use lgui::prelude::{Color, Element, TextStyle, UiRect, VisualStyle, panel, text};
 
 use crate::features::git::actions::SyncPlan;
-use crate::features::git::{GitStoreSnapshot, RepositorySnapshot, RepositoryState};
+use crate::features::git::{GitStoreSnapshot, RepositorySnapshot};
 use crate::ui::git::commands::{Binding, Command, Snapshot};
 use crate::ui::theme;
 
@@ -193,30 +193,16 @@ pub(crate) fn badge_pieces(git: &GitStoreSnapshot) -> Vec<(f32, BadgePiece)> {
             },
         ),
     ];
-    if let Some(label) = operation_label(repository.repository_state) {
+    if let Some(label) = crate::ui::git::panel::operation_label(repository) {
         pieces.push((
             GROUP_GAP,
             BadgePiece::Text {
-                label: label.into(),
+                label,
                 style: theme::mono_bold(theme::c().warning, theme::SMALL),
             },
         ));
     }
     pieces
-}
-
-/// The badge label for an operation Git is in the middle of.
-pub(crate) fn operation_label(state: RepositoryState) -> Option<&'static str> {
-    match state {
-        RepositoryState::MergeInProgress => Some("MERGING"),
-        RepositoryState::RebaseInProgress => Some("REBASING"),
-        RepositoryState::CherryPickInProgress => Some("CHERRY-PICKING"),
-        RepositoryState::RevertInProgress => Some("REVERTING"),
-        RepositoryState::Bisecting => Some("BISECTING"),
-        RepositoryState::Normal | RepositoryState::DetachedHead | RepositoryState::UnbornBranch => {
-            None
-        }
-    }
 }
 
 /// The sync button's contents: a publish icon for a branch with no

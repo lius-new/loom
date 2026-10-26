@@ -6,6 +6,7 @@ pub mod diff;
 pub mod diff_document;
 pub mod error;
 pub mod model;
+pub mod operation;
 pub mod parser;
 pub mod snapshot;
 pub mod types;
