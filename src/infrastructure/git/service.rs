@@ -388,7 +388,7 @@ impl GitService {
         let root = &repository.worktree_root;
         let mut files = Vec::new();
         for (group, target) in [
-            (ChangeGroup::Conflicts, DiffTarget::IndexToWorktree),
+            (ChangeGroup::Conflicts, DiffTarget::HeadToWorktree),
             (ChangeGroup::Staged, DiffTarget::HeadToIndex),
             (ChangeGroup::Unstaged, DiffTarget::IndexToWorktree),
             (ChangeGroup::Untracked, DiffTarget::IndexToWorktree),
@@ -432,10 +432,11 @@ impl GitService {
             for path in paths {
                 let content = match group {
                     ChangeGroup::Untracked => read_untracked(&root.join(&path)),
-                    ChangeGroup::Conflicts => Err(GitError::new(
-                        crate::features::git::error::GitErrorKind::Other,
-                        "Unresolved conflict. Open the file to resolve it.",
-                    )),
+                    // The index holds no single side of an unmerged path.
+                    ChangeGroup::Conflicts => self
+                        .backend
+                        .parsed_diff(root, target, std::slice::from_ref(&path))
+                        .map(DiffContent::Unified),
                     _ => match batch.as_mut().unwrap() {
                         Ok(batch) => match batch.remove(&path) {
                             Some(file) => Ok(DiffContent::Unified(

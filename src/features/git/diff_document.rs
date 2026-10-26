@@ -195,10 +195,7 @@ impl DiffDocument {
                                 Some(error.user_message()),
                             ),
                         };
-                        let mut document = Self::from_content(request, content);
-                        if file.group == ChangeGroup::Conflicts {
-                            document.blocks.clear();
-                        }
+                        let document = Self::from_content(request, content);
                         DiffSection {
                             document: Arc::new(document),
                             group: file.group,

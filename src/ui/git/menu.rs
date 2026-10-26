@@ -277,10 +277,10 @@ pub(crate) fn perform(
                         request: DiffRequest {
                             repository_root: repository.clone(),
                             path: path.clone(),
-                            target: if *section == STAGED {
-                                DiffTarget::HeadToIndex
-                            } else {
-                                DiffTarget::IndexToWorktree
+                            target: match *section {
+                                STAGED => DiffTarget::HeadToIndex,
+                                CONFLICTS => DiffTarget::HeadToWorktree,
+                                _ => DiffTarget::IndexToWorktree,
                             },
                         },
                         untracked: *section == UNTRACKED,

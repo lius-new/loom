@@ -422,10 +422,10 @@ pub fn render(
                     let hover = GitHover::File(filter, path.clone());
                     let hovered = app.ui.hover.as_ref() == Some(&hover);
                     hover_targets.push((row_rect, hover));
-                    let target = if filter == STAGED {
-                        DiffTarget::HeadToIndex
-                    } else {
-                        DiffTarget::IndexToWorktree
+                    let target = match filter {
+                        STAGED => DiffTarget::HeadToIndex,
+                        CONFLICTS => DiffTarget::HeadToWorktree,
+                        _ => DiffTarget::IndexToWorktree,
                     };
                     let active = [frame.active_diff.as_ref(), frame.active_diff_focus.as_ref()]
                         .into_iter()
