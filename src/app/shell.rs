@@ -825,7 +825,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     );
 
     // ---- Root (global shortcut listener) ------------------------------
-    let mut root = group(vp);
+    let mut root = window_root(vp);
     root = layout_map::attach(
         root,
         state.clone(),
@@ -1550,4 +1550,95 @@ fn pane_strip_rect(pane: UiRect) -> UiRect {
 /// A pane's surface below its tab strip.
 fn pane_body_rect(pane: UiRect) -> UiRect {
     UiRect::new(pane.left, pane.top + theme::TABS_H, pane.right, pane.bottom)
+}
+
+fn window_root(rect: UiRect) -> Element {
+    // Antialiased fractional pane edges leave translucent pixels between surfaces.
+    // Back them with an opaque fill: software presentation copies premultiplied RGB
+    // without alpha, which would otherwise turn those pixels into dark seams.
+    lgui::prelude::panel(rect, VisualStyle::filled(theme::c().bg))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::context::AppContext;
+    use lgui::application::{AppView, ApplicationContext};
+    use lgui::core::{PhysicalRect, UiScale};
+    use lgui::prelude::panel;
+    use lgui::renderer::{FrameInfo, FrameReason};
+    use lgui::session::UiSession;
+    use std::sync::Arc;
+
+    #[test]
+    fn fractional_history_boundary_stays_opaque() {
+        let viewport = UiRect::new(0.0, 0.0, 160.0, 128.0);
+        let context = ApplicationContext::empty(Default::default());
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        for factor in [1.0_f32, 1.25, 1.5, 1.75, 2.0] {
+            let scale = UiScale::new(factor);
+            for fraction in [0.0, 0.25, 0.5, 0.75] {
+                let top = (40.0 + fraction) / factor;
+                for expanded in [false, true] {
+                    let view: AppView = Arc::new(move |cx| {
+                        let state = AppContext::detached(cx.state_with(|| {
+                            let mut app = AppState::new();
+                            app.git.ui.panel_open = expanded;
+                            app
+                        }));
+                        let store = cx.state_with(GitStoreSnapshot::default);
+                        let editor = UiRect::new(0.0, 0.0, viewport.right, top);
+                        let history = UiRect::new(0.0, top, viewport.right, viewport.bottom);
+                        window_root(viewport)
+                            .child(panel(editor, VisualStyle::filled(theme::c().bg)))
+                            .child(crate::ui::git::workbench::render(
+                                history,
+                                crate::app::git_view::binding(&state, &store),
+                                store.into(),
+                                cx.focus_handle(UiId::new("seam-test-editor")),
+                            ))
+                    });
+                    let mut session = UiSession::new();
+                    session.render_view(&view, viewport, scale);
+                    let physical = scale.physical_rect(viewport);
+                    let boundary = PhysicalRect::new(0, 38, physical.right, 44);
+                    let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(1024 * 1024);
+                    // Check a full frame and a repaint of just the shared edge.
+                    for full_redraw in [true, false] {
+                        let dirty = [boundary];
+                        let frame = FrameInfo::new(
+                            physical,
+                            &dirty,
+                            scale,
+                            FrameReason::SceneChange,
+                            full_redraw,
+                        );
+                        lgui::assets::backend::with_render_resources(
+                            &context,
+                            lgui::RenderResources::new(),
+                            || {
+                                surface.draw(
+                                    &session.tree().scene().project_to_physical(scale),
+                                    &frame,
+                                )
+                            },
+                        )
+                        .unwrap();
+                        let x = physical.width() as usize / 2;
+                        for y in 38..44 {
+                            let offset = (y * physical.width() as usize + x) * 4;
+                            let pixel = &surface.pixels()[offset..offset + 4];
+                            assert_eq!(
+                                pixel[3], 255,
+                                "transparent seam: scale={factor}, fraction={fraction}, expanded={expanded}, full={full_redraw}, y={y}, BGRA={pixel:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
