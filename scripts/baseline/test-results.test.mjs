@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTestResults } from './test-results.mjs';
+import { parseTestResults, parseTestSuites } from './test-results.mjs';
 
 test('workspace unit and integration results survive a final empty doctest suite', () => {
   const summary = parseTestResults([
@@ -22,4 +22,20 @@ test('a failed earlier suite cannot be hidden by later successful suites', () =>
 });
 test('a build failure without test results is not counted as a passing suite', () => {
   assert.equal(parseTestResults('error: could not compile core'), null);
+});
+
+test('workspace validation and doctests retain separate crate and target identities', () => {
+  const suites = parseTestSuites([
+    '     Running unittests src/main.rs (target/debug/deps/Loom-deadbeef.exe)',
+    'test app::sample ... ok',
+    'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out',
+    '     Running unittests src/lib.rs (target/debug/deps/loom_workspace_tests-0123abcdef.exe)',
+    'test isolated::domain::sample ... ok',
+    'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out',
+    '   Doc-tests loom_workspace_tests',
+    'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out',
+  ].join('\n'));
+  assert.deepEqual(suites.map(suite => [suite.crate, suite.kind, suite.passed]), [
+    ['loom', 'unit', 1], ['loom-workspace-tests', 'unit', 1], ['loom-workspace-tests', 'doc', 0],
+  ]);
 });

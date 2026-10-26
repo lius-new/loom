@@ -164,5 +164,5 @@ test('every host CI/release job prepares dependencies before first compilation; 
     if (os === 'macos') assert.ok(code.includes('prepareDependencies({target, env})'));
   }
   for (const file of ['scripts/architecture/standalone-host.mjs','tests/language-runtime/run.mjs','tests/language-runtime/run-wasm.mjs']) assert.ok(read(file).includes('await prepareDependencies('));
-  assert.ok(read('scripts/baseline/run.ps1').includes('../dependencies/ensure.mjs'));
+  assert.ok(read('scripts/baseline/run.mjs').includes('../dependencies/ensure.mjs'));
 });

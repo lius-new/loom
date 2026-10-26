@@ -1,106 +1,51 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseTestResults } from './test-results.mjs';
+import {fileURLToPath} from 'node:url';
+import {evaluateReport} from './report-core.mjs';
 
-const directory = path.resolve(process.argv[2] || '');
-const logs = path.join(directory, 'logs');
-const rows = [];
-const checks = [];
-const notices = [];
-const diagnostics = new Map();
-let testInventory = [];
-function milliseconds(value) {
-  const found = /^([\d.]+)(ns|µs|us|ms|s)$/.exec(value);
-  if (!found) throw new Error('Unknown duration: ' + value);
-  return Number(found[1]) * ({ ns: 0.000001, 'µs': 0.001, us: 0.001, ms: 1, s: 1000 })[found[2]];
-}
-function add(scenario, metric, value, unit, sample, log, extra = {}) {
-  rows.push({ scenario, metric, value, unit, sample, log, ...extra });
-}
-for (const name of fs.readdirSync(logs).filter(name => name.endsWith('.log')).sort()) {
-  const text = fs.readFileSync(path.join(logs, name), 'utf8').replace(/^\uFEFF/, '');
-  const outcome = parseTestResults(text);
-  if (outcome) checks.push({ log: name, ...outcome });
-  if (name === 'tests-isolated.log') {
-    testInventory = [...text.matchAll(/^test (\S+) \.\.\. (ok|FAILED|ignored)(.*)$/gm)].map(match => ({
-      name: match[1], result: match[2], reason: match[3].replace(/^[, ]+/, '').trim()
-    }));
+const readJson = file => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) : undefined;
+const cell = value => String(value ?? '').replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ');
+const csv = value => '"' + String(value).replaceAll('"', '""') + '"';
+
+export function generateReport(directory) {
+  directory = path.resolve(directory);
+  const logDirectory = path.join(directory, 'logs');
+  const logs = Object.fromEntries(fs.readdirSync(logDirectory).filter(name => name.endsWith('.log'))
+    .sort().map(name => [name, fs.readFileSync(path.join(logDirectory, name), 'utf8').replace(/^\uFEFF/, '')]));
+  let recorded = readJson(path.join(directory, 'checks.json'));
+  if (recorded && !Array.isArray(recorded)) recorded = [recorded]; // Old PowerShell single-object output.
+  const report = evaluateReport({logs, checks: recorded, environment: readJson(path.join(directory, 'environment.json'))});
+  const writeJson = (name, value) => fs.writeFileSync(path.join(directory, name), JSON.stringify(value, null, 2) + '\n');
+  writeJson('measurements.json', report);
+  writeJson('test-inventory.json', report.inventory);
+  writeJson('clippy-diagnostics.json', report.diagnostics);
+  const columns = ['scenario', 'metric', 'samples', 'unit', 'median', 'min', 'max'];
+  fs.writeFileSync(path.join(directory, 'performance.csv'), '\uFEFF' + [columns.join(','),
+    ...report.statistics.map(row => columns.map(key => csv(row[key])).join(','))].join('\n') + '\n');
+  const lines = ['# 回归与性能采样结果', '',
+    `完整性：${report.complete ? '通过' : '不完整或失败'}；退出码记录：${report.verified ? '已核验' : '缺失，历史日志未核验'}。`, '',
+    '样本 0 为预热，不计入统计。结果仅适合同机、相同工具链和测量条件比较；UI session 不代表原生窗口帧率。', '',
+    '| 场景 | 指标 | 样本 | 单位 | 中位数 | 最小值 | 最大值 |', '| --- | --- | --- | --- | --- | --- | --- |'];
+  for (const row of report.statistics) lines.push('| ' + columns.map(key => cell(row[key])).join(' | ') + ' |');
+  lines.push('', '## 检查结果', '', '| 日志 | 结果 | 退出码 | 通过 | 失败 | 忽略 |', '| --- | --- | --- | --- | --- | --- |');
+  for (const row of report.checks) lines.push('| ' + [row.log, row.result, row.exit_code, row.passed, row.failed, row.ignored].map(cell).join(' | ') + ' |');
+  lines.push('', '## 按 crate 与套件统计', '',
+    'workspace 验证 crate 复用生产规则，其测试数量不代表新增独立行为覆盖。', '',
+    '| 日志 | crate | 类型 | 目标 | 通过 | 失败 | 忽略 |', '| --- | --- | --- | --- | --- | --- | --- |');
+  for (const suite of report.suites) lines.push('| ' + [suite.log, suite.crate, suite.kind, suite.target, suite.passed, suite.failed, suite.ignored].map(cell).join(' | ') + ' |');
+  if (report.notices.length) {
+    lines.push('', '## 完整性与缺测说明', '');
+    for (const item of report.notices) lines.push(`- ${cell(item.severity)} — ${cell(item.log)}: ${cell(item.reason)}`);
   }
-  if (name === 'clippy.log') {
-    for (const match of text.matchAll(/error: ([^\r\n]+)\r?\n\s+--> ((?:src|crates)[\\/][^:\r\n]+):(\d+):(\d+)/g)) {
-      const file = match[2].replaceAll('\\', '/');
-      diagnostics.set(file + ':' + match[3], { message: match[1], file, line: Number(match[3]), column: Number(match[4]) });
-    }
-  }
-  const numbered = /-(\d+)\.log$/.exec(name);
-  if (!numbered || Number(numbered[1]) === 0) continue;
-  // Failed tests are invalid samples even if they printed a timing.
-  if (!outcome || outcome.result !== 'ok') {
-    notices.push({ log: name, reason: 'invalid performance sample' });
-    continue;
-  }
-  const sample = Number(numbered[1]);
-  for (const line of text.split(/\r?\n/)) {
-    const marker = line.indexOf('LOOM_BASELINE ');
-    if (marker >= 0) {
-      const record = JSON.parse(line.slice(marker + 'LOOM_BASELINE '.length));
-      rows.push({ ...record, sample, log: name });
-    }
-    const terminalMarker = line.indexOf('R7_TERMINAL_PERF ');
-    if (terminalMarker >= 0) {
-      const record = JSON.parse(line.slice(terminalMarker + 'R7_TERMINAL_PERF '.length));
-      add('terminal-' + record.sessions + '-sessions', record.metric, record.milliseconds, 'ms', sample, name,
-        { sessions: record.sessions, iterations: record.iterations, nodes: record.nodes,
-          viewport: record.viewport, scale: record.scale, screen: record.screen });
-    }
-    if (line.includes('LOOM_BASELINE_STATUS')) notices.push({ log: name, reason: line.trim() });
-    let match = /(\d+) MB: typing (\S+)\/char, paste 1 MB (\S+), undo (\S+), select-all indent (\S+), history ([\d.]+) MB/.exec(line);
-    if (match) {
-      const scenario = 'ascii-' + match[1] + 'm';
-      ['typing_per_char', 'paste_1m', 'undo_paste', 'select_all_indent'].forEach((metric, index) =>
-        add(scenario, metric, milliseconds(match[index + 2]), 'ms', sample, name));
-      add(scenario, 'history_bytes_rounded', Number(match[6]) * 1024 * 1024, 'bytes', sample, name);
-    }
-    match = /(8 MiB single line|Unicode single line|many short lines): ([\d.]+) MiB, prepare (\S+), 100 viewport renders and clicks (\S+)/.exec(line);
-    if (match) {
-      add(match[1], 'ui_document_prepare', milliseconds(match[3]), 'ms', sample, name);
-      add(match[1], 'ui_100_viewports_and_clicks', milliseconds(match[4]), 'ms', sample, name);
-    }
-    match = /(8 MiB single line|Unicode single line|many short lines): 20 end-of-file edits and renders (\S+)/.exec(line);
-    if (match) add(match[1], 'ui_20_edits_and_renders', milliseconds(match[2]), 'ms', sample, name);
-    match = /(100|500) tabs: (\S+) per pointer update/.exec(line);
-    if (match) add(match[1] + '-tabs', 'pointer_update', milliseconds(match[2]), 'ms', sample, name);
-  }
+  fs.writeFileSync(path.join(directory, 'measurements.md'), lines.join('\n') + '\n');
+  return report;
 }
-const groups = new Map();
-for (const row of rows) {
-  const key = row.scenario + '/' + row.metric;
-  if (!groups.has(key)) groups.set(key, []);
-  groups.get(key).push(row);
+
+if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
+  try {
+    if (process.argv.length !== 3) throw Error('Usage: node scripts/baseline/report.mjs <output-directory>');
+    const report = generateReport(process.argv[2]);
+    console.log(`Recorded ${report.records.length} measurements across ${report.statistics.length} metrics; complete=${report.complete}.`);
+    process.exitCode = report.complete ? 0 : 1;
+  } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
-const statistics = [];
-for (const records of groups.values()) {
-  const values = records.map(row => row.value).sort((a, b) => a - b);
-  const middle = Math.floor(values.length / 2);
-  const median = values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
-  statistics.push({ scenario: records[0].scenario, metric: records[0].metric, samples: values.length,
-    unit: records[0].unit, median, min: values[0], max: values.at(-1) });
-}
-fs.writeFileSync(path.join(directory, 'measurements.json'), JSON.stringify({ schema: 1, records: rows, statistics, checks, notices }, null, 2) + '\n');
-if (testInventory.length) fs.writeFileSync(path.join(directory, 'test-inventory.json'), JSON.stringify(testInventory, null, 2) + '\n');
-fs.writeFileSync(path.join(directory, 'clippy-diagnostics.json'), JSON.stringify([...diagnostics.values()], null, 2) + '\n');
-const escape = value => '"' + String(value).replaceAll('"', '""') + '"';
-const csv = ['scenario,metric,samples,unit,median,min,max',
-  ...statistics.map(row => [row.scenario, row.metric, row.samples, row.unit, row.median, row.min, row.max].map(escape).join(','))].join('\n') + '\n';
-fs.writeFileSync(path.join(directory, 'performance.csv'), '\uFEFF' + csv);
-const lines = ['# 阶段零自动采样结果', '', '样本零为预热，已排除。以下为同机 release 测试中位数和范围；UI session 数据不等于原生窗口帧率。', '',
-  '| 场景 | 指标 | 样本 | 单位 | 中位数 | 最小值 | 最大值 |', '| --- | --- | --- | --- | --- | --- | --- |'];
-for (const row of statistics) lines.push('| ' + [row.scenario, row.metric, row.samples, row.unit, row.median.toFixed(6), row.min.toFixed(6), row.max.toFixed(6)].join(' | ') + ' |');
-lines.push('', '## 测试日志结果', '', '| 日志 | 结果 | 通过 | 失败 | 忽略 |', '| --- | --- | --- | --- | --- |');
-for (const row of checks.filter(row => !/-\d+\.log$/.test(row.log))) lines.push('| ' + [row.log, row.result, row.passed, row.failed, row.ignored].join(' | ') + ' |');
-if (notices.length) {
-  lines.push('', '## 采样说明', '');
-  for (const item of notices) lines.push('- ' + item.log + ': ' + item.reason);
-}
-fs.writeFileSync(path.join(directory, 'measurements.md'), lines.join('\n') + '\n');
-console.log('Recorded ' + rows.length + ' measurements across ' + statistics.length + ' metrics.');
