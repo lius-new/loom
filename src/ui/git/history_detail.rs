@@ -15,7 +15,8 @@ use crate::features::git::{ChangeKind, CommitDetails, CommitSummary, StashInfo};
 use crate::ui::git::commands::{Binding, Command};
 use crate::ui::git::history_branches::pin_slots;
 use crate::ui::git::panel::{
-    ROW_H, ScrollRegion, path_label, relative_time, scroll_region, wrap_text_sized,
+    ROW_H, ScrollRegion, change_color, change_path_label, relative_time, scroll_region,
+    wrap_text_sized,
 };
 use crate::ui::{tabs, theme};
 
@@ -85,7 +86,7 @@ fn layout(rect: UiRect, subject: Subject<'_>, details: Details<'_>) -> Layout {
             if details.files_changed > 0 {
                 let mut stats = vec![(plural(details.files_changed, "file"), c.text_soft)];
                 if details.insertions > 0 {
-                    stats.push((format!("  +{}", details.insertions), c.git.added));
+                    stats.push((format!("  +{}", details.insertions), c.git.added_text));
                 }
                 if details.deletions > 0 {
                     stats.push((format!("  −{}", details.deletions), c.git.deleted));
@@ -609,11 +610,7 @@ fn file_row(
     state: &Binding,
     editor_focus: &UiFocusHandle,
 ) -> Element {
-    let color = match kind {
-        ChangeKind::Added | ChangeKind::Copied => theme::c().git.added,
-        ChangeKind::Deleted => theme::c().git.deleted,
-        _ => theme::c().git.modified,
-    };
+    let color = change_color(kind);
     let (state, focus) = (state.clone(), editor_focus.clone());
     let (root, oid_owned, open_path) =
         (repository.to_path_buf(), oid.to_owned(), path.to_path_buf());
@@ -655,7 +652,7 @@ fn file_row(
         kind.indicator(),
         theme::mono_bold(color, theme::SMALL),
     ))
-    .child(path_label(
+    .child(change_path_label(
         UiRect::new(
             rect.left + indent + 22.0,
             rect.top,
@@ -664,7 +661,7 @@ fn file_row(
         ),
         Path::new(name),
         false,
-        false,
+        kind,
     ))
 }
 

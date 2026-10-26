@@ -78,6 +78,8 @@ pub struct DiffColors {
 #[derive(Clone, Copy, Debug)]
 pub struct GitColors {
     pub added: Color,
+    /// Green foreground for added and untracked files in the changes list.
+    pub added_text: Color,
     pub modified: Color,
     pub deleted: Color,
     pub staged: Color,
@@ -178,6 +180,7 @@ const AURA_DARK: Palette = Palette {
     },
     git: GitColors {
         added: Color(0x38bdf8),
+        added_text: Color(0x34d399),
         modified: Color(0xeab308),
         deleted: Color(0xf43f5e),
         staged: Color(0x34d399),
@@ -249,6 +252,7 @@ const AURA_LIGHT: Palette = Palette {
     },
     git: GitColors {
         added: Color(0x0284c7),
+        added_text: Color(0x047857),
         modified: Color(0xa16207),
         deleted: Color(0xe11d48),
         staged: Color(0x059669),
@@ -321,6 +325,7 @@ const EMBER: Palette = Palette {
     },
     git: GitColors {
         added: Color(0x5eead4),
+        added_text: Color(0xa3e635),
         modified: Color(0xfacc15),
         deleted: Color(0xf87171),
         staged: Color(0xa3e635),
@@ -393,6 +398,7 @@ const HIGH_CONTRAST: Palette = Palette {
     },
     git: GitColors {
         added: Color(0x7cc7ff),
+        added_text: Color(0x7dff8a),
         modified: Color(0xffd60a),
         deleted: Color(0xff6b6b),
         staged: Color(0x7dff8a),

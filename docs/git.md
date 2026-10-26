@@ -22,6 +22,13 @@ or uncheck its staged row to unstage it. File rows still open diffs and drag int
 editor panes; the staging checkbox never starts a drag. Conflicts retain their
 explicit resolution actions.
 
+In the changes list, filenames and status letters are green for added or untracked
+files, yellow/amber for modified files, and red for deleted files. Deleted filenames
+also have a thin strike-through; folder paths and file-type icons keep their usual
+appearance. These styles remain visible when a row is hovered or selected, and
+describe that row's staged or working-tree change. Conflicts keep their explicit
+status without a deletion strike-through.
+
 The commit composer stays at the bottom for both short and long change lists.
 It accepts multiline text: Enter inserts a newline and Ctrl+Enter (Command+Enter
 on macOS) commits. Amend is available beside the message label; the split
@@ -55,6 +62,8 @@ workspace or deletes it. Narrower panels keep the four tabs.
 The detail pane lists a commit's or stash's changed files as a folder tree. Folders
 that hold a single folder join into one row, fold shut when clicked, and stay
 pinned at the top while their files scroll.
+Filenames and status letters use the same change colors and deletion strike-through
+as the Source Control drawer. The summary's insertion count is green as well.
 
 Each group title has a **+** button: **BRANCHES** opens the branch picker, where a
 new name creates a branch and **New Worktree** checks it out in its own folder;

@@ -298,6 +298,178 @@ mod panel_virtualization_tests {
     }
 
     #[test]
+    fn drawer_labels_follow_the_compared_side_even_when_hovered_or_selected() {
+        use crate::ui::git::commands::{Binding, Frame};
+        use crate::ui::git::state::GitPanelState;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::session::UiSession;
+
+        let context = ApplicationContext::empty(Default::default());
+        context
+            .resources()
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                crate::app::svg_icons(),
+            )));
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        // The same path is added in the index and deleted in the working tree.
+        let split = FileState {
+            index: ChangeKind::Added,
+            worktree: ChangeKind::Deleted,
+            ..Default::default()
+        };
+        let cases = vec![
+            (
+                "src/new.rs",
+                split.clone(),
+                STAGED,
+                "A",
+                theme::c().git.added_text,
+                false,
+            ),
+            (
+                "src/new.rs",
+                split,
+                UNSTAGED,
+                "D",
+                theme::c().git.deleted,
+                true,
+            ),
+            (
+                "src/modified.rs",
+                FileState {
+                    worktree: ChangeKind::Modified,
+                    ..Default::default()
+                },
+                UNSTAGED,
+                "M",
+                theme::c().git.modified,
+                false,
+            ),
+            (
+                "src/untracked.rs",
+                FileState {
+                    worktree: ChangeKind::Untracked,
+                    ..Default::default()
+                },
+                UNTRACKED,
+                "?",
+                theme::c().git.added_text,
+                false,
+            ),
+            (
+                "src/conflict.rs",
+                FileState {
+                    worktree: ChangeKind::Deleted,
+                    conflict: Some(ConflictKind::DeletedByUs),
+                    ..Default::default()
+                },
+                CONFLICTS,
+                "U",
+                theme::c().error_text,
+                false,
+            ),
+        ];
+        for (width, nested, hovered, active) in [
+            (288.0, false, false, false),
+            (288.0, false, true, true),
+            (160.0, true, true, true),
+        ] {
+            let viewport = UiRect::new(0.0, 0.0, width, cases.len() as f32 * CHANGE_ROW_H);
+            let fixtures = cases.clone();
+            let view: AppView = Arc::new(move |cx| {
+                let state = cx.state_with(GitPanelState::default);
+                let store = cx.state_with(GitStoreSnapshot::default);
+                let binding = Binding::new(state.into(), Frame::default, |_| true);
+                let mut root = panel(viewport, VisualStyle::filled(theme::c().sidebar));
+                for (index, (path, file, section, _, _, _)) in fixtures.iter().enumerate() {
+                    let top = index as f32 * CHANGE_ROW_H;
+                    root = root.child(file_row(
+                        UiRect::new(0.0, top, width, top + CHANGE_ROW_H),
+                        path.into(),
+                        nested,
+                        file.clone(),
+                        *section,
+                        if *section == STAGED {
+                            DiffTarget::HeadToIndex
+                        } else {
+                            DiffTarget::IndexToWorktree
+                        },
+                        active,
+                        hovered,
+                        "loom".into(),
+                        binding.clone(),
+                        store.clone().into(),
+                        cx.focus_handle(UiId::new("git-label-editor")),
+                    ));
+                }
+                root
+            });
+            let mut session = UiSession::new();
+            session.render_view(&view, viewport, UiScale::ONE);
+            for (index, (path, _, _, indicator, color, deleted)) in cases.iter().enumerate() {
+                let top = index as f32 * CHANGE_ROW_H;
+                let nodes = session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .filter(|node| {
+                        node.layout_rect.top >= top && node.layout_rect.bottom <= top + CHANGE_ROW_H
+                    })
+                    .collect::<Vec<_>>();
+                let filename = std::path::Path::new(path)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap();
+                let name = nodes
+                    .iter()
+                    .find(|node| node.text.as_deref() == Some(filename))
+                    .unwrap();
+                assert_eq!(name.text_style.unwrap().color, *color);
+                let status = nodes
+                    .iter()
+                    .find(|node| node.text.as_deref() == Some(*indicator))
+                    .unwrap();
+                assert_eq!(status.text_style.unwrap().color, *color);
+                let strikes = nodes
+                    .iter()
+                    .filter(|node| {
+                        node.style.fill == Some(*color) && node.layout_rect.height() == 1.0
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(strikes.len(), usize::from(*deleted), "{path}");
+                if let Some(strike) = strikes.first() {
+                    assert_eq!(strike.layout_rect.left, name.layout_rect.left);
+                    assert_eq!(strike.layout_rect.right, name.layout_rect.right - TEXT_PAD);
+                }
+                for folder in nodes
+                    .iter()
+                    .filter(|node| node.text.as_deref() == Some("src"))
+                {
+                    assert_eq!(folder.text_style.unwrap().color, theme::c().text_ghost);
+                }
+                // Hover actions must not cover the persistent status letter.
+                for button in nodes.iter().filter(|node| {
+                    node.semantics
+                        .as_ref()
+                        .is_some_and(|s| s.role == SemanticRole::Button)
+                }) {
+                    assert!(button.layout_rect.right <= status.layout_rect.left);
+                }
+            }
+            save_drawer_preview(
+                &session,
+                &context,
+                viewport,
+                &format!("git-change-labels-{width}-{hovered}"),
+            );
+        }
+    }
+
+    #[test]
     fn drawer_filter_staging_and_multiline_commit_match_the_reference() {
         use crate::ui::git::commands::{Binding, Command, Frame};
         use crate::ui::git::state::GitPanelState;
@@ -561,6 +733,52 @@ mod panel_virtualization_tests {
                 .any(|line| line.contains("Improve editor behavior 0"))
         );
         save_drawer_preview(&session, &context, viewport, "git-panel-commits");
+        state.update(|app| {
+            let oid = "abc00000";
+            app.git.model.toggle_commit(oid.into());
+            app.git.model.set_commit_files(
+                oid,
+                Ok(vec![
+                    (ChangeKind::Added, "src/added.rs".into()),
+                    (ChangeKind::Modified, "src/modified.rs".into()),
+                    (ChangeKind::Deleted, "src/deleted.rs".into()),
+                ]),
+            );
+            app.git.model.cache_commit_detail(
+                oid.into(),
+                Ok(CommitDetails {
+                    author: "Ada".into(),
+                    author_email: "ada@example.com".into(),
+                    date: "2026-10-26".into(),
+                    message: "Update source files".into(),
+                    files_changed: 3,
+                    insertions: 12,
+                    deletions: 4,
+                }),
+            );
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        for (name, color, deleted) in [
+            ("added.rs", theme::c().git.added_text, false),
+            ("modified.rs", theme::c().git.modified, false),
+            ("deleted.rs", theme::c().git.deleted, true),
+        ] {
+            let nodes = session.tree().nodes();
+            let label = nodes
+                .iter()
+                .find(|node| node.text.as_deref() == Some(name))
+                .unwrap();
+            assert_eq!(label.text_style.unwrap().color, color);
+            assert_eq!(
+                nodes.iter().any(|node| node.style.fill == Some(color)
+                    && node.layout_rect.left == label.layout_rect.left
+                    && node.layout_rect.height() == 1.0
+                    && node.layout_rect.top > label.layout_rect.top
+                    && node.layout_rect.bottom < label.layout_rect.bottom),
+                deleted,
+            );
+        }
+        save_drawer_preview(&session, &context, viewport, "git-history-change-labels");
         for (tab, expected) in [
             ("Stashes", "WIP: search panel"),
             ("Tags", "v1.0.0"),
@@ -2407,7 +2625,24 @@ mod panel_action_tests {
                 state.get().workspace.active_editor().unwrap().text(),
                 "keep"
             );
-            send(&mut session, down(885.0, 10.0));
+            let action = session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| {
+                    node.semantics
+                        .as_ref()
+                        .is_some_and(|s| s.role == SemanticRole::Button)
+                })
+                .unwrap()
+                .layout_rect;
+            send(
+                &mut session,
+                down(
+                    (action.left + action.right) / 2.0,
+                    (action.top + action.bottom) / 2.0,
+                ),
+            );
             assert!(
                 state.get().editor.tabs.file_drag.is_none(),
                 "action buttons must not start a file drag"

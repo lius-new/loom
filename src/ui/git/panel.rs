@@ -1294,7 +1294,6 @@ pub(crate) fn path_label(
     show_folder: bool,
     emphasized: bool,
 ) -> Element {
-    let (name, folder) = split_path(path);
     let name_style = theme::sans(
         if emphasized {
             theme::c().text
@@ -1303,6 +1302,45 @@ pub(crate) fn path_label(
         },
         12.0,
     );
+    styled_path_label(viewport, path, show_folder, name_style, false)
+}
+
+/// Shared change styling for the drawer and the selected history entry's files.
+pub(crate) fn change_color(kind: ChangeKind) -> lgui::prelude::Color {
+    match kind {
+        ChangeKind::Added | ChangeKind::Untracked | ChangeKind::Copied => theme::c().git.added_text,
+        ChangeKind::Deleted => theme::c().git.deleted,
+        ChangeKind::Unmerged => theme::c().error_text,
+        ChangeKind::Unmodified => theme::c().text_soft,
+        ChangeKind::Modified | ChangeKind::Renamed | ChangeKind::TypeChanged => {
+            theme::c().git.modified
+        }
+    }
+}
+
+pub(crate) fn change_path_label(
+    viewport: UiRect,
+    path: &std::path::Path,
+    show_folder: bool,
+    kind: ChangeKind,
+) -> Element {
+    styled_path_label(
+        viewport,
+        path,
+        show_folder,
+        theme::sans(change_color(kind), 12.0),
+        kind == ChangeKind::Deleted,
+    )
+}
+
+fn styled_path_label(
+    viewport: UiRect,
+    path: &std::path::Path,
+    show_folder: bool,
+    name_style: lgui::core::TextStyle,
+    deleted: bool,
+) -> Element {
+    let (name, folder) = split_path(path);
     let folder_style = theme::sans(theme::c().text_ghost, 10.0);
     // Lay each text out at its natural width and let the viewport clip it.
     // Narrower rects make the text engine wrap at path separators instead.
@@ -1323,6 +1361,20 @@ pub(crate) fn path_label(
         name,
         name_style,
     ));
+    if deleted {
+        // Match the measured filename, excluding layout padding and folder text.
+        // The surrounding clip also trims the strike in narrow drawers.
+        let y = (viewport.top + viewport.height() / 2.0).floor();
+        label = label.child(panel(
+            UiRect::new(
+                viewport.left,
+                y,
+                viewport.left + (name_w - TEXT_PAD).max(0.0),
+                y + 1.0,
+            ),
+            VisualStyle::filled(name_style.color),
+        ));
+    }
     if let Some(folder) = folder.filter(|_| show_folder) {
         let left = viewport.left + name_w + 4.0;
         let folder_w = crate::ui::components::text::SingleLineText::new(
@@ -2345,17 +2397,15 @@ pub(crate) fn file_row(
     } else {
         file_state.worktree
     };
-    let side_kind = if side_kind == ChangeKind::Unmodified {
+    let side_kind = if file_state.conflict.is_some() || section == CONFLICTS {
+        ChangeKind::Unmerged
+    } else if side_kind == ChangeKind::Unmodified {
         kind
     } else {
         side_kind
     };
     let indicator = side_kind.indicator();
-    let indicator_color = match side_kind {
-        ChangeKind::Added | ChangeKind::Untracked => theme::c().git.added,
-        ChangeKind::Deleted | ChangeKind::Unmerged => theme::c().git.deleted,
-        _ => theme::c().git.modified,
-    };
+    let indicator_color = change_color(side_kind);
     let actions = file_actions(section)
         .iter()
         .copied()
@@ -2365,7 +2415,7 @@ pub(crate) fn file_row(
         .collect::<Vec<_>>();
     // Reserve room for action buttons only while the row is hovered.
     let trailing_w = if hovered {
-        BUTTON_W * actions.len() as f32 + 12.0
+        BUTTON_W * actions.len() as f32 + 32.0
     } else {
         32.0
     };
@@ -2437,12 +2487,12 @@ pub(crate) fn file_row(
         ),
         theme::c().text_muted,
     ))
-    .child(path_label(
+    .child(change_path_label(
         name_viewport,
         &path,
         // Grouped rows sit under their folder row already.
         !nested,
-        active || hovered,
+        side_kind,
     ));
     let stage_state = state.clone();
     let stage_path = path.clone();
@@ -2480,12 +2530,13 @@ pub(crate) fn file_row(
             VisualStyle::filled(theme::c().accent),
         ));
     }
+    row = row.child(text(
+        UiRect::new(rect.right - 24.0, rect.top, rect.right - 8.0, rect.bottom),
+        indicator,
+        theme::mono(indicator_color, 10.0),
+    ));
     if !hovered {
-        return row.child(text(
-            UiRect::new(rect.right - 24.0, rect.top, rect.right - 8.0, rect.bottom),
-            indicator,
-            theme::mono(indicator_color, 10.0),
-        ));
+        return row;
     }
     let buttons = actions
         .iter()
@@ -2518,5 +2569,5 @@ pub(crate) fn file_row(
             }
         })
         .collect();
-    row_buttons(row, rect, rect.right - 8.0, buttons)
+    row_buttons(row, rect, rect.right - 32.0, buttons)
 }
