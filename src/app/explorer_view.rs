@@ -66,7 +66,8 @@ pub(crate) fn drawer_header(rect: UiRect, state: &AppContext) -> Element {
 fn decoration(git: &GitStoreSnapshot, path: &Path) -> Decoration {
     Decoration {
         tone: match git.decoration_for_absolute_path(path) {
-            Some(PathDecoration::Conflict | PathDecoration::Deleted) => Some(GitTone::Deleted),
+            Some(PathDecoration::Conflict) => Some(GitTone::Conflict),
+            Some(PathDecoration::Deleted) => Some(GitTone::Deleted),
             Some(PathDecoration::Modified) => Some(GitTone::Modified),
             Some(PathDecoration::Created) => Some(GitTone::Added),
             Some(PathDecoration::Ignored) => Some(GitTone::Ignored),

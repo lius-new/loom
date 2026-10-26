@@ -72,6 +72,7 @@ impl Commands {
 /// Source-control tone of a tree label.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GitTone {
+    Conflict,
     Deleted,
     Modified,
     Added,

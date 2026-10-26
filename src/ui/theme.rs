@@ -78,7 +78,7 @@ pub struct DiffColors {
 #[derive(Clone, Copy, Debug)]
 pub struct GitColors {
     pub added: Color,
-    /// Green foreground for added and untracked files in the changes list.
+    /// Green foreground for added and untracked files across Git views and Explorer.
     pub added_text: Color,
     pub modified: Color,
     pub deleted: Color,

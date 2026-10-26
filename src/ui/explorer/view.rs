@@ -641,9 +641,10 @@ fn rename_row(tree: &TreeContext<'_>, y: f32, indent: f32, is_expanded: bool) ->
 fn tree_label_color(decoration: Decoration, default: Color) -> Color {
     let colors = theme::c().git;
     match decoration.tone {
+        Some(GitTone::Conflict) => theme::c().error_text,
         Some(GitTone::Deleted) => colors.deleted,
         Some(GitTone::Modified) => colors.modified,
-        Some(GitTone::Added) => colors.added,
+        Some(GitTone::Added) => colors.added_text,
         Some(GitTone::Ignored) => colors.ignored,
         None => default,
     }
@@ -821,7 +822,7 @@ fn file_row(
         .child(text(
             UiRect::new(content_right - 25.0, y + 2.0, content_right - 8.0, y + 18.0),
             decoration.indicator,
-            theme::mono(theme::c().accent, theme::SMALL),
+            theme::mono(label_color, theme::SMALL),
         ))
 }
 

@@ -28,6 +28,9 @@ also have a thin strike-through; folder paths and file-type icons keep their usu
 appearance. These styles remain visible when a row is hovered or selected, and
 describe that row's staged or working-tree change. Conflicts keep their explicit
 status without a deletion strike-through.
+The Explorer uses the same change colors for file and folder labels and file
+status letters, with ignored paths remaining muted and conflicts distinct from
+ordinary deletions.
 
 The commit composer stays at the bottom for both short and long change lists.
 It accepts multiline text: Enter inserts a newline and Ctrl+Enter (Command+Enter
