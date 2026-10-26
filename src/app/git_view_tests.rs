@@ -878,6 +878,152 @@ mod panel_virtualization_tests {
         );
     }
 
+    #[test]
+    fn history_header_expanded_bottom_rule_and_underline_are_crisp() {
+        check_history_header_bottom(true);
+    }
+
+    #[test]
+    fn history_header_collapsed_does_not_double_the_next_regions_border() {
+        check_history_header_bottom(false);
+    }
+
+    fn check_history_header_bottom(expanded: bool) {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::renderer::{FrameInfo, FrameReason};
+        use lgui::session::UiSession;
+
+        let context = ApplicationContext::empty(Default::default());
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        for factor in [0.75_f32, 1.0, 1.25, 1.5, 2.0] {
+            let scale = UiScale::new(factor);
+            for fraction in [0.0, 0.25, 0.5, 0.75] {
+                let top = (80.0 + fraction) / factor;
+                let header_bottom = top + crate::ui::git::workbench::HEADER_H;
+                let bottom = if expanded {
+                    header_bottom + 140.0
+                } else {
+                    header_bottom
+                };
+                let viewport = UiRect::new(0.0, 0.0, 640.0 / factor, bottom + theme::STATUS_H);
+                let history = UiRect::new(0.0, top, viewport.right, bottom);
+                let status = UiRect::new(0.0, bottom, viewport.right, viewport.bottom);
+                let view: AppView = Arc::new(move |cx| {
+                    let state = AppContext::detached(cx.state_with(|| {
+                        let mut app = AppState::new();
+                        app.git.ui.panel_open = expanded;
+                        app
+                    }));
+                    let store = cx.state_with(GitStoreSnapshot::default);
+                    panel(viewport, VisualStyle::filled(theme::c().bg))
+                        .child(crate::ui::git::workbench::render(
+                            history,
+                            crate::app::git_view::binding(&state, &store),
+                            store.into(),
+                            cx.focus_handle(UiId::new("header-rule-editor")),
+                        ))
+                        .child(crate::app::chrome::status(status, state))
+                });
+                let mut session = UiSession::new();
+                session.render_view(&view, viewport, scale);
+                if factor == 1.0 && fraction == 0.0 {
+                    save_drawer_preview(
+                        &session,
+                        &context,
+                        viewport,
+                        if expanded {
+                            "history-header-expanded"
+                        } else {
+                            "history-header-collapsed"
+                        },
+                    );
+                }
+                // At higher zoom the tabs overflow; sample inside the clipped underline.
+                let underline_x = if expanded {
+                    let underline = session
+                        .tree()
+                        .node(&UiId::owned(format!("git-panel-tab-underline-{}", HISTORY)))
+                        .unwrap();
+                    scale.physical_value(underline.layout_rect.left) as usize + 4
+                } else {
+                    4
+                };
+                if expanded {
+                    let point = Point::new(
+                        scale.logical_value(underline_x as i32),
+                        header_bottom - 0.25 / factor,
+                    );
+                    let tab = session
+                        .tree()
+                        .nodes()
+                        .iter()
+                        .find(|node| {
+                            node.semantics.as_ref().and_then(|s| s.name.as_deref())
+                                == Some("History")
+                        })
+                        .unwrap();
+                    assert_eq!(session.tree().hit_test(point).unwrap().id, tab.id);
+                    assert_eq!(session.tree().cursor_at(point), Some(CursorIcon::Pointer));
+                }
+                let physical = scale.physical_rect(viewport);
+                let edge = scale.physical_value(header_bottom);
+                let rule_width = scale.physical_length(1.0);
+                let underline_width = scale.physical_length(2.0);
+                let dirty = [PhysicalRect::new(0, edge - 5, physical.right, edge + 5)];
+                let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(4 * 1024 * 1024);
+                for full in [true, false] {
+                    let frame =
+                        FrameInfo::new(physical, &dirty, scale, FrameReason::SceneChange, full);
+                    lgui::assets::backend::with_render_resources(
+                        &context,
+                        lgui::RenderResources::new(),
+                        || surface.draw(&session.tree().scene().project_to_physical(scale), &frame),
+                    )
+                    .unwrap();
+                    let check = |x: usize, y: i32, color: Color| {
+                        let offset = (y as usize * physical.width() as usize + x) * 4;
+                        let expected = [
+                            color.0 as u8,
+                            (color.0 >> 8) as u8,
+                            (color.0 >> 16) as u8,
+                            255,
+                        ];
+                        let actual = &surface.pixels()[offset..offset + 4];
+                        // Blending adjacent identical fills can round an RGB channel by one.
+                        let tolerance = u8::from(color == theme::c().sidebar);
+                        assert!(
+                            actual[3] == 255
+                                && actual[..3]
+                                    .iter()
+                                    .zip(&expected[..3])
+                                    .all(|(&a, &b)| a.abs_diff(b) <= tolerance),
+                            "expanded={expanded}, scale={factor}, fraction={fraction}, full={full}, x={x}, y={y}, actual={actual:?}, expected={expected:?}"
+                        );
+                    };
+                    if expanded {
+                        for y in edge - rule_width..edge {
+                            check(400, y, theme::c().border);
+                        }
+                        for y in edge - underline_width..edge {
+                            check(underline_x, y, theme::c().accent);
+                        }
+                        check(underline_x, edge - underline_width - 1, theme::c().sidebar);
+                        check(underline_x, edge, theme::c().sidebar);
+                    } else {
+                        // The next region owns this edge. A collapsed header has no body to divide.
+                        check(400, edge - 1, theme::c().sidebar);
+                        for y in edge..edge + rule_width {
+                            check(400, y, theme::c().border);
+                        }
+                        check(400, edge + rule_width, theme::c().sidebar);
+                    }
+                }
+            }
+        }
+    }
     fn save_drawer_preview(
         session: &lgui::session::UiSession,
         context: &lgui::application::ApplicationContext,

@@ -3,8 +3,8 @@
 //! the commit form; this panel holds what is browsed rather than edited.
 
 use lgui::core::{
-    CursorIcon, EventPolicy, PointerButton, SemanticRole, Semantics, UiElement, UiEventKind,
-    UiEventPayload, UiFocusHandle, WheelUnit, clip,
+    CursorIcon, EventPolicy, PhysicalRect, PointerButton, SemanticRole, Semantics, UiElement,
+    UiEventKind, UiEventPayload, UiFocusHandle, WheelUnit, clip,
 };
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
 
@@ -70,7 +70,14 @@ pub fn render(
 ) -> Element {
     let app = state.get();
     let git = store.get();
-    let mut root = panel(rect, VisualStyle::filled(theme::c().sidebar)).key("git-panel");
+    let mut root = Element::new(move |cx| {
+        let scale = cx.context.scale();
+        // The background must end on the same pixel as its separators.
+        let painted = scale.logical_rect(scale.physical_rect(rect));
+        UiElement::panel(cx.id, painted, VisualStyle::filled(theme::c().sidebar))
+            .children(cx.children)
+    })
+    .key("git-panel");
     // Wide enough for the navigator, which reaches stashes, tags and worktrees.
     let wide = rect.width() >= BRANCHES_MIN_W;
     let panel_tab = if wide { HISTORY } else { app.ui.panel_tab };
@@ -78,8 +85,7 @@ pub fn render(
     let body = UiRect::new(rect.left, header.bottom, rect.right, rect.bottom);
     let expanded = app.ui.panel_open && rect.height() > HEADER_H;
     root = root.child(crate::ui::components::divider::top(header));
-    // Under the tabs, so the active tab's underline sits on top of it.
-    root = root.child(crate::ui::components::divider::bottom(header));
+
     let tabs = [
         ("History", HISTORY, None),
         (
@@ -154,7 +160,11 @@ pub fn render(
         .unwrap_or(selected_scroll)
         .clamp(0.0, max_scroll);
     let mut layer = clip(viewport, -scroll, 0.0);
+    let mut active_tab = None;
     for (tab, label, tab_rect) in tabs {
+        if expanded && panel_tab == tab {
+            active_tab = Some((tab, tab_rect.translate(-scroll, 0.0)));
+        }
         layer = layer.child(tab_button(
             tab_rect,
             tab,
@@ -212,8 +222,10 @@ pub fn render(
         expanded,
     ));
     if !expanded {
+        // There is no body to separate. The next region owns the shared edge.
         return root;
     }
+    let header_bottom = header_bottom_rule(header, viewport, active_tab);
 
     let Some(repository) = git.active() else {
         return root
@@ -227,7 +239,8 @@ pub fn render(
                 "Open a Git repository to browse its history.",
                 theme::mono(theme::c().text_ghost, theme::SMALL),
             ))
-            .child(resize_handle(rect, state));
+            .child(resize_handle(rect, state))
+            .child(header_bottom);
     };
 
     let history = app
@@ -566,7 +579,7 @@ pub fn render(
             state.clone(),
         ));
     }
-    root.child(resize_handle(rect, state))
+    root.child(resize_handle(rect, state)).child(header_bottom)
 }
 
 /// A vertical strip on a history pane's edge that drags its width.
@@ -661,6 +674,45 @@ fn empty_row(top: f32, rect: UiRect, message: &str) -> Element {
     .into()
 }
 
+// Paint after the body so fractional child clips cannot wash out the border.
+// Decorations have no hit area, leaving the tabs' click targets and cursors intact.
+fn header_bottom_rule(
+    header: UiRect,
+    viewport: UiRect,
+    active_tab: Option<(u8, UiRect)>,
+) -> Element {
+    Element::new(move |cx| {
+        let scale = cx.context.scale();
+        let no_hit = UiRect::new(header.left, header.bottom, header.left, header.bottom);
+        let mut rule = cx
+            .compile(crate::ui::components::divider::bottom(header))
+            .hit_rect(no_hit);
+        if let Some((tab, rect)) = active_tab {
+            // Clip horizontally without antialiasing the underline's vertical edges.
+            let left = scale.physical_value(rect.left.max(viewport.left));
+            let right = scale.physical_value(rect.right.min(viewport.right));
+            if right > left {
+                let bottom = scale.physical_value(header.bottom);
+                let underline = scale.logical_rect(PhysicalRect::new(
+                    left,
+                    bottom - scale.physical_length(2.0),
+                    right,
+                    bottom,
+                ));
+                rule = rule.child(
+                    UiElement::panel(
+                        lgui::core::UiId::owned(format!("git-panel-tab-underline-{tab}")),
+                        underline,
+                        VisualStyle::filled(theme::c().accent),
+                    )
+                    .hit_rect(no_hit),
+                );
+            }
+        }
+        rule
+    })
+}
+
 fn tab_button(rect: UiRect, tab: u8, label: String, active: bool, state: Binding) -> Element {
     Element::new(move |cx| {
         let c = theme::c();
@@ -676,11 +728,12 @@ fn tab_button(rect: UiRect, tab: u8, label: String, active: bool, state: Binding
         } else {
             theme::mono(color, theme::SMALL)
         };
-        let mut node = UiElement::panel(
+        UiElement::panel(
             cx.id,
             UiRect::new(rect.left, rect.top + 3.0, rect.right, rect.bottom - 3.0),
             fill,
         )
+        .hit_rect(rect)
         .child(UiElement::text(
             lgui::core::UiId::owned(format!("git-panel-tab-label-{tab}")),
             UiRect::new(
@@ -696,15 +749,7 @@ fn tab_button(rect: UiRect, tab: u8, label: String, active: bool, state: Binding
                 if active { 700 } else { 400 },
             ),
             style,
-        ));
-        if active {
-            node = node.child(UiElement::panel(
-                lgui::core::UiId::owned(format!("git-panel-tab-underline-{tab}")),
-                UiRect::new(rect.left, rect.bottom - 2.0, rect.right, rect.bottom),
-                VisualStyle::filled(c.accent),
-            ));
-        }
-        node
+        ))
     })
     .key(format!("git-panel-tab-{tab}"))
     .event_policy(EventPolicy::INTERACTIVE)

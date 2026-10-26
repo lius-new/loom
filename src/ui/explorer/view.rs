@@ -28,7 +28,7 @@ use crate::ui::drawer::drawer_icon;
 use crate::ui::theme;
 
 const HEADER_H: f32 = theme::TABS_H;
-const ROW_H: f32 = 20.0;
+const ROW_H: f32 = theme::DRAWER_ROW_H;
 const CREATE_ROW_H: f32 = 28.0;
 const INDENT: f32 = 12.0;
 const TREE_ICON_SIZE: f32 = 16.0;
