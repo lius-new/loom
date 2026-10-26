@@ -35,8 +35,8 @@ pub struct GitStoreSnapshot {
     /// Git line decorations for currently active files, keyed by absolute path
     /// and one-based line number.
     pub line_changes: Arc<BTreeMap<PathBuf, BTreeMap<usize, LineChange>>>,
-    /// Conflicts Git reports in currently active unmerged files, keyed by
-    /// absolute path.
+    /// Conflicts Git reports in unmerged files, keyed by absolute path. The
+    /// open file is also keyed by the path the editor knows it by.
     pub conflicts: Arc<BTreeMap<PathBuf, Arc<[ConflictRegion]>>>,
     pub diffs: Arc<BTreeMap<DiffRequest, GitResult<DiffContent>>>,
     pub presentation: Arc<GitPresentation>,
@@ -347,6 +347,8 @@ pub fn same_shared_scan(last: &GitStoreSnapshot, next: &GitStoreSnapshot) -> boo
         || (last.repositories.is_empty() && next.repositories.is_empty()))
         && (Arc::ptr_eq(&last.line_changes, &next.line_changes)
             || (last.line_changes.is_empty() && next.line_changes.is_empty()))
+        && (Arc::ptr_eq(&last.conflicts, &next.conflicts)
+            || (last.conflicts.is_empty() && next.conflicts.is_empty()))
         && (Arc::ptr_eq(&last.diffs, &next.diffs)
             || (last.diffs.is_empty() && next.diffs.is_empty()))
         && last.active_repository == next.active_repository

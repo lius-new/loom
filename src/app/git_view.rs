@@ -148,6 +148,9 @@ pub(crate) fn run(state: &AppContext, store: &State<GitStoreSnapshot>, command: 
         Command::RequestAbort => super::git::request_abort(state, store),
         Command::ContinueOperation => super::git::continue_operation(state, store),
         Command::StagePaths { paths } => super::git::stage_paths(state, store, paths),
+        Command::StageConflicted { paths } => {
+            super::git::stage_conflicted(state, store, paths, true)
+        }
         Command::UnstagePaths { paths } => super::git::unstage_paths(state, store, paths),
         Command::RequestDiscard { tracked, untracked } => {
             super::git::request_discard(state, store, tracked, untracked)

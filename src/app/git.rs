@@ -240,6 +240,14 @@ pub fn stage_paths(
     if paths.is_empty() {
         return false;
     }
+    if paths.iter().any(|path| {
+        repository
+            .files
+            .get(path)
+            .is_some_and(|file| file.conflict.is_some())
+    }) {
+        return stage_conflicted(state, store, paths, false);
+    }
     let message = count_label(&paths, "Staging");
     run(
         state,
@@ -248,6 +256,74 @@ pub fn stage_paths(
         OperationKind::Stage,
         message,
         move |service, root| service.write(root, |backend| backend.stage(root, &paths)),
+    )
+}
+
+/// What marking unmerged files resolved came to.
+enum Resolved {
+    Staged,
+    /// Git still finds conflict markers in these files; nothing was staged.
+    Markers(std::collections::BTreeMap<PathBuf, usize>),
+}
+
+/// Mark unmerged `paths` resolved. Git decides whether markers are left, with
+/// `git diff --check`; unless `confirmed`, leftovers ask first. The check
+/// reads the file on disk, so unsaved edits must be saved before.
+pub fn stage_conflicted(
+    state: &AppContext,
+    store: &State<GitStoreSnapshot>,
+    paths: Vec<PathBuf>,
+    confirmed: bool,
+) -> bool {
+    let Some(repository) = active_repository(store) else {
+        return false;
+    };
+    if unsaved(state, &repository.worktree_root, &paths) {
+        state.update(|app| app.show_toast("Save the file before marking it resolved."));
+        return false;
+    }
+    let message = count_label(&paths, "Marking resolved");
+    let asked = paths.clone();
+    run_with(
+        state,
+        store,
+        repository,
+        OperationKind::Stage,
+        message,
+        move |service, root| {
+            service.write(root, |backend| {
+                if !confirmed {
+                    let left = backend.leftover_conflict_markers(root, &paths)?;
+                    if !left.is_empty() {
+                        return Ok(Resolved::Markers(left));
+                    }
+                }
+                backend.stage(root, &paths)?;
+                Ok(Resolved::Staged)
+            })
+        },
+        move |app, resolved| {
+            let Resolved::Markers(left) = resolved else {
+                return;
+            };
+            let lines: usize = left.values().sum();
+            let message = match left.keys().collect::<Vec<_>>().as_slice() {
+                [path] => format!(
+                    "{} still has {lines} conflict marker line{}.",
+                    file_name(path),
+                    if lines == 1 { "" } else { "s" }
+                ),
+                files => format!("{} files still have conflict markers.", files.len()),
+            };
+            app.git.ui.confirm = Some(GitConfirm {
+                title: "Mark as resolved?".into(),
+                message,
+                confirm_label: "Mark Resolved",
+                destructive: false,
+                action: GitConfirmAction::StageConflicted { paths: asked },
+                restore_terminal: app.terminal.ui.terminal_focused,
+            });
+        },
     )
 }
 

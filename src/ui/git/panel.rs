@@ -2426,12 +2426,22 @@ pub(crate) fn file_row(
             section == CONFLICTS || !matches!(action, RowAction::Stage | RowAction::Unstage)
         })
         .collect::<Vec<_>>();
+    // What Git still reports as conflicts in this file; a file with none left
+    // only needs marking as resolved.
+    let unresolved = (section == CONFLICTS).then(|| {
+        store
+            .get()
+            .conflicts
+            .get(&repository_root.join(&path))
+            .map_or(0, |regions| regions.len())
+    });
+    let count_w = if unresolved.is_some() { 22.0 } else { 0.0 };
     // Reserve room for action buttons only while the row is hovered.
     let trailing_w = if hovered {
         BUTTON_W * actions.len() as f32 + 32.0
     } else {
         32.0
-    };
+    } + count_w;
     let indent = if nested { 14.0 } else { 0.0 };
     let name_left = rect.left + 58.0 + indent;
     let name_viewport = UiRect::new(name_left, rect.top, rect.right - trailing_w, rect.bottom);
@@ -2548,6 +2558,23 @@ pub(crate) fn file_row(
         indicator,
         theme::mono(indicator_color, 10.0),
     ));
+    if let Some(count) = unresolved {
+        let (label, color) = if count == 0 {
+            ("0".to_owned(), theme::c().text_ghost)
+        } else {
+            (count.to_string(), theme::c().warning)
+        };
+        row = row.child(text(
+            UiRect::new(
+                rect.right - 24.0 - count_w,
+                rect.top,
+                rect.right - 26.0,
+                rect.bottom,
+            ),
+            label,
+            theme::mono_right(color, 10.0),
+        ));
+    }
     if !hovered {
         return row;
     }
@@ -2582,5 +2609,5 @@ pub(crate) fn file_row(
             }
         })
         .collect();
-    row_buttons(row, rect, rect.right - 32.0, buttons)
+    row_buttons(row, rect, rect.right - 32.0 - count_w, buttons)
 }

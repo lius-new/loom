@@ -48,6 +48,9 @@ pub enum GitConfirmAction {
         untracked: Vec<PathBuf>,
     },
     StageAllAndCommit,
+    StageConflicted {
+        paths: Vec<PathBuf>,
+    },
     AbortOperation {
         repository: PathBuf,
         operation: RepositoryState,
@@ -147,6 +150,9 @@ pub(crate) fn resolve(state: &Binding, confirmed: bool) {
         }
         GitConfirmAction::StageAllAndCommit => {
             state.dispatch(Command::CommitAll);
+        }
+        GitConfirmAction::StageConflicted { paths } => {
+            state.dispatch(Command::StageConflicted { paths });
         }
         GitConfirmAction::AbortOperation {
             repository,

@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 
 use super::backend::{CliGitBackend, GitBackend};
 use super::command::CancellationToken;
-use crate::features::git::conflict::parse_regions;
 use crate::features::git::error::{GitError, GitResult};
 use crate::features::git::snapshot::{
     GitStoreSnapshot, PollTarget, binary_content, collect_line_changes, repository_id,
@@ -182,6 +181,28 @@ impl GitService {
             };
             repositories.insert(id, snapshot);
         }
+        // Every unmerged file's conflicts, from one diff per repository.
+        let mut conflicts = BTreeMap::new();
+        if mode == RefreshMode::Detailed {
+            for repository in repositories.values() {
+                let unmerged: Vec<PathBuf> = repository
+                    .files
+                    .iter()
+                    .filter(|(_, file)| file.conflict.is_some())
+                    .map(|(path, _)| path.clone())
+                    .collect();
+                if unmerged.is_empty() {
+                    continue;
+                }
+                for (path, regions) in self
+                    .backend
+                    .conflict_regions(&repository.worktree_root, &unmerged)
+                    .unwrap_or_default()
+                {
+                    conflicts.insert(repository.worktree_root.join(path), Arc::from(regions));
+                }
+            }
+        }
         let runtime = self.backend.git_runtime();
         let mut snapshot = GitStoreSnapshot {
             repositories: repositories.into(),
@@ -194,7 +215,7 @@ impl GitService {
             )),
             generation,
             line_changes: Arc::default(),
-            conflicts: Arc::default(),
+            conflicts: Arc::new(conflicts),
             diffs: Arc::default(),
             presentation: Arc::default(),
             initializing: false,
@@ -210,18 +231,11 @@ impl GitService {
                 .files
                 .get(&relative)
                 .is_some_and(|file| file.conflict.is_some());
-            let regions = if conflicted {
-                self.backend
-                    .zero_context_diff(
-                        &repository.worktree_root,
-                        DiffTarget::IndexToWorktree,
-                        &relative,
-                    )
-                    .map(|diff| parse_regions(&diff))
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
+            // The editor looks a file up by the path it opened it with.
+            let regions = snapshot
+                .conflicts
+                .get(&repository.worktree_root.join(&relative))
+                .cloned();
             let mut changes = BTreeMap::new();
             // An unmerged path has no single index side: `--cached` is empty
             // and the plain diff is a combined one, so compare with HEAD.
@@ -239,8 +253,8 @@ impl GitService {
                     collect_line_changes(&diff, &mut changes);
                 }
             }
-            if !regions.is_empty() {
-                Arc::make_mut(&mut snapshot.conflicts).insert(path.to_path_buf(), regions.into());
+            if let Some(regions) = regions {
+                Arc::make_mut(&mut snapshot.conflicts).insert(path.to_path_buf(), regions);
             }
             if !changes.is_empty() {
                 Arc::make_mut(&mut snapshot.line_changes).insert(path.to_path_buf(), changes);

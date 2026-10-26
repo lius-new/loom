@@ -35,6 +35,8 @@ pub struct GitCommand {
     pub read_only: bool,
     pub allow_prompt: bool,
     pub timeout: Option<Duration>,
+    /// Exit codes besides 0 that report a result rather than a failure.
+    pub accepted_exit_codes: Vec<i32>,
 }
 
 impl GitCommand {
@@ -46,6 +48,7 @@ impl GitCommand {
             read_only: false,
             allow_prompt: false,
             timeout: None,
+            accepted_exit_codes: Vec::new(),
         }
     }
 
@@ -84,6 +87,13 @@ impl GitCommand {
 
     pub fn allow_prompt(mut self) -> Self {
         self.allow_prompt = true;
+        self
+    }
+
+    /// Treats exit `code` as a normal result, like `git diff --check` does
+    /// when it finds something.
+    pub fn accept_exit_code(mut self, code: i32) -> Self {
+        self.accepted_exit_codes.push(code);
         self
     }
 
@@ -254,7 +264,11 @@ impl GitCommandRunner {
         let stderr = stderr_reader
             .join()
             .map_err(|_| GitError::new(GitErrorKind::Io, "Git stderr reader failed."))??;
-        if !status.success() {
+        if !status.success()
+            && !status
+                .code()
+                .is_some_and(|code| command.accepted_exit_codes.contains(&code))
+        {
             return Err(GitError::from_stderr(&stderr, status.code()));
         }
         Ok(GitOutput {

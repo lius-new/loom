@@ -136,6 +136,10 @@ pub enum Command {
     StagePaths {
         paths: Vec<PathBuf>,
     },
+    /// Mark unmerged `paths` resolved although conflict markers remain.
+    StageConflicted {
+        paths: Vec<PathBuf>,
+    },
     UnstagePaths {
         paths: Vec<PathBuf>,
     },

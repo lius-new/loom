@@ -7,7 +7,9 @@
 //! side. The regions follow from that structure, so a `<<<<<<<` in an ordinary
 //! file is never mistaken for a conflict.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
+use std::path::PathBuf;
 
 /// One conflict in the worktree file. Lines are one-based; ranges are half-open.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +53,49 @@ impl ConflictRegion {
     pub fn lines(&self) -> Range<usize> {
         self.start..self.end + 1
     }
+}
+
+/// The conflicts of each file in `diff`, the raw output of `git diff` for
+/// several unmerged paths, keyed by the path Git printed. A file with none is
+/// left out.
+pub fn regions_by_file(diff: &str) -> BTreeMap<PathBuf, Vec<ConflictRegion>> {
+    let mut files = BTreeMap::new();
+    let mut sections: Vec<(&str, usize)> = Vec::new();
+    let mut offset = 0;
+    for line in diff.split_inclusive('\n') {
+        if let Some(path) = line.strip_prefix("diff --cc ") {
+            sections.push((path.trim_end_matches(['\r', '\n']), offset));
+        }
+        offset += line.len();
+    }
+    for (index, (path, start)) in sections.iter().enumerate() {
+        let end = sections
+            .get(index + 1)
+            .map_or(diff.len(), |(_, next)| *next);
+        let regions = parse_regions(&diff[*start..end]);
+        if !regions.is_empty() {
+            files.insert(PathBuf::from(path), regions);
+        }
+    }
+    files
+}
+
+/// How many conflict-marker lines `git diff --check` reported in each file of
+/// `output`. Git, not a text scan, decides what counts as a marker.
+pub fn leftover_markers(output: &str) -> BTreeMap<PathBuf, usize> {
+    let mut files = BTreeMap::new();
+    for line in output.lines() {
+        let Some(location) = line.strip_suffix(": leftover conflict marker") else {
+            continue;
+        };
+        let Some((path, number)) = location.rsplit_once(':') else {
+            continue;
+        };
+        if number.parse::<usize>().is_ok() {
+            *files.entry(PathBuf::from(path)).or_insert(0) += 1;
+        }
+    }
+    files
 }
 
 /// What to keep of a conflict.
@@ -377,6 +422,26 @@ mod tests {
         let (range, replacement) = resolution_edit(text, &region, Resolution::Incoming).unwrap();
         assert_eq!(range, 0..text.len());
         assert_eq!(replacement, "Y\n");
+    }
+
+    #[test]
+    fn regions_are_grouped_by_the_file_git_printed() {
+        let two = format!(
+            "{SIMPLE}diff --cc dir/g.txt\nindex 1..2\n--- a/dir/g.txt\n+++ b/dir/g.txt\n@@@ -1,1 -1,1 +1,4 @@@\n++<<<<<<< a\n +P\n++=======\n+ Q\n++>>>>>>> b\n"
+        );
+        let files = regions_by_file(&two);
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[&PathBuf::from("f")].len(), 1);
+        assert_eq!(files[&PathBuf::from("dir/g.txt")][0].start, 1);
+    }
+
+    #[test]
+    fn git_check_output_counts_marker_lines_per_file() {
+        let output = "f.txt:2: leftover conflict marker\nf.txt:6: leftover conflict marker\ndir/g.txt:1: leftover conflict marker\nf.txt:9: trailing whitespace.\n+x  \n";
+        let counts = leftover_markers(output);
+        assert_eq!(counts[&PathBuf::from("f.txt")], 2);
+        assert_eq!(counts[&PathBuf::from("dir/g.txt")], 1);
+        assert_eq!(counts.len(), 2);
     }
 
     #[test]

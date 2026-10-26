@@ -100,6 +100,44 @@ impl CliGitBackend {
             .stdout_text()
     }
 
+    /// The conflicts of each of the unmerged `paths`, read from one combined
+    /// diff, keyed by path relative to `repository`.
+    pub fn conflict_regions(
+        &self,
+        repository: &Path,
+        paths: &[PathBuf],
+    ) -> GitResult<BTreeMap<PathBuf, Vec<crate::features::git::conflict::ConflictRegion>>> {
+        Ok(crate::features::git::conflict::regions_by_file(
+            &self.diff_with_context(repository, DiffTarget::IndexToWorktree, paths, Some(0))?,
+        ))
+    }
+
+    /// The conflict-marker lines `git diff --check` still finds in `paths`,
+    /// counted per file; a file that is clean is left out.
+    pub fn leftover_conflict_markers(
+        &self,
+        repository: &Path,
+        paths: &[PathBuf],
+    ) -> GitResult<BTreeMap<PathBuf, usize>> {
+        let mut args = vec![
+            OsString::from("diff"),
+            OsString::from("--no-ext-diff"),
+            OsString::from("--check"),
+            OsString::from("--"),
+        ];
+        args.extend(paths.iter().map(|path| path.as_os_str().to_owned()));
+        let output = self.runner.run(
+            GitCommand::new()
+                .cwd(repository)
+                .args(args)
+                .read_only()
+                .accept_exit_code(2),
+        )?;
+        Ok(crate::features::git::conflict::leftover_markers(
+            &output.stdout_text()?,
+        ))
+    }
+
     /// `path`'s diff with no context lines: one hunk per change block, as
     /// the source of single-change patches. Raw text keeps CRLF intact.
     pub fn zero_context_diff(
@@ -1780,6 +1818,53 @@ pub(crate) mod tests {
             "Loom Test"
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn git_reports_the_conflicts_and_leftover_markers_of_every_unmerged_file() {
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        let git = |args: &[&str]| {
+            backend
+                .runner()
+                .run(GitCommand::new().cwd(&root).args(args))
+        };
+        let commit = |name: &str, contents: &str, message: &str| {
+            std::fs::write(root.join(name), contents).unwrap();
+            backend.stage(&root, &[PathBuf::from(name)]).unwrap();
+            backend.commit(&root, message, false, false).unwrap();
+        };
+        commit("a.txt", "a\n", "base a");
+        commit("b.txt", "b\n", "base b");
+        backend.create_branch(&root, "topic", None).unwrap();
+        commit("a.txt", "topic\n", "topic a");
+        commit("b.txt", "topic\n", "topic b");
+        backend.switch(&root, "main").unwrap();
+        commit("a.txt", "main\n", "main a");
+        commit("b.txt", "main\n", "main b");
+        backend.switch(&root, "topic").unwrap();
+        assert!(git(&["rebase", "main"]).is_err());
+
+        let both = [PathBuf::from("a.txt"), PathBuf::from("b.txt")];
+        let regions = backend.conflict_regions(&root, &both).unwrap();
+        assert_eq!(regions.len(), 1, "only a.txt is unmerged: {regions:?}");
+        assert_eq!(regions[&PathBuf::from("a.txt")].len(), 1);
+        let left = backend
+            .leftover_conflict_markers(&root, &[PathBuf::from("a.txt")])
+            .unwrap();
+        assert_eq!(left[&PathBuf::from("a.txt")], 3);
+
+        // Taking one side by hand removes the markers; Git still lists the
+        // file as unmerged until it is staged.
+        std::fs::write(root.join("a.txt"), "main\n").unwrap();
+        assert!(
+            backend
+                .leftover_conflict_markers(&root, &[PathBuf::from("a.txt")])
+                .unwrap()
+                .is_empty()
+        );
+        assert!(backend.conflict_regions(&root, &both).unwrap().is_empty());
     }
 
     #[test]
