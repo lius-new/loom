@@ -15,12 +15,30 @@ pub enum GutterDecoration {
     GitAdded,
     GitModified,
     GitDeleted,
+    ConflictCurrent,
+    ConflictIncoming,
+    ConflictMarker,
     Diagnostic,
 }
 
 /// A Git change bar's width, and its width while the pointer is on it.
 const CHANGE_BAR_W: f32 = 3.0;
 const HOVERED_CHANGE_BAR_W: f32 = 6.0;
+
+fn conflict_color(
+    decorations: &BTreeMap<usize, Vec<GutterDecoration>>,
+    line: usize,
+) -> Option<Color> {
+    decorations
+        .get(&line)?
+        .iter()
+        .find_map(|value| match value {
+            GutterDecoration::ConflictCurrent => Some(theme::c().diff.add_mark),
+            GutterDecoration::ConflictIncoming => Some(theme::c().diff.mod_mark),
+            GutterDecoration::ConflictMarker => Some(theme::c().warning),
+            _ => None,
+        })
+}
 
 fn git_change(
     decorations: &BTreeMap<usize, Vec<GutterDecoration>>,
@@ -93,7 +111,19 @@ pub fn render(
             let dot = UiRect::new(rect.right - 11.0, y + 8.0, rect.right - 5.0, y + 14.0);
             g = g.child(ellipse(dot, VisualStyle::filled(theme::c().error)));
         }
-        if let Some(change) = git_change(decorations, i + 1) {
+        // A conflict's bar replaces the Git change bar: Git sees its lines as
+        // plain additions.
+        if let Some(color) = conflict_color(decorations, i + 1) {
+            g = g.child(lgui::prelude::panel(
+                UiRect::new(
+                    rect.right - CHANGE_BAR_W,
+                    y,
+                    rect.right,
+                    y + fonts::editor().line_h,
+                ),
+                VisualStyle::filled(color),
+            ));
+        } else if let Some(change) = git_change(decorations, i + 1) {
             let color = match change {
                 GutterDecoration::GitAdded => theme::c().diff.add_mark,
                 GutterDecoration::GitModified => theme::c().diff.mod_mark,

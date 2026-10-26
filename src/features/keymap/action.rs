@@ -188,6 +188,8 @@ actions! {
     ShowHover => "editor::Hover", "Show what the language servers say about the symbol at the cursor";
     GoToDiagnostic => "editor::GoToDiagnostic", "Go to the next problem in the file";
     GoToPreviousDiagnostic => "editor::GoToPreviousDiagnostic", "Go to the previous problem in the file";
+    GoToConflict => "editor::GoToConflict", "Go to the next merge conflict in the file";
+    GoToPreviousConflict => "editor::GoToPreviousConflict", "Go to the previous merge conflict in the file";
     GoBack => "pane::GoBack", "Go back to the previous place";
     GoForward => "pane::GoForward", "Go forward to the next place";
     ToggleOutline => "outline::Toggle", "Go to a symbol in this file";

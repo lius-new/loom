@@ -36,6 +36,7 @@ pub(crate) use bootstrap::run;
 pub(crate) use bootstrap::svg_icons;
 
 mod git_clone;
+mod git_conflict;
 mod git_peek;
 #[cfg(test)]
 mod git_performance;

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use super::backend::{CliGitBackend, GitBackend};
 use super::command::CancellationToken;
+use crate::features::git::conflict::parse_regions;
 use crate::features::git::error::{GitError, GitResult};
 use crate::features::git::snapshot::{
     GitStoreSnapshot, PollTarget, binary_content, collect_line_changes, repository_id,
@@ -193,6 +194,7 @@ impl GitService {
             )),
             generation,
             line_changes: Arc::default(),
+            conflicts: Arc::default(),
             diffs: Arc::default(),
             presentation: Arc::default(),
             initializing: false,
@@ -204,14 +206,26 @@ impl GitService {
             && let Some(relative) = repository.relative_path(path)
             && !relative.as_os_str().is_empty()
         {
+            let conflicted = repository
+                .files
+                .get(&relative)
+                .is_some_and(|file| file.conflict.is_some());
+            let regions = if conflicted {
+                self.backend
+                    .zero_context_diff(
+                        &repository.worktree_root,
+                        DiffTarget::IndexToWorktree,
+                        &relative,
+                    )
+                    .map(|diff| parse_regions(&diff))
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let mut changes = BTreeMap::new();
             // An unmerged path has no single index side: `--cached` is empty
             // and the plain diff is a combined one, so compare with HEAD.
-            let targets: &[DiffTarget] = if repository
-                .files
-                .get(&relative)
-                .is_some_and(|file| file.conflict.is_some())
-            {
+            let targets: &[DiffTarget] = if conflicted {
                 &[DiffTarget::HeadToWorktree]
             } else {
                 &[DiffTarget::HeadToIndex, DiffTarget::IndexToWorktree]
@@ -224,6 +238,9 @@ impl GitService {
                 ) {
                     collect_line_changes(&diff, &mut changes);
                 }
+            }
+            if !regions.is_empty() {
+                Arc::make_mut(&mut snapshot.conflicts).insert(path.to_path_buf(), regions.into());
             }
             if !changes.is_empty() {
                 Arc::make_mut(&mut snapshot.line_changes).insert(path.to_path_buf(), changes);

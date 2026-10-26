@@ -387,6 +387,12 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
             }
         }
         Action::MenuConfirm => crate::app::git_view::confirm_branch(&env.state, &env.git_store),
+        Action::GoToConflict | Action::GoToPreviousConflict => crate::app::git_conflict::go_to(
+            &env.state,
+            &env.git_store,
+            action == Action::GoToConflict,
+            env.editor_rect,
+        ),
         Action::GitCommit => {
             crate::app::git::commit(&env.state, &env.git_store);
             true

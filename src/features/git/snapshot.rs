@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use super::conflict::ConflictRegion;
 use super::diff_document::DiffDocument;
 use super::error::{GitError, GitResult};
 use super::types::*;
@@ -34,6 +35,9 @@ pub struct GitStoreSnapshot {
     /// Git line decorations for currently active files, keyed by absolute path
     /// and one-based line number.
     pub line_changes: Arc<BTreeMap<PathBuf, BTreeMap<usize, LineChange>>>,
+    /// Conflicts Git reports in currently active unmerged files, keyed by
+    /// absolute path.
+    pub conflicts: Arc<BTreeMap<PathBuf, Arc<[ConflictRegion]>>>,
     pub diffs: Arc<BTreeMap<DiffRequest, GitResult<DiffContent>>>,
     pub presentation: Arc<GitPresentation>,
     pub initializing: bool,
@@ -49,6 +53,7 @@ impl Default for GitStoreSnapshot {
             runtime_label: None,
             generation: 0,
             line_changes: Arc::default(),
+            conflicts: Arc::default(),
             diffs: Arc::default(),
             presentation: Arc::default(),
             initializing: true,
@@ -135,6 +140,9 @@ impl GitStoreSnapshot {
             }
             if self.line_changes == previous.line_changes {
                 self.line_changes = previous.line_changes.clone();
+            }
+            if self.conflicts == previous.conflicts {
+                self.conflicts = previous.conflicts.clone();
             }
             if self.diffs == previous.diffs {
                 self.diffs = previous.diffs.clone();
@@ -306,6 +314,7 @@ pub fn same_scan(last: &GitStoreSnapshot, next: &GitStoreSnapshot) -> bool {
         runtime_label,
         generation: _,
         line_changes,
+        conflicts,
         diffs,
         presentation: _,
         initializing,
@@ -315,6 +324,7 @@ pub fn same_scan(last: &GitStoreSnapshot, next: &GitStoreSnapshot) -> bool {
         && *last_error == next.last_error
         && *runtime_label == next.runtime_label
         && *line_changes == next.line_changes
+        && *conflicts == next.conflicts
         && *diffs == next.diffs
         && *initializing == next.initializing
 }

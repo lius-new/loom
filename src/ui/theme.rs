@@ -45,6 +45,7 @@ pub struct Palette {
     /// Syntax styles by highlight class; read through `syntax_style`.
     pub(crate) syntax: StyleTable,
     pub diff: DiffColors,
+    pub conflict: ConflictColors,
     pub git: GitColors,
     pub badge: BadgeColors,
     /// The 16 ANSI terminal colors, as `0xRRGGBB`.
@@ -72,6 +73,14 @@ pub struct DiffColors {
     pub del_fg: Color,
     pub del_mark: Color,
     pub mod_mark: Color,
+}
+
+/// Merge-conflict rows. The current side reuses the diff's added colors and
+/// the incoming side its modified mark; these are the tints with no diff twin.
+#[derive(Clone, Copy, Debug)]
+pub struct ConflictColors {
+    pub incoming_bg: Color,
+    pub marker_bg: Color,
 }
 
 /// Change-kind letters in Source Control and Explorer label colors.
@@ -178,6 +187,10 @@ const AURA_DARK: Palette = Palette {
         del_mark: Color(0xf43f5e),
         mod_mark: Color(0x60a5fa),
     },
+    conflict: ConflictColors {
+        incoming_bg: Color(0x1d2736),
+        marker_bg: Color(0x342e1c),
+    },
     git: GitColors {
         added: Color(0x38bdf8),
         added_text: Color(0x34d399),
@@ -249,6 +262,10 @@ const AURA_LIGHT: Palette = Palette {
         del_fg: Color(0xbe123c),
         del_mark: Color(0xf43f5e),
         mod_mark: Color(0x3b82f6),
+    },
+    conflict: ConflictColors {
+        incoming_bg: Color(0xe3ecfa),
+        marker_bg: Color(0xf0e3d8),
     },
     git: GitColors {
         added: Color(0x0284c7),
@@ -323,6 +340,10 @@ const EMBER: Palette = Palette {
         del_mark: Color(0xef4444),
         mod_mark: Color(0x60a5fa),
     },
+    conflict: ConflictColors {
+        incoming_bg: Color(0x242a32),
+        marker_bg: Color(0x3b3217),
+    },
     git: GitColors {
         added: Color(0x5eead4),
         added_text: Color(0xa3e635),
@@ -395,6 +416,10 @@ const HIGH_CONTRAST: Palette = Palette {
         del_fg: Color(0xffb3b3),
         del_mark: Color(0xff5c5c),
         mod_mark: Color(0x7cc7ff),
+    },
+    conflict: ConflictColors {
+        incoming_bg: Color(0x10304a),
+        marker_bg: Color(0x3a3000),
     },
     git: GitColors {
         added: Color(0x7cc7ff),

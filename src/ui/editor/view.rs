@@ -19,6 +19,7 @@ use super::gutter;
 use super::syntax;
 use crate::domain::identity::PaneId;
 use crate::domain::line_change::LineChange;
+use crate::features::git::conflict::{ConflictPart, ConflictRegion};
 use crate::features::language_service::diagnostics::{Diagnostic, Severity};
 use crate::ui::editor_binding::{Binding, Event, PeekPlacement, ViewState};
 use crate::ui::fonts;
@@ -107,7 +108,7 @@ pub(crate) fn render(
         let scroll_x = stored_x.clamp(0.0, metrics.max_x);
         let scroll_y = stored_y.clamp(0.0, metrics.max_y);
         let visible_lines = visible_line_range(scroll_y, rect.height(), line_count);
-        let decorations = s
+        let mut decorations = s
             .line_changes
             .range(visible_lines.start + 1..visible_lines.end + 1)
             .map(|(line, change)| {
@@ -119,6 +120,10 @@ pub(crate) fn render(
                 (*line, vec![decoration])
             })
             .collect::<BTreeMap<_, _>>();
+        let conflict_lines = conflict_lines(&s.conflicts, &visible_lines);
+        for &(line, part) in &conflict_lines {
+            decorations.insert(line, vec![conflict_decoration(part)]);
+        }
         let has_vertical = metrics.max_y > 0.0;
         let has_horizontal = metrics.max_x > 0.0;
 
@@ -179,6 +184,17 @@ pub(crate) fn render(
         let mut content = clip(rect, 0.0, 0.0)
             .key(format!("editor-content-{}", pane.get()))
             .cursor(CursorIcon::Text);
+        if !conflict_lines.is_empty() {
+            let mut rows = group(rect);
+            for &(line, part) in &conflict_lines {
+                let top = code_top + (line - 1) as f32 * fonts::editor().line_h;
+                rows = rows.child(panel(
+                    UiRect::new(code_left, top, rect.right, top + fonts::editor().line_h),
+                    VisualStyle::filled(conflict_row_color(part)),
+                ));
+            }
+            content = content.child(clip(rect, 0.0, -scroll_y).child(rows));
+        }
         if visible_lines.contains(&cursor_line) {
             let highlight_y = code_top + cursor_line as f32 * fonts::editor().line_h;
             let highlight = panel(
@@ -703,16 +719,20 @@ pub(crate) fn render(
             || (focused_pane
                 && (s.editor_vertical_scrollbar_dragging
                     || s.editor_horizontal_scrollbar_dragging));
-        if !s.overview_marks.is_empty() {
+        if !s.overview_marks.is_empty() || !s.conflicts.is_empty() {
             root = root.child(overview_ruler(
                 rect,
                 metrics,
                 has_horizontal,
                 fonts::editor().line_h,
                 s.overview_marks
-                    .clone()
-                    .into_iter()
-                    .map(|mark| (mark.first, mark.lines, mark.change)),
+                    .iter()
+                    .map(|mark| (mark.first, mark.lines, change_color(mark.change)))
+                    // Conflicts come last so they draw over the additions Git
+                    // sees in their lines.
+                    .chain(s.conflicts.iter().map(|region| {
+                        (region.start - 1, region.lines().len(), theme::c().warning)
+                    })),
             ));
         }
         if !s.diagnostics.is_empty() {
@@ -812,7 +832,7 @@ pub(crate) fn overview_ruler(
     metrics: ScrollMetrics,
     has_horizontal: bool,
     row_height: f32,
-    marks: impl IntoIterator<Item = (usize, usize, LineChange)>,
+    marks: impl IntoIterator<Item = (usize, usize, Color)>,
 ) -> Element {
     let corner = if has_horizontal { SCROLLBAR_SIZE } else { 0.0 };
     let lane = UiRect::new(
@@ -823,29 +843,24 @@ pub(crate) fn overview_ruler(
     );
     let scale = lane.height() / metrics.content_h.max(metrics.viewport_h);
     let mut ruler = group(lane);
-    let mut last: Option<(f32, f32, LineChange)> = None;
-    let flush = |ruler: Element, (top, bottom, change): (f32, f32, LineChange)| {
-        let color = match change {
-            LineChange::Added => theme::c().diff.add_mark,
-            LineChange::Modified => theme::c().diff.mod_mark,
-            LineChange::Deleted => theme::c().diff.del_mark,
-        };
+    let mut last: Option<(f32, f32, Color)> = None;
+    let flush = |ruler: Element, (top, bottom, color): (f32, f32, Color)| {
         ruler.child(panel(
             UiRect::new(lane.left, top, lane.right, bottom),
             VisualStyle::filled(color),
         ))
     };
-    for (first, lines, change) in marks {
+    for (first, lines, color) in marks {
         let top = (lane.top + first as f32 * row_height * scale).min(lane.bottom - MIN_MARK_LENGTH);
         let bottom =
             (lane.top + (first + lines) as f32 * row_height * scale).max(top + MIN_MARK_LENGTH);
         // Marks closer than a pixel draw as one, so huge files stay cheap.
         match &mut last {
-            Some((_, end, previous_change)) if *previous_change == change && top <= *end + 1.0 => {
+            Some((_, end, previous)) if *previous == color && top <= *end + 1.0 => {
                 *end = end.max(bottom)
             }
             _ => {
-                if let Some(previous) = last.replace((top, bottom, change)) {
+                if let Some(previous) = last.replace((top, bottom, color)) {
                     ruler = flush(ruler, previous);
                 }
             }
@@ -855,6 +870,49 @@ pub(crate) fn overview_ruler(
         ruler = flush(ruler, previous);
     }
     ruler
+}
+
+pub(crate) fn change_color(change: LineChange) -> Color {
+    match change {
+        LineChange::Added => theme::c().diff.add_mark,
+        LineChange::Modified => theme::c().diff.mod_mark,
+        LineChange::Deleted => theme::c().diff.del_mark,
+    }
+}
+
+/// The one-based lines of `regions` inside `visible` (zero-based), each with
+/// its part of the conflict.
+fn conflict_lines(
+    regions: &[ConflictRegion],
+    visible: &Range<usize>,
+) -> Vec<(usize, ConflictPart)> {
+    let mut lines = Vec::new();
+    for region in regions {
+        for line in region.lines() {
+            if visible.contains(&(line - 1))
+                && let Some(part) = region.part_of(line)
+            {
+                lines.push((line, part));
+            }
+        }
+    }
+    lines
+}
+
+fn conflict_decoration(part: ConflictPart) -> gutter::GutterDecoration {
+    match part {
+        ConflictPart::Current => gutter::GutterDecoration::ConflictCurrent,
+        ConflictPart::Incoming => gutter::GutterDecoration::ConflictIncoming,
+        ConflictPart::Marker => gutter::GutterDecoration::ConflictMarker,
+    }
+}
+
+fn conflict_row_color(part: ConflictPart) -> Color {
+    match part {
+        ConflictPart::Current => theme::c().diff.add_bg,
+        ConflictPart::Incoming => theme::c().conflict.incoming_bg,
+        ConflictPart::Marker => theme::c().conflict.marker_bg,
+    }
 }
 
 fn severity_colour(severity: Severity) -> Color {

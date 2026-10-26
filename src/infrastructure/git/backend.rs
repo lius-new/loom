@@ -1783,6 +1783,85 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn real_conflict_regions_come_from_git_and_end_with_the_markers_it_wrote() {
+        let Some((root, backend)) = repository() else {
+            return;
+        };
+        let git = |args: &[&str]| {
+            backend
+                .runner()
+                .run(GitCommand::new().cwd(&root).args(args))
+        };
+        let commit = |contents: &str, message: &str| {
+            std::fs::write(root.join("f.txt"), contents).unwrap();
+            backend.stage(&root, &[PathBuf::from("f.txt")]).unwrap();
+            backend.commit(&root, message, false, false).unwrap();
+        };
+        let regions = || {
+            let diff = backend
+                .zero_context_diff(&root, DiffTarget::IndexToWorktree, Path::new("f.txt"))
+                .unwrap();
+            crate::features::git::conflict::parse_regions(&diff)
+        };
+        commit(
+            "1
+a
+2
+b
+3
+",
+            "base",
+        );
+        backend.create_branch(&root, "topic", None).unwrap();
+        commit(
+            "1
+X
+2
+X2
+3
+",
+            "topic",
+        );
+        backend.switch(&root, "main").unwrap();
+        commit(
+            "1
+Y
+2
+Y2
+3
+",
+            "main",
+        );
+        backend.switch(&root, "topic").unwrap();
+        assert!(git(&["rebase", "main"]).is_err());
+
+        let text = std::fs::read_to_string(root.join("f.txt")).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let found = regions();
+        assert_eq!(found.len(), 1, "{text}");
+        let region = &found[0];
+        assert!(lines[region.start - 1].starts_with("<<<<<<<"), "{text}");
+        assert!(lines[region.separator - 1].starts_with("======="), "{text}");
+        assert!(lines[region.end - 1].starts_with(">>>>>>>"), "{text}");
+        assert_eq!(lines[region.current.start - 1], "Y");
+        assert_eq!(lines[region.incoming.start - 1], "X");
+
+        // Deleting the markers does not resolve it for Git, but nothing is
+        // left to show as a conflict.
+        std::fs::write(
+            root.join("f.txt"),
+            "1
+Y
+2
+X2
+3
+",
+        )
+        .unwrap();
+        assert!(regions().is_empty());
+    }
+
+    #[test]
     fn real_repository_resolves_conflicts_and_continues_a_rebase() {
         let Some((root, backend)) = repository() else {
             return;

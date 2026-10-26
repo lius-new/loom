@@ -121,7 +121,9 @@
       "shift-f12": "editor::FindAllReferences",
       "secondary-k secondary-i": "editor::Hover",
       "f8": "editor::GoToDiagnostic",
-      "shift-f8": "editor::GoToPreviousDiagnostic"
+      "shift-f8": "editor::GoToPreviousDiagnostic",
+      "alt-f8": "editor::GoToConflict",
+      "alt-shift-f8": "editor::GoToPreviousConflict"
     }
   },
   {

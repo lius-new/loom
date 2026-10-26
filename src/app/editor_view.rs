@@ -165,6 +165,25 @@ pub(crate) fn snapshot(
             crate::ui::editor::view::change_marks(changes, doc.buffer.line_count())
         })
         .unwrap_or_default();
+    // Git read the saved file, so unsaved edits move the conflicts it found.
+    let conflicts = document
+        .as_ref()
+        .and_then(|doc| {
+            let regions = git.conflicts.get(&doc.meta.path)?;
+            let saved = app.workspace.documents.get(&doc.stamp.document)?;
+            if !saved.is_dirty() {
+                return Some(regions.clone());
+            }
+            Some(
+                crate::features::git::conflict::shifted(
+                    regions,
+                    &saved.saved_text,
+                    &doc.buffer.text_snapshot(),
+                )
+                .into(),
+            )
+        })
+        .unwrap_or_default();
     let peek_visible = state.editor_hunk_peek.as_ref().is_some_and(|peek| {
         document
             .as_ref()
@@ -208,6 +227,7 @@ pub(crate) fn snapshot(
         editor_horizontal_scrollbar_dragging: state.editor_horizontal_scrollbar_dragging,
         line_changes,
         overview_marks,
+        conflicts,
         has_repository,
         peek_visible,
         hover: None,

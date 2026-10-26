@@ -60,6 +60,8 @@ pub(crate) struct ViewState {
     pub editor_horizontal_scrollbar_dragging: bool,
     pub line_changes: BTreeMap<usize, LineChange>,
     pub overview_marks: Vec<OverviewMark>,
+    /// The conflicts Git reports in this file.
+    pub conflicts: Arc<[crate::features::git::conflict::ConflictRegion]>,
     pub has_repository: bool,
     pub peek_visible: bool,
     /// What the language servers said about the word the pointer rests on.

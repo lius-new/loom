@@ -235,7 +235,9 @@ pub fn render(
                 metrics,
                 max_x > 0.0,
                 row_h(),
-                marks.iter().copied(),
+                marks.iter().map(|&(first, lines, change)| {
+                    (first, lines, editor_view::change_color(change))
+                }),
             ));
         }
     }
