@@ -165,22 +165,34 @@ pub(crate) fn snapshot(
             crate::ui::editor::view::change_marks(changes, doc.buffer.line_count())
         })
         .unwrap_or_default();
-    // Git read the saved file, so unsaved edits move the conflicts it found.
+    // Git read the saved file, so unsaved edits move the conflicts it found. A
+    // saved edit changes the file before Git has read it again, so keep only
+    // the conflicts whose markers are still where Git said.
     let conflicts = document
         .as_ref()
         .and_then(|doc| {
             let regions = git.conflicts.get(&doc.meta.path)?;
             let saved = app.workspace.documents.get(&doc.stamp.document)?;
-            if !saved.is_dirty() {
-                return Some(regions.clone());
-            }
-            Some(
+            let found = if saved.is_dirty() {
                 crate::features::git::conflict::shifted(
                     regions,
                     &saved.saved_text,
                     &doc.buffer.text_snapshot(),
                 )
-                .into(),
+            } else {
+                regions.to_vec()
+            };
+            let lines = doc.buffer.line_count();
+            Some(
+                found
+                    .into_iter()
+                    .filter(|region| {
+                        crate::features::git::conflict::markers_in_place(region, |n| {
+                            (1..=lines).contains(&n).then(|| doc.buffer.line(n - 1))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
             )
         })
         .unwrap_or_default();
@@ -935,6 +947,47 @@ R
             .unwrap()
             .replace(inside..inside, "x", loom_editor_core::text::EditKind::Other)
             .unwrap();
+        assert!(snapshot(app, git(), pane, RECT).conflicts.is_empty());
+    }
+
+    #[test]
+    fn a_saved_resolution_hides_the_conflict_before_git_has_looked_again() {
+        use crate::features::git::conflict::ConflictRegion;
+        let mut app = document("x\n<<<<<<< a\nL\n=======\nR\n>>>>>>> b\nz\n");
+        let pane = app.workspace.active_pane();
+        let id = app.workspace.active().unwrap();
+        let git = || GitStoreSnapshot {
+            conflicts: BTreeMap::from([(
+                "first.txt".into(),
+                std::sync::Arc::from(vec![ConflictRegion {
+                    start: 2,
+                    current: 3..4,
+                    separator: 4,
+                    incoming: 5..6,
+                    end: 6,
+                }]),
+            )])
+            .into(),
+            ..Default::default()
+        };
+        assert_eq!(snapshot(app.clone(), git(), pane, RECT).conflicts.len(), 1);
+
+        // Accepting the current side and saving: the text matches the disk
+        // again, but the snapshot still holds the positions Git found before.
+        let resolved = "x\nL\nz\n";
+        let length = app.workspace.editor(pane).unwrap().buffer().len();
+        app.workspace
+            .editor_mut(pane)
+            .unwrap()
+            .replace(0..length, resolved, loom_editor_core::text::EditKind::Other)
+            .unwrap();
+        let document = app.workspace.view_document(id).unwrap();
+        let saved = app.workspace.editor(pane).unwrap().buffer().text_snapshot();
+        app.workspace
+            .documents
+            .get_mut(&document)
+            .unwrap()
+            .saved_text = saved;
         assert!(snapshot(app, git(), pane, RECT).conflicts.is_empty());
     }
 

@@ -107,6 +107,21 @@ pub enum Resolution {
     Both,
 }
 
+/// Whether the opening, separator and closing lines of `region` are still
+/// where Git reported them, given `line` (one-based, `None` past the end).
+/// Git read the file on disk, so its answer is stale after the text changes;
+/// this tells a position that can still be drawn on or edited from one that
+/// cannot. It never decides whether something is a conflict.
+pub fn markers_in_place<'a>(
+    region: &ConflictRegion,
+    line: impl Fn(usize) -> Option<&'a str>,
+) -> bool {
+    line(region.start).is_some_and(|text| text.starts_with("<<<<<<<"))
+        && line(region.separator)
+            .is_some_and(|text| text.starts_with("=======") || text.starts_with("|||||||"))
+        && line(region.end).is_some_and(|text| text.starts_with(">>>>>>>"))
+}
+
 /// The edit that resolves `region` in `text`: the byte range to replace and
 /// what to put there. `None` when `text` no longer has the opening, separator
 /// and closing lines where Git reported them, because the file changed since
@@ -127,11 +142,7 @@ pub fn resolution_edit(
     let line = |n: usize| Some(&text[begin(n)?..begin(n + 1)?]);
     let side = |lines: &Range<usize>| Some(&text[begin(lines.start)?..begin(lines.end)?]);
 
-    if !line(region.start)?.starts_with("<<<<<<<")
-        || !(line(region.separator)?.starts_with("=======")
-            || line(region.separator)?.starts_with("|||||||"))
-        || !line(region.end)?.starts_with(">>>>>>>")
-    {
+    if !markers_in_place(region, line) {
         return None;
     }
     let replacement = match resolution {
