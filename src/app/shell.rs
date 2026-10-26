@@ -391,6 +391,18 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             crate::app::editor_vim::sync_view(app);
         });
     });
+    // The tree follows the active editor; the file's folders open and its row
+    // scrolls into sight, but the drawer and focus stay as they are.
+    let reveal_state = state.clone();
+    let reveal_key = (
+        active_view,
+        s.workspace.active_path().map(std::path::Path::to_path_buf),
+        s.preferences.values().explorer_auto_reveal,
+    );
+    cx.use_effect(reveal_key, move || {
+        reveal_state.update(crate::app::explorer::auto_reveal_active);
+        || {}
+    });
     terminal_effects::install_save(cx, &terminal_tabs, &s);
     let show_drawer = s.drawer.visible;
     let search_key = crate::app::search::key(&s);

@@ -17,8 +17,7 @@ use crate::features::explorer::{ExplorerContextTarget, ExplorerCreateKind, Explo
 use crate::features::explorer::{edit, roots};
 use crate::infrastructure::explorer_filesystem::ExplorerFilesystem;
 use crate::model::document::FileId;
-
-const TREE_ROW_H: f32 = 20.0;
+use crate::ui::explorer::state::ExplorerReveal;
 
 /// Open a file clicked in the Explorer: a single click previews it, a double
 /// click keeps it open. Returns whether the editor should take focus.
@@ -206,6 +205,7 @@ pub(crate) fn finish_drawer_file_drag(state: &AppContext) -> bool {
 
 /// Expand or collapse an Explorer directory row, reading it on first expansion.
 pub(crate) fn toggle_directory(app: &mut AppState, key: &str) {
+    app.explorer.ui.reveal = None;
     app.explorer
         .model
         .toggle_directory(&ExplorerFilesystem, key);
@@ -216,22 +216,61 @@ pub(crate) fn refresh(app: &mut AppState) -> bool {
     app.explorer.model.refresh_all(&ExplorerFilesystem)
 }
 
+/// Reveal a document from its tab menu: show the drawer and the file's row.
 pub fn reveal_file(state: &AppContext, id: FileId) {
     state.update(move |app| {
         let Some(path) = app.workspace.meta(id).map(|meta| meta.path.clone()) else {
             return;
         };
-        let Reveal::Revealed { row } = app.explorer.model.reveal(&ExplorerFilesystem, &path) else {
+        if !reveal_path(app, &path) {
             app.show_toast("File is outside the workspace.");
             return;
-        };
+        }
         app.workspace.activate_document(id);
         app.drawer.visible = true;
-        if let Some(index) = row {
-            app.explorer.ui.scroll = index.saturating_sub(1) as f32 * TREE_ROW_H;
-        }
         app.explorer.ui.scroll_x = 0.0;
     });
+}
+
+/// Follow the active editor in the tree after the user switched to it: expand
+/// its folders and bring its row into sight, without opening the drawer or
+/// moving focus. Files outside the workspace, diffs and built-in pages are
+/// skipped silently, as is a tree with an open create or rename row.
+pub(crate) fn auto_reveal_active(app: &mut AppState) {
+    if !app.preferences.values().explorer_auto_reveal || app.explorer.model.editing() {
+        return;
+    }
+    let Some(id) = app.workspace.active() else {
+        return;
+    };
+    if app.workspace.is_diff(id) {
+        return;
+    }
+    let Some(path) = app.workspace.active_path().map(Path::to_path_buf) else {
+        return;
+    };
+    reveal_path(app, &path);
+}
+
+/// Expand the folders above `path` and ask the tree to show its row; returns
+/// whether `path` lies inside the workspace.
+fn reveal_path(app: &mut AppState, path: &Path) -> bool {
+    let Reveal::Revealed { row } = app.explorer.model.reveal(&ExplorerFilesystem, path) else {
+        return false;
+    };
+    app.explorer.ui.reveal = row.map(|row| {
+        let depth = app
+            .explorer
+            .model
+            .root_for_path(path)
+            .and_then(|root| path.strip_prefix(root).ok())
+            .map_or(0, |relative| relative.components().count());
+        ExplorerReveal {
+            row,
+            covered: depth,
+        }
+    });
+    true
 }
 
 pub fn choose_folder(state: &AppContext) -> bool {

@@ -94,6 +94,7 @@ impl AppState {
                     shell_options: crate::infrastructure::terminal::profiles::options(&[]),
                     terminal_cursor_blink: true,
                     smooth_caret: true,
+                    explorer_auto_reveal: true,
                     markdown: Default::default(),
                     check_for_updates: true,
                     editor_font: crate::ui::fonts::FontSettings::EDITOR,
@@ -166,6 +167,7 @@ impl AppState {
             terminal_cursor_blink: self.preferences.values().terminal_cursor_blink,
             smooth_caret: self.preferences.values().smooth_caret,
             markdown: self.preferences.values().markdown,
+            explorer_auto_reveal: self.preferences.values().explorer_auto_reveal,
             check_for_updates: self.preferences.values().check_for_updates,
             git_inline_blame: self.git.ui.inline_blame,
             git_split_diff: self.git.ui.split_diff,
@@ -201,6 +203,7 @@ impl AppState {
         self.preferences.values_mut().terminal_cursor_blink = settings.terminal_cursor_blink;
         self.preferences.values_mut().smooth_caret = settings.smooth_caret;
         self.preferences.values_mut().markdown = settings.markdown;
+        self.preferences.values_mut().explorer_auto_reveal = settings.explorer_auto_reveal;
         self.preferences.values_mut().check_for_updates = settings.check_for_updates;
         self.preferences.values_mut().file_associations = settings.file_associations;
         self.preferences.values_mut().language_servers = settings.language_servers;

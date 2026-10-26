@@ -72,6 +72,7 @@ pub(crate) enum Setting {
     DefaultShell,
     TerminalCursorBlink,
     SmoothCaret,
+    ExplorerAutoReveal,
     InlineBlame,
     SplitDiff,
     TreeView,
@@ -80,7 +81,7 @@ pub(crate) enum Setting {
     CheckForUpdates,
 }
 
-const SECTIONS: [(&str, &[Setting]); 5] = [
+const SECTIONS: [(&str, &[Setting]); 6] = [
     ("APPEARANCE", &[Setting::Theme, Setting::UiScale]),
     (
         "EDITOR",
@@ -103,6 +104,7 @@ const SECTIONS: [(&str, &[Setting]); 5] = [
             Setting::TerminalCursorBlink,
         ],
     ),
+    ("EXPLORER", &[Setting::ExplorerAutoReveal]),
     (
         "SOURCE CONTROL",
         &[Setting::InlineBlame, Setting::SplitDiff, Setting::TreeView],
@@ -121,6 +123,7 @@ impl Setting {
             Self::DefaultShell => "Default shell",
             Self::TerminalCursorBlink => "Cursor blinking",
             Self::SmoothCaret => "Smooth caret movement",
+            Self::ExplorerAutoReveal => "Auto reveal active file",
             Self::InlineBlame => "Inline blame",
             Self::SplitDiff => "Side-by-side diff",
             Self::TreeView => "Tree view",
@@ -149,6 +152,9 @@ impl Setting {
             Self::DefaultShell => "Used when a new terminal opens without picking a shell.",
             Self::TerminalCursorBlink => "Blink the terminal cursor while it has focus.",
             Self::SmoothCaret => "Animate the editor caret when typing, navigating or clicking.",
+            Self::ExplorerAutoReveal => {
+                "Expand the file tree to the active editor's file when you switch tabs."
+            }
             Self::InlineBlame => "Show the last commit for the current line in the editor.",
             Self::SplitDiff => "Open diffs with the old and new versions in two columns.",
             Self::TreeView => "Group changed files by folder in Source Control.",
@@ -174,6 +180,7 @@ impl Setting {
             | Self::TerminalLineHeight => None,
             Self::TerminalCursorBlink => Some(app.prefs.terminal_cursor_blink),
             Self::SmoothCaret => Some(app.prefs.smooth_caret),
+            Self::ExplorerAutoReveal => Some(app.prefs.explorer_auto_reveal),
             Self::InlineBlame => Some(app.prefs.git_inline_blame),
             Self::SplitDiff => Some(app.prefs.git_split_diff),
             Self::TreeView => Some(app.prefs.git_tree_view),

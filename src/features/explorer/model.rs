@@ -252,6 +252,12 @@ impl ExplorerModel {
             current = directory.parent();
         }
         for directory in directories.iter().rev() {
+            // Directories already shown keep their listing, so revealing on every
+            // tab switch does not reread the disk.
+            let key = tree::key(directory);
+            if self.tree.is_expanded(&key) && self.tree.listing(&key).is_some() {
+                continue;
+            }
             self.tree.load_expanded(port, directory);
         }
         Reveal::Revealed {

@@ -52,6 +52,9 @@ pub struct Settings {
     pub smooth_caret: bool,
     #[serde(default)]
     pub markdown: super::markdown::MarkdownSettings,
+    /// Expand and scroll the file tree to the active editor's file.
+    #[serde(default = "default_true")]
+    pub explorer_auto_reveal: bool,
     #[serde(default)]
     pub git_inline_blame: bool,
     #[serde(default)]
@@ -127,6 +130,7 @@ impl Default for Settings {
             terminal_cursor_blink: true,
             smooth_caret: true,
             markdown: Default::default(),
+            explorer_auto_reveal: true,
             git_inline_blame: false,
             git_split_diff: false,
             git_tree_view: false,
@@ -467,6 +471,7 @@ mod tests {
             terminal_cursor_blink: false,
             smooth_caret: false,
             markdown: Default::default(),
+            explorer_auto_reveal: false,
             git_inline_blame: true,
             git_split_diff: true,
             git_tree_view: true,

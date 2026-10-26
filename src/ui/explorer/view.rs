@@ -19,7 +19,7 @@ use lgui::core::{
 use lgui::prelude::{Color, Element, TextAlign, UiRect, VisualStyle, panel, text};
 
 use super::commands::{Command, Commands, Decoration, EditInput, Frame, GitTone};
-use super::state::ExplorerPanelState;
+use super::state::{ExplorerPanelState, ExplorerReveal};
 use crate::features::explorer::{ExplorerContextTarget, ExplorerCreateKind, ExplorerTargetKind};
 use crate::ui::components::input::{self, AccessInputOptions, InputBinding, InputStyle};
 use crate::ui::components::scrollbar;
@@ -217,7 +217,10 @@ pub fn render(
         };
         let (mut tree_els, mut rows, mut content_bottom) = build(s.ui.scroll);
         let max_scroll = (content_bottom - content_rect.bottom).max(0.0);
-        let scroll = s.ui.scroll.clamp(0.0, max_scroll);
+        let mut scroll = s.ui.scroll.clamp(0.0, max_scroll);
+        if let Some(target) = s.ui.reveal {
+            scroll = revealed_scroll(scroll, target, content_rect.height(), max_scroll);
+        }
         if scroll != s.ui.scroll {
             (tree_els, rows, content_bottom) = build(scroll);
         }
@@ -240,7 +243,9 @@ pub fn render(
                     WheelUnit::Pixels => (delta.x, delta.y),
                 };
                 st.update(move |panel| {
-                    panel.ui.scroll = (panel.ui.scroll - step_y).clamp(0.0, max_scroll);
+                    // Start from the scroll on screen, which a reveal may have moved.
+                    panel.ui.reveal = None;
+                    panel.ui.scroll = (scroll - step_y).clamp(0.0, max_scroll);
                     panel.ui.scroll_x = (panel.ui.scroll_x - step_x).clamp(0.0, max_scroll_x);
                 });
             }
@@ -1126,6 +1131,18 @@ fn sticky_rows(index: &TreeIndex, viewport_top: f32, scroll: f32) -> Vec<StickyR
     pinned
 }
 
+/// Scroll offset that shows the revealed row. A row already in sight, below
+/// the directory rows pinned above it, leaves the tree where it is; otherwise
+/// the row is centred.
+fn revealed_scroll(scroll: f32, target: ExplorerReveal, viewport_h: f32, max_scroll: f32) -> f32 {
+    let top = target.row as f32 * ROW_H;
+    let covered = target.covered as f32 * ROW_H;
+    if top - covered >= scroll && top + ROW_H <= scroll + viewport_h {
+        return scroll;
+    }
+    (top - (viewport_h - ROW_H) / 2.0).clamp(0.0, max_scroll)
+}
+
 /// Fixed vertical scrollbar for the file tree. Only the draggable thumb is
 /// painted; the track remains invisible like the scrollbars in modern editors.
 fn vertical_scrollbar(rect: UiRect, content_bottom: f32, scroll: f32, state: Access) -> Element {
@@ -1172,6 +1189,7 @@ fn vertical_scrollbar(rect: UiRect, content_bottom: f32, scroll: f32, state: Acc
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down(move |_cx, p| {
         st_down.update(move |panel| {
+            panel.ui.reveal = None;
             panel.ui.scrollbar_dragging = true;
             panel.ui.scrollbar_drag_offset = p.point.y - thumb_top;
         });
@@ -1252,6 +1270,30 @@ fn horizontal_scrollbar(rect: UiRect, content_right: f32, scroll: f32, state: Ac
 mod tests {
     use super::*;
     use crate::features::explorer::DirEntry;
+
+    fn target(row: usize, covered: usize) -> ExplorerReveal {
+        ExplorerReveal { row, covered }
+    }
+
+    #[test]
+    fn revealed_row_in_sight_leaves_the_scroll_alone() {
+        // 200px show ten rows; at scroll 100 those are rows 5 to 14.
+        assert_eq!(revealed_scroll(100.0, target(8, 2), 200.0, 1000.0), 100.0);
+    }
+
+    #[test]
+    fn revealed_row_under_pinned_directories_counts_as_hidden() {
+        // Row 5 sits at 100px, below two pinned rows covering 100..140, so the
+        // row is centred rather than left under them.
+        assert_eq!(revealed_scroll(100.0, target(5, 2), 200.0, 1000.0), 10.0);
+    }
+
+    #[test]
+    fn revealed_row_out_of_sight_is_centred_and_clamped() {
+        assert_eq!(revealed_scroll(0.0, target(40, 1), 200.0, 2000.0), 710.0);
+        assert_eq!(revealed_scroll(500.0, target(1, 1), 200.0, 2000.0), 0.0);
+        assert_eq!(revealed_scroll(0.0, target(40, 1), 200.0, 650.0), 650.0);
+    }
 
     fn directory(key: &str, depth: usize, source_y: f32) -> StickyDirectory {
         StickyDirectory {

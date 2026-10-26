@@ -83,6 +83,7 @@ impl Setting {
             | Self::TerminalLineHeight => {}
             Self::TerminalCursorBlink => app.preferences.values_mut().terminal_cursor_blink ^= true,
             Self::SmoothCaret => app.preferences.values_mut().smooth_caret ^= true,
+            Self::ExplorerAutoReveal => app.preferences.values_mut().explorer_auto_reveal ^= true,
             Self::InlineBlame => app.git.ui.inline_blame ^= true,
             Self::SplitDiff => app.git.ui.split_diff ^= true,
             Self::TreeView => app.git.ui.tree_view ^= true,
@@ -266,6 +267,7 @@ mod tests {
         for setting in [
             Setting::TerminalCursorBlink,
             Setting::SmoothCaret,
+            Setting::ExplorerAutoReveal,
             Setting::InlineBlame,
             Setting::SplitDiff,
             Setting::TreeView,

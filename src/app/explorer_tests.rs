@@ -493,3 +493,109 @@ fn creating_nested_items_expands_their_folders_and_opens_new_files() {
     assert!(app.explorer.ui.create_input.text().is_empty());
     let _ = fs::remove_dir_all(root);
 }
+
+/// A workspace `root/a/b/file.rs` plus a sibling `root/z.rs`, opened in a tab.
+fn nested_workspace(name: &str) -> (AppState, PathBuf, PathBuf) {
+    let root = close_test_directory(name);
+    let nested = root.join("a").join("b");
+    fs::create_dir_all(&nested).unwrap();
+    let file = nested.join("file.rs");
+    fs::write(&file, "").unwrap();
+    fs::write(root.join("z.rs"), "").unwrap();
+    let mut app = AppState::new();
+    app.explorer
+        .model
+        .open_root(&ExplorerFilesystem, root.clone());
+    app.workspace.test_open_view(file.clone(), String::new());
+    (app, root, file)
+}
+
+#[test]
+fn auto_reveal_expands_folders_and_requests_the_row_without_opening_the_drawer() {
+    let (mut app, root, file) = nested_workspace("auto-reveal-expands");
+    let drawer_visible = app.drawer.visible;
+    assert!(!app.explorer.model.is_expanded(&key(&root.join("a"))));
+
+    auto_reveal_active(&mut app);
+
+    assert!(app.explorer.model.is_expanded(&key(&root.join("a"))));
+    assert!(
+        app.explorer
+            .model
+            .is_expanded(&key(&root.join("a").join("b")))
+    );
+    // root, a, b, file.rs: the file is the fourth row; a/b/file.rs is 3 deep.
+    assert_eq!(
+        app.explorer.ui.reveal,
+        Some(ExplorerReveal { row: 3, covered: 3 })
+    );
+    assert_eq!(app.drawer.visible, drawer_visible);
+    assert!(app.chrome.toast.is_none());
+    assert!(app.workspace.active_path() == Some(file.as_path()));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn auto_reveal_keeps_directories_the_user_already_opened() {
+    let (mut app, root, _file) = nested_workspace("auto-reveal-keeps");
+    app.explorer
+        .model
+        .toggle_directory(&ExplorerFilesystem, &key(&root.join("a")));
+    let sibling = root.join("a").join("other");
+    fs::create_dir_all(&sibling).unwrap();
+    let a = key(&root.join("a"));
+    app.explorer.model.toggle_directory(&ExplorerFilesystem, &a);
+    app.explorer
+        .model
+        .toggle_directory(&ExplorerFilesystem, &key(&sibling));
+    assert!(app.explorer.model.is_expanded(&key(&sibling)));
+
+    auto_reveal_active(&mut app);
+
+    // The path to the file opens; what the user opened elsewhere stays open.
+    assert!(app.explorer.model.is_expanded(&a));
+    assert!(app.explorer.model.is_expanded(&key(&sibling)));
+    assert!(
+        app.explorer
+            .model
+            .is_expanded(&key(&root.join("a").join("b")))
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn auto_reveal_is_skipped_when_off_editing_or_outside_the_workspace() {
+    let (mut app, root, _file) = nested_workspace("auto-reveal-skipped");
+
+    app.preferences.values_mut().explorer_auto_reveal = false;
+    auto_reveal_active(&mut app);
+    assert_eq!(app.explorer.ui.reveal, None);
+    assert!(!app.explorer.model.is_expanded(&key(&root.join("a"))));
+
+    app.preferences.values_mut().explorer_auto_reveal = true;
+    app.explorer
+        .model
+        .begin_create(root.clone(), ExplorerCreateKind::File);
+    auto_reveal_active(&mut app);
+    assert_eq!(app.explorer.ui.reveal, None);
+    app.explorer.model.cancel_edit();
+
+    let outside = close_test_directory("auto-reveal-outside").join("x.rs");
+    app.workspace.test_open_view(outside, String::new());
+    auto_reveal_active(&mut app);
+    assert_eq!(app.explorer.ui.reveal, None);
+    assert!(app.chrome.toast.is_none(), "automatic reveal never toasts");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn toggling_a_directory_ends_a_pending_reveal() {
+    let (mut app, root, _file) = nested_workspace("auto-reveal-toggle");
+    auto_reveal_active(&mut app);
+    assert!(app.explorer.ui.reveal.is_some());
+
+    toggle_directory(&mut app, &key(&root.join("a").join("b")));
+
+    assert_eq!(app.explorer.ui.reveal, None);
+    fs::remove_dir_all(root).unwrap();
+}

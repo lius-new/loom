@@ -4,8 +4,19 @@ use crate::features::explorer::ExplorerContextTarget;
 use crate::features::explorer::model::ExplorerModel;
 use crate::ui::components::input::InputState;
 
+/// A tree row to bring into sight; the view scrolls to it once it knows the
+/// viewport, and the request ends with the next scroll by the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExplorerReveal {
+    /// Visible row index counted from the top of the tree.
+    pub row: usize,
+    /// Ancestor rows that stay pinned above the row while it is scrolled to.
+    pub covered: usize,
+}
+
 #[derive(Clone, Default)]
 pub struct ExplorerUiState {
+    pub reveal: Option<ExplorerReveal>,
     /// Pointer is over the file drawer (shows its scrollbars).
     pub hovered: bool,
     /// Cache key of the tree row under the pointer.
@@ -40,6 +51,7 @@ impl ExplorerUiState {
     }
 
     pub fn reset_scroll(&mut self) {
+        self.reveal = None;
         self.scroll = 0.0;
         self.scroll_x = 0.0;
     }
