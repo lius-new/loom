@@ -448,7 +448,7 @@ pub fn set(id: ThemeId) {
 pub const TITLEBAR_H: f32 = 32.0;
 pub const TABS_H: f32 = 28.0;
 pub const STATUS_H: f32 = 24.0;
-/// Height shared by file and folder rows in the side drawers.
+/// Default height for file and folder rows in side drawers.
 pub const DRAWER_ROW_H: f32 = 20.0;
 pub const SIDEBAR_W: f32 = 288.0;
 pub const SIDEBAR_MIN_W: f32 = 160.0;

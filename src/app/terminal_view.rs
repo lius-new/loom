@@ -383,7 +383,7 @@ pub(crate) fn render_terminal_tabs(
         .collect::<Vec<_>>();
     let map = super::layout_map::binding(&state, &map, &tabs);
     let (state, tabs, request) = binding(&state, &tabs, &application);
-    view::render_terminal_tabs(
+    let strip = view::render_terminal_tabs(
         rect,
         &values,
         active,
@@ -393,7 +393,11 @@ pub(crate) fn render_terminal_tabs(
         terminal_focus,
         editor_focus,
         request,
-    )
+    );
+    let no_hit = UiRect::new(rect.left, rect.bottom, rect.left, rect.bottom);
+    lgui::prelude::group(no_hit)
+        .child(strip.contents)
+        .child(view::tab_header_rule(rect, rect, strip.active))
 }
 #[cfg(test)]
 mod ownership_tests {

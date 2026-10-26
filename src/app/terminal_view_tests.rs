@@ -16,6 +16,108 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn terminal_header_rule_and_underline_are_crisp_at_fractional_scales() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{PhysicalRect, UiScale};
+        use lgui::prelude::{Color, panel};
+        use lgui::renderer::{FrameInfo, FrameReason};
+        use lgui::session::UiSession;
+
+        let context = ApplicationContext::empty(Default::default());
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        for factor in [0.75_f32, 1.0, 1.25, 1.5, 2.0] {
+            let scale = UiScale::new(factor);
+            for fraction in [0.0, 0.25, 0.5, 0.75] {
+                for width in [360.0, 640.0] {
+                    let top = (80.0 + fraction) / factor;
+                    let viewport = UiRect::new(0.0, 0.0, width / factor, top + 180.0);
+                    let terminal = UiRect::new(0.0, top, viewport.right, viewport.bottom);
+                    let view: AppView = Arc::new(move |cx| {
+                        let state = AppContext::detached(cx.state_with(AppState::new));
+                        let tabs = crate::app::terminal_binding::test_store(
+                            cx,
+                            Some(state.clone()),
+                            TerminalTabs::new,
+                        );
+                        let controller = tabs.get().active().unwrap().controller.clone();
+                        let id = cx.use_stable_id();
+                        let focus = cx.focus_handle(id.clone());
+                        let editor_id = cx.use_stable_id();
+                        let editor_focus = cx.focus_handle(editor_id);
+                        panel(viewport, VisualStyle::filled(theme::c().bg)).child(render(
+                            terminal,
+                            state,
+                            editor_focus,
+                            focus,
+                            id,
+                            controller,
+                            tabs,
+                            Arc::new(ApplicationHandle::new(|task| task(), || {})),
+                            true,
+                            viewport.height(),
+                        ))
+                    });
+                    let mut session = UiSession::new();
+                    session.render_view(&view, viewport, scale);
+                    let physical = scale.physical_rect(viewport);
+                    let bottom = scale.physical_value(top + theme::TABS_H);
+                    let border_width = scale.physical_length(1.0);
+                    let underline_width = scale.physical_length(2.0);
+                    let dirty = [PhysicalRect::new(0, bottom - 6, physical.right, bottom + 6)];
+                    let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(4 * 1024 * 1024);
+                    for full in [true, false] {
+                        let frame =
+                            FrameInfo::new(physical, &dirty, scale, FrameReason::SceneChange, full);
+                        lgui::assets::backend::with_render_resources(
+                            &context,
+                            lgui::RenderResources::new(),
+                            || {
+                                surface.draw(
+                                    &session.tree().scene().project_to_physical(scale),
+                                    &frame,
+                                )
+                            },
+                        )
+                        .unwrap();
+                        let check = |x: usize, y: i32, color: Color| {
+                            let offset = (y as usize * physical.width() as usize + x) * 4;
+                            let expected = [
+                                color.0 as u8,
+                                (color.0 >> 8) as u8,
+                                (color.0 >> 16) as u8,
+                                255,
+                            ];
+                            assert_eq!(
+                                &surface.pixels()[offset..offset + 4],
+                                &expected,
+                                "scale={factor}, fraction={fraction}, width={width}, full={full}, x={x}, y={y}"
+                            );
+                        };
+                        for y in bottom - border_width..bottom {
+                            check(physical.width() as usize - 4, y, theme::c().border);
+                        }
+                        for y in bottom - underline_width..bottom {
+                            check(4, y, theme::c().accent);
+                        }
+                    }
+                    // Decorations must not intercept selecting/dragging the tab at its bottom.
+                    let point =
+                        Point::new(scale.logical_value(4), top + theme::TABS_H - 0.25 / factor);
+                    let hit = session.tree().hit_test(point).unwrap();
+                    assert!(hit.id.as_str().starts_with("terminal-tab-select-"));
+                    let above = Point::new(point.x, point.y - 6.0 / factor);
+                    assert_eq!(
+                        session.tree().cursor_at(point),
+                        session.tree().cursor_at(above)
+                    );
+                }
+            }
+        }
+    }
+    #[test]
     fn shell_menu_only_selects_available_profiles_and_plus_creates_selected_shell() {
         use crate::domain::application_layout::ApplicationLayout;
         use crate::features::terminal::profiles::ShellProfile;

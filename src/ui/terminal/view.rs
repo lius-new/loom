@@ -10,8 +10,8 @@ use super::bindings::{
 use super::layout_binding::{MapBinding, MapCommand};
 
 use lgui::core::{
-    CursorIcon, EventPolicy, IconStyle, Point, PointerButton, SemanticRole, Semantics, UiElement,
-    UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip,
+    CursorIcon, EventPolicy, IconStyle, PhysicalRect, Point, PointerButton, SemanticRole,
+    Semantics, UiElement, UiEventKind, UiEventPayload, UiFocusHandle, UiId, WheelUnit, clip,
 };
 use lgui::prelude::{Color, Element, UiRect, VisualStyle, component, group, panel, text};
 use lgui::services::ServicesContextExt;
@@ -378,10 +378,10 @@ pub(crate) fn render_view(
         ));
     }
 
-    // Keep the tab backgrounds and underline above the session surfaces.
+    // Paint one full-width rule after the clipped tab contents and session surfaces.
     terminal = terminal
-        .child(crate::ui::components::divider::bottom(header))
-        .child(tab_strip_element);
+        .child(tab_strip_element.contents)
+        .child(tab_header_rule(header, tab_strip, tab_strip_element.active));
 
     // Add handles after all session surfaces so they win hit testing.
     for index in 0..sessions.len().saturating_sub(1) {
@@ -760,6 +760,11 @@ fn vertical_scrollbar(
         .child(thumb)
 }
 
+pub(crate) struct TabStrip {
+    pub(crate) contents: Element,
+    pub(crate) active: Option<UiRect>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_terminal_tabs(
     rect: UiRect,
@@ -771,10 +776,13 @@ pub(crate) fn render_terminal_tabs(
     terminal_focus: UiFocusHandle,
     editor_focus: UiFocusHandle,
     application: FrameRequest,
-) -> Element {
+) -> TabStrip {
     let mut strip = panel(rect, VisualStyle::filled(theme::c().sidebar));
     if tabs.is_empty() || rect.width() <= 0.0 {
-        return strip;
+        return TabStrip {
+            contents: strip,
+            active: None,
+        };
     }
 
     let count = tabs.len() as f32;
@@ -1026,21 +1034,45 @@ pub(crate) fn render_terminal_tabs(
         left += tab_width + TAB_GAP;
     }
 
-    strip = strip.child(crate::ui::components::divider::bottom(rect));
-    if let Some(active) = active_rect {
-        strip = strip.child(panel(
-            UiRect::new(
-                active.left,
-                (active.bottom - 2.0).max(active.top),
-                active.right,
-                active.bottom,
-            ),
-            VisualStyle::filled(theme::c().accent),
-        ));
+    TabStrip {
+        contents: clip(rect, 0.0, 0.0).child(strip),
+        active: active_rect,
     }
-    clip(rect, 0.0, 0.0).child(strip)
 }
 
+// Keep vertical edges out of the fractional tab clip. Only the underline's
+// horizontal span is clipped, and decorations never intercept tab input.
+pub(crate) fn tab_header_rule(header: UiRect, viewport: UiRect, active: Option<UiRect>) -> Element {
+    Element::new(move |cx| {
+        let scale = cx.context.scale();
+        let no_hit = UiRect::new(header.left, header.bottom, header.left, header.bottom);
+        let mut rule = cx
+            .compile(crate::ui::components::divider::bottom(header))
+            .hit_rect(no_hit);
+        if let Some(active) = active {
+            let left = scale.physical_value(active.left.max(viewport.left));
+            let right = scale.physical_value(active.right.min(viewport.right));
+            if right > left {
+                let bottom = scale.physical_value(header.bottom);
+                let underline = scale.logical_rect(PhysicalRect::new(
+                    left,
+                    bottom - scale.physical_length(2.0),
+                    right,
+                    bottom,
+                ));
+                rule = rule.child(
+                    UiElement::panel(
+                        cx.auto_id(),
+                        underline,
+                        VisualStyle::filled(theme::c().accent),
+                    )
+                    .hit_rect(no_hit),
+                );
+            }
+        }
+        rule
+    })
+}
 pub(crate) fn render_screen(
     content: UiRect,
     snapshot: &crate::features::terminal::TerminalSnapshot,

@@ -23,7 +23,7 @@ use crate::ui::theme;
 
 pub(crate) const TOPLINE_H: f32 = 40.0;
 pub(crate) const PROMPT_H: f32 = 196.0;
-pub(crate) const CHANGE_ROW_H: f32 = theme::DRAWER_ROW_H;
+pub(crate) const CHANGE_ROW_H: f32 = 24.0;
 pub(crate) const SECTION_H: f32 = 26.0;
 pub(crate) const ROW_H: f32 = 20.0;
 
