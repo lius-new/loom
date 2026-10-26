@@ -205,7 +205,18 @@ impl GitService {
             && !relative.as_os_str().is_empty()
         {
             let mut changes = BTreeMap::new();
-            for target in [DiffTarget::HeadToIndex, DiffTarget::IndexToWorktree] {
+            // An unmerged path has no single index side: `--cached` is empty
+            // and the plain diff is a combined one, so compare with HEAD.
+            let targets: &[DiffTarget] = if repository
+                .files
+                .get(&relative)
+                .is_some_and(|file| file.conflict.is_some())
+            {
+                &[DiffTarget::HeadToWorktree]
+            } else {
+                &[DiffTarget::HeadToIndex, DiffTarget::IndexToWorktree]
+            };
+            for &target in targets {
                 if let Ok(diff) = self.backend.parsed_diff(
                     &repository.worktree_root,
                     target,
