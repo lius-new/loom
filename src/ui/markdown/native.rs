@@ -126,6 +126,9 @@ impl Default for NativeBackend {
 }
 fn text_style(style: InlineStyle, r: &ParagraphRequest<'_>, ink: Ink) -> TextStyle {
     let mut out = TextStyle::new();
+    // These paragraphs are painted into transparent tiles. Use the same font
+    // policy as the screen renderer, with its transparent-target fallback.
+    lgui::render_skia::TextRasterization::Grayscale.configure(&mut out);
     let size = if style.heading > 0 {
         match style.heading {
             1 => 30.0,
@@ -318,7 +321,9 @@ impl NativeBackend {
         height: f32,
         density: f32,
     ) -> Result<Arc<Vec<u8>>, TextFailure> {
-        let density = density.clamp(1.0, 3.0);
+        if !density.is_finite() || density <= 0.0 {
+            return Err(TextFailure::Unsupported);
+        }
         let tile_key = Key::new(r, self.ink);
         let bounds = [
             left.to_bits(),
@@ -345,6 +350,8 @@ impl NativeBackend {
             sk::surfaces::raster_n32_premul((w, h)).ok_or(TextFailure::Unsupported)?;
         let canvas = surface.canvas();
         canvas.clear(sk::Color::TRANSPARENT);
+        // Rasterize directly at the requested physical density, including <1.
+        // The UI presents this tile at exactly its native pixel dimensions.
         canvas.scale((density, density));
         canvas.translate((-left, -top));
         cached.paragraph.paint(canvas, (0.0, 0.0));
@@ -615,5 +622,15 @@ mod coordinate_tests {
             .tile(&request, 0.0, 0.0, 260.0, summary.height, 1.0)
             .unwrap();
         assert!(Arc::ptr_eq(&a, &b));
+        // The 80% interface scale must not rasterize at 100% and shrink later.
+        for density in [0.8, 1.25, 1.5] {
+            let tile = native
+                .tile(&request, 0.0, 0.0, 260.0, summary.height, density)
+                .unwrap();
+            let decoded = sk::Image::from_encoded(sk::Data::new_copy(tile.as_slice())).unwrap();
+            assert_eq!(decoded.width(), (260.0 * density).ceil() as i32);
+            assert_eq!(decoded.height(), (summary.height * density).ceil() as i32);
+            assert!(!Arc::ptr_eq(&a, &tile));
+        }
     }
 }

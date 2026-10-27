@@ -337,6 +337,8 @@ pub(super) fn paint(result: &Rendered, paragraph: usize, bounds: UiRect) -> Elem
             tile.top.to_bits()
         ));
         let density = tile.density;
+        let pixel_width = (tile.width * density).ceil() as i32;
+        let pixel_height = (tile.height * density).ceil() as i32;
         root = root.child(Element::new(move |cx| {
             // Skia samples the tile nearest: land every texel on one physical pixel.
             let scale = cx.context.scale();
@@ -347,8 +349,8 @@ pub(super) fn paint(result: &Rendered, paragraph: usize, bounds: UiRect) -> Elem
                 scale.logical_rect(lgui::core::PhysicalRect::new(
                     left,
                     top,
-                    left + scale.physical_ui_value(rect.width()).ceil() as i32,
-                    top + scale.physical_ui_value(rect.height()).ceil() as i32,
+                    left + pixel_width,
+                    top + pixel_height,
                 ))
             } else {
                 rect

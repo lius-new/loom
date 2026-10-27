@@ -10,6 +10,9 @@ use lgui::prelude::*;
 use lgui::{WinitApplication, WinitWindowIcon, WinitWindowOptions};
 
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // Native software presentation is RGB; allow LCD text on that opaque target.
+    // Transparent offscreen layers and Markdown tiles keep grayscale coverage.
+    lgui::render_skia::set_opaque_software_windows(true);
     crate::infrastructure::language_packs::initialize();
     crate::infrastructure::lsp_catalog::initialize();
     launch::init(std::env::args_os().skip(1));

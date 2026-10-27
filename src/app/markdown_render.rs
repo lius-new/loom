@@ -317,11 +317,12 @@ fn render(
     snippets: &mut crate::features::syntax::SnippetHighlighter,
 ) -> Result<Rendered, String> {
     let key = &request.key;
-    let density = key.density.clamp(1.0, 3.0).min(
-        (20.0 * 1024.0 * 1024.0 / (key.width * (key.height + 512.0) * 4.0).max(1.0))
-            .sqrt()
-            .max(1.0),
-    );
+    let density = key.density;
+    if !density.is_finite() || density <= 0.0 {
+        return Err("Invalid Markdown device scale".into());
+    }
+    // Bound overscan in physical pixels, without silently reducing text density.
+    let overscan = 128.0 / density;
     let document = request
         .publication
         .outcome
@@ -531,8 +532,8 @@ fn render(
             if !highlighted.is_empty() {
                 r.spans = &highlighted;
             }
-            let top = ((viewport.top - 256.0 - placed.y).max(0.0) / 256.0).floor() * 256.0;
-            let bottom = (viewport.top + viewport.height + 256.0 - placed.y)
+            let top = ((viewport.top - overscan - placed.y).max(0.0) * density).floor() / density;
+            let bottom = (viewport.top + viewport.height + overscan - placed.y)
                 .min(placed.summary.height)
                 .ceil();
             if bottom <= top {
@@ -552,7 +553,13 @@ fn render(
             };
             let mut y = top;
             while y < bottom {
-                let height = (bottom - y).min(256.0);
+                // Keep the native tile allocation bounded even at large device scales.
+                let tile_height = (4_194_304.0 / (width * density).ceil().max(1.0))
+                    .floor()
+                    .min(256.0 * density)
+                    .max(1.0)
+                    / density;
+                let height = (bottom - y).min(tile_height);
                 let png = backend
                     .tile(&r, left, y, width, height, density)
                     .map_err(|reason| format!("Markdown paint: {reason:?}"))?;

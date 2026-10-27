@@ -133,7 +133,7 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/markdown_resources.rs')return ['infrastructure','features','image','resvg','ureq','std::fs'].includes(root);
   if(file==='src/infrastructure/image_filesystem.rs')return ['infrastructure','domain','image','resvg','ring','std::fs','skia_safe'].includes(root);
   if(file==='src/infrastructure/gif_stream.rs')return ['infrastructure','domain','image','skia_safe'].includes(root);
-  if(file==='src/ui/markdown/native.rs')return ['ui','features','skia_safe','unicode_segmentation','unicode_width'].includes(root);
+  if(file==='src/ui/markdown/native.rs')return ['ui','features','lgui','skia_safe','unicode_segmentation','unicode_width'].includes(root);
   if(own==='ui')return ['ui','domain','features','theme','fonts','file_icons','unicode_segmentation'].includes(root)||dependency==='lgui';
   // Native parsers: only the grammar table names grammar crates; the engine files use the runtime.
   if(file==='src/features/syntax/grammars.rs')return ['features','domain','tree_sitter'].includes(root);

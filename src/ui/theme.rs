@@ -473,6 +473,7 @@ pub fn current() -> ThemeId {
 
 pub fn set(id: ThemeId) {
     CURRENT.store(id.index(), Ordering::Relaxed);
+    lgui::render_skia::set_software_text_background(id.theme().palette.bg);
 }
 
 // ---- Layout metrics (px) ----------------------------------------------
