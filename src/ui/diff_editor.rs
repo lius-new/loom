@@ -583,11 +583,18 @@ fn render_changes(
         let request = section.request();
         let toggle_request = request.clone();
         let collapsed = item.body_rows == 0;
-        let action_w = if rect.width() < 360.0 { 66.0 } else { 100.0 };
-        let action_rect = UiRect::new(
-            rect.right - SCROLLBAR_SIZE - action_w - 8.0,
+        let compact = rect.width() < 360.0;
+        let (changes_w, file_w) = if compact { (66.0, 44.0) } else { (100.0, 76.0) };
+        let file_rect = UiRect::new(
+            rect.right - SCROLLBAR_SIZE - file_w - 8.0,
             top + 9.0,
             rect.right - SCROLLBAR_SIZE - 8.0,
+            top + 31.0,
+        );
+        let action_rect = UiRect::new(
+            file_rect.left - BUTTON_GAP - changes_w,
+            top + 9.0,
+            file_rect.left - BUTTON_GAP,
             top + 31.0,
         );
         let stats_right = action_rect.left - 10.0;
@@ -661,6 +668,9 @@ fn render_changes(
         }
         let open_commands = git_commands.clone();
         let focus = editor_focus.clone();
+        let file_commands = git_commands.clone();
+        let file_focus = editor_focus.clone();
+        let file_path = request.repository_root.join(&request.path);
         let untracked = section.group == crate::features::git::ChangeGroup::Untracked;
         let revision = overview.revision.clone();
         file_header = file_header.child(
@@ -696,6 +706,21 @@ fn render_changes(
                 }
                 focus.focus();
             }),
+        );
+        file_header = file_header.child(
+            toolbar_button(file_rect, if compact { "File" } else { "Open File" }, false)
+                .semantics(
+                    Semantics::new(SemanticRole::Button)
+                        .name(format!("Open File {}", document.path.display())),
+                )
+                .on_click(move |cx: &mut lgui::core::UiEventContext| {
+                    cx.stop_propagation();
+                    if file_commands.dispatch(GitCommand::OpenFile {
+                        path: file_path.clone(),
+                    }) {
+                        file_focus.focus();
+                    }
+                }),
         );
         body = body.child(file_header);
         if collapsed {
