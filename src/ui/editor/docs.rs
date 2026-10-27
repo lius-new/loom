@@ -2,7 +2,7 @@
 use crate::ui::markdown::card::{self, Document, Interaction, Layout};
 use lgui::prelude::{Element, UiRect};
 use std::sync::Arc;
-pub(crate) const PAD: f32 = 8.0;
+pub(crate) const PAD: f32 = 12.0;
 #[derive(Clone)]
 pub(crate) struct Actions {
     pub open_link: Arc<dyn Fn(String) + Send + Sync>,

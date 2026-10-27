@@ -414,6 +414,55 @@ fn oversized_cells_and_tight_items_get_an_observable_fallback_without_native_wor
 }
 
 #[test]
+fn a_card_draws_code_flat_with_compact_headings_and_a_quiet_module_path() {
+    let hover = "```rust\nstd::process::Command\n```\n\n```rust\npub fn status(&mut self) -> io::Result<ExitStatus>\n```\n\n---\n\nExecutes a command.\n\n# Examples\n\n```rust\nlet x = 1;\n```\n";
+    let lay = |card: bool| {
+        layout_document(
+            Arc::new(parse(hover)),
+            LayoutStyle {
+                card,
+                ..Default::default()
+            },
+            LayoutLimits::default(),
+            &mut RecordingText::default(),
+            || false,
+        )
+        .unwrap()
+    };
+    let (plain, card) = (lay(false), lay(true));
+    let blocks = |layout: &DocumentLayout| {
+        layout
+            .decorations
+            .iter()
+            .filter(|decoration| matches!(decoration, Decoration::Code { .. }))
+            .count()
+    };
+    let styles = |layout: &DocumentLayout| {
+        layout
+            .paragraphs
+            .iter()
+            .flat_map(|paragraph| paragraph.spans.iter().map(|span| span.style))
+            .collect::<Vec<_>>()
+    };
+    // A document keeps its code blocks, copy buttons and full-size headings.
+    assert_eq!(blocks(&plain), 3);
+    assert!(styles(&plain).iter().any(|style| style.heading == 1));
+    assert!(styles(&plain).iter().all(|style| !style.muted));
+    // A card has no block behind its code and no heading above the smallest tier.
+    assert_eq!(blocks(&card), 0);
+    assert!(styles(&card).iter().any(|style| style.heading == 4));
+    assert!(
+        styles(&card)
+            .iter()
+            .all(|style| style.heading == 0 || style.heading == 4)
+    );
+    // Only the module path above the signature is quiet.
+    let quiet = styles(&card).iter().filter(|style| style.muted).count();
+    assert_eq!(quiet, 1);
+    assert!(card.height < plain.height);
+}
+
+#[test]
 fn an_image_that_is_still_loading_takes_no_room_but_a_failed_one_keeps_its_box() {
     let document = Arc::new(parse("before\n\n![alt](a.png)\n\nafter\n"));
     let place = |state: Option<ImageState>| {

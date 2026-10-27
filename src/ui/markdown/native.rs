@@ -33,6 +33,7 @@ pub struct Ink {
     pub text: u32,
     pub link: u32,
     pub code: u32,
+    pub muted: u32,
     pub syntax: [u32; crate::features::highlighting::HighlightId::COUNT],
 }
 impl Default for Ink {
@@ -41,6 +42,7 @@ impl Default for Ink {
             text: 0xffd4d4d4,
             link: 0xff70a5ff,
             code: 0xffd4d4d4,
+            muted: 0xff9a9a9a,
             syntax: [0xffd4d4d4; crate::features::highlighting::HighlightId::COUNT],
         }
     }
@@ -64,6 +66,7 @@ impl Ink {
             text: 0xff000000 | crate::ui::theme::c().text.0,
             link: 0xff000000 | crate::ui::theme::c().accent.0,
             code: 0xff000000 | crate::ui::theme::c().text_bright.0,
+            muted: 0xff000000 | crate::ui::theme::c().text_dim.0,
             ..Default::default()
         };
         for class in crate::features::highlighting::HighlightId::all() {
@@ -144,6 +147,8 @@ fn text_style(style: InlineStyle, r: &ParagraphRequest<'_>, ink: Ink) -> TextSty
         .set_color(sk::Color::from(style.foreground.unwrap_or_else(|| {
             if style.link.is_some() {
                 ink.link
+            } else if style.muted {
+                ink.muted
             } else if style.code {
                 ink.code
             } else {

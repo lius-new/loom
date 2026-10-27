@@ -283,6 +283,7 @@ pub fn render(
                 UiRect::new(body_area.left, body.top, body_area.right, body.bottom),
                 body,
                 app_hovered,
+                VisualStyle::filled(theme::c().bg),
                 binding,
                 focus,
             ));

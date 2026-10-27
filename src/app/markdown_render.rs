@@ -418,10 +418,11 @@ fn render(
                 12.0
             },
             gap: if matches!(request.view, Consumer::Card(_)) {
-                6.0
+                8.0
             } else {
                 12.0
             },
+            card: matches!(request.view, Consumer::Card(_)),
             ..Default::default()
         };
         let states = document
@@ -558,6 +559,7 @@ fn render(
             }
             let mut r = placed.request(&layout.document, layout.style);
             let mut highlighted = Vec::new();
+            let muted = placed.spans.iter().any(|span| span.style.muted);
             if let crate::features::markdown::model::NodeKind::CodeBlock {
                 language: Some(language),
                 ..
@@ -571,6 +573,7 @@ fn render(
                             bytes: token.range,
                             style: InlineStyle {
                                 code: true,
+                                muted,
                                 foreground: token.class.map(|class| key.ink.syntax[class.index()]),
                                 ..Default::default()
                             },

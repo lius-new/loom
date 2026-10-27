@@ -13,6 +13,8 @@ pub struct InlineStyle {
     pub heading: u8,
     pub link: Option<NodeId>,
     pub foreground: Option<u32>,
+    /// Quieter text, such as the module path above a signature.
+    pub muted: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StyleSpan {
@@ -125,6 +127,9 @@ pub struct LayoutStyle {
     pub minimum_cell_width: f32,
     pub font_generation: u64,
     pub scale: f32,
+    /// A hover or completion card: flat code blocks without copy buttons,
+    /// compact headings and a tighter hairline.
+    pub card: bool,
 }
 impl Default for LayoutStyle {
     fn default() -> Self {
@@ -137,6 +142,7 @@ impl Default for LayoutStyle {
             minimum_cell_width: 96.0,
             font_generation: 0,
             scale: 1.0,
+            card: false,
         }
     }
 }
@@ -338,7 +344,24 @@ fn children_reversed(document: &MarkdownDocument, id: NodeId) -> Vec<NodeId> {
     ids.reverse();
     ids
 }
-fn spans(document: &MarkdownDocument, id: NodeId, range: &DisplayRange) -> Vec<StyleSpan> {
+/// The module path a hover puts above a signature, e.g. `std::process::Command`:
+/// the first block, one line, no spaces.
+fn is_path_block(document: &MarkdownDocument, id: NodeId) -> bool {
+    let Some(node) = document.node(id) else {
+        return false;
+    };
+    let text = document.text(node.display.clone()).unwrap_or("").trim();
+    matches!(node.kind, NodeKind::CodeBlock { .. })
+        && document.node(NodeId(0)).and_then(|root| root.first_child) == Some(id)
+        && text.contains("::")
+        && !text.chars().any(char::is_whitespace)
+}
+fn spans(
+    document: &MarkdownDocument,
+    id: NodeId,
+    range: &DisplayRange,
+    card: bool,
+) -> Vec<StyleSpan> {
     let mut base = InlineStyle::default();
     let mut parent = document.node(id).and_then(|node| node.parent);
     while let Some(id) = parent {
@@ -356,14 +379,16 @@ fn spans(document: &MarkdownDocument, id: NodeId, range: &DisplayRange) -> Vec<S
         };
         match node.kind {
             NodeKind::Heading { level } => {
-                style.heading = level;
+                // Cards keep every heading just above body size.
+                style.heading = if card { 4 } else { level };
                 style.bold = true;
             }
             NodeKind::Strong => style.bold = true,
             NodeKind::Emphasis => style.italic = true,
             NodeKind::Strikethrough => style.strike = true,
             NodeKind::Code | NodeKind::CodeBlock { .. } | NodeKind::Html { block: true } => {
-                style.code = true
+                style.code = true;
+                style.muted = card && is_path_block(document, id);
             }
             NodeKind::Link { .. } => style.link = Some(id),
             _ => {}
@@ -414,7 +439,7 @@ impl<B: ParagraphBackend> Placer<'_, B> {
         if index.len() > self.limits.paragraph_scalars {
             return Err(fail(TextFailure::ParagraphBudget));
         }
-        let spans = spans(&self.out.document, id, &range);
+        let spans = spans(&self.out.document, id, &range, self.out.style.card);
         let style = self.out.style;
         let request = ParagraphRequest {
             text,
@@ -776,8 +801,14 @@ pub fn layout_with_images(
                 continue;
             }
             NodeKind::ThematicBreak => {
+                // A card keeps its hairline close: about ten pixels of air either side.
+                let height = if style.card { 3.0 } else { style.line_height };
                 placer.out.decorations.push(Decoration::Rule {
-                    y: y + style.line_height * 0.5,
+                    y: if style.card {
+                        y + 2.0
+                    } else {
+                        y + style.line_height * 0.5
+                    },
                     left: x,
                     right: x + width,
                 });
@@ -785,10 +816,15 @@ pub fn layout_with_images(
                     node: id,
                     source: node.source,
                     top: y,
-                    height: style.line_height,
+                    height,
                     paragraphs: placer.out.paragraphs.len()..placer.out.paragraphs.len(),
                 });
-                y += style.line_height + style.gap;
+                y += height
+                    + if style.card {
+                        style.gap + 2.0
+                    } else {
+                        style.gap
+                    };
                 continue;
             }
             NodeKind::ListItem { .. } => {
@@ -825,9 +861,16 @@ pub fn layout_with_images(
                 node.kind,
                 NodeKind::CodeBlock { .. } | NodeKind::Html { block: true }
             );
-            let pad = if code { style.padding } else { 0.0 };
+            // A card draws code straight on its own surface, with no block around it.
+            let boxed = code && !style.card;
+            let pad = if boxed { style.padding } else { 0.0 };
             // Vertical padding is tighter than horizontal; the copy button floats over the corner and takes no height.
-            let pad_y = if code { 10.0 } else { 0.0 };
+            let pad_y = if boxed { 10.0 } else { 0.0 };
+            let heading = matches!(node.kind, NodeKind::Heading { .. });
+            // A heading in a card sits closer to what it introduces than to what precedes it.
+            if style.card && heading && y > 0.0 {
+                y += 4.0;
+            }
             let start = placer.out.paragraphs.len();
             let mut range = node.display;
             if tight_item {
@@ -944,7 +987,7 @@ pub fn layout_with_images(
             };
             let mut height = content.max(style.line_height) + pad_y * 2.0;
             // Level 1 and 2 headings carry a hairline underneath, as on GitHub.
-            if matches!(node.kind, NodeKind::Heading { level: 1 | 2 }) {
+            if !style.card && matches!(node.kind, NodeKind::Heading { level: 1 | 2 }) {
                 placer.out.decorations.push(Decoration::Rule {
                     y: y + height + 3.0,
                     left: x,
@@ -963,16 +1006,18 @@ pub fn layout_with_images(
                     },
                     extent: placer.out.paragraphs[index].summary.width + pad * 2.0,
                 });
-                placer.out.decorations.push(Decoration::Code {
-                    node: id,
-                    rect: TextRect {
-                        left: x,
-                        top: y,
-                        right: x + width,
-                        bottom: y + height,
-                    },
-                    extent: placer.out.paragraphs[index].summary.width + pad * 2.0,
-                });
+                if !style.card {
+                    placer.out.decorations.push(Decoration::Code {
+                        node: id,
+                        rect: TextRect {
+                            left: x,
+                            top: y,
+                            right: x + width,
+                            bottom: y + height,
+                        },
+                        extent: placer.out.paragraphs[index].summary.width + pad * 2.0,
+                    });
+                }
             }
             if quote > 0 {
                 placer.out.decorations.push(Decoration::Quote {
@@ -991,7 +1036,12 @@ pub fn layout_with_images(
                 height,
                 paragraphs: start..placer.out.paragraphs.len(),
             });
-            y += height + style.gap;
+            y += height
+                + if style.card && heading {
+                    style.gap - 2.0
+                } else {
+                    style.gap
+                };
         } else {
             let indent = indent + usize::from(matches!(node.kind, NodeKind::List { .. }));
             let quote = quote + usize::from(matches!(node.kind, NodeKind::Quote));

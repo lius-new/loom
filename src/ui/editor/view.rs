@@ -1097,7 +1097,7 @@ fn diagnostic_ruler(
     ruler
 }
 
-const CARD_PAD: f32 = 8.0;
+const CARD_PAD: f32 = 12.0;
 const CARD_ROW: f32 = 18.0;
 const CARD_MAX_W: f32 = 640.0;
 

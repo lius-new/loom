@@ -214,7 +214,16 @@ fn translated(
 /// Selection/copy remains a full-document logical range outside this scene.
 pub fn render(id: UiId, rect: UiRect, binding: Binding, focus: UiFocusHandle) -> Element {
     let emphasized = false;
-    render_in(id, rect, rect, emphasized, binding, focus)
+    // A card sits on its own surface, so the reader adds no fill of its own.
+    render_in(
+        id,
+        rect,
+        rect,
+        emphasized,
+        VisualStyle::default(),
+        binding,
+        focus,
+    )
 }
 /// `area` is the whole pane; `rect` is the (possibly narrower, centered)
 /// reading column. Wheel input and the vertical scrollbar use the pane edge.
@@ -223,13 +232,14 @@ pub fn render_in(
     area: UiRect,
     rect: UiRect,
     emphasized: bool,
+    background: VisualStyle,
     binding: Binding,
     focus: UiFocusHandle,
 ) -> Element {
     let frame = binding.get();
     let semantic_scope = id.to_string();
     let mut root = Element::new(move |cx| {
-        UiElement::panel(id, area, VisualStyle::filled(theme::c().bg))
+        UiElement::panel(id, area, background)
             .semantics(Semantics::new(SemanticRole::Group).name("Markdown document"))
             .children(cx.children)
     })
