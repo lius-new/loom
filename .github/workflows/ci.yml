@@ -14,7 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  LOOM_VERSION: 0.1.5
+  LOOM_VERSION: 0.1.6
 
 jobs:
   core:
