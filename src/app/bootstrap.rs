@@ -10,16 +10,14 @@ use lgui::prelude::*;
 use lgui::{WinitApplication, WinitWindowIcon, WinitWindowOptions};
 
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // Native software presentation is RGB; allow LCD text on that opaque target.
-    // Transparent offscreen layers and Markdown tiles keep grayscale coverage.
-    lgui::render_skia::set_opaque_software_windows(true);
     crate::infrastructure::language_packs::initialize();
     crate::infrastructure::lsp_catalog::initialize();
     launch::init(std::env::args_os().skip(1));
     let native_window_options = native_window_options()?;
-    let ui_scale = crate::infrastructure::settings_filesystem::load().ui_scale;
+    let settings = crate::infrastructure::settings_filesystem::load();
     let window_options = window_geometry::restore_options(
         WindowOptions::new("loom")
+            .text_rendering(ui::theme::text_rendering(settings.theme))
             .title("Loom")
             .size(Size::new(900.0, 600.0))
             // Frameless: we render our own custom title bar (see ui/titlebar.rs).
@@ -30,7 +28,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
             .with_platform_options(native_window_options),
     );
     let window_options =
-        window_options.scale_preference(window_geometry::scale_preference(ui_scale));
+        window_options.scale_preference(window_geometry::scale_preference(settings.ui_scale));
 
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
         .svg_icons(svg_icons())

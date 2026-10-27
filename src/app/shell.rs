@@ -449,6 +449,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         || {}
     });
     let settings = s.settings();
+    let text_windows = application_context.windows();
+    let text_rendering = theme::text_rendering(settings.theme);
+    cx.use_effect(text_rendering, move || {
+        text_windows.set_text_rendering("loom", text_rendering);
+        || {}
+    });
     let scale_windows = application_context.windows();
     cx.use_effect(settings.ui_scale, move || {
         scale_windows.set_scale_preference(window_geometry::scale_preference(settings.ui_scale));

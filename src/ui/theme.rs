@@ -473,7 +473,21 @@ pub fn current() -> ThemeId {
 
 pub fn set(id: ThemeId) {
     CURRENT.store(id.index(), Ordering::Relaxed);
-    lgui::render_skia::set_software_text_background(id.theme().palette.bg);
+}
+
+/// Loom's visual policy. The library only receives explicit coverage parameters;
+/// it does not inspect themes or choose a curve from the window background.
+pub fn text_rendering(id: ThemeId) -> lgui::text::TextRenderingOptions {
+    let defaults = lgui::text::TextRenderingOptions::default();
+    let rgb = id.theme().palette.bg.0;
+    let brightness = 2126 * ((rgb >> 16) & 255) + 7152 * ((rgb >> 8) & 255) + 722 * (rgb & 255);
+    if cfg!(target_os = "windows") && brightness < 128 * 10000 {
+        defaults
+            .with_lcd_gamma(1.4)
+            .expect("Loom's LCD gamma is valid")
+    } else {
+        defaults
+    }
 }
 
 // ---- Layout metrics (px) ----------------------------------------------
