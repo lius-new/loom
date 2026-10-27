@@ -75,6 +75,10 @@
     "retired_entry_files_retained": true
   },
   "editor_state_ownership": {
+    "images": {
+      "owner": "app/image_preview: SVG and GIF publications, compact menu and pointer state; bounded decoding workers owned by AppRuntime",
+      "migrated_in": "image and SVG previews"
+    },
     "syntax_revision": {
       "owner": "app/state/editor: version-checked background syntax invalidation; worker owned by AppRuntime",
       "migrated_in": "incremental syntax"

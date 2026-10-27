@@ -47,6 +47,20 @@ pub(crate) fn open_tree_file(
     ) {
         return true;
     }
+    if crate::domain::media::is_raster(&path) || crate::domain::media::is_svg(&path) {
+        let prepared = crate::app::encoding::prepare(&path)
+            .unwrap_or_else(|error| crate::app::workspace::PreparedTextFile::failed(path, error));
+        app.workspace.open_prepared_text(
+            prepared,
+            if clicks > 1 {
+                crate::app::workspace::OpenMode::Permanent
+            } else {
+                crate::app::workspace::OpenMode::Preview
+            },
+        );
+        app.chrome.toast = None;
+        return true;
+    }
     open_tree_file_with(app, path, clicks, read_text_file)
 }
 
@@ -139,9 +153,17 @@ fn finish_file_drag_with(
     let Some(drop) = drag.drop else {
         return false;
     };
-    let prepared = match read(&drag.path) {
-        Ok(contents) => crate::app::workspace::PreparedTextFile::new(drag.path, contents),
-        Err(message) => crate::app::workspace::PreparedTextFile::failed(drag.path, message),
+    let prepared = if crate::domain::media::is_raster(&drag.path)
+        || crate::domain::media::is_svg(&drag.path)
+    {
+        crate::app::encoding::prepare(&drag.path).unwrap_or_else(|error| {
+            crate::app::workspace::PreparedTextFile::failed(drag.path, error)
+        })
+    } else {
+        match read(&drag.path) {
+            Ok(contents) => crate::app::workspace::PreparedTextFile::new(drag.path, contents),
+            Err(message) => crate::app::workspace::PreparedTextFile::failed(drag.path, message),
+        }
     };
     let workspace = &mut app.workspace;
     match drop {

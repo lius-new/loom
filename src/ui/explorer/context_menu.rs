@@ -100,6 +100,10 @@ const MARKDOWN_ENTRIES: &[Entry] = &[
     Entry::Separator,
     item("Preview Markdown", MenuAction::PreviewMarkdown),
 ];
+const SVG_ENTRIES: &[Entry] = &[
+    Entry::Separator,
+    item("Toggle SVG Preview", MenuAction::ToggleSvg),
+];
 
 /// The entries for `target`: directory actions, or file actions plus the
 /// Markdown preview for Markdown files.
@@ -107,9 +111,11 @@ fn entries_for(target: Option<&ExplorerContextTarget>) -> Vec<&'static Entry> {
     match target {
         Some(target) if target.kind == ExplorerTargetKind::File => {
             let markdown = crate::features::markdown::is_markdown_path(&target.path);
+            let svg = crate::domain::media::is_svg(&target.path);
             FILE_ENTRIES
                 .iter()
                 .chain(markdown.then_some(MARKDOWN_ENTRIES).into_iter().flatten())
+                .chain(svg.then_some(SVG_ENTRIES).into_iter().flatten())
                 .collect()
         }
         _ => DIRECTORY_ENTRIES.iter().collect(),
@@ -496,6 +502,31 @@ mod tests {
         let mono_width = UnicodeWidthStr::width(label) as f32 * theme::UI_CHAR_W;
 
         assert!(measure(label) >= mono_width);
+    }
+    #[test]
+    fn svg_toggle_is_only_in_svg_file_menus() {
+        for (name, kind, expected) in [
+            ("logo.svg", ExplorerTargetKind::File, true),
+            ("logo.SVG", ExplorerTargetKind::File, true),
+            ("photo.png", ExplorerTargetKind::File, false),
+            ("readme.md", ExplorerTargetKind::File, false),
+            ("folder.svg", ExplorerTargetKind::Directory, false),
+        ] {
+            let target = ExplorerContextTarget {
+                path: name.into(),
+                kind,
+            };
+            assert_eq!(
+                entries_for(Some(&target)).iter().any(|entry| matches!(
+                    entry,
+                    Entry::Item {
+                        action: MenuAction::ToggleSvg,
+                        ..
+                    }
+                )),
+                expected
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]

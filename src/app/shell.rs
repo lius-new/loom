@@ -90,6 +90,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             loading_application.clone(),
             loading_clipboard,
         ));
+        loading_runtime.install_images(super::image_service::ImageService::new(
+            loading_state.clone(),
+            loading_application.clone(),
+        ));
         loading_runtime.install_highlighter(super::syntax::Highlighter::new(
             loading_state.clone(),
             loading_application.clone(),
@@ -105,6 +109,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             restore.shutdown();
             loading_runtime.clear_file_loader();
             loading_runtime.clear_markdown();
+            loading_runtime.clear_images();
             loading_runtime.clear_highlighter();
             loading_runtime.clear_language_services();
         }
@@ -187,18 +192,26 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             window_geometry::handle_focus_change(event.focused);
             // A background window does not poll; regaining focus rescans.
             window_focus_git_poll.set_paused(!event.focused);
+            if let Some(images) = window_focus_state
+                .services()
+                .and_then(|runtime| runtime.images())
+            {
+                images.set_paused(!event.focused);
+            }
             if !event.focused {
                 window_focus_map.cancel();
                 window_focus_state.try_update(|app| {
                     // A key sequence does not survive leaving the window.
                     let had_pending = !app.keymap.pending().is_empty();
                     app.keymap.clear_pending();
+                    app.editor.modifiers = lgui::core::KeyModifiers::default();
                     let split_drag = app.editor.diff_split.drag.take().is_some()
                         | app.terminal.ui.terminal_split_drag.take().is_some()
                         | app.layout.application_sash_drag.take().is_some();
                     let terminal_scrollbar =
                         app.terminal.ui.terminal_scrollbar_drag.take().is_some()
                             | app.terminal.ui.hovered_terminal.take().is_some();
+                    app.editor.images.drag = None;
                     crate::app::editor::finish_scrollbar_drag(app)
                         | super::tabs::cancel_pointer_interaction(app)
                         | had_pending
@@ -288,6 +301,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let s = state.get();
     if let Some(markdown) = runtime.markdown() {
         markdown.sync(&s);
+    }
+    if let Some(images) = runtime.images() {
+        images.sync(&s);
     }
     let syntax_runtime = runtime.clone();
     let syntax_open = s.workspace.ordered_documents();
@@ -859,6 +875,12 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                             event.state == lgui::core::KeyState::Down,
                         );
                     }
+                    if event.key == lgui::core::LogicalKey::Named(lgui::core::NamedKey::Control) {
+                        modifiers.set(
+                            lgui::core::KeyModifiers::CONTROL,
+                            event.state == lgui::core::KeyState::Down,
+                        );
+                    }
                     let changed = app.editor.modifiers != modifiers;
                     app.editor.modifiers = modifiers;
                     changed
@@ -1088,6 +1110,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
             st_editor_scrollbar_drag.try_update(|app| {
+                if app.editor.images.drag.is_some() {
+                    return super::image_preview::drag(app, pointer.point.x, pointer.point.y);
+                }
                 if app.main_surface() == MainSurface::Diff {
                     crate::app::diff_view::drag_scrollbars(
                         app,
@@ -1108,7 +1133,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
     let st_editor_scrollbar_up = state.clone();
     root = root.on_event_capture(UiEventKind::PointerUp, move |_ctx, _payload| {
-        st_editor_scrollbar_up.try_update(crate::app::editor::finish_scrollbar_drag);
+        st_editor_scrollbar_up.try_update(|app| {
+            let image = app.editor.images.drag.take().is_some();
+            crate::app::editor::finish_scrollbar_drag(app) || image
+        });
     });
 
     // ---- Compose chrome (back-to-front) -------------------------------
@@ -1160,6 +1188,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 surface_id,
                 editor_focus.clone(),
                 application_context.clipboard(),
+            ),
+            MainSurface::Image => super::image_preview::render(
+                pane,
+                body,
+                state.clone(),
+                surface_id,
+                editor_focus.clone(),
             ),
             MainSurface::Editor => editor_view::render(
                 pane,
@@ -1328,6 +1363,39 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
 
     // ---- Overlays ------------------------------------------------------
+    let image_menu = s.editor.images.menu.filter(|menu| {
+        s.workspace.active() == Some(menu.view)
+            && s.workspace
+                .view(menu.view)
+                .is_some_and(|v| v.presentation == crate::domain::view::Presentation::Image)
+    });
+    let image_focus = cx.focus_handle(UiId::new(crate::ui::image_preview::FOCUS_ID));
+    crate::ui::hold_focus(
+        cx,
+        image_menu.map(|_| s.terminal.ui.terminal_focused),
+        image_focus,
+        terminal_focus.clone(),
+        editor_focus.clone(),
+    );
+    if let Some(menu) = image_menu {
+        if let Some(frame) = super::image_preview::frame(&s, menu.view) {
+            let (zoom, background) =
+                crate::ui::image_preview::status_anchors(statusbar_rect, &frame);
+            root = root.child(crate::ui::image_preview::menu(
+                vp,
+                if menu.kind == crate::ui::image_preview::MenuKind::Zoom {
+                    zoom
+                } else {
+                    background
+                },
+                menu.kind,
+                menu.selected,
+                menu.hovered,
+                frame.position,
+                super::image_preview::send(&state, menu.view),
+            ));
+        }
+    }
     let encoding_focus = cx.focus_handle(UiId::new(crate::ui::encoding_picker::FOCUS_ID));
     crate::ui::hold_focus(
         cx,

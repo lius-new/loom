@@ -29,7 +29,7 @@ skia-safe = { version = "=0.99.0", default-features = false, features = ["binary
 pulldown-cmark = { version = "=0.13.5", default-features = false }
 base64 = "0.22"
 icondata = "0.7"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts"] }
 notify = "8.2"
 ring = "0.17"
@@ -109,4 +109,12 @@ opt-level = 2
 [profile.dev.package.lgui-services]
 opt-level = 2
 [profile.dev.package.lgui-widgets]
+opt-level = 2
+
+# GIF decompression, composition and pixel transfer must also keep up in dev builds.
+[profile.dev.package.image]
+opt-level = 2
+[profile.dev.package.weezl]
+opt-level = 2
+[profile.dev.package.gif]
 opt-level = 2

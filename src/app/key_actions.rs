@@ -70,6 +70,9 @@ pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
     if env.state.get().chrome.encoding.is_some() {
         return crate::app::encoding::key(&env.state, event);
     }
+    if crate::app::image_preview::key(&env.state, event) {
+        return true;
+    }
     if event.is_composing {
         return false;
     }

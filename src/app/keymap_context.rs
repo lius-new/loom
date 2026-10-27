@@ -6,6 +6,7 @@ fn surface_name(surface: MainSurface) -> &'static str {
     match surface {
         MainSurface::Editor => "editor",
         MainSurface::Markdown => "markdown",
+        MainSurface::Image => "image",
         MainSurface::Diff => "diff",
         MainSurface::Settings => "settings",
         MainSurface::Keymap => "keymap",

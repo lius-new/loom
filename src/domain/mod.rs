@@ -8,6 +8,7 @@ pub mod geometry;
 pub(crate) mod identity;
 pub(crate) mod language;
 pub(crate) mod line_change;
+pub mod media;
 pub mod pane_layout;
 pub mod view;
 pub mod workspace;

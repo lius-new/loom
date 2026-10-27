@@ -46,6 +46,7 @@ pub enum MainSurface {
     Empty,
     Editor,
     Markdown,
+    Image,
     Diff,
     Settings,
     Keymap,
@@ -665,6 +666,14 @@ impl AppState {
             MainSurface::Diff
         } else if self.workspace.pane_open_error(pane).is_some() {
             MainSurface::Empty
+        } else if self
+            .workspace
+            .pane(pane)
+            .and_then(|p| p.active())
+            .and_then(|id| self.workspace.view(id))
+            .is_some_and(|v| v.presentation == crate::domain::view::Presentation::Image)
+        {
+            MainSurface::Image
         } else if self
             .workspace
             .pane(pane)

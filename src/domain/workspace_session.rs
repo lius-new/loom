@@ -57,6 +57,8 @@ pub enum SavedView {
         encoding: Option<SavedEncoding>,
         #[serde(default)]
         reader: SavedReader,
+        #[serde(default, skip_serializing_if = "SavedImage::is_default")]
+        image: SavedImage,
     },
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -79,6 +81,37 @@ pub enum SavedPresentation {
     #[default]
     Source,
     Markdown,
+    Image,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SavedImage {
+    pub scale: Option<f32>,
+    pub x: f32,
+    pub y: f32,
+    #[serde(default)]
+    pub background: String,
+    #[serde(default, skip_serializing)]
+    pub paused: bool,
+}
+impl Default for SavedImage {
+    fn default() -> Self {
+        Self {
+            scale: None,
+            x: 0.0,
+            y: 0.0,
+            background: "checkerboard".into(),
+            paused: false,
+        }
+    }
+}
+impl SavedImage {
+    fn is_default(&self) -> bool {
+        self.scale.is_none()
+            && self.x == 0.0
+            && self.y == 0.0
+            && ["", "checkerboard"].contains(&self.background.as_str())
+    }
 }
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -118,11 +151,13 @@ impl SavedView {
             presentation,
             source,
             reader,
+            image,
             ..
         } = self;
         view.presentation = match presentation {
             SavedPresentation::Source => Presentation::Source,
             SavedPresentation::Markdown => Presentation::Markdown,
+            SavedPresentation::Image => Presentation::Image,
         };
         view.source.selection = Selection {
             cursor: source.cursor,
@@ -135,6 +170,16 @@ impl SavedView {
             source_byte: reader.source_byte,
             block_fraction: reader.block_fraction,
         };
+        view.image = crate::domain::media::Position {
+            scale: image.scale,
+            x: image.x,
+            y: image.y,
+            background: match image.background.as_str() {
+                "light" => crate::domain::media::Background::Light,
+                "dark" => crate::domain::media::Background::Dark,
+                _ => crate::domain::media::Background::Checkerboard,
+            },
+        };
     }
     fn capture(path: PathBuf, view: &DocumentView, association: Option<SavedViewRef>) -> Self {
         Self::Text {
@@ -143,6 +188,7 @@ impl SavedView {
             presentation: match view.presentation {
                 Presentation::Source => SavedPresentation::Source,
                 Presentation::Markdown => SavedPresentation::Markdown,
+                Presentation::Image => SavedPresentation::Image,
             },
             source: SavedSource {
                 cursor: view.source.selection.cursor,
@@ -155,6 +201,18 @@ impl SavedView {
                 source_byte: view.reader.source_byte,
                 block_fraction: view.reader.block_fraction,
             },
+            image: SavedImage {
+                scale: view.image.scale,
+                x: view.image.x,
+                y: view.image.y,
+                paused: false,
+                background: match view.image.background {
+                    crate::domain::media::Background::Checkerboard => "checkerboard",
+                    crate::domain::media::Background::Light => "light",
+                    crate::domain::media::Background::Dark => "dark",
+                }
+                .into(),
+            },
         }
     }
 }
@@ -166,6 +224,7 @@ impl From<PathBuf> for SavedView {
             presentation: SavedPresentation::default(),
             source: SavedSource::default(),
             reader: SavedReader::default(),
+            image: SavedImage::default(),
         }
     }
 }
@@ -292,6 +351,7 @@ impl EditorLayout {
                         path,
                         source,
                         reader,
+                        image,
                         ..
                     } in items
                     {
@@ -304,6 +364,13 @@ impl EditorLayout {
                             || source.scroll_y < 0.0
                             || !reader.block_fraction.is_finite()
                             || !(0.0..=1.0).contains(&reader.block_fraction)
+                            || !image.x.is_finite()
+                            || !image.y.is_finite()
+                            || image
+                                .scale
+                                .is_some_and(|s| !s.is_finite() || !(0.05..=16.0).contains(&s))
+                            || !["", "checkerboard", "light", "dark"]
+                                .contains(&image.background.as_str())
                         {
                             return Err("invalid view position");
                         }
@@ -358,7 +425,7 @@ impl EditorLayout {
                     if !matches!(
                         view,
                         SavedView::Text {
-                            presentation: SavedPresentation::Markdown,
+                            presentation: SavedPresentation::Markdown | SavedPresentation::Image,
                             ..
                         }
                     ) || !matches!(
@@ -715,7 +782,10 @@ fn source_reference<D: Clone, K: Clone + Ord>(
     pending: Option<&PendingTab>,
 ) -> Option<SavedViewRef> {
     let value = workspace.view(view)?;
-    if value.presentation != Presentation::Markdown {
+    if !matches!(
+        value.presentation,
+        Presentation::Markdown | Presentation::Image
+    ) {
         return None;
     }
     let source = value.associated_source?;

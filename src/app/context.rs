@@ -44,6 +44,7 @@ impl AppContext {
             app.editor
                 .markdown_views
                 .retain(|id, _| app.workspace.views.contains_key(id));
+            super::image_preview::cleanup(app);
             self.invalidate_cancelled(before, app);
             self.sync_document_services(app);
             super::language_ui::observe(self, app);
@@ -53,6 +54,7 @@ impl AppContext {
         self.model.try_update(|app| {
             let before = app.editor.pending_file.as_ref().map(|p| p.generation);
             let changed = change(app);
+            super::image_preview::cleanup(app);
             if changed {
                 super::markdown_view::sync_sources(app);
             }

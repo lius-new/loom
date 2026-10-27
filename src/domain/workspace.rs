@@ -45,6 +45,7 @@ pub(crate) struct OpenDocument {
     pub(crate) loading: Option<bool>,
     /// A failed file keeps its tab and path, but never exposes a staging buffer.
     pub(crate) open_error: Option<String>,
+    pub(crate) image: Option<Arc<crate::domain::media::Image>>,
 }
 
 impl OpenDocument {
@@ -69,6 +70,7 @@ impl OpenDocument {
             missing_on_disk: false,
             loading: None,
             open_error: None,
+            image: None,
         }
     }
 
@@ -85,7 +87,7 @@ impl OpenDocument {
 
     /// Whether this tab edits a file on disk (not a diff or the settings page).
     pub(crate) fn is_text(&self) -> bool {
-        self.loading.is_none() && self.open_error.is_none()
+        self.loading.is_none() && self.open_error.is_none() && self.image.is_none()
     }
 
     pub(crate) fn format(&self) -> crate::domain::encoding::TextFormat {
@@ -202,6 +204,15 @@ pub enum OpenMode {
 pub(crate) struct PreparedTextFile(OpenDocument);
 
 impl PreparedTextFile {
+    pub(crate) fn image(
+        path: PathBuf,
+        image: crate::domain::media::Image,
+        disk: DiskState,
+    ) -> Self {
+        let mut value = Self::with_disk_state(path, String::new(), disk);
+        value.0.image = Some(Arc::new(image));
+        value
+    }
     pub(crate) fn failed(path: PathBuf, error: String) -> Self {
         let mut value = Self::with_disk_state(path, String::new(), DiskState::from_contents(""));
         value.0.open_error = Some(error);
@@ -399,6 +410,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         document.disk_state = disk;
         document.missing_on_disk = false;
         self.paths.insert(new_path, id);
+        self.clamp_document_views(id);
         true
     }
 
@@ -699,6 +711,24 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         self.view_document(id).is_some_and(|id| self.is_dirty(id))
     }
     pub fn set_presentation(&mut self, id: ViewId, presentation: Presentation) -> bool {
+        if presentation == Presentation::Image
+            && self
+                .view_document(id)
+                .and_then(|id| self.documents.get(&id))
+                .is_some_and(|doc| {
+                    doc.image.is_none() && !crate::domain::media::is_svg(&doc.meta.path)
+                })
+        {
+            return false;
+        }
+        if self
+            .view_document(id)
+            .and_then(|id| self.documents.get(&id))
+            .is_some_and(|doc| doc.image.is_some())
+            && presentation != Presentation::Image
+        {
+            return false;
+        }
         let Some(view) = self.views.get_mut(&id).filter(|v| v.document().is_some()) else {
             return false;
         };
@@ -713,7 +743,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         if let Some(document) = view.document().and_then(|id| self.documents.get_mut(&id)) {
             document.buffer.break_undo_group();
         }
-        if presentation == Presentation::Markdown {
+        if presentation != Presentation::Source {
             for other in self.views.values_mut() {
                 if other.associated_source == Some(id) {
                     other.associated_source = None;
@@ -781,6 +811,17 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     fn clamp_document_views(&mut self, id: FileId) {
         if let Some(document) = self.documents.get(&id) {
             for view in self.views.values_mut().filter(|v| v.document() == Some(id)) {
+                if document.image.is_some() && view.presentation != Presentation::Image {
+                    view.presentation = Presentation::Image;
+                    view.input_generation += 1;
+                } else if document.image.is_none()
+                    && view.presentation == Presentation::Image
+                    && !crate::domain::media::is_svg(&document.meta.path)
+                {
+                    view.presentation = Presentation::Source;
+                    view.associated_source = None;
+                    view.input_generation += 1;
+                }
                 view.source.selection = document.buffer.clamp(view.source.selection);
                 view.reader.source_byte = document
                     .buffer
@@ -1565,10 +1606,20 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
 
     pub(crate) fn attach_text_tab(&mut self, id: FileId, mode: OpenMode) -> FileId {
         let pane = self.active_pane;
-        let existing = self.panes[&pane].items.iter().copied().find(|v| {
+        let svg = crate::domain::media::is_svg(&self.documents[&id].meta.path);
+        let presentation = if self.documents[&id].image.is_some() || svg {
+            Presentation::Image
+        } else {
+            Presentation::Source
+        };
+        let same_document = |v: &ViewId| {
             self.views[v].document() == Some(id)
-                && self.views[v].presentation == Presentation::Source
-        });
+                && (svg || self.views[v].presentation == presentation)
+        };
+        let existing = self.panes[&pane]
+            .active
+            .filter(same_document)
+            .or_else(|| self.panes[&pane].items.iter().copied().find(same_document));
         let view = if let Some(view) = existing {
             if mode == OpenMode::Permanent {
                 self.promote_preview(pane, view);
@@ -1583,7 +1634,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
                 .first()
                 .and_then(|(_, v)| self.views.get(v))
                 .copied();
-            let view = self.create_view(ViewTarget::Text(id), Presentation::Source);
+            let view = self.create_view(ViewTarget::Text(id), presentation);
             if let Some(source) = source {
                 self.views.get_mut(&view).unwrap().source = source.source;
             }
@@ -1796,6 +1847,10 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
                 document.disk_conflict = true;
             }
             document.missing_on_disk = update.replacement.missing_on_disk;
+            if document.image.is_some() || update.replacement.image.is_some() {
+                document.image = update.replacement.image.clone();
+                document.open_error = update.replacement.open_error.clone();
+            }
             outcomes.push(update.outcome.clone());
             // Keep old shared text alive until the reclaimer frees it.
             self.retired.push(Retired::Document(old));
@@ -1856,6 +1911,8 @@ fn parent_suffix(parts: &[String], depth: usize) -> String {
     parts[start..].join("/")
 }
 
+#[cfg(test)]
+mod media_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

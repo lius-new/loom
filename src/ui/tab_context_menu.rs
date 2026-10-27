@@ -16,6 +16,7 @@ const SEP_H: f32 = 5.0;
 pub(crate) enum Action {
     KeepOpen,
     ToggleMarkdown,
+    ToggleSvg,
     SplitRight,
     SplitDown,
     ReloadFromDisk,
@@ -58,6 +59,7 @@ pub(crate) const ENTRIES: &[Entry] = &[
     Entry::Item("Reveal in File Explorer", Action::RevealInFileExplorer),
     Entry::Separator,
     Entry::Item("Toggle Markdown Preview", Action::ToggleMarkdown),
+    Entry::Item("Toggle SVG Preview", Action::ToggleSvg),
 ];
 
 /// The entries to show: the Markdown item only for Markdown files, and no
@@ -68,6 +70,7 @@ fn visible(enabled: &[Action]) -> Vec<&'static Entry> {
         match entry {
             Entry::Item(_, Action::ToggleMarkdown)
                 if !enabled.contains(&Action::ToggleMarkdown) => {}
+            Entry::Item(_, Action::ToggleSvg) if !enabled.contains(&Action::ToggleSvg) => {}
             Entry::Separator if !matches!(shown.last(), Some(Entry::Item(..))) => {}
             _ => shown.push(entry),
         }
@@ -225,6 +228,7 @@ mod tests {
         assert_eq!(plain.first(), Some(&"Keep Open"));
         assert_eq!(plain.last(), Some(&"Reveal in File Explorer"));
         assert!(!plain.contains(&"Toggle Markdown Preview"));
+        assert!(!plain.contains(&"Toggle SVG Preview"));
         assert!(plain.windows(2).all(|pair| pair != ["-", "-"]));
 
         let markdown = labels(&[Action::ToggleMarkdown]);
@@ -232,5 +236,8 @@ mod tests {
             &markdown[markdown.len() - 2..],
             ["-", "Toggle Markdown Preview"]
         );
+        let svg = labels(&[Action::ToggleSvg]);
+        assert_eq!(&svg[svg.len() - 2..], ["-", "Toggle SVG Preview"]);
+        assert!(!svg.contains(&"Toggle Markdown Preview"));
     }
 }

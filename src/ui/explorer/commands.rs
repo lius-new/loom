@@ -23,6 +23,7 @@ pub enum MenuAction {
     CopyPath,
     CopyRelativePath,
     PreviewMarkdown,
+    ToggleSvg,
 }
 
 #[derive(Clone, Debug, PartialEq)]

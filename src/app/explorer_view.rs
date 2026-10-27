@@ -250,6 +250,13 @@ fn run_menu(
             let pane = state.get().workspace.active_pane();
             super::markdown_view::open_local(state, pane, target.path, None);
         }
+        MenuAction::ToggleSvg => {
+            if target.kind == ExplorerTargetKind::File
+                && super::image_preview::toggle_path(state, target.path)
+            {
+                services.editor_focus.focus();
+            }
+        }
         MenuAction::AddFolder => unreachable!("handled before the target check"),
     }
 }

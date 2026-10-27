@@ -20,6 +20,7 @@ pub struct PendingFile {
     pub drop: Option<TabDrop>,
     pub markdown: bool,
     pub markdown_fragment: Option<String>,
+    pub toggle_svg: bool,
     pub indicator: bool,
     started: Instant,
     active: Option<ViewId>,
@@ -122,6 +123,7 @@ pub fn request(
         if mode == OpenMode::Permanent {
             pending.mode = mode;
         }
+        pending.toggle_svg = false;
         return true;
     }
     let generation = loader.worker.reserve_generation();
@@ -137,6 +139,7 @@ pub fn request(
         drop,
         markdown: false,
         markdown_fragment: None,
+        toggle_svg: false,
         indicator: false,
         started: Instant::now(),
         active: app.workspace.pane(pane).and_then(|p| p.active()),
@@ -286,12 +289,50 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
     if pending.markdown && succeeded {
         crate::app::markdown_view::finish_navigation(app, id, pending.markdown_fragment.clone());
     }
+    if pending.toggle_svg && succeeded {
+        crate::app::image_preview::run(app, id, crate::ui::image_preview::Command::Toggle);
+    }
     true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn svg_tree_menu_request_switches_the_completed_tab_to_source() {
+        let mut app = AppState::new();
+        app.workspace.open_path("seed.txt".into(), "keep".into());
+        let pane = app.workspace.active_pane();
+        let active = app.workspace.active();
+        app.editor.pending_file = Some(PendingFile {
+            generation: 42,
+            path: "logo.svg".into(),
+            pane,
+            mode: OpenMode::Permanent,
+            drop: None,
+            markdown: false,
+            markdown_fragment: None,
+            toggle_svg: true,
+            indicator: false,
+            started: Instant::now(),
+            active,
+            input_generation: active
+                .and_then(|id| app.workspace.view(id))
+                .map(|view| view.input_generation),
+            origin_pane: pane,
+            folders: app.explorer.model.roots().to_vec(),
+            remaining: Vec::new(),
+        });
+        let text = "<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+        assert!(finish(
+            &mut app,
+            42,
+            Ok(PreparedTextFile::new("logo.svg".into(), text.into()))
+        ));
+        assert_eq!(app.main_surface(), crate::app::state::MainSurface::Editor);
+        assert_eq!(app.workspace.active_editor().unwrap().text(), text);
+        assert_eq!(app.workspace.active_items().len(), 2);
+    }
     use crate::app::test_support::UiTasks;
     use lgui::{
         application::AppView,
@@ -316,6 +357,7 @@ mod tests {
             drop: None,
             markdown: false,
             markdown_fragment: None,
+            toggle_svg: false,
             indicator: false,
             started: Instant::now(),
             active,
@@ -802,6 +844,7 @@ mod tests {
                             drop: None,
                             markdown: false,
                             markdown_fragment: None,
+                            toggle_svg: false,
                             indicator: row == 1,
                             started: Instant::now(),
                             active: None,

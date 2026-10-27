@@ -16,6 +16,7 @@ pub(crate) struct AppRuntime {
 
 #[derive(Default)]
 struct Services {
+    images: Option<Arc<super::image_service::ImageService>>,
     markdown: Option<Arc<super::markdown_service::MarkdownService>>,
     highlighter: Option<super::syntax::Highlighter>,
     language_services: Option<Arc<super::language_services::LanguageServices>>,
@@ -25,6 +26,25 @@ struct Services {
 }
 
 impl AppRuntime {
+    pub(crate) fn images(&self) -> Option<Arc<super::image_service::ImageService>> {
+        self.services.lock().unwrap().images.clone()
+    }
+    pub(crate) fn install_images(&self, service: super::image_service::ImageService) {
+        if let Some(previous) = self
+            .services
+            .lock()
+            .unwrap()
+            .images
+            .replace(Arc::new(service))
+        {
+            previous.shutdown();
+        }
+    }
+    pub(crate) fn clear_images(&self) {
+        if let Some(service) = self.services.lock().unwrap().images.take() {
+            service.shutdown();
+        }
+    }
     pub(crate) fn markdown(&self) -> Option<Arc<super::markdown_service::MarkdownService>> {
         self.services.lock().unwrap().markdown.clone()
     }
@@ -145,6 +165,9 @@ impl Drop for AppRuntime {
     fn drop(&mut self) {
         self.terminals.shutdown();
         let services = self.services.get_mut().unwrap();
+        if let Some(images) = services.images.take() {
+            images.shutdown();
+        }
         if let Some(markdown) = services.markdown.take() {
             markdown.shutdown();
         }

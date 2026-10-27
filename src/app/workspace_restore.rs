@@ -36,6 +36,9 @@ impl SessionRestore {
                         saved.read_override
                     }
                 });
+            if crate::domain::media::is_raster(path) {
+                return crate::app::encoding::prepare(path);
+            }
             let read = crate::infrastructure::document_filesystem::read_encoded(
                 path,
                 explicit,

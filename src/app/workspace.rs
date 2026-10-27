@@ -140,7 +140,7 @@ impl Workspace {
             .into_iter()
             .filter(|id| {
                 self.core.documents.get(id).is_some_and(|document| {
-                    document.is_text()
+                    (document.is_text() || document.image.is_some())
                         && (full_rescan
                             || changed_paths
                                 .iter()
@@ -180,7 +180,7 @@ impl Workspace {
             .filter(|id| {
                 full_rescan
                     || self.core.documents.get(id).is_some_and(|document| {
-                        document.is_text()
+                        (document.is_text() || document.image.is_some())
                             && changed_paths.iter().any(|changed| {
                                 document.meta.path == *changed
                                     || document.meta.path.starts_with(changed)
@@ -194,6 +194,43 @@ impl Workspace {
     }
 
     pub fn reconcile_document(&mut self, id: FileId) -> ReconcileResult {
+        if self
+            .core
+            .documents
+            .get(&id)
+            .is_some_and(|d| d.image.is_some())
+        {
+            let document = &self.core.documents[&id];
+            let path = document.meta.path.clone();
+            let unchanged = std::fs::metadata(&path).is_ok_and(|metadata| {
+                metadata.len() == document.disk_state.size
+                    && metadata.modified().ok() == document.disk_state.modified_time
+            });
+            if unchanged && document.open_error.is_none() {
+                return ReconcileResult::Unchanged(path);
+            }
+            let loaded = crate::infrastructure::image_filesystem::load(&path);
+            let document = self.core.documents.get_mut(&id).unwrap();
+            return match loaded {
+                Ok((image, disk)) => {
+                    document.image = Some(std::sync::Arc::new(image));
+                    document.disk_state = disk;
+                    document.open_error = None;
+                    document.missing_on_disk = false;
+                    ReconcileResult::Reloaded(path)
+                }
+                Err(error) => {
+                    document.missing_on_disk = !path.exists();
+                    document.open_error =
+                        Some(format!("Could not open {}: {error}", path.display()));
+                    if document.missing_on_disk {
+                        ReconcileResult::Missing(path)
+                    } else {
+                        ReconcileResult::Reloaded(path)
+                    }
+                }
+            };
+        }
         let observation = self
             .core
             .documents

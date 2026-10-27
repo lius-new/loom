@@ -33,6 +33,7 @@ fn action_enabled(app: &AppState, pane: PaneId, target: ViewId, action: Action) 
     }
     match action {
         Action::ToggleMarkdown => crate::app::markdown_view::eligible(app, target),
+        Action::ToggleSvg => crate::app::image_preview::eligible(app, target),
         // Only files can be shown in two panes at once.
         Action::SplitRight | Action::SplitDown => app.workspace.is_file(target),
         Action::KeepOpen => app
@@ -91,6 +92,15 @@ pub fn execute(
         return;
     }
     match action {
+        Action::ToggleSvg => {
+            state.update(|app| {
+                crate::app::image_preview::run(
+                    app,
+                    target,
+                    crate::ui::image_preview::Command::Toggle,
+                );
+            });
+        }
         Action::ToggleMarkdown => {
             state.update(|app| {
                 app.workspace.activate(pane, target);
@@ -224,6 +234,22 @@ mod tests {
     use super::*;
     use crate::model::text::EditKind;
     use std::path::PathBuf;
+    #[test]
+    fn svg_toggle_is_enabled_for_svg_source_and_preview_only() {
+        let mut app = AppState::new();
+        let svg = app
+            .workspace
+            .test_open_view("logo.SVG".into(), "<svg/>".into());
+        let plain = app
+            .workspace
+            .test_open_view("note.txt".into(), "text".into());
+        let pane = app.workspace.active_pane();
+        assert!(action_enabled(&app, pane, svg, Action::ToggleSvg));
+        assert!(!action_enabled(&app, pane, plain, Action::ToggleSvg));
+        crate::app::image_preview::run(&mut app, svg, crate::ui::image_preview::Command::Toggle);
+        assert!(action_enabled(&app, pane, svg, Action::ToggleSvg));
+        assert_eq!(app.workspace.active(), Some(svg));
+    }
 
     #[test]
     fn close_actions_disable_when_their_scope_is_empty() {

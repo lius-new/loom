@@ -103,6 +103,15 @@ pub fn key(state: &AppContext, event: &lgui::core::KeyboardEvent) -> bool {
 }
 
 pub(crate) fn prepare(path: &Path) -> Result<crate::app::workspace::PreparedTextFile, String> {
+    if crate::domain::media::is_raster(path) {
+        let (image, disk) = crate::infrastructure::image_filesystem::load(path)
+            .map_err(|e| format!("Could not open {}: {e}", path.display()))?;
+        return Ok(crate::app::workspace::PreparedTextFile::image(
+            path.to_path_buf(),
+            image,
+            disk,
+        ));
+    }
     let (decoded, state) = crate::infrastructure::document_filesystem::read_encoded(
         path,
         None,

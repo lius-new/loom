@@ -757,5 +757,15 @@ fn current_servers(
 }
 
 pub fn status(rect: UiRect, state: AppContext) -> Element {
+    let app = state.get();
+    if let Some(view) = app.workspace.active() {
+        if let Some(frame) = crate::app::image_preview::frame(&app, view) {
+            return crate::ui::image_preview::status(
+                rect,
+                &frame,
+                crate::app::image_preview::send(&state, view),
+            );
+        }
+    }
     crate::ui::statusbar::render(rect, status_binding(&state))
 }

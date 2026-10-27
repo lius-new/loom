@@ -109,6 +109,11 @@ pub(crate) mod update;
 #[cfg(test)]
 mod language_panel_install_tests;
 
+mod gif_playback;
+pub(crate) mod image_preview;
+pub(crate) mod image_service;
+#[cfg(test)]
+mod image_tests;
 mod markdown_assets;
 mod markdown_cards;
 mod markdown_drag;

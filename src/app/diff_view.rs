@@ -32,18 +32,12 @@ pub fn binding(state: &AppContext) -> Binding {
 }
 pub fn run(state: &AppContext, c: Command) -> bool {
     if let Command::Open(path) = c {
-        return match crate::infrastructure::document_filesystem::read_diff_file(&path) {
-            Ok(contents) => {
-                state.update(move |app| {
-                    app.workspace.open_path(path, contents);
-                });
-                true
-            }
-            Err(error) => {
-                state.update(move |app| app.show_error(format!("Could not open file: {error}")));
-                false
-            }
-        };
+        let loader = state.services().and_then(|runtime| runtime.file_loader());
+        let mut opened = false;
+        state.update(|app| {
+            opened = crate::app::explorer::open_tree_file(app, path, 2, loader.as_ref());
+        });
+        return opened;
     }
     state.update(|app| match c {
         Command::Wheel(pane, dx, dy, mx, my) => {

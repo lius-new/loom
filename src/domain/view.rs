@@ -41,6 +41,7 @@ pub enum Presentation {
     #[default]
     Source,
     Markdown,
+    Image,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -58,6 +59,7 @@ pub struct DocumentView {
     pub associated_source: Option<ViewId>,
     pub source: ViewState,
     pub reader: ReaderPosition,
+    pub image: crate::domain::media::Position,
     /// Invalidates input and delayed source interactions on presentation changes.
     pub input_generation: u64,
 }
@@ -71,6 +73,7 @@ impl DocumentView {
             associated_source: None,
             source: ViewState::default(),
             reader: ReaderPosition::default(),
+            image: Default::default(),
             input_generation: 0,
         }
     }

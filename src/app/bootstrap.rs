@@ -62,6 +62,7 @@ pub(crate) fn svg_icons() -> SvgIconRegistry {
             .with_icon("panel-bottom", icondata::VsLayoutPanel)
             .with_icon("git-commit", icondata::VsGitCommit)
             .with_icon("check", icondata::VsCheck)
+            .with_icon("image-background", icondata::VsColorMode)
             .with_icon("copy", icondata::VsCopy)
             .with_icon("enter", r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M13 3v6H3m4-4L3 9l4 4"/></svg>"#)
             .with_icon("terminal", icondata::VsTerminal)
