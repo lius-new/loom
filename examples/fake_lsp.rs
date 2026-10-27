@@ -688,6 +688,11 @@ fn main() {
                             "data": { "retriggerRequest": !options.flag("--do-not-retrigger") } } }));
                     continue;
                 }
+                // Leave successful feature requests pending while continuing to
+                // read messages, so cancellation tests need no timing window.
+                if options.flag("--ignore-feature-success") {
+                    continue;
+                }
                 if method == "workspace/executeCommand" && options.flag("--exec-edit") {
                     out.send(&json!({ "jsonrpc": "2.0", "id": 9300, "method": "workspace/applyEdit",
                         "params": { "label": "by the server", "edit": { "changes": { last_uri.as_str().unwrap_or(""): [{

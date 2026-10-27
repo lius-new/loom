@@ -2202,7 +2202,7 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
     }
 
     #[test]
-    fn only_the_stale_server_is_retried_and_dropping_a_retried_handle_cancels_it() {
+    fn only_the_stale_server_is_retried() {
         let f = Fixture::with_servers(
             two_servers(),
             &[
@@ -2233,12 +2233,31 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
                 .count();
             assert_eq!(count, expected);
         }
-        let f = featured(&["--feature-error-once", "--slow-ms", "150"]);
+    }
+
+    #[test]
+    fn dropping_a_retried_handle_cancels_the_retried_request() {
+        // Keep the retry pending: a short delay can elapse before the test
+        // thread runs again on CI, leaving an already-finished request to drop.
+        let f = featured(&["--feature-error-once", "--ignore-feature-success"]);
         f.show(vec![f.doc("a.fk", 0, "alpha")]);
         let handle = f.ready_then_ask(Feature::Hover, 0, 2);
         f.wait_method_count("textDocument/hover", 2);
+        assert!(!handle.is_finished());
         drop(handle);
         f.wait_method_count("$/cancelRequest", 1);
+        let messages = f.log();
+        let requests: Vec<_> = messages
+            .iter()
+            .filter(|m| m["method"] == "textDocument/hover")
+            .collect();
+        assert_eq!(requests.len(), 2);
+        assert_ne!(requests[0]["id"], requests[1]["id"]);
+        let cancel = messages
+            .iter()
+            .find(|m| m["method"] == "$/cancelRequest")
+            .unwrap();
+        assert_eq!(cancel["params"]["id"], requests[1]["id"]);
     }
 
     #[test]
