@@ -185,12 +185,12 @@ pub fn render(frame: Frame, id: UiId, focus: lgui::core::UiFocusHandle, send: Se
         UiElement::requested_image(pixels_id, bounds, request, ImageFit::Fill)
     }));
     root = root.child(content);
-    if frame.error.is_some() {
+    if let Some(error) = frame.error {
         let note = UiRect::new(rect.left, rect.top, rect.right, rect.top + 44.0);
         root = root.child(
             clip(rect, 0.0, 0.0).child(
                 panel(note, VisualStyle::filled(theme::c().surface))
-                    .semantics(Semantics::new(SemanticRole::Alert).name(frame.error.unwrap()))
+                    .semantics(Semantics::new(SemanticRole::Alert).name(error))
                     .child(text(
                         UiRect::new(
                             rect.left + 10.0,
@@ -237,7 +237,7 @@ fn control(
         )
         .children(cx.children)
     })
-    .key(key.to_owned())
+    .key(key)
     .event_policy(EventPolicy::INTERACTIVE)
     .cursor(CursorIcon::Pointer)
     .semantics(Semantics::new(SemanticRole::Button).name(label.to_owned()))

@@ -274,12 +274,28 @@ mod tests {
             image::ImageFormat::Ico,
         ] {
             let mut bytes = Cursor::new(Vec::new());
-            image::DynamicImage::new_rgb8(16, 12)
+            let fixture = if format == image::ImageFormat::Ico {
+                // ICO embeds a PNG here, and its decoder requires RGBA pixels.
+                let mut rgba = image::RgbaImage::from_pixel(16, 12, image::Rgba([23, 45, 67, 255]));
+                rgba.put_pixel(0, 0, image::Rgba([23, 45, 67, 64]));
+                image::DynamicImage::ImageRgba8(rgba)
+            } else {
+                image::DynamicImage::new_rgb8(16, 12)
+            };
+            fixture
                 .write_to(&mut bytes, format)
-                .unwrap();
-            let result = decode(bytes.get_ref()).unwrap();
+                .unwrap_or_else(|error| panic!("{format:?} fixture encoding failed: {error}"));
+            let result = decode(bytes.get_ref())
+                .unwrap_or_else(|error| panic!("{format:?} preview decoding failed: {error}"));
             assert_eq!((result.width, result.height), (16, 12));
             assert!(result.frames[0].bytes.starts_with(b"\x89PNG"));
+            if format == image::ImageFormat::Ico {
+                let preview = image::load_from_memory(&result.frames[0].bytes)
+                    .unwrap()
+                    .into_rgba8();
+                assert_eq!(*preview.get_pixel(0, 0), image::Rgba([23, 45, 67, 64]));
+                assert_eq!(*preview.get_pixel(1, 0), image::Rgba([23, 45, 67, 255]));
+            }
         }
         assert!(decode(b"not an image").is_err());
     }
