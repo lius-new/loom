@@ -22,6 +22,7 @@ pub struct ImageService {
     gif: crate::app::gif_playback::Playback,
     paused: AtomicBool,
     state: AppContext,
+    loading: super::image_loading::Loading,
 }
 impl ImageService {
     pub fn new(state: AppContext, application: lgui::ApplicationHandle) -> Self {
@@ -106,7 +107,8 @@ impl ImageService {
         if spawned.is_err() {
             alive.store(false, Ordering::Release);
         }
-        let gif = crate::app::gif_playback::Playback::new(state.clone(), application);
+        let gif = crate::app::gif_playback::Playback::new(state.clone(), application.clone());
+        let loading = super::image_loading::Loading::new(state.clone(), application);
         Self {
             pending,
             queued,
@@ -115,6 +117,7 @@ impl ImageService {
             gif,
             paused: AtomicBool::new(false),
             state,
+            loading,
         }
     }
     pub fn request_svg(
@@ -182,6 +185,7 @@ impl ImageService {
         }
     }
     pub fn sync(self: &Arc<Self>, app: &crate::app::state::AppState) {
+        self.loading.sync(app);
         self.pending
             .lock()
             .unwrap()
@@ -201,6 +205,7 @@ impl ImageService {
     }
     pub fn shutdown(&self) {
         self.alive.store(false, Ordering::Release);
+        self.loading.shutdown();
         self.gif.shutdown();
         let _ = self.send.send(None);
     }

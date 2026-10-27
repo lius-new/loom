@@ -110,6 +110,7 @@ pub(crate) mod update;
 mod language_panel_install_tests;
 
 mod gif_playback;
+mod image_loading;
 pub(crate) mod image_preview;
 pub(crate) mod image_service;
 #[cfg(test)]

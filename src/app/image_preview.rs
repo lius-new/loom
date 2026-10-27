@@ -40,6 +40,8 @@ pub struct Drag {
 }
 #[derive(Clone, Default)]
 pub struct State {
+    /// Delayed feedback belongs to a visible view and its current document lifetime.
+    pub loading: HashMap<ViewId, DocumentStamp>,
     pub svg: HashMap<FileId, SvgPreview>,
     pub gif: HashMap<FileId, GifPreview>,
     pub bounds: HashMap<ViewId, UiRect>,
@@ -48,6 +50,14 @@ pub struct State {
     pub drag: Option<Drag>,
 }
 pub fn cleanup(app: &mut AppState) {
+    app.editor.images.loading = app
+        .editor
+        .images
+        .loading
+        .iter()
+        .filter(|(view, stamp)| loading_stamp(app, **view) == Some(**stamp))
+        .map(|(view, stamp)| (*view, *stamp))
+        .collect();
     app.editor.images.gif.retain(|id, preview| {
         app.workspace.documents.get(id).is_some_and(|doc| {
             doc.incarnation == preview.incarnation
@@ -157,7 +167,21 @@ pub fn frame(app: &AppState, view: ViewId) -> Option<Frame> {
             .copied()
             .unwrap_or(UiRect::new(0.0, 0.0, 512.0, 512.0)),
         error,
+        show_loading: app.editor.images.loading.get(&view) == Some(&doc.stamp(id)),
     })
+}
+/// A visible image canvas waiting for its first usable pixels, regardless of format.
+pub(super) fn loading_stamp(app: &AppState, view: ViewId) -> Option<DocumentStamp> {
+    let pane = app.workspace.pane_of(view)?;
+    if app.workspace.pane(pane)?.active() != Some(view) {
+        return None;
+    }
+    let frame = frame(app, view)?;
+    if frame.image.is_some() || frame.error.is_some() {
+        return None;
+    }
+    let id = app.workspace.view_document(view)?;
+    Some(app.workspace.documents.get(&id)?.stamp(id))
 }
 pub fn send(state: &AppContext, view: ViewId) -> ui::Send {
     let state = state.clone();

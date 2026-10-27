@@ -41,6 +41,7 @@ pub struct Frame {
     pub position: Position,
     pub bounds: UiRect,
     pub error: Option<String>,
+    pub show_loading: bool,
 }
 pub fn image_bounds(frame: &Frame) -> Option<UiRect> {
     let image = frame.image.as_ref()?;
@@ -107,6 +108,9 @@ pub fn render(frame: Frame, id: UiId, focus: lgui::core::UiFocusHandle, send: Se
     let Some(image) = frame.image.as_ref() else {
         if let Some(error) = frame.error {
             return root.child(crate::ui::file_error::render(rect, &error, error_id));
+        }
+        if !frame.show_loading {
+            return root;
         }
         let mut style = theme::sans(theme::c().text_muted, theme::UI_SIZE);
         style.align = TextAlign::Center;
