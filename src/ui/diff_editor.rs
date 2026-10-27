@@ -131,6 +131,15 @@ pub fn render(
         starts.clone(),
         current_change,
         absolute_path,
+        document
+            .sections
+            .as_ref()
+            .filter(|sections| !sections.is_empty())
+            .map(|sections| {
+                sections
+                    .iter()
+                    .all(|section| collapsed.contains(&section.request()))
+            }),
     ));
 
     if row_count == 0 {
@@ -345,6 +354,7 @@ fn toolbar(
     starts: std::sync::Arc<Vec<usize>>,
     current_change: Option<usize>,
     absolute_path: Option<PathBuf>,
+    all_collapsed: Option<bool>,
 ) -> Element {
     let mut bar = panel(rect, VisualStyle::filled(theme::c().sidebar));
     bar = bar.child(panel(
@@ -367,6 +377,37 @@ fn toolbar(
                     }
                 },
             ),
+        );
+    }
+
+    if let Some(all_collapsed) = all_collapsed {
+        let collapse_rect = take_button_rect(&mut right, button_top, 24.0);
+        let collapse_state = state.clone();
+        let (label, icon) = if all_collapsed {
+            ("Expand All Files", "expand-all")
+        } else {
+            ("Collapse All Files", "search-collapse")
+        };
+        bar = bar.child(
+            panel(collapse_rect, VisualStyle::default().radius(3.0))
+                .key("diff-collapse-all")
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .semantics(Semantics::new(SemanticRole::Button).name(label))
+                .on_click(move || {
+                    collapse_state.run(Command::ToggleAll(pane));
+                })
+                .child(crate::ui::drawer::drawer_icon(
+                    "diff-collapse-all-icon",
+                    icon,
+                    UiRect::new(
+                        collapse_rect.left + 5.0,
+                        collapse_rect.top + 4.0,
+                        collapse_rect.right - 5.0,
+                        collapse_rect.bottom - 4.0,
+                    ),
+                    theme::c().text_dim,
+                )),
         );
     }
 
@@ -537,13 +578,6 @@ fn render_changes(
         }
         let section = &sections[item.index];
         let document = &section.document;
-        if item.group_header {
-            body = body.child(text(
-                UiRect::new(rect.left + 12.0, top - row_h(), rect.right - 12.0, top),
-                section.group.label(),
-                theme::mono_bold(theme::c().text_dim, theme::SMALL),
-            ));
-        }
         let header = UiRect::new(rect.left, top, rect.right, top + row_h() * 2.0);
         let toggle_state = state.clone();
         let request = section.request();

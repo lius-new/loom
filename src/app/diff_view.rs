@@ -74,6 +74,31 @@ pub fn run(state: &AppContext, c: Command) -> bool {
             app.workspace.activate_pane(pane);
             app.workspace.toggle_diff_section(pane, request);
         }
+        Command::ToggleAll(pane) => {
+            let Some(sections) = app
+                .workspace
+                .diff(pane)
+                .and_then(|doc| doc.sections.as_ref())
+            else {
+                return;
+            };
+            let collapsed = app.workspace.collapsed_diffs(pane);
+            let all_collapsed = sections
+                .iter()
+                .all(|section| collapsed.contains(&section.request()));
+            let requests: Vec<_> = sections
+                .iter()
+                .map(|section| section.request())
+                .filter(|request| collapsed.contains(request) == all_collapsed)
+                .collect();
+            for request in requests {
+                app.workspace.toggle_diff_section(pane, request);
+            }
+            app.workspace.activate_pane(pane);
+            if !all_collapsed {
+                app.workspace.set_scroll(pane, 0.0, 0.0);
+            }
+        }
         Command::Open(_) => unreachable!(),
     });
     true
@@ -282,14 +307,7 @@ mod tests {
                     .filter_map(|node| node.text.as_deref())
                     .collect::<Vec<_>>()
             };
-            for expected in [
-                "STAGED CHANGES",
-                "CHANGES",
-                "UNTRACKED FILES",
-                "src/app.rs",
-                "src/ui/git_panel.rs",
-                "notes/review.md",
-            ] {
+            for expected in ["src/app.rs", "src/ui/git_panel.rs", "notes/review.md"] {
                 assert!(texts().contains(&expected), "Missing {expected}");
             }
             if !split && let Some(path) = std::env::var_os("LOOM_CHANGES_PREVIEW") {

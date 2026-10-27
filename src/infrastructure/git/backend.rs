@@ -2613,8 +2613,6 @@ X2
         assert_eq!(file("gone.txt").document.deletions(), 1);
         assert!(file("binary.dat").document.binary);
         file("renamed.txt");
-        let layout = document.changes_layout(false, &Default::default());
-        assert!(layout.sections.iter().all(|item| !item.group_header));
         let _ = std::fs::remove_dir_all(root);
     }
 

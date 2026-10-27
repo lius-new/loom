@@ -38,6 +38,7 @@ pub enum Command {
     Layout(PaneId, bool),
     Navigate(PaneId, Arc<Vec<usize>>, bool),
     Toggle(PaneId, DiffRequest),
+    ToggleAll(PaneId),
 }
 #[derive(Clone)]
 pub struct Binding {

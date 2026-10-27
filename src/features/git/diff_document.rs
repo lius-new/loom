@@ -78,7 +78,6 @@ impl DiffSection {
 pub struct SectionLayout {
     pub index: usize,
     pub top: usize,
-    pub group_header: bool,
     pub body_top: usize,
     pub body_rows: usize,
 }
@@ -251,13 +250,7 @@ impl DiffDocument {
             starts: Arc::default(),
         };
         let mut starts = Vec::new();
-        let mut group = None;
         for (index, section) in self.sections.iter().flatten().enumerate() {
-            let group_header = group != Some(section.group) && section.group != ChangeGroup::Commit;
-            if group_header {
-                layout.row_count += 1;
-            }
-            group = Some(section.group);
             let top = layout.row_count;
             layout.row_count += 2;
             let body_top = layout.row_count;
@@ -282,7 +275,6 @@ impl DiffDocument {
             layout.sections.push(SectionLayout {
                 index,
                 top,
-                group_header,
                 body_top,
                 body_rows,
             });

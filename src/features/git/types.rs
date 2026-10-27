@@ -420,18 +420,6 @@ pub enum ChangeGroup {
     Commit,
 }
 
-impl ChangeGroup {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Conflicts => "CONFLICTS",
-            Self::Staged => "STAGED CHANGES",
-            Self::Unstaged => "CHANGES",
-            Self::Untracked => "UNTRACKED FILES",
-            Self::Commit => "",
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChangeDiff {
     pub path: PathBuf,
