@@ -45,7 +45,7 @@ pub fn facts(app: &AppState) -> ContextFacts {
         editor: app.editor.focused
             && matches!(
                 app.main_surface(),
-                MainSurface::Editor | MainSurface::Markdown
+                MainSurface::Editor | MainSurface::Markdown | MainSurface::Diff
             ),
         vim_active: crate::app::editor_vim::is_active(app),
         popup: app
@@ -257,6 +257,31 @@ mod tests {
             action(&app, named(NamedKey::Enter, KeyModifiers::empty())),
             Some(Action::SearchOpen)
         );
+    }
+
+    #[test]
+    fn a_focused_changes_view_binds_copy_select_all_and_clear() {
+        let mut app = AppState::new();
+        app.workspace
+            .open_diff(crate::features::git::diff_selection_tests::overview());
+        assert_eq!(app.main_surface(), MainSurface::Diff);
+        // Without focus the shortcuts belong to whatever has it.
+        assert_eq!(action(&app, character("c", secondary())), None);
+        app.editor.focused = true;
+        assert_eq!(
+            action(&app, character("c", secondary())),
+            Some(Action::Copy)
+        );
+        assert_eq!(
+            action(&app, character("a", secondary())),
+            Some(Action::SelectAll)
+        );
+        assert_eq!(
+            action(&app, named(NamedKey::Escape, KeyModifiers::empty())),
+            Some(Action::Cancel)
+        );
+        // Editing commands stay out of a read-only diff.
+        assert_eq!(action(&app, character("x", secondary())), None);
     }
 
     #[test]

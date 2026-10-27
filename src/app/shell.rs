@@ -1184,6 +1184,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 body,
                 state.clone(),
                 super::git_view::binding(&state, &git_store),
+                surface_id,
                 editor_focus.clone(),
                 super::editor_view::binding(state.clone(), git_store.clone(), pane, body),
             ),

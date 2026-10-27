@@ -7,6 +7,9 @@
 pub mod close_confirmation;
 pub mod components;
 pub mod diff_editor;
+pub mod diff_selection;
+#[cfg(test)]
+mod diff_selection_tests;
 pub mod drawer;
 pub(crate) mod editor;
 pub(crate) mod editor_binding;

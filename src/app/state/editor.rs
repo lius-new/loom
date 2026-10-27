@@ -70,6 +70,8 @@ pub struct EditorState {
 
     pub modifiers: KeyModifiers,
     pub drag: Option<DragSelection>,
+    /// Text selected in the diff view.
+    pub diff_selection: Option<crate::features::git::diff_selection::DiffSelection>,
     /// A press can place the caret smoothly; only a real drag must follow immediately.
     pub caret_dragging: bool,
     pub last_click: Option<(Instant, ViewId, f32, f32, u8)>,

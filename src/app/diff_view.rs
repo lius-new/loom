@@ -1,9 +1,13 @@
 //! Diff input coordination; geometry and painting stay in UI.
 use crate::app::context::AppContext;
-use crate::app::state::AppState;
+use crate::app::state::{AppState, MainSurface};
 use crate::domain::identity::PaneId;
+use crate::features::git::diff_document::ChangesLayout;
+use crate::features::git::diff_selection::{DiffSelection, SelectionUnit};
+use crate::features::keymap::action::Action;
 use crate::ui::chrome::diff_binding::{Binding, Command, EditorFrame, Snapshot};
 use crate::ui::diff_editor::{TOOLBAR_H, code_left, row_h, scroll_metrics};
+use crate::ui::diff_selection::{Geometry, point_at};
 use lgui::core::UiFocusHandle;
 use lgui::prelude::{Element, UiRect};
 pub fn binding(state: &AppContext) -> Binding {
@@ -24,6 +28,7 @@ pub fn binding(state: &AppContext) -> Binding {
                     editor_horizontal_scrollbar_dragging: app
                         .editor
                         .editor_horizontal_scrollbar_dragging,
+                    selection: app.editor.diff_selection,
                 },
             }
         },
@@ -62,6 +67,7 @@ pub fn run(state: &AppContext, c: Command) -> bool {
         }
         Command::SplitEnd => app.editor.diff_split.drag = None,
         Command::Layout(pane, split) => {
+            app.editor.diff_selection = None;
             app.git.ui.split_diff = split;
             app.workspace.activate_pane(pane);
             app.workspace.set_scroll(pane, 0.0, 0.0);
@@ -71,10 +77,12 @@ pub fn run(state: &AppContext, c: Command) -> bool {
             navigate_change(app, &starts, next);
         }
         Command::Toggle(pane, request) => {
+            app.editor.diff_selection = None;
             app.workspace.activate_pane(pane);
             app.workspace.toggle_diff_section(pane, request);
         }
         Command::ToggleAll(pane) => {
+            app.editor.diff_selection = None;
             let Some(sections) = app
                 .workspace
                 .diff(pane)
@@ -99,19 +107,215 @@ pub fn run(state: &AppContext, c: Command) -> bool {
                 app.workspace.set_scroll(pane, 0.0, 0.0);
             }
         }
+        Command::SelectStart(pane, body, point) => {
+            app.workspace.activate_pane(pane);
+            let Some(view) = app.workspace.active() else {
+                return;
+            };
+            let clicks = app.editor.click_count(view, point.0, point.1);
+            let extend = app
+                .editor
+                .modifiers
+                .shift()
+                .then_some(app.editor.diff_selection)
+                .flatten();
+            let split = app.git.ui.split_diff;
+            let Some((geometry, layout)) = selection_geometry(app, pane, body) else {
+                return;
+            };
+            let document = app.workspace.diff(pane).expect("geometry needs a diff");
+            let hit = point_at(document, layout.as_ref(), geometry, None, point);
+            app.editor.diff_selection =
+                hit.filter(|(_, _, inside)| *inside)
+                    .map(|(side, point, _)| {
+                        let unit = match clicks {
+                            3 => SelectionUnit::Line,
+                            2 => SelectionUnit::Word,
+                            _ => SelectionUnit::Character,
+                        };
+                        DiffSelection::start(
+                            document,
+                            split,
+                            pane,
+                            side,
+                            point,
+                            unit,
+                            extend.as_ref(),
+                        )
+                    });
+        }
+        Command::SelectDrag(pane, body, point) => {
+            let Some(mut selection) = app
+                .editor
+                .diff_selection
+                .filter(|selection| selection.dragging && selection.pane == pane)
+            else {
+                return;
+            };
+            // Holding the pointer past an edge scrolls toward it.
+            let (x, y) = app.workspace.scroll(pane);
+            let step = row_h();
+            let toward = |value: f32, low: f32, high: f32| {
+                if value < low {
+                    -step
+                } else if value > high {
+                    step
+                } else {
+                    0.0
+                }
+            };
+            let (max_x, max_y) = scroll_limits(app, pane, body);
+            app.workspace.set_scroll(
+                pane,
+                (x + toward(point.0, body.left, body.right)).clamp(0.0, max_x),
+                (y + toward(point.1, body.top, body.bottom)).clamp(0.0, max_y),
+            );
+            let split = app.git.ui.split_diff;
+            let Some((geometry, layout)) = selection_geometry(app, pane, body) else {
+                return;
+            };
+            let document = app.workspace.diff(pane).expect("geometry needs a diff");
+            if let Some((_, point, _)) = point_at(
+                document,
+                layout.as_ref(),
+                geometry,
+                Some(selection.side),
+                point,
+            ) {
+                selection.drag_to(document, split, point);
+                app.editor.diff_selection = Some(selection);
+            }
+        }
+        Command::SelectEnd => {
+            if let Some(selection) = &mut app.editor.diff_selection {
+                selection.dragging = false;
+            }
+        }
+        Command::Focus(focused) => {
+            app.editor.focused = focused;
+            if !focused && let Some(selection) = &mut app.editor.diff_selection {
+                selection.dragging = false;
+            }
+        }
         Command::Open(_) => unreachable!(),
     });
     true
+}
+fn selection_geometry(
+    app: &AppState,
+    pane: PaneId,
+    body: UiRect,
+) -> Option<(Geometry, Option<ChangesLayout>)> {
+    let document = app.workspace.diff(pane)?;
+    let split = app.git.ui.split_diff;
+    let layout = document
+        .sections
+        .as_ref()
+        .map(|_| document.changes_layout(split, &app.workspace.collapsed_diffs(pane)));
+    let (scroll_x, scroll_y) = app.workspace.scroll(pane);
+    let geometry = Geometry {
+        body,
+        split,
+        ratio: app.editor.diff_split.ratio,
+        scroll_x,
+        scroll_y,
+    };
+    Some((geometry, layout))
+}
+fn scroll_limits(app: &AppState, pane: PaneId, body: UiRect) -> (f32, f32) {
+    let Some((_, layout)) = selection_geometry(app, pane, body) else {
+        return (0.0, 0.0);
+    };
+    let Some(document) = app.workspace.diff(pane) else {
+        return (0.0, 0.0);
+    };
+    let split = app.git.ui.split_diff;
+    let rows = layout.map_or_else(
+        || {
+            if split {
+                document.split_rows.len()
+            } else {
+                document.rows.len()
+            }
+        },
+        |layout| layout.row_count,
+    );
+    let metrics = scroll_metrics(
+        body,
+        split,
+        rows,
+        document.longest_line(split),
+        app.editor.diff_split.ratio,
+    );
+    (metrics.max_x, metrics.max_y)
+}
+/// Copy, select-all and clear for text selected in the diff view.
+pub(crate) fn key_action(
+    state: &AppContext,
+    action: Action,
+    clipboard: lgui::services::ClipboardHandle,
+) -> bool {
+    let app = state.get();
+    if app.main_surface() != MainSurface::Diff || !app.editor.focused {
+        return false;
+    }
+    let pane = app.workspace.active_pane();
+    let split = app.git.ui.split_diff;
+    let selection = app
+        .editor
+        .diff_selection
+        .filter(|selection| selection.pane == pane);
+    match action {
+        Action::Copy => {
+            let Some(text) =
+                selection
+                    .zip(app.workspace.diff(pane))
+                    .and_then(|(selection, document)| {
+                        selection.text(document, split, &app.workspace.collapsed_diffs(pane))
+                    })
+            else {
+                return false;
+            };
+            drop(app);
+            if let Err(error) = clipboard.write_text(&text) {
+                state.update(|app| app.show_error(format!("Clipboard: {error}")));
+            }
+            true
+        }
+        Action::SelectAll => {
+            let all = app.workspace.diff(pane).and_then(|document| {
+                DiffSelection::all(document, split, pane, &app.workspace.collapsed_diffs(pane))
+            });
+            drop(app);
+            state.update(|app| app.editor.diff_selection = all);
+            true
+        }
+        Action::Cancel if selection.is_some() => {
+            drop(app);
+            state.update(|app| app.editor.diff_selection = None);
+            true
+        }
+        _ => false,
+    }
 }
 pub fn render(
     pane: PaneId,
     rect: UiRect,
     state: AppContext,
     git: crate::ui::git::commands::Binding,
+    surface_id: lgui::core::UiId,
     focus: UiFocusHandle,
     scrollbars: crate::ui::editor_binding::Binding,
 ) -> Element {
-    crate::ui::diff_editor::render(pane, rect, binding(&state), git, focus, scrollbars)
+    crate::ui::diff_editor::render(
+        pane,
+        rect,
+        binding(&state),
+        git,
+        surface_id,
+        focus,
+        scrollbars,
+    )
 }
 /// Use the same window-level drag handling as the text editor, including
 /// movements outside the scrollbar strip.
@@ -201,6 +405,7 @@ mod tests {
             rect,
             state.clone(),
             crate::app::git_view::binding(&state, &store),
+            lgui::core::UiId::new("diff-test-surface"),
             focus,
             binding,
         )
@@ -784,5 +989,117 @@ mod tests {
         assert_eq!(app.workspace.active_scroll().1, 2.0 * row_h());
         navigate_change(&mut app, &[2, 8], false);
         assert_eq!(app.workspace.active_scroll().1, 8.0 * row_h());
+    }
+
+    #[derive(Default)]
+    struct TestClipboard(std::sync::Mutex<Option<String>>);
+
+    impl lgui::services::Clipboard for TestClipboard {
+        fn read_text(&self) -> Result<Option<String>, lgui::services::ClipboardError> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn write_text(&self, text: &str) -> Result<(), lgui::services::ClipboardError> {
+            *self.0.lock().unwrap() = Some(text.to_owned());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn dragging_across_changes_selects_code_and_copy_uses_the_clipboard() {
+        use crate::ui::fonts;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, Point, PointerButton, PointerData, UiScale};
+        use lgui::session::UiSession;
+        use std::sync::{Arc, Mutex};
+        for split in [false, true] {
+            let exposed = Arc::new(Mutex::new(None::<AppContext>));
+            let output = exposed.clone();
+            let viewport = UiRect::new(0.0, 0.0, 900.0, 600.0);
+            let view: AppView = Arc::new(move |cx| {
+                let state = AppContext::detached(cx.state_with(|| {
+                    let mut app = AppState::new();
+                    app.git.ui.split_diff = split;
+                    app.workspace.open_diff(sample_overview(0));
+                    app
+                }));
+                *output.lock().unwrap() = Some(state.clone());
+                let store = cx.state_with(GitStoreSnapshot::default);
+                let id = cx.use_stable_id();
+                let focus = cx.focus_handle(id.clone());
+                let pane = state.get().workspace.active_pane();
+                super::render(
+                    pane,
+                    viewport,
+                    state.clone(),
+                    crate::app::git_view::binding(&state, &store),
+                    id,
+                    focus,
+                    crate::app::editor_view::binding(state.clone(), store.clone(), pane, viewport),
+                )
+            });
+            let context = ApplicationContext::empty(Default::default());
+            let _text = lgui::backend::install_text_environment(
+                &context,
+                lgui::render_skia::skia_text_system_handle(),
+            );
+            let mut session = UiSession::new();
+            session.render_view(&view, viewport, UiScale::ONE);
+            let state = exposed.lock().unwrap().clone().unwrap();
+            assert!(!state.get().editor.focused, "nothing has focus yet");
+            let find = |session: &UiSession, label: &str| {
+                session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|node| node.text.as_deref() == Some(label))
+                    .unwrap_or_else(|| panic!("missing {label}"))
+                    .layout_rect
+            };
+            let char_w = fonts::editor().char_w;
+            let start = find(&session, "    open_changes(repository, file);");
+            let end = find(&session, "    show_all_changes();");
+            let down = Point::new(
+                start.left + 3.0 * char_w + 1.0,
+                (start.top + start.bottom) / 2.0,
+            );
+            let drag = Point::new(end.left + 10.0 * char_w + 1.0, (end.top + end.bottom) / 2.0);
+            for input in [
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(down),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerMove(PointerData::mouse(drag)),
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(drag),
+                    button: PointerButton::Left,
+                },
+            ] {
+                let events = session.handle_input(input);
+                lgui::core::dispatch_runtime_output(
+                    events,
+                    &context,
+                    &lgui::window::WindowId::new("changes-select-test"),
+                    |action| session.handle_default_action(action),
+                    |_| {},
+                );
+                session.render_view(&view, viewport, UiScale::ONE);
+            }
+            let selection = state.get().editor.diff_selection.expect("a selection");
+            assert!(!selection.dragging && !selection.is_empty());
+
+            let clipboard = Arc::new(TestClipboard::default());
+            assert!(key_action(&state, Action::Copy, clipboard.clone()));
+            let copied = clipboard.0.lock().unwrap().clone().unwrap();
+            let expected = if split {
+                " open_changes(repository, file);\n}\nfn on_click() {\n    show_a"
+            } else {
+                " open_changes(repository, file);\n}\nfn on_click() {\n    show_file_diff();\n    show_a"
+            };
+            assert_eq!(copied, expected, "split={split}");
+
+            assert!(key_action(&state, Action::Cancel, clipboard.clone()));
+            assert!(state.get().editor.diff_selection.is_none());
+            assert!(!key_action(&state, Action::Copy, clipboard.clone()));
+        }
     }
 }

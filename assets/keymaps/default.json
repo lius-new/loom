@@ -60,6 +60,14 @@
     }
   },
   {
+    "context": "Diff",
+    "bindings": {
+      "secondary-a": "editor::SelectAll",
+      "secondary-c": "editor::Copy",
+      "escape": "editor::Cancel"
+    }
+  },
+  {
     "context": "Editor",
     "bindings": {
       "secondary-s": "editor::Save",

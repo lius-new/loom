@@ -1,6 +1,7 @@
 //! Diff view snapshot and semantic command port.
 use crate::domain::identity::PaneId;
 use crate::features::git::DiffRequest;
+use crate::features::git::diff_selection::DiffSelection;
 use crate::ui::chrome::tabs_binding::Core;
 use lgui::prelude::UiRect;
 use std::{path::PathBuf, sync::Arc};
@@ -22,6 +23,7 @@ pub struct EditorFrame {
     pub editor_hovered: Option<PaneId>,
     pub editor_vertical_scrollbar_dragging: bool,
     pub editor_horizontal_scrollbar_dragging: bool,
+    pub selection: Option<DiffSelection>,
 }
 pub struct Snapshot {
     pub workspace: Core,
@@ -39,6 +41,10 @@ pub enum Command {
     Navigate(PaneId, Arc<Vec<usize>>, bool),
     Toggle(PaneId, DiffRequest),
     ToggleAll(PaneId),
+    SelectStart(PaneId, UiRect, (f32, f32)),
+    SelectDrag(PaneId, UiRect, (f32, f32)),
+    SelectEnd,
+    Focus(bool),
 }
 #[derive(Clone)]
 pub struct Binding {

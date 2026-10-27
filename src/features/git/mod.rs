@@ -4,6 +4,9 @@ pub mod actions;
 pub mod conflict;
 pub mod diff;
 pub mod diff_document;
+pub mod diff_selection;
+#[cfg(test)]
+pub(crate) mod diff_selection_tests;
 pub mod error;
 pub mod model;
 pub mod operation;

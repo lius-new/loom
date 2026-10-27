@@ -255,6 +255,9 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
     if crate::app::markdown_view::key_action(&env.state, action, env.application.clipboard()) {
         return true;
     }
+    if crate::app::diff_view::key_action(&env.state, action, env.application.clipboard()) {
+        return true;
+    }
     match action {
         Action::NoAction => false,
         Action::SearchToggleCase

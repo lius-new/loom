@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use lgui::core::{
     CursorIcon, EventPolicy, KeyState, PointerButton, SemanticRole, Semantics, UiElement,
@@ -2061,6 +2061,17 @@ pub(crate) fn hit_column(layout: &LineLayout, x: f32, y: f32) -> usize {
         .enumerate()
         .min_by_key(|(_, i)| i.abs_diff(index))
         .map_or(0, |(i, _)| i)
+}
+/// Display columns before the `chars`-th character, with tabs at four columns.
+pub(crate) fn display_columns(line: &str, chars: usize) -> usize {
+    line.chars().take(chars).fold(0, |column, ch| {
+        column
+            + if ch == '\t' {
+                4 - column % 4
+            } else {
+                UnicodeWidthChar::width(ch).unwrap_or(0)
+            }
+    })
 }
 pub(crate) fn fallback_hit_column(line: &str, x: f32) -> usize {
     let mut column = 0;

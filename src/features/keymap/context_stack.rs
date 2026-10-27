@@ -131,6 +131,8 @@ pub fn context_stack(app: &ContextFacts) -> Vec<KeyContext> {
         stack.push(KeyContext::new(TERMINAL));
     } else if app.surface == "markdown" && app.editor {
         stack.push(KeyContext::new("Markdown"));
+    } else if app.surface == "diff" && app.editor {
+        stack.push(KeyContext::new("Diff"));
     } else if app.editor {
         stack.push(editor_context(app));
         if app.vim_active {

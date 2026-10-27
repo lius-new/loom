@@ -15,13 +15,14 @@ use crate::features::git::diff_document::{
     ChangesLayout, DiffDocument, DiffRow, DiffRowKind, SplitDiffRow,
 };
 use crate::ui::chrome::diff_binding::{Binding, Command};
+use crate::ui::diff_selection::Geometry;
 use crate::ui::editor::view::{self as editor_view, SCROLLBAR_SIZE, ScrollMetrics};
 use crate::ui::fonts;
 use crate::ui::git::commands::{Binding as GitBinding, Command as GitCommand};
 use crate::ui::theme;
 
 pub(crate) const TOOLBAR_H: f32 = 34.0;
-const NUMBER_W: f32 = 44.0;
+pub(crate) const NUMBER_W: f32 = 44.0;
 const MARKER_W: f32 = 20.0;
 const BUTTON_H: f32 = 22.0;
 const BUTTON_GAP: f32 = 4.0;
@@ -37,6 +38,7 @@ pub fn render(
     rect: UiRect,
     state: Binding,
     git_commands: GitBinding,
+    surface_id: UiId,
     editor_focus: UiFocusHandle,
     scrollbars: crate::ui::editor_binding::Binding,
 ) -> Element {
@@ -101,23 +103,57 @@ pub fn render(
     let scroll_y = stored_y.clamp(0.0, max_y);
 
     let wheel_state = state.clone();
-    let mut root = panel(rect, VisualStyle::filled(theme::c().bg))
-        .key(format!("diff-pane-{}", pane.get()))
-        .event_policy(EventPolicy::INTERACTIVE)
-        .on_wheel(move |cx, delta| {
-            let (step_x, step_y) = match delta.unit {
-                WheelUnit::Lines => (delta.x * row_h() * 3.0, delta.y * row_h() * 3.0),
-                WheelUnit::Pixels => (delta.x, delta.y),
-            };
-            wheel_state.run(Command::Wheel(pane, step_x, step_y, max_x, max_y));
-            cx.stop_propagation();
-        });
+    let mut root = Element::new(move |cx| {
+        UiElement::panel(surface_id, rect, VisualStyle::filled(theme::c().bg))
+            .semantics(Semantics::new(SemanticRole::Group).name("Changes view"))
+            .children(cx.children)
+    })
+    .event_policy(EventPolicy::INTERACTIVE)
+    .on_wheel(move |cx, delta| {
+        let (step_x, step_y) = match delta.unit {
+            WheelUnit::Lines => (delta.x * row_h() * 3.0, delta.y * row_h() * 3.0),
+            WheelUnit::Pixels => (delta.x, delta.y),
+        };
+        wheel_state.run(Command::Wheel(pane, step_x, step_y, max_x, max_y));
+        cx.stop_propagation();
+    });
     let pointer_state = state.clone();
     let pointer_focus = editor_focus.clone();
     root = root.on_pointer_down(move |_cx, _pointer| {
         pointer_state.run(Command::Activate(pane));
         pointer_focus.focus();
     });
+    let select_state = state.clone();
+    root = root.on_pointer_down_with_button(move |_cx, pointer, button| {
+        let point = pointer.point;
+        let over_scrollbar = (max_y > 0.0 && point.x >= body_rect.right - SCROLLBAR_SIZE)
+            || (max_x > 0.0 && point.y >= body_rect.bottom - SCROLLBAR_SIZE);
+        if button == lgui::core::PointerButton::Left && point.y >= body_rect.top && !over_scrollbar
+        {
+            select_state.run(Command::SelectStart(pane, body_rect, (point.x, point.y)));
+        }
+    });
+    let drag_state = state.clone();
+    root = root.on_pointer_drag(move |_cx, pointer| {
+        drag_state.run(Command::SelectDrag(
+            pane,
+            body_rect,
+            (pointer.point.x, pointer.point.y),
+        ));
+    });
+    let end_state = state.clone();
+    root = root.on_pointer_up(move |_cx, _pointer| {
+        end_state.run(Command::SelectEnd);
+    });
+    let focus_state = state.clone();
+    let blur_state = state.clone();
+    root = root
+        .on_focus(move |_| {
+            focus_state.run(Command::Focus(true));
+        })
+        .on_blur(move |_| {
+            blur_state.run(Command::Focus(false));
+        });
 
     root = root.child(toolbar(
         pane,
@@ -203,6 +239,25 @@ pub fn render(
     } else {
         root.child(render_inline(body_rect, &document.rows, scroll_x, scroll_y))
     };
+
+    if let Some(selection) = app
+        .editor
+        .selection
+        .filter(|selection| selection.pane == pane && !selection.is_empty())
+    {
+        root = root.child(crate::ui::diff_selection::layer(
+            document,
+            overview.as_ref(),
+            Geometry {
+                body: body_rect,
+                split,
+                ratio: app.editor.diff_split.ratio,
+                scroll_x,
+                scroll_y,
+            },
+            &selection,
+        ));
+    }
 
     if !document.blocks.is_empty() {
         root = root.child(block_buttons(

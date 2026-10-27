@@ -155,6 +155,10 @@
       "owner": "app/state/editor",
       "migrated_in": "R3"
     },
+    "diff_selection": {
+      "owner": "app/state/editor",
+      "migrated_in": "R3"
+    },
     "last_tree_click": {
       "owner": "app/state/editor",
       "migrated_in": "R3"
