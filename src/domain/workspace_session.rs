@@ -426,7 +426,7 @@ fn save_pane_node<D: Clone, K: Clone + Ord>(
                 {
                     let SavedView::Text { encoding, .. } = &mut saved;
                     let dirty = document.is_dirty();
-                    *encoding = if document.loading.is_some() {
+                    *encoding = if !document.is_text() {
                         document.recovery.clone()
                     } else if dirty
                         || document.format() != Default::default()

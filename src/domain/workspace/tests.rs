@@ -20,6 +20,43 @@ fn observed(text: &str) -> DiskRead {
 }
 
 #[test]
+fn failed_tabs_never_expose_empty_text_for_editing_or_saving_and_retry_preserves_views() {
+    let mut workspace = PureWorkspace::new();
+    let path = std::path::PathBuf::from("unreadable.txt");
+    let id = workspace.open_prepared_text(
+        PreparedTextFile::failed(path.clone(), "Permission denied".into()),
+        OpenMode::Permanent,
+    );
+    let left = workspace.active_pane();
+    let left_view = workspace.active().unwrap();
+    let right = workspace.split(left, Direction::Right).unwrap();
+    let right_view = workspace.active().unwrap();
+    assert_eq!(workspace.pane_open_error(left), Some("Permission denied"));
+    assert_eq!(workspace.pane_open_error(right), Some("Permission denied"));
+    assert!(workspace.editor(left).is_none());
+    assert!(workspace.document_editor_mut(id).is_none());
+    assert!(workspace.save_snapshot(id).is_none());
+    assert!(workspace.text_snapshots().is_empty());
+    assert!(!workspace.is_dirty(id));
+    let prepared = PreparedTextFile::with_disk_state(
+        path,
+        "recovered".into(),
+        DiskState::from_contents("recovered"),
+    );
+    assert_eq!(
+        workspace.open_prepared_text(prepared, OpenMode::Permanent),
+        id
+    );
+    assert_eq!(workspace.active(), Some(right_view));
+    assert_eq!(workspace.pane(left).unwrap().active(), Some(left_view));
+    assert_eq!(workspace.editor(left).unwrap().text(), "recovered");
+    assert_eq!(workspace.editor(right).unwrap().text(), "recovered");
+    assert!(workspace.pane_open_error(left).is_none());
+    assert!(workspace.pane_open_error(right).is_none());
+    assert_eq!(workspace.documents.len(), 1);
+}
+
+#[test]
 fn unicode_edits_and_shared_undo_transform_both_pane_selections() {
     let mut workspace = PureWorkspace::new();
     let id = open(&mut workspace, "virtual.txt", "a界b\r\n");

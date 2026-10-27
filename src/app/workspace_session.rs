@@ -238,7 +238,12 @@ pub(crate) fn hydrate_editor_layout_with(
     mut read: impl FnMut(&Path) -> Result<String, String>,
 ) {
     restore_editor_layout_with(app, layout, |workspace, path| {
-        read(&path).ok().map(|text| workspace.open_path(path, text))
+        Some(match read(&path) {
+            Ok(text) => workspace.open_path(path, text),
+            Err(error) => {
+                workspace.open_failed(path, error, crate::app::workspace::OpenMode::Permanent)
+            }
+        })
     });
 }
 
@@ -278,7 +283,9 @@ fn restore_editor_layout_with(
             {
                 if let Some(doc) = app.workspace.documents.get_mut(&document) {
                     doc.recovery = Some(encoding.clone());
-                    if doc.loading.is_none() {
+                    if doc.loading.is_none()
+                        && (doc.open_error.is_none() || encoding.unsaved_text.is_some())
+                    {
                         crate::domain::workspace::restore_encoding(doc);
                     }
                 }

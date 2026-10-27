@@ -162,9 +162,8 @@ fn finish(
                     doc.disk_conflict = path.exists();
                 }
             } else {
-                app.workspace.close(id);
+                app.workspace.fail_open(id, &path, error);
             }
-            app.show_error(error);
             true
         }
     }
@@ -396,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_restore_skips_unreadable_tab_and_preserves_remaining_order() {
+    fn failed_restore_keeps_the_tab_and_describes_the_failure_without_a_toast() {
         let mut app = AppState::new();
         crate::app::workspace_commands::hydrate_editor_layout(&mut app, Some(layout()));
         let id = app.workspace.active_document().unwrap();
@@ -406,12 +405,17 @@ mod tests {
             "large.json".into(),
             Err("Could not read large.json".into())
         ));
-        assert!(app.chrome.toast.is_some());
-        assert!(
-            app.workspace
-                .file_id_for_path(Path::new("large.json"))
-                .is_none()
+        assert!(app.chrome.toast.is_none());
+        assert_eq!(
+            app.workspace.file_id_for_path(Path::new("large.json")),
+            Some(id)
         );
+        assert_eq!(
+            app.workspace.open_error(id),
+            Some("Could not read large.json")
+        );
+        assert!(app.workspace.active_editor().is_none());
+        assert!(app.workspace.save_snapshot(id).is_none());
         assert_eq!(app.workspace.loading_files().len(), 2);
         assert!(!finish(
             &mut app,

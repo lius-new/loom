@@ -663,6 +663,8 @@ impl AppState {
             }
         } else if self.workspace.diff(pane).is_some() {
             MainSurface::Diff
+        } else if self.workspace.pane_open_error(pane).is_some() {
+            MainSurface::Empty
         } else if self
             .workspace
             .pane(pane)

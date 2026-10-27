@@ -1168,9 +1168,24 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 surface_id,
                 editor_focus.clone(),
             ),
-            MainSurface::Empty => Element::new(move |_cx| {
-                UiElement::panel(surface_id, body, VisualStyle::filled(theme::c().bg))
-            }),
+            MainSurface::Empty => {
+                if let Some(error) = s.workspace.pane_open_error(pane) {
+                    let activate = state.clone();
+                    let focus = editor_focus.clone();
+                    crate::ui::file_error::render(body, error, surface_id)
+                        .event_policy(lgui::core::EventPolicy::INTERACTIVE)
+                        .on_click(move || {
+                            activate.update(|app| {
+                                app.workspace.activate_pane(pane);
+                            });
+                            focus.focus();
+                        })
+                } else {
+                    Element::new(move |_cx| {
+                        UiElement::panel(surface_id, body, VisualStyle::filled(theme::c().bg))
+                    })
+                }
+            }
             MainSurface::WorkspaceHome => super::chrome::workspace_home(
                 body,
                 state.clone(),

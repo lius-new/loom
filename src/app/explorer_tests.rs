@@ -61,7 +61,7 @@ fn launch_paths_open_the_first_folder_add_others_and_open_files() {
 }
 
 #[test]
-fn unreadable_launch_files_report_one_toast_and_keep_the_workspace() {
+fn unreadable_launch_files_keep_error_tabs_without_a_toast() {
     let mut app = AppState::new();
     app.explorer
         .model
@@ -78,15 +78,16 @@ fn unreadable_launch_files_report_one_toast_and_keep_the_workspace() {
         app.explorer.model.roots(),
         vec![PathBuf::from("previous-workspace")]
     );
-    assert!(app.workspace.active_items().is_empty());
+    assert_eq!(app.workspace.active_items().len(), 2);
+    let pane = app.workspace.active_pane();
     assert!(
-        app.chrome
-            .toast
-            .as_ref()
+        app.workspace
+            .pane_open_error(pane)
             .unwrap()
-            .message
-            .ends_with("(and 1 more)")
+            .contains("missing-b.rs")
     );
+    assert!(app.workspace.active_editor().is_none());
+    assert!(app.chrome.toast.is_none());
 }
 
 #[test]
@@ -262,7 +263,7 @@ fn dropping_a_file_near_a_pane_edge_opens_it_in_a_new_split() {
 }
 
 #[test]
-fn dropping_a_file_on_another_pane_opens_it_there_and_failures_change_nothing() {
+fn dropping_a_file_on_another_pane_keeps_failures_in_that_pane() {
     let mut app = AppState::new();
     let left = app.workspace.active_pane();
     app.workspace
@@ -278,9 +279,11 @@ fn dropping_a_file_on_another_pane_opens_it_there_and_failures_change_nothing() 
     });
 
     press_file(&mut app, "gone.rs", 1, drop);
-    assert!(!finish_file_drag_with(&mut app, |_| Err("gone".to_owned())));
+    assert!(finish_file_drag_with(&mut app, |_| Err("gone".to_owned())));
     assert_eq!(app.workspace.pane_count(), 2);
-    assert_eq!(app.workspace.active_pane(), left);
+    assert_eq!(app.workspace.active_pane(), right);
+    assert_eq!(app.workspace.pane_open_error(right), Some("gone"));
+    assert!(app.chrome.toast.is_none());
 
     press_file(&mut app, "new.rs", 1, drop);
     assert!(finish_file_drag_with(&mut app, read_ok));

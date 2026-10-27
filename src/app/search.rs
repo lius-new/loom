@@ -202,6 +202,7 @@ pub fn navigate(
     state.update(|app| app.search.ui.selected = Some((file.path.clone(), index)));
     let state = state.clone();
     let worker_state = state.clone();
+    let failed_path = file.path.clone();
     let worker = std::thread::Builder::new()
         .name("loom-search-open".into())
         .spawn(move || {
@@ -256,8 +257,18 @@ pub fn navigate(
                             app.editor.ime = None;
                             focused = focus_editor;
                         }
-                        Err(error) => {
-                            app.show_error(error);
+                        Err(crate::features::search::navigation::OpenError::Read(error)) => {
+                            let mode = if permanent {
+                                crate::app::workspace::OpenMode::Permanent
+                            } else {
+                                crate::app::workspace::OpenMode::Preview
+                            };
+                            app.workspace.open_failed(file.path.clone(), error, mode);
+                            app.chrome.toast = None;
+                            focused = focus_editor;
+                            app.search.ui.refresh += 1;
+                        }
+                        Err(crate::features::search::navigation::OpenError::Changed(_)) => {
                             app.search.ui.refresh += 1;
                         }
                     }
@@ -269,7 +280,19 @@ pub fn navigate(
             });
         });
     if let Err(error) = worker {
-        state.update(|app| app.show_error(format!("Could not open search result: {error}")));
+        state.update(|app| {
+            let mode = if permanent {
+                crate::app::workspace::OpenMode::Permanent
+            } else {
+                crate::app::workspace::OpenMode::Preview
+            };
+            app.workspace.open_failed(
+                failed_path,
+                format!("Could not open search result: {error}"),
+                mode,
+            );
+            app.chrome.toast = None;
+        });
     }
 }
 

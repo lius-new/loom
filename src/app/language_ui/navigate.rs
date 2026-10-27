@@ -157,7 +157,11 @@ pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
             app.editor.language.navigation_revision.wrapping_add(1);
         revision = app.editor.language.navigation_revision;
     });
-    if app.workspace.file_id_for_path(&place.path).is_some() {
+    if app
+        .workspace
+        .file_id_for_path(&place.path)
+        .is_some_and(|id| app.workspace.open_error(id).is_none())
+    {
         state.update(|app| {
             arrive(
                 app,
@@ -174,7 +178,14 @@ pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
         .unwrap_or(false);
     if !size_ok {
         let name = place.path.display().to_string();
-        state.update(move |app| app.show_error(format!("Could not open {name}")));
+        state.update(move |app| {
+            app.workspace.open_failed(
+                place.path,
+                format!("Could not open {name}: file is unavailable or larger than 16 MiB."),
+                crate::app::workspace::OpenMode::Permanent,
+            );
+            app.chrome.toast = None;
+        });
         return;
     }
     let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
@@ -182,14 +193,16 @@ pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
     };
     let worker_state = state.clone();
     let path = place.path.clone();
+    let failed_path = path.clone();
     let spawned = std::thread::Builder::new()
         .name("loom-goto-open".to_owned())
         .spawn(move || {
-            let read = std::fs::read(&path)
-                .map_err(|error| error.to_string())
-                .and_then(|bytes| {
-                    String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_owned())
-                });
+            let read =
+                crate::infrastructure::document_filesystem::read_encoded(&path, None, MAX_FILE)
+                    .map_err(|error| error.to_string())
+                    .map(|(decoded, disk)| {
+                        crate::app::workspace::PreparedTextFile::with_encoding(path, decoded, disk)
+                    });
             application.post(move || {
                 worker_state.update(|app| {
                     if app.editor.language.navigation_revision != revision
@@ -206,23 +219,41 @@ pub fn go(state: &AppContext, place: Place, rect: UiRect, remember: bool) {
                         return;
                     }
                     match read {
-                        Ok(text) => arrive(
-                            app,
-                            &place,
-                            Some(text),
-                            rect,
-                            remember.then_some(origin).flatten(),
-                        ),
-                        Err(error) => app.show_error(format!(
-                            "Could not open {}: {error}",
-                            place.path.display()
-                        )),
+                        Ok(prepared) => {
+                            app.workspace.open_prepared_text(
+                                prepared,
+                                crate::app::workspace::OpenMode::Permanent,
+                            );
+                            arrive(
+                                app,
+                                &place,
+                                None,
+                                rect,
+                                remember.then_some(origin).flatten(),
+                            );
+                            app.chrome.toast = None;
+                        }
+                        Err(error) => {
+                            app.workspace.open_failed(
+                                place.path.clone(),
+                                format!("Could not open {}: {error}", place.path.display()),
+                                crate::app::workspace::OpenMode::Permanent,
+                            );
+                            app.chrome.toast = None;
+                        }
                     }
                 })
             });
         });
     if spawned.is_err() {
-        state.update(|app| app.show_error("Could not start reading the file"));
+        state.update(|app| {
+            app.workspace.open_failed(
+                failed_path,
+                "Could not start reading the file".into(),
+                crate::app::workspace::OpenMode::Permanent,
+            );
+            app.chrome.toast = None;
+        });
     }
 }
 

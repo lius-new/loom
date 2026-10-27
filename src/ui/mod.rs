@@ -12,6 +12,7 @@ pub(crate) mod editor;
 pub(crate) mod editor_binding;
 pub(crate) mod encoding_picker;
 pub mod explorer;
+pub(crate) mod file_error;
 pub mod git;
 pub mod keymap_page;
 pub mod language_details;

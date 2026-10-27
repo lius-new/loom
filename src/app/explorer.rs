@@ -27,7 +27,11 @@ pub(crate) fn open_tree_file(
     clicks: u8,
     loader: Option<&crate::app::file_loading::FileLoader>,
 ) -> bool {
-    if app.workspace.file_id_for_path(&path).is_some() {
+    if app
+        .workspace
+        .file_id_for_path(&path)
+        .is_some_and(|id| app.workspace.open_error(id).is_none())
+    {
         crate::app::file_loading::cancel(app);
         return open_tree_file_with(app, path, clicks, |_| Ok(String::new()));
     } else if crate::app::file_loading::request(
@@ -53,6 +57,7 @@ fn open_tree_file_with(
     read: impl FnOnce(&Path) -> Result<String, String>,
 ) -> bool {
     if let Some(id) = app.workspace.file_id_for_path(&path)
+        && app.workspace.open_error(id).is_none()
         && app
             .workspace
             .active_items()
@@ -76,8 +81,14 @@ fn open_tree_file_with(
             true
         }
         Err(message) => {
-            app.show_error(message);
-            false
+            let mode = if clicks > 1 {
+                crate::app::workspace::OpenMode::Permanent
+            } else {
+                crate::app::workspace::OpenMode::Preview
+            };
+            app.workspace.open_failed(path, message, mode);
+            app.chrome.toast = None;
+            true
         }
     }
 }
@@ -128,18 +139,15 @@ fn finish_file_drag_with(
     let Some(drop) = drag.drop else {
         return false;
     };
-    let contents = match read(&drag.path) {
-        Ok(contents) => contents,
-        Err(message) => {
-            app.show_error(message);
-            return false;
-        }
+    let prepared = match read(&drag.path) {
+        Ok(contents) => crate::app::workspace::PreparedTextFile::new(drag.path, contents),
+        Err(message) => crate::app::workspace::PreparedTextFile::failed(drag.path, message),
     };
     let workspace = &mut app.workspace;
     match drop {
         TabDrop::Insert { pane, index } => {
             workspace.activate_pane(pane);
-            workspace.open_path(drag.path, contents);
+            workspace.open_prepared_text(prepared, crate::app::workspace::OpenMode::Permanent);
             let id = workspace.active().unwrap();
             // `index` is an insertion point; `move_tab` takes a final index.
             if let Some(position) = workspace
@@ -152,7 +160,7 @@ fn finish_file_drag_with(
         }
         TabDrop::Pane { pane, split: None } => {
             workspace.activate_pane(pane);
-            workspace.open_path(drag.path, contents);
+            workspace.open_prepared_text(prepared, crate::app::workspace::OpenMode::Permanent);
         }
         TabDrop::Pane {
             pane,
@@ -162,7 +170,7 @@ fn finish_file_drag_with(
                 return false;
             };
             workspace.activate_pane(new);
-            workspace.open_path(drag.path, contents);
+            workspace.open_prepared_text(prepared, crate::app::workspace::OpenMode::Permanent);
         }
     }
     app.chrome.toast = None;
@@ -603,7 +611,7 @@ fn add_folder_state(app: &mut AppState, path: PathBuf) -> bool {
 /// Open paths given on the command line, after the previous session has been
 /// restored. The first folder replaces the workspace like Open Folder and any
 /// further folders are added to it; files open as tabs, the last one active.
-/// Unreadable paths are reported once in a toast.
+/// Unreadable files keep a tab describing why they could not be opened.
 pub(crate) fn open_launch_paths(
     app: &mut AppState,
     paths: Vec<PathBuf>,
@@ -624,7 +632,11 @@ pub(crate) fn open_launch_paths(
             }
         } else {
             if loader.is_some() {
-                if let Some(id) = app.workspace.file_id_for_path(&path) {
+                if let Some(id) = app
+                    .workspace
+                    .file_id_for_path(&path)
+                    .filter(|id| app.workspace.open_error(*id).is_none())
+                {
                     app.workspace.activate_document(id);
                 } else {
                     crate::app::file_loading::request(
@@ -654,7 +666,6 @@ fn open_launch_paths_with(
     mut read: impl FnMut(&Path) -> Result<String, String>,
 ) -> bool {
     let mut replaced_workspace = false;
-    let mut errors = Vec::new();
     for path in paths {
         // Relative to the launching shell's directory. `absolute` keeps the
         // plain spelling (no `\\?\` prefix), so session tabs still match.
@@ -673,15 +684,14 @@ fn open_launch_paths_with(
             Ok(contents) => {
                 app.workspace.open_path(path, contents);
             }
-            Err(message) => errors.push(message),
+            Err(message) => {
+                app.workspace.open_failed(
+                    path,
+                    message,
+                    crate::app::workspace::OpenMode::Permanent,
+                );
+            }
         }
-    }
-    if let Some(first) = errors.first() {
-        let message = match errors.len() {
-            1 => first.clone(),
-            count => format!("{first} (and {} more)", count - 1),
-        };
-        app.show_error(message);
     }
     replaced_workspace
 }

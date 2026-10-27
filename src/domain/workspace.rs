@@ -43,6 +43,8 @@ pub(crate) struct OpenDocument {
     /// A restored tab has metadata before its text is ready. Never expose its
     /// empty staging buffer to editing, saving or disk reconciliation.
     pub(crate) loading: Option<bool>,
+    /// A failed file keeps its tab and path, but never exposes a staging buffer.
+    pub(crate) open_error: Option<String>,
 }
 
 impl OpenDocument {
@@ -66,6 +68,7 @@ impl OpenDocument {
             disk_conflict: false,
             missing_on_disk: false,
             loading: None,
+            open_error: None,
         }
     }
 
@@ -82,7 +85,7 @@ impl OpenDocument {
 
     /// Whether this tab edits a file on disk (not a diff or the settings page).
     pub(crate) fn is_text(&self) -> bool {
-        self.loading.is_none()
+        self.loading.is_none() && self.open_error.is_none()
     }
 
     pub(crate) fn format(&self) -> crate::domain::encoding::TextFormat {
@@ -199,6 +202,12 @@ pub enum OpenMode {
 pub(crate) struct PreparedTextFile(OpenDocument);
 
 impl PreparedTextFile {
+    pub(crate) fn failed(path: PathBuf, error: String) -> Self {
+        let mut value = Self::with_disk_state(path, String::new(), DiskState::from_contents(""));
+        value.0.open_error = Some(error);
+        value
+    }
+
     pub fn with_encoding(
         path: PathBuf,
         decoded: crate::domain::encoding::DecodedText,
@@ -1469,6 +1478,27 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         self.documents.get(&id).is_some_and(|d| d.loading.is_some())
     }
 
+    pub(crate) fn open_error(&self, id: FileId) -> Option<&str> {
+        self.documents.get(&id)?.open_error.as_deref()
+    }
+
+    pub(crate) fn pane_open_error(&self, pane: PaneId) -> Option<&str> {
+        self.open_error(self.pane_document(pane)?)
+    }
+
+    pub(crate) fn fail_open(&mut self, id: FileId, path: &Path, error: String) -> bool {
+        let Some(document) = self
+            .documents
+            .get_mut(&id)
+            .filter(|document| document.loading.is_some() && document.meta.path == path)
+        else {
+            return false;
+        };
+        document.loading = None;
+        document.open_error = Some(error);
+        true
+    }
+
     pub(crate) fn loading_indicator(&self, id: FileId) -> bool {
         self.documents
             .get(&id)
@@ -1574,7 +1604,20 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
     ) -> FileId {
         let path = prepared.0.meta.path.clone();
         if let Some(id) = self.file_id_for_path(&path) {
-            self.retired.push(Retired::Document(prepared.0));
+            if self.open_error(id).is_some() {
+                let old = self.documents.remove(&id).expect("failed document exists");
+                let mut replacement = prepared.0;
+                replacement.view_ids = old.view_ids.clone();
+                replacement.recovery = old.recovery.clone();
+                if replacement.open_error.is_none() {
+                    restore_encoding(&mut replacement);
+                }
+                self.insert_document(id, replacement);
+                self.retired.push(Retired::Document(old));
+                self.clamp_document_views(id);
+            } else {
+                self.retired.push(Retired::Document(prepared.0));
+            }
             return self.attach_text_tab(id, mode);
         }
         let id = self.allocate_file_id();
@@ -1822,6 +1865,8 @@ pub(crate) fn restore_encoding(document: &mut OpenDocument) {
     if let Some(recovery) = document.recovery.take() {
         document.meta.read_override = recovery.read_override;
         if let Some(text) = recovery.unsaved_text {
+            document.open_error = None;
+            document.loading = None;
             let disk_changed = document.buffer.text()
                 != recovery
                     .saved_text

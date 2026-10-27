@@ -547,7 +547,11 @@ pub(crate) fn open_local(
     let loader = state.services().and_then(|runtime| runtime.file_loader());
     state.update(|app| {
         app.workspace.activate_pane(pane);
-        if let Some(document) = app.workspace.file_id_for_path(&path) {
+        if let Some(document) = app
+            .workspace
+            .file_id_for_path(&path)
+            .filter(|id| app.workspace.open_error(*id).is_none())
+        {
             app.workspace.activate_document(document);
             if let Some(view) = app.workspace.active() {
                 finish_navigation(app, view, fragment);

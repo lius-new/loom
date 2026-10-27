@@ -717,6 +717,12 @@ mod tests {
         hydrate_editor_layout_with(&mut app, Some(layout), read_all_but("missing.rs"));
 
         assert_eq!(app.workspace.open_paths(), vec![first.clone(), second]);
+        assert_eq!(app.workspace.active_items().len(), 3);
+        let failed = app
+            .workspace
+            .file_id_for_path(Path::new("missing.rs"))
+            .unwrap();
+        assert!(app.workspace.open_error(failed).is_some());
         assert_eq!(app.workspace.active_path(), Some(first.as_path()));
     }
 
@@ -870,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn panes_whose_files_are_gone_are_dropped_on_restore() {
+    fn panes_whose_files_are_gone_keep_their_failure_tabs_on_restore() {
         let mut app = AppState::new();
         let layout = EditorLayout {
             root: SavedPaneNode::Split {
@@ -897,8 +903,14 @@ mod tests {
 
         hydrate_editor_layout_with(&mut app, Some(layout), read_all_but("gone.rs"));
 
-        assert_eq!(app.workspace.pane_count(), 1);
+        assert_eq!(app.workspace.pane_count(), 2);
         assert_eq!(app.workspace.open_paths(), vec![PathBuf::from("kept.rs")]);
-        assert_eq!(app.workspace.active_path(), Some(Path::new("kept.rs")));
+        assert_eq!(app.workspace.active_path(), Some(Path::new("gone.rs")));
+        assert!(
+            app.workspace
+                .pane_open_error(app.workspace.active_pane())
+                .is_some()
+        );
+        assert!(app.chrome.toast.is_none());
     }
 }

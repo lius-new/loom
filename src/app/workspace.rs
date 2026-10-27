@@ -109,10 +109,17 @@ impl Workspace {
     }
 
     fn open_path_with_mode(&mut self, path: PathBuf, contents: String, mode: OpenMode) -> FileId {
-        if let Some(id) = self.file_id_for_path(&path) {
+        if let Some(id) = self
+            .file_id_for_path(&path)
+            .filter(|id| self.open_error(*id).is_none())
+        {
             return self.transaction(|core| core.attach_text_tab(id, mode));
         }
         self.open_prepared_text(PreparedTextFile::new(path, contents), mode)
+    }
+
+    pub(crate) fn open_failed(&mut self, path: PathBuf, error: String, mode: OpenMode) -> FileId {
+        self.open_prepared_text(PreparedTextFile::failed(path, error), mode)
     }
 
     pub fn reconcile_disk(&mut self) -> Vec<ReconcileResult> {

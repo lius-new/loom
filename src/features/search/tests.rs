@@ -341,8 +341,7 @@ fn stale_line_navigation_requests_refresh_instead_of_selecting_unrelated_text() 
         version: 4,
     };
     assert!(
-        navigation::prepare(&source, &intent, Some(&buffer))
-            .unwrap_err()
-            .contains("File changed")
+        matches!(navigation::prepare(&source, &intent, Some(&buffer)),
+        Err(navigation::OpenError::Changed(message)) if message.contains("File changed"))
     );
 }

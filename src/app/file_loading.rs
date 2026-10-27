@@ -1,4 +1,4 @@
-//! File preparation stays off the event loop. Only a ready document is installed.
+//! File preparation stays off the event loop. Failures keep an inert file tab.
 use crate::app::context::AppContext;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -152,8 +152,7 @@ pub fn request(
     };
     app.editor.pending_file = Some(pending.clone());
     if !loader.worker.send_work(pending.clone()) {
-        cancel(app);
-        app.show_error("Could not start file loading.");
+        finish(app, generation, Err("Could not start file loading.".into()));
         return true;
     }
     loader.worker.send_timer(pending);
@@ -178,7 +177,12 @@ pub(crate) fn request_files(
     app.workspace.activate_pane(pane);
     let mut paths = paths.into_iter();
     while let Some(path) = paths.next() {
-        if app.workspace.file_id_for_path(&path).is_some() || loader.is_none() {
+        if app
+            .workspace
+            .file_id_for_path(&path)
+            .is_some_and(|id| app.workspace.open_error(id).is_none())
+            || loader.is_none()
+        {
             crate::app::explorer::open_tree_file(app, path, 2, loader);
         } else {
             request(app, path, OpenMode::Permanent, None, loader);
@@ -238,57 +242,49 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
         crate::infrastructure::ui_dispatch::retire(prepared);
         return true;
     }
-    match prepared {
-        Err(error) => {
-            app.show_error(error);
-        }
-        Ok(prepared) => {
-            let pane = if let Some(TabDrop::Pane {
+    let succeeded = prepared.is_ok();
+    let prepared =
+        prepared.unwrap_or_else(|error| PreparedTextFile::failed(pending.path.clone(), error));
+    let pane = if let Some(TabDrop::Pane {
+        pane,
+        split: Some(direction),
+    }) = pending.drop
+    {
+        let Some(new) = app.workspace.split_empty(pane, direction) else {
+            crate::infrastructure::ui_dispatch::retire(prepared);
+            return true;
+        };
+        new
+    } else {
+        pending.pane
+    };
+    app.workspace.activate_pane(pane);
+    app.workspace.open_prepared_text(prepared, pending.mode);
+    let id = app.workspace.active().expect("opened view");
+    if let Some(TabDrop::Insert { index, .. }) = pending.drop {
+        if let Some(position) = app
+            .workspace
+            .pane(pane)
+            .and_then(|p| p.items().iter().position(|item| *item == id))
+        {
+            app.workspace.move_tab(
                 pane,
-                split: Some(direction),
-            }) = pending.drop
-            {
-                let Some(new) = app.workspace.split_empty(pane, direction) else {
-                    crate::infrastructure::ui_dispatch::retire(prepared);
-                    return true;
-                };
-                new
-            } else {
-                pending.pane
-            };
-            app.workspace.activate_pane(pane);
-            app.workspace.open_prepared_text(prepared, pending.mode);
-            let id = app.workspace.active().expect("opened view");
-            if let Some(TabDrop::Insert { index, .. }) = pending.drop {
-                if let Some(position) = app
-                    .workspace
-                    .pane(pane)
-                    .and_then(|p| p.items().iter().position(|item| *item == id))
-                {
-                    app.workspace.move_tab(
-                        pane,
-                        id,
-                        if position < index {
-                            index.saturating_sub(1)
-                        } else {
-                            index
-                        },
-                    );
-                }
-            }
-            app.chrome.toast = None;
-            app.chrome.welcome_hover = None;
-            app.chrome.workspace_home_hover = None;
-            app.editor.drag = None;
-            app.editor.ime = None;
-            if pending.markdown {
-                crate::app::markdown_view::finish_navigation(
-                    app,
-                    id,
-                    pending.markdown_fragment.clone(),
-                );
-            }
+                id,
+                if position < index {
+                    index.saturating_sub(1)
+                } else {
+                    index
+                },
+            );
         }
+    }
+    app.chrome.toast = None;
+    app.chrome.welcome_hover = None;
+    app.chrome.workspace_home_hover = None;
+    app.editor.drag = None;
+    app.editor.ime = None;
+    if pending.markdown && succeeded {
+        crate::app::markdown_view::finish_navigation(app, id, pending.markdown_fragment.clone());
     }
     true
 }
@@ -444,7 +440,7 @@ mod tests {
             .collect();
         assert_eq!(
             paths,
-            ["current.txt", "first.txt", "second.txt"].map(PathBuf::from)
+            ["current.txt", "first.txt", "bad.bin", "second.txt"].map(PathBuf::from)
         );
         assert_eq!(
             app.workspace.active_path(),
@@ -648,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn failures_preserve_the_document_and_finished_loads_ignore_delayed_indicators() {
+    fn failures_keep_an_error_tab_and_ignore_delayed_indicators() {
         let h = Harness::new(|_| Err("Could not open missing.json".into()));
         h.open("missing.json");
         let generation = h
@@ -666,19 +662,51 @@ mod tests {
                 generation,
                 Instant::now() + INDICATOR_DELAY
             ));
+            assert!(app.workspace.active_editor().is_none());
             assert_eq!(
-                app.workspace.active_editor().unwrap().text(),
+                app.workspace.pane_open_error(app.workspace.active_pane()),
+                Some("Could not open missing.json")
+            );
+            let previous = app
+                .workspace
+                .file_id_for_path(std::path::Path::new("current.txt"))
+                .unwrap();
+            assert_eq!(
+                app.workspace.documents[&previous].buffer.text(),
                 "Keep this screen"
             );
-            assert!(
-                app.chrome
-                    .toast
-                    .as_ref()
-                    .unwrap()
-                    .message
-                    .contains("missing.json")
-            );
+            assert!(app.chrome.toast.is_none());
         });
+    }
+
+    #[test]
+    fn retrying_a_failed_file_reuses_its_tab_and_restores_editing() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let attempts = AtomicUsize::new(0);
+        let h = Harness::new(move |request| {
+            if attempts.fetch_add(1, Ordering::Relaxed) == 0 {
+                Err("Permission denied".into())
+            } else {
+                Ok(PreparedTextFile::new(request.path.clone(), "ready".into()))
+            }
+        });
+        h.open("retry.txt");
+        h.pump_until(|app| app.editor.pending_file.is_none());
+        let view = h.state.get().workspace.active().unwrap();
+        let document = h.state.get().workspace.active_document().unwrap();
+        assert_eq!(
+            h.state.get().workspace.open_error(document),
+            Some("Permission denied")
+        );
+        assert!(h.state.get().workspace.save_snapshot(document).is_none());
+        h.open("retry.txt");
+        h.pump_until(|app| app.editor.pending_file.is_none());
+        let app = h.state.get();
+        assert_eq!(app.workspace.active(), Some(view));
+        assert_eq!(app.workspace.active_document(), Some(document));
+        assert_eq!(app.workspace.active_editor().unwrap().text(), "ready");
+        assert_eq!(app.workspace.active_items().len(), 2);
+        assert!(app.chrome.toast.is_none());
     }
 
     #[test]
