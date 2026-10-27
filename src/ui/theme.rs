@@ -478,16 +478,44 @@ pub fn set(id: ThemeId) {
 /// Loom's visual policy. The library only receives explicit coverage parameters;
 /// it does not inspect themes or choose a curve from the window background.
 pub fn text_rendering(id: ThemeId) -> lgui::text::TextRenderingOptions {
+    use super::text_rendering::{ColorPair, coverage};
     let defaults = lgui::text::TextRenderingOptions::default();
-    let rgb = id.theme().palette.bg.0;
-    let brightness = 2126 * ((rgb >> 16) & 255) + 7152 * ((rgb >> 8) & 255) + 722 * (rgb & 255);
-    if cfg!(target_os = "windows") && brightness < 128 * 10000 {
-        defaults
-            .with_lcd_gamma(1.4)
-            .expect("Loom's LCD gamma is valid")
-    } else {
-        defaults
-    }
+    let palette = &id.theme().palette;
+    let pair = |foreground: Color, background: Color, weight| ColorPair {
+        foreground: foreground.0,
+        background: background.0,
+        weight,
+    };
+    let primary = [
+        pair(palette.text, palette.bg, 5.0),
+        pair(palette.text_bright, palette.bg, 1.0),
+        pair(palette.text_soft, palette.sidebar, 1.0),
+        pair(palette.text_muted, palette.sidebar, 1.0),
+        pair(palette.text_dim, palette.sidebar, 0.5),
+        pair(palette.text, palette.surface, 1.0),
+        pair(palette.text, palette.active_line, 0.5),
+        pair(palette.text, palette.selection, 0.5),
+        pair(palette.diff.add_fg, palette.diff.add_bg, 0.25),
+        pair(palette.diff.del_fg, palette.diff.del_bg, 0.25),
+        pair(palette.on_accent, palette.accent, 0.25),
+    ];
+    let syntax = [
+        HighlightId::KEYWORD,
+        HighlightId::FUNCTION,
+        HighlightId::TYPE,
+        HighlightId::STRING,
+        HighlightId::COMMENT,
+        HighlightId::NUMBER,
+        HighlightId::PROPERTY,
+    ]
+    .map(|class| pair(palette.syntax_color(class), palette.bg, 0.25));
+    let Some(profile) = coverage(primary.into_iter().chain(syntax)) else {
+        return defaults;
+    };
+    defaults
+        .with_lcd_gamma(profile.gamma)
+        .and_then(|options| options.with_lcd_contrast(profile.contrast))
+        .expect("Loom's bounded coverage profile is valid")
 }
 
 // ---- Layout metrics (px) ----------------------------------------------

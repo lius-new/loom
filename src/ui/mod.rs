@@ -28,6 +28,7 @@ pub mod tab_context_menu;
 pub mod tab_layout;
 pub mod tabs;
 pub mod terminal;
+pub(crate) mod text_rendering;
 pub mod titlebar;
 pub mod toast;
 pub mod welcome;
