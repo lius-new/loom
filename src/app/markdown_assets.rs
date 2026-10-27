@@ -5,7 +5,7 @@ use crate::infrastructure::{
     markdown_worker::{BudgetLease, CacheKind, MemoryBudget},
 };
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -15,9 +15,17 @@ pub struct Asset {
     stamp: Option<FileStamp>,
     _lease: BudgetLease,
 }
+/// An image read off the render thread, waiting to be cached.
+pub struct Fetched {
+    key: String,
+    watched: Option<PathBuf>,
+    stamp: Option<FileStamp>,
+    outcome: Result<LoadedImage, String>,
+}
 pub struct Assets {
     pub version: u64,
     values: VecDeque<(String, Arc<Asset>)>,
+    loading: HashSet<String>,
     budget: MemoryBudget,
 }
 impl Assets {
@@ -25,6 +33,7 @@ impl Assets {
         Self {
             version: 0,
             values: VecDeque::new(),
+            loading: HashSet::new(),
             budget,
         }
     }
@@ -38,19 +47,19 @@ impl Assets {
             .find(|(stored, _)| *stored == key)
             .map(|(_, asset)| asset.clone())
     }
-    pub fn load(
-        &mut self,
-        base: Option<&Path>,
-        destination: &str,
-        remote: bool,
-    ) -> Option<Arc<Asset>> {
-        let key = Self::key(base, destination, remote);
-        if let Some(index) = self.values.iter().position(|(stored, _)| *stored == key) {
-            let entry = self.values.remove(index).unwrap();
-            let asset = entry.1.clone();
-            self.values.push_back(entry);
-            return Some(asset);
-        }
+    /// Whether a load for this image is already underway.
+    pub fn loading(&self, base: Option<&Path>, destination: &str, remote: bool) -> bool {
+        self.loading.contains(&Self::key(base, destination, remote))
+    }
+
+    /// Record that `fetch` is running somewhere else, so it is not started twice.
+    pub fn begin(&mut self, base: Option<&Path>, destination: &str, remote: bool) {
+        self.loading.insert(Self::key(base, destination, remote));
+    }
+
+    /// The slow part of a load: file reads, network, decoding. It touches no
+    /// cache, so it can run on any thread.
+    pub fn fetch(base: Option<&Path>, destination: &str, remote: bool) -> Fetched {
         let watched = match resolve(base, destination) {
             Some(Address::Local { path, .. })
                 if remote || !crate::infrastructure::markdown_resources::network_path(&path) =>
@@ -66,6 +75,40 @@ impl Assets {
             .ok()
             .and_then(|image| image.local.clone())
             .or(before);
+        Fetched {
+            key: Self::key(base, destination, remote),
+            watched,
+            stamp: before,
+            outcome,
+        }
+    }
+
+    /// Load synchronously and cache the result.
+    pub fn load(
+        &mut self,
+        base: Option<&Path>,
+        destination: &str,
+        remote: bool,
+    ) -> Option<Arc<Asset>> {
+        let key = Self::key(base, destination, remote);
+        if let Some(index) = self.values.iter().position(|(stored, _)| *stored == key) {
+            let entry = self.values.remove(index).unwrap();
+            let asset = entry.1.clone();
+            self.values.push_back(entry);
+            return Some(asset);
+        }
+        self.store(Self::fetch(base, destination, remote))
+    }
+
+    /// Cache a finished `fetch`.
+    pub fn store(&mut self, fetched: Fetched) -> Option<Arc<Asset>> {
+        let Fetched {
+            key,
+            watched,
+            stamp: before,
+            outcome,
+        } = fetched;
+        self.loading.remove(&key);
         let bytes = key.capacity()
             + outcome.as_ref().map_or_else(
                 |error| error.capacity(),

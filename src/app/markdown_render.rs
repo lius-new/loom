@@ -90,6 +90,10 @@ struct Queue {
     ready: HashMap<Consumer, Status>,
     last: HashMap<Consumer, Request>,
     clock: u64,
+    /// Images finished by loader threads, waiting to enter the render thread's cache.
+    completed: Vec<super::markdown_assets::Fetched>,
+    /// Loader threads running now.
+    loading: usize,
 }
 struct Shared {
     queue: Mutex<Queue>,
@@ -245,6 +249,17 @@ fn run(shared: Arc<Shared>) {
                 if !shared.alive.load(Ordering::Acquire) {
                     return;
                 }
+                if !queue.completed.is_empty() {
+                    // New image sizes change the layout, which the cache sees as
+                    // a new resource version; render every view again.
+                    for fetched in std::mem::take(&mut queue.completed) {
+                        assets.store(fetched);
+                    }
+                    for request in queue.last.values().cloned().collect::<Vec<_>>() {
+                        queue.pending.retain(|old| old.view != request.view);
+                        queue.pending.push_back(request);
+                    }
+                }
                 if let Some(request) = queue.pending.pop_front() {
                     break request;
                 }
@@ -284,7 +299,6 @@ fn run(shared: Arc<Shared>) {
                 &mut backend,
                 &mut layouts,
                 &mut assets,
-                false,
                 &mut snippets,
             )
         } else {
@@ -307,13 +321,55 @@ fn run(shared: Arc<Shared>) {
         (shared.notify)();
     }
 }
+/// Loader threads running at once; more would only compete for the network.
+const MAX_LOADERS: usize = 4;
+/// Read one image on its own thread. The result joins the render thread's
+/// cache through `Queue::completed`, which also wakes the worker.
+fn start_load(
+    shared: &Arc<Shared>,
+    assets: &mut super::markdown_assets::Assets,
+    base: Option<&std::path::Path>,
+    destination: &str,
+    remote: bool,
+) {
+    if assets.loading(base, destination, remote) {
+        return;
+    }
+    {
+        let mut queue = shared.queue.lock().unwrap();
+        if queue.loading >= MAX_LOADERS {
+            // Retried by the render that follows any finished load.
+            return;
+        }
+        queue.loading += 1;
+    }
+    assets.begin(base, destination, remote);
+    let (base, destination) = (
+        base.map(std::path::Path::to_path_buf),
+        destination.to_owned(),
+    );
+    let worker = shared.clone();
+    let spawned = thread::Builder::new()
+        .name("loom-markdown-image".into())
+        .spawn(move || {
+            let fetched =
+                super::markdown_assets::Assets::fetch(base.as_deref(), &destination, remote);
+            let mut queue = worker.queue.lock().unwrap();
+            queue.loading -= 1;
+            queue.completed.push(fetched);
+            drop(queue);
+            worker.wake.notify_one();
+        });
+    if spawned.is_err() {
+        shared.queue.lock().unwrap().loading -= 1;
+    }
+}
 fn render(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     request: &Request,
     backend: &mut NativeBackend,
     layouts: &mut VecDeque<Arc<LayoutEntry>>,
     assets: &mut super::markdown_assets::Assets,
-    reflowed: bool,
     snippets: &mut crate::features::syntax::SnippetHighlighter,
 ) -> Result<Rendered, String> {
     let key = &request.key;
@@ -368,7 +424,7 @@ fn render(
             },
             ..Default::default()
         };
-        let sizes = document
+        let states = document
             .nodes
             .iter()
             .enumerate()
@@ -376,15 +432,16 @@ fn render(
                 if let crate::features::markdown::model::NodeKind::Image { destination, .. } =
                     &node.kind
                 {
+                    // No cached asset means the image is still loading.
                     let asset = assets.get(key.base.as_deref(), destination, key.remote)?;
-                    let image = asset.outcome.as_ref().ok()?;
-                    Some((
-                        crate::features::markdown::model::NodeId(index),
-                        ImageSize {
+                    let state = match &asset.outcome {
+                        Ok(image) => ImageState::Loaded(ImageSize {
                             width: image.width as f32,
                             height: image.height as f32,
-                        },
-                    ))
+                        }),
+                        Err(_) => ImageState::Failed,
+                    };
+                    Some((crate::features::markdown::model::NodeId(index), state))
                 } else {
                     None
                 }
@@ -399,7 +456,7 @@ fn render(
             },
             backend,
             || !current(shared, request),
-            &sizes,
+            &states,
         )
         .map_err(|failure| {
             format!(
@@ -456,8 +513,6 @@ fn render(
         }
     }
     let mut images = HashMap::new();
-    let version = assets.version;
-    let mut loaded = 0;
     for image in &layout.images {
         if image.rect.bottom < viewport.top || image.rect.top > viewport.top + viewport.height {
             continue;
@@ -465,22 +520,16 @@ fn render(
         if let crate::features::markdown::model::NodeKind::Image { destination, .. } =
             &layout.document.nodes[image.node.0].kind
         {
-            let cached = assets.get(key.base.as_deref(), destination, key.remote);
-            let value = if cached.is_some() {
-                cached
-            } else if loaded < 8 {
-                loaded += 1;
-                assets.load(key.base.as_deref(), destination, key.remote)
-            } else {
-                None
-            };
-            if let Some(asset) = value {
-                images.insert(image.node, asset);
+            // Text must not wait for files or the network: an image that is not
+            // cached yet loads on its own thread and the view renders again once
+            // it arrives; until then it keeps its placeholder.
+            match assets.get(key.base.as_deref(), destination, key.remote) {
+                Some(asset) => {
+                    images.insert(image.node, asset);
+                }
+                None => start_load(shared, assets, key.base.as_deref(), destination, key.remote),
             }
         }
-    }
-    if !reflowed && assets.version != version {
-        return render(shared, request, backend, layouts, assets, true, snippets);
     }
     let mut geometry = Vec::new();
     let mut tiles = Vec::new();

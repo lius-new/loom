@@ -414,6 +414,85 @@ fn oversized_cells_and_tight_items_get_an_observable_fallback_without_native_wor
 }
 
 #[test]
+fn an_image_that_is_still_loading_takes_no_room_but_a_failed_one_keeps_its_box() {
+    let document = Arc::new(parse("before\n\n![alt](a.png)\n\nafter\n"));
+    let place = |state: Option<ImageState>| {
+        let image = document
+            .nodes
+            .iter()
+            .position(|node| matches!(node.kind, NodeKind::Image { .. }))
+            .map(NodeId)
+            .unwrap();
+        let states = state.map(|state| (image, state)).into_iter().collect();
+        layout_with_images(
+            document.clone(),
+            LayoutStyle::default(),
+            LayoutLimits::default(),
+            &mut RecordingText::default(),
+            || false,
+            &states,
+        )
+        .unwrap()
+    };
+    let size = |layout: &DocumentLayout| {
+        let rect = &layout.images[0].rect;
+        (rect.right - rect.left, rect.bottom - rect.top)
+    };
+    let pending = place(None);
+    let loaded = place(Some(ImageState::Loaded(ImageSize {
+        width: 90.0,
+        height: 20.0,
+    })));
+    let failed = place(Some(ImageState::Failed));
+    // The host still sees the image, at its place, so it knows to load it.
+    assert_eq!(pending.images.len(), 1);
+    assert_eq!(size(&pending), (0.0, 0.0));
+    assert_eq!(size(&loaded), (90.0, 20.0));
+    assert_eq!(size(&failed).1, 64.0);
+    assert!(loaded.height >= pending.height + 20.0);
+    assert!(failed.height >= pending.height + 64.0);
+    // The text around it lays out the same whatever the image is doing.
+    let top = |layout: &DocumentLayout| layout.paragraphs.last().unwrap().y;
+    assert!(top(&pending) < top(&loaded) && top(&loaded) < top(&failed));
+}
+
+#[test]
+fn only_the_first_column_and_header_row_mark_the_tables_outer_edges() {
+    let document = Arc::new(parse("|a|b|\n|---|---|\n|c|d|\n|e|f|\n"));
+    let layout = layout_document(
+        document,
+        LayoutStyle::default(),
+        LayoutLimits::default(),
+        &mut RecordingText::default(),
+        || false,
+    )
+    .unwrap();
+    let cells = layout
+        .decorations
+        .iter()
+        .filter_map(|decoration| match decoration {
+            Decoration::TableCell {
+                header,
+                first_column,
+                ..
+            } => Some((*header, *first_column)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        cells,
+        [
+            (true, true),
+            (true, false),
+            (false, true),
+            (false, false),
+            (false, true),
+            (false, false)
+        ]
+    );
+}
+
+#[test]
 fn keyboard_links_and_copy_code_share_the_pure_reader_transaction() {
     let frame = frame(
         parse("[one](a.md) [two](#title)\n\n\x60\x60\x60rust\nlet 中 = 1;\n\x60\x60\x60"),

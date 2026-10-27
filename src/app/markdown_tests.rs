@@ -642,6 +642,82 @@ fn copy_code_button_writes_complete_code_without_editing_source() {
 }
 
 #[test]
+fn images_load_off_the_render_thread_and_the_view_updates_when_they_arrive() {
+    // Relative to the package root, where tests run.
+    let mut reader = Reader::new(
+        "![Loom](icons/source/app-icon-transparent-128.png)\n\nbody text after the image\n".into(),
+    );
+    let latest = |reader: &Reader| {
+        let view = reader.state.get().workspace.active().unwrap();
+        reader.runtime.markdown().unwrap().render.latest(
+            crate::infrastructure::markdown_worker::Consumer::Document(view),
+        )
+    };
+    // The text is there whether or not the image has arrived.
+    reader.wait(|r| r.text_rect("body").is_some());
+    // The image is read on another thread and joins the view afterwards.
+    reader.wait(|r| latest(r).is_some_and(|result| !result.images.is_empty()));
+    let result = latest(&reader).unwrap();
+    let image = result.images.values().next().unwrap();
+    assert_eq!(
+        image
+            .outcome
+            .as_ref()
+            .map(|image| (image.width, image.height)),
+        Ok((128, 128))
+    );
+    assert!(reader.text_rect("body").is_some());
+}
+
+#[test]
+fn text_appears_without_waiting_for_an_image_server_that_never_answers() {
+    // A server that accepts the connection and then says nothing.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let hold = std::thread::spawn(move || {
+        let connection = listener.accept();
+        std::thread::sleep(Duration::from_secs(12));
+        drop(connection);
+    });
+    let started = Instant::now();
+    let mut reader = Reader::new(format!(
+        "![badge](http://127.0.0.1:{port}/badge.png)\n\nbody text after the badge\n"
+    ));
+    reader.wait(|r| r.text_rect("body").is_some());
+    // The read timeout alone is five seconds; the text must not pay for it.
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "text took {:?}",
+        started.elapsed()
+    );
+    drop(reader);
+    drop(hold);
+}
+
+#[test]
+fn a_link_glued_to_punctuation_still_shows_the_pointer_cursor() {
+    use lgui::core::CursorIcon;
+    let mut reader = Reader::new(
+        "- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))\n- MIT license ([LICENSE-MIT](LICENSE-MIT))\n- plain [spaced](https://example.com) link".into(),
+    );
+    reader.wait(|r| r.text_rect("LICENSE-MIT").is_some());
+    let cursor = |reader: &Reader, word: &str| {
+        let rect = reader.text_rect(word).unwrap();
+        reader.session.tree().cursor_at(Point::new(
+            (rect.left + rect.right) * 0.5,
+            (rect.top + rect.bottom) * 0.5,
+        ))
+    };
+    for link in ["LICENSE-APACHE", "LICENSE-MIT", "spaced"] {
+        assert_eq!(cursor(&reader, link), Some(CursorIcon::Pointer), "{link}");
+    }
+    // The parenthesis and ordinary words around a link keep the text cursor.
+    for plain in ["Apache", "2.0", "MIT"] {
+        assert_eq!(cursor(&reader, plain), Some(CursorIcon::Text), "{plain}");
+    }
+}
+
+#[test]
 fn stale_frame_release_cancels_the_gesture_without_opening_a_link() {
     let mut reader = Reader::new("# Heading\n\n[link](https://example.com)\n\nbody\n\nmore".into());
     reader.wait(|r| r.text_rect("Heading").is_some());

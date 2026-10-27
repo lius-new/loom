@@ -81,6 +81,123 @@ fn hit(frame: &ReaderFrame, rect: UiRect, point: (f32, f32)) -> Option<Hit> {
         (point.0 - rect.left, point.1 - rect.top),
     )
 }
+/// The vertical extent of each visual line of a paragraph. Glyph boxes of mixed
+/// fonts differ in height and leave gaps between lines, so every band runs down
+/// to the top of the next one.
+fn line_bands(glyphs: &[crate::features::markdown::layout::GraphemeGeometry]) -> Vec<(f32, f32)> {
+    let mut spans: Vec<(f32, f32)> = glyphs
+        .iter()
+        .map(|glyph| (glyph.rect.top, glyph.rect.bottom))
+        .collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut bands: Vec<(f32, f32)> = Vec::new();
+    for (top, bottom) in spans {
+        match bands.last_mut() {
+            // Starting above the middle of the band means the same line.
+            Some(last) if top < (last.0 + last.1) / 2.0 => last.1 = last.1.max(bottom),
+            _ => bands.push((top, bottom)),
+        }
+    }
+    for index in 1..bands.len() {
+        bands[index - 1].1 = bands[index].0.max(bands[index - 1].0);
+    }
+    bands
+}
+
+/// The band holding `glyph`.
+fn band_of(
+    bands: &[(f32, f32)],
+    glyph: crate::features::markdown::layout::TextRect,
+) -> Option<usize> {
+    let middle = (glyph.top + glyph.bottom) / 2.0;
+    bands
+        .iter()
+        .position(|band| middle < band.1)
+        .or(bands.len().checked_sub(1))
+}
+
+/// A selection block on whole pixels. Every edge rounds the same way, so the
+/// edge two lines share lands on one pixel row; an overlap would be painted
+/// twice by the translucent fill and show as a bright line.
+fn snapped(run: crate::features::markdown::layout::TextRect, left: f32, top: f32) -> UiRect {
+    UiRect::new(
+        (left + run.left).round(),
+        (top + run.top).round(),
+        (left + run.right).round(),
+        (top + run.bottom).round(),
+    )
+}
+
+/// Selected glyphs merged into one rectangle per stretch of each line. A
+/// translucent fill must not overlap itself, or the overlap would look darker.
+fn selection_runs(
+    bands: &[(f32, f32)],
+    glyphs: impl Iterator<Item = crate::features::markdown::layout::TextRect>,
+) -> Vec<crate::features::markdown::layout::TextRect> {
+    use crate::features::markdown::layout::TextRect;
+    let mut lines: Vec<Vec<(f32, f32)>> = vec![Vec::new(); bands.len()];
+    for glyph in glyphs {
+        if let Some(line) = band_of(bands, glyph) {
+            lines[line].push((glyph.left, glyph.right));
+        }
+    }
+    let mut runs = Vec::new();
+    for (line, mut spans) in lines.into_iter().enumerate() {
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut merged: Vec<(f32, f32)> = Vec::new();
+        for (left, right) in spans {
+            match merged.last_mut() {
+                // Neighbouring glyphs may sit a sub-pixel apart.
+                Some(last) if left <= last.1 + 1.0 => last.1 = last.1.max(right),
+                _ => merged.push((left, right)),
+            }
+        }
+        runs.extend(merged.into_iter().map(|(left, right)| TextRect {
+            left,
+            top: bands[line].0,
+            right,
+            bottom: bands[line].1,
+        }));
+    }
+    runs
+}
+
+/// Split `start..end` into runs that are entirely inside one link or entirely
+/// outside any link, so punctuation glued to a link never changes its cursor.
+fn link_runs(
+    spans: &[crate::features::markdown::layout::StyleSpan],
+    start: usize,
+    end: usize,
+) -> Vec<(
+    std::ops::Range<usize>,
+    Option<crate::features::markdown::model::NodeId>,
+)> {
+    let mut runs: Vec<(std::ops::Range<usize>, Option<_>)> = Vec::new();
+    let mut push = |range: std::ops::Range<usize>, link| {
+        if range.is_empty() {
+            return;
+        }
+        match runs.last_mut() {
+            Some((last, previous)) if *previous == link && last.end == range.start => {
+                last.end = range.end;
+            }
+            _ => runs.push((range, link)),
+        }
+    };
+    let mut position = start;
+    for span in spans
+        .iter()
+        .filter(|span| span.bytes.end > start && span.bytes.start < end)
+    {
+        let from = span.bytes.start.max(position);
+        let to = span.bytes.end.min(end);
+        push(position..from, None);
+        push(from..to, span.style.link);
+        position = position.max(to);
+    }
+    push(position..end, None);
+    runs
+}
 fn translated(
     rect: crate::features::markdown::layout::TextRect,
     viewport: UiRect,
@@ -293,6 +410,7 @@ pub fn render_in(
                 node,
                 rect: bounds,
                 header,
+                first_column,
                 ..
             } => {
                 let mut bounds = translated(*bounds, rect, frame.viewport.top);
@@ -306,7 +424,24 @@ pub fn render_in(
                 if bounds.bottom > rect.top && bounds.top < rect.bottom {
                     if *header {
                         content = content
-                            .child(panel(bounds, VisualStyle::filled(theme::c().active_line)));
+                            .child(panel(bounds, VisualStyle::filled(theme::c().active_line)))
+                            // Cells draw their right and bottom edges; the table's
+                            // top edge belongs to the header row.
+                            .child(panel(
+                                UiRect::new(
+                                    bounds.left,
+                                    bounds.top,
+                                    bounds.right,
+                                    bounds.top + 1.0,
+                                ),
+                                VisualStyle::filled(theme::c().border),
+                            ));
+                    }
+                    if *first_column {
+                        content = content.child(panel(
+                            UiRect::new(bounds.left, bounds.top, bounds.left + 1.0, bounds.bottom),
+                            VisualStyle::filled(theme::c().border),
+                        ));
                     }
                     content = content
                         .child(panel(
@@ -349,32 +484,25 @@ pub fn render_in(
             let Some(paragraph) = frame.layout.paragraphs.get(geometry.paragraph) else {
                 continue;
             };
-            for glyph in geometry.glyphs.iter() {
+            let bands = line_bands(&geometry.glyphs);
+            let chosen = geometry.glyphs.iter().filter(|glyph| {
                 let start = paragraph.display.start.0 + glyph.bytes.start;
                 let end = paragraph.display.start.0 + glyph.bytes.end;
-                if start < selected.end.0 && end > selected.start.0 {
-                    let bounds = glyph.rect;
-                    let bounds = UiRect::new(
-                        rect.left + paragraph.x
-                            - frame
-                                .layout
-                                .scroll_container(geometry.paragraph)
-                                .and_then(|node| frame.horizontal.get(&node).copied())
-                                .unwrap_or(0.0)
-                            + bounds.left,
-                        rect.top + paragraph.y + bounds.top - frame.viewport.top,
-                        rect.left + paragraph.x
-                            - frame
-                                .layout
-                                .scroll_container(geometry.paragraph)
-                                .and_then(|node| frame.horizontal.get(&node).copied())
-                                .unwrap_or(0.0)
-                            + bounds.right,
-                        rect.top + paragraph.y + bounds.bottom - frame.viewport.top,
-                    );
-                    content =
-                        content.child(panel(bounds, VisualStyle::filled(theme::c().selection)));
-                }
+                start < selected.end.0 && end > selected.start.0
+            });
+            let left = rect.left + paragraph.x
+                - frame
+                    .layout
+                    .scroll_container(geometry.paragraph)
+                    .and_then(|node| frame.horizontal.get(&node).copied())
+                    .unwrap_or(0.0);
+            let top = rect.top + paragraph.y - frame.viewport.top;
+            // One translucent block per line, as in the editor and Changes view.
+            for run in selection_runs(&bands, chosen.map(|glyph| glyph.rect)) {
+                content = content.child(panel(
+                    snapped(run, left, top),
+                    VisualStyle::filled(theme::c().accent).alpha(55),
+                ));
             }
         }
     }
@@ -420,83 +548,83 @@ pub fn render_in(
                 let Some(found) = value[offset..].find(word) else {
                     continue;
                 };
-                let start = offset + found;
-                let end = start + word.len();
-                offset = end;
-                let from = geometry
-                    .glyphs
-                    .partition_point(|glyph| glyph.bytes.end <= start);
-                let mut bounds: Option<UiRect> = None;
-                for glyph in geometry.glyphs[from..]
-                    .iter()
-                    .take_while(|glyph| glyph.bytes.start < end)
-                {
-                    let b = glyph.rect;
-                    let r = UiRect::new(
-                        rect.left + paragraph.x
-                            - frame
-                                .layout
-                                .scroll_container(geometry.paragraph)
-                                .and_then(|node| frame.horizontal.get(&node).copied())
-                                .unwrap_or(0.0)
-                            + b.left,
-                        rect.top + paragraph.y + b.top - frame.viewport.top,
-                        rect.left + paragraph.x
-                            - frame
-                                .layout
-                                .scroll_container(geometry.paragraph)
-                                .and_then(|node| frame.horizontal.get(&node).copied())
-                                .unwrap_or(0.0)
-                            + b.right,
-                        rect.top + paragraph.y + b.bottom - frame.viewport.top,
-                    );
-                    bounds = Some(bounds.map_or(r, |old| {
-                        UiRect::new(
-                            old.left.min(r.left),
-                            old.top.min(r.top),
-                            old.right.max(r.right),
-                            old.bottom.max(r.bottom),
-                        )
-                    }));
-                }
-                if let Some(bounds) =
-                    bounds.filter(|bounds| bounds.bottom > rect.top && bounds.top < rect.bottom)
-                {
-                    let linked = paragraph
-                        .spans
+                let word_start = offset + found;
+                let word_end = word_start + word.len();
+                offset = word_end;
+                // A link can start or end inside a word, e.g. `(LICENSE-MIT)`.
+                for (range, link) in link_runs(&paragraph.spans, word_start, word_end) {
+                    let (start, end) = (range.start, range.end);
+                    let from = geometry
+                        .glyphs
+                        .partition_point(|glyph| glyph.bytes.end <= start);
+                    let mut bounds: Option<UiRect> = None;
+                    for glyph in geometry.glyphs[from..]
                         .iter()
-                        .find(|span| span.bytes.start <= start && start < span.bytes.end)
-                        .and_then(|span| span.style.link)
-                        .and_then(|node| frame.document.node(node))
-                        .and_then(|node| match &node.kind {
-                            crate::features::markdown::model::NodeKind::Link {
-                                destination,
-                                ..
-                            } => Some(destination.clone()),
-                            _ => None,
+                        .take_while(|glyph| glyph.bytes.start < end)
+                    {
+                        let b = glyph.rect;
+                        let r = UiRect::new(
+                            rect.left + paragraph.x
+                                - frame
+                                    .layout
+                                    .scroll_container(geometry.paragraph)
+                                    .and_then(|node| frame.horizontal.get(&node).copied())
+                                    .unwrap_or(0.0)
+                                + b.left,
+                            rect.top + paragraph.y + b.top - frame.viewport.top,
+                            rect.left + paragraph.x
+                                - frame
+                                    .layout
+                                    .scroll_container(geometry.paragraph)
+                                    .and_then(|node| frame.horizontal.get(&node).copied())
+                                    .unwrap_or(0.0)
+                                + b.right,
+                            rect.top + paragraph.y + b.bottom - frame.viewport.top,
+                        );
+                        bounds = Some(bounds.map_or(r, |old| {
+                            UiRect::new(
+                                old.left.min(r.left),
+                                old.top.min(r.top),
+                                old.right.max(r.right),
+                                old.bottom.max(r.bottom),
+                            )
+                        }));
+                    }
+                    if let Some(bounds) =
+                        bounds.filter(|bounds| bounds.bottom > rect.top && bounds.top < rect.bottom)
+                    {
+                        let linked =
+                            link.and_then(|node| frame.document.node(node))
+                                .and_then(|node| match &node.kind {
+                                    crate::features::markdown::model::NodeKind::Link {
+                                        destination,
+                                        ..
+                                    } => Some(destination.clone()),
+                                    _ => None,
+                                });
+                        let word = value[start..end].to_owned();
+                        let is_link = linked.is_some();
+                        let semantics = match linked {
+                            Some(url) => Semantics::new(SemanticRole::Link)
+                                .name(word.clone())
+                                .value(word)
+                                .description(url),
+                            None => Semantics::new(SemanticRole::Text).value(word),
+                        };
+                        let semantic_id = UiId::owned(format!(
+                            "{semantic_scope}-text-{}-{start}",
+                            geometry.paragraph
+                        ));
+                        let semantic = Element::new(move |_| {
+                            UiElement::panel(semantic_id, bounds, VisualStyle::default())
+                                .semantics(semantics)
                         });
-                    let word = word.to_owned();
-                    let is_link = linked.is_some();
-                    let semantics = match linked {
-                        Some(url) => Semantics::new(SemanticRole::Link)
-                            .name(word.clone())
-                            .value(word)
-                            .description(url),
-                        None => Semantics::new(SemanticRole::Text).value(word),
-                    };
-                    let semantic_id = UiId::owned(format!(
-                        "{semantic_scope}-text-{}-{start}",
-                        geometry.paragraph
-                    ));
-                    let semantic = Element::new(move |_| {
-                        UiElement::panel(semantic_id, bounds, VisualStyle::default())
-                            .semantics(semantics)
-                    });
-                    content = content.child(if is_link {
-                        semantic.cursor(CursorIcon::Pointer)
-                    } else {
-                        semantic
-                    });
+                        content = content.child(if is_link {
+                            semantic.cursor(CursorIcon::Pointer)
+                        } else {
+                            semantic
+                        });
+                    }
                 }
             }
         }
@@ -835,4 +963,95 @@ fn recently_copied(node: crate::features::markdown::model::NodeId) -> bool {
     use std::sync::atomic::Ordering::Relaxed;
     COPIED_NODE.load(Relaxed) == node.0 + 1
         && elapsed_ms().saturating_sub(COPIED_AT.load(Relaxed)) < COPIED_FOR.as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::markdown::layout::{GraphemeGeometry, TextRect};
+
+    fn glyph(top: f32, bottom: f32) -> GraphemeGeometry {
+        GraphemeGeometry {
+            bytes: 0..1,
+            rect: TextRect {
+                left: 0.0,
+                top,
+                right: 8.0,
+                bottom,
+            },
+        }
+    }
+
+    #[test]
+    fn selection_bands_close_the_gaps_between_lines_of_mixed_fonts() {
+        // Line one has a short code glyph; line two starts 3px below it.
+        let glyphs = [
+            glyph(0.0, 20.0),
+            glyph(1.0, 17.0),
+            glyph(23.0, 43.0),
+            glyph(24.0, 40.0),
+        ];
+        let bands = line_bands(&glyphs);
+        assert_eq!(bands, [(0.0, 23.0), (23.0, 43.0)]);
+        // Every glyph lands in its own line, and the code glyphs fill it.
+        assert_eq!(band_of(&bands, glyphs[1].rect), Some(0));
+        assert_eq!(band_of(&bands, glyphs[3].rect), Some(1));
+    }
+
+    #[test]
+    fn slightly_overlapping_line_boxes_stay_separate_lines() {
+        let bands = line_bands(&[glyph(0.0, 20.5), glyph(20.0, 40.0)]);
+        assert_eq!(bands, [(0.0, 20.0), (20.0, 40.0)]);
+    }
+
+    #[test]
+    fn blocks_of_adjacent_lines_touch_without_overlapping_at_any_offset() {
+        let line = |top: f32, bottom: f32| TextRect {
+            left: 0.0,
+            top,
+            right: 100.0,
+            bottom,
+        };
+        for step in 0..40 {
+            // Paragraphs start at fractional pixels as the view scrolls.
+            let offset = 12.0 + step as f32 * 0.137;
+            let first = snapped(line(0.0, 20.3), 3.2, offset);
+            let second = snapped(line(20.3, 41.7), 3.2, offset);
+            assert_eq!(first.bottom, second.top, "offset {offset}");
+            assert!(first.top < first.bottom && second.top < second.bottom);
+        }
+    }
+
+    #[test]
+    fn selected_glyphs_merge_into_one_block_per_line_stretch() {
+        let at = |left: f32, top: f32, bottom: f32| TextRect {
+            left,
+            top,
+            right: left + 8.0,
+            bottom,
+        };
+        let glyphs = [glyph(0.0, 20.0), glyph(23.0, 43.0)];
+        let bands = line_bands(&glyphs);
+        let chosen = [
+            at(0.0, 0.0, 20.0),
+            at(8.0, 1.0, 17.0),
+            at(16.4, 0.0, 20.0),
+            // A gap of unselected glyphs, then the second line.
+            at(48.0, 0.0, 20.0),
+            at(0.0, 23.0, 43.0),
+        ];
+        let runs = selection_runs(&bands, chosen.into_iter());
+        let spans = runs
+            .iter()
+            .map(|run| (run.left, run.top, run.right, run.bottom))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            spans,
+            [
+                (0.0, 0.0, 24.4, 23.0),
+                (48.0, 0.0, 56.0, 23.0),
+                (0.0, 23.0, 8.0, 43.0)
+            ]
+        );
+    }
 }

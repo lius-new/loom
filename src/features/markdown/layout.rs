@@ -226,6 +226,7 @@ pub enum Decoration {
         node: NodeId,
         rect: TextRect,
         header: bool,
+        first_column: bool,
         alignment: ColumnAlignment,
     },
 }
@@ -241,6 +242,14 @@ pub struct FlowBox {
 pub struct ImageSize {
     pub width: f32,
     pub height: f32,
+}
+/// What the host knows about an image. An image with no entry is still loading
+/// and takes no room until it arrives.
+#[derive(Clone, Copy, Debug)]
+pub enum ImageState {
+    Loaded(ImageSize),
+    /// Could not be loaded; it keeps a box that shows the reason.
+    Failed,
 }
 #[derive(Clone, Debug)]
 pub struct ImageBox {
@@ -380,7 +389,7 @@ struct Placer<'a, B> {
     out: DocumentLayout,
     backend: &'a mut B,
     limits: LayoutLimits,
-    images: &'a std::collections::HashMap<NodeId, ImageSize>,
+    images: &'a std::collections::HashMap<NodeId, ImageState>,
     lines: usize,
 }
 impl<B: ParagraphBackend> Placer<'_, B> {
@@ -601,6 +610,7 @@ impl<B: ParagraphBackend> Placer<'_, B> {
                         bottom: 0.0,
                     },
                     header,
+                    first_column: column == 0,
                     alignment: columns
                         .get(column)
                         .copied()
@@ -663,7 +673,7 @@ pub fn layout_with_images(
     limits: LayoutLimits,
     backend: &mut impl ParagraphBackend,
     mut cancelled: impl FnMut() -> bool,
-    images: &std::collections::HashMap<NodeId, ImageSize>,
+    images: &std::collections::HashMap<NodeId, ImageState>,
 ) -> Result<DocumentLayout, LayoutFailure> {
     let mut style = style;
     style.width = style.width.max(1.0);
@@ -864,10 +874,38 @@ pub fn layout_with_images(
                             block_alignment,
                         )?;
                     }
-                    let size = placer.images.get(&image).copied().unwrap_or(ImageSize {
-                        width: width.min(240.0),
-                        height: 64.0,
-                    });
+                    let size = match placer.images.get(&image).copied() {
+                        Some(ImageState::Loaded(size)) => size,
+                        Some(ImageState::Failed) => ImageSize {
+                            width: width.min(240.0),
+                            height: 64.0,
+                        },
+                        None => {
+                            // Still loading: no room is made for it. A zero-size
+                            // box at its place in the flow lets the host see
+                            // when it comes into view and start loading it.
+                            let at = placer.out.paragraphs.len();
+                            placer.out.images.push(ImageBox {
+                                node: image,
+                                rect: TextRect {
+                                    left: x,
+                                    top: y,
+                                    right: x,
+                                    bottom: y,
+                                },
+                                display: image_range.clone(),
+                            });
+                            placer.out.boxes.push(FlowBox {
+                                node: image,
+                                source: placer.out.document.nodes[image.0].source.clone(),
+                                top: y,
+                                height: 0.0,
+                                paragraphs: at..at,
+                            });
+                            cursor = image_range.end;
+                            continue;
+                        }
+                    };
                     let factor = (width / size.width.max(1.0)).min(1.0);
                     row.push((
                         image,

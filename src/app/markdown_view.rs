@@ -757,16 +757,13 @@ fn paint_image(
                     )
             })
         }
-        value => {
-            let message = value
-                .and_then(|value| value.as_ref().err())
-                .map_or("Image pending", String::as_str);
-            panel(bounds, VisualStyle::filled(theme::c().surface)).child(text(
-                bounds,
-                format!("{alt}\n{message}"),
-                theme::sans(theme::c().text_soft, 12.0),
-            ))
-        }
+        // Still loading: it has no room yet, so there is nothing to draw.
+        None => panel(bounds, VisualStyle::default()),
+        Some(Err(message)) => panel(bounds, VisualStyle::filled(theme::c().surface)).child(text(
+            bounds,
+            format!("{alt}\n{message}"),
+            theme::sans(theme::c().text_soft, 12.0),
+        )),
     }
 }
 
