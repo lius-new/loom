@@ -34,6 +34,13 @@ const INDENT: f32 = 12.0;
 const TREE_ICON_SIZE: f32 = 16.0;
 const TREE_ICON_GAP: f32 = 4.0;
 const TREE_LABEL_OFFSET: f32 = TREE_ICON_SIZE + TREE_ICON_GAP;
+/// Extra shaping room so the final glyph is not wrapped or clipped prematurely.
+const TREE_TEXT_PAD: f32 = 6.0;
+const DIRECTORY_RIGHT_PAD: f32 = 12.0;
+const STATUS_RIGHT_PAD: f32 = 8.0;
+const STATUS_WIDTH: f32 = 17.0;
+const STATUS_GAP: f32 = 5.0;
+const FILE_RIGHT_PAD: f32 = STATUS_RIGHT_PAD + STATUS_WIDTH + STATUS_GAP;
 
 type Access = StateAccess<ExplorerPanelState>;
 
@@ -693,9 +700,9 @@ fn dir_row(
     let row_rect = UiRect::new(rect.left, y, row_right, y + ROW_H);
     let indent = indent + content_offset_x;
     let text_right = if sticky {
-        rect.right - 12.0
+        rect.right - DIRECTORY_RIGHT_PAD
     } else {
-        content_right - 12.0
+        content_right - DIRECTORY_RIGHT_PAD
     };
     let icon = if is_expanded {
         crate::ui::file_icons::FOLDER_OPEN_ICON
@@ -719,39 +726,47 @@ fn dir_row(
 
     let commands = tree.commands.clone();
     let click_key = key.to_string();
-    row.on_pointer_down_with_button(move |cx, pointer, button| {
-        let key = click_key.clone();
-        match button {
-            PointerButton::Left => commands.dispatch(Command::ToggleDirectory(key)),
-            PointerButton::Right => commands.dispatch(Command::OpenMenu {
-                point: (pointer.point.x, pointer.point.y),
-                target: Some(ExplorerContextTarget {
-                    path: key.into(),
-                    kind: ExplorerTargetKind::Directory,
+    let row = row
+        .on_pointer_down_with_button(move |cx, pointer, button| {
+            let key = click_key.clone();
+            match button {
+                PointerButton::Left => commands.dispatch(Command::ToggleDirectory(key)),
+                PointerButton::Right => commands.dispatch(Command::OpenMenu {
+                    point: (pointer.point.x, pointer.point.y),
+                    target: Some(ExplorerContextTarget {
+                        path: key.into(),
+                        kind: ExplorerTargetKind::Directory,
+                    }),
                 }),
-            }),
-            _ => return,
-        }
-        cx.stop_propagation();
-    })
-    .child(precompiled(
-        UiElement::icon(
-            fid,
-            UiRect::new(
-                indent,
-                y + 2.0,
-                indent + TREE_ICON_SIZE,
-                y + 2.0 + TREE_ICON_SIZE,
-            ),
-            icon,
-        )
-        .icon_style(IconStyle::new(theme::c().text_muted)),
-    ))
-    .child(text(
-        UiRect::new(indent + TREE_LABEL_OFFSET, y + 2.0, text_right, y + 18.0),
-        name.to_string(),
-        theme::mono(label_color, theme::UI_SIZE),
-    ))
+                _ => return,
+            }
+            cx.stop_propagation();
+        })
+        .child(precompiled(
+            UiElement::icon(
+                fid,
+                UiRect::new(
+                    indent,
+                    y + 2.0,
+                    indent + TREE_ICON_SIZE,
+                    y + 2.0 + TREE_ICON_SIZE,
+                ),
+                icon,
+            )
+            .icon_style(IconStyle::new(theme::c().text_muted)),
+        ))
+        .child(tree_label(
+            UiRect::new(indent + TREE_LABEL_OFFSET, y + 2.0, text_right, y + 18.0),
+            name,
+            label_color,
+        ));
+    if sticky {
+        // Sticky rows are outside the scrolling tree's clip. Keep their names
+        // and icons inside the drawer when horizontal scrolling moves them left.
+        clip(row_rect, 0.0, 0.0).child(row)
+    } else {
+        row
+    }
 }
 
 fn file_row(
@@ -814,21 +829,52 @@ fn file_row(
             )
             .icon_style(IconStyle::new(theme::c().text_muted)),
         ))
-        .child(text(
+        .child(tree_label(
             UiRect::new(
                 indent + TREE_LABEL_OFFSET,
                 y + 2.0,
-                content_right - 30.0,
+                content_right - FILE_RIGHT_PAD,
                 y + 18.0,
             ),
-            name,
-            theme::mono(label_color, theme::UI_SIZE),
+            &name,
+            label_color,
         ))
         .child(text(
-            UiRect::new(content_right - 25.0, y + 2.0, content_right - 8.0, y + 18.0),
+            UiRect::new(
+                content_right - STATUS_RIGHT_PAD - STATUS_WIDTH,
+                y + 2.0,
+                content_right - STATUS_RIGHT_PAD,
+                y + 18.0,
+            ),
             decoration.indicator,
             theme::mono(label_color, theme::SMALL),
         ))
+}
+
+/// Shape the entire name at its natural width, then crop only at the label's
+/// viewport. A narrow layout rect would break at spaces or separators first.
+fn tree_label(viewport: UiRect, name: &str, color: Color) -> Element {
+    let width = tree_label_width(name);
+    let viewport = UiRect::new(
+        viewport.left,
+        viewport.top,
+        viewport.right.max(viewport.left),
+        viewport.bottom,
+    );
+    clip(viewport, 0.0, 0.0).child(text(
+        UiRect::new(
+            viewport.left,
+            viewport.top,
+            viewport.left + width,
+            viewport.bottom,
+        ),
+        name.to_owned(),
+        theme::mono(color, theme::UI_SIZE),
+    ))
+}
+
+fn tree_label_width(name: &str) -> f32 {
+    crate::ui::tabs::measure(name, theme::UI_SIZE, 400) + TREE_TEXT_PAD
 }
 
 /// Collects every root and its descendants into one scrollable list, returning
@@ -1043,11 +1089,10 @@ fn build_tree(
     els
 }
 
-/// Right edge required by the currently visible tree rows. File-tree labels
-/// use the editor's monospace UI font, so the shared character advance gives
-/// a stable scroll range without measuring text during every frame.
+/// Right edge required by expanded tree rows. Reuse the tab strip's cached
+/// shaped widths so CJK and fallback glyphs contribute their actual advances.
 fn tree_content_right(root_key: &str, root_name: &str, s: &ExplorerPanelState, left: f32) -> f32 {
-    let mut right = row_content_right(left, 0, root_name);
+    let mut right = row_content_right(left, 0, root_name, true);
     if s.model.is_expanded(root_key) {
         extend_content_right(&mut PathBuf::from(root_key), 1, s, left, &mut right);
     }
@@ -1068,7 +1113,7 @@ fn extend_content_right(
     };
 
     for entry in entries.iter() {
-        *right = right.max(row_content_right(left, depth, &entry.name));
+        *right = right.max(row_content_right(left, depth, &entry.name, entry.is_dir));
         if entry.is_dir {
             dir_path.push(&entry.name);
             if s.model.is_expanded(&dir_path.to_string_lossy()) {
@@ -1079,9 +1124,13 @@ fn extend_content_right(
     }
 }
 
-fn row_content_right(left: f32, depth: usize, name: &str) -> f32 {
-    let label_width = name.chars().count() as f32 * theme::UI_CHAR_W;
-    left + INDENT + depth as f32 * INDENT + TREE_LABEL_OFFSET + label_width + 12.0
+fn row_content_right(left: f32, depth: usize, name: &str, is_dir: bool) -> f32 {
+    let right_pad = if is_dir {
+        DIRECTORY_RIGHT_PAD
+    } else {
+        FILE_RIGHT_PAD
+    };
+    left + INDENT + depth as f32 * INDENT + TREE_LABEL_OFFSET + tree_label_width(name) + right_pad
 }
 
 /// Keep scrolled project roots in stacked slots, followed by the current
@@ -1463,13 +1512,13 @@ mod tests {
 
         assert_eq!(
             tree_content_right(root_key, "root", &state, 100.0),
-            row_content_right(100.0, 2, long_name)
+            row_content_right(100.0, 2, long_name, false)
         );
 
         state.model.set_expanded(nested_key, false);
         assert_eq!(
             tree_content_right(root_key, "root", &state, 100.0),
-            row_content_right(100.0, 1, "src")
+            row_content_right(100.0, 1, "src", true)
         );
     }
 

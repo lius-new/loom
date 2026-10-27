@@ -7,6 +7,11 @@ use lgui::prelude::{Element, UiRect, text};
 use lgui::text::{self, TextLayout, TextLayoutRequest};
 use unicode_width::UnicodeWidthStr;
 
+/// Display-column estimate used only while no renderer text layout is available.
+pub(crate) fn fallback_width(value: &str, font_height: f32) -> f32 {
+    UnicodeWidthStr::width(value) as f32 * font_height * 0.6
+}
+
 /// A single-line text run whose caret and hit-testing geometry comes from the
 /// active renderer rather than a fixed character-width approximation.
 #[derive(Clone)]
@@ -44,9 +49,7 @@ impl SingleLineText {
             .as_ref()
             .map(|layout| layout.width)
             .filter(|width| width.is_finite() && *width >= 0.0)
-            .unwrap_or_else(|| {
-                UnicodeWidthStr::width(self.value.as_str()) as f32 * self.style.height * 0.6
-            })
+            .unwrap_or_else(|| fallback_width(&self.value, self.style.height))
     }
 
     pub fn caret_x(&self, byte_offset: usize) -> f32 {

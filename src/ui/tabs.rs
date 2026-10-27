@@ -119,7 +119,7 @@ fn measure_in(s: &str, size: f32, weight: i32, mono: bool) -> f32 {
             });
             layout.width
         }
-        None => s.chars().count() as f32 * size * 0.6,
+        None => crate::ui::components::text::fallback_width(s, size),
     }
 }
 
