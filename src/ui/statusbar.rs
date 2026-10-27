@@ -64,9 +64,8 @@ impl Group {
 /// The status items in order, with the language group's place held by an empty item.
 struct Items {
     items: Vec<(String, TextStyle)>,
-    /// The group and the diagnostics beside it: one click target for the panel.
-    language: std::ops::Range<usize>,
     group: Option<Group>,
+    encoding: Option<usize>,
 }
 
 impl Items {
@@ -109,28 +108,32 @@ fn on_fill(fill: lgui::prelude::Color) -> lgui::prelude::Color {
     }
 }
 
-/// The measured layout anchors the language panel to the language items.
+/// Anchor the language panel to the server's colored chip only.
 pub fn language_anchor(rect: UiRect, frame: &StatusFrame) -> Option<UiRect> {
     let items = status_items(frame);
+    let group = items.group.as_ref()?;
     let mut x = items.left(rect);
-    let mut span: Option<UiRect> = None;
-    for index in 0..items.items.len() {
-        let width = items.width_of(index);
-        // The panel opens over the server group itself, not the diagnostics beside it.
-        if items
-            .group
-            .as_ref()
-            .is_some_and(|group| group.index == index)
-        {
-            return Some(UiRect::new(x, rect.top, x + width, rect.bottom));
-        }
-        if items.language.contains(&index) {
-            let left = span.map_or(x, |span| span.left);
-            span = Some(UiRect::new(left, rect.top, x + width, rect.bottom));
-        }
-        x += width + GAP;
+    for index in 0..group.index {
+        x += items.width_of(index) + GAP;
     }
-    span
+    x += group.action_width();
+    Some(UiRect::new(x, rect.top, x + group.chip_width, rect.bottom))
+}
+
+/// The encoding label's measured bounds, used to anchor its menu above it.
+pub fn encoding_anchor(rect: UiRect, frame: &StatusFrame) -> Option<UiRect> {
+    let items = status_items(frame);
+    let index = items.encoding?;
+    let mut x = items.left(rect);
+    for preceding in 0..index {
+        x += items.width_of(preceding) + GAP;
+    }
+    Some(UiRect::new(
+        x,
+        rect.top,
+        x + items.width_of(index) + TEXT_MARGIN,
+        rect.bottom,
+    ))
 }
 
 pub fn render(rect: UiRect, state: StatusBinding) -> Element {
@@ -162,16 +165,11 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
     }
 
     let mut x = items.left(rect);
-    // The language group and its diagnostics are one click target that opens the panel.
-    let mut language_span: Option<(f32, f32)> = None;
     let mut group_layer = None;
+    let mut encoding_layer = None;
     for index in 0..items.items.len() {
         let w = items.width_of(index);
         let is_group = items.group.as_ref().is_some_and(|g| g.index == index);
-        if items.language.contains(&index) {
-            let (from, _) = language_span.unwrap_or((x, x));
-            language_span = Some((from, x + w + TEXT_MARGIN));
-        }
         if is_group {
             if let Some(group) = &items.group {
                 group_layer = Some(render_group(rect, x, group, state.clone()));
@@ -184,28 +182,29 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
                 style,
             ));
         }
+        if items.encoding == Some(index) {
+            let action = state.clone();
+            encoding_layer = Some(
+                panel(
+                    UiRect::new(x - 3.0, rect.top, x + w + TEXT_MARGIN, rect.bottom),
+                    VisualStyle::default(),
+                )
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(lgui::core::CursorIcon::Pointer)
+                .semantics(Semantics::new(SemanticRole::Button).name("Change file encoding"))
+                .on_click(move || action.run(StatusCommand::Encoding)),
+            );
+        }
         x += w + GAP;
     }
-    if let Some((from, to)) = language_span {
-        let panel_state = state.clone();
-        bar = bar.child(
-            panel(
-                UiRect::new(from - 4.0, rect.top, to + 4.0, rect.bottom),
-                VisualStyle::default(),
-            )
-            .event_policy(EventPolicy::INTERACTIVE)
-            .cursor(lgui::core::CursorIcon::Pointer)
-            .semantics(Semantics::new(SemanticRole::Button).name("Language servers"))
-            .on_click(move || {
-                panel_state.run(StatusCommand::LanguagePanel);
-            }),
-        );
-    }
-    // Drawn over the panel's click target so the action block acts on its own.
+    // Each chip and action owns its own click target.
     if let Some(layer) = group_layer {
         bar = bar.child(layer);
     }
 
+    if let Some(layer) = encoding_layer {
+        bar = bar.child(layer);
+    }
     bar = bar.child(crate::ui::components::divider::top(rect));
 
     bar
@@ -213,6 +212,7 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
 
 fn status_items(s: &StatusFrame) -> Items {
     let mut items = Vec::new();
+    let mut encoding = None;
     if !s.pending.is_empty() {
         items.push((
             format!(
@@ -222,7 +222,6 @@ fn status_items(s: &StatusFrame) -> Items {
             theme::mono_bold(theme::c().accent, theme::SMALL),
         ));
     }
-    let language_start = items.len();
     for note in &s.language {
         let style = match note.level {
             crate::ui::chrome::NoteLevel::Quiet => theme::mono(theme::c().text_dim, theme::SMALL),
@@ -267,8 +266,9 @@ fn status_items(s: &StatusFrame) -> Items {
                 "Spaces: 2".into(),
                 theme::mono(theme::c().text_dim, theme::SMALL),
             ));
+            encoding = Some(items.len());
             items.push((
-                "UTF-8".into(),
+                file.encoding.clone(),
                 theme::mono(theme::c().text_dim, theme::SMALL),
             ));
         } else if file.is_diff {
@@ -293,11 +293,10 @@ fn status_items(s: &StatusFrame) -> Items {
             theme::mono(theme::c().text_dim, theme::SMALL),
         ));
     }
-    let language = language_start..items.len();
     Items {
         items,
-        language,
         group,
+        encoding,
     }
 }
 
@@ -361,12 +360,13 @@ fn render_group(rect: UiRect, x: f32, group: &Group, state: StatusBinding) -> El
         let mut element = panel(block, VisualStyle::filled(theme::c().surface));
         if action.interactive() {
             let command = action.clone();
+            let action_state = state.clone();
             element = element
                 .event_policy(EventPolicy::INTERACTIVE)
                 .cursor(lgui::core::CursorIcon::Pointer)
                 .semantics(Semantics::new(SemanticRole::Button).name(action.label()))
                 .on_click(move || {
-                    state.run(StatusCommand::ServerAction(command.clone()));
+                    action_state.run(StatusCommand::ServerAction(command.clone()));
                 });
         }
         layer = layer.child(element.child(crate::ui::tabs::icon(
@@ -381,7 +381,11 @@ fn render_group(rect: UiRect, x: f32, group: &Group, state: StatusBinding) -> El
     let ink = on_fill(fill);
     let middle = (rect.top + rect.bottom) / 2.0;
     let mut left = block.left + BLOCK_PAD;
-    let mut element = panel(block, VisualStyle::filled(fill)).event_policy(EventPolicy::NONE);
+    let mut element = panel(block, VisualStyle::filled(fill))
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(lgui::core::CursorIcon::Pointer)
+        .semantics(Semantics::new(SemanticRole::Button).name("Language servers"))
+        .on_click(move || state.run(StatusCommand::LanguagePanel));
     match chip.progress {
         Progress::Percent(percent) => {
             element = element.child(crate::ui::components::progress_ring::render(
@@ -427,4 +431,151 @@ pub fn language_action_anchor(rect: UiRect, frame: &StatusFrame) -> Option<UiRec
         },
         rect.bottom,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::chrome::{ChipAction, FileStatus, NoteLevel, StatusNote};
+    use lgui::{
+        application::{AppView, ApplicationContext},
+        core::{InputEvent, Point, PointerButton, PointerData, UiScale},
+        session::UiSession,
+    };
+    use std::sync::{Arc, Mutex};
+
+    fn click(session: &mut UiSession, context: &ApplicationContext, x: f32, y: f32) {
+        let pointer = PointerData::mouse(Point::new(x, y));
+        for input in [
+            InputEvent::PointerDown {
+                pointer,
+                button: PointerButton::Left,
+            },
+            InputEvent::PointerUp {
+                pointer,
+                button: PointerButton::Left,
+            },
+        ] {
+            let output = session.handle_input(input);
+            lgui::core::dispatch_runtime_output(
+                output,
+                context,
+                &lgui::window::WindowId::new("statusbar-hit-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+        }
+    }
+
+    #[test]
+    fn language_panel_opens_only_from_server_chip() {
+        let rect = UiRect::new(0.0, 0.0, 1000.0, 28.0);
+        for with_server in [false, true] {
+            let lang = crate::domain::language::builtin("rust");
+            let frame = StatusFrame {
+                pending: Vec::new(),
+                diff_loading: false,
+                vim: None,
+                file: Some(FileStatus {
+                    encoding: "UTF-8".into(),
+                    lang,
+                    missing: false,
+                    conflict: false,
+                    cursor: Some((0, 0)),
+                    is_diff: false,
+                    is_file: true,
+                }),
+                language: vec![StatusNote {
+                    text: "2 diagnostics".into(),
+                    level: NoteLevel::Warning,
+                }],
+                server: with_server.then(|| ServerChip {
+                    text: "rust-analyzer".into(),
+                    tone: crate::ui::language_panel::Tone::Ready,
+                    progress: Progress::None,
+                    action: Some(ChipAction::Restart(7)),
+                }),
+            };
+            let commands = Arc::new(Mutex::new(Vec::new()));
+            let seen = commands.clone();
+            let snapshot = frame.clone();
+            let binding = StatusBinding::new(
+                move || snapshot.clone(),
+                move |command| {
+                    seen.lock().unwrap().push(match command {
+                        StatusCommand::LanguagePanel => "panel",
+                        StatusCommand::Encoding => "encoding",
+                        StatusCommand::ServerAction(_) => "action",
+                    });
+                },
+            );
+            let view: AppView = Arc::new(move |_| render(rect, binding.clone()));
+            let context = ApplicationContext::empty(Default::default());
+            let _fonts = lgui::backend::install_text_environment(
+                &context,
+                lgui::render_skia::skia_text_system_handle(),
+            );
+            let mut session = UiSession::new();
+            session.render_view(&view, rect, UiScale::ONE);
+            for label in ["2 diagnostics", "Ln 1, Col 1", "Spaces: 2", lang.badge()] {
+                let bounds = session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|node| node.text.as_deref() == Some(label))
+                    .unwrap()
+                    .paint_bounds;
+                click(
+                    &mut session,
+                    &context,
+                    (bounds.left + bounds.right) / 2.0,
+                    14.0,
+                );
+                assert!(
+                    commands.lock().unwrap().is_empty(),
+                    "{label} opened a panel"
+                );
+            }
+            let bounds = session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|node| node.text.as_deref() == Some("UTF-8"))
+                .unwrap()
+                .paint_bounds;
+            click(
+                &mut session,
+                &context,
+                (bounds.left + bounds.right) / 2.0,
+                14.0,
+            );
+            assert_eq!(*commands.lock().unwrap(), ["encoding"]);
+            commands.lock().unwrap().clear();
+            click(&mut session, &context, 2.0, 14.0);
+            assert!(commands.lock().unwrap().is_empty());
+            if let Some(chip) = language_anchor(rect, &frame) {
+                for x in [
+                    chip.left + 1.0,
+                    (chip.left + chip.right) / 2.0,
+                    chip.right - 1.0,
+                ] {
+                    click(&mut session, &context, x, 14.0);
+                    assert_eq!(*commands.lock().unwrap(), ["panel"]);
+                    commands.lock().unwrap().clear();
+                }
+                click(&mut session, &context, chip.right + GAP / 2.0, 14.0);
+                assert!(commands.lock().unwrap().is_empty());
+                let action = language_action_anchor(rect, &frame).unwrap();
+                click(
+                    &mut session,
+                    &context,
+                    (action.left + action.right) / 2.0,
+                    14.0,
+                );
+                assert_eq!(*commands.lock().unwrap(), ["action"]);
+            } else {
+                assert!(!with_server);
+            }
+        }
+    }
 }

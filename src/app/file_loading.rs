@@ -44,8 +44,7 @@ impl crate::infrastructure::file_loader::Request for PendingFile {
 impl FileLoader {
     pub fn new(state: AppContext, application: ApplicationHandle) -> Self {
         Self::with_prepare(state, application, |request| {
-            let text = crate::app::workspace_commands::read_text_file(&request.path)?;
-            Ok(PreparedTextFile::new(request.path.clone(), text))
+            crate::app::encoding::prepare(&request.path)
         })
     }
     fn with_prepare(
@@ -240,7 +239,9 @@ fn finish(app: &mut AppState, generation: u64, prepared: Result<PreparedTextFile
         return true;
     }
     match prepared {
-        Err(error) => app.show_error(error),
+        Err(error) => {
+            app.show_error(error);
+        }
         Ok(prepared) => {
             let pane = if let Some(TabDrop::Pane {
                 pane,

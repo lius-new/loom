@@ -926,7 +926,7 @@ R
             ..Default::default()
         };
         let saved = snapshot(app.clone(), git(), pane, RECT);
-        assert_eq!(saved.conflicts.as_ref(), [region.clone()]);
+        assert_eq!(saved.conflicts.as_ref(), std::slice::from_ref(&region));
 
         // A line typed above moves the conflict down; one typed inside drops it.
         app.workspace

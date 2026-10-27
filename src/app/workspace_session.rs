@@ -89,7 +89,63 @@ pub fn save_terminal_workspace_root(root: Option<PathBuf>) -> io::Result<()> {
 }
 
 pub fn save_editor_layout(layout: Option<&EditorLayout>) -> io::Result<()> {
-    update(|session| session.editor_layout = layout.cloned())
+    let (reply, done) = std::sync::mpsc::sync_channel(1);
+    layout_writer()
+        .send(LayoutWrite {
+            layout: layout.cloned(),
+            reply: Some(reply),
+        })
+        .map_err(|_| io::Error::other("Session writer stopped"))?;
+    done.recv()
+        .map_err(|_| io::Error::other("Session writer stopped"))?
+}
+pub(crate) fn queue_editor_layout(layout: Option<EditorLayout>) {
+    let _ = layout_writer().send(LayoutWrite {
+        layout,
+        reply: None,
+    });
+}
+struct LayoutWrite {
+    layout: Option<EditorLayout>,
+    reply: Option<std::sync::mpsc::SyncSender<io::Result<()>>>,
+}
+fn layout_writer() -> &'static std::sync::mpsc::Sender<LayoutWrite> {
+    static WRITER: OnceLock<std::sync::mpsc::Sender<LayoutWrite>> = OnceLock::new();
+    WRITER.get_or_init(|| {
+        start_layout_writer(|layout| update(|session| session.editor_layout = layout))
+    })
+}
+fn start_layout_writer(
+    persist: impl Fn(Option<EditorLayout>) -> io::Result<()> + Send + 'static,
+) -> std::sync::mpsc::Sender<LayoutWrite> {
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    let (sender, receiver) = mpsc::channel::<LayoutWrite>();
+    std::thread::Builder::new()
+        .name("loom-session-writer".into())
+        .spawn(move || {
+            while let Ok(mut pending) = receiver.recv() {
+                if pending.reply.is_none() {
+                    loop {
+                        match receiver.recv_timeout(std::time::Duration::from_millis(250)) {
+                            Ok(next) => {
+                                pending = next;
+                                if pending.reply.is_some() {
+                                    break;
+                                }
+                            }
+                            Err(RecvTimeoutError::Timeout) => break,
+                            Err(RecvTimeoutError::Disconnected) => return,
+                        }
+                    }
+                }
+                let result = persist(pending.layout);
+                if let Some(reply) = pending.reply {
+                    let _ = reply.send(result);
+                }
+            }
+        })
+        .expect("could not start session writer");
+    sender
 }
 
 pub fn save_terminal_state(
@@ -215,6 +271,18 @@ fn restore_editor_layout_with(
                 continue;
             };
             let temporary = existing.is_none().then(|| app.workspace.active()).flatten();
+            if let crate::domain::workspace_session::SavedView::Text {
+                encoding: Some(encoding),
+                ..
+            } = &saved
+            {
+                if let Some(doc) = app.workspace.documents.get_mut(&document) {
+                    doc.recovery = Some(encoding.clone());
+                    if doc.loading.is_none() {
+                        crate::domain::workspace::restore_encoding(doc);
+                    }
+                }
+            }
             let view = app.workspace.restore_view(pane, document, &saved);
             restored_items[index] = Some(view);
             if let Some(reference) = saved.association() {
@@ -437,5 +505,41 @@ mod tests {
         let decoded: WorkspaceSession = serde_json::from_str("{}").unwrap();
 
         assert_eq!(decoded, WorkspaceSession::default());
+    }
+}
+
+#[cfg(test)]
+mod recovery_writer_tests {
+    use super::*;
+    #[test]
+    fn encoding_exit_flush_supersedes_queued_recovery_without_a_later_stale_write() {
+        let output = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let seen = output.clone();
+        let writer = start_layout_writer(move |layout| {
+            seen.lock().unwrap().push(layout);
+            Ok(())
+        });
+        let old = EditorLayout {
+            root: crate::domain::workspace_session::SavedPaneNode::Pane {
+                items: vec!["discarded.txt".into()],
+                active: Some(0),
+            },
+            active_pane: 0,
+        };
+        writer
+            .send(LayoutWrite {
+                layout: Some(old),
+                reply: None,
+            })
+            .unwrap();
+        let (reply, done) = std::sync::mpsc::sync_channel(1);
+        writer
+            .send(LayoutWrite {
+                layout: None,
+                reply: Some(reply),
+            })
+            .unwrap();
+        done.recv().unwrap().unwrap();
+        assert_eq!(*output.lock().unwrap(), vec![None]);
     }
 }

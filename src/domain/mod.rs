@@ -3,6 +3,7 @@ pub(crate) mod notification;
 
 pub mod document;
 pub(crate) mod document_snapshot;
+pub mod encoding;
 pub mod geometry;
 pub(crate) mod identity;
 pub(crate) mod language;

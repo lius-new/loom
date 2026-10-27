@@ -169,6 +169,12 @@ pub fn status_binding(state: &AppContext) -> crate::ui::chrome::StatusBinding {
                 vim: crate::app::editor_vim::is_active(&app)
                     .then(|| (app.editor.vim.mode(), app.editor.vim.status())),
                 file: app.workspace.active().map(|id| FileStatus {
+                    encoding: app
+                        .workspace
+                        .view_document(id)
+                        .and_then(|id| app.workspace.documents.get(&id))
+                        .map(|d| crate::ui::encoding_picker::encoding_label(d.format()))
+                        .unwrap_or_default(),
                     lang: app
                         .workspace
                         .view_meta(id)
@@ -192,6 +198,7 @@ pub fn status_binding(state: &AppContext) -> crate::ui::chrome::StatusBinding {
             }
         },
         move |command| match command {
+            StatusCommand::Encoding => crate::app::encoding::open(&writer),
             StatusCommand::ServerAction(crate::ui::chrome::ChipAction::Details(id)) => writer
                 .update(|app| {
                     app.chrome.language_panel = false;

@@ -64,6 +64,7 @@ pub struct ChromeState {
     pub workspace_home_hover: Option<usize>,
     /// The language server panel opened from the status bar.
     pub language_panel: bool,
+    pub encoding: Option<crate::app::encoding::Picker>,
     /// The language server whose details card is open, by instance.
     pub language_details: Option<u64>,
 }

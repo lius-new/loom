@@ -378,7 +378,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         move || drop(handle)
     });
     cx.use_effect(editor_layout.clone(), move || {
-        let _ = workspace_persistence::save_editor_layout(editor_layout.as_ref());
+        workspace_persistence::queue_editor_layout(editor_layout);
         || {}
     });
     let document_state = state.clone();
@@ -1313,6 +1313,26 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     }
 
     // ---- Overlays ------------------------------------------------------
+    let encoding_focus = cx.focus_handle(UiId::new(crate::ui::encoding_picker::FOCUS_ID));
+    crate::ui::hold_focus(
+        cx,
+        s.chrome
+            .encoding
+            .as_ref()
+            .map(|_| s.terminal.ui.terminal_focused),
+        encoding_focus.clone(),
+        terminal_focus.clone(),
+        editor_focus.clone(),
+    );
+    if s.chrome.encoding.is_some() {
+        let status = super::chrome::status_binding(&state).frame();
+        root = root.child(crate::ui::encoding_picker::render(
+            vp,
+            crate::ui::statusbar::encoding_anchor(statusbar_rect, &status),
+            super::encoding::binding(&state),
+        ));
+    }
+
     if s.chrome.language_details.is_some()
         && let Some(frame) = super::chrome::language_details_frame(&state)
     {

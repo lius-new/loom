@@ -46,7 +46,8 @@ pub fn save_document(state: &AppContext, id: FileId) -> bool {
     };
     let contents = std::sync::Arc::new(contents);
 
-    match crate::infrastructure::document_filesystem::write(&path, contents.as_bytes()) {
+    let format = state.get().workspace.documents[&id].format();
+    match crate::infrastructure::document_filesystem::write_encoded(&path, &contents, format) {
         Ok(()) => {
             let saved_path = path.clone();
             let project_settings = crate::features::settings::project::is_settings_file(&path);
@@ -173,6 +174,18 @@ pub fn discard_close_request(state: &AppContext) -> Option<CloseContinuation> {
 
 fn discard_close_request_in(app: &mut AppState) -> Option<CloseContinuation> {
     let request = app.editor.close_request.take()?;
+    if request.continuation == CloseContinuation::ExitApplication {
+        for id in app.workspace.released_by(&request.targets) {
+            if let Some(doc) = app.workspace.documents.get_mut(&id) {
+                crate::domain::workspace::replace_buffer_from_disk(
+                    doc,
+                    doc.saved_text.as_ref().clone(),
+                );
+                doc.buffer.initialize_metadata(doc.saved_format.code());
+                doc.recovery = None;
+            }
+        }
+    }
     if request.continuation == CloseContinuation::CloseTabs {
         for (pane, id) in request.targets {
             app.workspace.close_item(pane, id);
@@ -207,8 +220,12 @@ fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>
         let Some((id, path, contents)) = app.workspace.save_snapshot(id) else {
             continue;
         };
-        crate::infrastructure::document_filesystem::write(&path, contents.as_bytes())
-            .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
+        crate::infrastructure::document_filesystem::write_encoded(
+            &path,
+            &contents,
+            app.workspace.documents[&id].format(),
+        )
+        .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
         app.workspace.mark_saved(id);
     }
     if request.continuation == CloseContinuation::CloseTabs {
@@ -298,6 +315,7 @@ mod tests {
         let file = fs::File::create(&path).unwrap();
         file.set_len(MAX_EDITABLE_FILE_BYTES).unwrap();
         drop(file);
+        fs::write(&path, vec![b'a'; MAX_EDITABLE_FILE_BYTES as usize]).unwrap();
         assert_eq!(
             read_text_file(&path).unwrap().len() as u64,
             MAX_EDITABLE_FILE_BYTES
@@ -307,17 +325,20 @@ mod tests {
         drop(file);
         assert_eq!(
             read_text_file(&path).unwrap_err(),
-            "Could not open large.txt: file is larger than 64 MiB"
+            format!(
+                "Could not open {}: file is larger than 64 MiB",
+                path.display()
+            )
         );
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn text_file_rejects_invalid_utf8_and_directories() {
+    fn text_file_displays_malformed_encoding_and_rejects_directories() {
         let root = close_test_directory("invalid-text-file");
         let path = root.join("invalid.txt");
-        fs::write(&path, [0xff, 0xfe]).unwrap();
-        assert!(read_text_file(&path).unwrap_err().contains("as UTF-8"));
+        fs::write(&path, [0xff, 0xfe, 0x00, 0xd8]).unwrap();
+        assert_eq!(read_text_file(&path).unwrap(), "\u{fffd}");
         assert!(read_text_file(&root).is_err());
         fs::remove_dir_all(root).unwrap();
     }

@@ -121,7 +121,10 @@ fn injected_source_preserves_skip_categories_and_read_errors() {
     let mut source = MemorySource::default();
     source.files.extend([
         ("project/binary".into(), Err("Binary file".into())),
-        ("project/encoding".into(), Err("File is not UTF-8".into())),
+        (
+            "project/encoding".into(),
+            Err("Unsupported text encoding".into()),
+        ),
         (
             "project/large".into(),
             Err("File is larger than 4 MiB".into()),

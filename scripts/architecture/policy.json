@@ -975,6 +975,10 @@
     "markdown": {
       "owner": "features/settings/markdown: reading metrics independent of syntax/resource policy",
       "migrated_in": "Markdown reading preferences"
+    },
+    "encoding": {
+      "owner": "features/settings/model: file encoding preferences DTO",
+      "migrated_in": "File encoding support"
     }
   },
   "keymap_model_ownership": {
@@ -1048,7 +1052,8 @@
       "welcome_hover",
       "workspace_home_hover",
       "language_panel",
-      "language_details"
+      "language_details",
+      "encoding"
     ],
     "SidebarChrome": [
       "visible",

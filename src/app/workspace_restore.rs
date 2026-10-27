@@ -21,9 +21,30 @@ pub struct SessionRestore {
 
 impl SessionRestore {
     pub fn new(state: AppContext, application: ApplicationHandle) -> Self {
-        Self::with_prepare(state, application, |path| {
-            crate::app::workspace_commands::read_text_file(path)
-                .map(|text| PreparedTextFile::new(path.to_path_buf(), text))
+        let reader = state.clone();
+        Self::with_prepare(state, application, move |path| {
+            let app = reader.get();
+            let explicit = app
+                .workspace
+                .file_id_for_path(path)
+                .and_then(|id| app.workspace.documents.get(&id))
+                .and_then(|doc| doc.recovery.as_ref())
+                .and_then(|saved| {
+                    if saved.unsaved_text.is_some() {
+                        Some(saved.saved)
+                    } else {
+                        saved.read_override
+                    }
+                });
+            let read = crate::infrastructure::document_filesystem::read_encoded(
+                path,
+                explicit,
+                crate::infrastructure::document_filesystem::MAX_EDITABLE_FILE_BYTES,
+            );
+            read.map(|(decoded, disk)| {
+                PreparedTextFile::with_encoding(path.to_path_buf(), decoded, disk)
+            })
+            .map_err(|e| format!("Could not restore {}: {e}", path.display()))
         })
     }
 
@@ -127,7 +148,22 @@ fn finish(
             {
                 return false;
             }
-            app.workspace.close(id);
+            if app
+                .workspace
+                .documents
+                .get(&id)
+                .and_then(|d| d.recovery.as_ref())
+                .is_some_and(|r| r.unsaved_text.is_some())
+            {
+                let prepared = PreparedTextFile::new(path.clone(), String::new());
+                app.workspace.install_restored(id, &path, prepared);
+                if let Some(doc) = app.workspace.documents.get_mut(&id) {
+                    doc.missing_on_disk = !path.exists();
+                    doc.disk_conflict = path.exists();
+                }
+            } else {
+                app.workspace.close(id);
+            }
             app.show_error(error);
             true
         }

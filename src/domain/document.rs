@@ -15,6 +15,8 @@ pub struct FileMeta {
     /// the old language are dropped even if the text did not change.
     pub language_generation: u64,
     pub path: PathBuf,
+    pub encoding_source: crate::domain::encoding::EncodingSource,
+    pub read_override: Option<crate::domain::encoding::TextFormat>,
 }
 
 /// Everything that decides whether a derived result still describes a document:
@@ -52,12 +54,17 @@ pub struct DiskState {
     pub modified_time: Option<SystemTime>,
     pub size: u64,
     pub content_hash: u64,
+    pub format: crate::domain::encoding::TextFormat,
 }
 
 /// A filesystem result. Missing and unreadable are distinct observations.
 #[derive(Clone, Debug)]
 pub enum DiskRead {
-    Found { contents: String, state: DiskState },
+    Found {
+        contents: String,
+        state: DiskState,
+        bytes: Option<std::sync::Arc<Vec<u8>>>,
+    },
     Missing,
     Failed(String),
 }
@@ -68,6 +75,7 @@ impl DiskState {
             modified_time: None,
             size: contents.len() as u64,
             content_hash: content_hash(contents),
+            format: Default::default(),
         }
     }
 
@@ -90,6 +98,8 @@ impl FileMeta {
         Self {
             name,
             lang,
+            encoding_source: Default::default(),
+            read_override: None,
             language_generation: 0,
             path,
         }

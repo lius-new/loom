@@ -92,6 +92,7 @@ impl TitleBinding {
 
 #[derive(Clone)]
 pub struct FileStatus {
+    pub encoding: String,
     pub lang: crate::domain::document::ResolvedLanguage,
     pub missing: bool,
     pub conflict: bool,
@@ -180,6 +181,7 @@ pub struct StatusNote {
 pub enum StatusCommand {
     ServerAction(ChipAction),
     LanguagePanel,
+    Encoding,
 }
 #[derive(Clone)]
 pub struct StatusBinding {
@@ -243,3 +245,5 @@ pub(crate) mod tab_state;
 pub(crate) mod tabs_binding;
 
 pub mod diff_binding;
+
+pub(crate) mod encoding_binding;

@@ -66,6 +66,7 @@ pub struct TextBuffer {
     lines: Arc<LineIndex>,
     history: Arc<History>,
     version: u64,
+    metadata: u32,
     revisions: Arc<VecDeque<super::revision::TextRevision>>,
     /// The line break of the first line, kept for when no line break is left.
     ending: &'static str,
@@ -81,11 +82,31 @@ impl TextBuffer {
             text: Arc::new(text),
             history: Arc::default(),
             version: 0,
+            metadata: 0,
             revisions: Arc::default(),
             ending,
         }
     }
 
+    /// Opaque document metadata, with undo steps interleaved with text edits.
+    pub fn metadata(&self) -> u32 {
+        self.metadata
+    }
+    pub fn initialize_metadata(&mut self, value: u32) {
+        self.metadata = value;
+    }
+    pub fn set_metadata(&mut self, value: u32) {
+        if self.metadata != value {
+            let before = self.metadata;
+            self.history_mut().record_metadata(before, value);
+            self.metadata = value;
+            self.version += 1;
+        }
+    }
+    pub(super) fn replay_metadata(&mut self, value: u32) {
+        self.metadata = value;
+        self.version += 1;
+    }
     pub fn text(&self) -> &str {
         &self.text
     }

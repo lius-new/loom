@@ -71,13 +71,15 @@ pub fn run(
                     Err(error)
                         if matches!(
                             error.as_str(),
-                            "Binary file" | "File is not UTF-8" | "File is larger than 4 MiB"
+                            "Binary file"
+                                | "Unsupported text encoding"
+                                | "File is larger than 4 MiB"
                         ) =>
                     {
                         results.skipped += 1;
                         match error.as_str() {
                             "Binary file" => results.skipped_binary += 1,
-                            "File is not UTF-8" => results.skipped_encoding += 1,
+                            "Unsupported text encoding" => results.skipped_encoding += 1,
                             _ => results.skipped_large += 1,
                         }
                         continue;

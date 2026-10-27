@@ -53,9 +53,25 @@ pub enum SavedView {
         presentation: SavedPresentation,
         #[serde(default)]
         source: SavedSource,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encoding: Option<SavedEncoding>,
         #[serde(default)]
         reader: SavedReader,
     },
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SavedEncoding {
+    pub current: crate::domain::encoding::TextFormat,
+    pub saved: crate::domain::encoding::TextFormat,
+    #[serde(default)]
+    pub read_override: Option<crate::domain::encoding::TextFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsaved_text: Option<std::sync::Arc<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_text: Option<std::sync::Arc<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_bytes: Option<std::sync::Arc<Vec<u8>>>,
 }
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,6 +139,7 @@ impl SavedView {
     fn capture(path: PathBuf, view: &DocumentView, association: Option<SavedViewRef>) -> Self {
         Self::Text {
             path,
+            encoding: None,
             presentation: match view.presentation {
                 Presentation::Source => SavedPresentation::Source,
                 Presentation::Markdown => SavedPresentation::Markdown,
@@ -145,6 +162,7 @@ impl From<PathBuf> for SavedView {
     fn from(path: PathBuf) -> Self {
         Self::Text {
             path,
+            encoding: None,
             presentation: SavedPresentation::default(),
             source: SavedSource::default(),
             reader: SavedReader::default(),
@@ -397,11 +415,36 @@ fn save_pane_node<D: Clone, K: Clone + Ord>(
             let pane = workspace.pane(*id)?;
             let restorable = |view: ViewId| workspace.is_file(view);
             let saved = |id: ViewId| {
-                Some(SavedView::capture(
+                let mut saved = SavedView::capture(
                     workspace.view_meta(id)?.path.clone(),
                     workspace.view(id)?,
                     source_reference(workspace, id, pending),
-                ))
+                );
+                if let Some(document) = workspace
+                    .view_document(id)
+                    .and_then(|id| workspace.documents.get(&id))
+                {
+                    let SavedView::Text { encoding, .. } = &mut saved;
+                    let dirty = document.is_dirty();
+                    *encoding = if document.loading.is_some() {
+                        document.recovery.clone()
+                    } else if dirty
+                        || document.format() != Default::default()
+                        || document.meta.read_override.is_some()
+                    {
+                        Some(SavedEncoding {
+                            current: document.format(),
+                            saved: document.saved_format,
+                            read_override: document.meta.read_override.map(|_| document.format()),
+                            unsaved_text: dirty.then(|| document.buffer.text_snapshot()),
+                            saved_text: dirty.then(|| document.saved_text.clone()),
+                            source_bytes: dirty.then(|| document.encoding_bytes.clone()).flatten(),
+                        })
+                    } else {
+                        None
+                    };
+                }
+                Some(saved)
             };
             let mut items = pane
                 .items()

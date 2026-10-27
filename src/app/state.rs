@@ -100,6 +100,7 @@ impl AppState {
                     editor_font: crate::ui::fonts::FontSettings::EDITOR,
                     terminal_font: crate::ui::fonts::FontSettings::TERMINAL,
                     file_associations: Vec::new(),
+                    encoding: Default::default(),
                     language_servers: Vec::new(),
                     languages: Default::default(),
                     lsp: Default::default(),
@@ -161,6 +162,7 @@ impl AppState {
     pub fn settings(&self) -> crate::infrastructure::settings_filesystem::Settings {
         crate::infrastructure::settings_filesystem::Settings {
             theme: self.preferences.values().theme,
+            encoding: self.preferences.values().encoding.clone(),
             ui_scale: self.preferences.values().ui_scale,
             default_shell: self.preferences.values().default_shell,
             terminal_profiles: self.preferences.values().terminal_profiles.clone(),
@@ -196,6 +198,7 @@ impl AppState {
         let shells_changed = settings.default_shell != self.preferences.values().default_shell
             || settings.terminal_profiles != self.preferences.values().terminal_profiles;
         self.preferences.values_mut().theme = settings.theme;
+        self.preferences.values_mut().encoding = settings.encoding.clone();
         self.preferences.values_mut().ui_scale =
             crate::features::settings::scale::clamped(settings.ui_scale);
         self.preferences.values_mut().default_shell = settings.default_shell;

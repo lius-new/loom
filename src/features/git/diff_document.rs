@@ -300,7 +300,17 @@ impl DiffDocument {
         let mut rows = Vec::new();
         let mut binary = false;
 
+        let mut encoded = false;
         if let Some(file) = diff.files.into_iter().next() {
+            encoded = file.encoded;
+            if let Some(change) = file.format_change {
+                rows.push(DiffRow {
+                    old_line: None,
+                    new_line: None,
+                    text: change,
+                    kind: DiffRowKind::Hunk,
+                });
+            }
             binary = file.binary;
             for (hunk_index, hunk) in file.hunks.into_iter().enumerate() {
                 if hunk_index > 0 || hunk.old_start > 1 || hunk.new_start > 1 {
@@ -365,6 +375,7 @@ impl DiffDocument {
         let metrics = DiffMetrics::new(&rows, &split_rows);
         // Only the index and worktree can take a single change back.
         let blocks = if !binary
+            && !encoded
             && matches!(
                 target,
                 DiffTarget::HeadToIndex | DiffTarget::IndexToWorktree

@@ -534,13 +534,17 @@ impl GitService {
 
 pub(crate) fn read_untracked(path: &Path) -> GitResult<DiffContent> {
     let bytes = std::fs::read(path)?;
-    if bytes.contains(&0) {
-        return Ok(binary_content());
-    }
-    Ok(match String::from_utf8(bytes) {
-        Ok(contents) => DiffContent::Untracked(contents),
-        Err(_) => binary_content(),
-    })
+    Ok(
+        match crate::features::encoding::decode(
+            &bytes,
+            None,
+            &crate::infrastructure::document_filesystem::options(path),
+            crate::infrastructure::document_filesystem::MAX_EDITABLE_FILE_BYTES as usize,
+        ) {
+            Ok(decoded) => DiffContent::Untracked(decoded.text),
+            Err(_) => binary_content(),
+        },
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

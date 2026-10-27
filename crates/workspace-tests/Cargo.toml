@@ -6,5 +6,5 @@ publish = false
 
 [dependencies]
 loom-editor-core = { path = "../editor-core" }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order"] }

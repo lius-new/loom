@@ -28,6 +28,12 @@ pub(crate) struct OpenDocument {
     pub(crate) meta: FileMeta,
     pub(crate) buffer: TextBuffer,
     pub(crate) saved_text: Arc<String>,
+    pub(crate) saved_format: crate::domain::encoding::TextFormat,
+    /// Raw disk bytes and the current unsaved byte interpretation. Neither is
+    /// rebuilt from replacement characters when an encoding is selected again.
+    pub(crate) disk_bytes: Option<Arc<Vec<u8>>>,
+    pub(crate) encoding_bytes: Option<Arc<Vec<u8>>>,
+    pub(crate) recovery: Option<crate::domain::workspace_session::SavedEncoding>,
     pub(crate) dirty_cache: Arc<Mutex<(u64, usize, usize, bool)>>,
     /// Membership index only. Per-view state lives in Workspace::views.
     pub(crate) view_ids: BTreeSet<ViewId>,
@@ -41,13 +47,19 @@ pub(crate) struct OpenDocument {
 
 impl OpenDocument {
     pub(crate) fn new(meta: FileMeta, contents: String, disk_state: DiskState) -> Self {
-        let buffer = TextBuffer::new(contents);
+        let saved_format = disk_state.format;
+        let mut buffer = TextBuffer::new(contents);
+        buffer.initialize_metadata(saved_format.code());
         let saved_text = buffer.text_snapshot();
         Self {
             incarnation: 0,
             meta,
             buffer,
             saved_text,
+            saved_format,
+            disk_bytes: None,
+            encoding_bytes: None,
+            recovery: None,
             dirty_cache: Arc::new(Mutex::new((u64::MAX, 0, 0, false))),
             view_ids: BTreeSet::new(),
             disk_state,
@@ -73,7 +85,13 @@ impl OpenDocument {
         self.loading.is_none()
     }
 
+    pub(crate) fn format(&self) -> crate::domain::encoding::TextFormat {
+        crate::domain::encoding::TextFormat::from_code(self.buffer.metadata())
+    }
     pub(crate) fn is_dirty(&self) -> bool {
+        if self.is_text() && self.format() != self.saved_format {
+            return true;
+        }
         let version = self.buffer.version();
         let saved = Arc::as_ptr(&self.saved_text) as usize;
         let text = self.buffer.snapshot_identity();
@@ -181,6 +199,17 @@ pub enum OpenMode {
 pub(crate) struct PreparedTextFile(OpenDocument);
 
 impl PreparedTextFile {
+    pub fn with_encoding(
+        path: PathBuf,
+        decoded: crate::domain::encoding::DecodedText,
+        disk: DiskState,
+    ) -> Self {
+        let mut value = Self::with_disk_state(path, decoded.text, disk);
+        value.0.meta.encoding_source = decoded.source;
+        value.0.disk_bytes = Some(decoded.bytes.clone());
+        value.0.encoding_bytes = Some(decoded.bytes);
+        value
+    }
     pub fn with_disk_state(path: PathBuf, contents: String, disk: DiskState) -> Self {
         Self(OpenDocument::new(FileMeta::from_path(path), contents, disk))
     }
@@ -227,6 +256,13 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             return false;
         }
         document.saved_text = Arc::new(document.buffer.text().to_owned());
+        document.buffer.initialize_metadata(disk.format.code());
+        document.saved_format = disk.format;
+        document.disk_bytes = None;
+        document.encoding_bytes = None;
+        if document.meta.read_override.is_some() {
+            document.meta.read_override = Some(disk.format);
+        }
         document.disk_state = disk;
         document.disk_conflict = false;
         document.missing_on_disk = false;
@@ -242,10 +278,14 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         if !document.is_text() {
             return ReconcileResult::Unchanged(path);
         }
-        let dirty = document.buffer.text() != document.saved_text.as_str();
+        let dirty = document.is_dirty();
         let previous = document.disk_state.clone();
-        let (contents, current) = match observation {
-            DiskRead::Found { contents, state } => (contents, state),
+        let (contents, current, bytes) = match observation {
+            DiskRead::Found {
+                contents,
+                state,
+                bytes,
+            } => (contents, state, bytes),
             DiskRead::Missing => {
                 if let Some(document) = self.documents.get_mut(&id) {
                     document.missing_on_disk = true;
@@ -271,6 +311,10 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         } else {
             replace_buffer_from_disk(document, contents.clone());
             document.saved_text = Arc::new(contents);
+            document.buffer.initialize_metadata(current.format.code());
+            document.saved_format = current.format;
+            document.disk_bytes = bytes.clone();
+            document.encoding_bytes = bytes;
             document.disk_state = current;
             document.disk_conflict = false;
             self.clamp_document_views(id);
@@ -293,6 +337,13 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         }
         replace_buffer_from_disk(document, contents.clone());
         document.saved_text = Arc::new(contents);
+        document.buffer.initialize_metadata(disk.format.code());
+        document.saved_format = disk.format;
+        document.disk_bytes = None;
+        document.encoding_bytes = None;
+        if document.meta.read_override.is_some() {
+            document.meta.read_override = Some(disk.format);
+        }
         document.disk_state = disk;
         document.disk_conflict = false;
         document.missing_on_disk = false;
@@ -334,6 +385,8 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         document.meta.lang = language;
         document.meta.language_generation =
             previous.language_generation + u64::from(previous.lang != document.meta.lang);
+        document.meta.encoding_source = previous.encoding_source;
+        document.meta.read_override = previous.read_override;
         document.disk_state = disk;
         document.missing_on_disk = false;
         self.paths.insert(new_path, id);
@@ -1318,6 +1371,42 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             .is_some_and(|document| document.is_text() && document.missing_on_disk)
     }
 
+    pub fn set_encoding(
+        &mut self,
+        id: FileId,
+        format: crate::domain::encoding::TextFormat,
+    ) -> Result<bool, String> {
+        format.validate()?;
+        let document = self.documents.get_mut(&id).ok_or("Document is not open")?;
+        if !document.is_text() {
+            return Err("Document is loading".into());
+        }
+        if document.format() == format {
+            return Ok(false);
+        }
+        document.buffer.set_metadata(format.code());
+        document.buffer.break_undo_group();
+
+        Ok(true)
+    }
+
+    pub(crate) fn set_decoded_encoding(
+        &mut self,
+        id: FileId,
+        decoded: crate::domain::encoding::DecodedText,
+    ) -> Result<bool, String> {
+        self.document_editor_mut(id)
+            .ok_or("Document is not editable")?
+            .replace_with_metadata(&decoded.text, decoded.format.code())
+            .map_err(|error| error.to_string())?;
+        let document = self.documents.get_mut(&id).ok_or("Document is not open")?;
+        document.encoding_bytes = Some(decoded.bytes);
+        document.meta.read_override = Some(decoded.format);
+        document.meta.encoding_source = decoded.source;
+        self.clamp_document_views(id);
+        Ok(true)
+    }
+
     pub fn save_snapshot(&self, id: FileId) -> Option<(FileId, PathBuf, String)> {
         let document = self.documents.get(&id)?;
         if !document.is_text() {
@@ -1349,9 +1438,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         let mut versions = self
             .documents
             .values()
-            .filter(|document| {
-                document.is_text() && document.buffer.text() != document.saved_text.as_str()
-            })
+            .filter(|document| document.is_dirty())
             .map(|document| (document.meta.path.clone(), document.buffer.version()))
             .collect::<Vec<_>>();
         versions.sort();
@@ -1436,6 +1523,8 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             return false;
         };
         let mut replacement = prepared.0;
+        replacement.recovery = document.recovery.take();
+        restore_encoding(&mut replacement);
         replacement.view_ids = std::mem::take(&mut document.view_ids);
         replacement.incarnation = document.incarnation;
         self.retired
@@ -1652,6 +1741,9 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
                     .buffer
                     .install_prepared(update.replacement.buffer.clone());
                 document.saved_text = update.replacement.saved_text.clone();
+                document.saved_format = update.replacement.saved_format;
+                document.disk_bytes = update.replacement.disk_bytes.clone();
+                document.encoding_bytes = update.replacement.encoding_bytes.clone();
             }
             document.disk_state = update.replacement.disk_state.clone();
             document.disk_conflict = update.replacement.disk_conflict;
@@ -1725,3 +1817,25 @@ fn parent_suffix(parts: &[String], depth: usize) -> String {
 mod tests;
 #[cfg(test)]
 mod view_tests;
+
+pub(crate) fn restore_encoding(document: &mut OpenDocument) {
+    if let Some(recovery) = document.recovery.take() {
+        document.meta.read_override = recovery.read_override;
+        if let Some(text) = recovery.unsaved_text {
+            let disk_changed = document.buffer.text()
+                != recovery
+                    .saved_text
+                    .as_ref()
+                    .map_or(document.buffer.text(), |text| text.as_str())
+                || document.saved_format != recovery.saved;
+            document.buffer = TextBuffer::new(text.as_ref().clone());
+            document.saved_text = recovery
+                .saved_text
+                .unwrap_or_else(|| Arc::new(String::new()));
+            document.saved_format = recovery.saved;
+            document.disk_conflict = disk_changed;
+            document.buffer.initialize_metadata(recovery.current.code());
+            document.encoding_bytes = recovery.source_bytes;
+        }
+    }
+}

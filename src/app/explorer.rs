@@ -531,7 +531,9 @@ pub fn finish_create(state: &AppContext) {
             .model
             .complete_create(&ExplorerFilesystem, &request.parent, &target, kind);
         if kind == ExplorerCreateKind::File {
-            app.workspace.open_path(target, String::new());
+            let format = crate::infrastructure::document_filesystem::options(&target).new_file;
+            let id = app.workspace.open_path(target, String::new());
+            let _ = app.workspace.set_encoding(id, format);
         }
         app.explorer.ui.clear_edit();
         app.chrome.toast = None;

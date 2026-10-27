@@ -89,10 +89,20 @@ pub fn read_text(path: &Path) -> Result<String, String> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err("File is larger than 4 MiB".into());
     }
-    if bytes.contains(&0) {
-        return Err("Binary file".into());
-    }
-    String::from_utf8(bytes).map_err(|_| "File is not UTF-8".into())
+    crate::features::encoding::decode(
+        &bytes,
+        None,
+        &super::document_filesystem::options(path),
+        MAX_FILE_BYTES,
+    )
+    .map(|decoded| decoded.text)
+    .map_err(|error| {
+        if error == "Binary file" {
+            error
+        } else {
+            "Unsupported text encoding".into()
+        }
+    })
 }
 
 fn search_walk(root: &Path, spec: &SearchSpec, matcher: Arc<Matcher>) -> WalkBuilder {

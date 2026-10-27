@@ -39,6 +39,8 @@ impl FileAssociation {
 pub struct Settings {
     #[serde(default)]
     pub theme: ThemeId,
+    #[serde(default)]
+    pub encoding: crate::domain::encoding::EncodingSettings,
     /// Interface scale as a percentage of OS scaling; null selects automatic scaling.
     #[serde(default)]
     pub ui_scale: Option<u16>,
@@ -124,6 +126,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeId::default(),
+            encoding: Default::default(),
             ui_scale: None,
             default_shell: ShellKind::default(),
             terminal_profiles: Vec::new(),
@@ -163,7 +166,7 @@ pub struct LoadOutcome {
 
 /// Settings a project's `.loom/settings.json` may override. Everything else
 /// is a personal preference and only read from the user's file.
-pub const PROJECT_KEYS: &[&str] = &["default_shell", "file_associations"];
+pub const PROJECT_KEYS: &[&str] = &["default_shell", "file_associations", "encoding"];
 
 /// Which file a settings source is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -357,6 +360,7 @@ fn accept(
             .lsp
             .validate()
             .and_then(|()| settings.markdown.validate())
+            .and_then(|()| settings.encoding.new_file.validate())
         {
             Ok(()) => *accepted = candidate,
             Err(error) => errors.push(error),
@@ -460,6 +464,7 @@ mod tests {
     fn settings_round_trip_as_json() {
         let settings = Settings {
             theme: ThemeId::parse("ember").unwrap(),
+            encoding: Default::default(),
             ui_scale: Some(130),
             default_shell: ShellKind::Bash,
             terminal_profiles: vec![crate::features::terminal::profiles::ShellProfile {

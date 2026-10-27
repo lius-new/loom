@@ -30,6 +30,54 @@ impl Workspace {
     pub fn new() -> Self {
         Self { core: Core::new() }
     }
+
+    /// Reinterpret retained bytes immediately. A manual decoding choice is never
+    /// judged by whether the resulting text looks sensible or contains errors.
+    pub fn set_encoding(
+        &mut self,
+        id: FileId,
+        format: crate::domain::encoding::TextFormat,
+    ) -> Result<bool, String> {
+        use crate::features::encoding;
+        use std::sync::Arc;
+        format.validate()?;
+        let document = self.core.documents.get(&id).ok_or("Document is not open")?;
+        if !document.is_text() {
+            return Err("Document is loading".into());
+        }
+        if document.format() == format {
+            return Ok(false);
+        }
+        let limit = crate::infrastructure::document_filesystem::MAX_EDITABLE_FILE_BYTES as usize;
+        let source = [&document.encoding_bytes, &document.disk_bytes]
+            .into_iter()
+            .flatten()
+            .find(|bytes| {
+                encoding::decode_explicit(bytes, document.format(), limit)
+                    .is_ok_and(|decoded| decoded.text == document.buffer.text())
+            })
+            .cloned();
+        let bytes = match source {
+            Some(bytes) => bytes,
+            None => match encoding::encode(document.buffer.text(), document.format()) {
+                Ok(bytes) => Arc::new(bytes),
+                Err(_) => {
+                    // Unsaved Unicode edits may not fit the previous encoding
+                    // (e.g. an emoji typed in a GBK document). Keep those edits
+                    // intact, and let the newly selected save format represent them.
+                    let changed = self.core.set_encoding(id, format)?;
+                    let document = self.core.documents.get_mut(&id).unwrap();
+                    document.meta.read_override = Some(format);
+                    document.meta.encoding_source = encoding::EncodingSource::Explicit;
+                    document.encoding_bytes = None;
+                    return Ok(changed);
+                }
+            },
+        };
+        let mut decoded = encoding::decode_explicit(&bytes, format, limit)?;
+        decoded.bytes = bytes;
+        self.transaction(|core| core.set_decoded_encoding(id, decoded))
+    }
     fn transaction<R>(&mut self, apply: impl FnOnce(&mut Core) -> R) -> R {
         let result = apply(&mut self.core);
         let retired = self.core.take_retired();
@@ -48,7 +96,7 @@ impl Workspace {
         let Some(doc) = self.core.documents.get(&id).filter(|doc| doc.is_text()) else {
             return false;
         };
-        let disk = filesystem::capture(&doc.meta.path, doc.buffer.text());
+        let disk = filesystem::capture_format(&doc.meta.path, doc.buffer.text(), doc.format());
         self.transaction(|core| core.mark_saved_with_disk(id, disk))
     }
 
@@ -145,7 +193,10 @@ impl Workspace {
             .get(&id)
             .filter(|doc| doc.is_text())
             .map_or(crate::domain::document::DiskRead::Missing, |doc| {
-                filesystem::read(&doc.meta.path)
+                filesystem::read_with_encoding(
+                    &doc.meta.path,
+                    doc.meta.read_override.map(|_| doc.format()),
+                )
             });
         self.transaction(|core| core.reconcile_with_disk(id, observation))
     }
@@ -159,11 +210,21 @@ impl Workspace {
         if !document.is_text() {
             return Err("Diff documents are read-only.".to_owned());
         }
-        let contents = filesystem::read_contents(&document.meta.path).map_err(|error| {
-            format!("Could not reload {}: {error}", document.meta.path.display())
-        })?;
-        let disk = filesystem::capture(&document.meta.path, &contents);
-        self.transaction(|core| core.accept_disk_with(id, contents, disk))
+        let (decoded, disk) = crate::infrastructure::document_filesystem::read_encoded(
+            &document.meta.path,
+            document.meta.read_override.map(|_| document.format()),
+            crate::infrastructure::document_filesystem::MAX_EDITABLE_FILE_BYTES,
+        )
+        .map_err(|error| format!("Could not reload {}: {error}", document.meta.path.display()))?;
+        self.transaction(|core| {
+            core.accept_disk_with(id, decoded.text, disk)?;
+            if let Some(document) = core.documents.get_mut(&id) {
+                document.disk_bytes = Some(decoded.bytes.clone());
+                document.encoding_bytes = Some(decoded.bytes);
+                document.meta.encoding_source = decoded.source;
+            }
+            Ok(())
+        })
     }
 
     pub fn keep_editor_version(&mut self, id: FileId) -> bool {

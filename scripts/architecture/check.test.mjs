@@ -446,3 +446,11 @@ test('host build script cannot recover language compilation or resource staging'
   assert.deepEqual(hostBuildScriptErrors('fn main() { println!("cargo:rerun-if-changed=icons/app.ico"); }'),[]);
   for(const source of ['mod language_packages;', 'mod language_assets;', 'stage_packs(root,destination);','read("language-packs/manifests");'])assert.ok(hostBuildScriptErrors(source).length>0,source);
 });
+
+test('file encoding attributes stay pure, codec is independent, and UI receives only bindings',()=>{
+  assert.deepEqual(violations({'src/domain/encoding.rs':'use serde::{Serialize, Deserialize}; pub struct TextFormat { bom: bool }'},policy()),[]);
+  for(const source of ['use encoding_rs::Encoding;','use chardetng::EncodingDetector;','use std::fs;','use crate::features::encoding;'])assert.ok(violations({'src/domain/encoding.rs':source},policy()).length>0);
+  assert.deepEqual(violations({'src/features/encoding/mod.rs':'use encoding_rs::Encoding; use crate::domain::encoding::TextFormat;'},policy()),[]);
+  for(const source of ['use std::fs;','use crate::app::state::AppState;','use lgui::ApplicationHandle;'])assert.ok(violations({'src/features/encoding/mod.rs':source},policy()).length>0);
+  assert.ok(violations({'src/ui/encoding_picker.rs':'use crate::app::context::AppContext;'},policy()).length>0);
+});

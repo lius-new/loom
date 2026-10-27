@@ -187,6 +187,7 @@ fn p1_reload_clamps_hidden_source_and_reader_and_keeps_view_identity() {
         DiskRead::Found {
             contents: "界".into(),
             state: DiskState::from_contents("界"),
+            bytes: None,
         },
     );
     for id in [source, reader] {

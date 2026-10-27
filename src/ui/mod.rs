@@ -10,6 +10,7 @@ pub mod diff_editor;
 pub mod drawer;
 pub(crate) mod editor;
 pub(crate) mod editor_binding;
+pub(crate) mod encoding_picker;
 pub mod explorer;
 pub mod git;
 pub mod keymap_page;

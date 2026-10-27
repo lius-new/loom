@@ -236,6 +236,26 @@ impl CliGitBackend {
         context: Option<usize>,
     ) -> GitResult<UnifiedDiff> {
         validate_ref(commit)?;
+        if paths.is_empty() {
+            let mut result = UnifiedDiff::default();
+            for (_, path) in self.commit_files(repository, commit)? {
+                result.files.extend(
+                    self.commit_diff(repository, commit, &[path], context)?
+                        .files,
+                );
+            }
+            return Ok(result);
+        }
+        if let Some(diff) = super::encoded_diff::compare(
+            &self.runner,
+            repository,
+            DiffTarget::Commit,
+            paths,
+            Some(commit),
+            context,
+        )? {
+            return Ok(diff);
+        }
         let mut args = vec![
             OsString::from("show"),
             OsString::from("--format="),
@@ -261,7 +281,74 @@ impl CliGitBackend {
         target: DiffTarget,
         paths: &[PathBuf],
     ) -> GitResult<UnifiedDiff> {
-        parse_unified(&self.diff(repository, target, paths)?)
+        self.parsed_bytes_diff(repository, target, paths, None)
+    }
+
+    fn parsed_bytes_diff(
+        &self,
+        repository: &Path,
+        target: DiffTarget,
+        paths: &[PathBuf],
+        context: Option<usize>,
+    ) -> GitResult<UnifiedDiff> {
+        let raw = self.diff_with_context(repository, target, paths, context);
+        if let Ok(text) = &raw {
+            if !text.contains("Binary files ")
+                && !text.contains("GIT binary patch")
+                && !text.contains('\u{feff}')
+            {
+                return parse_unified(text);
+            }
+        }
+        if paths.len() == 1 {
+            if let Some(diff) = super::encoded_diff::compare(
+                &self.runner,
+                repository,
+                target,
+                paths,
+                None,
+                context,
+            )? {
+                return Ok(diff);
+            }
+            return parse_unified(&raw?);
+        }
+        if paths.is_empty() {
+            let mut command = GitCommand::new()
+                .cwd(repository)
+                .args(["diff", "--name-only", "-z"]);
+            if target == DiffTarget::HeadToIndex {
+                command = command.args(["--cached"]);
+            } else if target == DiffTarget::HeadToWorktree {
+                command = command.args(["HEAD"]);
+            }
+            let output = self.runner.run(command.args(["--"]).read_only())?;
+            let mut result = UnifiedDiff::default();
+            for path in output.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+                let path = path_from_git_bytes(path);
+                let value = if let Some(diff) = super::encoded_diff::compare(
+                    &self.runner,
+                    repository,
+                    target,
+                    std::slice::from_ref(&path),
+                    None,
+                    context,
+                )? {
+                    diff
+                } else {
+                    parse_unified(&self.diff_with_context(
+                        repository,
+                        target,
+                        std::slice::from_ref(&path),
+                        context,
+                    )?)?
+                };
+                result.files.extend(value.files);
+            }
+            Ok(result)
+        } else {
+            parse_unified(&self.diff_with_context(repository, target, paths, context)?)
+        }
     }
 
     pub fn parsed_full_diff(
@@ -270,7 +357,7 @@ impl CliGitBackend {
         target: DiffTarget,
         paths: &[PathBuf],
     ) -> GitResult<UnifiedDiff> {
-        parse_unified(&self.full_diff(repository, target, paths)?)
+        self.parsed_bytes_diff(repository, target, paths, Some(1_000_000))
     }
 
     pub fn stage(&self, repository: &Path, paths: &[PathBuf]) -> GitResult<()> {

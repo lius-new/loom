@@ -143,7 +143,7 @@ pub(super) fn load(paths: Vec<PathBuf>) -> Result<HashMap<PathBuf, String>, Stri
                     if meta.len() > MAX_FILE {
                         Err(std::io::Error::other("the file is too large"))
                     } else {
-                        std::fs::read_to_string(&path)
+                        crate::infrastructure::document_filesystem::read_diff_file(&path)
                     }
                 })
                 .map_err(|e| format!("{}: {e}", path.display()))?;

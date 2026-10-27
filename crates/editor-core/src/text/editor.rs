@@ -208,6 +208,25 @@ impl<'a> EditorMut<'a> {
         })
     }
 
+    /// Replace a document interpretation and its metadata as one undo step.
+    pub fn replace_with_metadata(&mut self, text: &str, metadata: u32) -> Result<(), EditError> {
+        if self.buffer.text() == text {
+            self.buffer.set_metadata(metadata);
+            return Ok(());
+        }
+        self.buffer.history_mut().close_groups();
+        let before = self.buffer.metadata();
+        let selection = *self.selection;
+        self.edit(
+            EditKind::Other,
+            vec![Edit::replace(0..self.buffer.len(), text)],
+            |_, buffer| buffer.clamp(selection),
+        )?;
+        self.buffer.initialize_metadata(metadata);
+        self.buffer.history_mut().attach_metadata(before, metadata);
+        Ok(())
+    }
+
     /// Replace the selection, or insert at the caret, and put the caret after
     /// the inserted text.
     pub fn replace_selection(
@@ -267,10 +286,15 @@ impl<'a> EditorMut<'a> {
         let entry = self.buffer.history_mut().pop_undo()?;
         let reverse = entry.changes.iter().rev().map(ChangeSet::inverse).collect();
         let extent = self.replay(reverse)?;
-        *self.selection = self.buffer.clamp(Selection {
-            preferred_column: None,
-            ..entry.before
-        });
+        if let Some((before, _)) = entry.metadata {
+            self.buffer.replay_metadata(before);
+        }
+        if !entry.changes.is_empty() {
+            *self.selection = self.buffer.clamp(Selection {
+                preferred_column: None,
+                ..entry.before
+            });
+        }
         self.buffer.history_mut().push_redo(entry);
         Some(extent)
     }
@@ -280,10 +304,15 @@ impl<'a> EditorMut<'a> {
         let entry = self.buffer.history_mut().pop_redo()?;
         let forward = entry.changes.iter().map(ChangeSet::forward).collect();
         let extent = self.replay(forward)?;
-        *self.selection = self.buffer.clamp(Selection {
-            preferred_column: None,
-            ..entry.after
-        });
+        if let Some((_, after)) = entry.metadata {
+            self.buffer.replay_metadata(after);
+        }
+        if !entry.changes.is_empty() {
+            *self.selection = self.buffer.clamp(Selection {
+                preferred_column: None,
+                ..entry.after
+            });
+        }
         self.buffer.history_mut().push_undo(entry);
         Some(extent)
     }
@@ -314,6 +343,30 @@ impl<'a> EditorMut<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn replacement_and_metadata_undo_as_one_step_between_normal_edits() {
+        use super::*;
+        let mut buffer = TextBuffer::new("中文");
+        buffer.initialize_metadata(6);
+        let mut selection = Selection::caret(0);
+        let mut editor = EditorMut::new(&mut buffer, &mut selection, Vec::new());
+        crate::normal::insert(&mut editor, "x");
+        editor.replace_with_metadata("x乱码", 0).unwrap();
+        assert_eq!(editor.text(), "x乱码");
+        assert_eq!(editor.metadata(), 0);
+        editor.undo();
+        assert_eq!(editor.text(), "x中文");
+        assert_eq!(editor.metadata(), 6);
+        editor.redo();
+        assert_eq!(editor.text(), "x乱码");
+        assert_eq!(editor.metadata(), 0);
+        editor.undo();
+        editor.undo();
+        assert_eq!(editor.text(), "中文");
+        assert_eq!(editor.metadata(), 6);
+        assert!(!editor.can_undo());
+    }
+
     #[test]
     fn a_transaction_is_one_tagged_step_that_never_joins_typing() {
         use super::*;

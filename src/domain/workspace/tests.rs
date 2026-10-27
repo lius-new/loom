@@ -15,6 +15,7 @@ fn observed(text: &str) -> DiskRead {
     DiskRead::Found {
         contents: text.into(),
         state: DiskState::from_contents(text),
+        bytes: None,
     }
 }
 

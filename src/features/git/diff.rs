@@ -13,6 +13,9 @@ pub struct FileDiff {
     pub new_path: Option<PathBuf>,
     pub hunks: Vec<DiffHunk>,
     pub binary: bool,
+    /// Decoded comparison: raw-byte hunk application is unavailable.
+    pub encoded: bool,
+    pub format_change: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
