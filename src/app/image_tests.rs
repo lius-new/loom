@@ -211,16 +211,45 @@ fn tree_menu_opens_unopened_svg_as_source_and_toggles_only_that_file() {
     ));
     assert_eq!(state.get().workspace.active(), Some(view));
 }
-fn drain(tasks: &super::test_support::UiTasks, condition: impl Fn() -> bool) {
+fn drain(
+    tasks: &super::test_support::UiTasks,
+    state: &super::context::AppContext,
+    document: crate::domain::identity::FileId,
+    phase: &str,
+    condition: impl Fn() -> bool,
+) {
     let deadline = Instant::now() + Duration::from_secs(10);
-    while !condition() {
+    loop {
         tasks.run_all();
-        assert!(Instant::now() < deadline, "image worker did not publish");
+        if condition() {
+            return;
+        }
+        let app = state.get();
+        let actual = app
+            .editor
+            .images
+            .svg
+            .get(&document)
+            .map(|p| (p.stamp, p.density, p.image.is_some(), p.error.clone()));
+        assert!(
+            Instant::now() < deadline,
+            "SVG worker timed out during {phase}; publication (stamp, density, image, error): {actual:?}; queued UI tasks: {:?}",
+            tasks.pending_ids()
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }
 #[test]
 fn svg_worker_keeps_last_valid_pixels_and_publishes_current_unsaved_revision() {
+    for (scale, density) in [(0.75, 300), (1.0, 400), (1.5, 600), (2.0, 800)] {
+        crate::ui::device_scale::observe(scale);
+        svg_worker_revision_scenario(density);
+    }
+}
+
+fn svg_worker_revision_scenario(expected_density: u32) {
+    // System-font discovery is cold-start setup, not a worker publication budget.
+    crate::infrastructure::image_filesystem::svg(svg(), 1.0).expect("SVG renderer setup");
     let mut app = AppState::new();
     let document = app.workspace.open_path("logo.svg".into(), svg().into());
     let preview = app.workspace.active().unwrap();
@@ -240,7 +269,7 @@ fn svg_worker_keeps_last_valid_pixels_and_publishes_current_unsaved_revision() {
     let tasks = super::test_support::UiTasks::default();
     let service = super::image_service::ImageService::new(state.clone(), tasks.application());
     service.request_svg(&state.get(), preview);
-    drain(&tasks, || {
+    drain(&tasks, &state, document, "initial pixels", || {
         state
             .get()
             .editor
@@ -254,19 +283,19 @@ fn svg_worker_keeps_last_valid_pixels_and_publishes_current_unsaved_revision() {
         image_preview::run(app, preview, Command::Zoom(Some(4.0)));
     });
     service.request_svg(&state.get(), preview);
-    drain(&tasks, || {
+    drain(&tasks, &state, document, "zoom density", || {
         state
             .get()
             .editor
             .images
             .svg
             .get(&document)
-            .is_some_and(|p| p.density >= 400)
+            .is_some_and(|p| p.density == expected_density)
     });
     let previous = image_preview::image(&state.get(), preview).unwrap_or(previous);
     state.update(|app| replace(app, document, "<svg>"));
     service.request_svg(&state.get(), preview);
-    drain(&tasks, || {
+    drain(&tasks, &state, document, "invalid-source fallback", || {
         state
             .get()
             .editor
@@ -284,7 +313,7 @@ fn svg_worker_keeps_last_valid_pixels_and_publishes_current_unsaved_revision() {
     state.update(|app| replace(app, document, &svg().replace("#818cf8", "#00ff00")));
     let stamp = state.get().workspace.documents[&document].stamp(document);
     service.request_svg(&state.get(), preview);
-    drain(&tasks, || {
+    drain(&tasks, &state, document, "latest unsaved revision", || {
         state
             .get()
             .editor

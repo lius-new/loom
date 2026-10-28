@@ -1,19 +1,20 @@
 //! Last device scale the renderer reported, for work that rasterizes off the UI
 //! thread and needs one texel per physical pixel (Skia samples images nearest).
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::cell::Cell;
 
-static OBSERVED: AtomicU32 = AtomicU32::new(0);
+// UI workers receive the scale in request snapshots, like font metrics.
+// Separate UI/test threads must not overwrite each other's rendering context.
+thread_local! {
+    static OBSERVED: Cell<f32> = const { Cell::new(1.0) };
+}
 
 pub fn observe(factor: f32) {
     if factor.is_finite() && factor > 0.0 {
-        OBSERVED.store(factor.to_bits(), Ordering::Relaxed);
+        OBSERVED.set(factor);
     }
 }
 
 /// `1.0` until a frame has been rendered.
 pub fn observed() -> f32 {
-    match f32::from_bits(OBSERVED.load(Ordering::Relaxed)) {
-        factor if factor > 0.0 => factor,
-        _ => 1.0,
-    }
+    OBSERVED.get()
 }

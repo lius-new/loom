@@ -130,3 +130,6 @@ mod outline_view_tests;
 
 #[cfg(test)]
 mod encoding_tests;
+
+#[cfg(test)]
+mod render_context_tests;

@@ -3,7 +3,7 @@
 //! Centralizes color palettes, layout metrics and text-style helpers so every UI
 //! module renders from a single source of truth.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use crate::features::highlighting::{HighlightId, HighlightModifiers, HighlightStyle, StyleTable};
 use lgui::prelude::{Color, Element, Stroke, TextAlign, TextStyle, UiRect, VisualStyle, panel};
@@ -449,7 +449,11 @@ impl ThemeId {
     }
 }
 
-static CURRENT: AtomicUsize = AtomicUsize::new(0);
+// Rendering state follows the UI thread, as font metrics do. Background
+// Markdown requests carry their own Ink snapshot instead of consulting this.
+thread_local! {
+    static CURRENT: Cell<usize> = const { Cell::new(0) };
+}
 
 /// The active theme's style for a highlight class and its modifiers. Unset
 /// attributes are left for the caller to default.
@@ -468,11 +472,11 @@ pub fn c() -> &'static Palette {
 }
 
 pub fn current() -> ThemeId {
-    ThemeId::from_index(CURRENT.load(Ordering::Relaxed))
+    ThemeId::from_index(CURRENT.get())
 }
 
 pub fn set(id: ThemeId) {
-    CURRENT.store(id.index(), Ordering::Relaxed);
+    CURRENT.set(id.index());
 }
 
 /// Loom's visual policy. The library only receives explicit coverage parameters;

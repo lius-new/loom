@@ -859,14 +859,16 @@ pub fn render_in(
     root = root.on_focus(move |_| focused.send(ReaderEvent::Focus(true)));
     root.on_blur(move |_| binding.send(ReaderEvent::Focus(false)))
 }
-/// Pointer offset inside the thumb while a scrollbar is held. Only one pointer
-/// drags at a time, and the element tree is rebuilt on every scroll step.
-static GRAB: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+// Pointer offset inside the thumb while a scrollbar is held. Only one pointer
+// drags at a time, and the element tree is rebuilt on every scroll step.
+thread_local! {
+    static GRAB: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+}
 fn grab() -> f32 {
-    f32::from_bits(GRAB.load(std::sync::atomic::Ordering::Relaxed))
+    GRAB.get()
 }
 fn set_grab(value: f32) {
-    GRAB.store(value.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    GRAB.set(value);
 }
 /// Overlay scrollbar that behaves like the editor's: dimmer at rest, brighter
 /// while the pane is hovered, the thumb keeps the grab offset, and a click on
@@ -954,30 +956,54 @@ fn axis_scrollbar(
 
 /// How long a code block's copy button reads "Copied" after a successful copy.
 pub const COPIED_FOR: std::time::Duration = std::time::Duration::from_millis(1400);
-/// Node (+1, so zero means none) and milliseconds since `EPOCH` of the last copy.
-static COPIED_NODE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static COPIED_AT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-fn elapsed_ms() -> u64 {
-    EPOCH
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_millis() as u64
+thread_local! {
+    // Keep the node and timestamp together, within the rendering context.
+    static COPIED: std::cell::Cell<Option<(crate::features::markdown::model::NodeId, std::time::Instant)>> = const { std::cell::Cell::new(None) };
 }
 pub fn mark_copied(node: crate::features::markdown::model::NodeId) {
-    use std::sync::atomic::Ordering::Relaxed;
-    COPIED_AT.store(elapsed_ms(), Relaxed);
-    COPIED_NODE.store(node.0 + 1, Relaxed);
+    COPIED.set(Some((node, std::time::Instant::now())));
 }
 fn recently_copied(node: crate::features::markdown::model::NodeId) -> bool {
-    use std::sync::atomic::Ordering::Relaxed;
-    COPIED_NODE.load(Relaxed) == node.0 + 1
-        && elapsed_ms().saturating_sub(COPIED_AT.load(Relaxed)) < COPIED_FOR.as_millis() as u64
+    recently_copied_at(node, std::time::Instant::now())
+}
+fn recently_copied_at(
+    node: crate::features::markdown::model::NodeId,
+    now: std::time::Instant,
+) -> bool {
+    COPIED.get().is_some_and(|(copied, at)| {
+        copied == node && now.saturating_duration_since(at) < COPIED_FOR
+    })
+}
+
+/// Narrow value-only inspection for cross-thread application tests.
+#[cfg(test)]
+pub(crate) fn context_feedback() -> (f32, Option<crate::features::markdown::model::NodeId>) {
+    (grab(), COPIED.get().map(|(node, _)| node))
+}
+#[cfg(test)]
+pub(crate) fn set_context_feedback(offset: f32, node: crate::features::markdown::model::NodeId) {
+    set_grab(offset);
+    mark_copied(node);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_feedback_expires_without_sleeping() {
+        use crate::features::markdown::model::NodeId;
+        let at = std::time::Instant::now();
+        COPIED.set(Some((NodeId(7), at)));
+        assert!(recently_copied_at(NodeId(7), at));
+        assert!(!recently_copied_at(NodeId(8), at));
+        assert!(recently_copied_at(
+            NodeId(7),
+            at + COPIED_FOR - std::time::Duration::from_nanos(1)
+        ));
+        assert!(!recently_copied_at(NodeId(7), at + COPIED_FOR));
+    }
+
     use crate::features::markdown::layout::{GraphemeGeometry, TextRect};
 
     fn glyph(top: f32, bottom: f32) -> GraphemeGeometry {
