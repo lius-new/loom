@@ -49,15 +49,21 @@ impl Document {
 pub struct Layout {
     pub width: f32,
     pub height: f32,
+    /// False while the document is still being prepared, so `height` is only a
+    /// placeholder and a card sized from it would jump once the real one arrives.
+    pub measured: bool,
     pub document: Document,
 }
 pub fn layout(document: &Document, width: f32) -> Layout {
-    let ready = document
+    let resolved = document
         .port
         .as_ref()
-        .and_then(|port| (port.resolve)(width.max(40.0), 0.0).ok().flatten());
+        .map(|port| (port.resolve)(width.max(40.0), 0.0));
+    let measured = !matches!(resolved, Some(Ok(None)));
+    let ready = resolved.and_then(|result| result.ok().flatten());
     Layout {
         width,
+        measured,
         height: ready
             .as_ref()
             .map_or(22.0, |frame| frame.reader.layout.height),

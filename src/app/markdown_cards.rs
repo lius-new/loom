@@ -159,7 +159,10 @@ impl MarkdownService {
             view: Consumer::Card(owner),
             key: RequestKey {
                 parse: publication.revision,
-                width: width.max(40.0),
+                // The measuring call passes the layout width and the painting call the
+                // width of the rect built from it, which can differ by float error;
+                // as separate keys they evicted each other and the card flickered.
+                width: width.max(40.0).round(),
                 height: height.clamp(1.0, 2048.0),
                 position,
                 ink,
