@@ -4902,6 +4902,18 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
                     .unwrap()
                     .layout_rect
             };
+            let arrow_visible = |session: &UiSession, name| {
+                session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|n| n.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name))
+                    .unwrap()
+                    .path_style
+                    .stroke
+                    .is_some()
+            };
+            assert!(!arrow_visible(&session, "Fold code at line 1"));
             let fold = bounds(&session, "Fold code at line 1");
             let bulb = bounds(&session, "Code actions (Ctrl+.)");
             let git = bounds(&session, "Show change");
@@ -4942,6 +4954,7 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
             };
             let click = |session: &mut UiSession, x, y| {
                 let pointer = PointerData::mouse(Point::new(x, y));
+                send(session, InputEvent::PointerMove(pointer));
                 send(
                     session,
                     InputEvent::PointerDown {
@@ -4962,6 +4975,7 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
                 (fold.left + fold.right) / 2.0,
                 (fold.top + fold.bottom) / 2.0,
             );
+            assert!(arrow_visible(&session, "Unfold code at line 1"));
             let state = exposed.lock().unwrap().clone().unwrap();
             assert!(
                 crate::app::editing::active_projection(&state.get(), rect).folded(),
@@ -4969,6 +4983,10 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
             );
             check_source(&session);
             click(&mut session, expected_left + 0.5, 4.0);
+            assert!(
+                !arrow_visible(&session, "Unfold code at line 1"),
+                "leaving the fold target hides its arrow"
+            );
             assert_eq!(
                 state.get().workspace.active_editor().unwrap().cursor(),
                 0,
@@ -4981,6 +4999,7 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
                 (fold.top + fold.bottom) / 2.0,
             );
             assert!(!crate::app::editing::active_projection(&state.get(), rect).folded());
+            assert!(arrow_visible(&session, "Fold code at line 1"));
             check_source(&session);
             if size == 12 && factor == 1.0 {
                 if let Some(path) = std::env::var_os("LOOM_FOLD_PREVIEW") {

@@ -9,14 +9,16 @@ use lgui::prelude::{Element, UiRect, VisualStyle, panel};
 pub(crate) fn render(rect: UiRect, activate: impl Fn() + Send + Sync + 'static) -> Element {
     let x = (rect.left + rect.right) / 2.0;
     let y = (rect.top + rect.bottom) / 2.0;
+    // Fit the bulb beside the larger folding target in the original action strip.
+    let sx = (rect.width() / 8.0).min(1.0);
     let colour = theme::c().warning;
-    let head = UiRect::new(x - 4.0, y - 6.0, x + 4.0, y + 2.0);
+    let head = UiRect::new(x - 4.0 * sx, y - 6.0, x + 4.0 * sx, y + 2.0);
     let lines = [(-2.5, 2.0), (-2.5, 4.0), (2.5, 4.0), (2.5, 2.0)];
     let commands: Vec<_> = lines
         .into_iter()
         .enumerate()
         .map(|(i, (dx, dy))| {
-            let p = Point::new(x + dx, y + dy);
+            let p = Point::new(x + dx * sx, y + dy);
             if i == 0 {
                 UiPathCommand::MoveTo(p)
             } else {
@@ -24,8 +26,8 @@ pub(crate) fn render(rect: UiRect, activate: impl Fn() + Send + Sync + 'static) 
             }
         })
         .chain([
-            UiPathCommand::MoveTo(Point::new(x - 1.5, y + 6.0)),
-            UiPathCommand::LineTo(Point::new(x + 1.5, y + 6.0)),
+            UiPathCommand::MoveTo(Point::new(x - 1.5 * sx, y + 6.0)),
+            UiPathCommand::LineTo(Point::new(x + 1.5 * sx, y + 6.0)),
         ])
         .collect();
     panel(rect, VisualStyle::default())

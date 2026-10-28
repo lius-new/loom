@@ -540,7 +540,7 @@ pub const EDITOR_MIN_H: f32 = 96.0;
 pub const GUTTER_W: f32 = 46.0;
 pub const GUTTER_ACTION_W: f32 = 14.0;
 // Share the original action strip without moving line numbers or source text.
-pub const GUTTER_CODE_ACTION_W: f32 = 8.0;
+pub const GUTTER_CODE_ACTION_W: f32 = 6.0;
 pub const CODE_PAD: f32 = 4.0;
 /// Estimated monospace advance of UI text at `UI_SIZE`. Code surfaces use
 /// the measured `fonts::Metrics::char_w` instead.
