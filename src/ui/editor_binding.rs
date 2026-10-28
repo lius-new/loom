@@ -34,11 +34,12 @@ pub(crate) struct ViewDocument {
     pub buffer: TextBuffer,
     pub projection: Arc<loom_editor_core::text::DisplayMap>,
     pub selection: Selection,
+    pub secondary: Vec<Selection>,
     pub scroll: (f32, f32),
 }
 impl ViewDocument {
     pub fn editor(&self) -> Editor<'_> {
-        Editor::new(&self.buffer, self.selection)
+        Editor::new(&self.buffer, self.selection).with_secondary(&self.secondary)
     }
 }
 pub(crate) struct Preedit {

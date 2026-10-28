@@ -33,6 +33,7 @@ pub(super) struct Entry {
     pub metadata: Option<(u32, u32)>,
     pub ending: Option<(&'static str, &'static str)>,
     pub pairs: Option<(PairSnapshot, PairSnapshot)>,
+    pub selections: Option<(Vec<Selection>, Vec<Selection>)>,
     /// Selection of the editing view before the step.
     pub before: Selection,
     /// Selection of the editing view after the step's last edit.
@@ -57,6 +58,22 @@ pub(super) struct History {
 }
 
 impl History {
+    pub fn attach_selections(&mut self, before: Vec<Selection>, after: Vec<Selection>) {
+        if let Some(entry) = self.undo.last_mut() {
+            match &mut entry.selections {
+                Some((_, last)) => *last = after,
+                None => entry.selections = Some((before, after)),
+            }
+        }
+    }
+    pub fn update_selections(&mut self, primary: Selection, after: Vec<Selection>) {
+        if let Some(entry) = self.undo.last_mut() {
+            entry.after = primary;
+            if let Some((_, last)) = &mut entry.selections {
+                *last = after;
+            }
+        }
+    }
     pub fn attach_ending(&mut self, before: &'static str, after: &'static str) {
         if let Some(entry) = self.undo.last_mut() {
             match &mut entry.ending {
@@ -95,6 +112,7 @@ impl History {
             changes: Vec::new(),
             metadata: Some((before, after)),
             pairs: None,
+            selections: None,
             ending: None,
             before: Selection::default(),
             after: Selection::default(),
@@ -165,6 +183,7 @@ impl History {
                     self.undo.push(Entry {
                         metadata: None,
                         pairs: None,
+                        selections: None,
                         ending: None,
                         changes: vec![changes],
                         before,
@@ -201,6 +220,7 @@ impl History {
                 self.undo.push(Entry {
                     metadata: None,
                     pairs: None,
+                    selections: None,
                     ending: None,
                     changes: vec![changes],
                     before,

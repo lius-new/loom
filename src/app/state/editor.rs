@@ -11,6 +11,7 @@ use std::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionUnit {
+    Rectangle { row: usize, column: usize },
     Character,
     Word,
     Line,

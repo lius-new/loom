@@ -106,7 +106,7 @@ fn image_positions_and_svg_source_associations_round_trip_as_session_metadata() 
         panic!("pane missing");
     };
     value.clone_from(&items[0]);
-    let mut fresh = *workspace.view(source).unwrap();
+    let mut fresh = workspace.view(source).unwrap().clone();
     value.apply(&mut fresh);
     assert_eq!(fresh.image.scale, Some(2.0));
     assert_eq!(fresh.image.x, 50.0);

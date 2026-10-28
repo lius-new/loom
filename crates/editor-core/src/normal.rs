@@ -28,6 +28,18 @@ pub const INDENT: &str = "  ";
 /// Insert typed or committed text over the selection. Plain characters join
 /// the current typing run; line breaks and tabs are undo steps of their own.
 pub fn insert(editor: &mut EditorMut<'_>, text: &str) {
+    if editor.has_secondary() {
+        crate::text::multiple::insert(
+            editor,
+            text,
+            if text.contains(['\n', '\r', '\t']) {
+                EditKind::Other
+            } else {
+                EditKind::Typing
+            },
+        );
+        return;
+    }
     let kind = if text.contains(['\n', '\r', '\t']) {
         EditKind::Other
     } else {
@@ -39,6 +51,10 @@ pub fn insert(editor: &mut EditorMut<'_>, text: &str) {
 
 /// Type one key with delimiter pairing. IME commits and paste use literal insertion.
 pub fn type_text(editor: &mut EditorMut<'_>, text: &str, language: &str) {
+    if editor.has_secondary() {
+        crate::text::multiple::type_text(editor, text, language);
+        return;
+    }
     let mut chars = text.chars();
     let Some(ch) = chars.next() else {
         return;
@@ -129,13 +145,13 @@ pub fn type_text(editor: &mut EditorMut<'_>, text: &str, language: &str) {
     editor.break_undo_group();
 }
 
-fn quotes(language: &str) -> bool {
+pub(crate) fn quotes(language: &str) -> bool {
     !matches!(language, "text" | "plain" | "plaintext" | "markdown" | "")
 }
 
 /// Bounded lexical fallback: uncertainty in long prefixes disables pairing.
 /// Comments and strings deliberately suppress pairs until a reliable boundary.
-fn code_context(text: &str, end: usize, language: &str) -> bool {
+pub(crate) fn code_context(text: &str, end: usize, language: &str) -> bool {
     if end > 64 * 1024 {
         return false;
     }
@@ -198,6 +214,10 @@ fn code_context(text: &str, end: usize, language: &str) -> bool {
 
 /// Paste text, converting its line breaks to the document's convention.
 pub fn paste(editor: &mut EditorMut<'_>, text: &str) {
+    if editor.has_secondary() {
+        crate::text::multiple::paste(editor, text);
+        return;
+    }
     let newline = editor.line_ending();
     let normalized = text
         .replace("\r\n", "\n")
@@ -217,6 +237,10 @@ pub fn delete_forward(editor: &mut EditorMut<'_>) {
 
 /// Delete the selection, or one character or word before or after the caret.
 pub fn erase(editor: &mut EditorMut<'_>, forward: bool, word: bool) {
+    if editor.has_secondary() {
+        crate::text::multiple::erase(editor, forward, word);
+        return;
+    }
     let cursor = editor.cursor();
     if !forward && !word && editor.selection().is_none() && editor.is_empty_auto_pair(cursor) {
         let _ = editor.replace(cursor - 1..cursor + 1, "", EditKind::Other);
@@ -239,6 +263,10 @@ pub fn erase(editor: &mut EditorMut<'_>, forward: bool, word: bool) {
 
 /// Break the line, carrying over the current line's indentation.
 pub fn enter(editor: &mut EditorMut<'_>) {
+    if editor.has_secondary() {
+        crate::text::multiple::enter(editor);
+        return;
+    }
     let start = editor
         .selection()
         .map_or(editor.cursor(), |range| range.start);
@@ -282,6 +310,10 @@ pub fn enter(editor: &mut EditorMut<'_>) {
 /// Indent or outdent every line the selection touches, as one undo step.
 /// Without a selection, Tab inserts spaces at the caret instead.
 pub fn indent(editor: &mut EditorMut<'_>, outdent: bool) {
+    if editor.has_secondary() {
+        crate::text::multiple::indent(editor, outdent);
+        return;
+    }
     let indent = editor.options().indent();
     let size = editor.options().indent_size;
     if !outdent && editor.selection().is_none() {
@@ -328,49 +360,58 @@ pub fn indent(editor: &mut EditorMut<'_>, outdent: bool) {
 
 /// Move the caret, extending the selection when `extend` is set.
 pub fn navigate(editor: &mut EditorMut<'_>, movement: Movement, extend: bool) {
+    editor.map_selections(|buffer, state| navigated(buffer, state, movement, extend));
+}
+pub fn navigated(
+    buffer: &crate::text::TextBuffer,
+    state: Selection,
+    movement: Movement,
+    extend: bool,
+) -> Selection {
     if !extend
         && matches!(movement, Movement::Left | Movement::Right)
-        && let Some(range) = editor.selection()
+        && let Some(r) = state.range()
     {
-        editor.set_cursor(if movement == Movement::Left {
-            range.start
+        return Selection::caret(if movement == Movement::Left {
+            r.start
         } else {
-            range.end
+            r.end
         });
-        return;
     }
-    let state = editor.selection_state();
     let cursor = state.cursor;
-    let line = editor.line_of(cursor);
-    let last_line = editor.line_count() - 1;
-    let vertical_target = match movement {
-        Movement::Up => Some(line.saturating_sub(1)),
-        Movement::Down => Some((line + 1).min(last_line)),
-        Movement::PageUp(lines) => Some(line.saturating_sub(lines)),
-        Movement::PageDown(lines) => Some((line + lines).min(last_line)),
+    let row = buffer.line_of(cursor);
+    let last = buffer.line_count() - 1;
+    let vertical = match movement {
+        Movement::Up => Some(row.saturating_sub(1)),
+        Movement::Down => Some((row + 1).min(last)),
+        Movement::PageUp(n) => Some(row.saturating_sub(n)),
+        Movement::PageDown(n) => Some((row + n).min(last)),
         _ => None,
     };
-    if let Some(target) = vertical_target {
-        let column = state
-            .preferred_column
-            .unwrap_or_else(|| editor.display_column(cursor));
-        let offset = editor.offset_at_display_column(target, column);
-        editor.select_to(offset, extend);
-        editor.set_preferred_column(Some(column));
-        return;
-    }
-    let target = match movement {
-        Movement::Left => editor.prev_grapheme(cursor),
-        Movement::Right => editor.next_grapheme(cursor),
-        Movement::WordLeft => editor.word_left(cursor),
-        Movement::WordRight => editor.word_right(cursor),
-        Movement::Home => editor.line_start(line),
-        Movement::End => editor.line_end(line),
-        Movement::Start => 0,
-        Movement::Finish => editor.len(),
-        _ => unreachable!("vertical movements return above"),
+    let column = state
+        .preferred_column
+        .unwrap_or_else(|| buffer.display_column(cursor));
+    let target = if let Some(row) = vertical {
+        buffer.offset_at_display_column(row, column)
+    } else {
+        match movement {
+            Movement::Left => buffer.prev_grapheme(cursor),
+            Movement::Right => buffer.next_grapheme(cursor),
+            Movement::WordLeft => buffer.word_left(cursor),
+            Movement::WordRight => buffer.word_right(cursor),
+            Movement::Home => buffer.line_start(row),
+            Movement::End => buffer.line_end(row),
+            Movement::Start => 0,
+            Movement::Finish => buffer.len(),
+            _ => unreachable!(),
+        }
     };
-    editor.select_to(target, extend);
+    Selection {
+        cursor: target,
+        anchor: extend.then(|| state.anchor.unwrap_or(cursor)),
+        preferred_column: vertical.map(|_| column),
+        wrap_affinity: Default::default(),
+    }
 }
 
 #[cfg(test)]

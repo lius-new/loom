@@ -302,23 +302,21 @@ fn normalize_selection(app: &mut AppState, view: ViewId) {
         return;
     };
     if let Some(mut editor) = app.workspace.view_editor_mut(pane, view) {
-        let mut selection = editor.selection_state();
-        let old = selection;
-        for range in ranges {
-            let header_end = editor.line_end(editor.line_of(range.start));
-            if selection.cursor > header_end && selection.cursor < range.end {
-                selection.cursor = header_end;
+        editor.map_selections(|buffer, mut selection| {
+            for range in &ranges {
+                let end = buffer.line_end(buffer.line_of(range.start));
+                if selection.cursor > end && selection.cursor < range.end {
+                    selection.cursor = end;
+                }
+                if let Some(anchor) = selection.anchor
+                    && anchor > end
+                    && anchor < range.end
+                {
+                    selection.anchor = Some(end);
+                }
             }
-            if let Some(anchor) = selection.anchor
-                && anchor > header_end
-                && anchor < range.end
-            {
-                selection.anchor = Some(header_end);
-            }
-        }
-        if selection != old {
-            editor.set_selection(selection);
-        }
+            selection
+        });
     }
 }
 fn apply(app: &mut AppState, view: ViewId, stamp: DocumentStamp, action: FoldAction) {
@@ -464,11 +462,19 @@ pub fn reveal(app: &mut AppState) {
     let Some(editor) = app.workspace.active_editor() else {
         return;
     };
-    let cursor = editor.cursor();
-    let line = editor.line_of(cursor);
+    let selections = editor.selections();
     let remove = collapsed(app, view)
         .into_iter()
-        .filter(|r| editor.line_of(r.start) < line && cursor < r.end)
+        .filter(|r| {
+            selections.iter().any(|s| {
+                [Some(s.cursor), s.anchor]
+                    .into_iter()
+                    .flatten()
+                    .any(|cursor| {
+                        editor.line_of(r.start) < editor.line_of(cursor) && cursor < r.end
+                    })
+            })
+        })
         .map(|r| r.start)
         .collect::<Vec<_>>();
     if let Some(f) = app.editor.editing.folding.views.get_mut(&view) {

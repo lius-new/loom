@@ -309,68 +309,73 @@ pub fn move_displayed(app: &mut AppState, command: loom_editor_core::commands::C
     let Some(mut editor) = app.workspace.active_editor_mut() else {
         return false;
     };
-    let state = editor.selection_state();
-    let row = map.caret_row(&editor, state.cursor, state.wrap_affinity);
-    let source = map.row(&editor, row);
-    if matches!(movement, Movement::Left | Movement::Right) && editor.selection().is_none() {
-        let flip = match movement {
-            Movement::Left
-                if state.wrap_affinity == Assoc::After
-                    && source.continuation
-                    && state.cursor == source.range.start =>
-            {
-                Some(Assoc::Before)
+    editor.map_selections(|buffer, state| {
+        let row = map.caret_row(buffer, state.cursor, state.wrap_affinity);
+        let source = map.row(buffer, row);
+        if state.range().is_none() {
+            let flip = match movement {
+                Movement::Left
+                    if state.wrap_affinity == Assoc::After
+                        && source.continuation
+                        && state.cursor == source.range.start =>
+                {
+                    Some(Assoc::Before)
+                }
+                Movement::Right if state.wrap_affinity == Assoc::Before => Some(Assoc::After),
+                _ => None,
+            };
+            if let Some(affinity) = flip {
+                return loom_editor_core::text::Selection {
+                    wrap_affinity: affinity,
+                    ..state
+                };
             }
-            Movement::Right if state.wrap_affinity == Assoc::Before => Some(Assoc::After),
+        }
+        let vertical = match movement {
+            Movement::Up => Some(row.saturating_sub(1)),
+            Movement::Down => Some((row + 1).min(map.len() - 1)),
+            Movement::PageUp(n) => Some(row.saturating_sub(n)),
+            Movement::PageDown(n) => Some((row + n).min(map.len() - 1)),
             _ => None,
         };
-        if let Some(affinity) = flip {
-            editor.set_wrap_affinity(affinity);
-            editor.break_undo_group();
-            return true;
-        }
-    }
-    let vertical = match movement {
-        Movement::Up => Some(row.saturating_sub(1)),
-        Movement::Down => Some((row + 1).min(map.len() - 1)),
-        Movement::PageUp(n) => Some(row.saturating_sub(n)),
-        Movement::PageDown(n) => Some((row + n).min(map.len() - 1)),
-        _ => None,
-    };
-    if let Some(target) = vertical {
-        let column = state.preferred_column.unwrap_or_else(|| {
-            editor
-                .display_column(state.cursor)
-                .saturating_sub(source.column)
-        });
-        let at = map.offset_at(&editor, target, column);
-        editor.select_to(at, extend);
-        editor.set_wrap_affinity(map.affinity_at(&editor, target, at));
-        editor.set_preferred_column(Some(column));
-        return true;
-    }
-    match movement {
-        Movement::Home | Movement::End => {
+        let mut after = if let Some(target) = vertical {
+            let column = state.preferred_column.unwrap_or_else(|| {
+                buffer
+                    .display_column(state.cursor)
+                    .saturating_sub(source.column)
+            });
+            let at = map.offset_at(buffer, target, column);
+            loom_editor_core::text::Selection {
+                cursor: at,
+                anchor: extend.then(|| state.anchor.unwrap_or(state.cursor)),
+                wrap_affinity: map.affinity_at(buffer, target, at),
+                preferred_column: Some(column),
+            }
+        } else if matches!(movement, Movement::Home | Movement::End) {
             let at = if movement == Movement::Home {
                 source.range.start
             } else {
                 source.range.end
             };
-            editor.select_to(at, extend);
-            editor.set_wrap_affinity(map.affinity_at(&editor, row, at));
-            true
-        }
-        Movement::Left | Movement::Right => {
-            loom_editor_core::normal::navigate(&mut editor, movement, extend);
-            editor.set_wrap_affinity(if movement == Movement::Right {
+            loom_editor_core::text::Selection {
+                cursor: at,
+                anchor: extend.then(|| state.anchor.unwrap_or(state.cursor)),
+                wrap_affinity: map.affinity_at(buffer, row, at),
+                preferred_column: None,
+            }
+        } else {
+            loom_editor_core::normal::navigated(buffer, state, movement, extend)
+        };
+        if matches!(movement, Movement::Left | Movement::Right) {
+            after.wrap_affinity = if movement == Movement::Right {
                 Assoc::Before
             } else {
                 Assoc::After
-            });
-            true
+            };
         }
-        _ => false,
-    }
+        after
+    });
+    true
 }
 
 #[cfg(test)]

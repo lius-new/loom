@@ -70,7 +70,7 @@ impl MarkdownService {
                     return;
                 };
                 let app = self.context.get();
-                let Some(value) = app.workspace.view(view).copied() else {
+                let Some(value) = app.workspace.view(view).cloned() else {
                     return;
                 };
                 let Some(pane) = app.workspace.pane_of(view) else {

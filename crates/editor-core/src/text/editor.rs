@@ -16,6 +16,7 @@ use super::selection::Selection;
 pub struct Editor<'a> {
     buffer: &'a TextBuffer,
     selection: Selection,
+    secondary: &'a [Selection],
 }
 
 impl Deref for Editor<'_> {
@@ -27,9 +28,40 @@ impl Deref for Editor<'_> {
 
 impl<'a> Editor<'a> {
     pub fn new(buffer: &'a TextBuffer, selection: Selection) -> Self {
-        Self { buffer, selection }
+        Self {
+            buffer,
+            selection,
+            secondary: &[],
+        }
     }
 
+    pub fn with_secondary(mut self, secondary: &'a [Selection]) -> Self {
+        self.secondary = secondary;
+        self
+    }
+    pub fn secondary(&self) -> &[Selection] {
+        self.secondary
+    }
+    pub fn selections(&self) -> Vec<Selection> {
+        let (primary, secondary) =
+            super::multiple::normalize(self.buffer, self.selection, self.secondary.to_vec());
+        std::iter::once(primary).chain(secondary).collect()
+    }
+    pub fn selected_texts(&self) -> Option<String> {
+        let mut ranges: Vec<_> = self
+            .selections()
+            .into_iter()
+            .filter_map(|s| s.range())
+            .collect();
+        ranges.sort_by_key(|r| r.start);
+        (!ranges.is_empty()).then(|| {
+            ranges
+                .into_iter()
+                .map(|r| &self.buffer.text()[r])
+                .collect::<Vec<_>>()
+                .join(self.buffer.line_ending())
+        })
+    }
     pub fn buffer(&self) -> &'a TextBuffer {
         self.buffer
     }
@@ -62,6 +94,7 @@ pub struct EditorMut<'a> {
     buffer: &'a mut TextBuffer,
     selection: &'a mut Selection,
     peers: Vec<&'a mut Selection>,
+    secondary: Option<&'a mut Vec<Selection>>,
     anchors: Vec<(&'a mut usize, Assoc)>,
 }
 
@@ -82,10 +115,66 @@ impl<'a> EditorMut<'a> {
             buffer,
             selection,
             peers,
+            secondary: None,
             anchors: Vec::new(),
         }
     }
 
+    pub fn with_secondary(mut self, secondary: &'a mut Vec<Selection>) -> Self {
+        self.secondary = Some(secondary);
+        let extra = self.secondary.as_deref().cloned().unwrap_or_default();
+        self.install_selections(*self.selection, extra);
+        self
+    }
+    pub fn has_secondary(&self) -> bool {
+        self.secondary.as_ref().is_some_and(|s| !s.is_empty())
+    }
+    pub fn selections(&self) -> Vec<Selection> {
+        self.as_ref().selections()
+    }
+    pub fn set_selections(&mut self, primary: Selection, others: Vec<Selection>) {
+        self.buffer.break_undo_group();
+        self.install_selections(primary, others);
+    }
+    pub(super) fn install_selections(&mut self, primary: Selection, others: Vec<Selection>) {
+        let (primary, others) = super::multiple::normalize(self.buffer, primary, others);
+        *self.selection = primary;
+        if let Some(secondary) = self.secondary.as_mut() {
+            **secondary = others;
+        }
+    }
+    pub fn map_selections(&mut self, mut map: impl FnMut(&TextBuffer, Selection) -> Selection) {
+        let mut states = self.selections().into_iter().map(|s| map(self.buffer, s));
+        let primary = states.next().unwrap();
+        let rest = states.collect();
+        self.set_selections(primary, rest);
+    }
+    pub fn cut_selections(&mut self) {
+        let states = self.selections();
+        let edits = states
+            .iter()
+            .filter_map(|s| s.range())
+            .map(Edit::delete)
+            .collect();
+        let before = states[0];
+        let _ = self.edit(EditKind::Other, edits, |changes, _| {
+            Selection::caret(changes.map(
+                before.range().map_or(before.cursor, |r| r.start),
+                Assoc::Before,
+            ))
+        });
+        self.map_selections(|_, s| Selection::caret(s.range().map_or(s.cursor, |r| r.start)));
+        self.finish_multiple();
+    }
+    pub(crate) fn finish_multiple(&mut self) {
+        let primary = *self.selection;
+        let extra = self.secondary.as_deref().cloned().unwrap_or_default();
+        self.install_selections(primary, extra);
+        let extra = self.secondary.as_deref().cloned().unwrap_or_default();
+        self.buffer
+            .history_mut()
+            .update_selections(*self.selection, extra);
+    }
     /// Attach positions that follow every edit, including undo/redo and long
     /// grouped commands. This does not depend on the bounded revision journal.
     pub fn with_anchors(mut self, anchors: Vec<(&'a mut usize, Assoc)>) -> Self {
@@ -95,6 +184,7 @@ impl<'a> EditorMut<'a> {
 
     pub fn as_ref(&self) -> Editor<'_> {
         Editor::new(self.buffer, *self.selection)
+            .with_secondary(self.secondary.as_deref().map_or(&[], |s| s.as_slice()))
     }
 
     pub fn buffer(&self) -> &TextBuffer {
@@ -128,6 +218,9 @@ impl<'a> EditorMut<'a> {
     pub fn set_selection(&mut self, selection: Selection) {
         self.buffer.break_undo_group();
         *self.selection = self.buffer.clamp(selection);
+        if let Some(secondary) = self.secondary.as_mut() {
+            secondary.clear();
+        }
     }
 
     pub fn set_cursor(&mut self, offset: usize) {
@@ -157,6 +250,9 @@ impl<'a> EditorMut<'a> {
     pub fn clear_selection(&mut self) {
         self.buffer.break_undo_group();
         self.selection.anchor = None;
+        if let Some(secondary) = self.secondary.as_mut() {
+            secondary.clear();
+        }
     }
 
     /// Keep a display column for the next vertical move.
@@ -198,6 +294,7 @@ impl<'a> EditorMut<'a> {
         select: impl FnOnce(&ChangeSet, &TextBuffer) -> Selection,
     ) -> Result<ChangeSet, EditError> {
         let before = *self.selection;
+        let secondary_before = self.secondary.as_deref().cloned().unwrap_or_default();
         let pairs = self.buffer.pairs.clone();
         let ending = self.buffer.ending;
         let changes = self.buffer.apply_edits(edits)?;
@@ -207,9 +304,16 @@ impl<'a> EditorMut<'a> {
         let after = self.buffer.clamp(select(&changes, self.buffer));
         *self.selection = after;
         self.move_peers(&changes);
+        let extra = self.secondary.as_deref().cloned().unwrap_or_default();
+        self.install_selections(*self.selection, extra);
+        let after = *self.selection;
         self.buffer
             .history_mut()
             .record(changes.clone(), kind, before, after);
+        let secondary_after = self.secondary.as_deref().cloned().unwrap_or_default();
+        self.buffer
+            .history_mut()
+            .attach_selections(secondary_before, secondary_after);
         let after_pairs = self.buffer.pairs.clone();
         self.buffer.history_mut().attach_pairs(pairs, after_pairs);
         let after_ending = self.buffer.ending;
@@ -269,8 +373,8 @@ impl<'a> EditorMut<'a> {
         } else {
             let selection = *self.selection;
             self.edit(EditKind::Other, edits, |changes, _| Selection {
-                cursor: changes.map(selection.cursor, Assoc::After),
-                anchor: selection.anchor.map(|a| changes.map(a, Assoc::After)),
+                cursor: changes.map(selection.cursor, Assoc::Before),
+                anchor: selection.anchor.map(|a| changes.map(a, Assoc::Before)),
                 preferred_column: None,
                 wrap_affinity: Default::default(),
             })?;
@@ -318,6 +422,12 @@ impl<'a> EditorMut<'a> {
                 .buffer
                 .clamp(Selection::caret(changes.map(**anchor, *assoc)))
                 .cursor;
+        }
+        if let Some(secondary) = self.secondary.as_mut() {
+            for s in secondary.iter_mut() {
+                s.transform(changes);
+                *s = self.buffer.clamp(*s);
+            }
         }
         for peer in &mut self.peers {
             peer.transform(changes);
@@ -374,6 +484,9 @@ impl<'a> EditorMut<'a> {
                 ..entry.before
             });
         }
+        if let Some((before, _)) = &entry.selections {
+            self.install_selections(*self.selection, before.clone());
+        }
         self.buffer.history_mut().push_redo(entry);
         Some(extent)
     }
@@ -397,6 +510,9 @@ impl<'a> EditorMut<'a> {
                 preferred_column: None,
                 ..entry.after
             });
+        }
+        if let Some((_, after)) = &entry.selections {
+            self.install_selections(*self.selection, after.clone());
         }
         self.buffer.history_mut().push_undo(entry);
         Some(extent)

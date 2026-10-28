@@ -139,7 +139,8 @@ and local Markdown headings; its current behavior is in [Outline](../outline.md)
 Definitions/Peek, references, hierarchy/problem lists, lightbulbs, completion,
 signature switching, snippets and save actions are implemented in
 `app/language_ui/`. A protocol request type is not a claim of complete UI support:
-folding integration, rich inlay interaction and inline code lens still have gaps.
+rich inlay interaction and inline code lens still have gaps. Versioned folding
+uses syntax ranges with an LSP fallback; see [Editing](../editing.md#folding).
 
 Workspace edits from rename, formatting, code actions and server `applyEdit`
 use `app/language_ui/edit.rs`. Planning validates source stamps, protocol

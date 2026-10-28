@@ -21,6 +21,7 @@ mod lines;
 mod options;
 mod pairs;
 pub use self::options::{ENDING_MASK, EditingOptions, FileOptions, LineEnding, normalize_endings};
+pub(crate) mod multiple;
 mod revision;
 mod selection;
 pub use self::revision::{BytePoint, RevisionEdit, TextExtent, TextRevision};

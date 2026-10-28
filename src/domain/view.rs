@@ -22,9 +22,10 @@ impl AppPage {
 }
 
 /// Source selection and scroll of one independent view.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ViewState {
     pub selection: Selection,
+    pub secondary: Vec<Selection>,
     pub scroll_x: f32,
     pub scroll_y: f32,
 }
@@ -50,7 +51,7 @@ pub struct ReaderPosition {
     pub block_fraction: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DocumentView {
     pub id: ViewId,
     pub target: ViewTarget,
@@ -77,13 +78,13 @@ impl DocumentView {
             input_generation: 0,
         }
     }
-    pub fn document(self) -> Option<FileId> {
+    pub fn document(&self) -> Option<FileId> {
         match self.target {
             ViewTarget::Text(id) => Some(id),
             _ => None,
         }
     }
-    pub fn accepts_text(self) -> bool {
+    pub fn accepts_text(&self) -> bool {
         matches!(self.target, ViewTarget::Text(_)) && self.presentation == Presentation::Source
     }
 }

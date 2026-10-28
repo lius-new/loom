@@ -201,3 +201,35 @@ the same display map as soft wrap, including hit testing and scrolling.
 Folding uses the same 1 MiB/100,000-row large-file fallback as wrapping. Ranges
 are bounded and crossing server ranges are rejected. Fold state is temporary
 for the open views and does not change the file or create text undo entries.
+
+## Multiple cursors
+
+Ctrl+D (Cmd+D on macOS) selects the word at the caret, then adds the next
+matching occurrence, wrapping at the end of the document. An existing custom
+selection searches for that exact text. Ctrl+Alt+Up/Down adds a cursor on the
+previous/next displayed row, including wrapped rows. These actions can be rebound
+as editor::SelectNextOccurrence, editor::AddCursorAbove and editor::AddCursorBelow.
+
+Alt+click adds or removes a cursor; Shift+Alt+drag selects a rectangle across
+displayed rows. Tabs, wide characters and grapheme clusters use the same geometry
+as painting. Rectangles stop at line ends and skip folded lines. Up to 256 cursors
+are supported per view. A plain click or Escape returns to the primary cursor.
+Overlapping selections merge; adjacent nonempty selections remain independent.
+Selections are temporary and are not restored from a saved session.
+
+Typing, delimiter pairs, Enter and deletion apply to all selections as one atomic
+edit. Indentation, comments and line movement handle each touched line once.
+Undo/redo restores every selection. Each split view keeps its own selections while
+following edits to the shared text. Copy joins nonempty selections in source order;
+Cut leaves empty carets intact. Paste distributes lines when their count exactly
+matches the number of cursors; otherwise it inserts the full text at each cursor,
+using the document's line endings.
+
+IME preedit is shown at the primary caret; committing inserts the literal text at
+all selections. Automatic completion and on-type formatting pause during multiple
+cursor editing. Manually requesting completion keeps only the primary cursor, so
+completion edits and snippet tab stops have an explicit target. Adding a cursor
+ends a snippet session and cancels its pending completion list. Saving/formatting
+maps all selections through the resulting document edits. Vim's normal-mode
+bindings retain their meaning; the extra-cursor commands are available in Insert
+mode.

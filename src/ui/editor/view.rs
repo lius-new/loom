@@ -699,6 +699,24 @@ pub(crate) fn render(
                     && selections.is_empty()
                     && s.preedit_for(pane, id).is_none(),
             ));
+            for selection in &document.secondary {
+                let (x, y) = projection::caret(
+                    &buffer,
+                    &projection,
+                    *selection,
+                    code_left,
+                    code_top,
+                    scroll_x,
+                    metrics.viewport_w,
+                );
+                if y + fonts::editor().line_h >= scroll_y + rect.top && y <= scroll_y + rect.bottom
+                {
+                    code = code.child(panel(
+                        UiRect::new(x, y + 1.0, x + 2.0, y + fonts::editor().line_h - 1.0),
+                        VisualStyle::filled(theme::c().accent),
+                    ));
+                }
+            }
             if let Some(session) = s.preedit_for(pane, id) {
                 let width = layout_line(&session.text, 0.0, 0.0, metrics.content_w)
                     .map_or(80.0, |l| l.width)

@@ -234,8 +234,7 @@ pub(crate) fn apply_command(
             let selected = app
                 .workspace
                 .active_editor()
-                .and_then(|buffer| buffer.selected_text())
-                .map(str::to_owned);
+                .and_then(|buffer| buffer.selected_texts());
             if let Some(value) = selected {
                 // A failed copy must leave the source text and selection untouched.
                 clipboard.write_text(&value)?;
@@ -245,7 +244,7 @@ pub(crate) fn apply_command(
                 if let Some(mut buffer) = app.workspace.active_editor_mut() {
                     buffer.break_undo_group();
                     if command == Command::Cut {
-                        normal::backspace(&mut buffer);
+                        buffer.cut_selections();
                         buffer.break_undo_group();
                     }
                 }
@@ -340,6 +339,19 @@ pub(crate) fn update_drag_selection(app: &mut AppState, rect: UiRect) {
             drag.point.1,
         );
         match drag.unit {
+            SelectionUnit::Rectangle { row, column } => {
+                let head = projection.caret_row(&buffer, cursor, affinity);
+                let col = buffer
+                    .display_column(cursor)
+                    .saturating_sub(projection.row(&buffer, head).column);
+                let (primary, others) = super::multicursor::rectangle_at(
+                    &buffer,
+                    &projection,
+                    (row, column),
+                    (head, col),
+                );
+                buffer.set_selections(primary, others);
+            }
             SelectionUnit::Character => {
                 buffer.set_cursor(drag.origin.start);
                 buffer.select_to(cursor, true);
@@ -548,11 +560,57 @@ pub(crate) fn pointer_down(
             point.y,
         )
     });
+    if button == PointerButton::Left && app.editor.modifiers.alt() {
+        if let Some((cursor, affinity)) = cursor {
+            let rectangle = app.editor.modifiers.shift();
+            super::multicursor::prepare(app);
+            if let Some(mut buffer) = app.workspace.active_editor_mut() {
+                let mut states = buffer.selections();
+                let mut primary = loom_editor_core::text::Selection::caret(cursor);
+                primary.wrap_affinity = affinity;
+                if rectangle {
+                    buffer.set_selection(primary);
+                } else if let Some(index) = states
+                    .iter()
+                    .position(|s| s.cursor == cursor && s.range().is_none())
+                {
+                    if states.len() > 1 {
+                        states.remove(index);
+                        let first = states.remove(0);
+                        buffer.set_selections(first, states);
+                    }
+                } else {
+                    buffer.set_selections(primary, states);
+                }
+            }
+            if rectangle {
+                app.editor.drag = Some(DragSelection {
+                    document: id,
+                    origin: cursor..cursor,
+                    unit: {
+                        let buffer = app.workspace.active_editor().unwrap();
+                        let row = projection.caret_row(&buffer, cursor, affinity);
+                        let column = buffer
+                            .display_column(cursor)
+                            .saturating_sub(projection.row(&buffer, row).column);
+                        SelectionUnit::Rectangle { row, column }
+                    },
+                    point: (point.x, point.y),
+                });
+            }
+        }
+        reveal_cursor(app, rect);
+        return;
+    }
     if let Some((cursor, affinity)) = cursor
         && let Some(mut buffer) = app.workspace.active_editor_mut()
     {
         if button == PointerButton::Right {
-            if !buffer.selection().is_some_and(|r| r.contains(&cursor)) {
+            if !buffer
+                .selections()
+                .iter()
+                .any(|s| s.range().is_some_and(|r| r.contains(&cursor)))
+            {
                 buffer.set_cursor(cursor);
                 buffer.set_wrap_affinity(affinity);
             }
@@ -585,6 +643,7 @@ pub(crate) fn pointer_down(
                     buffer.line_range_with_break(line)
                 }
                 SelectionUnit::Word => buffer.word_range(cursor),
+                SelectionUnit::Rectangle { .. } => unreachable!(),
                 SelectionUnit::Character => {
                     buffer.select_to(cursor, shift);
                     buffer.set_wrap_affinity(affinity);

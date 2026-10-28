@@ -176,7 +176,7 @@ pub fn render(
         .pane(pane)
         .and_then(|pane| pane.active())
         .and_then(|id| app.workspace.view(id))
-        .copied()
+        .cloned()
     else {
         return group(rect);
     };
@@ -594,7 +594,7 @@ pub fn sync_sources(app: &mut AppState) {
     let active = panes.into_iter().map(|(_, view)| view).collect::<Vec<_>>();
     let mut pairs = Vec::new();
     for &id in &active {
-        let Some(view) = app.workspace.view(id).copied() else {
+        let Some(view) = app.workspace.view(id).cloned() else {
             continue;
         };
         if view.presentation != Presentation::Markdown {
@@ -622,7 +622,7 @@ pub fn sync_sources(app: &mut AppState) {
         let Some(source_view) = app
             .workspace
             .view(source)
-            .copied()
+            .cloned()
             .filter(|view| view.accepts_text())
         else {
             continue;
@@ -688,7 +688,7 @@ pub fn key_action(
         .workspace
         .active()
         .and_then(|id| app.workspace.view(id))
-        .copied()
+        .cloned()
     else {
         return false;
     };

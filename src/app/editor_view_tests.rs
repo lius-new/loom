@@ -4061,3 +4061,498 @@ fn lsp_folding_fallback_is_versioned_and_late_results_do_not_fold_a_switched_tab
     assert!(crate::app::editing::active_projection(&h.state.get(), h.rect).folded());
     let _ = std::fs::remove_file(log);
 }
+
+#[test]
+fn multicursor_ui_shortcuts_rectangle_unicode_ime_and_undo_use_one_transaction() {
+    use lgui::{
+        application::{AppView, ApplicationContext},
+        core::{
+            ImeEvent, InputEvent, NamedKey, Point, PointerData, UiScale, dispatch_runtime_output,
+        },
+        session::UiSession,
+    };
+    use loom_editor_core::text::Selection;
+    use std::sync::Arc;
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
+    let output = exposed.clone();
+    let rect = UiRect::new(0.0, 0.0, 600.0, 320.0);
+    let application = ApplicationContext::empty(Default::default());
+    let environment = application.clone();
+    let _fonts = lgui::backend::install_text_environment(
+        &application,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    let source = "foo foo\r\nfoo bar\r\n中😀 e\u{301}\r\n中😀 tail";
+    let view: AppView = Arc::new(move |cx| {
+        let mut initial = document(source);
+        initial.editor.focused = true;
+        initial.preferences.values_mut().smooth_caret = false;
+        let state = AppContext::detached(cx.state(initial));
+        let git = cx.state(GitStoreSnapshot::default());
+        *output.lock().unwrap() = Some(state.clone());
+        let id = UiId::new("multicursor");
+        let focus = cx.focus_handle(id.clone());
+        let env = crate::app::key_actions::KeyEnv {
+            state: state.clone(),
+            git_store: git.clone(),
+            application: environment.clone(),
+            editor_focus: focus.clone(),
+            editor_rect: rect,
+            terminal: None,
+        };
+        crate::app::key_actions::attach(
+            group(rect).child(render(PaneId::new(1), rect, state, git, id, focus)),
+            env,
+        )
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, rect, UiScale::ONE);
+    let state = exposed.lock().unwrap().clone().unwrap();
+    let send = |session: &mut UiSession, input| {
+        dispatch_runtime_output(
+            session.handle_input(input),
+            &application,
+            &lgui::window::WindowId::new("multicursor"),
+            |a| session.handle_default_action(a),
+            |_| {},
+        );
+        session.render_view(&view, rect, UiScale::ONE);
+    };
+    let key = |key, modifiers| {
+        InputEvent::Keyboard(KeyboardEvent {
+            state: KeyState::Down,
+            key,
+            modifiers,
+            ..Default::default()
+        })
+    };
+    let secondary = if cfg!(target_os = "macos") {
+        KeyModifiers::META
+    } else {
+        KeyModifiers::CONTROL
+    };
+    let left = fonts::editor().gutter_w() + theme::CODE_PAD;
+    let click = |session: &mut UiSession, x, y| {
+        let pointer = PointerData::mouse(Point::new(x, y));
+        send(
+            session,
+            InputEvent::PointerDown {
+                pointer,
+                button: PointerButton::Left,
+            },
+        );
+        send(
+            session,
+            InputEvent::PointerUp {
+                pointer,
+                button: PointerButton::Left,
+            },
+        );
+    };
+    click(&mut session, left + 1.0, 5.0);
+    for _ in 0..3 {
+        send(
+            &mut session,
+            key(LogicalKey::Character("d".into()), secondary),
+        );
+    }
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections()
+            .len(),
+        3
+    );
+    let selected = state.get().workspace.active_editor().unwrap().selections();
+    send(
+        &mut session,
+        InputEvent::Ime(ImeEvent::Preedit {
+            text: "zhong".into(),
+            cursor: Some(0..5),
+        }),
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        source
+    );
+    send(
+        &mut session,
+        InputEvent::Ime(ImeEvent::Commit("中文()".into())),
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "中文() 中文()\r\n中文() bar\r\n中😀 e\u{301}\r\n中😀 tail"
+    );
+    send(
+        &mut session,
+        key(LogicalKey::Character("z".into()), secondary),
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        source
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().selections(),
+        selected
+    );
+    send(
+        &mut session,
+        key(LogicalKey::Named(NamedKey::Escape), KeyModifiers::empty()),
+    );
+    assert!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .secondary()
+            .is_empty()
+    );
+    state.update(|app| app.workspace.active_editor_mut().unwrap().set_cursor(0));
+    send(
+        &mut session,
+        key(
+            LogicalKey::Named(NamedKey::ArrowDown),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ),
+    );
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections()
+            .len(),
+        2
+    );
+    send(
+        &mut session,
+        key(
+            LogicalKey::Named(NamedKey::ArrowRight),
+            KeyModifiers::empty(),
+        ),
+    );
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections()
+            .iter()
+            .map(|s| s.cursor)
+            .collect::<Vec<_>>(),
+        [10, 1]
+    );
+    // Alt-click adds then removes a caret; plain click restores a single caret.
+    state.update(|app| app.editor.modifiers = KeyModifiers::ALT);
+    click(&mut session, left + 1.0, fonts::editor().line_h * 3.0 + 5.0);
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections()
+            .len(),
+        3
+    );
+    click(&mut session, left + 1.0, fonts::editor().line_h * 3.0 + 5.0);
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections()
+            .len(),
+        2
+    );
+    state.update(|app| app.editor.modifiers = KeyModifiers::empty());
+    click(&mut session, left + 1.0, 5.0);
+    assert!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .secondary()
+            .is_empty()
+    );
+    state.update(|app| app.editor.modifiers = KeyModifiers::ALT | KeyModifiers::SHIFT);
+    let start = PointerData::mouse(Point::new(left + 1.0, fonts::editor().line_h * 2.0 + 5.0));
+    send(
+        &mut session,
+        InputEvent::PointerDown {
+            pointer: start,
+            button: PointerButton::Left,
+        },
+    );
+    let app = state.get();
+    let buffer = app.workspace.active_editor().unwrap();
+    let map = crate::app::editing::active_projection(&app, rect);
+    let at = buffer.line_start(3) + "中😀".len();
+    let metrics = crate::ui::editor::projection::metrics(rect, left, &buffer, &map);
+    let (x, y) = crate::ui::editor::projection::caret(
+        &buffer,
+        &map,
+        Selection::caret(at),
+        left,
+        0.0,
+        0.0,
+        metrics.viewport_w,
+    );
+    drop(app);
+    let end = PointerData::mouse(Point::new(x + 0.1, y + 5.0));
+    send(&mut session, InputEvent::PointerMove(end));
+    send(
+        &mut session,
+        InputEvent::PointerUp {
+            pointer: end,
+            button: PointerButton::Left,
+        },
+    );
+    let app = state.get();
+    let editor = app.workspace.active_editor().unwrap();
+    assert_eq!(editor.selections().len(), 2);
+    assert_eq!(editor.selected_texts().as_deref(), Some("中😀\r\n中😀"));
+    drop(app);
+    send(&mut session, InputEvent::Ime(ImeEvent::Commit("替".into())));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "foo foo\r\nfoo bar\r\n替 e\u{301}\r\n替 tail"
+    );
+    send(
+        &mut session,
+        key(LogicalKey::Character("z".into()), secondary),
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        source
+    );
+    state.update(crate::app::language_ui::completion::words);
+    assert!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .secondary()
+            .is_empty()
+    );
+}
+
+#[test]
+fn multicursor_display_rows_and_split_view_state_stay_independent() {
+    use loom_editor_core::text::Selection;
+    let mut app = document("one two three four five six seven eight nine\nend");
+    app.preferences.values_mut().editor.soft_wrap = true;
+    crate::app::editing::configure_all(&mut app);
+    let rect = UiRect::new(0.0, 0.0, 180.0, 320.0);
+    let map = crate::app::editing::active_projection(&app, rect);
+    assert!(map.len() > 3);
+    crate::app::multicursor::command(&mut app, false, true, rect);
+    let buffer = app.workspace.active_editor().unwrap();
+    let states = buffer.selections();
+    assert_eq!(states.len(), 2);
+    assert_eq!(
+        map.caret_row(&buffer, states[0].cursor, states[0].wrap_affinity),
+        1
+    );
+    let first = app.workspace.active().unwrap();
+    let (primary, others) =
+        crate::app::multicursor::rectangle(&buffer, &map, 0, map.row(&buffer, 2).range.start + 1);
+    assert_eq!(others.len(), 2);
+    assert!(
+        others
+            .iter()
+            .chain(std::iter::once(&primary))
+            .all(|s| s.range().is_none_or(|r| !buffer.text()[r].contains('\n')))
+    );
+    let other = app
+        .workspace
+        .test_open_view("another.txt".into(), "other".into());
+    assert!(
+        app.workspace
+            .active_editor()
+            .unwrap()
+            .secondary()
+            .is_empty()
+    );
+    app.workspace.set_active(first);
+    assert_eq!(app.workspace.active_editor().unwrap().selections(), states);
+    app.workspace.set_active(other);
+    app.workspace
+        .active_editor_mut()
+        .unwrap()
+        .set_selections(Selection::caret(0), vec![Selection::caret(5)]);
+    crate::app::multicursor::primary_only(&mut app);
+    assert_eq!(
+        app.workspace.active_editor().unwrap().selections(),
+        vec![Selection::caret(0)]
+    );
+}
+
+#[test]
+fn multicursor_cancels_pending_completion_and_snippets_before_late_reply() {
+    use crate::app::language_ui::completion;
+    let log = std::env::temp_dir().join(format!(
+        "loom-multi-completion-{}-{}.jsonl",
+        std::process::id(),
+        LANGUAGE_CASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let log_arg = log.display().to_string();
+    let mut h = LanguageHarness::configured(
+        "b\nb",
+        &[
+            "--features",
+            "completion",
+            "--defer-feature-replies",
+            "--log",
+            &log_arg,
+        ],
+        |app| {
+            app.preferences.values_mut().language_servers[0]
+                .args
+                .as_mut()
+                .unwrap()[1] = "object".into()
+        },
+    );
+    h.until_ready();
+    h.set_cursor(1);
+    let count = |h: &LanguageHarness| {
+        server_log(h, &log)
+            .iter()
+            .filter(|m| m.as_str() == "textDocument/completion")
+            .count()
+    };
+    let before = count(&h);
+    h.state
+        .update(|app| completion::request(&h.state, app, true, None));
+    h.until("first completion request to reach the server", |h| {
+        count(h) > before
+    });
+    h.state
+        .update(|app| crate::app::multicursor::command(app, false, true, h.rect));
+    assert!(h.state.get().editor.language.completion.is_none());
+    let path = h.state.get().workspace.active_path().unwrap().to_path_buf();
+    h.runtime
+        .language_services()
+        .unwrap()
+        .saved(path.clone(), Arc::new("b\nb".into()));
+    h.state
+        .update(|app| completion::observe(&h.state, app, Some('o')));
+    assert!(h.state.get().editor.language.completion.is_none());
+    assert_eq!(
+        h.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections()
+            .len(),
+        2
+    );
+    let before = count(&h);
+    h.state
+        .update(|app| completion::request(&h.state, app, true, None));
+    assert!(
+        h.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .secondary()
+            .is_empty()
+    );
+    h.until(
+        "new manual completion request after releasing the cancelled response",
+        |h| count(h) > before,
+    );
+    h.runtime
+        .language_services()
+        .unwrap()
+        .saved(path, Arc::new("b\nb".into()));
+    h.until("manual completion at the primary caret", |h| {
+        h.state
+            .get()
+            .editor
+            .language
+            .completion
+            .as_ref()
+            .is_some_and(|s| s.visible())
+    });
+    h.state.update(|app| {
+        completion::accept(app, None);
+    });
+    assert!(h.state.get().editor.language.snippet.is_some());
+    h.state
+        .update(|app| crate::app::multicursor::command(app, false, false, h.rect));
+    assert!(h.state.get().editor.language.snippet.is_none());
+    let _ = std::fs::remove_file(log);
+}
+
+#[test]
+fn multicursor_save_formats_crlf_bytes_and_maps_all_selections_with_undo() {
+    use crate::features::keymap::action::Action;
+    use lgui::ServicesContextExt;
+    use loom_editor_core::text::Selection;
+    let source = "fn alpha() {}\r\nlast";
+    let mut h =
+        LanguageHarness::configured(source, &["--features", "formatting"], on_save(&[], true));
+    h.until_ready();
+    h.state.update(|app| {
+        app.workspace
+            .active_editor_mut()
+            .unwrap()
+            .set_selections(Selection::caret(5), vec![Selection::caret(source.len())])
+    });
+    let before = h
+        .state
+        .get()
+        .workspace
+        .active_editor()
+        .unwrap()
+        .selections();
+    h.act(Action::Save);
+    let path = h.state.get().workspace.active_path().unwrap().to_path_buf();
+    let expected = format!("// formatted\r\n{source}");
+    h.until("formatted multi-cursor CRLF file bytes", |_| {
+        std::fs::read(&path).is_ok_and(|bytes| bytes == expected.as_bytes())
+    });
+    let prefix = "// formatted\r\n".len();
+    assert_eq!(
+        h.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections()
+            .iter()
+            .map(|s| s.cursor)
+            .collect::<Vec<_>>(),
+        [5 + prefix, source.len() + prefix]
+    );
+    execute_command(
+        &h.state,
+        loom_editor_core::commands::Command::Undo,
+        h.rect,
+        h.context.clipboard(),
+    );
+    h.render();
+    assert_eq!(h.document_text(), source);
+    assert_eq!(
+        h.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections(),
+        before
+    );
+    let _ = std::fs::remove_file(path);
+}

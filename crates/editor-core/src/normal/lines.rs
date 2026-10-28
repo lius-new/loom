@@ -21,6 +21,10 @@ pub fn touched(editor: &EditorMut<'_>) -> (usize, usize) {
     (first, last)
 }
 pub fn lines(editor: &mut EditorMut<'_>, operation: LineOperation) {
+    if editor.has_secondary() {
+        crate::text::multiple::lines(editor, operation);
+        return;
+    }
     let (first, last) = touched(editor);
     let start = editor.line_start(first);
     let end = if last + 1 < editor.line_count() {
@@ -147,6 +151,10 @@ pub fn lines(editor: &mut EditorMut<'_>, operation: LineOperation) {
 }
 
 pub fn comment(editor: &mut EditorMut<'_>, prefix: &str) {
+    if editor.has_secondary() {
+        crate::text::multiple::comment(editor, prefix);
+        return;
+    }
     if prefix.is_empty() {
         return;
     }

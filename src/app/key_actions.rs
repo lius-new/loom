@@ -301,6 +301,17 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
             );
             true
         }
+        Action::SelectNextOccurrence | Action::AddCursorAbove | Action::AddCursorBelow => {
+            env.state.update(|app| {
+                super::multicursor::command(
+                    app,
+                    action == Action::SelectNextOccurrence,
+                    action == Action::AddCursorBelow,
+                    env.editor_rect,
+                )
+            });
+            true
+        }
         Action::ToggleSoftWrap => {
             env.state.update(|app| {
                 app.editor.language.rect = Some(env.editor_rect);

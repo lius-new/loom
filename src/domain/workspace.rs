@@ -833,6 +833,9 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
                     view.input_generation += 1;
                 }
                 view.source.selection = document.buffer.clamp(view.source.selection);
+                for selection in &mut view.source.secondary {
+                    *selection = document.buffer.clamp(*selection);
+                }
                 view.reader.source_byte = document
                     .buffer
                     .clamp(Selection::caret(view.reader.source_byte))
@@ -897,7 +900,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         {
             return false;
         }
-        let source = self.views[&id];
+        let source = self.views[&id].clone();
         let new = self.create_view(source.target, source.presentation);
         self.views.insert(
             new,
@@ -1209,7 +1212,10 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             .documents
             .get(&view.document()?)
             .filter(|d| d.is_text())?;
-        Some(Editor::new(&document.buffer, view.source.selection))
+        Some(
+            Editor::new(&document.buffer, view.source.selection)
+                .with_secondary(&view.source.secondary),
+        )
     }
 
     /// The editor of one specific view: `document` as shown in `pane`, whether
@@ -1226,26 +1232,48 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         self.document_view_editor_mut(id, view)
     }
     pub(crate) fn document_editor_mut(&mut self, id: FileId) -> Option<EditorMut<'_>> {
-        let view = *self.documents.get(&id)?.view_ids.iter().next()?;
+        let document = self.documents.get(&id)?;
+        let view = self
+            .active()
+            .filter(|v| {
+                self.views
+                    .get(v)
+                    .is_some_and(|v| v.document() == Some(id) && v.accepts_text())
+            })
+            .or_else(|| {
+                document
+                    .view_ids
+                    .iter()
+                    .copied()
+                    .find(|v| self.views.get(v).is_some_and(|v| v.accepts_text()))
+            })
+            .or_else(|| document.view_ids.iter().next().copied())?;
         self.document_view_editor_mut(id, view)
     }
     fn document_view_editor_mut(&mut self, id: FileId, view: ViewId) -> Option<EditorMut<'_>> {
         let document = self.documents.get_mut(&id).filter(|d| d.is_text())?;
         let mut own = None;
+        let mut extra = None;
         let mut peers = Vec::new();
         let mut readers = Vec::new();
         for v in self.views.values_mut().filter(|v| v.document() == Some(id)) {
             if v.id == view {
                 own = Some(&mut v.source.selection);
+                extra = Some(&mut v.source.secondary);
             } else {
                 peers.push(&mut v.source.selection);
+                peers.extend(v.source.secondary.iter_mut());
             }
             readers.push((
                 &mut v.reader.source_byte,
                 loom_editor_core::text::Assoc::After,
             ));
         }
-        Some(EditorMut::new(&mut document.buffer, own?, peers).with_anchors(readers))
+        Some(
+            EditorMut::new(&mut document.buffer, own?, peers)
+                .with_secondary(extra?)
+                .with_anchors(readers),
+        )
     }
 
     pub fn editor_mut(&mut self, pane: PaneId) -> Option<EditorMut<'_>> {
@@ -1651,7 +1679,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
                 .tabs_of(id)
                 .first()
                 .and_then(|(_, v)| self.views.get(v))
-                .copied();
+                .cloned();
             let view = self.create_view(ViewTarget::Text(id), presentation);
             if let Some(source) = source {
                 self.views.get_mut(&view).unwrap().source = source.source;

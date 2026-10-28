@@ -396,7 +396,7 @@ fn side_preview_association_survives_session_with_runtime_ids_reallocated() {
         .views
         .values()
         .find(|view| view.presentation == Presentation::Markdown)
-        .copied()
+        .cloned()
         .unwrap();
     let source = view.associated_source.unwrap();
     let pane = restored.workspace.pane_of(source).unwrap();

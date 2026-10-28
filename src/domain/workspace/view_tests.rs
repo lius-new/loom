@@ -103,12 +103,12 @@ fn p1_toggle_keeps_identity_and_both_positions_without_changing_text_history() {
             block_fraction: 0.6,
         },
     );
-    let before = *w.view(view).unwrap();
+    let before = w.view(view).unwrap().clone();
     let stamp = w.documents[&document].stamp(document);
     assert!(w.set_presentation(view, Presentation::Markdown));
     w.set_scroll(pane, 100.0, 200.0);
     assert!(w.set_presentation(view, Presentation::Source));
-    let after = *w.view(view).unwrap();
+    let after = w.view(view).unwrap().clone();
     assert_eq!(before.id, after.id);
     assert_eq!(before.source, after.source);
     assert_eq!(before.reader, after.reader);
@@ -311,4 +311,93 @@ fn markdown_preview_associations_do_not_outlive_their_source_surface() {
     workspace.close_item(pane, source);
     assert_eq!(workspace.view(preview).unwrap().associated_source, None);
     assert_eq!(workspace.documents.len(), 1);
+}
+
+#[test]
+fn multicursor_split_selections_follow_shared_edits_and_hidden_reload_clamps_them() {
+    use loom_editor_core::text::Selection;
+    let mut w = Model::new();
+    let left = w.active_pane();
+    let (document, original) = open(&mut w, "multi.md", "abc\r\nxyz");
+    w.active_editor_mut()
+        .unwrap()
+        .set_selections(Selection::caret(1), vec![Selection::caret(6)]);
+    let right = w.split(left, Direction::Right).unwrap();
+    let copy = w.active().unwrap();
+    w.active_editor_mut()
+        .unwrap()
+        .set_selections(Selection::caret(0), vec![Selection::caret(5)]);
+    normal::insert(&mut w.active_editor_mut().unwrap(), "中");
+    assert_eq!(
+        w.editor(left)
+            .unwrap()
+            .selections()
+            .iter()
+            .map(|s| s.cursor)
+            .collect::<Vec<_>>(),
+        [4, 12]
+    );
+    assert_eq!(
+        w.editor(right)
+            .unwrap()
+            .selections()
+            .iter()
+            .map(|s| s.cursor)
+            .collect::<Vec<_>>(),
+        [3, 11]
+    );
+    w.active_editor_mut().unwrap().undo();
+    assert_eq!(
+        w.editor(left)
+            .unwrap()
+            .selections()
+            .iter()
+            .map(|s| s.cursor)
+            .collect::<Vec<_>>(),
+        [1, 6]
+    );
+    w.set_presentation(original, Presentation::Markdown);
+    w.reconcile_with_disk(
+        document,
+        DiskRead::Found {
+            contents: "界".into(),
+            state: DiskState::from_contents("界"),
+            bytes: None,
+        },
+    );
+    assert!(
+        w.view(original)
+            .unwrap()
+            .source
+            .secondary
+            .iter()
+            .all(|s| s.cursor <= 3)
+    );
+    assert_eq!(w.view(copy).unwrap().document(), Some(document));
+    invariants(&w);
+}
+
+#[test]
+fn multicursor_document_edits_record_the_active_source_view_selection() {
+    use loom_editor_core::text::{Assoc, Edit, EditKind, Selection};
+    let mut w = Model::new();
+    let left = w.active_pane();
+    let (document, _) = open(&mut w, "active.md", "abc\nxyz");
+    w.split(left, Direction::Right).unwrap();
+    w.active_editor_mut()
+        .unwrap()
+        .set_selections(Selection::caret(1), vec![Selection::caret(5)]);
+    let before = w.active_editor().unwrap().selections();
+    let mut editor = w.document_editor_mut(document).unwrap();
+    let primary = editor.selection_state();
+    editor
+        .edit(
+            EditKind::Other,
+            vec![Edit::insert(0, "// prefix\n")],
+            |c, _| Selection::caret(c.map(primary.cursor, Assoc::After)),
+        )
+        .unwrap();
+    drop(editor);
+    w.active_editor_mut().unwrap().undo();
+    assert_eq!(w.active_editor().unwrap().selections(), before);
 }

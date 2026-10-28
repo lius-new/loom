@@ -79,6 +79,15 @@ pub fn note_typed(app: &mut AppState, input: &str) {
 /// follows or ends a completion accordingly. Runs after every state update, so
 /// it is cheap when nothing relevant changed.
 pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
+    if app
+        .workspace
+        .active_editor()
+        .is_some_and(|e| !e.secondary().is_empty())
+    {
+        app.editor.language.completion = None;
+        app.editor.language.completion_timer = None;
+        return;
+    }
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else {
         app.editor.language.completion = None;
@@ -169,6 +178,7 @@ fn schedule(ctx: &AppContext, app: &mut AppState, trigger: Option<char>) {
 
 /// The words of the document, as completions, for when no server offers any.
 pub fn words(app: &mut AppState) {
+    crate::app::multicursor::primary_only(app);
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else { return };
     let start = word_start(&t.text, t.cursor);
@@ -260,6 +270,15 @@ pub fn words_of(text: &str) -> Vec<(usize, String)> {
 
 /// Asks the servers now. `manual` is the person pressing the key.
 pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Option<char>) {
+    if manual {
+        crate::app::multicursor::primary_only(app);
+    } else if app
+        .workspace
+        .active_editor()
+        .is_some_and(|e| !e.secondary().is_empty())
+    {
+        return;
+    }
     app.editor.language.completion_timer = None;
     if !manual && snippet_session::choice_visible(app) {
         return;

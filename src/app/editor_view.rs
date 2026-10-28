@@ -40,7 +40,7 @@ pub(crate) fn menu(
                 Command::Undo => buffer.can_undo(),
                 Command::Redo => buffer.can_redo(),
                 Command::Copy | Command::Cut => {
-                    buffer.selection().is_some()
+                    buffer.selections().iter().any(|s| s.range().is_some())
                         || matches!(
                             app.editor.vim.mode(),
                             loom_editor_core::vim::Mode::Visual(_)
@@ -99,6 +99,7 @@ pub(crate) fn snapshot(
                 projection: super::editing::projection(&app, id, rect),
                 buffer: value.buffer().clone(),
                 selection: value.selection_state(),
+                secondary: value.secondary().to_vec(),
                 scroll: app.workspace.scroll(pane),
             })
         });
@@ -145,7 +146,13 @@ pub(crate) fn snapshot(
             vim_view
                 .then(|| state.vim.highlights(&doc.buffer, doc.selection))
                 .flatten()
-                .unwrap_or_else(|| doc.editor().selection().into_iter().collect())
+                .unwrap_or_else(|| {
+                    doc.editor()
+                        .selections()
+                        .into_iter()
+                        .filter_map(|s| s.range())
+                        .collect()
+                })
         })
         .unwrap_or_default();
     let search_matches = document

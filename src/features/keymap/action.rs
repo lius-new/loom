@@ -161,6 +161,9 @@ actions! {
     Unfold => "editor::Unfold", "Unfold code at the caret";
     FoldAll => "editor::FoldAll", "Fold all code regions";
     UnfoldAll => "editor::UnfoldAll", "Unfold all code regions";
+    SelectNextOccurrence => "editor::SelectNextOccurrence", "Select the next occurrence";
+    AddCursorAbove => "editor::AddCursorAbove", "Add a cursor on the row above";
+    AddCursorBelow => "editor::AddCursorBelow", "Add a cursor on the row below";
     ToggleSoftWrap => "editor::ToggleSoftWrap", "Toggle soft wrapping in the current document";
     MoveLineUp => "editor::MoveLineUp", "Move selected lines up";
     MoveLineDown => "editor::MoveLineDown", "Move selected lines down";
