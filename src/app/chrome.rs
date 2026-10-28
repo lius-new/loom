@@ -163,7 +163,6 @@ pub fn status_binding(state: &AppContext) -> crate::ui::chrome::StatusBinding {
             let (server, language) = language_status(&reader, &app);
             StatusFrame {
                 pending: app.keymap.pending().to_vec(),
-                diff_loading: app.git.model.diff_loading().is_some(),
                 server,
                 language,
                 vim: crate::app::editor_vim::is_active(&app)

@@ -57,6 +57,7 @@ pub fn attach(
     left: f32,
     state: Binding,
     store: Snapshot,
+    diff_loading: bool,
 ) -> Element {
     let git = store.get();
     let picker_open = state.get().ui.branch_picker.is_some();
@@ -108,13 +109,30 @@ pub fn attach(
         );
     }
 
-    if let Some(operation) = &git.operation {
+    // A Git operation in progress, else a diff being read. Reading blocks
+    // nothing, so it is shown here without disabling the controls above.
+    let busy = match &git.operation {
+        Some(operation) => Some(operation.message.as_str()),
+        None => diff_loading.then_some("Loading diff…"),
+    };
+    if let Some(message) = busy {
         let style = theme::mono(theme::c().text_dim, theme::SMALL);
-        let left = right + GROUP_GAP;
-        let width = measure(&operation.message, &style) + TEXT_MARGIN;
+        let spinner = UiRect::new(
+            right + GROUP_GAP,
+            rect.top + (rect.height() - BADGE_ICON) / 2.0,
+            right + GROUP_GAP + BADGE_ICON,
+            rect.top + (rect.height() + BADGE_ICON) / 2.0,
+        );
+        bar = bar.child(crate::ui::components::loading_indicator::render(
+            spinner,
+            theme::c().accent,
+            "titlebar-git-busy".into(),
+        ));
+        let left = spinner.right + ICON_GAP;
+        let width = measure(message, &style) + TEXT_MARGIN;
         bar = bar.child(text(
             UiRect::new(left, rect.top, left + width, rect.bottom),
-            operation.message.clone(),
+            message.to_owned(),
             style,
         ));
     }

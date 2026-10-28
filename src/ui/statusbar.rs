@@ -158,14 +158,6 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
     let items = status_items(&s);
 
     let mut left = rect.left + EDGE_PAD;
-    if s.diff_loading {
-        bar = bar.child(text(
-            UiRect::new(left, rect.top, left + 140.0, rect.bottom),
-            "Loading diff…",
-            theme::mono(theme::c().text_dim, theme::SMALL),
-        ));
-        left += 140.0 + GAP;
-    }
     if let Some((mode, status)) = s.vim {
         for (label, style) in vim_status_items(mode, status) {
             let width = measure(&label, style.weight) + TEXT_MARGIN;
@@ -522,7 +514,6 @@ mod tests {
             let lang = crate::domain::language::builtin("rust");
             let frame = StatusFrame {
                 pending: Vec::new(),
-                diff_loading: false,
                 vim: None,
                 file: Some(FileStatus {
                     indent: "Spaces: 2".into(),

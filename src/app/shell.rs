@@ -1206,6 +1206,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             titlebar_rect.left + 8.0,
             super::git_view::binding(&state, &git_store),
             git_store.clone().into(),
+            s.git.model.diff_loading().is_some(),
         ),
         Some((
             editor_focus.clone(),

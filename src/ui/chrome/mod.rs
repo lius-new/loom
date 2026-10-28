@@ -106,7 +106,6 @@ pub struct FileStatus {
 pub struct StatusFrame {
     pub pending: Vec<crate::features::keymap::keystroke::Keystroke>,
     pub file: Option<FileStatus>,
-    pub diff_loading: bool,
     pub vim: Option<(loom_editor_core::vim::Mode, loom_editor_core::vim::Status)>,
     /// The active file's main language server.
     pub server: Option<ServerChip>,
