@@ -89,6 +89,11 @@ pub fn observe(app: &mut AppState) {
 }
 
 impl Hover {
+    /// The word the pointer rests on, once it has moved onto one.
+    pub fn rest(&self) -> Option<&Rest> {
+        self.rest.as_ref()
+    }
+
     pub fn is_idle(&self) -> bool {
         self.rest.is_none() && self.pending.is_none() && self.card.is_none()
     }

@@ -280,6 +280,7 @@ pub(crate) fn snapshot(
         language_peek: None,
         signature: None,
         symbol_highlights: selection_occurrences,
+        link: None,
         inlay_hints: Arc::from(Vec::new()),
     }
 }
@@ -321,6 +322,9 @@ pub(crate) fn binding(
                         anchor: card.anchor.clone(),
                         docs: card.documentation.clone().into(),
                     });
+            }
+            if let Some(document) = &view.document {
+                view.link = super::language_ui::link::word_for(&reader.get(), pane, &document.stamp);
             }
             if let Some(document) = &view.document {
                 let app = reader.get();
@@ -426,6 +430,24 @@ pub(crate) fn binding(
                     }
                 }
                 return;
+            }
+            // A click on the word shown as a link goes to where it is defined.
+            if let Event::PointerDown {
+                point,
+                button: lgui::core::PointerButton::Left,
+                code_left,
+                metrics,
+                ..
+            } = &event
+            {
+                let app = dispatcher.get();
+                if let Some(offset) = hover_offset(&app, pane, rect, *code_left, *metrics, *point)
+                    && let Some(goal) = super::language_ui::link::click_target(&app, offset)
+                {
+                    drop(app);
+                    super::language_ui::link::follow(&dispatcher, goal, offset, rect);
+                    return;
+                }
             }
             if let Event::HoverMove {
                 point,

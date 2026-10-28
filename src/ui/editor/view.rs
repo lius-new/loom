@@ -196,7 +196,11 @@ pub(crate) fn render(
         // Content runs under the overlay scrollbars, whose tracks are transparent.
         let mut content = clip(rect, 0.0, 0.0)
             .key(format!("editor-content-{}", pane.get()))
-            .cursor(CursorIcon::Text);
+            .cursor(if s.link.is_some() {
+                CursorIcon::Pointer
+            } else {
+                CursorIcon::Text
+            });
         if !conflict_lines.is_empty() {
             let mut rows = group(rect);
             for &(line, part) in &conflict_lines {
@@ -495,6 +499,14 @@ pub(crate) fn render(
                     }
                 }
             }
+            if let Some(link) = &s.link
+                && let Some(r) = line_rect(link)
+            {
+                code = code.child(panel(
+                    UiRect::new(r.left, r.bottom - 3.0, r.right, r.bottom - 2.0),
+                    VisualStyle::filled(theme::c().accent),
+                ));
+            }
             for found in s.symbol_highlights.iter() {
                 if let Some(r) = line_rect(found) {
                     code = code.child(panel(r, VisualStyle::filled(theme::c().accent).alpha(38)));
@@ -629,6 +641,10 @@ pub(crate) fn render(
                 ),
                 &hint_positions,
             );
+            let spans = match &s.link {
+                Some(link) => tint_range(spans, window.start, link, theme::c().accent),
+                None => spans,
+            };
             for (span, color) in spans {
                 char_offset += span.chars().count();
                 let (display, _, column) = expand_tabs(&span, display_column);
@@ -1269,6 +1285,41 @@ fn severity_colour(severity: Severity) -> Color {
         Severity::Warning => theme::c().warning,
         Severity::Information | Severity::Hint => theme::c().accent,
     }
+}
+
+/// `spans` (which start at byte `start`) with the part inside `range` in `tint`.
+fn tint_range(
+    spans: Vec<(String, Color)>,
+    start: usize,
+    range: &Range<usize>,
+    tint: Color,
+) -> Vec<(String, Color)> {
+    let mut out = Vec::with_capacity(spans.len() + 2);
+    let mut at = start;
+    for (text, color) in spans {
+        let end = at + text.len();
+        if end <= range.start || at >= range.end {
+            out.push((text, color));
+        } else {
+            let from = range.start.saturating_sub(at).min(text.len());
+            let to = (range.end - at).min(text.len());
+            if text.is_char_boundary(from) && text.is_char_boundary(to) {
+                for (part, colour) in [
+                    (&text[..from], color),
+                    (&text[from..to], tint),
+                    (&text[to..], color),
+                ] {
+                    if !part.is_empty() {
+                        out.push((part.to_owned(), colour));
+                    }
+                }
+            } else {
+                out.push((text, color));
+            }
+        }
+        at = end;
+    }
+    out
 }
 
 /// Half the period and the height of a diagnostic's wavy underline.
@@ -2540,6 +2591,25 @@ mod card_placement_tests {
         right: 800.0,
         bottom: 600.0,
     };
+
+    #[test]
+    fn a_link_tints_only_its_own_bytes_across_span_boundaries() {
+        let (a, b) = (Color(0x010203), Color(0x040506));
+        let tint = Color(0x090909);
+        let spans = vec![("let ".to_owned(), a), ("héllo_world".to_owned(), b)];
+        // "héllo" is bytes 4..10 of the line, which starts at byte 100.
+        let out = tint_range(spans, 100, &(104..110), tint);
+        assert_eq!(
+            out,
+            vec![
+                ("let ".to_owned(), a),
+                ("héllo".to_owned(), tint),
+                ("_world".to_owned(), b)
+            ]
+        );
+        let untouched = tint_range(vec![("abc".to_owned(), a)], 0, &(5..8), tint);
+        assert_eq!(untouched, vec![("abc".to_owned(), a)]);
+    }
 
     #[test]
     fn a_card_opens_below_and_to_the_right_of_its_underline() {

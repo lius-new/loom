@@ -8,6 +8,7 @@ pub(crate) mod edit;
 pub(crate) mod expand;
 pub(crate) mod highlight;
 pub(crate) mod hover;
+pub(crate) mod link;
 pub(crate) mod inlay;
 pub(crate) mod keys;
 pub(crate) mod lightbulb;
@@ -40,6 +41,8 @@ pub struct LanguageUi {
     pub peek: Option<peek::Peek>,
     pub peek_revision: u64,
     pub hover: hover::Hover,
+    /// The word under the pointer as a link to its definition.
+    pub link: link::Link,
     pub history: navigate::History,
     pub navigation_revision: u64,
     /// The list open over the code, if any.
@@ -209,6 +212,7 @@ pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
     let language = &mut app.editor.language;
     if language.interaction_view.is_some() && language.interaction_view != owner {
         language.hover = Default::default();
+        language.link = Default::default();
         language.highlights = Default::default();
         language.inlay = Default::default();
         language.expansion = Default::default();
@@ -245,6 +249,7 @@ pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
     }
     let typed = app.editor.language.typed.take();
     hover::observe(app);
+    link::observe(ctx, app);
     peek::observe(app);
     completion::observe(ctx, app, typed);
     signature::observe(ctx, app, typed);
@@ -526,6 +531,7 @@ pub(crate) fn tick(state: &AppContext) {
     state.try_update(|app| {
         app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
         hover::tick(app);
+        link::tick(app);
         completion::tick(app);
         signature::tick(app);
         highlight::tick(app);

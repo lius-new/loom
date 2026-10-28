@@ -79,6 +79,17 @@ pub fn begin(state: &AppContext, wanted: Wanted, rect: UiRect, query: Option<Str
     });
 }
 
+/// Where `parts` say to go, without repeats.
+pub(super) fn locations(
+    parts: &[Arc<crate::infrastructure::lsp::manager::Part>],
+    feature: Feature,
+) -> Vec<Place> {
+    distinct(parts, feature)
+        .iter()
+        .filter_map(place_of)
+        .collect()
+}
+
 fn place_of(location: &Location) -> Option<Place> {
     Some(Place::span(uri::file_path(&location.uri)?, location.span))
 }

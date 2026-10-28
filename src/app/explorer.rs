@@ -262,6 +262,19 @@ pub fn reveal_file(state: &AppContext, id: FileId) {
     });
 }
 
+/// Show a folder from a path in the text: open the drawer and its row.
+pub fn reveal_folder(state: &AppContext, path: &Path) {
+    let path = path.to_path_buf();
+    state.update(move |app| {
+        if !reveal_path(app, &path) {
+            app.show_toast("Folder is outside the workspace.");
+            return;
+        }
+        app.drawer.visible = true;
+        app.explorer.ui.scroll_x = 0.0;
+    });
+}
+
 /// Follow the active editor in the tree after the user switched to it: expand
 /// its folders and bring its row into sight, without opening the drawer or
 /// moving focus. Files outside the workspace, diffs and built-in pages are
