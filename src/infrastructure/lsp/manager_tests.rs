@@ -2054,7 +2054,7 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
 
     #[test]
     fn a_server_that_is_not_ready_yet_cannot_answer() {
-        let f = featured(&["--init-delay-ms", "400"]);
+        let f = featured(&["--ignore-initialize"]);
         f.show(vec![f.doc("a.fk", 0, "x")]);
         let handle = f.ask(Feature::Hover, 0, 0);
         assert_eq!(f.finish(&handle).failure, Some(Failure::Unsupported));
@@ -2062,7 +2062,7 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
 
     #[test]
     fn dropping_the_handle_cancels_the_request_at_the_server() {
-        let f = featured(&["--slow-ms", "800"]);
+        let f = featured(&["--ignore-feature-success"]);
         f.show(vec![f.doc("a.fk", 0, "x")]);
         let handle = f.ready_then_ask(Feature::Hover, 0, 0);
         f.wait_method_count("textDocument/hover", 1);
@@ -2072,9 +2072,11 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
 
     #[test]
     fn a_newer_request_of_the_same_kind_replaces_the_older() {
-        let f = featured(&["--slow-ms", "400"]);
+        let f = featured(&["--ignore-first-feature-success"]);
         f.show(vec![f.doc("a.fk", 0, "abcdef")]);
         let first = f.ready_then_ask(Feature::Hover, 0, 1);
+        f.wait_method_count("textDocument/hover", 1);
+        assert!(!first.is_finished());
         let second = f.ask(Feature::Hover, 0, 4);
         let old = f.finish(&first);
         assert!(old.parts.is_empty(), "the older request was given up on");
@@ -2139,11 +2141,20 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
             1
         );
 
-        let f = featured(&["--feature-error-once", "--slow-ms", "200"]);
+        let f = featured(&[
+            "--sync",
+            "object",
+            "--feature-error-once",
+            "--defer-feature-replies",
+        ]);
         f.show(vec![f.doc("a.fk", 0, "alpha")]);
         let handle = f.ready_then_ask(Feature::Hover, 0, 2);
         f.wait_method_count("textDocument/hover", 1);
         f.show(vec![f.doc("a.fk", 1, "different")]);
+        f.wait_method_count("textDocument/didChange", 1);
+        f.mgr()
+            .saved(f.dir.join("a.fk"), Arc::new("different".into()));
+        f.wait_method_count("textDocument/didSave", 1);
         assert_eq!(f.finish(&handle).failure, Some(Failure::Stale));
         assert_eq!(
             f.methods()
@@ -2155,7 +2166,7 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
     }
 
     #[test]
-    fn the_server_can_forbid_retriggering_and_a_retry_keeps_the_original_budget() {
+    fn the_server_can_forbid_retriggering() {
         let f = featured(&[
             "--feature-error-once",
             "--feature-error-code",
@@ -2172,7 +2183,10 @@ signature,rename,codeAction,formatting,inlay,folding,selection,callHierarchy,cod
                 .count(),
             1
         );
+    }
 
+    #[test]
+    fn a_retry_keeps_the_original_request_budget() {
         let f = featured(&["--feature-error-once", "--slow-ms", "150"]);
         f.show(vec![f.doc("a.fk", 0, "alpha")]);
         f.wait_status("ready", |s| matches!(s, Status::Ready));

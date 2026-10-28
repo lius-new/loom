@@ -386,6 +386,16 @@ fn capabilities(options: &Options) -> Value {
     Value::Object(caps)
 }
 
+// A save notification is an explicit test barrier: keep reading cancellation
+// and document updates while a reply is held, rather than sleeping in the pipe loop.
+fn feature_reply(out: &Output<'_>, options: &Options, deferred: &mut Vec<Value>, reply: Value) {
+    if options.flag("--defer-feature-replies") {
+        deferred.push(reply);
+    } else {
+        out.send(&reply);
+    }
+}
+
 fn main() {
     let options = Options {
         args: std::env::args().skip(1).collect(),
@@ -407,6 +417,8 @@ fn main() {
     let mut input = std::io::BufReader::new(std::io::stdin().lock());
     let mut shutdown_seen = false;
     let mut feature_errors = std::collections::HashSet::<String>::new();
+    let mut feature_successes = std::collections::HashSet::<String>::new();
+    let mut deferred_features = Vec::new();
     let mut save_seen = false;
     let mut registration_step = 0;
     let registration_script: Vec<Value> = options
@@ -431,6 +443,9 @@ fn main() {
         }
         match (method, id) {
             ("initialize", Some(id)) => {
+                if options.flag("--ignore-initialize") {
+                    continue;
+                }
                 if options.flag("--init-error") {
                     out.send(&json!({
                         "jsonrpc": "2.0", "id": id,
@@ -578,6 +593,9 @@ fn main() {
             }
             ("textDocument/didSave", None) => {
                 save_seen = true;
+                for reply in deferred_features.drain(..) {
+                    out.send(&reply);
+                }
                 registration_step += 1;
                 for request in registration_script
                     .iter()
@@ -683,14 +701,22 @@ fn main() {
                         .value("--feature-error-code")
                         .and_then(|s| s.parse::<i64>().ok())
                         .unwrap_or(-32801);
-                    out.send(&json!({ "jsonrpc": "2.0", "id": id,
+                    feature_reply(
+                        &out,
+                        &options,
+                        &mut deferred_features,
+                        json!({ "jsonrpc": "2.0", "id": id,
                         "error": { "code": code, "message": "content modified",
-                            "data": { "retriggerRequest": !options.flag("--do-not-retrigger") } } }));
+                            "data": { "retriggerRequest": !options.flag("--do-not-retrigger") } } }),
+                    );
                     continue;
                 }
                 // Leave successful feature requests pending while continuing to
                 // read messages, so cancellation tests need no timing window.
-                if options.flag("--ignore-feature-success") {
+                if options.flag("--ignore-feature-success")
+                    || (options.flag("--ignore-first-feature-success")
+                        && feature_successes.insert(method.to_owned()))
+                {
                     continue;
                 }
                 if method == "workspace/executeCommand" && options.flag("--exec-edit") {
@@ -705,7 +731,12 @@ fn main() {
                     );
                 }
                 let result = feature_result(method, &params, &options).unwrap_or(Value::Null);
-                out.send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+                feature_reply(
+                    &out,
+                    &options,
+                    &mut deferred_features,
+                    json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+                );
             }
             (_, Some(id)) if !method.is_empty() => {
                 if options.flag("--ignore-requests") {

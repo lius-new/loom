@@ -455,7 +455,7 @@ impl Coordinator {
             );
             self.book.next_tag += 1;
             let tag = TAG_BASE + self.book.next_tag;
-            if client.request_within(spec.feature.method(), params.clone(), tag, timeout) {
+            if client.request_until(spec.feature.method(), params.clone(), tag, deadline - GRACE) {
                 waiting.insert(tag, instance.id);
                 attempts.insert(
                     tag,
@@ -697,11 +697,11 @@ impl Coordinator {
             if retry && let Phase::Running(Running { client, .. }) = &instance.phase {
                 self.book.next_tag += 1;
                 let new_tag = TAG_BASE + self.book.next_tag;
-                if client.request_within(
+                if client.request_until(
                     live.spec.feature.method(),
                     attempt.params.clone(),
                     new_tag,
-                    remaining,
+                    live.deadline - GRACE,
                 ) {
                     attempt.retried = true;
                     live.waiting.insert(new_tag, instance.id);

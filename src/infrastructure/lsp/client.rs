@@ -77,7 +77,7 @@ enum Command {
         method: String,
         params: Value,
         tag: u64,
-        timeout: Option<Duration>,
+        deadline: Option<Instant>,
     },
     Notify {
         method: String,
@@ -194,17 +194,17 @@ impl Client {
             method: method.to_owned(),
             params,
             tag,
-            timeout: None,
+            deadline: None,
         })
     }
 
-    /// Like [`request`](Self::request), with its own time limit.
-    pub fn request_within(&self, method: &str, params: Value, tag: u64, timeout: Duration) -> bool {
+    /// Uses an absolute deadline so queueing and retries cannot reset the budget.
+    pub fn request_until(&self, method: &str, params: Value, tag: u64, deadline: Instant) -> bool {
         self.command(Command::Request {
             method: method.to_owned(),
             params,
             tag,
-            timeout: Some(timeout),
+            deadline: Some(deadline),
         })
     }
 
@@ -345,7 +345,7 @@ struct Driver {
     timeouts: Timeouts,
     on_event: Box<dyn Fn(Event) + Send>,
     state: Arc<Mutex<State>>,
-    /// Pending request deadlines, oldest first (the timeout is the same for most).
+    /// Pending requests ordered by deadline, including shorter retry budgets.
     requests: VecDeque<(Instant, Id)>,
     initialize_deadline: Option<Instant>,
     /// Set once the server was told to stop: when to give up waiting for it.
@@ -394,7 +394,13 @@ impl Driver {
     }
 
     fn input(&mut self, input: Input) -> Output {
-        match input {
+        // A queued message can be available even after recv_timeout's deadline.
+        // Expire work before consuming it, including on a continuously busy inbox.
+        let mut output = self.timers();
+        if output.terminate || matches!(self.session.state(), State::Failed(_)) {
+            return output;
+        }
+        let more = match input {
             Input::Message(message) => self.session.receive(message),
             Input::BadMessage(_) => {
                 // Framing held, so the stream is still usable; count it and go on.
@@ -415,7 +421,9 @@ impl Driver {
                 self.session.transport_closed(Some(reason))
             }
             Input::Command(command) => self.command(command),
-        }
+        };
+        merge(&mut output, more);
+        output
     }
 
     fn command(&mut self, command: Command) -> Output {
@@ -424,11 +432,21 @@ impl Driver {
                 method,
                 params,
                 tag,
-                timeout,
+                deadline,
             } => match self.session.request(&method, params, tag) {
                 Ok((id, output)) => {
-                    let timeout = timeout.unwrap_or(self.timeouts.request);
-                    self.requests.push_back((Instant::now() + timeout, id));
+                    let deadline =
+                        deadline.unwrap_or_else(|| Instant::now() + self.timeouts.request);
+                    if deadline <= Instant::now() {
+                        let mut expired = self.session.expire(&id);
+                        // The request never reached the writer; neither should a cancel.
+                        expired.send.clear();
+                        return expired;
+                    }
+                    let at = self
+                        .requests
+                        .partition_point(|(known, _)| *known <= deadline);
+                    self.requests.insert(at, (deadline, id));
                     output
                 }
                 Err(error) => Output {
@@ -587,6 +605,115 @@ mod tests {
     use super::super::client_tests::{fake_server, options};
     use super::*;
     use serde_json::json;
+
+    fn ready_driver() -> Driver {
+        let mut process = Process::new(fake_server());
+        process
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            process.creation_flags(0x0800_0000);
+        }
+        let mut child = process.spawn().unwrap();
+        child.wait().unwrap();
+        let (mut session, _) = Session::start(options());
+        session.receive(
+            Message::parse(br#"{"jsonrpc":"2.0","id":0,"result":{"capabilities":{}}}"#).unwrap(),
+        );
+        let (_, inbox) = mpsc::channel();
+        let (outbox, _) = mpsc::channel();
+        Driver {
+            session,
+            inbox,
+            outbox,
+            child,
+            _job: None,
+            timeouts: Timeouts::default(),
+            on_event: Box::new(|_| {}),
+            state: Arc::new(Mutex::new(State::Ready)),
+            requests: VecDeque::new(),
+            initialize_deadline: None,
+            exit_deadline: None,
+            bad_messages: 0,
+            eof: false,
+        }
+    }
+
+    #[test]
+    fn queued_request_keeps_its_absolute_deadline_and_expired_work_is_not_sent() {
+        let mut driver = ready_driver();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        driver.input(Input::Command(Command::Request {
+            method: "custom/pending".into(),
+            params: json!({}),
+            tag: 1,
+            deadline: Some(deadline),
+        }));
+        assert_eq!(driver.next_deadline(), Some(deadline));
+        let output = driver.input(Input::Command(Command::Request {
+            method: "custom/expired".into(),
+            params: json!({}),
+            tag: 2,
+            deadline: Some(Instant::now() - Duration::from_secs(1)),
+        }));
+        assert!(output.send.is_empty());
+        assert!(output.events.iter().any(|event| matches!(event,
+            Event::Response { tag: 2, outcome: Err(error), .. } if error.message.contains("timed out"))));
+        assert!(driver.session.pending_id(2).is_none());
+        driver.finish();
+    }
+
+    #[test]
+    fn queued_reply_cannot_bypass_an_expired_deadline() {
+        let mut driver = ready_driver();
+        driver.command(Command::Request {
+            method: "custom/late".into(),
+            params: json!({}),
+            tag: 7,
+            deadline: Some(Instant::now() + Duration::from_secs(60)),
+        });
+        let id = driver.session.pending_id(7).unwrap();
+        driver.requests[0].0 = Instant::now() - Duration::from_secs(1);
+        let message = Message::parse(
+            &serde_json::to_vec(&json!({"jsonrpc":"2.0", "id":id.to_json(), "result":true}))
+                .unwrap(),
+        )
+        .unwrap();
+        let output = driver.input(Input::Message(message));
+        assert!(output.events.iter().any(|event| matches!(event, Event::Response { tag: 7, outcome: Err(error), .. } if error.message.contains("timed out"))), "late reply must time out: {:?}", output.events);
+        assert!(
+            !output
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Response { outcome: Ok(_), .. }))
+        );
+        driver.finish();
+    }
+
+    #[test]
+    fn shorter_deadline_is_not_blocked_by_an_older_long_request() {
+        let mut driver = ready_driver();
+        for (tag, seconds) in [(1, 60), (2, 10)] {
+            driver.command(Command::Request {
+                method: "custom/pending".into(),
+                params: json!({}),
+                tag,
+                deadline: Some(Instant::now() + Duration::from_secs(seconds)),
+            });
+        }
+        let id = driver.session.pending_id(2).unwrap();
+        let short = driver
+            .requests
+            .iter()
+            .find(|(_, pending)| *pending == id)
+            .unwrap()
+            .0;
+        assert_eq!(driver.next_deadline(), Some(short));
+        driver.finish();
+    }
 
     #[test]
     fn write_failure_before_eof_reports_the_crash_and_fails_pending_requests() {
