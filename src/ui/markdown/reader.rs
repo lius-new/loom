@@ -554,6 +554,7 @@ pub fn render_in(
                 continue;
             };
             let value = frame.document.text(paragraph.display.clone()).unwrap_or("");
+            let bands = line_bands(&geometry.glyphs);
             let mut offset = 0;
             for word in value.split_whitespace() {
                 let Some(found) = value[offset..].find(word) else {
@@ -568,62 +569,68 @@ pub fn render_in(
                     let from = geometry
                         .glyphs
                         .partition_point(|glyph| glyph.bytes.end <= start);
-                    let mut bounds: Option<UiRect> = None;
+                    // A run that wraps gets one box per visual line; a single
+                    // union box would cover everything between the lines.
+                    let mut lines: Vec<Option<UiRect>> = vec![None; bands.len()];
+                    let left = rect.left + paragraph.x
+                        - frame
+                            .layout
+                            .scroll_container(geometry.paragraph)
+                            .and_then(|node| frame.horizontal.get(&node).copied())
+                            .unwrap_or(0.0);
+                    let top = rect.top + paragraph.y - frame.viewport.top;
                     for glyph in geometry.glyphs[from..]
                         .iter()
                         .take_while(|glyph| glyph.bytes.start < end)
                     {
+                        let Some(band) = band_of(&bands, glyph.rect) else {
+                            continue;
+                        };
                         let b = glyph.rect;
-                        let r = UiRect::new(
-                            rect.left + paragraph.x
-                                - frame
-                                    .layout
-                                    .scroll_container(geometry.paragraph)
-                                    .and_then(|node| frame.horizontal.get(&node).copied())
-                                    .unwrap_or(0.0)
-                                + b.left,
-                            rect.top + paragraph.y + b.top - frame.viewport.top,
-                            rect.left + paragraph.x
-                                - frame
-                                    .layout
-                                    .scroll_container(geometry.paragraph)
-                                    .and_then(|node| frame.horizontal.get(&node).copied())
-                                    .unwrap_or(0.0)
-                                + b.right,
-                            rect.top + paragraph.y + b.bottom - frame.viewport.top,
-                        );
-                        bounds = Some(bounds.map_or(r, |old| {
-                            UiRect::new(
-                                old.left.min(r.left),
-                                old.top.min(r.top),
-                                old.right.max(r.right),
-                                old.bottom.max(r.bottom),
-                            )
-                        }));
+                        let slot = &mut lines[band];
+                        *slot = Some(match *slot {
+                            Some(old) => UiRect::new(
+                                old.left.min(left + b.left),
+                                old.top,
+                                old.right.max(left + b.right),
+                                old.bottom,
+                            ),
+                            None => UiRect::new(
+                                left + b.left,
+                                top + bands[band].0,
+                                left + b.right,
+                                top + bands[band].1,
+                            ),
+                        });
                     }
-                    if let Some(bounds) =
-                        bounds.filter(|bounds| bounds.bottom > rect.top && bounds.top < rect.bottom)
+                    let linked = link
+                        .and_then(|node| frame.document.node(node))
+                        .and_then(|node| match &node.kind {
+                            crate::features::markdown::model::NodeKind::Link {
+                                destination,
+                                ..
+                            } => Some(destination.clone()),
+                            _ => None,
+                        });
+                    let word = value[start..end].to_owned();
+                    let is_link = linked.is_some();
+                    for (line, bounds) in lines
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(i, b)| b.map(|b| (i, b)))
                     {
-                        let linked =
-                            link.and_then(|node| frame.document.node(node))
-                                .and_then(|node| match &node.kind {
-                                    crate::features::markdown::model::NodeKind::Link {
-                                        destination,
-                                        ..
-                                    } => Some(destination.clone()),
-                                    _ => None,
-                                });
-                        let word = value[start..end].to_owned();
-                        let is_link = linked.is_some();
-                        let semantics = match linked {
+                        if bounds.bottom <= rect.top || bounds.top >= rect.bottom {
+                            continue;
+                        }
+                        let semantics = match linked.clone() {
                             Some(url) => Semantics::new(SemanticRole::Link)
                                 .name(word.clone())
-                                .value(word)
+                                .value(word.clone())
                                 .description(url),
-                            None => Semantics::new(SemanticRole::Text).value(word),
+                            None => Semantics::new(SemanticRole::Text).value(word.clone()),
                         };
                         let semantic_id = UiId::owned(format!(
-                            "{semantic_scope}-text-{}-{start}",
+                            "{semantic_scope}-text-{}-{start}-{line}",
                             geometry.paragraph
                         ));
                         let semantic = Element::new(move |_| {
