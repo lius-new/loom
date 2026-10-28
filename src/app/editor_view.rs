@@ -165,6 +165,17 @@ pub(crate) fn snapshot(
         })
         .map(|doc| state.vim.search_matches(&doc.buffer, visible_lines.clone()))
         .unwrap_or_default();
+    // Other places the selected text appears, tinted as the symbol under the
+    // caret is; one selection only, and only the lines on screen.
+    let selection_occurrences: Arc<[std::ops::Range<usize>]> = document
+        .as_ref()
+        .filter(|_| selections.len() == 1)
+        .map(|doc| {
+            doc.buffer
+                .other_occurrences(selections[0].clone(), visible_lines.clone())
+        })
+        .unwrap_or_default()
+        .into();
     let changes = document
         .as_ref()
         .and_then(|doc| git.line_changes.get(&doc.meta.path));
@@ -268,7 +279,7 @@ pub(crate) fn snapshot(
         quickfix: None,
         language_peek: None,
         signature: None,
-        symbol_highlights: Arc::from(Vec::new()),
+        symbol_highlights: selection_occurrences,
         inlay_hints: Arc::from(Vec::new()),
     }
 }
@@ -325,12 +336,16 @@ pub(crate) fn binding(
                     .inlay
                     .for_view(pane, &document.stamp)
                     .unwrap_or_else(|| Arc::from(Vec::new()));
-                view.symbol_highlights = app
+                // The servers' tint only exists with no selection; a selection
+                // keeps its own occurrences.
+                if let Some(found) = app
                     .editor
                     .language
                     .highlights
                     .for_view(pane, &document.stamp)
-                    .unwrap_or_else(|| Arc::from(Vec::new()));
+                {
+                    view.symbol_highlights = found;
+                }
             }
             if let Some(document) = &view.document
                 && let Some(services) = reader.services().and_then(|r| r.language_services())

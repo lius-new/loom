@@ -326,6 +326,24 @@ pub(crate) fn apply_command(
     Ok(None)
 }
 
+/// The word under the pointer. A hit lands on the nearest character boundary,
+/// so the right half of `(` would otherwise pick the `)` after it, and a small
+/// wobble across the half would grow a double click to both. `caret_x` is where
+/// a boundary is drawn; a pointer left of the nearest boundary is over the
+/// character before it.
+fn pointer_word(
+    buffer: &loom_editor_core::text::TextBuffer,
+    nearest: usize,
+    pointer_x: f32,
+    caret_x: f32,
+) -> Range<usize> {
+    if pointer_x < caret_x && nearest > 0 {
+        buffer.word_range(buffer.prev_grapheme(nearest))
+    } else {
+        buffer.word_range(nearest)
+    }
+}
+
 pub(crate) fn update_drag_selection(app: &mut AppState, rect: UiRect) {
     let projection = super::editing::active_projection(app, rect);
     let Some(drag) = app.editor.drag.clone() else {
@@ -375,7 +393,21 @@ pub(crate) fn update_drag_selection(app: &mut AppState, rect: UiRect) {
             }
             SelectionUnit::Word | SelectionUnit::Line => {
                 let range = if drag.unit == SelectionUnit::Word {
-                    buffer.word_range(cursor)
+                    pointer_word(
+                        &buffer,
+                        cursor,
+                        drag.point.0 + sx,
+                        projected::caret(
+                            &buffer,
+                            &projection,
+                            loom_editor_core::text::Selection::caret(cursor),
+                            left,
+                            rect.top,
+                            sx,
+                            metrics.viewport_w,
+                        )
+                        .0,
+                    )
                 } else {
                     buffer.line_range_with_break(projection.source_line(projected::point_row(
                         &projection,
@@ -667,7 +699,21 @@ pub(crate) fn pointer_down(
                     ));
                     buffer.line_range_with_break(line)
                 }
-                SelectionUnit::Word => buffer.word_range(cursor),
+                SelectionUnit::Word => pointer_word(
+                    &buffer,
+                    cursor,
+                    point.x + scroll_x,
+                    projected::caret(
+                        &buffer,
+                        &projection,
+                        loom_editor_core::text::Selection::caret(cursor),
+                        code_left,
+                        rect.top,
+                        scroll_x,
+                        metrics.viewport_w,
+                    )
+                    .0,
+                ),
                 SelectionUnit::Rectangle { .. } => unreachable!(),
                 SelectionUnit::Character => {
                     buffer.select_to(cursor, shift);
@@ -701,4 +747,21 @@ fn ime_cursor_rect(app: &AppState, rect: UiRect) -> UiRect {
         rect,
     );
     crate::ui::editor::view::ime_cursor_rect(&view, rect)
+}
+
+#[cfg(test)]
+mod pointer_word_tests {
+    use super::*;
+
+    #[test]
+    fn the_character_under_the_pointer_picks_the_word_not_the_nearest_boundary() {
+        let buffer = loom_editor_core::text::TextBuffer::new("ab cd\"");
+        // The boundary after `cd` is at x = 40. A pointer left of it is over
+        // `d`, however close it is to that boundary.
+        assert_eq!(pointer_word(&buffer, 5, 38.0, 40.0), 3..5);
+        // Right of it, the pointer is over the quote.
+        assert_eq!(pointer_word(&buffer, 5, 42.0, 40.0), 5..6);
+        // The start of the line has no character before it.
+        assert_eq!(pointer_word(&buffer, 0, -1.0, 0.0), 0..2);
+    }
 }

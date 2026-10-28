@@ -615,15 +615,74 @@ impl TextBuffer {
 
     // ---- Words (Unicode word boundaries) -----------------------------------
 
-    /// The word-boundary segment containing `offset`.
+    /// The word at `offset`: the identifier-like run around it, a run of
+    /// whitespace, or a single punctuation mark. Unicode word boundaries
+    /// join across `.` and `'`, so `a.rs` is cut at the dot into three.
     pub fn word_range(&self, offset: usize) -> Range<usize> {
         let offset = self.grapheme_floor(offset);
         let line = self.line_range_with_break(self.line_of(offset));
-        self.text[line.clone()]
+        let Some(segment) = self.text[line.clone()]
             .split_word_bound_indices()
             .map(|(index, segment)| line.start + index..line.start + index + segment.len())
             .find(|range| range.contains(&offset))
-            .unwrap_or(offset..offset)
+        else {
+            return offset..offset;
+        };
+        let text = &self.text[segment.clone()];
+        let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+        let at = offset - segment.start;
+        let Some(here) = text[at..].chars().next() else {
+            return segment;
+        };
+        if word(here) {
+            let start = text[..at]
+                .char_indices()
+                .rev()
+                .take_while(|(_, ch)| word(*ch))
+                .last()
+                .map_or(at, |(index, _)| index);
+            let end = text[at..]
+                .char_indices()
+                .find(|(_, ch)| !word(*ch))
+                .map_or(text.len(), |(index, _)| at + index);
+            segment.start + start..segment.start + end
+        } else if text.chars().all(char::is_whitespace) {
+            segment
+        } else {
+            offset..self.next_grapheme(offset).min(segment.end)
+        }
+    }
+
+    /// Where else `selected` appears within `lines`, for tinting after a
+    /// selection. A selected whole word matches whole words only; single
+    /// lines, blank text and very long text match nothing.
+    pub fn other_occurrences(&self, selected: Range<usize>, lines: Range<usize>) -> Vec<Range<usize>> {
+        const MAX_LEN: usize = 200;
+        const MAX_FOUND: usize = 2000;
+        if lines.is_empty() || selected.is_empty() || selected.len() > MAX_LEN {
+            return Vec::new();
+        }
+        let Some(needle) = self.text.get(selected.clone()) else {
+            return Vec::new();
+        };
+        if needle.contains(['\n', '\r']) || needle.chars().all(char::is_whitespace) {
+            return Vec::new();
+        }
+        let whole_word = self.word_range(selected.start) == selected;
+        let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+        let start = self.line_start(lines.start);
+        let end = self.line_range_with_break(lines.end - 1).end;
+        self.text[start..end]
+            .match_indices(needle)
+            .map(|(index, found)| start + index..start + index + found.len())
+            .filter(|found| *found != selected)
+            .filter(|found| {
+                !whole_word
+                    || (!self.text[..found.start].chars().next_back().is_some_and(word)
+                        && !self.text[found.end..].chars().next().is_some_and(word))
+            })
+            .take(MAX_FOUND)
+            .collect()
     }
 
     /// The start of the word before `from`, skipping whitespace.
@@ -883,6 +942,25 @@ mod tests {
         assert_eq!(buffer.word_range(2), 0..5);
         assert_eq!(buffer.word_range(6), 5..7);
         assert_eq!(buffer.word_range(15), 14..18);
+        let repeated = TextBuffer::new("foo foobar foo\nfoo");
+        assert_eq!(
+            repeated.other_occurrences(0..3, 0..2),
+            [11..14, 15..18],
+            "a whole word skips foobar"
+        );
+        assert_eq!(
+            repeated.other_occurrences(0..2, 0..2),
+            [4..6, 11..13, 15..17],
+            "a fragment matches inside words"
+        );
+        assert!(repeated.other_occurrences(3..4, 0..2).is_empty(), "blank");
+        assert!(repeated.other_occurrences(0..3, 0..0).is_empty());
+        let path = TextBuffer::new("a_b.rs(x)");
+        assert_eq!(path.word_range(1), 0..3, "underscores stay in the word");
+        assert_eq!(path.word_range(3), 3..4, "the dot alone");
+        assert_eq!(path.word_range(5), 4..6, "the extension alone");
+        assert_eq!(path.word_range(6), 6..7, "a bracket alone");
+        assert_eq!(path.word_range(7), 7..8);
         assert_eq!(buffer.word_right(0), 7, "a word and the spaces after it");
         assert_eq!(buffer.word_right(5), 7, "leading spaces only");
         assert_eq!(buffer.word_left(13), 12);
