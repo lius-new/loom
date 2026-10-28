@@ -71,7 +71,8 @@ fn layout(rect: UiRect, subject: Subject<'_>, details: Details<'_>) -> Layout {
     };
     let mut meta: Vec<Line> = Vec::new();
     match details {
-        None => meta.push(Line::Text(vec![("Loading details…".into(), c.text_ghost)])),
+        // Details arrive with the files, in a blink; no placeholder to flash.
+        None => {}
         Some(Err(error)) => meta.extend(wrapped(error.clone(), c.error_text)),
         Some(Ok(details)) => {
             if let Subject::Commit(commit) = subject {
@@ -208,7 +209,7 @@ pub(crate) fn render(
     let summary_height = state.get().ui.history_summary_height;
     let layout = layout(rect, subject, details);
     let heading = match files {
-        None => "Loading files…".to_owned(),
+        None => String::new(),
         Some(Err(error)) => error.clone(),
         Some(Ok(files)) => plural(files.len(), "changed file"),
     };
@@ -869,9 +870,9 @@ Another body line."
                 .iter()
                 .any(|line| line.contains("Body line 49"))
         );
-        // Before the details arrive the header says so.
+        // Before the details arrive the subject shows alone, with no placeholder.
         let waiting = text_of(&layout(tall, subject, None));
-        assert!(waiting.iter().any(|line| line.contains("Loading details")));
+        assert!(!waiting.iter().any(|line| line.contains("Loading")));
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::time::Duration;
 use super::command::{CancellationToken, GitCommand, GitCommandRunner, nul_pathspec};
 use super::discovery::{self, DiscoveredRepository};
 use super::runtime::GitRuntime;
-use crate::features::git::diff::{UnifiedDiff, parse_unified};
+use crate::features::git::diff::{DiffLine, FileDiff, UnifiedDiff, parse_unified};
 use crate::features::git::error::{GitError, GitErrorKind, GitResult};
 use crate::features::git::parser::{parse_branches, parse_log, parse_numstat, parse_porcelain_v2};
 use crate::features::git::types::*;
@@ -237,12 +237,20 @@ impl CliGitBackend {
     ) -> GitResult<UnifiedDiff> {
         validate_ref(commit)?;
         if paths.is_empty() {
+            // One `git show` serves every file that needs no special decoding;
+            // only binary, BOM-marked or non-UTF-8 files take the per-file
+            // route, which costs several Git processes each.
+            let mut batch = self.commit_batch(repository, commit, context)?;
             let mut result = UnifiedDiff::default();
             for (_, path) in self.commit_files(repository, commit)? {
-                result.files.extend(
-                    self.commit_diff(repository, commit, &[path], context)?
-                        .files,
-                );
+                if let Some(file) = batch.remove(&path) {
+                    result.files.push(file);
+                } else {
+                    result.files.extend(
+                        self.commit_diff(repository, commit, &[path], context)?
+                            .files,
+                    );
+                }
             }
             return Ok(result);
         }
@@ -273,6 +281,50 @@ impl CliGitBackend {
             .run(GitCommand::new().cwd(repository).args(args).read_only())?
             .stdout_text()?;
         parse_unified(&text)
+    }
+
+    /// The text diffs of all of `commit`'s files from a single `git show`,
+    /// keyed by path. Files whose patch may need encoding-aware handling are
+    /// left out so the caller can read them individually.
+    fn commit_batch(
+        &self,
+        repository: &Path,
+        commit: &str,
+        context: Option<usize>,
+    ) -> GitResult<std::collections::HashMap<PathBuf, FileDiff>> {
+        let mut args = vec![
+            OsString::from("show"),
+            OsString::from("--format="),
+            OsString::from("--no-ext-diff"),
+        ];
+        if let Some(context) = context {
+            args.push(OsString::from(format!("--unified={context}")));
+        }
+        args.push(OsString::from("--diff-merges=first-parent"));
+        args.push(OsString::from(commit));
+        args.push(OsString::from("--"));
+        let output = self
+            .runner
+            .run(GitCommand::new().cwd(repository).args(args).read_only())?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let plain = |file: &FileDiff| {
+            !file.binary
+                && file.hunks.iter().flat_map(|hunk| &hunk.lines).all(|line| match line {
+                    DiffLine::Context(s) | DiffLine::Addition(s) | DiffLine::Deletion(s) => {
+                        !s.contains(['\u{feff}', '\u{fffd}'])
+                    }
+                    DiffLine::NoNewline => true,
+                })
+        };
+        Ok(parse_unified(&text)?
+            .files
+            .into_iter()
+            .filter(plain)
+            .filter_map(|file| {
+                let path = file.new_path.clone().or_else(|| file.old_path.clone())?;
+                Some((path, file))
+            })
+            .collect())
     }
 
     pub fn parsed_diff(

@@ -1349,40 +1349,39 @@ pub fn toggle_commit(state: &AppContext, root: PathBuf, oid: String) {
     let Some(application) = application.filter(|_| expanded) else {
         return;
     };
-    load_commit_details(state, application.clone(), root.clone(), oid.clone());
+    // The detail pane shows the files and the details together, so both are
+    // read at once and handed over in one update instead of popping in
+    // one after the other.
+    let need_details = state.get().git.model.commit_detail(&oid).is_none();
     let worker_state = state.clone();
     let _ = thread::Builder::new()
         .name("loom-git-commit-files".into())
         .spawn(move || {
-            let files = crate::infrastructure::git::service()
-                .and_then(|service| service.backend().commit_files(&root, &oid))
-                .map_err(|error| error.user_message());
-            application.post(move || {
-                worker_state.update(move |app| app.git.model.set_commit_files(&oid, files));
+            let (files, details) = thread::scope(|scope| {
+                let details = need_details.then(|| {
+                    scope.spawn(|| {
+                        crate::infrastructure::git::service()
+                            .and_then(|service| service.backend().commit_details(&root, &oid))
+                            .map_err(|error| error.user_message())
+                    })
+                });
+                let files = crate::infrastructure::git::service()
+                    .and_then(|service| service.backend().commit_files(&root, &oid))
+                    .map_err(|error| error.user_message());
+                let details = details.map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err("Could not read the commit.".into()))
+                });
+                (files, details)
             });
-        });
-}
-
-/// Read the author, date, message and stats of `oid` for the detail pane,
-/// unless they are cached already.
-fn load_commit_details(
-    state: &AppContext,
-    application: lgui::ApplicationHandle,
-    root: PathBuf,
-    oid: String,
-) {
-    if state.get().git.model.commit_detail(&oid).is_some() {
-        return;
-    }
-    let worker_state = state.clone();
-    let _ = thread::Builder::new()
-        .name("loom-git-commit-details".into())
-        .spawn(move || {
-            let details = crate::infrastructure::git::service()
-                .and_then(|service| service.backend().commit_details(&root, &oid))
-                .map_err(|error| error.user_message());
             application.post(move || {
-                worker_state.update(move |app| app.git.model.cache_commit_detail(oid, details));
+                worker_state.update(move |app| {
+                    if let Some(details) = details {
+                        app.git.model.cache_commit_detail(oid.clone(), details);
+                    }
+                    app.git.model.set_commit_files(&oid, files);
+                });
             });
         });
 }
