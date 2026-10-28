@@ -10,6 +10,7 @@
 //! Behaviours (default editing, Vim) decide what a key means and express it
 //! as edits and selections here; nothing else touches the text.
 
+mod brackets;
 mod buffer;
 mod change;
 mod editor;

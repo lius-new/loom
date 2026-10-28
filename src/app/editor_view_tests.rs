@@ -3521,3 +3521,76 @@ fn line_shortcuts_dispatch_through_real_source_editor_and_undo_in_order() {
         );
     }
 }
+
+#[test]
+fn reading_aids_render_only_when_enabled_and_do_not_modify_source() {
+    use lgui::{application::AppView, core::UiScale, session::UiSession};
+    use std::sync::Arc;
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
+    let output = exposed.clone();
+    let rect = UiRect::new(0.0, 0.0, 800.0, 300.0);
+    let view: AppView = Arc::new(move |cx| {
+        let mut initial = document("\t  call([中]);\n");
+        initial.preferences.values_mut().editor.show_whitespace = true;
+        let id = initial.workspace.active_document().unwrap();
+        initial.workspace.documents.get_mut(&id).unwrap().meta.lang =
+            crate::domain::language::builtin("rust");
+        crate::app::editing::configure_all(&mut initial);
+        initial.workspace.active_editor_mut().unwrap().set_cursor(8);
+        let state = AppContext::detached(cx.state(initial));
+        let git = cx.state(GitStoreSnapshot::default());
+        *output.lock().unwrap() = Some(state.clone());
+        let id = UiId::new("reading-aids-test");
+        let focus = cx.focus_handle(id.clone());
+        render(PaneId::new(1), rect, state, git, id, focus)
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, rect, UiScale::ONE);
+    let count = |session: &UiSession, name: &str| {
+        session
+            .tree()
+            .nodes()
+            .iter()
+            .filter(|n| {
+                n.semantics
+                    .as_ref()
+                    .is_some_and(|s| s.name.as_deref() == Some(name))
+            })
+            .count()
+    };
+    assert_eq!(count(&session, "Matching bracket"), 2);
+    assert!(count(&session, "Indent guide") > 0);
+    for mark in ["→", "·", "¬"] {
+        assert!(
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .any(|n| n.text.as_deref() == Some(mark)),
+            "{mark}"
+        );
+    }
+    let state = exposed.lock().unwrap().clone().unwrap();
+    state.update(|app| {
+        let settings = &mut app.preferences.values_mut().editor;
+        settings.show_whitespace = false;
+        settings.match_brackets = false;
+        settings.indent_guides = false;
+        crate::app::editing::configure_all(app);
+    });
+    session.render_view(&view, rect, UiScale::ONE);
+    assert_eq!(count(&session, "Matching bracket"), 0);
+    assert_eq!(count(&session, "Indent guide"), 0);
+    assert!(
+        !session
+            .tree()
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref() == Some("¬"))
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "\t  call([中]);\n"
+    );
+    assert!(!state.get().workspace.active_editor().unwrap().can_undo());
+}

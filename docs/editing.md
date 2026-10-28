@@ -158,3 +158,14 @@ The actions editor::MoveLineUp/Down, editor::DuplicateLineUp/Down,
 editor::DeleteLine and editor::ToggleComment can be rebound in keymap.json.
 They apply in source Editor contexts, including explicit bindings in Vim;
 terminal, preview and text-diff views keep their own contexts.
+
+## Reading aids
+
+Settings → Editor provides Matching brackets, Indent guides and Visible
+whitespace. They can also be configured as editor.match_brackets,
+editor.indent_guides and editor.show_whitespace, including project and language
+overrides. Guides use the actual indentation and tab display widths; whitespace
+markers show spaces, tabs and line endings without editing the text. Matching
+uses a cached lexical index with conservative comment/string handling. It skips
+files larger than 128 KiB or with more than 32,768 matched pairs so large-file
+viewing stays bounded. Incomplete or crossed delimiters remain unhighlighted.

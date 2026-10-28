@@ -72,6 +72,7 @@ pub struct TextBuffer {
     /// The line break of the first line, kept for when no line break is left.
     pub(super) ending: &'static str,
     observed_ending: bool,
+    bracket_index: Arc<std::sync::OnceLock<Vec<(usize, usize)>>>,
     options: super::options::EditingOptions,
     file_options: super::options::FileOptions,
 }
@@ -92,6 +93,7 @@ impl TextBuffer {
             revisions: Arc::default(),
             ending,
             observed_ending,
+            bracket_index: Arc::default(),
             options: Default::default(),
             file_options: Default::default(),
         }
@@ -211,6 +213,7 @@ impl TextBuffer {
                 )
             })
             .collect();
+        self.bracket_index = Arc::default();
         let changes = apply(Arc::make_mut(&mut self.text), edits);
         Arc::make_mut(&mut self.pairs).retain_mut(|pair| {
             if let Some(mapped) = pair.transform(&changes) {
@@ -473,6 +476,18 @@ impl TextBuffer {
     pub fn initialize_file_options(&mut self, options: super::options::FileOptions) {
         self.file_options = options;
     }
+    pub fn matching_brackets(&self, cursor: usize) -> Option<(usize, usize)> {
+        let pairs = self
+            .bracket_index
+            .get_or_init(|| super::brackets::index(self.text(), self.options.language));
+        let cursor = self.grapheme_floor(cursor);
+        for at in [cursor, self.prev_grapheme(cursor)] {
+            if let Ok(index) = pairs.binary_search_by_key(&at, |&(open, _)| open) {
+                return Some(pairs[index]);
+            }
+        }
+        None
+    }
     pub fn options(&self) -> super::options::EditingOptions {
         self.options
     }
@@ -480,6 +495,9 @@ impl TextBuffer {
         let options = options.clamped();
         if options.tab_width != self.options.tab_width {
             self.lines = Arc::new(LineIndex::with_tab_width(self.text(), options.tab_width));
+        }
+        if self.options.language != options.language {
+            self.bracket_index = Arc::default();
         }
         self.options = options;
     }

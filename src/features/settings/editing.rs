@@ -18,6 +18,9 @@ impl Ending {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EditorSettings {
+    pub match_brackets: bool,
+    pub indent_guides: bool,
+    pub show_whitespace: bool,
     pub indent_size: usize,
     pub tab_width: usize,
     pub use_tabs: bool,
@@ -27,6 +30,9 @@ pub struct EditorSettings {
 impl Default for EditorSettings {
     fn default() -> Self {
         Self {
+            match_brackets: true,
+            indent_guides: true,
+            show_whitespace: false,
             indent_size: 2,
             tab_width: 4,
             use_tabs: false,
@@ -45,6 +51,9 @@ impl EditorSettings {
     }
     pub fn core(self) -> loom_editor_core::text::EditingOptions {
         loom_editor_core::text::EditingOptions {
+            match_brackets: self.match_brackets,
+            indent_guides: self.indent_guides,
+            show_whitespace: self.show_whitespace,
             language: "text",
             indent_size: self.indent_size,
             tab_width: self.tab_width,
@@ -56,6 +65,12 @@ impl EditorSettings {
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EditorOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_brackets: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent_guides: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_whitespace: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indent_size: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,6 +84,15 @@ pub struct EditorOverrides {
 }
 impl EditorOverrides {
     pub fn apply(self, s: &mut EditorSettings) {
+        if let Some(v) = self.match_brackets {
+            s.match_brackets = v;
+        }
+        if let Some(v) = self.indent_guides {
+            s.indent_guides = v;
+        }
+        if let Some(v) = self.show_whitespace {
+            s.show_whitespace = v;
+        }
         if let Some(v) = self.indent_size {
             s.indent_size = v;
         }

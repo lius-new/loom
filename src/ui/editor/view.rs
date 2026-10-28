@@ -386,6 +386,71 @@ pub(crate) fn render(
                     code = code.child(panel(r, VisualStyle::filled(theme::c().accent).alpha(55)));
                 }
             }
+            if buffer.options().indent_guides {
+                let indentation = buffer
+                    .line(line_index)
+                    .chars()
+                    .take(4096)
+                    .take_while(|c| *c == ' ' || *c == '\t')
+                    .count();
+                let end = buffer.offset_at_char_column(line_index, indentation);
+                let columns = buffer.display_column(end);
+                let step = if buffer.options().use_tabs {
+                    buffer.options().tab_width
+                } else {
+                    buffer.options().indent_size
+                };
+                for column in (step..=columns).step_by(step) {
+                    let x = code_left + column as f32 * fonts::editor().char_w;
+                    if x >= code_left + scroll_x && x <= rect.right + scroll_x {
+                        code = code.child(
+                            panel(
+                                UiRect::new(x, y, x + 1.0, y + fonts::editor().line_h),
+                                VisualStyle::filled(theme::c().border).alpha(100),
+                            )
+                            .semantics(Semantics::new(SemanticRole::Group).name("Indent guide")),
+                        );
+                    }
+                }
+            }
+            if buffer.options().match_brackets {
+                if let Some((a, b)) = buffer.matching_brackets(buffer.cursor()) {
+                    for at in [a, b] {
+                        if let Some(r) = line_rect(&(at..at + 1)) {
+                            code = code.child(
+                                panel(r, VisualStyle::filled(theme::c().accent).alpha(70))
+                                    .semantics(
+                                        Semantics::new(SemanticRole::Group)
+                                            .name("Matching bracket"),
+                                    ),
+                            );
+                        }
+                    }
+                }
+            }
+            if buffer.options().show_whitespace {
+                for (column, ch) in line.chars().enumerate() {
+                    if ch != ' ' && ch != '\t' {
+                        continue;
+                    }
+                    let x = caret_x(layout.as_ref(), column).unwrap_or(line_left);
+                    let mark = if ch == '\t' { "→" } else { "·" };
+                    code = code.child(text(
+                        UiRect::new(x, y, x + fonts::editor().char_w, y + fonts::editor().line_h),
+                        mark,
+                        fonts::editor().style(theme::c().text_faint),
+                    ));
+                }
+                if end == buffer.line_end(line_index) && next > end {
+                    let x = caret_x(layout.as_ref(), line.chars().count()).unwrap_or(line_left);
+                    code = code.child(text(
+                        UiRect::new(x, y, x + fonts::editor().char_w, y + fonts::editor().line_h),
+                        "¬",
+                        fonts::editor().style(theme::c().text_faint),
+                    ));
+                }
+            }
+
             // Hints are drawn in the room the layout left for them.
             for (n, (_, hint)) in line_hints.iter().enumerate() {
                 if let Some(hint_x) = layout.as_ref().and_then(|l| l.hint_x(n)) {
