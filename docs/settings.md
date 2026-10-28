@@ -176,7 +176,7 @@ for sorting/combining imports and removing unused imports, as in this example.
 
 ```jsonc
 "lsp": {
-  "hover_delay_ms": 300,             // how long the pointer rests before hover opens
+  "hover_delay_ms": 500,             // how long the pointer rests before hover opens
   "completion": {
     "auto": true,                    // open the list while typing; false = only the key
     "accept_on": "enter_and_tab",    // enter_and_tab | enter | tab

@@ -358,7 +358,7 @@ pub struct LspSettings {
 impl Default for LspSettings {
     fn default() -> Self {
         Self {
-            hover_delay_ms: 300,
+            hover_delay_ms: 500,
             completion: CompletionSettings::default(),
             inlay_hints: false,
             semantic_highlighting: "combined".to_owned(),

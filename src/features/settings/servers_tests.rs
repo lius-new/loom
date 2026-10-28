@@ -250,7 +250,7 @@ fn a_language_entry_orders_and_selects_its_servers() {
 fn lsp_settings_have_defaults_and_are_checked() {
     let defaults = LspSettings::default();
     assert!(defaults.validate().is_ok());
-    assert_eq!(defaults.hover_delay_ms, 300);
+    assert_eq!(defaults.hover_delay_ms, 500);
     let parsed: LspSettings =
         serde_json::from_str(r#"{ "completion": { "auto": false }, "inlay_hints": true }"#)
             .unwrap();

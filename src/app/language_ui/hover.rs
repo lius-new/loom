@@ -10,7 +10,7 @@ use crate::features::markdown::content::Markup;
 use crate::infrastructure::lsp::manager::{RequestHandle, RequestSpec};
 use std::ops::Range;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The word the pointer rests on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +44,9 @@ pub struct Hover {
     rest: Option<Rest>,
     pending: Option<Pending>,
     timer: Option<Arc<Timer>>,
+    /// When the pointer last moved over the word; it has only rested once the
+    /// delay has passed since.
+    moved_at: Option<Instant>,
     pub card: Option<Card>,
     /// The text the person selected in the card, for Copy.
     pub selection: Option<String>,
@@ -149,10 +152,12 @@ pub fn pointer_over(app: &mut AppState, pane: PaneId, offset: Option<usize>) -> 
     };
     let hover = &mut app.editor.language.hover;
     if hover.rest.as_ref() == Some(&rest) {
+        hover.moved_at = Some(Instant::now());
         return None;
     }
     *hover = Hover {
         rest: Some(rest.clone()),
+        moved_at: Some(Instant::now()),
         ..Hover::default()
     };
     Some(rest)
@@ -160,13 +165,17 @@ pub fn pointer_over(app: &mut AppState, pane: PaneId, offset: Option<usize>) -> 
 
 /// Starts the timer that asks after the pointer has rested.
 pub fn arm(state: &AppContext, rest: Rest) {
+    // How long the pointer rests on a word before the servers are asked.
+    let delay = Duration::from_millis(state.get().preferences.values().lsp.hover_delay_ms);
+    arm_for(state, rest, delay);
+}
+
+fn arm_for(state: &AppContext, rest: Rest, delay: Duration) {
     let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return;
     };
     let timed = state.clone();
     let word = rest.clone();
-    // How long the pointer rests on a word before the servers are asked.
-    let delay = Duration::from_millis(state.get().preferences.values().lsp.hover_delay_ms);
     let timer = ui_timer::after(application, delay, move || fire(&timed, &word));
     state.try_update(|app| {
         let hover = &mut app.editor.language.hover;
@@ -181,6 +190,19 @@ pub fn arm(state: &AppContext, rest: Rest) {
 pub fn fire(state: &AppContext, rest: &Rest) {
     let app = state.get();
     if app.editor.language.hover.rest.as_ref() != Some(rest) {
+        return;
+    }
+    // Still moving over the word: the pointer has not rested, wait out the remainder.
+    let delay = Duration::from_millis(app.preferences.values().lsp.hover_delay_ms);
+    if let Some(left) = app
+        .editor
+        .language
+        .hover
+        .moved_at
+        .and_then(|at| delay.checked_sub(at.elapsed()))
+        .filter(|left| !left.is_zero())
+    {
+        arm_for(state, rest.clone(), left);
         return;
     }
     let Some(target) = target(&app, rest.pane).filter(|t| {
