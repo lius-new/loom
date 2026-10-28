@@ -11,7 +11,6 @@ use lgui::core::{
     UiEventKind, UiEventPayload, UiId, WheelUnit, clip, precompiled,
 };
 use lgui::prelude::{Element, UiRect, VisualStyle, panel, text};
-use unicode_width::UnicodeWidthStr;
 
 use crate::features::highlighting::HighlightId;
 use crate::features::outline::{Kind, Node, Outline, Row};
@@ -25,6 +24,8 @@ const INDENT: f32 = 14.0;
 const CHEVRON_W: f32 = 14.0;
 const ICON_SIZE: f32 = 16.0;
 const GAP: f32 = 4.0;
+/// Extra shaping room so the final glyph is not wrapped or clipped prematurely.
+const LABEL_PAD: f32 = 6.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
@@ -76,6 +77,8 @@ pub struct Frame<'a> {
     pub sorted: bool,
     pub scroll: f32,
     pub hovered: Option<usize>,
+    /// The pointer is anywhere over the drawer, scrollbar included.
+    pub pointer_inside: bool,
     pub scrollbar_grab: Option<f32>,
     pub resizable: bool,
     pub resizing: bool,
@@ -310,7 +313,9 @@ fn tree(
     }
     bar = bar.child(pinned);
 
-    if max_scroll > 0.0 {
+    // Only the thumb is drawn, and only while the list is in use, so the right
+    // edge stays free for text and clicks as in the file tree.
+    if max_scroll > 0.0 && (frame.pointer_inside || frame.scrollbar_grab.is_some()) {
         bar = bar.child(vertical_scrollbar(
             list, content_h, scroll, max_scroll, frame, commands,
         ));
@@ -390,7 +395,7 @@ fn row_element(
         top + (ROW_H + ICON_SIZE) / 2.0,
     );
     let label_left = icon.right + GAP;
-    let name_width = node.name.width() as f32 * theme::UI_CHAR_W;
+    let name_width = label_width(&node.name);
 
     let go = commands.clone();
     let hover = commands.clone();
@@ -440,22 +445,47 @@ fn row_element(
     } else {
         theme::c().text
     };
-    element = element.child(text(
-        UiRect::new(label_left, top + 4.0, list.right - 12.0, top + ROW_H),
-        node.name.clone(),
-        theme::mono(color, theme::UI_SIZE),
+    element = element.child(label(
+        UiRect::new(label_left, top + 4.0, list.right, top + ROW_H),
+        &node.name,
+        color,
     ));
     if let Some(detail) = &node.detail {
         let detail_left = label_left + name_width + 8.0;
         if detail_left < list.right - 24.0 {
-            element = element.child(text(
-                UiRect::new(detail_left, top + 4.0, list.right - 12.0, top + ROW_H),
-                detail.clone(),
-                theme::mono(theme::c().text_faint, theme::UI_SIZE),
+            element = element.child(label(
+                UiRect::new(detail_left, top + 4.0, list.right, top + ROW_H),
+                detail,
+                theme::c().text_faint,
             ));
         }
     }
     element
+}
+
+/// Shape the entire text at its natural width, then crop only at the viewport.
+/// A narrow layout rect would break at spaces or CJK word boundaries first.
+fn label(viewport: UiRect, content: &str, color: lgui::prelude::Color) -> Element {
+    let viewport = UiRect::new(
+        viewport.left,
+        viewport.top,
+        viewport.right.max(viewport.left),
+        viewport.bottom,
+    );
+    clip(viewport, 0.0, 0.0).child(text(
+        UiRect::new(
+            viewport.left,
+            viewport.top,
+            viewport.left + label_width(content),
+            viewport.bottom,
+        ),
+        content.to_owned(),
+        theme::mono(color, theme::UI_SIZE),
+    ))
+}
+
+fn label_width(content: &str) -> f32 {
+    crate::ui::tabs::measure(content, theme::UI_SIZE, 400) + LABEL_PAD
 }
 
 /// The tinted symbol icon; headings get a small `H1`..`H6` tag instead.
@@ -525,7 +555,6 @@ fn vertical_scrollbar(
         .min(track.height());
     let travel = (track.height() - thumb).max(0.0);
     let start = track.top + travel * (scroll / max_scroll);
-    let emphasized = frame.hovered.is_some() || frame.scrollbar_grab.is_some();
     let grab = frame.scrollbar_grab.unwrap_or(thumb / 2.0);
     let to_scroll = move |pointer_y: f32, grab: f32| {
         if travel <= 0.0 {
@@ -535,23 +564,6 @@ fn vertical_scrollbar(
         }
     };
 
-    let (track_down, track_drag, track_up) = (commands.clone(), commands.clone(), commands.clone());
-    let track_hit = scrollbar::track(track)
-        .event_policy(EventPolicy::INTERACTIVE)
-        .on_pointer_down_with_button(move |cx, pointer, button| {
-            if button != PointerButton::Left {
-                return;
-            }
-            track_down.dispatch(Command::ScrollbarGrab(thumb / 2.0));
-            track_down.dispatch(Command::Scroll(to_scroll(pointer.point.y, thumb / 2.0)));
-            cx.stop_propagation();
-        })
-        .on_pointer_drag(move |cx, pointer| {
-            track_drag.dispatch(Command::Scroll(to_scroll(pointer.point.y, grab)));
-            cx.stop_propagation();
-        })
-        .on_pointer_up(move |_cx, _pointer| track_up.dispatch(Command::ScrollbarRelease));
-
     let (thumb_down, thumb_drag, thumb_up) = (commands.clone(), commands.clone(), commands.clone());
     let thumb_hit = scrollbar::thumb(
         UiRect::new(
@@ -560,7 +572,7 @@ fn vertical_scrollbar(
             track.right - scrollbar::INSET,
             start + thumb,
         ),
-        if emphasized { 0xb8 } else { 0x68 },
+        0xb8,
     )
     .event_policy(EventPolicy::INTERACTIVE)
     .on_pointer_down_with_button(move |cx, pointer, button| {
@@ -576,7 +588,7 @@ fn vertical_scrollbar(
     })
     .on_pointer_up(move |_cx, _pointer| thumb_up.dispatch(Command::ScrollbarRelease));
 
-    lgui::core::group(track).child(track_hit).child(thumb_hit)
+    thumb_hit
 }
 
 #[cfg(test)]

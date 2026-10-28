@@ -284,6 +284,7 @@ fn outline_preview_picture() {
                 sorted: false,
                 scroll: 0.0,
                 hovered: Some(1),
+                pointer_inside: true,
                 scrollbar_grab: None,
                 resizable: false,
                 resizing: false,

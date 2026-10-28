@@ -977,6 +977,25 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         }
     });
 
+    // The Outline page shows its scrollbar on the same terms.
+    let outline_drawer =
+        show_drawer && s.drawer.mode == crate::ui::drawer::DrawerMode::Outline;
+    let st_outline_hover = state.clone();
+    root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
+        if let UiEventPayload::PointerMove { pointer } = payload {
+            let inside = outline_drawer && explorer_rect.contains(pointer.point);
+            st_outline_hover.try_update(move |app| {
+                let ui = &mut app.editor.language.outline;
+                let changed = ui.pointer_inside != inside || (!inside && ui.hovered.is_some());
+                ui.pointer_inside = inside;
+                if !inside {
+                    ui.hovered = None;
+                }
+                changed
+            });
+        }
+    });
+
     // Keep Source Control's overlay scrollbar behavior aligned with Explorer:
     // it is visible while the pointer is inside the drawer or while its thumb
     // is being dragged.

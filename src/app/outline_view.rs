@@ -43,6 +43,7 @@ pub(crate) fn render(rect: UiRect, state: &AppContext, code_rect: UiRect) -> Ele
         sorted: ui.sorted,
         scroll: ui.scroll,
         hovered: ui.hovered,
+        pointer_inside: ui.pointer_inside,
         scrollbar_grab: ui.scrollbar_dragging.then_some(ui.scrollbar_drag_offset),
         resizable: app.layout.application_layout.is_none(),
         resizing: app.drawer.resizing,
