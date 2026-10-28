@@ -379,6 +379,17 @@ mod tests {
         wait_for(&controller, |screen| {
             screen.contents().contains("history-080")
         });
+        // The shell still prints its next prompt after the last line; output
+        // arriving after the wheel would change the scrollback being checked.
+        let settled = std::cell::RefCell::new((String::new(), Instant::now()));
+        wait_for(&controller, |screen| {
+            let contents = screen.contents();
+            let mut settled = settled.borrow_mut();
+            if contents != settled.0 {
+                *settled = (contents, Instant::now());
+            }
+            settled.1.elapsed() >= Duration::from_millis(500)
+        });
         controller.wheel(1.0, KeyModifiers::empty());
         assert_eq!(controller.test_parser().screen().scrollback(), 3);
         controller.wheel(-1.0, KeyModifiers::empty());
