@@ -4556,3 +4556,274 @@ fn multicursor_save_formats_crlf_bytes_and_maps_all_selections_with_undo() {
     );
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn vim_editor_completion_snippet_pairing_and_escape_share_input_ownership() {
+    use crate::features::keymap::action::Action;
+    let mut h = LanguageHarness::configured("\n", &["--features", "completion"], |app| {
+        app.editor.vim.options.enabled = true
+    });
+    h.until_ready();
+    // Explicit completion from Normal mode enters Insert rather than opening an inert list.
+    h.act(Action::ShowCompletions);
+    h.until("Vim manual completion", |h| {
+        !h.completion_labels().is_empty()
+    });
+    assert_eq!(
+        h.state.get().editor.vim.mode(),
+        loom_editor_core::vim::Mode::Insert
+    );
+    h.act(Action::MenuSelectNext);
+    h.act(Action::MenuConfirm);
+    assert!(h.state.get().editor.language.snippet.is_some());
+    h.type_text("(");
+    assert_eq!(h.document_text(), "beta(())\n");
+    crate::app::editor_vim::feed_keys(&h.state, "<Esc>", h.rect, &TestClipboard::default());
+    h.render();
+    assert_eq!(
+        h.state.get().editor.vim.mode(),
+        loom_editor_core::vim::Mode::Normal
+    );
+    assert!(h.state.get().editor.language.snippet.is_none());
+    assert!(h.state.get().editor.language.completion.is_none());
+}
+
+#[test]
+fn vim_editor_pending_completion_cannot_reopen_after_escape() {
+    use crate::features::keymap::action::Action;
+    let log = std::env::temp_dir().join(format!(
+        "loom-vim-completion-{}-{}.jsonl",
+        std::process::id(),
+        LANGUAGE_CASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let log_arg = log.display().to_string();
+    let mut h = LanguageHarness::configured(
+        "\n",
+        &[
+            "--features",
+            "completion",
+            "--defer-feature-replies",
+            "--log",
+            &log_arg,
+        ],
+        |app| {
+            app.editor.vim.options.enabled = true;
+            app.preferences.values_mut().language_servers[0]
+                .args
+                .as_mut()
+                .unwrap()[1] = "object".into();
+        },
+    );
+    h.until_ready();
+    h.act(Action::ShowCompletions);
+    h.until("pending Vim completion at the server", |h| {
+        server_log(h, &log)
+            .iter()
+            .any(|m| m == "textDocument/completion")
+    });
+    crate::app::editor_vim::feed_keys(&h.state, "<Esc>", h.rect, &TestClipboard::default());
+    h.render();
+    let path = h.state.get().workspace.active_path().unwrap().to_path_buf();
+    h.runtime
+        .language_services()
+        .unwrap()
+        .saved(path.clone(), Arc::new("\n".into()));
+    h.until("save barrier after cancelling Vim completion", |h| {
+        server_log(h, &log)
+            .iter()
+            .any(|m| m == "textDocument/didSave")
+    });
+    assert!(h.state.get().editor.language.completion.is_none());
+    assert_eq!(
+        h.state.get().editor.vim.mode(),
+        loom_editor_core::vim::Mode::Normal
+    );
+    let before = server_log(&h, &log)
+        .iter()
+        .filter(|m| m.as_str() == "textDocument/completion")
+        .count();
+    h.act(Action::ShowCompletions);
+    h.until("new Vim completion request", |h| {
+        server_log(h, &log)
+            .iter()
+            .filter(|m| m.as_str() == "textDocument/completion")
+            .count()
+            > before
+    });
+    h.runtime
+        .language_services()
+        .unwrap()
+        .saved(path, Arc::new("\n".into()));
+    h.until("fresh completion after Vim re-enters Insert", |h| {
+        !h.completion_labels().is_empty()
+    });
+    assert_eq!(
+        h.state.get().editor.vim.mode(),
+        loom_editor_core::vim::Mode::Insert
+    );
+    let _ = std::fs::remove_file(log);
+}
+
+#[test]
+fn vim_editor_save_formatting_preserves_multi_selections_and_insert_history() {
+    use crate::features::keymap::action::Action;
+    use loom_editor_core::text::Selection;
+    let source = "fn alpha() {}\r\nlast";
+    let mut h = LanguageHarness::configured(source, &["--features", "formatting"], |app| {
+        app.editor.vim.options.enabled = true;
+        on_save(&[], true)(app);
+    });
+    h.until_ready();
+    crate::app::editor_vim::feed_keys(&h.state, "i", h.rect, &TestClipboard::default());
+    h.state.update(|app| {
+        app.workspace
+            .active_editor_mut()
+            .unwrap()
+            .set_selections(Selection::caret(5), vec![Selection::caret(source.len())])
+    });
+    let before = h
+        .state
+        .get()
+        .workspace
+        .active_editor()
+        .unwrap()
+        .selections();
+    h.act(Action::Save);
+    let path = h.state.get().workspace.active_path().unwrap().to_path_buf();
+    let expected = format!("// formatted\r\n{source}");
+    h.until("Vim save formatting bytes", |_| {
+        std::fs::read(&path).is_ok_and(|bytes| bytes == expected.as_bytes())
+    });
+    assert_eq!(
+        h.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections()
+            .len(),
+        2
+    );
+    execute_command(
+        &h.state,
+        loom_editor_core::commands::Command::Undo,
+        h.rect,
+        Arc::new(TestClipboard::default()),
+    );
+    h.render();
+    assert_eq!(h.document_text(), source);
+    assert_eq!(
+        h.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections(),
+        before
+    );
+    assert_eq!(
+        h.state.get().editor.vim.mode(),
+        loom_editor_core::vim::Mode::Insert
+    );
+    h.type_text("字");
+    crate::app::editor_vim::feed_keys(&h.state, "<Esc>", h.rect, &TestClipboard::default());
+    crate::app::editor_vim::feed_keys(&h.state, "u", h.rect, &TestClipboard::default());
+    h.render();
+    assert_eq!(h.document_text(), source);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn vim_editor_inlay_hints_recover_when_a_provider_appears_without_an_edit() {
+    let script = std::env::temp_dir().join(format!(
+        "loom-vim-inlay-registration-{}-{}.json",
+        std::process::id(),
+        LANGUAGE_CASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::write(&script,serde_json::json!([
+        {"step":1,"id":8208,"method":"client/registerCapability","params":{"registrations":[{"id":"late-hints","method":"textDocument/inlayHint","registerOptions":{}}]}}
+    ]).to_string()).unwrap();
+    let script_arg = script.display().to_string();
+    let mut h = LanguageHarness::configured(
+        "let x = 1;\n",
+        &["--features", "hover", "--registration-script", &script_arg],
+        |app| {
+            app.editor.vim.options.enabled = true;
+            app.preferences.values_mut().lsp.inlay_hints = true;
+            app.preferences.values_mut().language_servers[0]
+                .args
+                .as_mut()
+                .unwrap()[1] = "object".into();
+        },
+    );
+    h.until_ready();
+    // Consume the first settled request with no eligible provider. The next
+    // capability transition is released explicitly, without an edit or a sleep.
+    h.until("settled hint request before provider registration", |h| {
+        h.state.try_update(crate::app::language_ui::inlay::tick);
+        h.state
+            .get()
+            .editor
+            .language
+            .inlay
+            .shown
+            .as_ref()
+            .is_some_and(|s| s.hints.is_empty())
+    });
+    let path = h.state.get().workspace.active_path().unwrap().to_path_buf();
+    let before = h.document_text();
+    let cursor = h.cursor();
+    let save = |h: &LanguageHarness| {
+        h.runtime
+            .language_services()
+            .unwrap()
+            .saved(path.clone(), Arc::new(before.clone()))
+    };
+    save(&h);
+    h.until("inlay hints after late capability registration", |h| {
+        h.state
+            .get()
+            .editor
+            .language
+            .inlay
+            .shown
+            .as_ref()
+            .is_some_and(|s| !s.hints.is_empty())
+    });
+    assert_eq!(h.document_text(), before);
+    assert_eq!(h.cursor(), cursor);
+    let run = h.runtime.language_services().unwrap().infos()[0].run;
+    h.runtime.language_services().unwrap().restart();
+    h.until("inlay provider restart", |h| {
+        h.runtime
+            .language_services()
+            .unwrap()
+            .infos()
+            .iter()
+            .any(|i| i.run > run && i.status == crate::infrastructure::lsp::manager::Status::Ready)
+    });
+    h.until("old hints cleared after provider restart", |h| {
+        h.state.try_update(crate::app::language_ui::inlay::tick);
+        h.state
+            .get()
+            .editor
+            .language
+            .inlay
+            .shown
+            .as_ref()
+            .is_some_and(|s| s.hints.is_empty())
+    });
+    save(&h);
+    h.until("hints after re-registering the restarted provider", |h| {
+        h.state
+            .get()
+            .editor
+            .language
+            .inlay
+            .shown
+            .as_ref()
+            .is_some_and(|s| !s.hints.is_empty())
+    });
+    assert_eq!(h.cursor(), cursor);
+    let _ = std::fs::remove_file(script);
+}

@@ -393,6 +393,42 @@ impl Vim {
         count: Option<usize>,
     ) {
         let selection = editor.selection_state();
+        let display_move = match motion {
+            Motion::DisplayUp => Some(crate::normal::Movement::Up),
+            Motion::DisplayDown => Some(crate::normal::Movement::Down),
+            Motion::HalfPageDown => Some(crate::normal::Movement::PageDown(
+                count.unwrap_or((host.page_lines() / 2).max(1)),
+            )),
+            Motion::HalfPageUp => Some(crate::normal::Movement::PageUp(
+                count.unwrap_or((host.page_lines() / 2).max(1)),
+            )),
+            Motion::PageDown => Some(crate::normal::Movement::PageDown(
+                count.unwrap_or(1) * host.page_lines().saturating_sub(2).max(1),
+            )),
+            Motion::PageUp => Some(crate::normal::Movement::PageUp(
+                count.unwrap_or(1) * host.page_lines().saturating_sub(2).max(1),
+            )),
+            _ => None,
+        };
+        if let Some(movement) = display_move
+            && let Some(map) = host.display_map(editor.buffer())
+        {
+            let mut after = selection;
+            let steps = if matches!(motion, Motion::DisplayUp | Motion::DisplayDown) {
+                count.unwrap_or(1).min(map.len())
+            } else {
+                1
+            };
+            for _ in 0..steps {
+                after = map.navigate(editor.buffer(), after, movement, false);
+            }
+            after.cursor = normal_position(editor, after.cursor);
+            after.anchor = matches!(self.mode, Mode::Visual(_))
+                .then(|| selection.anchor.unwrap_or(selection.cursor));
+            editor.set_selection(after);
+            editor.set_wrap_affinity(after.wrap_affinity);
+            return;
+        }
         let Some(moved) = self.eval_motion(editor, selection, host, motion, count, None) else {
             self.failed = true;
             return;
@@ -477,17 +513,40 @@ impl Vim {
                 }
                 Moved::exclusive(offset)
             }
+            Motion::DisplayUp | Motion::DisplayDown if host.display_map(buffer).is_some() => {
+                let map = host.display_map(buffer).unwrap();
+                let mut after = selection;
+                let movement = if *motion == Motion::DisplayUp {
+                    crate::normal::Movement::Up
+                } else {
+                    crate::normal::Movement::Down
+                };
+                for _ in 0..n.min(map.len()) {
+                    after = map.navigate(buffer, after, movement, false);
+                }
+                Moved {
+                    offset: after.cursor,
+                    kind: MotionKind::Exclusive,
+                    column: after.preferred_column,
+                }
+            }
             Motion::Up | Motion::DisplayUp => {
                 if line == 0 {
                     return None;
                 }
-                vertical(line.saturating_sub(n))
+                vertical(host.display_map(buffer).map_or_else(
+                    || line.saturating_sub(n),
+                    |map| map.adjacent_line(buffer, cursor, false, n),
+                ))
             }
             Motion::Down | Motion::DisplayDown => {
                 if line == last {
                     return None;
                 }
-                vertical((line + n).min(last))
+                vertical(host.display_map(buffer).map_or_else(
+                    || (line + n).min(last),
+                    |map| map.adjacent_line(buffer, cursor, true, n),
+                ))
             }
             Motion::WrapLeft => {
                 let mut offset = cursor;
@@ -673,6 +732,20 @@ impl Vim {
                 vertical(target)
             }
             Motion::ScreenTop | Motion::ScreenMiddle | Motion::ScreenBottom => {
+                if let Some(map) = host.display_map(buffer) {
+                    let visible = host.visible_display_rows();
+                    let first = visible.start.min(map.len() - 1);
+                    let end = visible.end.clamp(first + 1, map.len());
+                    let row = match motion {
+                        Motion::ScreenTop => (first + n - 1).min(end - 1),
+                        Motion::ScreenMiddle => first + (end - first - 1) / 2,
+                        _ => end.saturating_sub(n).max(first),
+                    };
+                    return Some(Moved::linewise(first_non_blank(
+                        buffer,
+                        map.source_line(row),
+                    )));
+                }
                 let visible = host.visible_lines();
                 let first = visible.start.min(last);
                 let end = visible.end.clamp(first + 1, last + 1);
@@ -1039,7 +1112,7 @@ impl Vim {
                 let content = editor.line(line);
                 if indent {
                     return (!content.is_empty())
-                        .then(|| Edit::insert(start, crate::normal::INDENT.repeat(times)));
+                        .then(|| Edit::insert(start, editor.options().indent().repeat(times)));
                 }
                 let mut remove = 0;
                 for _ in 0..times {
@@ -1047,7 +1120,10 @@ impl Vim {
                     remove += if rest.starts_with('\t') {
                         1
                     } else {
-                        rest.chars().take(2).take_while(|c| *c == ' ').count()
+                        rest.chars()
+                            .take(editor.options().indent_size)
+                            .take_while(|c| *c == ' ')
+                            .count()
                     };
                 }
                 (remove > 0).then(|| Edit::delete(start..start + remove))
@@ -1229,6 +1305,10 @@ impl Vim {
                 }
             }
             Simple::ScrollCursor(to) => host.request(Request::Scroll((*to).into())),
+            Simple::Fold { open, all } => host.request(Request::Fold {
+                open: *open,
+                all: *all,
+            }),
             Simple::Language(command) => host.request(Request::Language(*command)),
             Simple::SwapVisualEnds => {
                 let selection = editor.selection_state();
@@ -1290,19 +1370,16 @@ impl Vim {
         line: usize,
         below: bool,
     ) -> usize {
+        if below {
+            editor.set_cursor(editor.line_end(line));
+            crate::normal::enter(editor);
+            return editor.cursor();
+        }
         let indent = leading_whitespace(editor, line);
         let newline = editor.line_ending();
-        let (at, text, caret) = if below {
-            let at = editor.line_end(line);
-            (
-                at,
-                format!("{newline}{indent}"),
-                at + newline.len() + indent.len(),
-            )
-        } else {
-            let at = editor.line_start(line);
-            (at, format!("{indent}{newline}"), at + indent.len())
-        };
+        let at = editor.line_start(line);
+        let text = format!("{indent}{newline}");
+        let caret = at + indent.len();
         let _ = editor.edit(EditKind::Other, vec![Edit::insert(at, text)], |_, _| {
             Selection::caret(caret)
         });

@@ -231,5 +231,33 @@ cursor editing. Manually requesting completion keeps only the primary cursor, so
 completion edits and snippet tab stops have an explicit target. Adding a cursor
 ends a snippet session and cancels its pending completion list. Saving/formatting
 maps all selections through the resulting document edits. Vim's normal-mode
-bindings retain their meaning; the extra-cursor commands are available in Insert
-mode.
+bindings retain their meaning. Explicit extra-cursor commands enter Insert mode
+when Vim is enabled.
+
+## Vim and editor enhancements
+
+Vim uses the same editor preferences and editing rules. Insert mode supports
+automatic delimiter pairs, generated-closer skipping, pair deletion and wrapping
+an IDE selection. Composition commits and pasted text stay literal, including
+when replayed with a count, a macro or the dot command. Replace mode overwrites
+text with its usual backspace restoration.
+
+| Feature | Vim behavior |
+| --- | --- |
+| Indentation | Enter, Tab, Shift+Tab, o/O and >>/<< use the configured indentation and language rules |
+| Line endings | Newlines and register pastes use LF/CRLF preferences; status-bar conversion and :w use the same buffer and encoding |
+| Line operations | Alt+Up/Down, Shift+Alt+Up/Down, delete-line and comment shortcuts work in Normal, Visual and Insert modes; Visual ranges include their last selected row |
+| Reading aids | Bracket matching, indentation guides and whitespace display use the same settings in every mode |
+| Soft wrap | Alt+Z toggles wrapping; j/k retain logical-line movement and gj/gk move by displayed rows; page and screen motions use displayed geometry |
+| Folding | zc/zo close/open a region and zM/zR close/open all regions; j/k skip folded lines and jumps reveal hidden targets |
+| Multiple cursors | Ctrl+Alt+Up/Down, Alt+click and Shift+Alt+drag enter Insert mode; Ctrl/Cmd+D selects occurrences there; Visual Block I/A edits its eligible lines immediately |
+| Language services | Completion and snippet tab stops work in Insert mode; manual completion enters it; Escape ends the snippet and cancels outstanding completion when leaving Insert |
+
+Normal-mode Ctrl+D keeps Vim's half-page movement. An explicit IDE line command
+is an independent undo step, and subsequent typing starts a fresh insert group.
+Escape ends a multiple-cursor insert at its primary cursor. Save formatting maps
+all selections; undo during Insert restores them and subsequent typing remains
+repeatable. Core editing and display features also work without a language server.
+
+Server-provided annotations refresh when a provider becomes ready, registers new
+capabilities or restarts, even when the text and caret stay unchanged.

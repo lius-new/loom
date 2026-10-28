@@ -61,7 +61,13 @@ impl Vim {
                     Key::Home => normal::Movement::Home,
                     _ => normal::Movement::End,
                 };
-                normal::navigate(editor, movement, false);
+                if let Some(map) = host.display_map(editor.buffer()) {
+                    editor.map_selections(|buffer, state| {
+                        map.navigate(buffer, state, movement, false)
+                    });
+                } else {
+                    normal::navigate(editor, movement, false);
+                }
                 self.record_insert(None);
                 return true;
             }
@@ -72,7 +78,18 @@ impl Vim {
     }
 
     /// Apply a typing event and remember it for repeating.
+    fn sync_insert_group(&mut self, editor: &mut EditorMut<'_>) {
+        if self.group_open && !editor.in_undo_group() {
+            self.group_open = false;
+            self.record_insert(None);
+        }
+    }
     pub(super) fn insert_event(&mut self, editor: &mut EditorMut<'_>, event: InsertEvent) {
+        self.sync_insert_group(editor);
+        if !self.group_open {
+            editor.begin_group();
+            self.group_open = true;
+        }
         self.apply_event(editor, &event);
         if let Some(session) = self.insert.as_mut() {
             session.events.push(event);
@@ -83,12 +100,20 @@ impl Vim {
         let replacing = self.mode == Mode::Replace;
         match event {
             InsertEvent::Text(text) if replacing => self.overwrite(editor, text),
-            InsertEvent::Text(text) => normal::insert(editor, text),
+            InsertEvent::Literal(text) if replacing => self.overwrite(editor, text),
+            InsertEvent::Literal(text) => normal::insert(editor, text),
+            InsertEvent::Text(text) => {
+                let language = editor.options().language;
+                normal::type_text(editor, text, language);
+            }
             InsertEvent::Backspace if replacing => self.restore(editor),
             InsertEvent::Backspace => normal::backspace(editor),
             InsertEvent::Delete => normal::delete_forward(editor),
             InsertEvent::DeleteWordBack => normal::erase(editor, false, true),
             InsertEvent::DeleteWordForward => normal::erase(editor, true, true),
+            InsertEvent::DeleteToLineStart if editor.has_secondary() => {
+                crate::text::multiple::erase_prefix(editor)
+            }
             InsertEvent::DeleteToLineStart => {
                 let cursor = editor.cursor();
                 let line = editor.line_of(cursor);
@@ -147,6 +172,7 @@ impl Vim {
     /// for a count or a visual block and steps the cursor back onto the last
     /// typed character; leaving a view only closes the session.
     pub(super) fn finish_insert(&mut self, editor: &mut EditorMut<'_>, exiting: bool) {
+        self.sync_insert_group(editor);
         let Some(session) = self.insert.take() else {
             self.mode = Mode::Normal;
             return;
@@ -170,7 +196,9 @@ impl Vim {
             .events
             .iter()
             .filter_map(|event| match event {
-                InsertEvent::Text(text) | InsertEvent::Paste(text) => Some(text.as_str()),
+                InsertEvent::Text(text) | InsertEvent::Literal(text) | InsertEvent::Paste(text) => {
+                    Some(text.as_str())
+                }
                 _ => None,
             })
             .collect();
@@ -185,6 +213,7 @@ impl Vim {
         self.replaced.clear();
         self.one_command = false;
         if exiting {
+            editor.set_selection(editor.selection_state());
             let cursor = editor.cursor();
             let line_start = editor.line_start(editor.line_of(cursor));
             if cursor > line_start {
@@ -213,7 +242,7 @@ impl Vim {
         let mut text = String::new();
         for event in events {
             match event {
-                InsertEvent::Text(typed) => text.push_str(typed),
+                InsertEvent::Text(typed) | InsertEvent::Literal(typed) => text.push_str(typed),
                 // Line breaks or deletions make the insert unsuitable for a block.
                 _ => return,
             }
@@ -300,6 +329,26 @@ impl Vim {
             ),
         };
         self.start_insert(editor, offset, Some(command.clone()), 1, None, false);
+        let mut block = block;
+        if editor.supports_secondary()
+            && let Some(region) = block.take()
+        {
+            let primary = editor.selection_state();
+            let others = (region.lines.0..=region.lines.1.min(editor.line_count() - 1))
+                .filter_map(|row| {
+                    let at = if region.to_line_end {
+                        editor.line_end(row)
+                    } else {
+                        if editor.line_display_width(row) < region.column {
+                            return None;
+                        }
+                        editor.offset_at_display_column(row, region.column)
+                    };
+                    Some(Selection::caret(at))
+                })
+                .collect();
+            editor.set_selections(primary, others);
+        }
         if let Some(session) = self.insert.as_mut() {
             session.block = block;
             session.visual = None;
@@ -313,6 +362,10 @@ impl Vim {
     /// Feed one key as if typed, for macros: keys Vim does not consume while
     /// typing are typed as text.
     pub(super) fn feed(&mut self, editor: &mut EditorMut<'_>, host: &mut dyn Host, key: Key) {
+        if let Key::Literal(c) = key {
+            self.handle_commit(editor, &c.to_string());
+            return;
+        }
         if self.handle_key(editor, key, host) {
             return;
         }

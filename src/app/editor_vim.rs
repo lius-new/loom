@@ -20,6 +20,8 @@ struct AppHost<'a> {
     page_lines: usize,
     visible: Range<usize>,
     requests: Vec<Request>,
+    display: std::sync::Arc<loom_editor_core::text::DisplayMap>,
+    version: u64,
 }
 
 impl vim::Clipboard for AppHost<'_> {
@@ -42,9 +44,20 @@ impl vim::Host for AppHost<'_> {
     }
 
     fn visible_lines(&self) -> Range<usize> {
-        self.visible.clone()
+        self.display.source_line(self.visible.start)
+            ..self.display.source_line(self.visible.end.saturating_sub(1)) + 1
     }
 
+    fn display_map(
+        &self,
+        buffer: &loom_editor_core::text::TextBuffer,
+    ) -> Option<&loom_editor_core::text::DisplayMap> {
+        (buffer.version() == self.version && (self.display.wrapped() || self.display.folded()))
+            .then_some(self.display.as_ref())
+    }
+    fn visible_display_rows(&self) -> Range<usize> {
+        self.visible.clone()
+    }
     fn request(&mut self, request: Request) {
         self.requests.push(request);
     }
@@ -114,12 +127,20 @@ fn with_vim<R>(
         super::editing::configure(app, view);
     }
     sync_view(app);
+    let display = super::editing::active_projection(app, rect);
+    let version = app.workspace.active_editor()?.version();
+    let visible = visible_lines(app, rect);
+    let first = visible.start.min(display.len() - 1);
+    let last = visible.end.clamp(first + 1, display.len());
     let mut host = AppHost {
         clipboard,
         page_lines: page_lines(rect),
-        visible: visible_lines(app, rect),
+        visible: first..last,
+        display,
+        version,
         requests: Vec::new(),
     };
+    let was_inserting = app.editor.vim.is_inserting();
     let (result, changed) = {
         let workspace = &mut app.workspace;
         let vim = &mut app.editor.vim;
@@ -128,6 +149,11 @@ fn with_vim<R>(
         let result = f(vim, &mut editor, &mut host);
         (result, editor.version() != version)
     };
+    if was_inserting && !app.editor.vim.is_inserting() {
+        super::language_ui::snippet_session::end(app);
+        super::language_ui::completion::close(app);
+        app.editor.language.completion_timer = None;
+    }
     if changed {
         app.workspace.promote_active_preview();
     }
@@ -158,10 +184,13 @@ pub fn handle_key(
             return;
         }
         let scrolls_page = matches!(key, Key::Ctrl('d' | 'u' | 'f' | 'b'));
-        let before = app
-            .workspace
-            .active_editor()
-            .map(|editor| editor.line_of(editor.cursor()));
+        let before = app.workspace.active_editor().map(|editor| {
+            super::editing::active_projection(app, rect).caret_row(
+                &editor,
+                editor.cursor(),
+                editor.selection_state().wrap_affinity,
+            )
+        });
         if let Some((used, asked)) = with_vim(app, rect, clipboard, |vim, editor, host| {
             vim.handle_key(editor, key, host)
         }) {
@@ -170,10 +199,13 @@ pub fn handle_key(
         }
         if scrolls_page {
             // Page keys scroll the view with the cursor, as Vim does.
-            let after = app
-                .workspace
-                .active_editor()
-                .map(|editor| editor.line_of(editor.cursor()));
+            let after = app.workspace.active_editor().map(|editor| {
+                super::editing::active_projection(app, rect).caret_row(
+                    &editor,
+                    editor.cursor(),
+                    editor.selection_state().wrap_affinity,
+                )
+            });
             if let (Some(before), Some(after)) = (before, after) {
                 let (x, y) = app.workspace.active_scroll();
                 let delta = (after as f32 - before as f32) * fonts::editor().line_h;
@@ -235,8 +267,17 @@ pub fn visual_clipboard(
 /// Text input for Vim. Returns whether Vim took it; in Normal and Visual mode
 /// typed text is not a command and is left to the caller.
 pub fn handle_text(app: &mut AppState, text: &str, rect: UiRect) -> bool {
+    handle_input(app, text, rect, false)
+}
+pub fn handle_commit(app: &mut AppState, text: &str, rect: UiRect) -> bool {
+    handle_input(app, text, rect, true)
+}
+fn handle_input(app: &mut AppState, text: &str, rect: UiRect, literal: bool) -> bool {
     if !is_active(app) {
         return false;
+    }
+    if let Some(view) = app.workspace.active() {
+        super::editing::configure(app, view);
     }
     sync_view(app);
     let handled = {
@@ -246,7 +287,11 @@ pub fn handle_text(app: &mut AppState, text: &str, rect: UiRect) -> bool {
             return false;
         };
         let version = editor.version();
-        let handled = vim.handle_text(&mut editor, text);
+        let handled = if literal {
+            vim.handle_commit(&mut editor, text)
+        } else {
+            vim.handle_text(&mut editor, text)
+        };
         if editor.version() != version {
             drop(editor);
             workspace.promote_active_preview();
@@ -261,6 +306,26 @@ pub fn handle_text(app: &mut AppState, text: &str, rect: UiRect) -> bool {
 
 /// An edit the default editing commands made while Vim is typing, so `.`
 /// and counts repeat it; `None` for a cursor move.
+pub fn start_multi(app: &mut AppState) {
+    if !is_active(app) {
+        return;
+    }
+    if let Some(view) = app.workspace.active() {
+        super::editing::configure(app, view);
+    }
+    sync_view(app);
+    if let Some(mut editor) = app.workspace.active_editor_mut() {
+        app.editor.vim.start_multi_insert(&mut editor);
+    }
+}
+pub fn prepare_external(app: &mut AppState) {
+    if !is_active(app) {
+        return;
+    }
+    if let Some(mut editor) = app.workspace.active_editor_mut() {
+        app.editor.vim.prepare_external(&mut editor);
+    }
+}
 pub fn record_insert(app: &mut AppState, event: Option<vim::InsertEvent>) {
     if is_active(app) && app.editor.vim.is_inserting() {
         app.editor.vim.record_insert(event);
@@ -303,14 +368,17 @@ pub fn after_command(app: &mut AppState, undo: bool) {
 }
 
 fn scroll_cursor(app: &mut AppState, rect: UiRect, position: ScrollPosition) {
-    let Some(line) = app
-        .workspace
-        .active_editor()
-        .map(|editor| editor.line_of(editor.cursor()))
-    else {
+    if app.workspace.active_editor().is_none() {
         return;
-    };
-    let top = line as f32 * fonts::editor().line_h;
+    }
+    let map = super::editing::active_projection(app, rect);
+    let editor = app.workspace.active_editor().unwrap();
+    let row = map.caret_row(
+        &editor,
+        editor.cursor(),
+        editor.selection_state().wrap_affinity,
+    );
+    let top = row as f32 * fonts::editor().line_h;
     let height = rect.height();
     let y = match position {
         ScrollPosition::Top => top,
@@ -354,6 +422,16 @@ fn perform(state: &AppContext, requests: Vec<Request>, rect: UiRect) {
                 )
             }
             Request::Scroll(_) => {}
+            Request::Fold { open, all } => {
+                use super::folding::FoldAction;
+                let action = match (open, all) {
+                    (false, false) => FoldAction::Fold,
+                    (true, false) => FoldAction::Unfold,
+                    (false, true) => FoldAction::FoldAll,
+                    (true, true) => FoldAction::UnfoldAll,
+                };
+                super::folding::command(state, action, rect);
+            }
             Request::Language(command) => {
                 crate::app::language_ui::keys::vim_command(state, command, rect)
             }

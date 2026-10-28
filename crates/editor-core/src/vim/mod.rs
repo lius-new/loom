@@ -106,6 +106,10 @@ pub enum Request {
     },
     SaveAndQuit,
     Scroll(ScrollPosition),
+    Fold {
+        open: bool,
+        all: bool,
+    },
 }
 
 /// The language-server commands Vim has keys for.
@@ -150,6 +154,12 @@ pub trait Host: Clipboard {
     /// The range of lines currently on screen.
     fn visible_lines(&self) -> Range<usize>;
     fn request(&mut self, request: Request);
+    fn display_map(&self, _buffer: &TextBuffer) -> Option<&crate::text::DisplayMap> {
+        None
+    }
+    fn visible_display_rows(&self) -> Range<usize> {
+        self.visible_lines()
+    }
 }
 
 /// User preferences for the Vim layer.
@@ -185,6 +195,8 @@ pub struct Status {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InsertEvent {
     Text(String),
+    /// Composition commits remain literal during dot/count/macro replay.
+    Literal(String),
     Backspace,
     Delete,
     DeleteWordBack,
@@ -507,9 +519,64 @@ impl Vim {
         }
     }
 
+    /// Start an IDE multiple-selection edit while preserving its ranges.
+    pub fn start_multi_insert(&mut self, editor: &mut EditorMut<'_>) {
+        let states = if matches!(self.mode, Mode::Visual(_)) {
+            self.highlights(editor.buffer(), editor.selection_state())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| Selection::spanning(r.start, r.end))
+                .collect::<Vec<_>>()
+        } else {
+            editor.selections()
+        };
+        self.prepare_external(editor);
+        if self.mode != Mode::Insert {
+            self.start_insert(
+                editor,
+                editor.cursor(),
+                Some(insert_command(InsertKind::Before)),
+                1,
+                None,
+                false,
+            );
+        }
+        if let Some(primary) = states.first().copied() {
+            editor.set_selections(primary, states.into_iter().skip(1).collect());
+        }
+        self.keys.clear();
+        self.command_line = None;
+    }
+    /// An independent IDE edit/history command ends the preceding insert group.
+    pub fn prepare_external(&mut self, editor: &mut EditorMut<'_>) {
+        if matches!(self.mode, Mode::Visual(_)) {
+            let ranges = self
+                .highlights(editor.buffer(), editor.selection_state())
+                .unwrap_or_default();
+            self.exit_visual(editor);
+            let mut states = ranges
+                .into_iter()
+                .map(|r| Selection::spanning(r.start, r.end));
+            if let Some(primary) = states.next() {
+                editor.set_selections(primary, states.collect());
+            }
+        }
+        if self.group_open {
+            editor.end_group();
+            self.group_open = false;
+        }
+        self.record_insert(None);
+        self.replaced.clear();
+    }
     /// Handle committed text. Returns whether Vim used it; in Normal and
     /// Visual mode text is not a command and is left to the caller.
     pub fn handle_text(&mut self, editor: &mut EditorMut<'_>, text: &str) -> bool {
+        self.handle_input(editor, text, false)
+    }
+    pub fn handle_commit(&mut self, editor: &mut EditorMut<'_>, text: &str) -> bool {
+        self.handle_input(editor, text, true)
+    }
+    fn handle_input(&mut self, editor: &mut EditorMut<'_>, text: &str, literal: bool) -> bool {
         if let Some(line) = self.command_line.as_mut() {
             line.text.push_str(&text.replace(['\r', '\n'], ""));
             return true;
@@ -518,9 +585,22 @@ impl Vim {
             return false;
         }
         if let Some((_, keys)) = self.recording.as_mut() {
-            keys.extend(text.chars().map(Key::Char));
+            keys.extend(text.chars().map(|c| {
+                if literal {
+                    Key::Literal(c)
+                } else {
+                    Key::Char(c)
+                }
+            }));
         }
-        self.insert_event(editor, InsertEvent::Text(text.to_owned()));
+        self.insert_event(
+            editor,
+            if literal {
+                InsertEvent::Literal(text.to_owned())
+            } else {
+                InsertEvent::Text(text.to_owned())
+            },
+        );
         true
     }
 

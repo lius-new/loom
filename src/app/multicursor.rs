@@ -3,6 +3,7 @@ use super::state::AppState;
 use lgui::prelude::UiRect;
 use loom_editor_core::text::{DisplayMap, Selection, TextBuffer};
 pub fn prepare(app: &mut AppState) {
+    super::editor_vim::start_multi(app);
     super::language_ui::snippet_session::end(app);
     super::language_ui::dismiss(app);
     app.editor.language.completion = None;
@@ -18,11 +19,6 @@ pub fn primary_only(app: &mut AppState) {
     }
 }
 pub fn command(app: &mut AppState, next: bool, down: bool, rect: UiRect) {
-    if app.editor.vim.is_enabled()
-        && !matches!(app.editor.vim.mode(), loom_editor_core::vim::Mode::Insert)
-    {
-        return;
-    }
     prepare(app);
     let map = super::editing::active_projection(app, rect);
     let Some(mut editor) = app.workspace.active_editor_mut() else {

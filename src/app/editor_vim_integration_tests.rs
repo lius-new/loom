@@ -33,6 +33,24 @@ impl Ui {
     }
 
     fn new_with_home(contents: &str, workspace_home: Option<bool>) -> Self {
+        Self::create(contents, workspace_home, |_| {})
+    }
+    fn configured(contents: &str, setup: impl Fn(&mut AppState) + Send + Sync + 'static) -> Self {
+        Self::create(contents, None, setup)
+    }
+    fn code(contents: &str, setup: impl Fn(&mut AppState) + Send + Sync + 'static) -> Self {
+        let source = contents.to_owned();
+        Self::configured(contents, move |app| {
+            app.workspace
+                .open_path("vim-features.rs".into(), source.clone());
+            setup(app);
+        })
+    }
+    fn create(
+        contents: &str,
+        workspace_home: Option<bool>,
+        setup: impl Fn(&mut AppState) + Send + Sync + 'static,
+    ) -> Self {
         let exposed = Arc::new(Mutex::new(None::<AppContext>));
         let output = exposed.clone();
         let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
@@ -52,6 +70,8 @@ impl Ui {
                     app.workspace.open_path("vim.txt".into(), contents.clone());
                     app.editor.vim.options.enabled = true;
                 }
+                setup(&mut app);
+                crate::app::editing::configure_all(&mut app);
                 app
             }));
             let git_store = cx.state(GitStoreSnapshot::default());
@@ -461,4 +481,269 @@ fn smooth_caret_animates_every_vim_shape_without_sliding_on_mode_switches() {
         .update(|app| app.preferences.values_mut().smooth_caret = false);
     ui.keys("j");
     assert_eq!(ui.caret().1, (0.0, 0.0), "disabled motion snaps");
+}
+
+impl Ui {
+    fn redraw(&mut self) {
+        self.session
+            .render_view(&self.view, self.viewport, UiScale::ONE);
+    }
+    fn selections(&self) -> Vec<loom_editor_core::text::Selection> {
+        self.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selections()
+    }
+}
+
+#[test]
+fn vim_editor_pairs_wrap_selections_skip_closers_and_keep_ime_literal() {
+    use loom_editor_core::text::Selection;
+    let mut ui = Ui::code("", |_| {});
+    ui.keys("i(");
+    assert_eq!(ui.text(), "()");
+    assert_eq!(ui.cursor(), 1);
+    ui.keys("<BS>[{\"");
+    assert_eq!(ui.text(), "[{\"\"}]");
+    ui.keys("\"}]");
+    assert_eq!(ui.text(), "[{\"\"}]");
+    assert_eq!(ui.cursor(), 6);
+    ui.send(InputEvent::Ime(ImeEvent::Preedit {
+        text: "symbols".into(),
+        cursor: None,
+    }));
+    ui.send(InputEvent::Ime(ImeEvent::Commit("(中文".into())));
+    assert_eq!(ui.text(), "[{\"\"}](中文");
+    ui.keys("<Esc>u");
+    assert_eq!(ui.text(), "");
+    let mut ui = Ui::code("hello", |_| {});
+    ui.keys("i");
+    ui.state.update(|app| {
+        app.workspace
+            .active_editor_mut()
+            .unwrap()
+            .set_selection(Selection::spanning(0, 5))
+    });
+    ui.keys("(");
+    assert_eq!(ui.text(), "(hello)");
+    assert_eq!(ui.selections()[0].range(), Some(1..6));
+    let mut ui = Ui::code("", |app| {
+        app.preferences.values_mut().editor.auto_pairs = false
+    });
+    ui.keys("i(");
+    assert_eq!(ui.text(), "(");
+}
+
+#[test]
+fn vim_editor_tab_smart_enter_line_endings_and_write_share_preferences() {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "loom-vim-features-{}-{}.rs",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let target = path.clone();
+    let mut ui = Ui::configured("", move |app| {
+        app.workspace.open_path(target.clone(), String::new());
+        let prefs = &mut app.preferences.values_mut().editor;
+        prefs.use_tabs = true;
+        prefs.indent_size = 4;
+        prefs.tab_width = 8;
+        prefs.new_file_line_ending = crate::features::settings::editing::Ending::Crlf;
+    });
+    ui.keys("i{<CR>x<Esc>");
+    assert_eq!(ui.text(), "{\r\n\tx\r\n}");
+    assert_eq!(
+        ui.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .options()
+            .tab_width,
+        8
+    );
+    ui.keys(">>");
+    assert_eq!(ui.text(), "{\r\n\t\tx\r\n}");
+    ui.keys("<<");
+    assert_eq!(ui.text(), "{\r\n\tx\r\n}");
+    ui.keys(":w<CR>");
+    assert_eq!(std::fs::read(&path).unwrap(), ui.text().as_bytes());
+    ui.keys("i");
+    ui.state.update(|app| {
+        crate::app::editing::open(app, crate::app::editing::Menu::Ending);
+        crate::app::editing::choose(app, 0);
+    });
+    assert_eq!(ui.text(), "{\n\tx\n}");
+    ui.keys("YZ<Esc>u");
+    assert_eq!(ui.text(), "{\n\tx\n}");
+    ui.keys("u");
+    assert_eq!(ui.text(), "{\r\n\tx\r\n}");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn vim_editor_line_commands_keep_visual_rows_and_separate_insert_undo() {
+    let mut ui = Ui::code("one\ntwo\nthree", |app| {
+        app.preferences.values_mut().editor.indent_size = 4
+    });
+    ui.keys("iX");
+    ui.press(LogicalKey::Named(NamedKey::ArrowDown), KeyModifiers::ALT);
+    assert_eq!(ui.text(), "two\nXone\nthree");
+    assert_eq!(ui.mode(), Mode::Insert);
+    ui.undo();
+    assert_eq!(ui.text(), "Xone\ntwo\nthree");
+    ui.keys("Y<Esc>u");
+    assert_eq!(ui.text(), "Xone\ntwo\nthree");
+    ui.keys("u");
+    assert_eq!(ui.text(), "one\ntwo\nthree");
+    ui.keys("ggVj");
+    let secondary = if cfg!(target_os = "macos") {
+        KeyModifiers::META
+    } else {
+        KeyModifiers::CONTROL
+    };
+    ui.press(LogicalKey::Character("/".into()), secondary);
+    assert_eq!(ui.text(), "// one\n// two\nthree");
+    ui.keys("<Esc>u");
+    assert_eq!(ui.text(), "one\ntwo\nthree");
+    ui.keys("ggVj");
+    ui.press(
+        LogicalKey::Named(NamedKey::ArrowDown),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    );
+    assert_eq!(ui.text(), "one\ntwo\none\ntwo\nthree");
+    ui.undo();
+    assert_eq!(ui.text(), "one\ntwo\nthree");
+}
+
+#[test]
+fn vim_editor_multiple_cursors_and_visual_blocks_apply_pairs_ime_and_prefix_delete() {
+    let mut ui = Ui::code("one\none", |_| {});
+    ui.press(
+        LogicalKey::Named(NamedKey::ArrowDown),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
+    assert_eq!(ui.mode(), Mode::Insert);
+    assert_eq!(ui.selections().len(), 2);
+    ui.press(LogicalKey::Named(NamedKey::End), KeyModifiers::empty());
+    ui.keys("(");
+    assert_eq!(ui.text(), "one()\none()");
+    ui.send(InputEvent::Ime(ImeEvent::Preedit {
+        text: "zhong".into(),
+        cursor: None,
+    }));
+    ui.send(InputEvent::Ime(ImeEvent::Commit("中文(".into())));
+    assert_eq!(ui.text(), "one(中文()\none(中文()");
+    ui.undo();
+    assert_eq!(ui.text(), "one\none");
+    assert_eq!(ui.selections().len(), 2);
+    ui.keys("x<C-u>");
+    assert_eq!(ui.text(), "\n");
+    ui.keys("<Esc>");
+    assert_eq!(ui.mode(), Mode::Normal);
+    assert_eq!(ui.selections().len(), 1);
+    let mut ui = Ui::code("\n\n", |_| {});
+    ui.keys("<C-v>jjI(");
+    assert_eq!(ui.text(), "()\n()\n()");
+    assert_eq!(ui.selections().len(), 3);
+    ui.keys("<BS>");
+    assert_eq!(ui.text(), "\n\n");
+    ui.keys("<Esc>");
+    assert_eq!(ui.selections().len(), 1);
+}
+
+#[test]
+fn vim_editor_display_motions_folding_and_reading_aids_use_the_shared_map() {
+    let source = format!("{}\nnext", "one two three four ".repeat(60));
+    let mut ui = Ui::code(&source, |app| {
+        app.preferences.values_mut().editor.soft_wrap = true;
+        app.preferences.values_mut().editor.show_whitespace = true;
+    });
+    let map = crate::app::editing::active_projection(&ui.state.get(), ui.viewport);
+    assert!(map.wrapped());
+    ui.keys("gj");
+    let app = ui.state.get();
+    let editor = app.workspace.active_editor().unwrap();
+    assert_eq!(editor.line_col().0, 0);
+    assert_eq!(
+        map.caret_row(
+            &editor,
+            editor.cursor(),
+            editor.selection_state().wrap_affinity
+        ),
+        1
+    );
+    drop(app);
+    ui.keys("gk");
+    assert_eq!(ui.cursor(), 0);
+    ui.keys("j");
+    assert_eq!(
+        ui.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .line_col()
+            .0,
+        1
+    );
+    ui.keys("k<C-d>");
+    assert_eq!(
+        ui.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .line_col()
+            .0,
+        0
+    );
+    assert!(ui.state.get().workspace.active_scroll().1 > 0.0);
+    let mut ui = Ui::code("fn f() {\n    body();\n}\ntail", |app| {
+        let id = app.workspace.active_document().unwrap();
+        let doc = &app.workspace.documents[&id];
+        let stamp = doc.stamp(id);
+        let range = 0..doc.buffer.line_start(3);
+        crate::app::folding::publish_syntax(app, stamp, Some(Arc::from([range])));
+        app.preferences.values_mut().editor.show_whitespace = true;
+    });
+    ui.keys("zc");
+    assert!(crate::app::editing::active_projection(&ui.state.get(), ui.viewport).folded());
+    ui.keys("j");
+    assert_eq!(
+        ui.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .line_col()
+            .0,
+        3
+    );
+    assert!(crate::app::editing::active_projection(&ui.state.get(), ui.viewport).folded());
+    ui.keys("kzo");
+    assert!(!crate::app::editing::active_projection(&ui.state.get(), ui.viewport).folded());
+    ui.keys("zMzR");
+    assert!(!crate::app::editing::active_projection(&ui.state.get(), ui.viewport).folded());
+    ui.keys("f(");
+    ui.redraw();
+    assert!(
+        ui.session.tree().nodes().iter().any(|n| n
+            .semantics
+            .as_ref()
+            .and_then(|s| s.name.as_deref())
+            == Some("Matching bracket"))
+    );
+    assert!(
+        ui.state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .options()
+            .indent_guides
+    );
 }

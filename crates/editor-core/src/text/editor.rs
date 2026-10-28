@@ -126,6 +126,9 @@ impl<'a> EditorMut<'a> {
         self.install_selections(*self.selection, extra);
         self
     }
+    pub fn supports_secondary(&self) -> bool {
+        self.secondary.is_some()
+    }
     pub fn has_secondary(&self) -> bool {
         self.secondary.as_ref().is_some_and(|s| !s.is_empty())
     }

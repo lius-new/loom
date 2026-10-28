@@ -186,6 +186,10 @@ pub enum Simple {
     CommandLine,
     Escape,
     ScrollCursor(ScrollTo),
+    Fold {
+        open: bool,
+        all: bool,
+    },
     SwapVisualEnds,
     ReselectVisual,
     /// `I` and `A` on a visual selection.
@@ -612,6 +616,22 @@ fn normal_simple(cursor: &mut Cursor<'_>, key: Key, recording: bool) -> Step<Act
         Key::Ctrl('a') => Simple::Increment(1),
         Key::Ctrl('x') => Simple::Increment(-1),
         Key::Char('z') => match cursor.next()? {
+            Key::Char('c') => Simple::Fold {
+                open: false,
+                all: false,
+            },
+            Key::Char('o') => Simple::Fold {
+                open: true,
+                all: false,
+            },
+            Key::Char('M') => Simple::Fold {
+                open: false,
+                all: true,
+            },
+            Key::Char('R') => Simple::Fold {
+                open: true,
+                all: true,
+            },
             Key::Char('z' | '.') => Simple::ScrollCursor(ScrollTo::Center),
             Key::Char('t') | Key::Enter => Simple::ScrollCursor(ScrollTo::Top),
             Key::Char('b' | '-') => Simple::ScrollCursor(ScrollTo::Bottom),
@@ -666,6 +686,22 @@ fn visual_simple(cursor: &mut Cursor<'_>, key: Key) -> Step<Action> {
         Key::Char(':') => Simple::CommandLine,
         Key::Esc | Key::Ctrl('c') => Simple::Escape,
         Key::Char('z') => match cursor.next()? {
+            Key::Char('c') => Simple::Fold {
+                open: false,
+                all: false,
+            },
+            Key::Char('o') => Simple::Fold {
+                open: true,
+                all: false,
+            },
+            Key::Char('M') => Simple::Fold {
+                open: false,
+                all: true,
+            },
+            Key::Char('R') => Simple::Fold {
+                open: true,
+                all: true,
+            },
             Key::Char('z' | '.') => Simple::ScrollCursor(ScrollTo::Center),
             Key::Char('t') | Key::Enter => Simple::ScrollCursor(ScrollTo::Top),
             Key::Char('b' | '-') => Simple::ScrollCursor(ScrollTo::Bottom),

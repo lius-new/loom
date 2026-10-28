@@ -22,6 +22,121 @@ pub struct DisplayMap {
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_ROWS: usize = 100_000;
 impl DisplayMap {
+    /// The single display-row movement rule used by ordinary and Vim input.
+    pub fn navigate(
+        &self,
+        buffer: &TextBuffer,
+        state: super::Selection,
+        movement: crate::normal::Movement,
+        extend: bool,
+    ) -> super::Selection {
+        use crate::normal::Movement;
+
+        let row = self.caret_row(buffer, state.cursor, state.wrap_affinity);
+        let source = self.row(buffer, row);
+        if state.range().is_none() {
+            let flip = match movement {
+                Movement::Left
+                    if state.wrap_affinity == Assoc::After
+                        && source.continuation
+                        && state.cursor == source.range.start =>
+                {
+                    Some(Assoc::Before)
+                }
+                Movement::Right if state.wrap_affinity == Assoc::Before => Some(Assoc::After),
+                _ => None,
+            };
+            if let Some(affinity) = flip {
+                return crate::text::Selection {
+                    wrap_affinity: affinity,
+                    ..state
+                };
+            }
+        }
+        let vertical = match movement {
+            Movement::Up => Some(row.saturating_sub(1)),
+            Movement::Down => Some((row + 1).min(self.len() - 1)),
+            Movement::PageUp(n) => Some(row.saturating_sub(n)),
+            Movement::PageDown(n) => Some((row + n).min(self.len() - 1)),
+            _ => None,
+        };
+        let mut after = if let Some(target) = vertical {
+            let column = state.preferred_column.unwrap_or_else(|| {
+                buffer
+                    .display_column(state.cursor)
+                    .saturating_sub(source.column)
+            });
+            let at = self.offset_at(buffer, target, column);
+            crate::text::Selection {
+                cursor: at,
+                anchor: extend.then(|| state.anchor.unwrap_or(state.cursor)),
+                wrap_affinity: self.affinity_at(buffer, target, at),
+                preferred_column: Some(column),
+            }
+        } else if matches!(movement, Movement::Home | Movement::End) {
+            let at = if movement == Movement::Home {
+                source.range.start
+            } else {
+                source.range.end
+            };
+            crate::text::Selection {
+                cursor: at,
+                anchor: extend.then(|| state.anchor.unwrap_or(state.cursor)),
+                wrap_affinity: self.affinity_at(buffer, row, at),
+                preferred_column: None,
+            }
+        } else {
+            crate::normal::navigated(buffer, state, movement, extend)
+        };
+        if matches!(movement, Movement::Left | Movement::Right) {
+            after.wrap_affinity = if movement == Movement::Right {
+                Assoc::Before
+            } else {
+                Assoc::After
+            };
+        }
+        after
+    }
+    /// Logical Vim j/k steps skip folds while retaining source-line columns.
+    pub fn adjacent_line(
+        &self,
+        buffer: &TextBuffer,
+        cursor: usize,
+        down: bool,
+        count: usize,
+    ) -> usize {
+        let line = buffer.line_of(cursor);
+        let last = buffer.line_count() - 1;
+        if !self.folded {
+            return if down {
+                line.saturating_add(count).min(last)
+            } else {
+                line.saturating_sub(count)
+            };
+        }
+        let mut row = self.row_of(buffer, buffer.line_start(line));
+        for _ in 0..count.min(buffer.line_count()) {
+            let current = self.source_line(row);
+            if down {
+                while row + 1 < self.len() && self.source_line(row + 1) == current {
+                    row += 1;
+                }
+                if row + 1 == self.len() {
+                    break;
+                }
+                row += 1;
+            } else {
+                while row > 0 && self.source_line(row - 1) == current {
+                    row -= 1;
+                }
+                if row == 0 {
+                    break;
+                }
+                row -= 1;
+            }
+        }
+        self.source_line(row)
+    }
     pub fn new(buffer: &TextBuffer, columns: Option<usize>, folds: &[Range<usize>]) -> Self {
         let linear = || Self {
             rows: None,

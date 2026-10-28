@@ -599,3 +599,20 @@ pub fn comment(editor: &mut EditorMut<'_>, prefix: &str) {
 
 #[cfg(test)]
 mod tests;
+
+/// Vim Ctrl+U uses the same atomic selection planner as other deletion commands.
+pub(crate) fn erase_prefix(editor: &mut EditorMut<'_>) {
+    let plans = editor
+        .selections()
+        .into_iter()
+        .map(|s| {
+            let row = editor.line_of(s.cursor);
+            let start = editor.line_start(row);
+            let indent = start + editor.line(row).len()
+                - editor.line(row).trim_start_matches([' ', '\t']).len();
+            let from = if s.cursor > indent { indent } else { start };
+            Plan::at(s.range().unwrap_or(from..s.cursor), "", 0)
+        })
+        .collect();
+    apply(editor, EditKind::Other, plans);
+}

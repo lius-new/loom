@@ -79,6 +79,11 @@ pub fn note_typed(app: &mut AppState, input: &str) {
 /// follows or ends a completion accordingly. Runs after every state update, so
 /// it is cheap when nothing relevant changed.
 pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
+    if crate::app::editor_vim::is_active(app) && !app.editor.vim.is_inserting() {
+        close(app);
+        app.editor.language.completion_timer = None;
+        return;
+    }
     if app
         .workspace
         .active_editor()
@@ -178,6 +183,9 @@ fn schedule(ctx: &AppContext, app: &mut AppState, trigger: Option<char>) {
 
 /// The words of the document, as completions, for when no server offers any.
 pub fn words(app: &mut AppState) {
+    if crate::app::editor_vim::is_active(app) && !app.editor.vim.is_inserting() {
+        crate::app::editor_vim::start_multi(app);
+    }
     crate::app::multicursor::primary_only(app);
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else { return };
@@ -271,6 +279,9 @@ pub fn words_of(text: &str) -> Vec<(usize, String)> {
 /// Asks the servers now. `manual` is the person pressing the key.
 pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Option<char>) {
     if manual {
+        if crate::app::editor_vim::is_active(app) && !app.editor.vim.is_inserting() {
+            crate::app::editor_vim::start_multi(app);
+        }
         crate::app::multicursor::primary_only(app);
     } else if app
         .workspace

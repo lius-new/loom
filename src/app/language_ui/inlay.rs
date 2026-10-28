@@ -40,11 +40,20 @@ pub struct Shown {
     pub hints: Arc<[Hint]>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct Seen {
+    pane: PaneId,
+    view: crate::domain::identity::ViewId,
+    generation: u64,
+    stamp: DocumentStamp,
+    line: usize,
+    providers: Vec<(u64, u64, u64)>,
+}
 #[derive(Clone, Default)]
 pub struct Inlay {
     timer: Option<Arc<ui_timer::Timer>>,
     pending: Option<Pending>,
-    seen: Option<(DocumentStamp, usize)>,
+    seen: Option<Seen>,
     pub shown: Option<Shown>,
 }
 
@@ -70,31 +79,67 @@ pub fn observe(ctx: &AppContext, app: &mut AppState) {
         return;
     };
     let line = t.text[..t.cursor.min(t.text.len())].matches('\n').count();
+    let mut providers = services(ctx)
+        .map(|services| {
+            services
+                .infos()
+                .into_iter()
+                .filter(|i| {
+                    i.status == crate::infrastructure::lsp::manager::Status::Ready
+                        && t.path.starts_with(&i.root)
+                        && i.providers.as_ref().is_some_and(|p| p.inlay_hint)
+                })
+                .map(|i| (i.id, i.run, i.registration_revision))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    providers.sort_unstable();
+    let now = Seen {
+        pane,
+        view: t.view,
+        generation: t.input_generation,
+        stamp: t.stamp,
+        line,
+        providers,
+    };
     let inlay = &mut app.editor.language.inlay;
-    if inlay.seen == Some((t.stamp, line)) {
+    if inlay.seen.as_ref() == Some(&now) {
         return;
     }
-    inlay.seen = Some((t.stamp, line));
-    // Hints for the same text stay while the caret is among the lines they cover.
-    let covered = inlay.shown.as_ref().is_some_and(|shown| {
-        shown.stamp == t.stamp && shown.lines.start + 20 <= line && line + 20 <= shown.lines.end
-            || shown.stamp == t.stamp && shown.lines.start == 0 && line + 20 <= shown.lines.end
+    let same_provider = inlay.seen.as_ref().is_some_and(|previous| {
+        previous.providers == now.providers
+            && previous.pane == now.pane
+            && previous.view == now.view
+            && previous.generation == now.generation
     });
+    inlay.seen = Some(now.clone());
+    // Hints for the same text stay while the caret is among the lines they cover.
+    let covered = same_provider
+        && inlay.shown.as_ref().is_some_and(|shown| {
+            shown.stamp == t.stamp && shown.lines.start + 20 <= line && line + 20 <= shown.lines.end
+                || shown.stamp == t.stamp && shown.lines.start == 0 && line + 20 <= shown.lines.end
+        });
     if covered {
         return;
     }
     inlay.pending = None;
     inlay.timer = None;
+    inlay.shown = None;
     let Some(application) = ctx.services().and_then(|r| r.application()) else {
         return;
     };
     let timed = ctx.clone();
     inlay.timer = Some(Arc::new(ui_timer::after(application, SETTLE, move || {
-        timed.update(|app| request(&timed, app));
+        timed.update(|app| {
+            if app.editor.language.inlay.seen.as_ref() == Some(&now) {
+                request(&timed, app);
+            }
+        });
     })));
 }
 
 fn request(ctx: &AppContext, app: &mut AppState) {
+    app.editor.language.inlay.timer = None;
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else { return };
     let Some(services) = services(ctx) else {

@@ -178,6 +178,13 @@ pub fn execute_command(
         {
             return;
         }
+        if matches!(
+            command,
+            Command::Line(..) | Command::ToggleComment | Command::Undo | Command::Redo
+        ) || matches!(command, Command::Indent(..)) && !app.editor.vim.is_inserting()
+        {
+            vim_input::prepare_external(app);
+        }
         if matches!(command, Command::Undo | Command::Redo) {
             super::language_ui::snippet_session::end(app);
         }
@@ -489,7 +496,12 @@ pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
     let in_active_view =
         app.workspace.active_pane() == pane && app.workspace.active() == Some(document);
     if in_active_view && vim_input::is_active(app) {
-        if vim_input::handle_text(app, input, rect) {
+        let handled = if session.is_some() {
+            vim_input::handle_commit(app, input, rect)
+        } else {
+            vim_input::handle_text(app, input, rect)
+        };
+        if handled {
             return;
         }
         // Text in Normal or Visual mode is not a command. Only a composition

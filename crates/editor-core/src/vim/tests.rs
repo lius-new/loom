@@ -56,6 +56,10 @@ impl Harness {
             host: TestHost::default(),
         };
         harness.vim.options.enabled = true;
+        harness.buffer.configure(crate::text::EditingOptions {
+            auto_pairs: false,
+            ..Default::default()
+        });
         let mut editor = EditorMut::new(&mut harness.buffer, &mut harness.selection, Vec::new());
         harness.vim.enter_view(
             crate::vim::ViewKey {
@@ -544,4 +548,150 @@ fn foreign_selections_become_visual_and_leaving_ends_insert() {
     assert!(!editor.buffer().can_redo());
     editor.undo();
     assert_eq!(editor.text(), "ad");
+}
+
+#[test]
+fn vim_editor_pairing_repeats_counts_dot_and_restores_provenance() {
+    let mut h = Harness::new("|");
+    h.buffer.configure(crate::text::EditingOptions {
+        language: "rust",
+        ..Default::default()
+    });
+    h.keys("i(");
+    assert_eq!(h.state(), "(|)");
+    h.keys(")<Esc>");
+    assert_eq!(h.buffer.text(), "()");
+    h.keys("0.");
+    assert_eq!(h.buffer.text(), "()()");
+    h.keys("u");
+    assert_eq!(h.buffer.text(), "()");
+    h.keys("<C-r>");
+    assert_eq!(h.buffer.text(), "()()");
+    let mut h = Harness::new("|");
+    h.buffer.configure(crate::text::EditingOptions {
+        language: "rust",
+        ..Default::default()
+    });
+    h.keys("3i(<Esc>");
+    assert_eq!(h.buffer.text(), "((()))");
+    h.keys("u");
+    assert_eq!(h.buffer.text(), "");
+    let mut h = Harness::new("|");
+    h.buffer.configure(crate::text::EditingOptions {
+        language: "rust",
+        ..Default::default()
+    });
+    h.keys("i{<BS><Esc>");
+    assert_eq!(h.buffer.text(), "");
+}
+
+#[test]
+fn vim_editor_literal_composition_stays_literal_in_dot_and_macro_replay() {
+    let mut h = Harness::new("|");
+    h.buffer.configure(crate::text::EditingOptions {
+        language: "rust",
+        ..Default::default()
+    });
+    h.keys("qai");
+    {
+        let mut editor = EditorMut::new(&mut h.buffer, &mut h.selection, vec![]);
+        assert!(h.vim.handle_commit(&mut editor, "(中文"));
+    }
+    h.keys("<Esc>q0@a");
+    assert_eq!(h.buffer.text(), "(中文(中文");
+    assert!(!h.buffer.text().contains(')'));
+    h.keys(".");
+    assert_eq!(h.buffer.text().matches('(').count(), 3);
+    assert!(!h.buffer.text().contains(')'));
+    let keys = [
+        Key::Literal('('),
+        Key::Literal('中'),
+        Key::Literal('\u{301}'),
+    ];
+    for key in keys {
+        assert_eq!(Key::parse(&key.notation()), vec![key]);
+    }
+}
+
+#[test]
+fn vim_editor_shift_and_open_lines_follow_indent_and_crlf_preferences() {
+    let mut h = Harness::new("|fn f() {\r\n}\r\n");
+    h.buffer.configure(crate::text::EditingOptions {
+        language: "rust",
+        indent_size: 4,
+        ..Default::default()
+    });
+    h.keys("ox<Esc>");
+    assert_eq!(h.buffer.text(), "fn f() {\r\n    x\r\n}\r\n");
+    h.keys(">>");
+    assert_eq!(h.buffer.line(1), "        x");
+    h.keys("<<");
+    assert_eq!(h.buffer.line(1), "    x");
+    h.buffer.configure(crate::text::EditingOptions {
+        language: "rust",
+        indent_size: 4,
+        use_tabs: true,
+        tab_width: 8,
+        ..Default::default()
+    });
+    h.keys(">>");
+    assert_eq!(h.buffer.line(1), "\t    x");
+    h.keys("<<");
+    assert_eq!(h.buffer.line(1), "    x");
+}
+
+#[test]
+fn vim_editor_folding_requests_are_native_and_do_not_change_undo_history() {
+    let mut h = Harness::new("|fn f() {}\n");
+    h.keys("zczozMzR");
+    assert_eq!(
+        h.host.requests,
+        vec![
+            Request::Fold {
+                open: false,
+                all: false
+            },
+            Request::Fold {
+                open: true,
+                all: false
+            },
+            Request::Fold {
+                open: false,
+                all: true
+            },
+            Request::Fold {
+                open: true,
+                all: true
+            }
+        ]
+    );
+    assert!(!h.buffer.can_undo());
+}
+
+#[test]
+fn vim_editor_metadata_conversion_splits_insert_history_and_count_replay() {
+    let mut h = Harness::new("|a\nb");
+    h.keys("i12");
+    {
+        let mut editor = EditorMut::new(&mut h.buffer, &mut h.selection, vec![]);
+        editor
+            .set_line_ending(crate::text::LineEnding::Crlf)
+            .unwrap();
+    }
+    h.keys("34<Esc>u");
+    assert_eq!(h.buffer.text(), "12a\r\nb");
+    h.keys("u");
+    assert_eq!(h.buffer.text(), "12a\nb");
+    h.keys("u");
+    assert_eq!(h.buffer.text(), "a\nb");
+    let mut h = Harness::new("|x\ny");
+    h.keys("3iA");
+    {
+        let mut editor = EditorMut::new(&mut h.buffer, &mut h.selection, vec![]);
+        editor
+            .set_line_ending(crate::text::LineEnding::Crlf)
+            .unwrap();
+    }
+    h.keys("<Esc>");
+    assert_eq!(h.buffer.text(), "Ax\r\ny");
 }

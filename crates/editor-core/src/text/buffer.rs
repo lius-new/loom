@@ -309,6 +309,10 @@ impl TextBuffer {
         self.history.can_redo()
     }
 
+    pub fn in_undo_group(&self) -> bool {
+        self.history.in_group()
+    }
+
     /// Start a new undo step with the next edit, unless an explicit group
     /// is open.
     pub fn break_undo_group(&mut self) {

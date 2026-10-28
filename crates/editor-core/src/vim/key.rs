@@ -6,6 +6,8 @@ use std::fmt;
 pub enum Key {
     /// A printable character, including space.
     Char(char),
+    /// Literal committed text retained by a macro.
+    Literal(char),
     /// Ctrl with a letter or punctuation key, e.g. `<C-r>`.
     Ctrl(char),
     Esc,
@@ -46,6 +48,12 @@ impl Key {
 
     fn named(name: &str) -> Option<Self> {
         let lower = name.to_ascii_lowercase();
+        if let Some(hex) = lower.strip_prefix("literal-") {
+            return u32::from_str_radix(hex, 16)
+                .ok()
+                .and_then(char::from_u32)
+                .map(Key::Literal);
+        }
         if let Some(rest) = lower.strip_prefix("c-") {
             let mut chars = rest.chars();
             let character = chars.next()?;
@@ -97,6 +105,7 @@ impl fmt::Display for Key {
             Key::Char(' ') => f.write_str("<Space>"),
             Key::Char('<') => f.write_str("<lt>"),
             Key::Char(character) => write!(f, "{character}"),
+            Key::Literal(character) => write!(f, "<Literal-{:x}>", *character as u32),
             Key::Ctrl(character) => write!(f, "^{}", character.to_ascii_uppercase()),
             Key::Esc => f.write_str("<Esc>"),
             Key::Enter => f.write_str("<CR>"),
