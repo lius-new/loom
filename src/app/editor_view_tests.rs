@@ -4829,7 +4829,7 @@ fn vim_editor_inlay_hints_recover_when_a_provider_appears_without_an_edit() {
 }
 
 #[test]
-fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git() {
+fn folding_gutter_hover_reveals_right_column_and_preserves_numbers_actions_and_git() {
     use crate::ui::editor_binding::Binding;
     use lgui::{
         application::{AppView, ApplicationContext},
@@ -4843,8 +4843,8 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
         lgui::render_skia::skia_text_system_handle(),
     );
     let rect = UiRect::new(0.0, 0.0, 640.0, 180.0);
-    let source = "first {\n  hidden\n}\nnext\n";
-    for (size, expected_left) in [(12, 50.0), (18, 73.0), (24, 96.0)] {
+    let source = "first {\n  hidden\n}\nnext {\n  tail\n}\n";
+    for (size, expected_left) in [(12, 60.0), (18, 83.0), (24, 106.0)] {
         let font = fonts::FontSettings {
             size,
             ..fonts::FontSettings::EDITOR
@@ -4863,8 +4863,11 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
                 let document = initial.workspace.active_document().unwrap();
                 let doc = &initial.workspace.documents[&document];
                 let stamp = doc.stamp(document);
-                let range = 0..doc.buffer.line_start(3);
-                crate::app::folding::publish_syntax(&mut initial, stamp, Some(Arc::from([range])));
+                let ranges = [
+                    0..doc.buffer.line_start(3),
+                    doc.buffer.line_start(3)..doc.buffer.line_start(6),
+                ];
+                crate::app::folding::publish_syntax(&mut initial, stamp, Some(Arc::from(ranges)));
                 let state = AppContext::detached(cx.state(initial));
                 *output.lock().unwrap() = Some(state.clone());
                 let git = cx.state(GitStoreSnapshot::default());
@@ -4914,10 +4917,12 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
                     .is_some()
             };
             assert!(!arrow_visible(&session, "Fold code at line 1"));
+            assert!(!arrow_visible(&session, "Fold code at line 4"));
             let fold = bounds(&session, "Fold code at line 1");
             let bulb = bounds(&session, "Code actions (Ctrl+.)");
             let git = bounds(&session, "Show change");
-            assert!(bulb.right <= fold.left && fold.right <= git.left);
+            assert!(bulb.right <= git.left && git.right <= fold.left);
+            assert_eq!(fold.right - fold.left, 10.0);
             let check_source = |session: &UiSession| {
                 let painted = session
                     .tree()
@@ -4927,7 +4932,7 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
                     .unwrap();
                 assert_eq!(
                     painted.layout_rect.left, expected_left,
-                    "original source margin at size {size}, scale {factor}"
+                    "only the narrow column is added at size {size}, scale {factor}"
                 );
                 let number = session
                     .tree()
@@ -4937,8 +4942,8 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
                     .unwrap();
                 assert_eq!(
                     number.layout_rect.right,
-                    expected_left - 14.0,
-                    "original number-to-source spacing"
+                    expected_left - 24.0,
+                    "original line-number position is unchanged"
                 );
             };
             check_source(&session);
@@ -4970,11 +4975,94 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
                     },
                 );
             };
+            let blank = Point::new((fold.left + fold.right) / 2.0, fonts::editor().line_h + 2.0);
+            for (point, cursor) in [
+                (Point::new(1.0, blank.y), CursorIcon::Default),
+                (
+                    Point::new(expected_left - 25.0, blank.y),
+                    CursorIcon::Default,
+                ),
+                (blank, CursorIcon::Default),
+                (
+                    Point::new(
+                        (bulb.left + bulb.right) / 2.0,
+                        (bulb.top + bulb.bottom) / 2.0,
+                    ),
+                    CursorIcon::Pointer,
+                ),
+                (
+                    Point::new((git.left + git.right) / 2.0, (git.top + git.bottom) / 2.0),
+                    CursorIcon::Pointer,
+                ),
+            ] {
+                send(
+                    &mut session,
+                    InputEvent::PointerMove(PointerData::mouse(point)),
+                );
+                assert!(
+                    arrow_visible(&session, "Fold code at line 1"),
+                    "gutter point {point:?}"
+                );
+                assert!(
+                    arrow_visible(&session, "Fold code at line 4"),
+                    "gutter point {point:?}"
+                );
+                assert_eq!(
+                    session
+                        .tree()
+                        .cursor_at(point)
+                        .unwrap_or(CursorIcon::Default),
+                    cursor,
+                    "gutter point {point:?}, font={size}, scale={factor}"
+                );
+            }
+            send(
+                &mut session,
+                InputEvent::PointerLeave(PointerData::mouse(blank)),
+            );
+            assert!(!arrow_visible(&session, "Fold code at line 1"));
+            assert!(!arrow_visible(&session, "Fold code at line 4"));
+            send(
+                &mut session,
+                InputEvent::PointerMove(PointerData::mouse(blank)),
+            );
+            assert!(arrow_visible(&session, "Fold code at line 1"));
+            assert!(arrow_visible(&session, "Fold code at line 4"));
+            assert_eq!(
+                session
+                    .tree()
+                    .cursor_at(blank)
+                    .unwrap_or(CursorIcon::Default),
+                CursorIcon::Default
+            );
+            click(&mut session, blank.x, blank.y);
+            assert_eq!(
+                exposed
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .get()
+                    .workspace
+                    .active_editor()
+                    .unwrap()
+                    .cursor(),
+                0,
+                "blank column click must not move the caret"
+            );
             click(
                 &mut session,
                 (fold.left + fold.right) / 2.0,
                 (fold.top + fold.bottom) / 2.0,
             );
+            assert_eq!(
+                session.tree().cursor_at(Point::new(
+                    (fold.left + fold.right) / 2.0,
+                    (fold.top + fold.bottom) / 2.0
+                )),
+                Some(CursorIcon::Pointer)
+            );
+            assert!(arrow_visible(&session, "Fold code at line 4"));
             assert!(arrow_visible(&session, "Unfold code at line 1"));
             let state = exposed.lock().unwrap().clone().unwrap();
             assert!(
@@ -4985,8 +5073,9 @@ fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git()
             click(&mut session, expected_left + 0.5, 4.0);
             assert!(
                 !arrow_visible(&session, "Unfold code at line 1"),
-                "leaving the fold target hides its arrow"
+                "moving from the gutter into source hides every arrow"
             );
+            assert!(!arrow_visible(&session, "Fold code at line 4"));
             assert_eq!(
                 state.get().workspace.active_editor().unwrap().cursor(),
                 0,

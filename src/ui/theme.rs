@@ -535,12 +535,12 @@ pub const TERMINAL_H: f32 = 176.0;
 pub const TERMINAL_MIN_H: f32 = 120.0;
 pub const TERMINAL_MAX_H: f32 = 480.0;
 pub const EDITOR_MIN_H: f32 = 96.0;
-/// Minimum editor gutter width; see `fonts::Metrics::gutter_w`.
+/// Base line-number gutter width; `fonts::Metrics::gutter_w` adds the fold column.
 /// Line numbers and Git marks retain 32 pixels beside the action lane.
 pub const GUTTER_W: f32 = 46.0;
 pub const GUTTER_ACTION_W: f32 = 14.0;
-// Share the original action strip without moving line numbers or source text.
-pub const GUTTER_CODE_ACTION_W: f32 = 6.0;
+// A narrow folding column follows the original line-number and Git gutter.
+pub const GUTTER_FOLD_W: f32 = 10.0;
 pub const CODE_PAD: f32 = 4.0;
 /// Estimated monospace advance of UI text at `UI_SIZE`. Code surfaces use
 /// the measured `fonts::Metrics::char_w` instead.

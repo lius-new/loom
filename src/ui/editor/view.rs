@@ -245,53 +245,73 @@ pub(crate) fn render(
         let gutter_content = UiRect::new(
             gutter_viewport.left,
             code_top,
-            gutter_viewport.right,
+            gutter_viewport.right - theme::GUTTER_FOLD_W,
             code_top + metrics.content_h,
         );
         let gutter_hover = s
             .editor_gutter_hover
             .filter(|(hovered_pane, _)| *hovered_pane == pane)
             .map(|(_, line)| line);
-        content = content.child(
-            clip(gutter_viewport, 0.0, -scroll_y).child(gutter::render_rows(
-                gutter_content,
-                visible_rows.clone().filter_map(|row| {
-                    let source = projection.row(&buffer, row);
-                    (!source.continuation).then_some((source.line, row))
-                }),
-                &decorations,
-                gutter_hover,
-            )),
+        let fold_viewport = UiRect::new(
+            gutter_viewport.right - theme::GUTTER_FOLD_W,
+            gutter_viewport.top,
+            gutter_viewport.right,
+            gutter_viewport.bottom,
         );
-        for row in visible_rows.clone() {
-            let source = projection.row(&buffer, row);
-            if source.continuation {
-                continue;
-            }
-            if let Some(marker) = document.folds.iter().find(|f| f.line == source.line) {
-                let y = code_top + row as f32 * fonts::editor().line_h - scroll_y;
-                content = content.child(super::fold::button(
-                    UiRect::new(
-                        gutter_viewport.left + theme::GUTTER_CODE_ACTION_W,
-                        y,
-                        gutter_viewport.left + theme::GUTTER_ACTION_W,
-                        y + fonts::editor().line_h,
-                    ),
-                    format!(
-                        "{} code at line {}",
-                        if marker.collapsed { "Unfold" } else { "Fold" },
-                        marker.line + 1
-                    ),
-                    super::fold::Content::Chevron {
-                        collapsed: marker.collapsed,
-                    },
-                    state.clone(),
-                    editor_focus.clone(),
-                    id,
-                    document.stamp,
-                    marker.start,
-                ));
-            }
+        let fold_rows: Vec<_> = visible_rows
+            .clone()
+            .filter_map(|row| {
+                let source = projection.row(&buffer, row);
+                if source.continuation {
+                    return None;
+                }
+                document
+                    .folds
+                    .iter()
+                    .find(|f| f.line == source.line)
+                    .map(|marker| (row, marker))
+            })
+            .collect();
+        let fold_column =
+            super::fold::Column::new(id, fold_rows.iter().map(|(_, marker)| marker.start));
+        let mut fold_controls = fold_column
+            .render(gutter_viewport, fold_viewport.left)
+            .child(
+                clip(gutter_viewport, 0.0, -scroll_y).child(gutter::render_rows(
+                    gutter_content,
+                    visible_rows.clone().filter_map(|row| {
+                        let source = projection.row(&buffer, row);
+                        (!source.continuation).then_some((source.line, row))
+                    }),
+                    &decorations,
+                    gutter_hover,
+                )),
+            );
+        for (row, marker) in fold_rows {
+            let y = code_top + row as f32 * fonts::editor().line_h - scroll_y;
+            fold_controls = fold_controls.child(super::fold::button(
+                UiRect::new(
+                    fold_viewport.left,
+                    y,
+                    fold_viewport.right,
+                    y + fonts::editor().line_h,
+                ),
+                format!(
+                    "{} code at line {}",
+                    if marker.collapsed { "Unfold" } else { "Fold" },
+                    marker.line + 1
+                ),
+                super::fold::Content::Chevron {
+                    collapsed: marker.collapsed,
+                    column: fold_column.clone(),
+                    start: marker.start,
+                },
+                state.clone(),
+                editor_focus.clone(),
+                id,
+                document.stamp,
+                marker.start,
+            ));
         }
         // The hovered change bar opens its peek, like a link.
         if let Some(run) = gutter::hovered_run(&decorations, gutter_hover)
@@ -313,17 +333,18 @@ pub(crate) fn render(
                 - scroll_y)
                 .min(gutter_viewport.bottom);
             let st_peek = state.clone();
-            content = content.child(
-                panel(
-                    // Keep the action strip clickable while a changed line is hovered.
-                    UiRect::new(
-                        gutter_viewport.left + theme::GUTTER_ACTION_W,
-                        top,
-                        gutter_viewport.right,
-                        bottom,
-                    ),
-                    VisualStyle::default(),
-                )
+            let change_id = fold_column.change_id();
+            let change_rect = UiRect::new(
+                gutter_viewport.left + theme::GUTTER_ACTION_W,
+                top,
+                gutter_viewport.right - theme::GUTTER_FOLD_W,
+                bottom,
+            );
+            fold_controls = fold_controls.child(
+                Element::new(move |cx| {
+                    UiElement::panel(change_id.clone(), change_rect, VisualStyle::default())
+                        .children(cx.children)
+                })
                 .key(format!("gutter-change-{}", pane.get()))
                 .event_policy(EventPolicy::INTERACTIVE)
                 .cursor(CursorIcon::Pointer)
@@ -342,16 +363,15 @@ pub(crate) fn render(
         {
             let top = code_top + cursor_row as f32 * fonts::editor().line_h - scroll_y;
             let st_actions = state.clone();
-            content = content.child(clip(gutter_viewport, 0.0, 0.0).child(
-                super::lightbulb::render(
-                    UiRect::new(
-                        gutter_viewport.left,
-                        top,
-                        gutter_viewport.left + theme::GUTTER_CODE_ACTION_W,
-                        top + fonts::editor().line_h,
-                    ),
-                    move || st_actions.send(Event::CodeActions { revision }),
+            fold_controls = fold_controls.child(super::lightbulb::render(
+                UiRect::new(
+                    gutter_viewport.left,
+                    top,
+                    gutter_viewport.left + theme::GUTTER_ACTION_W,
+                    top + fonts::editor().line_h,
                 ),
+                fold_column.actions_id(),
+                move || st_actions.send(Event::CodeActions { revision }),
             ));
         }
         root = root.on_event_capture(UiEventKind::PointerMove, move |_cx, payload| {
@@ -760,7 +780,9 @@ pub(crate) fn render(
             pane,
             &state,
         ));
-        root = root.child(content);
+        root = root
+            .child(content)
+            .child(clip(gutter_viewport, 0.0, 0.0).child(fold_controls));
 
         // The pointer over an underline opens its message, as in VS Code and
         // IntelliJ. Where two overlap, the more serious one wins.

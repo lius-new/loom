@@ -60,12 +60,12 @@ impl Metrics {
         style
     }
 
-    /// Editor line-number gutter width, grown with the font so wide numbers
-    /// still fit.
+    /// Scale line numbers with the font, then add a fixed narrow folding column.
     pub fn gutter_w(&self) -> f32 {
         (crate::ui::theme::GUTTER_W * self.size / 12.0)
             .round()
             .max(crate::ui::theme::GUTTER_W)
+            + crate::ui::theme::GUTTER_FOLD_W
     }
 }
 
