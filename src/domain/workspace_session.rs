@@ -64,6 +64,8 @@ pub enum SavedView {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SavedEncoding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_ending: Option<String>,
     pub current: crate::domain::encoding::TextFormat,
     pub saved: crate::domain::encoding::TextFormat,
     #[serde(default)]
@@ -498,8 +500,13 @@ fn save_pane_node<D: Clone, K: Clone + Ord>(
                     } else if dirty
                         || document.format() != Default::default()
                         || document.meta.read_override.is_some()
+                        || document.buffer.chosen_line_ending().is_some()
                     {
                         Some(SavedEncoding {
+                            line_ending: document
+                                .buffer
+                                .chosen_line_ending()
+                                .map(|e| e.label().to_owned()),
                             current: document.format(),
                             saved: document.saved_format,
                             read_override: document.meta.read_override.map(|_| document.format()),

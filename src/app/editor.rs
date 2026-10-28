@@ -213,6 +213,9 @@ pub(crate) fn apply_command(
     if app.workspace.active_editor().is_none() {
         return Ok(None);
     }
+    if let Some(view) = app.workspace.active() {
+        super::editing::configure(app, view);
+    }
     match command {
         Command::Copy | Command::Cut => {
             let selected = app
@@ -453,6 +456,7 @@ pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
     if !input.is_empty() {
         app.workspace.promote_preview(pane, document);
     }
+    super::editing::configure(app, document);
     let language = app
         .workspace
         .view_meta(document)

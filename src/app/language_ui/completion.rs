@@ -673,6 +673,11 @@ pub fn accept(app: &mut AppState, then: Option<char>) -> bool {
         cursor,
         false,
     );
+    let ending = app
+        .workspace
+        .editor(session.pane)
+        .map(|e| e.line_ending())
+        .unwrap_or("\n");
     let indent = line_indent(&t.text, plan.range.start);
     let mut snippet = plan.snippet.then(|| {
         let resolve = snippet::insertion_variables(
@@ -687,15 +692,22 @@ pub fn accept(app: &mut AppState, then: Option<char>) -> bool {
         if !entry.item.as_is {
             snippet::indent_lines(&mut parsed, &indent);
         }
+        snippet::normalize_endings(&mut parsed, ending);
         parsed
     });
-    let text = snippet
-        .as_ref()
-        .map_or_else(|| plan.text.clone(), |s| s.text.clone());
+    let text = snippet.as_ref().map_or_else(
+        || loom_editor_core::text::normalize_endings(&plan.text, ending),
+        |s| s.text.clone(),
+    );
     let mut edits: Vec<Edit> = plan
         .additional
         .iter()
-        .map(|(range, new_text)| Edit::replace(range.clone(), new_text.clone()))
+        .map(|(range, new_text)| {
+            Edit::replace(
+                range.clone(),
+                loom_editor_core::text::normalize_endings(new_text, ending),
+            )
+        })
         .collect();
     edits.push(Edit::replace(plan.range.clone(), text.clone()));
     if let Some(c) = then {

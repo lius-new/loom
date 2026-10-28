@@ -26,6 +26,7 @@ pub use crate::ui::chrome::diff_binding::DiffSplit;
 
 #[derive(Clone, Default)]
 pub struct EditorState {
+    pub editing: crate::app::editing::State,
     pub images: crate::app::image_preview::State,
     /// Current Markdown publications changed; no service handle lives here.
     pub markdown_revision: u64,

@@ -51,6 +51,12 @@ pub(crate) struct PreparedFileBatch {
     roots: Vec<PathBuf>,
     directories: Vec<PreparedDirectory>,
     disk_updates: Vec<crate::app::workspace::PreparedDiskUpdate>,
+    editing: Vec<(
+        crate::domain::identity::FileId,
+        u64,
+        PathBuf,
+        loom_editor_core::text::FileOptions,
+    )>,
     defer_tree: bool,
     invalidate_search: bool,
 }
@@ -83,7 +89,29 @@ pub(crate) fn prepare_batch(app: &AppState, batch: &FileChangeBatch) -> Prepared
             (next != Some(previous)).then(|| (key.clone(), previous.clone(), next.cloned()))
         })
         .collect();
+    let editing = if batch.requires_full_rescan
+        || paths
+            .iter()
+            .any(|p| p.file_name().is_some_and(|n| n == ".editorconfig"))
+    {
+        app.workspace
+            .documents
+            .iter()
+            .filter(|(_, d)| d.is_text())
+            .map(|(&id, d)| {
+                (
+                    id,
+                    d.incarnation,
+                    d.meta.path.clone(),
+                    crate::infrastructure::editorconfig::load(&d.meta.path),
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     PreparedFileBatch {
+        editing,
         roots: app.explorer.model.roots().to_vec(),
         directories,
         disk_updates,
@@ -135,6 +163,17 @@ pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch)
         }
     }
     crate::infrastructure::ui_dispatch::retire(batch.directories);
+    for (id, incarnation, path, options) in batch.editing {
+        if let Some(doc) = app
+            .workspace
+            .documents
+            .get_mut(&id)
+            .filter(|d| d.incarnation == incarnation && d.meta.path == path)
+        {
+            doc.buffer.initialize_file_options(options);
+            changed = true;
+        }
+    }
     let expected_updates = batch.disk_updates.len();
     let outcomes = app.workspace.apply_disk_updates(batch.disk_updates);
     retry |= outcomes.len() < expected_updates;
@@ -158,6 +197,7 @@ pub(crate) fn apply_prepared_batch(app: &mut AppState, batch: PreparedFileBatch)
         app.search.ui.refresh += 1;
         changed = true;
     }
+    changed |= super::editing::configure_all(app);
     (changed, retry)
 }
 

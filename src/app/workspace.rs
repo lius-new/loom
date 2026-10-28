@@ -381,7 +381,8 @@ impl Workspace {
 impl PreparedTextFile {
     pub fn new(path: PathBuf, contents: String) -> Self {
         let disk = filesystem::capture(&path, &contents);
-        Self::with_disk_state(path, contents, disk)
+        let options = crate::infrastructure::editorconfig::load(&path);
+        Self::with_disk_state(path, contents, disk).with_file_options(options)
     }
 }
 

@@ -449,10 +449,20 @@ fn plan(
                 if let Some(origin) = &origin {
                     check_stamps(app, request, origin)?;
                 }
+                let ending = origin
+                    .as_ref()
+                    .and_then(|p| app.workspace.documents.values().find(|d| d.meta.path == *p))
+                    .map(|d| d.buffer.line_ending())
+                    .unwrap_or_else(|| if text.contains("\r\n") { "\r\n" } else { "\n" });
                 let edits: Vec<Edit> = document
                     .edits
                     .iter()
-                    .map(|e| Edit::replace(e.span.bytes(&text), e.new_text.clone()))
+                    .map(|e| {
+                        Edit::replace(
+                            e.span.bytes(&text),
+                            loom_editor_core::text::normalize_endings(&e.new_text, ending),
+                        )
+                    })
                     .collect();
                 let mut preview = TextBuffer::new(text.as_ref().clone());
                 let mut selection = Selection::default();

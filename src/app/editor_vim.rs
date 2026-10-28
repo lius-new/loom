@@ -110,6 +110,9 @@ fn with_vim<R>(
     clipboard: &dyn SystemClipboard,
     f: impl FnOnce(&mut vim::Vim, &mut crate::model::text::EditorMut<'_>, &mut AppHost<'_>) -> R,
 ) -> Option<(R, Vec<Request>)> {
+    if let Some(view) = app.workspace.active() {
+        super::editing::configure(app, view);
+    }
     sync_view(app);
     let mut host = AppHost {
         clipboard,

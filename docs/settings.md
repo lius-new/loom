@@ -287,3 +287,55 @@ The default bindings are in [`assets/keymaps/default.json`](../assets/keymaps/de
 Use `"markdown": {"font_size": 16, "line_height": 22, "max_width": 960}` in user
 or project settings. See [Markdown reading](markdown.md) for ranges, actions
 and resource policy.
+
+## Indentation and line endings
+
+Click **Spaces/Tab** in the status bar to choose two spaces, four spaces or tabs
+for this open document. Tab display width is a separate choice (2, 4 or 8).
+These choices last until the document closes. The menu also opens user and
+project defaults. Settings JSON accepts:
+
+```json
+{
+  "editor": {
+    "indent_size": 4,
+    "tab_width": 8,
+    "use_tabs": false,
+    "auto_pairs": true,
+    "new_file_line_ending": "lf"
+  },
+  "editor_languages": {
+    "go": { "use_tabs": true },
+    "python": { "indent_size": 4 }
+  }
+}
+```
+
+Both objects are allowed in `.loom/settings.json`. Widths accept 1–16.
+Effective precedence, highest first: a temporary document choice; project
+language overrides; project editor overrides; matching `.editorconfig` rules;
+user language overrides; user editor defaults. Unspecified fields inherit.
+EditorConfig supports directory inheritance with `root=true`, file globs,
+`indent_style`, `indent_size` (including `tab`), `tab_width`, `end_of_line`
+(`lf`/`crlf`) and `unset`. Changes inside watched workspace folders refresh in
+the background. Reopen files outside a watched folder to reread their rules.
+
+Enter carries indentation and opens an indented middle line between brackets;
+typing a closer on an indented empty line removes one indentation step. Tab and
+Shift-Tab affect touched lines, preserving selection direction. A selection
+ending at the next line's start excludes that line.
+
+Click **LF**, **CRLF** or **Mixed** to normalize a file's newlines. Conversion is
+one undo step, follows selections in split views, and keeps the final-newline
+shape, character encoding and BOM. It changes the buffer; Save and Save All
+write the converted bytes. Empty and single-line documents can choose future
+newlines without adding text. Enter, paste, completion snippets and formatting
+respect the document's convention. Mixed files retain their actual text until
+an explicit conversion. Opening an existing file never normalizes its content.
+
+The default and EditorConfig `end_of_line` apply only to documents that have not
+contained a line break. Existing line breaks establish the convention. A manual
+choice persists in the restored session, including empty documents. Closing and
+reopening from disk detects the saved bytes again. A clean external reload
+redetects disk line endings; external changes to unsaved text keep the existing
+conflict flow. Git's automatic line-ending settings are independent.

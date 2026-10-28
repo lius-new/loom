@@ -98,6 +98,7 @@ export function allowed(file, dependency) {
   if(file==='src/infrastructure/window_geometry.rs')return ['infrastructure','domain','lgui','windows_sys','std::process'].includes(root);
   if(file==='src/infrastructure/document_filesystem.rs')return ['infrastructure','features','domain','std::fs','std::process','windows_sys'].includes(root);
   if(file.startsWith('src/features/encoding/'))return ['features','domain','encoding_rs','chardetng'].includes(root);
+  if(file==='src/infrastructure/editorconfig.rs')return ['infrastructure','domain','std::fs','globset','loom_editor_core'].includes(root);
   if(file==='src/infrastructure/edit_journal.rs')return ['infrastructure','std::fs','std::process'].includes(root);
   if(file==='src/infrastructure/file_watcher.rs')return ['infrastructure','notify','std::fs','std::thread'].includes(root);
   if(file==='src/infrastructure/lsp_watch.rs')return ['infrastructure','features','serde_json','std::fs','std::thread'].includes(root);

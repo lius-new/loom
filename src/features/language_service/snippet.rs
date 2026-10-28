@@ -959,3 +959,38 @@ mod tests {
         assert_eq!(resolve("NOPE"), None);
     }
 }
+
+/// Normalize expanded text and remap tab stops after indentation and variables.
+pub fn normalize_endings(snippet: &mut Snippet, ending: &str) {
+    let text = &snippet.text;
+    if !text.contains(['\r', '\n']) {
+        return;
+    }
+    let mapped = |at: usize| loom_editor_core::text::normalize_endings(&text[..at], ending).len();
+    for stop in &mut snippet.stops {
+        for range in &mut stop.ranges {
+            *range = mapped(range.start)..mapped(range.end);
+        }
+        for choice in &mut stop.choices {
+            *choice = loom_editor_core::text::normalize_endings(choice, ending);
+        }
+    }
+    snippet.text = loom_editor_core::text::normalize_endings(text, ending);
+}
+
+#[cfg(test)]
+mod ending_tests {
+    use super::*;
+    #[test]
+    fn normalized_snippet_stops_track_multiline_defaults_and_choices() {
+        let mut snippet = parse("fn { \n  \u{24}{1:中\n尾}\n}\u{24}0", &|_| None);
+        normalize_endings(&mut snippet, "\r\n");
+        assert!(snippet.text.contains("中\r\n尾"));
+        let first = snippet.stops.iter().find(|s| s.index == 1).unwrap();
+        assert_eq!(&snippet.text[first.ranges[0].clone()], "中\r\n尾");
+        assert_eq!(
+            snippet.stops.last().unwrap().ranges[0].end,
+            snippet.text.len()
+        );
+    }
+}

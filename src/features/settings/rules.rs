@@ -38,6 +38,10 @@ impl FileAssociation {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Settings {
     #[serde(default)]
+    pub editor: super::editing::EditorSettings,
+    #[serde(default)]
+    pub editor_languages: std::collections::BTreeMap<String, super::editing::EditorOverrides>,
+    #[serde(default)]
     pub theme: ThemeId,
     #[serde(default)]
     pub encoding: crate::domain::encoding::EncodingSettings,
@@ -126,6 +130,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeId::default(),
+            editor: Default::default(),
+            editor_languages: Default::default(),
             encoding: Default::default(),
             ui_scale: None,
             default_shell: ShellKind::default(),
@@ -166,7 +172,13 @@ pub struct LoadOutcome {
 
 /// Settings a project's `.loom/settings.json` may override. Everything else
 /// is a personal preference and only read from the user's file.
-pub const PROJECT_KEYS: &[&str] = &["default_shell", "file_associations", "encoding"];
+pub const PROJECT_KEYS: &[&str] = &[
+    "default_shell",
+    "file_associations",
+    "encoding",
+    "editor",
+    "editor_languages",
+];
 
 /// Which file a settings source is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -228,7 +240,10 @@ fn parse_overrides_with(
             ));
             continue;
         }
-        let keyed = matches!(key.as_str(), "language_servers" | "languages");
+        let keyed = matches!(
+            key.as_str(),
+            "language_servers" | "languages" | "editor_languages"
+        );
         if let (Value::Object(default_fields), Value::Object(fields)) = (default, &value)
             && !keyed
         {
@@ -361,7 +376,13 @@ fn accept(
             .validate()
             .and_then(|()| settings.markdown.validate())
             .and_then(|()| settings.encoding.new_file.validate())
-        {
+            .and_then(|()| settings.editor.validate())
+            .and_then(|()| {
+                settings
+                    .editor_languages
+                    .values()
+                    .try_for_each(|v| v.validate())
+            }) {
             Ok(()) => *accepted = candidate,
             Err(error) => errors.push(error),
         },
@@ -464,6 +485,8 @@ mod tests {
     fn settings_round_trip_as_json() {
         let settings = Settings {
             theme: ThemeId::parse("ember").unwrap(),
+            editor: Default::default(),
+            editor_languages: Default::default(),
             encoding: Default::default(),
             ui_scale: Some(130),
             default_shell: ShellKind::Bash,

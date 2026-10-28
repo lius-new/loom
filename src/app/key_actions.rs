@@ -67,6 +67,16 @@ pub fn attach(root: Element, env: KeyEnv) -> Element {
 
 /// Resolve one key-down event. Returns whether the keymap consumed it.
 pub fn handle_key_down(env: &KeyEnv, event: &KeyboardEvent) -> bool {
+    if env
+        .state
+        .get()
+        .editor
+        .editing
+        .menu
+        .is_some_and(|(view, _)| env.state.get().workspace.active() == Some(view))
+    {
+        return crate::app::editing::key(&env.state, event);
+    }
     if env.state.get().chrome.encoding.is_some() {
         return crate::app::encoding::key(&env.state, event);
     }

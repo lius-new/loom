@@ -66,6 +66,8 @@ struct Items {
     items: Vec<(String, TextStyle)>,
     group: Option<Group>,
     encoding: Option<usize>,
+    ending: Option<usize>,
+    indent: Option<usize>,
 }
 
 impl Items {
@@ -118,6 +120,18 @@ pub fn language_anchor(rect: UiRect, frame: &StatusFrame) -> Option<UiRect> {
     }
     x += group.action_width();
     Some(UiRect::new(x, rect.top, x + group.chip_width, rect.bottom))
+}
+
+pub fn editing_anchor(rect: UiRect, frame: &StatusFrame, ending: bool) -> Option<UiRect> {
+    let items = status_items(frame);
+    let index = if ending { items.ending? } else { items.indent? };
+    let x = items.left(rect) + (0..index).map(|i| items.width_of(i) + GAP).sum::<f32>();
+    Some(UiRect::new(
+        x,
+        rect.top,
+        x + items.width_of(index),
+        rect.bottom,
+    ))
 }
 
 /// The encoding label's measured bounds, used to anchor its menu above it.
@@ -195,6 +209,30 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
                 .on_click(move || action.run(StatusCommand::Encoding)),
             );
         }
+        if items.ending == Some(index) || items.indent == Some(index) {
+            let action = state.clone();
+            let is_ending = items.ending == Some(index);
+            bar = bar.child(
+                panel(
+                    UiRect::new(x - 3.0, rect.top, x + w + TEXT_MARGIN, rect.bottom),
+                    VisualStyle::default(),
+                )
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(lgui::core::CursorIcon::Pointer)
+                .semantics(Semantics::new(SemanticRole::Button).name(if is_ending {
+                    "Change line ending"
+                } else {
+                    "Change indentation"
+                }))
+                .on_click(move || {
+                    action.run(if is_ending {
+                        StatusCommand::LineEnding
+                    } else {
+                        StatusCommand::Indent
+                    })
+                }),
+            );
+        }
         x += w + GAP;
     }
     // Each chip and action owns its own click target.
@@ -213,6 +251,8 @@ pub fn render(rect: UiRect, state: StatusBinding) -> Element {
 fn status_items(s: &StatusFrame) -> Items {
     let mut items = Vec::new();
     let mut encoding = None;
+    let mut ending = None;
+    let mut indent = None;
     if !s.pending.is_empty() {
         items.push((
             format!(
@@ -262,8 +302,14 @@ fn status_items(s: &StatusFrame) -> Items {
                 format!("Ln {}, Col {}", line + 1, col + 1),
                 theme::mono(theme::c().text_muted, theme::SMALL),
             ));
+            indent = Some(items.len());
             items.push((
-                "Spaces: 2".into(),
+                file.indent.clone(),
+                theme::mono(theme::c().text_dim, theme::SMALL),
+            ));
+            ending = Some(items.len());
+            items.push((
+                file.line_ending.clone(),
                 theme::mono(theme::c().text_dim, theme::SMALL),
             ));
             encoding = Some(items.len());
@@ -297,6 +343,8 @@ fn status_items(s: &StatusFrame) -> Items {
         items,
         group,
         encoding,
+        ending,
+        indent,
     }
 }
 
@@ -477,6 +525,8 @@ mod tests {
                 diff_loading: false,
                 vim: None,
                 file: Some(FileStatus {
+                    indent: "Spaces: 2".into(),
+                    line_ending: "LF".into(),
                     encoding: "UTF-8".into(),
                     lang,
                     missing: false,
@@ -505,6 +555,8 @@ mod tests {
                     seen.lock().unwrap().push(match command {
                         StatusCommand::LanguagePanel => "panel",
                         StatusCommand::Encoding => "encoding",
+                        StatusCommand::LineEnding => "ending",
+                        StatusCommand::Indent => "indent",
                         StatusCommand::ServerAction(_) => "action",
                     });
                 },
@@ -517,7 +569,7 @@ mod tests {
             );
             let mut session = UiSession::new();
             session.render_view(&view, rect, UiScale::ONE);
-            for label in ["2 diagnostics", "Ln 1, Col 1", "Spaces: 2", lang.badge()] {
+            for label in ["2 diagnostics", "Ln 1, Col 1", lang.badge()] {
                 let bounds = session
                     .tree()
                     .nodes()
@@ -535,6 +587,17 @@ mod tests {
                     commands.lock().unwrap().is_empty(),
                     "{label} opened a panel"
                 );
+            }
+            for (ending, expected) in [(true, "ending"), (false, "indent")] {
+                let bounds = editing_anchor(rect, &frame, ending).unwrap();
+                click(
+                    &mut session,
+                    &context,
+                    (bounds.left + bounds.right) / 2.0,
+                    14.0,
+                );
+                assert_eq!(*commands.lock().unwrap(), [expected]);
+                commands.lock().unwrap().clear();
             }
             let bounds = session
                 .tree()

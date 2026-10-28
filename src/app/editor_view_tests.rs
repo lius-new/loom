@@ -3356,3 +3356,55 @@ fn typed_delimiters_and_ime_commits_take_distinct_paths_through_editor_events() 
         "{中文()}".len()
     );
 }
+
+#[test]
+fn document_tab_width_changes_paint_geometry_hits_and_ime_columns_together() {
+    use loom_editor_core::text::EditingOptions;
+    let context = lgui::application::ApplicationContext::empty(Default::default());
+    let _fonts = lgui::backend::install_text_environment(
+        &context,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    let rect = UiRect::new(0.0, 0.0, 800.0, 300.0);
+    let left = fonts::editor().gutter_w() + theme::CODE_PAD;
+    let mut positions = Vec::new();
+    for width in [2, 4, 8] {
+        let mut buffer = TextBuffer::new("\t中文\te\u{301}😀");
+        buffer.configure(EditingOptions {
+            tab_width: width,
+            ..Default::default()
+        });
+        let metrics = scroll_metrics(rect, left, &buffer);
+        let x = document_caret(
+            &buffer,
+            0,
+            1,
+            left,
+            0.0,
+            rect.right,
+            (0.0, metrics.viewport_w),
+        );
+        positions.push(x);
+        assert_eq!(
+            cursor_offset_from_point(&buffer, rect, left, metrics, 0.0, 0.0, x + 0.01, 5.0),
+            1
+        );
+        for column in [1, 2, 3, 4, 6] {
+            let at = buffer.offset_at_char_column(0, column);
+            let x = document_caret(
+                &buffer,
+                0,
+                column,
+                left,
+                0.0,
+                rect.right,
+                (0.0, metrics.viewport_w),
+            );
+            assert_eq!(
+                cursor_offset_from_point(&buffer, rect, left, metrics, 0.0, 0.0, x + 0.01, 5.0),
+                buffer.grapheme_floor(at)
+            );
+        }
+    }
+    assert!(positions[0] < positions[1] && positions[1] < positions[2]);
+}

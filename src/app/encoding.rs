@@ -118,11 +118,10 @@ pub(crate) fn prepare(path: &Path) -> Result<crate::app::workspace::PreparedText
         crate::infrastructure::document_filesystem::MAX_EDITABLE_FILE_BYTES,
     )
     .map_err(|e| format!("Could not open {}: {e}", path.display()))?;
-    Ok(crate::app::workspace::PreparedTextFile::with_encoding(
-        path.to_path_buf(),
-        decoded,
-        state,
-    ))
+    Ok(
+        crate::app::workspace::PreparedTextFile::with_encoding(path.to_path_buf(), decoded, state)
+            .with_file_options(crate::infrastructure::editorconfig::load(path)),
+    )
 }
 
 pub fn binding(state: &AppContext) -> crate::ui::chrome::encoding_binding::Binding {

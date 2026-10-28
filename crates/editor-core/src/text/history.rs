@@ -31,6 +31,7 @@ impl EditKind {
 pub(super) struct Entry {
     pub changes: Vec<ChangeSet>,
     pub metadata: Option<(u32, u32)>,
+    pub ending: Option<(&'static str, &'static str)>,
     pub pairs: Option<(PairSnapshot, PairSnapshot)>,
     /// Selection of the editing view before the step.
     pub before: Selection,
@@ -56,6 +57,15 @@ pub(super) struct History {
 }
 
 impl History {
+    pub fn attach_ending(&mut self, before: &'static str, after: &'static str) {
+        if let Some(entry) = self.undo.last_mut() {
+            match &mut entry.ending {
+                Some((_, last)) => *last = after,
+                None => entry.ending = Some((before, after)),
+            }
+        }
+    }
+
     pub fn attach_pairs(
         &mut self,
         before: std::sync::Arc<Vec<super::pairs::Pair>>,
@@ -85,6 +95,7 @@ impl History {
             changes: Vec::new(),
             metadata: Some((before, after)),
             pairs: None,
+            ending: None,
             before: Selection::default(),
             after: Selection::default(),
             transaction: None,
@@ -154,6 +165,7 @@ impl History {
                     self.undo.push(Entry {
                         metadata: None,
                         pairs: None,
+                        ending: None,
                         changes: vec![changes],
                         before,
                         after,
@@ -189,6 +201,7 @@ impl History {
                 self.undo.push(Entry {
                     metadata: None,
                     pairs: None,
+                    ending: None,
                     changes: vec![changes],
                     before,
                     after,

@@ -53,6 +53,28 @@ pub fn type_text(editor: &mut EditorMut<'_>, text: &str, language: &str) {
         editor.set_cursor(cursor + ch.len_utf8());
         return;
     }
+    if editor.selection().is_none() && matches!(ch, '}' | ']' | ')') {
+        let start = editor.line_start(editor.line_of(cursor));
+        let prefix = &editor.text()[start..cursor];
+        if !prefix.is_empty()
+            && prefix.chars().all(|c| c == ' ' || c == '\t')
+            && code_context(editor.text(), cursor, language)
+        {
+            let removed = if prefix.ends_with('\t') {
+                1
+            } else {
+                prefix.len().min(editor.options().indent_size)
+            };
+            let value = format!("{}{ch}", &prefix[..prefix.len() - removed]);
+            let _ = editor.replace(start..cursor, &value, EditKind::Other);
+            editor.break_undo_group();
+            return;
+        }
+    }
+    if !editor.options().auto_pairs {
+        insert(editor, text);
+        return;
+    }
     let close = match ch {
         '(' => ')',
         '[' => ']',
@@ -223,14 +245,44 @@ pub fn enter(editor: &mut EditorMut<'_>) {
         .take_while(|c| *c == ' ' || *c == '\t')
         .collect();
     let newline = editor.line_ending();
-    insert(editor, &format!("{newline}{indent}"));
+    let range = editor.selection().unwrap_or(start..start);
+    let before = editor.text()[line_start..start].trim_end();
+    let after = editor.text()[range.end..].trim_start_matches([' ', '\t']);
+    let opening = before.chars().next_back();
+    let closing = after.chars().next();
+    let pair = matches!(
+        (opening, closing),
+        (Some('{'), Some('}')) | (Some('['), Some(']')) | (Some('('), Some(')'))
+    );
+    let extra = if code_context(editor.text(), start, editor.options().language)
+        && (matches!(opening, Some('{' | '[' | '('))
+            || opening == Some(':') && matches!(editor.options().language, "python" | "yaml"))
+    {
+        editor.options().indent()
+    } else {
+        String::new()
+    };
+    let value = if pair {
+        format!("{newline}{indent}{extra}{newline}{indent}")
+    } else {
+        format!("{newline}{indent}{extra}")
+    };
+    let cursor = start + newline.len() + indent.len() + extra.len();
+    let _ = editor.edit(
+        EditKind::Other,
+        vec![Edit::replace(range, value)],
+        |_, _| Selection::caret(cursor),
+    );
+    editor.break_undo_group();
 }
 
 /// Indent or outdent every line the selection touches, as one undo step.
 /// Without a selection, Tab inserts spaces at the caret instead.
 pub fn indent(editor: &mut EditorMut<'_>, outdent: bool) {
+    let indent = editor.options().indent();
+    let size = editor.options().indent_size;
     if !outdent && editor.selection().is_none() {
-        insert(editor, INDENT);
+        insert(editor, &indent);
         editor.break_undo_group();
         return;
     }
@@ -248,13 +300,13 @@ pub fn indent(editor: &mut EditorMut<'_>, outdent: bool) {
         .filter_map(|line| {
             let start = editor.line_start(line);
             if !outdent {
-                return Some(Edit::insert(start, INDENT));
+                return Some(Edit::insert(start, &indent));
             }
             let rest = &editor.text()[start..editor.line_end(line)];
             let remove = if rest.starts_with('\t') {
                 1
             } else {
-                rest.chars().take(2).take_while(|c| *c == ' ').count()
+                rest.chars().take(size).take_while(|c| *c == ' ').count()
             };
             (remove > 0).then(|| Edit::delete(start..start + remove))
         })

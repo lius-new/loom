@@ -10,8 +10,11 @@ pub const TAB_WIDTH: usize = 4;
 
 /// Display width of one grapheme starting at display column `column`.
 pub fn grapheme_width(grapheme: &str, column: usize) -> usize {
+    grapheme_width_with_tab_width(grapheme, column, TAB_WIDTH)
+}
+pub fn grapheme_width_with_tab_width(grapheme: &str, column: usize, width: usize) -> usize {
     if grapheme == "\t" {
-        TAB_WIDTH - column % TAB_WIDTH
+        width - column % width
     } else {
         UnicodeWidthStr::width(grapheme)
     }
@@ -49,15 +52,24 @@ pub(super) struct Position {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct LineIndex {
     starts: Vec<usize>,
+    endings: Vec<bool>,
+    crlf_count: usize,
     widths: Vec<u32>,
     positions: Vec<Vec<Position>>,
     max_width: usize,
+    tab_width: usize,
 }
 
 impl LineIndex {
     pub fn new(text: &str) -> Self {
+        Self::with_tab_width(text, TAB_WIDTH)
+    }
+    pub fn with_tab_width(text: &str, tab_width: usize) -> Self {
         let mut index = Self {
+            tab_width,
             starts: Vec::new(),
+            endings: Vec::new(),
+            crlf_count: 0,
             widths: Vec::new(),
             positions: Vec::new(),
             max_width: 0,
@@ -79,6 +91,9 @@ impl LineIndex {
         for (i, &start) in starts.iter().enumerate() {
             let next = starts.get(i + 1).copied().or(next_after_region);
             let end = content_end(text, start, next);
+            let crlf = next.is_some_and(|n| n >= 2 && text.as_bytes()[n - 2] == b'\r');
+            self.endings.push(crlf);
+            self.crlf_count += usize::from(crlf);
             self.starts.push(start);
             let line = &text[start..end];
             let mut positions: Vec<Position> = Vec::new();
@@ -96,7 +111,7 @@ impl LineIndex {
                         columns,
                     });
                 }
-                columns += grapheme_width(grapheme, columns);
+                columns += grapheme_width_with_tab_width(grapheme, columns, self.tab_width);
                 chars += grapheme.chars().count();
             }
             if !positions.is_empty() {
@@ -112,6 +127,9 @@ impl LineIndex {
         }
     }
 
+    pub fn mixed_endings(&self) -> bool {
+        self.crlf_count > 0 && self.crlf_count < self.starts.len().saturating_sub(1)
+    }
     pub fn len(&self) -> usize {
         self.starts.len()
     }
@@ -182,7 +200,10 @@ impl LineIndex {
         let region_end = following.map_or(text.len(), |next| (next as isize + delta) as usize);
 
         let mut rebuilt = Self {
+            tab_width: self.tab_width,
             starts: Vec::new(),
+            endings: Vec::new(),
+            crlf_count: 0,
             widths: Vec::new(),
             positions: Vec::new(),
             max_width: 0,
@@ -192,6 +213,12 @@ impl LineIndex {
         for start in &mut self.starts[tail..] {
             *start = (*start as isize + delta) as usize;
         }
+        self.crlf_count -= self.endings[first_line..tail]
+            .iter()
+            .filter(|&&b| b)
+            .count();
+        self.crlf_count += rebuilt.crlf_count;
+        self.endings.splice(first_line..tail, rebuilt.endings);
         self.starts.splice(first_line..tail, rebuilt.starts);
         self.widths.splice(first_line..tail, rebuilt.widths);
         self.positions.splice(first_line..tail, rebuilt.positions);
@@ -252,11 +279,11 @@ impl LineIndex {
                 });
                 last = byte;
             }
-            columns += grapheme_width(grapheme, columns);
+            columns += grapheme_width_with_tab_width(grapheme, columns, self.tab_width);
             chars += grapheme.chars().count();
         }
         let column_delta = columns as isize - after.columns as isize;
-        if column_delta % 4 != 0 && text[tail_offset..end].contains('\t') {
+        if column_delta % self.tab_width as isize != 0 && text[tail_offset..end].contains('\t') {
             return false;
         }
         let char_delta = chars as isize - after.chars as isize;
@@ -270,6 +297,11 @@ impl LineIndex {
         for offset in &mut self.starts[line + 1..] {
             *offset = (*offset as isize + delta) as usize;
         }
+        let crlf = self
+            .next_start(line)
+            .is_some_and(|n| n >= 2 && text.as_bytes()[n - 2] == b'\r');
+        self.crlf_count = self.crlf_count + usize::from(crlf) - usize::from(self.endings[line]);
+        self.endings[line] = crlf;
         self.max_width = self.widths.iter().copied().max().unwrap_or(0) as usize;
         true
     }

@@ -59,6 +59,7 @@ impl TextFormat {
         self.charset as u32 * 2 + u32::from(self.bom)
     }
     pub fn from_code(code: u32) -> Self {
+        let code = code & 255;
         use self::Charset::*;
         let charset = match code / 2 {
             0 => Utf8,

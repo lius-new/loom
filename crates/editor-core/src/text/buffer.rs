@@ -8,7 +8,7 @@ use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
 use super::change::{Change, ChangeSet, Edit, EditError, validate};
 use super::history::History;
-use super::lines::{LineIndex, grapheme_width};
+use super::lines::{LineIndex, grapheme_width_with_tab_width};
 use super::selection::Selection;
 
 /// The line break ending the first line, if it has one.
@@ -70,13 +70,17 @@ pub struct TextBuffer {
     metadata: u32,
     revisions: Arc<VecDeque<super::revision::TextRevision>>,
     /// The line break of the first line, kept for when no line break is left.
-    ending: &'static str,
+    pub(super) ending: &'static str,
+    observed_ending: bool,
+    options: super::options::EditingOptions,
+    file_options: super::options::FileOptions,
 }
 
 impl TextBuffer {
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
         let lines = LineIndex::new(&text);
+        let observed_ending = lines.len() > 1;
         let ending = first_line_ending(&text, &lines).unwrap_or("\n");
         Self {
             pairs: Arc::default(),
@@ -87,6 +91,9 @@ impl TextBuffer {
             metadata: 0,
             revisions: Arc::default(),
             ending,
+            observed_ending,
+            options: Default::default(),
+            file_options: Default::default(),
         }
     }
 
@@ -166,11 +173,19 @@ impl TextBuffer {
     /// reset because it describes a different file revision.
     pub fn reload(&mut self, contents: String) {
         let version = self.version + 1;
+        let options = self.options;
+        let file_options = self.file_options;
         *self = Self::new(contents);
+        self.configure(options);
+        self.file_options = file_options;
         self.version = version;
     }
 
     pub fn install_prepared(&mut self, mut prepared: Self) {
+        prepared.configure(self.options);
+        if prepared.file_options == Default::default() {
+            prepared.file_options = self.file_options;
+        }
         prepared.version = self.version + 1;
         *self = prepared;
     }
@@ -237,6 +252,7 @@ impl TextBuffer {
         }
         if let Some(ending) = first_line_ending(&self.text, &self.lines) {
             self.ending = ending;
+            self.observed_ending = true;
         }
         Ok(changes)
     }
@@ -442,7 +458,42 @@ impl TextBuffer {
 
     /// The line break the document uses, judged by its first line.
     pub fn line_ending(&self) -> &'static str {
-        self.ending
+        self.chosen_line_ending()
+            .map_or(self.ending, |ending| ending.text())
+    }
+    pub fn needs_default_line_ending(&self) -> bool {
+        !self.observed_ending && self.chosen_line_ending().is_none()
+    }
+    pub fn chosen_line_ending(&self) -> Option<super::options::LineEnding> {
+        super::options::LineEnding::from_code(self.metadata)
+    }
+    pub fn file_options(&self) -> super::options::FileOptions {
+        self.file_options
+    }
+    pub fn initialize_file_options(&mut self, options: super::options::FileOptions) {
+        self.file_options = options;
+    }
+    pub fn options(&self) -> super::options::EditingOptions {
+        self.options
+    }
+    pub fn configure(&mut self, options: super::options::EditingOptions) {
+        let options = options.clamped();
+        if options.tab_width != self.options.tab_width {
+            self.lines = Arc::new(LineIndex::with_tab_width(self.text(), options.tab_width));
+        }
+        self.options = options;
+    }
+    pub fn initialize_line_ending(&mut self, ending: super::options::LineEnding) {
+        self.metadata = (self.metadata & !super::options::ENDING_MASK) | ending.code();
+    }
+    pub fn line_ending_label(&self) -> &'static str {
+        if self.lines.mixed_endings() {
+            "Mixed"
+        } else if self.line_ending() == "\r\n" {
+            "CRLF"
+        } else {
+            "LF"
+        }
     }
 
     // ---- Display columns -----------------------------------------------------
@@ -456,7 +507,9 @@ impl TextBuffer {
         let position = self.lines.position_by(line, offset - start, |p| p.byte);
         self.text[start + position.byte..offset]
             .graphemes(true)
-            .fold(position.columns, |x, g| x + grapheme_width(g, x))
+            .fold(position.columns, |x, g| {
+                x + grapheme_width_with_tab_width(g, x, self.options.tab_width)
+            })
     }
 
     /// The last grapheme boundary of `line` whose display column does not pass
@@ -471,7 +524,7 @@ impl TextBuffer {
         for (index, grapheme) in
             self.text[range.start + position.byte..range.end].grapheme_indices(true)
         {
-            let width = grapheme_width(grapheme, x);
+            let width = grapheme_width_with_tab_width(grapheme, x, self.options.tab_width);
             if x + width > column {
                 break;
             }
@@ -503,7 +556,7 @@ impl TextBuffer {
             if x >= right {
                 break;
             }
-            let width = grapheme_width(grapheme, x);
+            let width = grapheme_width_with_tab_width(grapheme, x, self.options.tab_width);
             if x + width.max(1) > left && start.is_none() {
                 start = Some(range.start + position.byte + index);
             }
@@ -567,6 +620,7 @@ impl TextBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::text::grapheme_width;
 
     #[test]
     fn medium_line_indexes_survive_edits_across_old_size_thresholds() {

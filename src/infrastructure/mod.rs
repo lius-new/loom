@@ -42,3 +42,5 @@ pub(crate) mod markdown_worker;
 pub(crate) mod gif_stream;
 pub(crate) mod image_filesystem;
 pub mod markdown_resources;
+
+pub(crate) mod editorconfig;

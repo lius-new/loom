@@ -169,6 +169,23 @@ pub fn status_binding(state: &AppContext) -> crate::ui::chrome::StatusBinding {
                 vim: crate::app::editor_vim::is_active(&app)
                     .then(|| (app.editor.vim.mode(), app.editor.vim.status())),
                 file: app.workspace.active().map(|id| FileStatus {
+                    line_ending: app
+                        .workspace
+                        .active_editor()
+                        .map(|b| b.line_ending_label().into())
+                        .unwrap_or_default(),
+                    indent: app
+                        .workspace
+                        .active_document()
+                        .map(|doc| {
+                            let settings = super::editing::effective(&app, doc);
+                            if settings.use_tabs {
+                                format!("Tabs: {}", settings.tab_width)
+                            } else {
+                                format!("Spaces: {}", settings.indent_size)
+                            }
+                        })
+                        .unwrap_or_default(),
                     encoding: app
                         .workspace
                         .view_document(id)
@@ -198,6 +215,12 @@ pub fn status_binding(state: &AppContext) -> crate::ui::chrome::StatusBinding {
             }
         },
         move |command| match command {
+            StatusCommand::LineEnding => {
+                writer.update(|app| super::editing::open(app, super::editing::Menu::Ending))
+            }
+            StatusCommand::Indent => {
+                writer.update(|app| super::editing::open(app, super::editing::Menu::Indent))
+            }
             StatusCommand::Encoding => crate::app::encoding::open(&writer),
             StatusCommand::ServerAction(crate::ui::chrome::ChipAction::Details(id)) => writer
                 .update(|app| {

@@ -115,3 +115,5 @@ pub(crate) mod keymap_events;
 pub(crate) mod keymap_binding;
 
 pub(crate) mod chrome;
+
+pub(crate) mod editing_menu;

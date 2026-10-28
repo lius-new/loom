@@ -195,6 +195,7 @@ impl<'a> EditorMut<'a> {
     ) -> Result<ChangeSet, EditError> {
         let before = *self.selection;
         let pairs = self.buffer.pairs.clone();
+        let ending = self.buffer.ending;
         let changes = self.buffer.apply_edits(edits)?;
         if changes.is_empty() {
             return Ok(changes);
@@ -207,6 +208,10 @@ impl<'a> EditorMut<'a> {
             .record(changes.clone(), kind, before, after);
         let after_pairs = self.buffer.pairs.clone();
         self.buffer.history_mut().attach_pairs(pairs, after_pairs);
+        let after_ending = self.buffer.ending;
+        self.buffer
+            .history_mut()
+            .attach_ending(ending, after_ending);
         Ok(changes)
     }
 
@@ -228,6 +233,47 @@ impl<'a> EditorMut<'a> {
                 buffer.next_grapheme(end)
             })
         })
+    }
+
+    /// Convert only newline spans, mapping all view positions through the edit.
+    pub fn set_line_ending(&mut self, ending: super::options::LineEnding) -> Result<(), EditError> {
+        self.buffer.history_mut().close_groups();
+        let before = self.buffer.metadata();
+        let after = (before & !super::options::ENDING_MASK) | ending.code();
+        let bytes = self.buffer.text().as_bytes();
+        let edits = bytes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &byte)| {
+                if byte != b'\n' {
+                    return None;
+                }
+                let crlf = i > 0 && bytes[i - 1] == b'\r';
+                match (crlf, ending) {
+                    (true, super::options::LineEnding::Lf) => {
+                        Some(Edit::replace(i - 1..i + 1, "\n"))
+                    }
+                    (false, super::options::LineEnding::Crlf) => {
+                        Some(Edit::replace(i..i + 1, "\r\n"))
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        if edits.is_empty() {
+            self.buffer.set_metadata(after);
+        } else {
+            let selection = *self.selection;
+            self.edit(EditKind::Other, edits, |changes, _| Selection {
+                cursor: changes.map(selection.cursor, Assoc::After),
+                anchor: selection.anchor.map(|a| changes.map(a, Assoc::After)),
+                preferred_column: None,
+            })?;
+            self.buffer.initialize_metadata(after);
+            self.buffer.history_mut().attach_metadata(before, after);
+        }
+        self.break_undo_group();
+        Ok(())
     }
 
     /// Replace a document interpretation and its metadata as one undo step.
@@ -308,6 +354,9 @@ impl<'a> EditorMut<'a> {
         let entry = self.buffer.history_mut().pop_undo()?;
         let reverse = entry.changes.iter().rev().map(ChangeSet::inverse).collect();
         let extent = self.replay(reverse)?;
+        if let Some((before, _)) = entry.ending {
+            self.buffer.ending = before;
+        }
         if let Some((before, _)) = &entry.pairs {
             self.buffer.pairs = before.clone();
         }
@@ -329,6 +378,9 @@ impl<'a> EditorMut<'a> {
         let entry = self.buffer.history_mut().pop_redo()?;
         let forward = entry.changes.iter().map(ChangeSet::forward).collect();
         let extent = self.replay(forward)?;
+        if let Some((_, after)) = entry.ending {
+            self.buffer.ending = after;
+        }
         if let Some((_, after)) = &entry.pairs {
             self.buffer.pairs = after.clone();
         }

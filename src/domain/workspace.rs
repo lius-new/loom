@@ -204,6 +204,14 @@ pub enum OpenMode {
 pub(crate) struct PreparedTextFile(OpenDocument);
 
 impl PreparedTextFile {
+    pub(crate) fn with_file_options(
+        mut self,
+        options: loom_editor_core::text::FileOptions,
+    ) -> Self {
+        self.0.buffer.initialize_file_options(options);
+        self
+    }
+
     pub(crate) fn image(
         path: PathBuf,
         image: crate::domain::media::Image,
@@ -276,7 +284,9 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             return false;
         }
         document.saved_text = Arc::new(document.buffer.text().to_owned());
-        document.buffer.initialize_metadata(disk.format.code());
+        document
+            .buffer
+            .initialize_metadata((document.buffer.metadata() & !255) | disk.format.code());
         document.saved_format = disk.format;
         document.disk_bytes = None;
         document.encoding_bytes = None;
@@ -1434,7 +1444,9 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         if document.format() == format {
             return Ok(false);
         }
-        document.buffer.set_metadata(format.code());
+        document
+            .buffer
+            .set_metadata((document.buffer.metadata() & !255) | format.code());
         document.buffer.break_undo_group();
 
         Ok(true)
@@ -1445,9 +1457,15 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         id: FileId,
         decoded: crate::domain::encoding::DecodedText,
     ) -> Result<bool, String> {
+        let metadata = self
+            .documents
+            .get(&id)
+            .ok_or("Document is not open")?
+            .buffer
+            .metadata();
         self.document_editor_mut(id)
             .ok_or("Document is not editable")?
-            .replace_with_metadata(&decoded.text, decoded.format.code())
+            .replace_with_metadata(&decoded.text, (metadata & !255) | decoded.format.code())
             .map_err(|error| error.to_string())?;
         let document = self.documents.get_mut(&id).ok_or("Document is not open")?;
         document.encoding_bytes = Some(decoded.bytes);
@@ -1920,6 +1938,12 @@ mod view_tests;
 
 pub(crate) fn restore_encoding(document: &mut OpenDocument) {
     if let Some(recovery) = document.recovery.take() {
+        let restore_unsaved = recovery.unsaved_text.is_some();
+        let ending = recovery.line_ending.as_deref().and_then(|e| match e {
+            "LF" => Some(loom_editor_core::text::LineEnding::Lf),
+            "CRLF" => Some(loom_editor_core::text::LineEnding::Crlf),
+            _ => None,
+        });
         document.meta.read_override = recovery.read_override;
         if let Some(text) = recovery.unsaved_text {
             document.open_error = None;
@@ -1938,6 +1962,13 @@ pub(crate) fn restore_encoding(document: &mut OpenDocument) {
             document.disk_conflict = disk_changed;
             document.buffer.initialize_metadata(recovery.current.code());
             document.encoding_bytes = recovery.source_bytes;
+        }
+        if let Some(ending) = ending.filter(|e| {
+            restore_unsaved
+                || document.buffer.line_count() == 1
+                || document.buffer.line_ending() == e.text()
+        }) {
+            document.buffer.initialize_line_ending(ending);
         }
     }
 }

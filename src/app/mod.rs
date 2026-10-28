@@ -133,3 +133,5 @@ mod encoding_tests;
 
 #[cfg(test)]
 mod render_context_tests;
+
+pub(crate) mod editing;

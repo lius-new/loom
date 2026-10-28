@@ -190,6 +190,10 @@
     "markdown_views": {
       "owner": "app/state/editor: pure per-view reading selection, pointer and outline state; no native/layout resources",
       "migrated_in": "Markdown reading host"
+    },
+    "editing": {
+      "owner": "app/editing: effective editing policy and document-scoped status choices",
+      "migrated_in": "editor preferences"
     }
   },
   "workspace_core_ownership": {
@@ -987,6 +991,14 @@
     "encoding": {
       "owner": "features/settings/model: file encoding preferences DTO",
       "migrated_in": "File encoding support"
+    },
+    "editor": {
+      "owner": "features/settings/model: code editing preferences",
+      "migrated_in": "editor preferences"
+    },
+    "editor_languages": {
+      "owner": "features/settings/model: code editing preferences",
+      "migrated_in": "editor preferences"
     }
   },
   "keymap_model_ownership": {

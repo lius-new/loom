@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 #[derive(Clone)]
 pub struct Values {
+    pub editor: super::editing::EditorSettings,
+    pub editor_languages: std::collections::BTreeMap<String, super::editing::EditorOverrides>,
     pub theme: ThemeId,
     pub encoding: crate::domain::encoding::EncodingSettings,
     pub ui_scale: Option<u16>,

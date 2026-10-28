@@ -92,6 +92,8 @@ impl TitleBinding {
 
 #[derive(Clone)]
 pub struct FileStatus {
+    pub line_ending: String,
+    pub indent: String,
     pub encoding: String,
     pub lang: crate::domain::document::ResolvedLanguage,
     pub missing: bool,
@@ -182,6 +184,8 @@ pub enum StatusCommand {
     ServerAction(ChipAction),
     LanguagePanel,
     Encoding,
+    LineEnding,
+    Indent,
 }
 #[derive(Clone)]
 pub struct StatusBinding {

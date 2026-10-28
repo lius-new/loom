@@ -299,6 +299,26 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         changed
     });
     let s = state.get();
+    let editing_key = s
+        .workspace
+        .documents
+        .iter()
+        .filter(|(_, d)| d.is_text())
+        .map(|(&id, d)| {
+            (
+                id,
+                d.incarnation,
+                super::editing::effective(&s, id),
+                d.buffer.options(),
+                d.buffer.chosen_line_ending(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let editing_state = state.clone();
+    cx.use_effect(editing_key, move || {
+        editing_state.try_update(super::editing::configure_all);
+        || {}
+    });
     if let Some(markdown) = runtime.markdown() {
         markdown.sync(&s);
     }
@@ -1400,6 +1420,54 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 menu.hovered,
                 frame.position,
                 super::image_preview::send(&state, menu.view),
+            ));
+        }
+    }
+    let editing_focus = cx.focus_handle(UiId::new(crate::ui::editing_menu::FOCUS_ID));
+    crate::ui::hold_focus(
+        cx,
+        s.editor
+            .editing
+            .menu
+            .filter(|(view, _)| s.workspace.active() == Some(*view))
+            .map(|_| s.terminal.ui.terminal_focused),
+        editing_focus.clone(),
+        terminal_focus.clone(),
+        editor_focus.clone(),
+    );
+    if let Some((view, kind)) = s.editor.editing.menu
+        && s.workspace.active() == Some(view)
+    {
+        let ending = kind == super::editing::Menu::Ending;
+        let status = super::chrome::status_binding(&state).frame();
+        if let Some(anchor) = crate::ui::statusbar::editing_anchor(statusbar_rect, &status, ending)
+        {
+            let labels = if ending {
+                vec![
+                    "LF",
+                    "CRLF",
+                    "User editor defaults…",
+                    "Project editor defaults…",
+                ]
+            } else {
+                vec![
+                    "Indent: 2 spaces",
+                    "Indent: 4 spaces",
+                    "Indent: Tabs",
+                    "Tab width: 2",
+                    "Tab width: 4",
+                    "Tab width: 8",
+                    "User editor defaults…",
+                    "Project editor defaults…",
+                ]
+            };
+            let menu_state = state.clone();
+            root = root.child(crate::ui::editing_menu::render(
+                vp,
+                anchor,
+                labels.into_iter().map(str::to_owned).collect(),
+                s.editor.editing.selected,
+                std::sync::Arc::new(move |event| super::editing::menu_event(&menu_state, event)),
             ));
         }
     }

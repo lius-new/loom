@@ -100,6 +100,7 @@ pub(crate) fn render(
     if let Some(document) = &s.document {
         let id = document.id;
         let buffer = document.editor();
+        let _tabs = TabScope::new(buffer.options().tab_width);
         let line_count = buffer.line_count();
         let (cursor_line, cursor_col) = buffer.line_col();
         let code_top = rect.top;
@@ -1690,6 +1691,7 @@ pub(crate) fn document_caret(
     right: f32,
     viewport: (f32, f32),
 ) -> f32 {
+    let _tabs = TabScope::new(buffer.options().tab_width);
     let offset = buffer.offset_at_char_column(line, column);
     let visual = buffer.display_column(offset);
     let mut range = line_window(buffer, line, viewport.0, viewport.1);
@@ -1762,7 +1764,14 @@ pub(crate) fn scroll_metrics(rect: UiRect, code_left: f32, buffer: &TextBuffer) 
 }
 
 pub(crate) fn visual_columns(line: &str) -> usize {
-    loom_editor_core::text::display_width(line)
+    line.graphemes(true).fold(0, |column, g| {
+        column
+            + if g == "\t" {
+                tab_size() - column % tab_size()
+            } else {
+                UnicodeWidthStr::width(g)
+            }
+    })
 }
 
 pub(crate) fn visible_line_range(
@@ -1871,6 +1880,21 @@ impl LayoutCache {
         }
     }
 }
+thread_local! { static TAB_SIZE: std::cell::Cell<usize> = const { std::cell::Cell::new(4) }; }
+struct TabScope(usize);
+impl TabScope {
+    fn new(width: usize) -> Self {
+        Self(TAB_SIZE.with(|s| s.replace(width.clamp(1, 16))))
+    }
+}
+impl Drop for TabScope {
+    fn drop(&mut self) {
+        TAB_SIZE.with(|s| s.set(self.0));
+    }
+}
+fn tab_size() -> usize {
+    TAB_SIZE.with(|s| s.get())
+}
 thread_local! {
     static LINE_LAYOUTS: RefCell<LayoutCache> = RefCell::new(LayoutCache::default());
 }
@@ -1900,7 +1924,7 @@ pub(crate) fn expand_tabs(line: &str, initial_column: usize) -> (String, Vec<usi
     let mut display_chars = 0;
     for grapheme in line.graphemes(true) {
         if grapheme == "\t" {
-            let spaces = 4 - column % 4;
+            let spaces = tab_size() - column % tab_size();
             result.extend(std::iter::repeat_n(' ', spaces));
             column += spaces;
             display_chars += spaces;
@@ -1958,7 +1982,7 @@ pub(crate) fn layout_line_hinted(
         font.size.to_bits(),
         font.families.as_ptr() as usize,
         font.line_h.to_bits(),
-        column % 4,
+        tab_size() * 32 + column % tab_size(),
     );
     if let Some(mut layout) = LINE_LAYOUTS.with(|cache| {
         let mut cache = cache.borrow_mut();
@@ -2067,7 +2091,7 @@ pub(crate) fn display_columns(line: &str, chars: usize) -> usize {
     line.chars().take(chars).fold(0, |column, ch| {
         column
             + if ch == '\t' {
-                4 - column % 4
+                tab_size() - column % tab_size()
             } else {
                 UnicodeWidthChar::width(ch).unwrap_or(0)
             }
@@ -2078,7 +2102,7 @@ pub(crate) fn fallback_hit_column(line: &str, x: f32) -> usize {
     let mut chars = 0;
     for g in line.graphemes(true) {
         let width = if g == "\t" {
-            4 - column % 4
+            tab_size() - column % tab_size()
         } else {
             UnicodeWidthStr::width(g)
         };
@@ -2102,6 +2126,7 @@ pub(crate) fn cursor_offset_from_point(
     point_x: f32,
     point_y: f32,
 ) -> usize {
+    let _tabs = TabScope::new(buffer.options().tab_width);
     let line = line_index_from_point(point_y, rect.top, scroll_y, buffer.line_count());
     let content_x = point_x + scroll_x;
     let range = line_window(buffer, line, scroll_x, metrics.viewport_w);
