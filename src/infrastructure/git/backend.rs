@@ -309,12 +309,16 @@ impl CliGitBackend {
         let text = String::from_utf8_lossy(&output.stdout);
         let plain = |file: &FileDiff| {
             !file.binary
-                && file.hunks.iter().flat_map(|hunk| &hunk.lines).all(|line| match line {
-                    DiffLine::Context(s) | DiffLine::Addition(s) | DiffLine::Deletion(s) => {
-                        !s.contains(['\u{feff}', '\u{fffd}'])
-                    }
-                    DiffLine::NoNewline => true,
-                })
+                && file
+                    .hunks
+                    .iter()
+                    .flat_map(|hunk| &hunk.lines)
+                    .all(|line| match line {
+                        DiffLine::Context(s) | DiffLine::Addition(s) | DiffLine::Deletion(s) => {
+                            !s.contains(['\u{feff}', '\u{fffd}'])
+                        }
+                        DiffLine::NoNewline => true,
+                    })
         };
         Ok(parse_unified(&text)?
             .files

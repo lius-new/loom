@@ -1568,7 +1568,10 @@ fn info_card_actions(
     let documentation = docs.map(|blocks| super::docs::layout(blocks, max_width - 2.0 * CARD_PAD));
     // Sized from the placeholder it would open as a short card below the text
     // and then jump above it once the real height is known.
-    if documentation.as_ref().is_some_and(|layout| !layout.measured) {
+    if documentation
+        .as_ref()
+        .is_some_and(|layout| !layout.measured)
+    {
         return None;
     }
     let width = (diagnostics_w.max(documentation.as_ref().map_or(0.0, |l| l.width))

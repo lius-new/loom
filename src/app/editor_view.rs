@@ -324,7 +324,8 @@ pub(crate) fn binding(
                     });
             }
             if let Some(document) = &view.document {
-                view.link = super::language_ui::link::word_for(&reader.get(), pane, &document.stamp);
+                view.link =
+                    super::language_ui::link::word_for(&reader.get(), pane, &document.stamp);
             }
             if let Some(document) = &view.document {
                 let app = reader.get();

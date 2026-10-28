@@ -656,7 +656,11 @@ impl TextBuffer {
     /// Where else `selected` appears within `lines`, for tinting after a
     /// selection. A selected whole word matches whole words only; single
     /// lines, blank text and very long text match nothing.
-    pub fn other_occurrences(&self, selected: Range<usize>, lines: Range<usize>) -> Vec<Range<usize>> {
+    pub fn other_occurrences(
+        &self,
+        selected: Range<usize>,
+        lines: Range<usize>,
+    ) -> Vec<Range<usize>> {
         const MAX_LEN: usize = 200;
         const MAX_FOUND: usize = 2000;
         if lines.is_empty() || selected.is_empty() || selected.len() > MAX_LEN {
@@ -678,7 +682,10 @@ impl TextBuffer {
             .filter(|found| *found != selected)
             .filter(|found| {
                 !whole_word
-                    || (!self.text[..found.start].chars().next_back().is_some_and(word)
+                    || (!self.text[..found.start]
+                        .chars()
+                        .next_back()
+                        .is_some_and(word)
                         && !self.text[found.end..].chars().next().is_some_and(word))
             })
             .take(MAX_FOUND)

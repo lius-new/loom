@@ -265,8 +265,22 @@ fn path_span(text: &str, word: &Range<usize>) -> Option<Range<usize>> {
         !c.is_whitespace()
             && !matches!(
                 c,
-                '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | ','
-                    | ';' | '*' | '?' | '='
+                '"' | '\''
+                    | '`'
+                    | '<'
+                    | '>'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '|'
+                    | ','
+                    | ';'
+                    | '*'
+                    | '?'
+                    | '='
             )
     };
     let start = text.get(..word.start)?;
@@ -351,10 +365,16 @@ mod tests {
 
     #[test]
     fn a_path_is_the_run_of_path_characters_around_the_word() {
-        assert_eq!(span_of("see ./src/app/mod.rs for it", "app"), "./src/app/mod.rs");
+        assert_eq!(
+            span_of("see ./src/app/mod.rs for it", "app"),
+            "./src/app/mod.rs"
+        );
         // A space ends the path: quote-free paths with spaces are not guessed at.
         assert_eq!(span_of(r#"open("../a b/c.txt")"#, "c"), "b/c.txt");
-        assert_eq!(span_of("in C:\\dir\\file.rs:12:3.", "file"), "C:\\dir\\file.rs:12:3");
+        assert_eq!(
+            span_of("in C:\\dir\\file.rs:12:3.", "file"),
+            "C:\\dir\\file.rs:12:3"
+        );
         assert_eq!(span_of("mod.rs, then", "mod"), "mod.rs");
     }
 
@@ -364,7 +384,10 @@ mod tests {
         assert_eq!(split_position("a/b.rs:12"), ("a/b.rs", Some(12), None));
         assert_eq!(split_position("a/b.rs:12:3"), ("a/b.rs", Some(12), Some(3)));
         assert_eq!(split_position("C:\\a\\b.rs"), ("C:\\a\\b.rs", None, None));
-        assert_eq!(split_position("C:\\a\\b.rs:7"), ("C:\\a\\b.rs", Some(7), None));
+        assert_eq!(
+            split_position("C:\\a\\b.rs:7"),
+            ("C:\\a\\b.rs", Some(7), None)
+        );
     }
 
     #[test]
@@ -402,7 +425,15 @@ mod tests {
         assert!(path_at("sub", &(0..3), Some(&dir), &[]).is_none());
         // An absolute path needs no base.
         let absolute = format!("{}", dir.join("sub").join("note.txt").display());
-        assert!(path_at(&absolute, &(absolute.len() - 6..absolute.len() - 2), None, &[]).is_some());
+        assert!(
+            path_at(
+                &absolute,
+                &(absolute.len() - 6..absolute.len() - 2),
+                None,
+                &[]
+            )
+            .is_some()
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

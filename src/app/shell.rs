@@ -5,9 +5,9 @@ use crate::ui::git::{
     panel as git_panel, stash_switch,
 };
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -679,7 +679,9 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                         }
                         let (state, pending) = (drag_state.clone(), pending.clone());
                         drag_application.post(move || {
-                            state.try_update(|app| crate::app::editor::drag_scroll_tick(app, code_rect));
+                            state.try_update(|app| {
+                                crate::app::editor::drag_scroll_tick(app, code_rect)
+                            });
                             pending.store(false, Ordering::Release);
                         });
                     }
@@ -978,8 +980,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     });
 
     // The Outline page shows its scrollbar on the same terms.
-    let outline_drawer =
-        show_drawer && s.drawer.mode == crate::ui::drawer::DrawerMode::Outline;
+    let outline_drawer = show_drawer && s.drawer.mode == crate::ui::drawer::DrawerMode::Outline;
     let st_outline_hover = state.clone();
     root = root.on_event_capture(UiEventKind::PointerMove, move |_ctx, payload| {
         if let UiEventPayload::PointerMove { pointer } = payload {
