@@ -35,6 +35,7 @@ pub const ENDING_MASK: u32 = 3 << 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EditingOptions {
+    pub soft_wrap: bool,
     pub match_brackets: bool,
     pub indent_guides: bool,
     pub show_whitespace: bool,
@@ -47,6 +48,7 @@ pub struct EditingOptions {
 impl Default for EditingOptions {
     fn default() -> Self {
         Self {
+            soft_wrap: false,
             match_brackets: true,
             indent_guides: true,
             show_whitespace: false,

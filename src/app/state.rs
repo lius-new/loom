@@ -448,6 +448,7 @@ impl AppState {
     /// view or a platform service are performed by `key_actions` instead.
     pub fn apply(&mut self, action: Action) {
         match action {
+            Action::ToggleSoftWrap => crate::app::editing::toggle_wrap(self),
             Action::ToggleMarkdown => {
                 crate::app::markdown_view::toggle(self);
             }

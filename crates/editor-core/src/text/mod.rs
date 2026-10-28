@@ -12,6 +12,8 @@
 
 mod brackets;
 mod buffer;
+mod display;
+pub use self::display::{DisplayMap, DisplayRow};
 mod change;
 mod editor;
 mod history;

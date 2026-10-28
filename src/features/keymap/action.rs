@@ -157,6 +157,7 @@ actions! {
     DeleteToNextWordEnd => "editor::DeleteToNextWordEnd", "Delete to the next word end";
     Newline => "editor::Newline", "Insert a line break";
     Tab => "editor::Tab", "Indent";
+    ToggleSoftWrap => "editor::ToggleSoftWrap", "Toggle soft wrapping in the current document";
     MoveLineUp => "editor::MoveLineUp", "Move selected lines up";
     MoveLineDown => "editor::MoveLineDown", "Move selected lines down";
     DuplicateLineUp => "editor::DuplicateLineUp", "Duplicate selected lines above";

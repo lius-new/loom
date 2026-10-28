@@ -24,6 +24,7 @@ pub(crate) struct ViewDocument {
     pub stamp: DocumentStamp,
     pub meta: DocumentMeta,
     pub buffer: TextBuffer,
+    pub projection: Arc<loom_editor_core::text::DisplayMap>,
     pub selection: Selection,
     pub scroll: (f32, f32),
 }

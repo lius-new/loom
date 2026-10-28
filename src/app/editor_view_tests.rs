@@ -3594,3 +3594,261 @@ fn reading_aids_render_only_when_enabled_and_do_not_modify_source() {
     );
     assert!(!state.get().workspace.active_editor().unwrap().can_undo());
 }
+
+#[test]
+fn soft_wrap_keeps_paint_hits_navigation_selection_ime_and_resize_in_agreement() {
+    use lgui::{
+        application::{AppView, ApplicationContext},
+        core::{
+            ImeEvent, InputEvent, NamedKey, Point, PointerData, UiScale, dispatch_runtime_output,
+        },
+        session::UiSession,
+    };
+    use loom_editor_core::text::{Assoc, Selection};
+    use std::sync::Arc;
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
+    let output = exposed.clone();
+    let bounds = Arc::new(Mutex::new(UiRect::new(0.0, 0.0, 220.0, 300.0)));
+    let layout = bounds.clone();
+    let application = ApplicationContext::empty(Default::default());
+    let environment = application.clone();
+    let _fonts = lgui::backend::install_text_environment(
+        &application,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    let source = format!("{}\r\nsecond", "a中😀e\u{301}\t".repeat(30));
+    let initial_text = source.clone();
+    let view: AppView = Arc::new(move |cx| {
+        let rect = *layout.lock().unwrap();
+        let mut initial = document(&initial_text);
+        initial.editor.focused = true;
+        initial.preferences.values_mut().editor.soft_wrap = true;
+        initial.preferences.values_mut().smooth_caret = false;
+        crate::app::editing::configure_all(&mut initial);
+        let state = AppContext::detached(cx.state(initial));
+        let git = cx.state(GitStoreSnapshot::default());
+        *output.lock().unwrap() = Some(state.clone());
+        let id = UiId::new("soft-wrap-editor");
+        let focus = cx.focus_handle(id.clone());
+        let env = crate::app::key_actions::KeyEnv {
+            state: state.clone(),
+            git_store: git.clone(),
+            application: environment.clone(),
+            editor_focus: focus.clone(),
+            editor_rect: rect,
+            terminal: None,
+        };
+        crate::app::key_actions::attach(
+            group(rect).child(render(PaneId::new(1), rect, state, git, id, focus)),
+            env,
+        )
+    });
+    let mut session = UiSession::new();
+    let rect = *bounds.lock().unwrap();
+    session.render_view(&view, rect, UiScale::ONE);
+    let state = exposed.lock().unwrap().clone().unwrap();
+    let send = |session: &mut UiSession, input| {
+        dispatch_runtime_output(
+            session.handle_input(input),
+            &application,
+            &lgui::window::WindowId::new("soft-wrap"),
+            |a| session.handle_default_action(a),
+            |_| {},
+        );
+        let viewport = *bounds.lock().unwrap();
+        session.render_view(&view, viewport, UiScale::ONE);
+    };
+    let get_map = || crate::app::editing::active_projection(&state.get(), *bounds.lock().unwrap());
+    let map = get_map();
+    assert!(map.wrapped());
+    assert!(map.len() > 10);
+    let left = fonts::editor().gutter_w() + theme::CODE_PAD;
+    for row in 0..5 {
+        let app = state.get();
+        let buffer = app.workspace.active_editor().unwrap();
+        let source_row = map.row(&buffer, row);
+        let metrics = crate::ui::editor::projection::metrics(rect, left, &buffer, &map);
+        assert_eq!(metrics.max_x, 0.0);
+        let (x, y) = crate::ui::editor::projection::caret(
+            &buffer,
+            &map,
+            Selection::caret(source_row.range.start),
+            left,
+            rect.top,
+            0.0,
+            metrics.viewport_w,
+        );
+        assert!(x < rect.right);
+        drop(app);
+        let pointer = PointerData::mouse(Point::new(x + 0.1, y + 4.0));
+        send(
+            &mut session,
+            InputEvent::PointerDown {
+                pointer,
+                button: PointerButton::Left,
+            },
+        );
+        send(
+            &mut session,
+            InputEvent::PointerUp {
+                pointer,
+                button: PointerButton::Left,
+            },
+        );
+        assert_eq!(
+            state.get().workspace.active_editor().unwrap().cursor(),
+            source_row.range.start,
+            "row {row}"
+        );
+    }
+    let key = |key, modifiers| {
+        InputEvent::Keyboard(KeyboardEvent {
+            state: KeyState::Down,
+            key: LogicalKey::Named(key),
+            modifiers,
+            ..Default::default()
+        })
+    };
+    send(
+        &mut session,
+        key(NamedKey::ArrowDown, KeyModifiers::empty()),
+    );
+    let app = state.get();
+    let ed = app.workspace.active_editor().unwrap();
+    let row = map.caret_row(&ed, ed.cursor(), ed.selection_state().wrap_affinity);
+    assert_eq!(row, 5);
+    drop(app);
+    send(&mut session, key(NamedKey::End, KeyModifiers::empty()));
+    let before = state.get().workspace.active_editor().unwrap().cursor();
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selection_state()
+            .wrap_affinity,
+        Assoc::Before
+    );
+    send(
+        &mut session,
+        key(NamedKey::ArrowRight, KeyModifiers::empty()),
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().cursor(),
+        before
+    );
+    assert_eq!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selection_state()
+            .wrap_affinity,
+        Assoc::After
+    );
+    send(&mut session, key(NamedKey::ArrowDown, KeyModifiers::SHIFT));
+    assert!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .selection()
+            .is_some()
+    );
+    send(
+        &mut session,
+        InputEvent::Ime(ImeEvent::Preedit {
+            text: "zhong".into(),
+            cursor: Some(0..5),
+        }),
+    );
+    let ime = ime_cursor_rect(&state.get(), rect);
+    assert!(ime.top >= rect.top && ime.bottom <= rect.bottom);
+    send(
+        &mut session,
+        InputEvent::Ime(ImeEvent::Commit("中文".into())),
+    );
+    assert!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .text()
+            .contains("中文")
+    );
+    assert!(
+        state
+            .get()
+            .workspace
+            .active_editor()
+            .unwrap()
+            .text()
+            .ends_with("\r\nsecond")
+    );
+    for width in [180.0, 420.0, 220.0] {
+        *bounds.lock().unwrap() = UiRect::new(0.0, 0.0, width, 300.0);
+        let rect = *bounds.lock().unwrap();
+        session.render_view(&view, rect, UiScale::ONE);
+        let app = state.get();
+        let buffer = app.workspace.active_editor().unwrap();
+        let map = get_map();
+        let metrics = crate::ui::editor::projection::metrics(rect, left, &buffer, &map);
+        let at = map.row(&buffer, 2).range.start;
+        let (x, y) = crate::ui::editor::projection::caret(
+            &buffer,
+            &map,
+            Selection::caret(at),
+            left,
+            0.0,
+            0.0,
+            metrics.viewport_w,
+        );
+        assert_eq!(
+            crate::ui::editor::projection::hit(
+                &buffer,
+                &map,
+                rect,
+                left,
+                metrics,
+                0.0,
+                0.0,
+                x + 0.1,
+                y + 4.0
+            )
+            .0,
+            at
+        );
+    }
+    let previous = state
+        .get()
+        .workspace
+        .active_editor()
+        .unwrap()
+        .text()
+        .to_owned();
+    send(
+        &mut session,
+        InputEvent::Keyboard(KeyboardEvent {
+            state: KeyState::Down,
+            key: LogicalKey::Character("z".into()),
+            modifiers: KeyModifiers::ALT,
+            ..Default::default()
+        }),
+    );
+    assert!(!get_map().wrapped());
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        previous
+    );
+    state.update(|app| {
+        app.workspace.active_editor_mut().unwrap().undo();
+    });
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        source
+    );
+}

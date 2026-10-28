@@ -11,3 +11,5 @@ pub(crate) mod popup;
 pub(crate) mod signature;
 mod syntax;
 pub(crate) mod view;
+
+pub(crate) mod projection;

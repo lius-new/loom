@@ -95,6 +95,7 @@ pub(crate) fn snapshot(
                     path: meta.path.clone(),
                     lang: meta.lang,
                 },
+                projection: super::editing::projection(&app, id, rect),
                 buffer: value.buffer().clone(),
                 selection: value.selection_state(),
                 scroll: app.workspace.scroll(pane),
@@ -109,12 +110,18 @@ pub(crate) fn snapshot(
         .map(|doc| {
             let left =
                 rect.left + crate::ui::fonts::editor().gutter_w() + crate::ui::theme::CODE_PAD;
-            let metrics = crate::ui::editor::view::scroll_metrics(rect, left, &doc.buffer);
-            crate::ui::editor::view::visible_line_range(
+            let metrics =
+                crate::ui::editor::projection::metrics(rect, left, &doc.buffer, &doc.projection);
+            let rows = crate::ui::editor::view::visible_line_range(
                 doc.scroll.1.clamp(0.0, metrics.max_y),
                 rect.height(),
-                doc.buffer.line_count(),
-            )
+                doc.projection.len(),
+            );
+            if rows.is_empty() {
+                0..0
+            } else {
+                doc.projection.source_line(rows.start)..doc.projection.source_line(rows.end - 1) + 1
+            }
         })
         .unwrap_or(0..0);
     let state = app.editor;
@@ -778,31 +785,34 @@ fn hover_offset(
     metrics: crate::ui::editor::view::ScrollMetrics,
     point: (f32, f32),
 ) -> Option<usize> {
-    use crate::ui::editor::view::{
-        cursor_offset_from_point, document_caret, line_index_from_point,
-    };
+    use crate::ui::editor::projection as projected;
     if point.0 < code_left {
         return None;
     }
-    let (scroll_x, scroll_y) = app.workspace.scroll(pane);
+    let (sx, sy) = app.workspace.scroll(pane);
     let buffer = app.workspace.editor(pane)?;
-    let offset = cursor_offset_from_point(
-        &buffer, rect, code_left, metrics, scroll_x, scroll_y, point.0, point.1,
+    let view = app.workspace.pane(pane)?.active()?;
+    let map = super::editing::projection(app, view, rect);
+    let (offset, _) = projected::hit(
+        &buffer, &map, rect, code_left, metrics, sx, sy, point.0, point.1,
     );
-    let line = line_index_from_point(point.1, rect.top, scroll_y, buffer.line_count());
-    let end = buffer.line_end(line);
+    let row = projected::point_row(&map, rect, sy, point.1);
+    let end = map.row(&buffer, row).range.end;
     if offset >= end {
-        let text: &loom_editor_core::text::TextBuffer = &buffer;
-        let (_, column) = text.line_col(end);
-        let edge = document_caret(
+        let edge = projected::caret(
             &buffer,
-            line,
-            column,
+            &map,
+            loom_editor_core::text::Selection {
+                cursor: end,
+                wrap_affinity: loom_editor_core::text::Assoc::Before,
+                ..Default::default()
+            },
             code_left,
             rect.top,
-            code_left + metrics.content_w,
-            (scroll_x, metrics.viewport_w),
-        ) - scroll_x;
+            sx,
+            metrics.viewport_w,
+        )
+        .0 - sx;
         if point.0 > edge + 1.0 {
             return None;
         }

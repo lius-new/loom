@@ -142,6 +142,7 @@ impl<'a> EditorMut<'a> {
             cursor: offset,
             anchor,
             preferred_column: None,
+            wrap_affinity: Default::default(),
         });
     }
 
@@ -159,6 +160,9 @@ impl<'a> EditorMut<'a> {
     }
 
     /// Keep a display column for the next vertical move.
+    pub fn set_wrap_affinity(&mut self, affinity: Assoc) {
+        self.selection.wrap_affinity = affinity;
+    }
     pub fn set_preferred_column(&mut self, column: Option<usize>) {
         self.selection.preferred_column = column;
     }
@@ -268,6 +272,7 @@ impl<'a> EditorMut<'a> {
                 cursor: changes.map(selection.cursor, Assoc::After),
                 anchor: selection.anchor.map(|a| changes.map(a, Assoc::After)),
                 preferred_column: None,
+                wrap_affinity: Default::default(),
             })?;
             self.buffer.initialize_metadata(after);
             self.buffer.history_mut().attach_metadata(before, after);

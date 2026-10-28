@@ -81,11 +81,24 @@ pub fn render(
     decorations: &BTreeMap<usize, Vec<GutterDecoration>>,
     hovered: Option<usize>,
 ) -> Element {
+    render_rows(
+        rect,
+        visible_lines.map(|line| (line, line)),
+        decorations,
+        hovered,
+    )
+}
+pub fn render_rows(
+    rect: UiRect,
+    rows: impl IntoIterator<Item = (usize, usize)>,
+    decorations: &BTreeMap<usize, Vec<GutterDecoration>>,
+    hovered: Option<usize>,
+) -> Element {
     let mut g = group(rect);
     let hovered_run = hovered_run(decorations, hovered);
 
-    for i in visible_lines {
-        let y = rect.top + i as f32 * fonts::editor().line_h;
+    for (i, row) in rows {
+        let y = rect.top + row as f32 * fonts::editor().line_h;
         let line_decorations = decorations.get(&(i + 1));
         let has_bp =
             line_decorations.is_some_and(|values| values.contains(&GutterDecoration::Breakpoint));

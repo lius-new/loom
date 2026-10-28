@@ -101,11 +101,12 @@ impl Change {
 }
 
 /// Which side of a change a position on its start ends up on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Assoc {
     /// Stay before inserted text: the rule for other views' positions.
     Before,
     /// Move past inserted text.
+    #[default]
     After,
 }
 

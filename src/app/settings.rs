@@ -85,6 +85,7 @@ impl Setting {
             Self::MatchBrackets => app.preferences.values_mut().editor.match_brackets ^= true,
             Self::IndentGuides => app.preferences.values_mut().editor.indent_guides ^= true,
             Self::ShowWhitespace => app.preferences.values_mut().editor.show_whitespace ^= true,
+            Self::SoftWrap => app.preferences.values_mut().editor.soft_wrap ^= true,
             Self::SmoothCaret => app.preferences.values_mut().smooth_caret ^= true,
             Self::ExplorerAutoReveal => app.preferences.values_mut().explorer_auto_reveal ^= true,
             Self::InlineBlame => app.git.ui.inline_blame ^= true,

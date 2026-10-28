@@ -233,6 +233,141 @@ pub fn key(state: &crate::app::context::AppContext, event: &lgui::core::Keyboard
     true
 }
 
+pub fn projection(
+    app: &AppState,
+    view: ViewId,
+    rect: lgui::prelude::UiRect,
+) -> std::sync::Arc<loom_editor_core::text::DisplayMap> {
+    let Some(doc) = app
+        .workspace
+        .view_document(view)
+        .and_then(|id| app.workspace.documents.get(&id))
+    else {
+        return std::sync::Arc::new(loom_editor_core::text::DisplayMap::new(
+            &loom_editor_core::text::TextBuffer::new(""),
+            None,
+            &[],
+        ));
+    };
+    let left = rect.left + crate::ui::fonts::editor().gutter_w() + crate::ui::theme::CODE_PAD;
+    let columns = doc.buffer.options().soft_wrap.then(|| {
+        ((rect.right - left - crate::ui::editor::view::SCROLLBAR_SIZE)
+            / crate::ui::fonts::editor().char_w)
+            .floor()
+            .max(4.0) as usize
+    });
+    crate::ui::editor::projection::cached(&doc.buffer, columns, &[])
+}
+pub fn active_projection(
+    app: &AppState,
+    rect: lgui::prelude::UiRect,
+) -> std::sync::Arc<loom_editor_core::text::DisplayMap> {
+    app.workspace
+        .active()
+        .map(|view| projection(app, view, rect))
+        .unwrap_or_else(|| {
+            std::sync::Arc::new(loom_editor_core::text::DisplayMap::new(
+                &loom_editor_core::text::TextBuffer::new(""),
+                None,
+                &[],
+            ))
+        })
+}
+pub fn toggle_wrap(app: &mut AppState) {
+    let Some(view) = app.workspace.active() else {
+        return;
+    };
+    let Some(id) = app.workspace.view_document(view) else {
+        return;
+    };
+    let wrapped = effective(app, id).soft_wrap;
+    app.editor.editing.manual.entry(id).or_default().soft_wrap = Some(!wrapped);
+    configure(app, view);
+}
+pub fn move_displayed(app: &mut AppState, command: loom_editor_core::commands::Command) -> bool {
+    use loom_editor_core::{commands::Command, normal::Movement, text::Assoc};
+    let Command::Move(movement, extend) = command else {
+        return false;
+    };
+    let Some(view) = app.workspace.active() else {
+        return false;
+    };
+    let rect = app
+        .editor
+        .language
+        .rect
+        .unwrap_or_else(|| lgui::prelude::UiRect::new(0.0, 0.0, 800.0, 600.0));
+    let map = projection(app, view, rect);
+    if !map.wrapped() {
+        return false;
+    }
+    let Some(mut editor) = app.workspace.active_editor_mut() else {
+        return false;
+    };
+    let state = editor.selection_state();
+    let row = map.caret_row(&editor, state.cursor, state.wrap_affinity);
+    let source = map.row(&editor, row);
+    if matches!(movement, Movement::Left | Movement::Right) && editor.selection().is_none() {
+        let flip = match movement {
+            Movement::Left
+                if state.wrap_affinity == Assoc::After
+                    && source.continuation
+                    && state.cursor == source.range.start =>
+            {
+                Some(Assoc::Before)
+            }
+            Movement::Right if state.wrap_affinity == Assoc::Before => Some(Assoc::After),
+            _ => None,
+        };
+        if let Some(affinity) = flip {
+            editor.set_wrap_affinity(affinity);
+            editor.break_undo_group();
+            return true;
+        }
+    }
+    let vertical = match movement {
+        Movement::Up => Some(row.saturating_sub(1)),
+        Movement::Down => Some((row + 1).min(map.len() - 1)),
+        Movement::PageUp(n) => Some(row.saturating_sub(n)),
+        Movement::PageDown(n) => Some((row + n).min(map.len() - 1)),
+        _ => None,
+    };
+    if let Some(target) = vertical {
+        let column = state.preferred_column.unwrap_or_else(|| {
+            editor
+                .display_column(state.cursor)
+                .saturating_sub(source.column)
+        });
+        let at = map.offset_at(&editor, target, column);
+        editor.select_to(at, extend);
+        editor.set_wrap_affinity(map.affinity_at(&editor, target, at));
+        editor.set_preferred_column(Some(column));
+        return true;
+    }
+    match movement {
+        Movement::Home | Movement::End => {
+            let at = if movement == Movement::Home {
+                source.range.start
+            } else {
+                source.range.end
+            };
+            editor.select_to(at, extend);
+            editor.set_wrap_affinity(map.affinity_at(&editor, row, at));
+            true
+        }
+        Movement::Left | Movement::Right => {
+            loom_editor_core::normal::navigate(&mut editor, movement, extend);
+            editor.set_wrap_affinity(if movement == Movement::Right {
+                Assoc::Before
+            } else {
+                Assoc::After
+            });
+            true
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

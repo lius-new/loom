@@ -354,6 +354,7 @@ impl Vim {
                         cursor,
                         anchor: None,
                         preferred_column: selection.preferred_column,
+                        wrap_affinity: Default::default(),
                     });
                 }
             }
@@ -413,6 +414,7 @@ impl Vim {
                 None
             },
             preferred_column,
+            wrap_affinity: Default::default(),
         });
     }
 
@@ -1429,6 +1431,7 @@ impl Vim {
             cursor: end,
             anchor: Some(cursor),
             preferred_column: extent.to_line_end.then_some(usize::MAX),
+            wrap_affinity: Default::default(),
         });
     }
 

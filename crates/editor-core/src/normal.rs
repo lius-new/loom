@@ -321,6 +321,7 @@ pub fn indent(editor: &mut EditorMut<'_>, outdent: bool) {
             .anchor
             .map(|anchor| changes.map(anchor, Assoc::After)),
         preferred_column: None,
+        wrap_affinity: Default::default(),
     });
     editor.break_undo_group();
 }

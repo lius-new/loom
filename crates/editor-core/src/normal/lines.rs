@@ -70,6 +70,7 @@ pub fn lines(editor: &mut EditorMut<'_>, operation: LineOperation) {
                     cursor: map(state.cursor),
                     anchor: state.anchor.map(map),
                     preferred_column: None,
+                    wrap_affinity: Default::default(),
                 }
             });
         }
@@ -133,6 +134,7 @@ pub fn lines(editor: &mut EditorMut<'_>, operation: LineOperation) {
                 cursor: map(state.cursor),
                 anchor: state.anchor.map(map),
                 preferred_column: None,
+                wrap_affinity: Default::default(),
             };
             let _ = editor.edit(
                 EditKind::Other,
@@ -180,6 +182,7 @@ pub fn comment(editor: &mut EditorMut<'_>, prefix: &str) {
         cursor: changes.map(state.cursor, Assoc::After),
         anchor: state.anchor.map(|a| changes.map(a, Assoc::After)),
         preferred_column: None,
+        wrap_affinity: Default::default(),
     });
     editor.break_undo_group();
 }

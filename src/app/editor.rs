@@ -3,6 +3,7 @@ use super::editor_vim as vim_input;
 use crate::app::context::AppContext;
 use crate::app::state::AppState;
 use crate::app::state::editor::{DragSelection, ImeSession, SelectionUnit};
+use crate::ui::editor::projection as projected;
 use crate::ui::editor::view::*;
 use crate::ui::fonts;
 use crate::ui::theme;
@@ -14,6 +15,7 @@ use loom_editor_core::vim;
 use std::ops::Range;
 const CURSOR_REVEAL_MARGIN: f32 = 12.0;
 pub fn drag_scrollbars(app: &mut AppState, rect: UiRect, pointer_x: f32, pointer_y: f32) -> bool {
+    let projection = super::editing::active_projection(app, rect);
     if !app.editor.editor_vertical_scrollbar_dragging
         && !app.editor.editor_horizontal_scrollbar_dragging
     {
@@ -24,7 +26,7 @@ pub fn drag_scrollbars(app: &mut AppState, rect: UiRect, pointer_x: f32, pointer
     let Some(metrics) = app
         .workspace
         .active_editor()
-        .map(|buffer| scroll_metrics(rect, code_left, &buffer))
+        .map(|buffer| projected::metrics(rect, code_left, &buffer, &projection))
     else {
         return finish_scrollbar_drag(app);
     };
@@ -99,12 +101,17 @@ pub fn finish_scrollbar_drag(app: &mut AppState) -> bool {
 }
 
 pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
+    let projection = super::editing::active_projection(app, rect);
     let Some(buffer) = app.workspace.active_editor() else {
         return;
     };
-    let (line, column) = buffer.line_col();
+    let line = projection.caret_row(
+        &buffer,
+        buffer.cursor(),
+        buffer.selection_state().wrap_affinity,
+    );
     let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
-    let metrics = scroll_metrics(rect, code_left, &buffer);
+    let metrics = projected::metrics(rect, code_left, &buffer, &projection);
     let (mut scroll_x, mut scroll_y) = app.workspace.active_scroll();
 
     let line_top = line as f32 * fonts::editor().line_h;
@@ -115,15 +122,16 @@ pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
         scroll_y = line_bottom - metrics.viewport_h;
     }
 
-    let caret = document_caret(
+    let caret = projected::caret(
         &buffer,
-        line,
-        column,
+        &projection,
+        buffer.selection_state(),
         code_left,
         rect.top,
-        code_left + metrics.content_w,
-        (scroll_x, metrics.viewport_w),
-    ) - code_left;
+        scroll_x,
+        metrics.viewport_w,
+    )
+    .0 - code_left;
     if caret < scroll_x + CURSOR_REVEAL_MARGIN {
         scroll_x = (caret - CURSOR_REVEAL_MARGIN).max(0.0);
     } else if caret > scroll_x + metrics.viewport_w - CURSOR_REVEAL_MARGIN {
@@ -143,6 +151,7 @@ pub fn execute_command(
     clipboard: lgui::services::ClipboardHandle,
 ) {
     state.update(|app| {
+        app.editor.language.rect = Some(rect);
         if command == Command::Escape
             && (app.editor.menu.take().is_some()
                 || app.editor.editor_hunk_peek.take().is_some()
@@ -215,6 +224,9 @@ pub(crate) fn apply_command(
     }
     if let Some(view) = app.workspace.active() {
         super::editing::configure(app, view);
+    }
+    if super::editing::move_displayed(app, command) {
+        return Ok(None);
     }
     match command {
         Command::Copy | Command::Cut => {
@@ -303,6 +315,7 @@ pub(crate) fn apply_command(
 }
 
 pub(crate) fn update_drag_selection(app: &mut AppState, rect: UiRect) {
+    let projection = super::editing::active_projection(app, rect);
     let Some(drag) = app.editor.drag.clone() else {
         return;
     };
@@ -313,9 +326,10 @@ pub(crate) fn update_drag_selection(app: &mut AppState, rect: UiRect) {
     let (sx, sy) = app.workspace.active_scroll();
     let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
     if let Some(mut buffer) = app.workspace.active_editor_mut() {
-        let metrics = scroll_metrics(rect, left, &buffer);
-        let cursor = cursor_offset_from_point(
+        let metrics = projected::metrics(rect, left, &buffer, &projection);
+        let (cursor, affinity) = projected::hit(
             &buffer,
+            &projection,
             rect,
             left,
             metrics,
@@ -328,17 +342,18 @@ pub(crate) fn update_drag_selection(app: &mut AppState, rect: UiRect) {
             SelectionUnit::Character => {
                 buffer.set_cursor(drag.origin.start);
                 buffer.select_to(cursor, true);
+                buffer.set_wrap_affinity(affinity);
             }
             SelectionUnit::Word | SelectionUnit::Line => {
                 let range = if drag.unit == SelectionUnit::Word {
                     buffer.word_range(cursor)
                 } else {
-                    buffer.line_range_with_break(line_index_from_point(
-                        drag.point.1,
-                        rect.top,
+                    buffer.line_range_with_break(projection.source_line(projected::point_row(
+                        &projection,
+                        rect,
                         sy,
-                        buffer.line_count(),
-                    ))
+                        drag.point.1,
+                    )))
                 };
                 if range.start < drag.origin.start {
                     buffer.set_cursor(drag.origin.end);
@@ -354,6 +369,7 @@ pub(crate) fn update_drag_selection(app: &mut AppState, rect: UiRect) {
 }
 
 pub fn drag_scroll_tick(app: &mut AppState, rect: UiRect) -> bool {
+    let projection = super::editing::active_projection(app, rect);
     let Some(drag) = app.editor.drag.as_ref() else {
         return false;
     };
@@ -383,7 +399,7 @@ pub fn drag_scroll_tick(app: &mut AppState, rect: UiRect) -> bool {
     let Some(buffer) = app.workspace.active_editor() else {
         return false;
     };
-    let metrics = scroll_metrics(rect, left, &buffer);
+    let metrics = projected::metrics(rect, left, &buffer, &projection);
     let (x, y) = app.workspace.active_scroll();
     let next = (
         (x + dx).clamp(0.0, metrics.max_x),
@@ -517,17 +533,27 @@ pub(crate) fn pointer_down(
     app.editor.editor_hunk_peek = None;
     app.workspace.activate_pane(pane);
     let (scroll_x, scroll_y) = app.workspace.scroll(pane);
+    let projection = super::editing::projection(app, id, rect);
     let cursor = app.workspace.active_editor().map(|buffer| {
-        cursor_offset_from_point(
-            &buffer, rect, code_left, metrics, scroll_x, scroll_y, point.x, point.y,
+        projected::hit(
+            &buffer,
+            &projection,
+            rect,
+            code_left,
+            metrics,
+            scroll_x,
+            scroll_y,
+            point.x,
+            point.y,
         )
     });
-    if let Some(cursor) = cursor
+    if let Some((cursor, affinity)) = cursor
         && let Some(mut buffer) = app.workspace.active_editor_mut()
     {
         if button == PointerButton::Right {
             if !buffer.selection().is_some_and(|r| r.contains(&cursor)) {
                 buffer.set_cursor(cursor);
+                buffer.set_wrap_affinity(affinity);
             }
             app.editor.menu = Some((point.x, point.y));
             app.editor.menu_hover = None;
@@ -549,13 +575,18 @@ pub(crate) fn pointer_down(
             };
             let origin = match unit {
                 SelectionUnit::Line => {
-                    let line =
-                        line_index_from_point(point.y, rect.top, scroll_y, buffer.line_count());
+                    let line = projection.source_line(projected::point_row(
+                        &projection,
+                        rect,
+                        scroll_y,
+                        point.y,
+                    ));
                     buffer.line_range_with_break(line)
                 }
                 SelectionUnit::Word => buffer.word_range(cursor),
                 SelectionUnit::Character => {
                     buffer.select_to(cursor, shift);
+                    buffer.set_wrap_affinity(affinity);
                     // Dragging extends from where the selection is anchored.
                     let anchor = buffer.selection_state().anchor.unwrap_or(cursor);
                     anchor..anchor

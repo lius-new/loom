@@ -10,6 +10,8 @@ pub struct Selection {
     /// The active end, where the caret is drawn.
     pub cursor: usize,
     pub anchor: Option<usize>,
+    /// Which side of a soft-wrap boundary displays the caret.
+    pub wrap_affinity: Assoc,
     /// Display column kept across vertical moves through shorter lines.
     pub preferred_column: Option<usize>,
 }
@@ -27,6 +29,7 @@ impl Selection {
         Self {
             cursor,
             anchor: Some(anchor),
+            wrap_affinity: Assoc::After,
             preferred_column: None,
         }
     }

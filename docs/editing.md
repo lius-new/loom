@@ -169,3 +169,16 @@ markers show spaces, tabs and line endings without editing the text. Matching
 uses a cached lexical index with conservative comment/string handling. It skips
 files larger than 128 KiB or with more than 32,768 matched pairs so large-file
 viewing stays bounded. Incomplete or crossed delimiters remain unhighlighted.
+
+## Soft wrap
+
+Alt+Z toggles soft wrap for the current document. Settings → Editor → Soft wrap
+and editor.soft_wrap choose the default; project and language overrides also
+apply. Wrapping never inserts line breaks. Arrows, Home/End, selection, mouse
+hits, scrolling, source cards and IME use the same displayed-row map. At a wrap
+boundary the caret can remain at the previous row's end or the next row's start.
+Vim's logical-line motions retain their normal meaning.
+
+Documents over 1 MiB or 100,000 displayed rows use the existing horizontal-scroll
+view to bound reflow memory and work. The status preference is retained. Display
+geometry caches retain immutable source snapshots and are bounded per UI thread.

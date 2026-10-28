@@ -71,6 +71,7 @@ pub(crate) enum Setting {
     TerminalLineHeight,
     DefaultShell,
     TerminalCursorBlink,
+    SoftWrap,
     SmoothCaret,
     MatchBrackets,
     IndentGuides,
@@ -92,6 +93,7 @@ const SECTIONS: [(&str, &[Setting]); 6] = [
             Setting::EditorFontFamily,
             Setting::EditorFontSize,
             Setting::EditorLineHeight,
+            Setting::SoftWrap,
             Setting::SmoothCaret,
             Setting::MatchBrackets,
             Setting::IndentGuides,
@@ -131,6 +133,7 @@ impl Setting {
             Self::MatchBrackets => "Matching brackets",
             Self::IndentGuides => "Indent guides",
             Self::ShowWhitespace => "Visible whitespace",
+            Self::SoftWrap => "Soft wrap",
             Self::SmoothCaret => "Smooth caret movement",
             Self::ExplorerAutoReveal => "Auto reveal active file",
             Self::InlineBlame => "Inline blame",
@@ -163,6 +166,9 @@ impl Setting {
             Self::MatchBrackets => "Highlight the bracket pair beside the caret.",
             Self::IndentGuides => "Show guides at the configured indentation steps.",
             Self::ShowWhitespace => "Show spaces, tabs and line endings without changing the file.",
+            Self::SoftWrap => {
+                "Wrap long code lines to the editor width without changing source text."
+            }
             Self::SmoothCaret => "Animate the editor caret when typing, navigating or clicking.",
             Self::ExplorerAutoReveal => {
                 "Expand the file tree to the active editor's file when you switch tabs."
@@ -194,6 +200,7 @@ impl Setting {
             Self::MatchBrackets => Some(app.prefs.editor.match_brackets),
             Self::IndentGuides => Some(app.prefs.editor.indent_guides),
             Self::ShowWhitespace => Some(app.prefs.editor.show_whitespace),
+            Self::SoftWrap => Some(app.prefs.editor.soft_wrap),
             Self::SmoothCaret => Some(app.prefs.smooth_caret),
             Self::ExplorerAutoReveal => Some(app.prefs.explorer_auto_reveal),
             Self::InlineBlame => Some(app.prefs.git_inline_blame),

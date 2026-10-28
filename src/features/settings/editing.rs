@@ -18,6 +18,7 @@ impl Ending {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EditorSettings {
+    pub soft_wrap: bool,
     pub match_brackets: bool,
     pub indent_guides: bool,
     pub show_whitespace: bool,
@@ -30,6 +31,7 @@ pub struct EditorSettings {
 impl Default for EditorSettings {
     fn default() -> Self {
         Self {
+            soft_wrap: false,
             match_brackets: true,
             indent_guides: true,
             show_whitespace: false,
@@ -51,6 +53,7 @@ impl EditorSettings {
     }
     pub fn core(self) -> loom_editor_core::text::EditingOptions {
         loom_editor_core::text::EditingOptions {
+            soft_wrap: self.soft_wrap,
             match_brackets: self.match_brackets,
             indent_guides: self.indent_guides,
             show_whitespace: self.show_whitespace,
@@ -65,6 +68,8 @@ impl EditorSettings {
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EditorOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soft_wrap: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub match_brackets: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -84,6 +89,9 @@ pub struct EditorOverrides {
 }
 impl EditorOverrides {
     pub fn apply(self, s: &mut EditorSettings) {
+        if let Some(v) = self.soft_wrap {
+            s.soft_wrap = v;
+        }
         if let Some(v) = self.match_brackets {
             s.match_brackets = v;
         }

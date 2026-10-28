@@ -16,6 +16,7 @@ use lgui::prelude::{Color, Element, UiRect, VisualStyle, group, panel, selection
 use lgui::text::{self, TextLayout, TextLayoutRequest};
 
 use super::gutter;
+use super::projection;
 use super::syntax;
 use crate::domain::identity::PaneId;
 use crate::domain::line_change::LineChange;
@@ -101,15 +102,24 @@ pub(crate) fn render(
         let id = document.id;
         let buffer = document.editor();
         let _tabs = TabScope::new(buffer.options().tab_width);
+        let projection = document.projection.clone();
         let line_count = buffer.line_count();
         let (cursor_line, cursor_col) = buffer.line_col();
+        let cursor_row =
+            projection.caret_row(&buffer, buffer.cursor(), document.selection.wrap_affinity);
         let code_top = rect.top;
         let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
-        let metrics = scroll_metrics(rect, code_left, &buffer);
+        let metrics = projection::metrics(rect, code_left, &buffer, &projection);
         let (stored_x, stored_y) = document.scroll;
         let scroll_x = stored_x.clamp(0.0, metrics.max_x);
         let scroll_y = stored_y.clamp(0.0, metrics.max_y);
-        let visible_lines = visible_line_range(scroll_y, rect.height(), line_count);
+        let visible_rows = visible_line_range(scroll_y, rect.height(), projection.len());
+        let visible_lines = if visible_rows.is_empty() {
+            0..0
+        } else {
+            projection.source_line(visible_rows.start)
+                ..projection.source_line(visible_rows.end - 1) + 1
+        };
         let mut decorations = s
             .line_changes
             .range(visible_lines.start + 1..visible_lines.end + 1)
@@ -189,16 +199,31 @@ pub(crate) fn render(
         if !conflict_lines.is_empty() {
             let mut rows = group(rect);
             for &(line, part) in &conflict_lines {
-                let top = code_top + (line - 1) as f32 * fonts::editor().line_h;
+                let at = buffer.line_start(line - 1);
+                if projection.hidden(&buffer, at) {
+                    continue;
+                }
+                let first = projection.row_of(&buffer, at);
+                let after = if line < buffer.line_count() {
+                    projection.row_of(&buffer, buffer.line_start(line))
+                } else {
+                    projection.len()
+                };
+                let top = code_top + first as f32 * fonts::editor().line_h;
                 rows = rows.child(panel(
-                    UiRect::new(code_left, top, rect.right, top + fonts::editor().line_h),
+                    UiRect::new(
+                        code_left,
+                        top,
+                        rect.right,
+                        top + (after - first).max(1) as f32 * fonts::editor().line_h,
+                    ),
                     VisualStyle::filled(conflict_row_color(part)),
                 ));
             }
             content = content.child(clip(rect, 0.0, -scroll_y).child(rows));
         }
         if visible_lines.contains(&cursor_line) {
-            let highlight_y = code_top + cursor_line as f32 * fonts::editor().line_h;
+            let highlight_y = code_top + cursor_row as f32 * fonts::editor().line_h;
             let highlight = panel(
                 UiRect::new(
                     code_left,
@@ -227,20 +252,35 @@ pub(crate) fn render(
             .editor_gutter_hover
             .filter(|(hovered_pane, _)| *hovered_pane == pane)
             .map(|(_, line)| line);
-        content = content.child(clip(gutter_viewport, 0.0, -scroll_y).child(gutter::render(
-            gutter_content,
-            visible_lines.clone(),
-            &decorations,
-            gutter_hover,
-        )));
+        content = content.child(
+            clip(gutter_viewport, 0.0, -scroll_y).child(gutter::render_rows(
+                gutter_content,
+                visible_rows.clone().filter_map(|row| {
+                    let source = projection.row(&buffer, row);
+                    (!source.continuation).then_some((source.line, row))
+                }),
+                &decorations,
+                gutter_hover,
+            )),
+        );
         // The hovered change bar opens its peek, like a link.
         if let Some(run) = gutter::hovered_run(&decorations, gutter_hover)
             && let Some(line) = gutter_hover
             && s.has_repository
         {
-            let top = (code_top + (*run.start() - 1) as f32 * fonts::editor().line_h - scroll_y)
+            let top = (code_top
+                + projection.row_of(&buffer, buffer.line_start(*run.start() - 1)) as f32
+                    * fonts::editor().line_h
+                - scroll_y)
                 .max(gutter_viewport.top);
-            let bottom = (code_top + *run.end() as f32 * fonts::editor().line_h - scroll_y)
+            let bottom = (code_top
+                + (if *run.end() < buffer.line_count() {
+                    projection.row_of(&buffer, buffer.line_start(*run.end()))
+                } else {
+                    projection.len()
+                }) as f32
+                    * fonts::editor().line_h
+                - scroll_y)
                 .min(gutter_viewport.bottom);
             let st_peek = state.clone();
             content = content.child(
@@ -259,11 +299,12 @@ pub(crate) fn render(
             );
         }
         let st_gutter_hover = state.clone();
+        let gutter_projection = projection.clone();
         if focused_pane
             && visible_lines.contains(&cursor_line)
             && let Some(revision) = s.lightbulb
         {
-            let top = code_top + cursor_line as f32 * fonts::editor().line_h - scroll_y;
+            let top = code_top + cursor_row as f32 * fonts::editor().line_h - scroll_y;
             let st_actions = state.clone();
             content = content.child(clip(gutter_viewport, 0.0, 0.0).child(
                 super::lightbulb::render(
@@ -283,7 +324,7 @@ pub(crate) fn render(
                 let hovered = gutter_viewport.contains(point).then(|| {
                     let line =
                         ((point.y - code_top + scroll_y) / fonts::editor().line_h).floor() as usize;
-                    (pane, line + 1)
+                    (pane, gutter_projection.source_line(line) + 1)
                 });
                 let hovered = hovered.filter(|(_, line)| *line <= line_count + 1);
                 st_gutter_hover.send(Event::GutterHover(hovered));
@@ -302,22 +343,40 @@ pub(crate) fn render(
         // Vim draws its own visual selection; other views show the core one.
         let selections = &s.selections;
         let matches = &s.search_matches;
-        let windows = visible_lines
+        let windows = visible_rows
             .clone()
-            .map(|line| crate::features::syntax::Window {
-                line: buffer.line_range(line),
-                range: line_window(&buffer, line, scroll_x, metrics.viewport_w),
+            .map(|row| {
+                let source = projection.row(&buffer, row);
+                crate::features::syntax::Window {
+                    line: buffer.line_range(source.line),
+                    range: projection::window(
+                        &buffer,
+                        &projection,
+                        row,
+                        scroll_x,
+                        metrics.viewport_w,
+                    ),
+                }
             })
             .collect();
         let ready = state.highlights(document, windows);
         // Where each underlined diagnostic is on screen, least serious first.
         let mut diagnostic_hits: Vec<(UiRect, Range<usize>)> = Vec::new();
-        for line_index in visible_lines.clone() {
-            let y = code_top + line_index as f32 * fonts::editor().line_h;
-            let window = line_window(&buffer, line_index, scroll_x, metrics.viewport_w);
+        for row_index in visible_rows.clone() {
+            let source_row = projection.row(&buffer, row_index);
+            let line_index = source_row.line;
+            let y = code_top + row_index as f32 * fonts::editor().line_h;
+            let window = projection::window(
+                &buffer,
+                &projection,
+                row_index,
+                scroll_x,
+                metrics.viewport_w,
+            );
             let line = &buffer.text()[window.clone()];
             let initial_column = buffer.display_column(window.start);
-            let line_left = code_left + initial_column as f32 * fonts::editor().char_w;
+            let line_left =
+                code_left + (initial_column - source_row.column) as f32 * fonts::editor().char_w;
             let line_hints = super::hints::in_window(&s.inlay_hints, buffer.text(), window.clone());
             let layout = layout_line_hinted(
                 line,
@@ -328,7 +387,11 @@ pub(crate) fn render(
                 initial_column,
             );
             let (start, end) = (window.start, window.end);
-            let next = buffer.line_range_with_break(line_index).end;
+            let next = if window.end < buffer.line_end(line_index) {
+                window.end
+            } else {
+                buffer.line_range_with_break(line_index).end
+            };
             // The part of `range` on this line, as a highlight rectangle.
             let line_rect = |range: &Range<usize>| {
                 if range.start >= next || range.end <= start || range.start > end {
@@ -338,13 +401,17 @@ pub(crate) fn render(
                 let to = range.end.min(end).max(start);
                 let left = caret_x(layout.as_ref(), buffer.text()[start..from].chars().count())
                     .unwrap_or_else(|| {
-                        code_left + buffer.display_column(from) as f32 * fonts::editor().char_w
+                        code_left
+                            + (buffer.display_column(from) - source_row.column) as f32
+                                * fonts::editor().char_w
                     });
                 let mut right = caret_x(layout.as_ref(), buffer.text()[start..to].chars().count())
                     .unwrap_or_else(|| {
-                        code_left + buffer.display_column(to) as f32 * fonts::editor().char_w
+                        code_left
+                            + (buffer.display_column(to) - source_row.column) as f32
+                                * fonts::editor().char_w
                     });
-                if range.end > end {
+                if range.end > end && next > end {
                     right += fonts::editor().char_w;
                 }
                 Some(UiRect::new(
@@ -401,7 +468,8 @@ pub(crate) fn render(
                     buffer.options().indent_size
                 };
                 for column in (step..=columns).step_by(step) {
-                    let x = code_left + column as f32 * fonts::editor().char_w;
+                    let x = code_left
+                        + (column as f32 - source_row.column as f32) * fonts::editor().char_w;
                     if x >= code_left + scroll_x && x <= rect.right + scroll_x {
                         code = code.child(
                             panel(
@@ -493,15 +561,15 @@ pub(crate) fn render(
         // Only the editor that owns keyboard focus shows a caret.
         let editor_focused = s.focused && focused_pane;
         if editor_focused && visible_lines.contains(&cursor_line) {
-            let cursor_y = code_top + cursor_line as f32 * fonts::editor().line_h;
-            let cursor_x = document_caret(
+            let cursor_y = code_top + cursor_row as f32 * fonts::editor().line_h;
+            let (cursor_x, _) = projection::caret(
                 &buffer,
-                cursor_line,
-                cursor_col,
+                &projection,
+                document.selection,
                 code_left,
-                cursor_y,
-                layout_right,
-                (scroll_x, metrics.viewport_w),
+                code_top,
+                scroll_x,
+                metrics.viewport_w,
             );
             let shape = s.cursor_shape;
             let cell = [cursor_x, cursor_y];
@@ -518,15 +586,23 @@ pub(crate) fn render(
                     .map_or(0, |grapheme| grapheme.chars().count());
                 let right = (chars > 0)
                     .then(|| {
-                        Some(document_caret(
-                            &buffer,
-                            cursor_line,
-                            cursor_col + chars,
-                            code_left,
-                            cursor_y,
-                            layout_right,
-                            (scroll_x, metrics.viewport_w),
-                        ))
+                        Some(
+                            projection::caret(
+                                &buffer,
+                                &projection,
+                                loom_editor_core::text::Selection {
+                                    cursor: buffer
+                                        .offset_at_char_column(cursor_line, cursor_col + chars),
+                                    wrap_affinity: loom_editor_core::text::Assoc::Before,
+                                    ..Default::default()
+                                },
+                                code_left,
+                                code_top,
+                                scroll_x,
+                                metrics.viewport_w,
+                            )
+                            .0,
+                        )
                     })
                     .flatten()
                     .unwrap_or(cursor_x + fonts::editor().char_w)
@@ -593,6 +669,8 @@ pub(crate) fn render(
         // Above the code layer, which would otherwise take the pointer and
         // its text cursor away from the buttons.
         content = content.child(conflict_actions(
+            &projection,
+            &buffer,
             &s.conflicts,
             &visible_lines,
             rect,
@@ -621,8 +699,9 @@ pub(crate) fn render(
         // diagnostic the pointer is on.
         let mut card_anchor: Option<UiRect> = None;
         let card = if let Some(hover) = &s.hover {
-            let anchor = anchor_rect(
+            let anchor = anchor_rect_in(
                 &buffer,
+                &projection,
                 &hover.anchor,
                 (code_left, code_top, layout_right),
                 (scroll_x, scroll_y),
@@ -670,8 +749,9 @@ pub(crate) fn render(
             .or(s.popup.as_ref())
             .map(|view| {
                 let anchor = view.anchor.and_then(|offset| {
-                    anchor_rect(
+                    anchor_rect_in(
                         &buffer,
+                        &projection,
                         &(offset..offset),
                         (code_left, code_top, layout_right),
                         (scroll_x, scroll_y),
@@ -692,8 +772,9 @@ pub(crate) fn render(
                 )
             });
         let signature = s.signature.as_ref().and_then(|(anchor, view)| {
-            let rect = anchor_rect(
+            let rect = anchor_rect_in(
                 &buffer,
+                &projection,
                 &(*anchor..*anchor),
                 (code_left, code_top, layout_right),
                 (scroll_x, scroll_y),
@@ -805,11 +886,21 @@ pub(crate) fn render(
                 fonts::editor().line_h,
                 s.overview_marks
                     .iter()
-                    .map(|mark| (mark.first, mark.lines, change_color(mark.change)))
+                    .map(|mark| {
+                        let (first, lines) =
+                            displayed_span(&buffer, &projection, mark.first, mark.lines);
+                        (first, lines, change_color(mark.change))
+                    })
                     // Conflicts come last so they draw over the additions Git
                     // sees in their lines.
                     .chain(s.conflicts.iter().map(|region| {
-                        (region.start - 1, region.lines().len(), theme::c().warning)
+                        let (first, lines) = displayed_span(
+                            &buffer,
+                            &projection,
+                            region.start - 1,
+                            region.lines().len(),
+                        );
+                        (first, lines, theme::c().warning)
                     })),
             ));
         }
@@ -822,7 +913,7 @@ pub(crate) fn render(
                 s.diagnostics
                     .iter()
                     .filter(|d| d.severity != Severity::Hint)
-                    .map(|d| (document.buffer.line_of(d.range.start), d.severity)),
+                    .map(|d| (projection.row_of(&buffer, d.range.start), d.severity)),
             ));
         }
         if has_vertical {
@@ -950,6 +1041,23 @@ pub(crate) fn overview_ruler(
     ruler
 }
 
+fn displayed_span(
+    buffer: &TextBuffer,
+    map: &loom_editor_core::text::DisplayMap,
+    first: usize,
+    lines: usize,
+) -> (usize, usize) {
+    let start = map.row_of(
+        buffer,
+        buffer.line_start(first.min(buffer.line_count() - 1)),
+    );
+    let end = if first + lines < buffer.line_count() {
+        map.row_of(buffer, buffer.line_start(first + lines))
+    } else {
+        map.len()
+    };
+    (start, end.saturating_sub(start).max(1))
+}
 pub(crate) fn change_color(change: LineChange) -> Color {
     match change {
         LineChange::Added => theme::c().diff.add_mark,
@@ -988,6 +1096,8 @@ const CONFLICT_ACTION_GAP: f32 = 4.0;
 /// The buttons that keep one side of each conflict, on its opening line at the
 /// right edge where the marker text rarely reaches.
 fn conflict_actions(
+    projection: &loom_editor_core::text::DisplayMap,
+    buffer: &TextBuffer,
     regions: &[ConflictRegion],
     visible: &Range<usize>,
     rect: UiRect,
@@ -1006,7 +1116,10 @@ fn conflict_actions(
             continue;
         }
         let line_h = fonts::editor().line_h;
-        let top = code_top + (region.start - 1) as f32 * line_h - scroll_y + 2.0;
+        let top = code_top
+            + projection.row_of(buffer, buffer.line_start(region.start - 1)) as f32 * line_h
+            - scroll_y
+            + 2.0;
         let mut right = rect.right - SCROLLBAR_SIZE - 8.0;
         for ((resolution, label), width) in CONFLICT_ACTIONS.iter().zip(&widths).rev() {
             let st = state.clone();
@@ -1095,33 +1208,58 @@ pub(crate) fn anchor_rect(
     (scroll_x, scroll_y): (f32, f32),
     viewport_w: f32,
 ) -> Option<UiRect> {
-    if range.start > buffer.len() || !buffer.text().is_char_boundary(range.start) {
+    let map = loom_editor_core::text::DisplayMap::new(buffer, None, &[]);
+    anchor_rect_in(
+        buffer,
+        &map,
+        range,
+        (code_left, code_top, layout_right),
+        (scroll_x, scroll_y),
+        viewport_w,
+    )
+}
+
+pub(crate) fn anchor_rect_in(
+    buffer: &TextBuffer,
+    map: &loom_editor_core::text::DisplayMap,
+    range: &Range<usize>,
+    (code_left, code_top, _layout_right): (f32, f32, f32),
+    (scroll_x, scroll_y): (f32, f32),
+    viewport_w: f32,
+) -> Option<UiRect> {
+    if range.start > buffer.len()
+        || !buffer.text().is_char_boundary(range.start)
+        || map.hidden(buffer, range.start)
+    {
         return None;
     }
-    let line = buffer.line_of(range.start);
-    let end = range.end.min(buffer.line_end(line)).max(range.start);
-    let (_, from) = buffer.line_col(range.start);
-    let (_, to) = buffer.line_col(end);
-    let y = code_top + line as f32 * fonts::editor().line_h;
-    let x0 = document_caret(
+    let row = map.row(buffer, map.row_of(buffer, range.start));
+    let end = range.end.min(row.range.end).max(range.start);
+    let (x0, y) = projection::caret(
         buffer,
-        line,
-        from,
+        map,
+        loom_editor_core::text::Selection::caret(range.start),
         code_left,
-        y,
-        layout_right,
-        (scroll_x, viewport_w),
+        code_top,
+        scroll_x,
+        viewport_w,
     );
-    let x1 = document_caret(
+    let x1 = projection::caret(
         buffer,
-        line,
-        to,
+        map,
+        loom_editor_core::text::Selection {
+            cursor: end,
+            wrap_affinity: loom_editor_core::text::Assoc::Before,
+            ..Default::default()
+        },
         code_left,
-        y,
-        layout_right,
-        (scroll_x, viewport_w),
-    );
-    let (left, top) = (x0 - scroll_x, y - scroll_y);
+        code_top,
+        scroll_x,
+        viewport_w,
+    )
+    .0;
+    let left = x0 - scroll_x;
+    let top = y - scroll_y;
     Some(UiRect::new(
         left,
         top,
@@ -1946,9 +2084,9 @@ impl LayoutCache {
     }
 }
 thread_local! { static TAB_SIZE: std::cell::Cell<usize> = const { std::cell::Cell::new(4) }; }
-struct TabScope(usize);
+pub(super) struct TabScope(usize);
 impl TabScope {
-    fn new(width: usize) -> Self {
+    pub(super) fn new(width: usize) -> Self {
         Self(TAB_SIZE.with(|s| s.replace(width.clamp(1, 16))))
     }
 }
@@ -2245,20 +2383,20 @@ pub(crate) fn ime_cursor_rect(app: &ViewState, rect: UiRect) -> UiRect {
         return rect;
     };
     let buffer = document.editor();
-    let (line, col) = buffer.line_col();
     let (sx, sy) = document.scroll;
     let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
-    let top = rect.top + line as f32 * fonts::editor().line_h - sy;
-    let metrics = scroll_metrics(rect, left, &buffer);
-    let mut x = document_caret(
+    let metrics = projection::metrics(rect, left, &buffer, &document.projection);
+    let (mut x, top) = projection::caret(
         &buffer,
-        line,
-        col,
+        &document.projection,
+        document.selection,
         left,
-        top,
-        left + metrics.content_w,
-        (sx, metrics.viewport_w),
-    ) - sx;
+        rect.top,
+        sx,
+        metrics.viewport_w,
+    );
+    x -= sx;
+    let top = top - sy;
     let pane = app.pane;
     if let Some(session) = app.preedit_for(pane, document.id) {
         let index = session

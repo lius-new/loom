@@ -165,6 +165,7 @@ impl SavedView {
             cursor: source.cursor,
             anchor: source.anchor,
             preferred_column: None,
+            wrap_affinity: Default::default(),
         };
         view.source.scroll_x = source.scroll_x;
         view.source.scroll_y = source.scroll_y;

@@ -269,6 +269,14 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
         return true;
     }
     match action {
+        Action::ToggleSoftWrap => {
+            env.state.update(|app| {
+                app.editor.language.rect = Some(env.editor_rect);
+                super::editing::toggle_wrap(app);
+                super::editor::reveal_cursor(app, env.editor_rect);
+            });
+            true
+        }
         Action::NoAction => false,
         Action::SearchToggleCase
         | Action::SearchToggleWord

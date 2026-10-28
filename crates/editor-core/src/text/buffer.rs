@@ -370,6 +370,7 @@ impl TextBuffer {
             cursor: self.grapheme_floor(selection.cursor),
             anchor: selection.anchor.map(|anchor| self.grapheme_floor(anchor)),
             preferred_column: selection.preferred_column,
+            wrap_affinity: Default::default(),
         }
     }
 

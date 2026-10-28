@@ -464,6 +464,7 @@ impl Vim {
                         cursor,
                         anchor: None,
                         preferred_column: selection.preferred_column,
+                        wrap_affinity: Default::default(),
                     });
                 }
             }
