@@ -4906,15 +4906,17 @@ fn folding_gutter_hover_reveals_right_column_and_preserves_numbers_actions_and_g
                     .layout_rect
             };
             let arrow_visible = |session: &UiSession, name| {
-                session
+                let control = session
                     .tree()
                     .nodes()
                     .iter()
                     .find(|n| n.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name))
-                    .unwrap()
-                    .path_style
-                    .stroke
-                    .is_some()
+                    .unwrap();
+                session.tree().nodes().iter().any(|node| {
+                    node.parent.as_ref() == Some(&control.id)
+                        && node.icon_key.is_some()
+                        && node.icon_style.alpha > 0
+                })
             };
             assert!(!arrow_visible(&session, "Fold code at line 1"));
             assert!(!arrow_visible(&session, "Fold code at line 4"));
@@ -5092,6 +5094,11 @@ fn folding_gutter_hover_reveals_right_column_and_preserves_numbers_actions_and_g
             check_source(&session);
             if size == 12 && factor == 1.0 {
                 if let Some(path) = std::env::var_os("LOOM_FOLD_PREVIEW") {
+                    application
+                        .resources()
+                        .provide(lgui::icons::IconRegistration(Arc::new(
+                            crate::app::svg_icons(),
+                        )));
                     let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(4 * 1024 * 1024);
                     let frame = lgui::renderer::FrameInfo::new(
                         lgui::core::PhysicalRect::new(0, 0, 640, 180),
@@ -5100,9 +5107,12 @@ fn folding_gutter_hover_reveals_right_column_and_preserves_numbers_actions_and_g
                         lgui::renderer::FrameReason::SceneChange,
                         true,
                     );
-                    surface
-                        .draw(&session.tree().scene().project_to_physical(scale), &frame)
-                        .unwrap();
+                    lgui::assets::backend::with_render_resources(
+                        &application,
+                        lgui::RenderResources::new(),
+                        || surface.draw(&session.tree().scene().project_to_physical(scale), &frame),
+                    )
+                    .unwrap();
                     let mut pixels = surface.pixels().to_vec();
                     for pixel in pixels.as_chunks_mut::<4>().0 {
                         pixel.swap(0, 2);

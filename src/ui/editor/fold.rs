@@ -8,8 +8,8 @@ use crate::{
 };
 use lgui::{
     core::{
-        ComponentState, EventPolicy, PathStyle, Point, SemanticRole, Semantics, Stroke, UiElement,
-        UiFocusHandle, UiId, UiPath, UiPathCommand, UiRenderContext,
+        ComponentState, EventPolicy, IconStyle, SemanticRole, Semantics, UiElement, UiFocusHandle,
+        UiId, UiRenderContext,
     },
     prelude::{Element, UiRect, VisualStyle, panel, text},
 };
@@ -76,6 +76,10 @@ impl Column {
 
     fn button_id(&self, start: usize) -> UiId {
         Self::id_for(self.view, start)
+    }
+
+    fn icon_id(view: ViewId, start: usize) -> UiId {
+        UiId::owned(format!("editor-fold-icon-{view:?}-{start}"))
     }
 
     fn hovered(&self, context: &UiRenderContext<'_>) -> bool {
@@ -156,35 +160,26 @@ fn contains_control(children: &[UiElement], id: &UiId) -> bool {
 }
 
 fn chevron(rect: UiRect, collapsed: bool, column: Column, start: usize) -> Element {
-    let x = (rect.left + rect.right) / 2.0;
-    let y = (rect.top + rect.bottom) / 2.0;
-    let points = if collapsed {
-        [(x - 3.0, y - 4.0), (x + 3.0, y), (x - 3.0, y + 4.0)]
+    let key = if collapsed {
+        "chevron-right"
     } else {
-        [(x - 4.0, y - 2.5), (x, y + 2.5), (x + 4.0, y - 2.5)]
+        "chevron-down"
     };
-    let arrow = UiPath::new(points.into_iter().enumerate().map(|(i, (x, y))| {
-        if i == 0 {
-            UiPathCommand::MoveTo(Point::new(x, y))
-        } else {
-            UiPathCommand::LineTo(Point::new(x, y))
-        }
-    }));
-    // The target keeps its identity and bounds when the arrow appears. Drawing
-    // on the target itself avoids hover flicker from inserting a hit-test child.
+    // Keep both identities mounted, changing only opacity on gutter hover.
+    // The standard 16px icon canvas does not widen the 10px pointer target.
     Element::new(move |cx| {
         let visible = column.hovered(cx.context);
-        UiElement::path(
-            column.button_id(start),
-            rect,
-            arrow.clone(),
-            PathStyle {
-                fill: None,
-                fill_alpha: 0,
-                stroke: visible.then(|| Stroke::new(theme::c().text_dim, 1.5, 255)),
-            },
-        )
-        .children(cx.children)
+        let mut children = cx.children;
+        children.push(
+            UiElement::icon(
+                Column::icon_id(column.view, start),
+                theme::icon_rect(rect),
+                key,
+            )
+            .hit_rect(rect)
+            .icon_style(IconStyle::new(theme::c().text_dim).alpha(if visible { 255 } else { 0 })),
+        );
+        UiElement::panel(column.button_id(start), rect, VisualStyle::default()).children(children)
     })
 }
 
@@ -233,15 +228,23 @@ pub fn button(
 mod tests {
     use super::*;
     use lgui::{
-        application::AppView,
-        core::{CursorIcon, InputEvent, PhysicalRect, PointerData, UiScale},
+        application::{AppView, ApplicationContext},
+        core::{CursorIcon, InputEvent, PhysicalRect, Point, PointerData, UiScale},
         render_skia::SkiaSoftwareSurface,
         renderer::{FrameInfo, FrameReason},
         session::UiSession,
     };
 
     #[test]
-    fn larger_chevrons_show_only_on_hover_without_flicker_or_background_at_fractional_scale() {
+    fn registered_chevrons_show_only_on_hover_without_flicker_or_background_at_fractional_scale() {
+        let context = ApplicationContext::empty(Default::default());
+        context
+            .resources()
+            .provide(lgui::icons::IconRegistration(Arc::new(
+                lgui::icons::SvgIconRegistry::new()
+                    .with_icon("chevron-down", icondata::VsChevronDown)
+                    .with_icon("chevron-right", icondata::VsChevronRight),
+            )));
         let viewport = UiRect::new(0.0, 0.0, 32.0, 32.0);
         let rect = UiRect::new(6.0, 4.0, 16.0, 28.0);
         for collapsed in [false, true] {
@@ -265,9 +268,15 @@ mod tests {
                     true,
                 );
                 let mut surface = SkiaSoftwareSurface::new(1024 * 1024);
-                surface
-                    .draw(&session.tree().scene().project_to_physical(scale), &frame)
+                let draw = |surface: &mut SkiaSoftwareSurface, session: &UiSession| {
+                    lgui::assets::backend::with_render_resources(
+                        &context,
+                        lgui::RenderResources::new(),
+                        || surface.draw(&session.tree().scene().project_to_physical(scale), &frame),
+                    )
                     .unwrap();
+                };
+                draw(&mut surface, &session);
                 assert!(
                     surface
                         .pixels()
@@ -290,9 +299,7 @@ mod tests {
                     }
                     assert_eq!(session.tree().nodes()[0].id, target);
                     assert_eq!(session.tree().cursor_at(point), Some(CursorIcon::Pointer));
-                    surface
-                        .draw(&session.tree().scene().project_to_physical(scale), &frame)
-                        .unwrap();
+                    draw(&mut surface, &session);
                     let mut bounds = (edge, edge, -1, -1);
                     let mut count = 0;
                     for y in 0..edge {
@@ -339,9 +346,7 @@ mod tests {
                 for outside in [Point::new(20.0, 16.0), Point::new(3.0, 16.0)] {
                     session.handle_input(InputEvent::PointerMove(PointerData::mouse(outside)));
                     session.render_view(&view, viewport, scale);
-                    surface
-                        .draw(&session.tree().scene().project_to_physical(scale), &frame)
-                        .unwrap();
+                    draw(&mut surface, &session);
                     assert!(
                         surface
                             .pixels()
@@ -404,11 +409,11 @@ mod tests {
                     assert_eq!(
                         session
                             .tree()
-                            .node(&Column::id_for(view, start))
+                            .node(&Column::icon_id(view, start))
                             .unwrap()
-                            .path_style
-                            .stroke
-                            .is_some(),
+                            .icon_style
+                            .alpha
+                            > 0,
                         visible,
                         "view={view:?}, start={start}, scrolled={}",
                         scrolled.load(std::sync::atomic::Ordering::Relaxed)
