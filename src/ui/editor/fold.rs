@@ -159,9 +159,9 @@ fn chevron(rect: UiRect, collapsed: bool, column: Column, start: usize) -> Eleme
     let x = (rect.left + rect.right) / 2.0;
     let y = (rect.top + rect.bottom) / 2.0;
     let points = if collapsed {
-        [(x - 1.625, y - 4.5), (x + 1.625, y), (x - 1.625, y + 4.5)]
+        [(x - 3.0, y - 4.0), (x + 3.0, y), (x - 3.0, y + 4.0)]
     } else {
-        [(x - 3.25, y - 2.25), (x, y + 2.25), (x + 3.25, y - 2.25)]
+        [(x - 4.0, y - 2.5), (x, y + 2.5), (x + 4.0, y - 2.5)]
     };
     let arrow = UiPath::new(points.into_iter().enumerate().map(|(i, (x, y))| {
         if i == 0 {
@@ -181,7 +181,7 @@ fn chevron(rect: UiRect, collapsed: bool, column: Column, start: usize) -> Eleme
             PathStyle {
                 fill: None,
                 fill_alpha: 0,
-                stroke: visible.then(|| Stroke::new(theme::c().text_soft, 1.5, 255)),
+                stroke: visible.then(|| Stroke::new(theme::c().text_dim, 1.5, 255)),
             },
         )
         .children(cx.children)
