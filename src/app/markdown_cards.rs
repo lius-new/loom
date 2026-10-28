@@ -129,7 +129,7 @@ impl MarkdownService {
         width: f32,
         height: f32,
     ) -> Result<Option<Frame>, String> {
-        let (key, position, selection, focused, horizontal, height) = {
+        let (key, position, selection, focused, horizontal, height, scrollbar_dragging) = {
             let mut cards = self.cards.lock().unwrap();
             let card = cards
                 .get_mut(&owner)
@@ -145,6 +145,7 @@ impl MarkdownService {
                 card.focused,
                 card.interaction.horizontal.clone(),
                 card.height,
+                card.interaction.scrollbar.is_some(),
             )
         };
         let publication = match self.worker.query(Consumer::Card(owner), key) {
@@ -192,6 +193,7 @@ impl MarkdownService {
             },
         );
         let reader = ReaderFrame {
+            scrollbar_dragging,
             key: result.frame,
             document: result.layout.document.clone(),
             layout: result.layout.clone(),
@@ -272,6 +274,7 @@ impl MarkdownService {
             },
         );
         let frame = ReaderFrame {
+            scrollbar_dragging: card.interaction.scrollbar.is_some(),
             key: result.frame,
             document: result.layout.document.clone(),
             layout: result.layout.clone(),
@@ -410,10 +413,28 @@ impl MarkdownService {
         };
         card.focused
             && card.interaction.pressed.is_some()
-            && card
-                .interaction
-                .drag_point
-                .is_some_and(|point| point.1 < 0.0 || point.1 > card.height)
+            && card.interaction.drag_point.is_some_and(|point| {
+                let Some(result) = self.render.latest(Consumer::Card(owner)) else {
+                    return false;
+                };
+                let mut viewport = result.viewport;
+                viewport.height = card.height;
+                viewport.restore(
+                    &result.layout,
+                    crate::features::markdown::reader::ReadingAnchor {
+                        source: crate::features::markdown::model::SourceByte(
+                            card.position.source_byte,
+                        ),
+                        fraction: card.position.block_fraction,
+                    },
+                );
+                let (vertical, horizontal) = crate::features::markdown::reader::drag_scroll_delta(
+                    &result.layout,
+                    viewport,
+                    point,
+                );
+                vertical != 0.0 || horizontal.is_some()
+            })
     }
     pub(super) fn tick_card_drag(&self, owner: u64) {
         let Some(result) = self.render.latest(Consumer::Card(owner)) else {

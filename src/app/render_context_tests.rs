@@ -50,18 +50,18 @@ fn parallel_render_contexts_keep_their_own_reader_feedback() {
     use crate::features::markdown::model::NodeId;
     use crate::ui::markdown::reader::{context_feedback, set_context_feedback};
     use std::sync::{Arc, Barrier};
-    set_context_feedback(3.0, NodeId(1));
+    set_context_feedback(NodeId(1));
     let barrier = Arc::new(Barrier::new(2));
     let other = barrier.clone();
     let worker = std::thread::spawn(move || {
         let initial = context_feedback();
-        set_context_feedback(9.0, NodeId(2));
+        set_context_feedback(NodeId(2));
         other.wait();
         (initial, context_feedback())
     });
     barrier.wait();
     let local = context_feedback();
     let remote = worker.join().unwrap();
-    assert_eq!(local, (3.0, Some(NodeId(1))));
-    assert_eq!(remote, ((0.0, None), (9.0, Some(NodeId(2)))));
+    assert_eq!(local, Some(NodeId(1)));
+    assert_eq!(remote, (None, Some(NodeId(2))));
 }

@@ -975,3 +975,247 @@ fn returning_from_a_markdown_tab_restores_the_source_caret_and_typing() {
         );
     }
 }
+
+fn scroll_preview_result(reader: &Reader) -> Option<Arc<super::markdown_render::Rendered>> {
+    let view = reader.state.get().workspace.active()?;
+    reader.runtime.markdown()?.render.latest(
+        crate::infrastructure::markdown_worker::Consumer::Document(view),
+    )
+}
+fn scroll_preview_offset(reader: &Reader, node: NodeId) -> f32 {
+    let app = reader.state.get();
+    let view = app.workspace.active().unwrap();
+    app.editor
+        .markdown_views
+        .get(&view)
+        .and_then(|s| s.horizontal.get(&node))
+        .copied()
+        .unwrap_or(0.0)
+}
+fn scroll_preview_ready(reader: &Reader, node: NodeId) -> bool {
+    let Some(result) = scroll_preview_result(reader) else {
+        return false;
+    };
+    result
+        .key
+        .horizontal
+        .iter()
+        .find(|(n, _)| *n == node)
+        .map_or(0.0, |(_, v)| *v)
+        == scroll_preview_offset(reader, node)
+}
+fn scroll_preview_thumb(reader: &Reader) -> UiRect {
+    reader
+        .session
+        .tree()
+        .nodes()
+        .iter()
+        .find(|n| {
+            n.semantics.as_ref().and_then(|s| s.name.as_deref())
+                == Some("Markdown horizontal scrollbar thumb")
+        })
+        .unwrap()
+        .layout_rect
+}
+
+#[test]
+fn markdown_horizontal_scrollbar_keeps_arrow_and_drag_across_native_repaints() {
+    use lgui::core::CursorIcon;
+    let mut reader = Reader::new(format!(
+        "# Heading\n\n```text\nstart {}\n```\n\nbody text\n\n```text\nsecond {}\n```",
+        "中😀 token ".repeat(150),
+        "another token ".repeat(150)
+    ));
+    reader.wait(|r| {
+        r.text_rect("start").is_some()
+            && r.session
+                .tree()
+                .nodes()
+                .iter()
+                .filter(|n| {
+                    n.semantics.as_ref().and_then(|s| s.name.as_deref())
+                        == Some("Markdown horizontal scrollbar thumb")
+                })
+                .count()
+                == 2
+    });
+    let result = scroll_preview_result(&reader).unwrap();
+    let node = result.layout.horizontal[0].node;
+    let thumb = scroll_preview_thumb(&reader);
+    let start = PointerData::mouse(Point::new(
+        thumb.left + 4.0,
+        (thumb.top + thumb.bottom) * 0.5,
+    ));
+    assert_ne!(
+        reader.session.tree().cursor_at(start.point),
+        Some(CursorIcon::Text)
+    );
+    let text = reader.text_rect("start").unwrap();
+    assert_eq!(
+        reader
+            .session
+            .tree()
+            .cursor_at(Point::new(text.left + 1.0, text.top + 3.0)),
+        Some(CursorIcon::Text)
+    );
+    reader.send(InputEvent::PointerDown {
+        pointer: start,
+        button: PointerButton::Left,
+    });
+    let view = reader.state.get().workspace.active().unwrap();
+    assert_eq!(
+        reader.state.get().editor.markdown_views[&view]
+            .scrollbar
+            .unwrap()
+            .grab,
+        4.0
+    );
+    assert_ne!(
+        reader
+            .session
+            .tree()
+            .cursor_at(Point::new(text.left + 1.0, text.top + 3.0)),
+        Some(CursorIcon::Text)
+    );
+    for step in 1..=6 {
+        let before = scroll_preview_offset(&reader, node);
+        reader.send(InputEvent::PointerMove(PointerData::mouse(Point::new(
+            start.point.x + step as f32 * 35.0,
+            start.point.y,
+        ))));
+        assert!(
+            scroll_preview_offset(&reader, node) > before,
+            "drag stopped after repaint {step}"
+        );
+        reader.wait(|r| scroll_preview_ready(r, node));
+    }
+    assert_eq!(
+        scroll_preview_offset(&reader, result.layout.horizontal[1].node),
+        0.0
+    );
+    let beyond = PointerData::mouse(Point::new(reader.rect.right + 150.0, start.point.y));
+    reader.send(InputEvent::PointerMove(beyond));
+    assert_eq!(
+        scroll_preview_offset(&reader, node),
+        result.layout.max_scroll(node)
+    );
+    reader.send(InputEvent::PointerUp {
+        pointer: beyond,
+        button: PointerButton::Left,
+    });
+    assert!(
+        reader.state.get().editor.markdown_views[&view]
+            .scrollbar
+            .is_none()
+    );
+    reader.wait(|r| scroll_preview_ready(r, node));
+    // Clicking the empty track keeps its target while the thumb moves away.
+    let track = PointerData::mouse(Point::new(thumb.left + 100.0, start.point.y));
+    reader.send(InputEvent::PointerDown {
+        pointer: track,
+        button: PointerButton::Left,
+    });
+    let previous = scroll_preview_offset(&reader, node);
+    reader.wait(|r| scroll_preview_ready(r, node));
+    let back = PointerData::mouse(Point::new(track.point.x - 30.0, track.point.y));
+    reader.send(InputEvent::PointerMove(back));
+    assert!(scroll_preview_offset(&reader, node) < previous);
+    reader.send(InputEvent::PointerUp {
+        pointer: back,
+        button: PointerButton::Left,
+    });
+    assert!(
+        reader.state.get().editor.markdown_views[&view]
+            .scrollbar
+            .is_none()
+    );
+    assert!(
+        reader.state.get().editor.markdown_views[&view]
+            .selection
+            .is_none()
+    );
+}
+
+#[test]
+fn markdown_code_selection_automatically_scrolls_right_and_left_until_release() {
+    let mut reader = Reader::new(format!(
+        "# Heading\n\n```text\nstart {}\n```\n\nbody text",
+        "中😀 e\u{301} token ".repeat(180)
+    ));
+    reader.wait(|r| r.text_rect("start").is_some());
+    let result = scroll_preview_result(&reader).unwrap();
+    let block = result.layout.horizontal[0].clone();
+    let text = reader.text_rect("start").unwrap();
+    let start = PointerData::mouse(Point::new(text.left + 1.0, (text.top + text.bottom) * 0.5));
+    reader.send(InputEvent::PointerDown {
+        pointer: start,
+        button: PointerButton::Left,
+    });
+    let outside = PointerData::mouse(Point::new(block.rect.right + 80.0, start.point.y));
+    reader.send(InputEvent::PointerMove(outside));
+    let first = scroll_preview_offset(&reader, block.node);
+    let view = reader.state.get().workspace.active().unwrap();
+    let first_head = reader.state.get().editor.markdown_views[&view]
+        .selection
+        .unwrap()
+        .head;
+    reader.wait(|r| {
+        scroll_preview_offset(r, block.node) > first + 80.0
+            && r.state.get().editor.markdown_views[&view]
+                .selection
+                .unwrap()
+                .head
+                > first_head
+    });
+    let after = scroll_preview_offset(&reader, block.node);
+    let head = reader.state.get().editor.markdown_views[&view]
+        .selection
+        .unwrap()
+        .head;
+    assert!(after > first);
+    let outside_left = PointerData::mouse(Point::new(block.rect.left - 60.0, start.point.y));
+    reader.send(InputEvent::PointerMove(outside_left));
+    reader.wait(|r| {
+        scroll_preview_offset(r, block.node) < after - 40.0
+            && r.state.get().editor.markdown_views[&view]
+                .selection
+                .unwrap()
+                .head
+                < head
+    });
+    let selection = reader.state.get().editor.markdown_views[&view]
+        .selection
+        .unwrap();
+    assert_eq!(
+        crate::features::markdown::reader::grapheme_floor(
+            &result.layout.document.display_text,
+            selection.head.0
+        ),
+        selection.head.0
+    );
+    reader.send(InputEvent::PointerUp {
+        pointer: outside_left,
+        button: PointerButton::Left,
+    });
+    let stopped = scroll_preview_offset(&reader, block.node);
+    reader.tasks.run_all();
+    reader.render();
+    assert_eq!(scroll_preview_offset(&reader, block.node), stopped);
+    assert!(
+        reader.state.get().editor.markdown_views[&view]
+            .pressed
+            .is_none()
+    );
+    assert!(
+        !reader
+            .runtime
+            .markdown()
+            .unwrap()
+            .drag_timers
+            .lock()
+            .unwrap()
+            .contains_key(&crate::infrastructure::markdown_worker::Consumer::Document(
+                view
+            ))
+    );
+}

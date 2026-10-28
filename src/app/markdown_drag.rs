@@ -30,7 +30,14 @@ impl MarkdownService {
                     && app.editor.markdown_views.get(&view).is_some_and(|state| {
                         state.pressed.is_some()
                             && state.drag_point.is_some_and(|point| {
-                                point.1 < 0.0 || point.1 > result.viewport.height
+                                let frame = super::markdown_view::frame_for(&app, view, &result);
+                                let (vertical, horizontal) =
+                                    crate::features::markdown::reader::drag_scroll_delta(
+                                        &frame.layout,
+                                        frame.viewport,
+                                        point,
+                                    );
+                                vertical != 0.0 || horizontal.is_some()
                             })
                     })
             }

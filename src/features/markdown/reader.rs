@@ -165,9 +165,20 @@ pub fn classify_link(destination: &str) -> LinkIntent {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollAxis {
+    Vertical,
+    Horizontal(NodeId),
+}
+#[derive(Clone, Copy, Debug)]
+pub struct ScrollbarDrag {
+    pub axis: ScrollAxis,
+    pub grab: f32,
+}
 /// Transient state of one reading surface; documents own persisted anchors.
 #[derive(Clone, Debug, Default)]
 pub struct InteractionState {
+    pub scrollbar: Option<ScrollbarDrag>,
     pub selection: Option<LogicalSelection>,
     pub pressed: Option<(u64, DisplayByte, Option<NodeId>)>,
     pub dragging: bool,
@@ -191,6 +202,7 @@ pub struct ParagraphGeometry {
 }
 #[derive(Clone)]
 pub struct ReaderFrame {
+    pub scrollbar_dragging: bool,
     pub key: FrameKey,
     pub document: Arc<MarkdownDocument>,
     pub layout: Arc<DocumentLayout>,
@@ -218,6 +230,22 @@ pub enum Move {
 }
 #[derive(Clone, Debug)]
 pub enum ReaderEvent {
+    ScrollbarDown {
+        key: FrameKey,
+        axis: ScrollAxis,
+        grab: f32,
+        position: Option<f32>,
+    },
+    ScrollbarDrag {
+        key: FrameKey,
+        axis: ScrollAxis,
+        position: f32,
+        travel: f32,
+    },
+    ScrollbarUp {
+        key: FrameKey,
+        axis: ScrollAxis,
+    },
     Focus(bool),
     HorizontalScroll {
         key: FrameKey,
@@ -293,16 +321,50 @@ pub fn reduce(
         state.selection = None;
         state.pressed = None;
         state.drag_point = None;
+        state.scrollbar = None;
         state.horizontal.clear();
         state.revision = key.parse;
     }
     match event {
+        ReaderEvent::ScrollbarDown {
+            key: expected,
+            axis,
+            grab,
+            position,
+        } if expected == key && grab.is_finite() => {
+            cancel_gesture(state);
+            state.scrollbar = Some(ScrollbarDrag { axis, grab });
+            if let Some(position) = position.filter(|p| p.is_finite()) {
+                scroll_axis(state, &frame.layout, &mut viewport, axis, position);
+            }
+        }
+        ReaderEvent::ScrollbarDrag {
+            key: expected,
+            axis,
+            position,
+            travel,
+        } if expected == key && position.is_finite() && travel.is_finite() => {
+            if let Some(gesture) = state.scrollbar.filter(|g| g.axis == axis) {
+                let max = match axis {
+                    ScrollAxis::Vertical => (frame.layout.height - viewport.height).max(0.0),
+                    ScrollAxis::Horizontal(node) => frame.layout.max_scroll(node),
+                };
+                let value = if travel > 0.0 {
+                    ((position - gesture.grab) / travel).clamp(0.0, 1.0) * max
+                } else {
+                    0.0
+                };
+                scroll_axis(state, &frame.layout, &mut viewport, axis, value);
+            }
+        }
+        ReaderEvent::ScrollbarUp { .. } => state.scrollbar = None,
         ReaderEvent::Focus(value) => {
             effects.focus = Some(value);
             if !value {
                 state.pressed = None;
                 state.drag_point = None;
                 state.dragging = false;
+                state.scrollbar = None;
             }
         }
         ReaderEvent::HorizontalScroll {
@@ -322,6 +384,7 @@ pub fn reduce(
             hit: Some(hit),
             extend,
         } if expected == key => {
+            state.scrollbar = None;
             let anchor = if extend {
                 state
                     .selection
@@ -348,14 +411,14 @@ pub fn reduce(
                 selection.head = hit.display;
                 state.dragging |= selection.head != selection.anchor;
             }
-            let delta = if point.1 < 0.0 {
-                -(-point.1 * 0.25).clamp(2.0, 40.0)
-            } else if point.1 > viewport.height {
-                ((point.1 - viewport.height) * 0.25).clamp(2.0, 40.0)
-            } else {
-                0.0
-            };
-            if delta != 0.0 {
+            let (delta, horizontal) = drag_scroll_delta(&frame.layout, viewport, point);
+            if let Some((node, delta)) = horizontal
+                && !frame.geometry.is_empty()
+            {
+                let offset = state.horizontal.entry(node).or_default();
+                *offset = (*offset + delta).clamp(0.0, frame.layout.max_scroll(node));
+            }
+            if delta != 0.0 || horizontal.is_some() {
                 viewport.scroll_to(&frame.layout, viewport.top + delta);
                 if let Some(hit) = hit_at(
                     &frame.layout,
@@ -363,11 +426,10 @@ pub fn reduce(
                     &state.horizontal,
                     viewport,
                     (point.0, point.1.clamp(0.0, viewport.height)),
-                ) {
-                    if let Some(selection) = state.selection.as_mut() {
-                        selection.head = hit.display;
-                        state.dragging = true;
-                    }
+                ) && let Some(selection) = state.selection.as_mut()
+                {
+                    selection.head = hit.display;
+                    state.dragging = true;
                 }
             }
         }
@@ -379,9 +441,7 @@ pub fn reduce(
                     }
                 }
             }
-            state.pressed = None;
-            state.dragging = false;
-            state.drag_point = None;
+            cancel_gesture(state);
         }
         ReaderEvent::PointerUp { .. } => cancel_gesture(state),
         ReaderEvent::Copy { key: expected } if expected == key => {
@@ -399,8 +459,7 @@ pub fn reduce(
         }
         ReaderEvent::ClearSelection { key: expected } if expected == key => {
             state.selection = None;
-            state.pressed = None;
-            state.drag_point = None;
+            cancel_gesture(state);
         }
         ReaderEvent::Move {
             key: expected,
@@ -568,6 +627,52 @@ fn vertical_head(frame: &ReaderFrame, head: DisplayByte, down: bool) -> Option<D
     }
     nearest
 }
+fn scroll_axis(
+    state: &mut InteractionState,
+    layout: &DocumentLayout,
+    viewport: &mut Viewport,
+    axis: ScrollAxis,
+    position: f32,
+) {
+    match axis {
+        ScrollAxis::Vertical => viewport.scroll_to(layout, position),
+        ScrollAxis::Horizontal(node) => {
+            state
+                .horizontal
+                .insert(node, position.clamp(0.0, layout.max_scroll(node)));
+        }
+    }
+}
+/// Edge motion uses the scroll block's viewport, including edges inside pane margins.
+/// Keep scheduling at a limit until release so a pending native geometry window can settle.
+pub fn drag_scroll_delta(
+    layout: &DocumentLayout,
+    viewport: Viewport,
+    point: (f32, f32),
+) -> (f32, Option<(NodeId, f32)>) {
+    if !point.0.is_finite() || !point.1.is_finite() {
+        return (0.0, None);
+    }
+    let speed = |at: f32, lo: f32, hi: f32| {
+        if at < lo {
+            -((lo - at) * 0.25).clamp(2.0, 40.0)
+        } else if at > hi {
+            ((at - hi) * 0.25).clamp(2.0, 40.0)
+        } else {
+            0.0
+        }
+    };
+    let y = point.1 + viewport.top;
+    let horizontal = layout
+        .horizontal
+        .iter()
+        .find(|b| y >= b.rect.top && y <= b.rect.bottom && layout.max_scroll(b.node) > 0.0)
+        .and_then(|block| {
+            let delta = speed(point.0, block.rect.left, block.rect.right);
+            (delta != 0.0).then_some((block.node, delta))
+        });
+    (speed(point.1, 0.0, viewport.height), horizontal)
+}
 pub fn hit_at(
     layout: &DocumentLayout,
     geometry: &[ParagraphGeometry],
@@ -702,10 +807,14 @@ pub fn next_link(
 
 impl ReaderEvent {
     pub fn ends_gesture(&self) -> bool {
-        matches!(self, Self::PointerUp { .. } | Self::Focus(false))
+        matches!(
+            self,
+            Self::PointerUp { .. } | Self::ScrollbarUp { .. } | Self::Focus(false)
+        )
     }
 }
 pub fn cancel_gesture(state: &mut InteractionState) {
+    state.scrollbar = None;
     state.pressed = None;
     state.drag_point = None;
     state.dragging = false;
@@ -718,7 +827,10 @@ impl ReaderEvent {
     pub fn on_frame(mut self, frame: FrameKey) -> Option<Self> {
         let key = match &mut self {
             Self::Focus(_) => return Some(self),
-            Self::HorizontalScroll { key, .. }
+            Self::ScrollbarDown { key, .. }
+            | Self::ScrollbarDrag { key, .. }
+            | Self::ScrollbarUp { key, .. }
+            | Self::HorizontalScroll { key, .. }
             | Self::Scroll { key, .. }
             | Self::PointerDown { key, .. }
             | Self::PointerDrag { key, .. }

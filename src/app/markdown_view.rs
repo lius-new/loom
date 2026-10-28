@@ -33,9 +33,7 @@ pub fn eligible(app: &AppState, view: ViewId) -> bool {
 }
 fn reset_input(app: &mut AppState) {
     for state in app.editor.markdown_views.values_mut() {
-        state.pressed = None;
-        state.drag_point = None;
-        state.dragging = false;
+        crate::features::markdown::reader::cancel_gesture(state);
     }
     app.editor.ime = None;
     app.editor.drag = None;
@@ -374,7 +372,10 @@ pub(super) fn event(
         return;
     };
     let mut effects = crate::features::markdown::reader::Effects::default();
-    let activate = matches!(action, ReaderEvent::PointerDown { .. });
+    let activate = matches!(
+        action,
+        ReaderEvent::PointerDown { .. } | ReaderEvent::ScrollbarDown { .. }
+    );
     let copied_node = match action {
         ReaderEvent::CopyNode { node, .. } => Some(node),
         _ => None,
@@ -485,6 +486,7 @@ pub(super) fn frame_for(app: &AppState, view: ViewId, result: &Rendered) -> Read
         }
     }
     ReaderFrame {
+        scrollbar_dragging: interaction.scrollbar.is_some(),
         key: result.frame,
         document: result.layout.document.clone(),
         layout: result.layout.clone(),

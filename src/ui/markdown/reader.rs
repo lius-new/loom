@@ -257,6 +257,7 @@ pub fn render_in(
         });
     }
     let mut scrollbar_layer = None;
+    let mut horizontal_scrollbars = Vec::new();
     // I-beam only over the reading column, as in the editor; margins and scrollbars keep the arrow.
     // Drawn after the paragraph tiles, which would otherwise cover them.
     let mut overlays: Vec<Element> = Vec::new();
@@ -685,25 +686,29 @@ pub fn render_in(
             .copied()
             .unwrap_or(0.0)
             .clamp(0.0, max);
-        let on_scroll = binding.clone();
-        content = content.child(axis_scrollbar(
-            false,
-            track,
-            block.extent,
-            track.width(),
-            current,
-            max,
-            emphasized,
-            move |position| {
-                let frame = on_scroll.get();
-                let previous = frame.horizontal.get(&node).copied().unwrap_or(0.0);
-                on_scroll.send(ReaderEvent::HorizontalScroll {
-                    key: frame.key,
-                    node,
-                    delta: position - previous,
-                });
-            },
-        ));
+        let visible = UiRect::new(
+            track.left.max(rect.left),
+            track.top.max(rect.top),
+            track.right.min(rect.right),
+            track.bottom.min(rect.bottom),
+        );
+        if visible.width() > 0.0 && visible.height() > 0.0 {
+            horizontal_scrollbars.push(
+                clip(visible, 0.0, 0.0)
+                    .key(format!("markdown-scrollbar-clip-{}", node.0))
+                    .child(axis_scrollbar(
+                        crate::features::markdown::reader::ScrollAxis::Horizontal(node),
+                        track,
+                        block.extent,
+                        track.width(),
+                        current,
+                        max,
+                        emphasized,
+                        binding.clone(),
+                        focus.clone(),
+                    )),
+            );
+        }
     }
     if frame.layout.height > frame.viewport.height {
         let max = (frame.layout.height - frame.viewport.height).max(1.0);
@@ -713,28 +718,34 @@ pub fn render_in(
             area.right,
             area.bottom,
         );
-        let on_scroll = binding.clone();
-        // Drawn on the root, not the clipped column, so it sits at the pane edge.
         scrollbar_layer = Some(axis_scrollbar(
-            true,
+            crate::features::markdown::reader::ScrollAxis::Vertical,
             track,
             frame.layout.height,
             track.height(),
             frame.viewport.top,
             max,
             emphasized,
-            move |position| {
-                let frame = on_scroll.get();
-                on_scroll.send(ReaderEvent::Scroll {
-                    key: frame.key,
-                    delta: position - frame.viewport.top,
-                });
-            },
+            binding.clone(),
+            focus.clone(),
         ));
     }
     root = root.child(content);
+    for scrollbar in horizontal_scrollbars {
+        root = root.child(scrollbar);
+    }
     if let Some(layer) = scrollbar_layer {
         root = root.child(layer);
+    }
+    if frame.scrollbar_dragging {
+        // Default cursors inherit from ancestors in lgui. A passive foreground
+        // surface keeps the arrow while dragging across text or links, without
+        // replacing the captured scrollbar's event target.
+        root = root.child(
+            panel(area, VisualStyle::default())
+                .key("markdown-scrollbar-cursor")
+                .cursor(CursorIcon::Default),
+        );
     }
     let down = binding.clone();
     let down_focus = focus.clone();
@@ -859,31 +870,22 @@ pub fn render_in(
     root = root.on_focus(move |_| focused.send(ReaderEvent::Focus(true)));
     root.on_blur(move |_| binding.send(ReaderEvent::Focus(false)))
 }
-// Pointer offset inside the thumb while a scrollbar is held. Only one pointer
-// drags at a time, and the element tree is rebuilt on every scroll step.
-thread_local! {
-    static GRAB: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
-}
-fn grab() -> f32 {
-    GRAB.get()
-}
-fn set_grab(value: f32) {
-    GRAB.set(value);
-}
-/// Overlay scrollbar that behaves like the editor's: dimmer at rest, brighter
-/// while the pane is hovered, the thumb keeps the grab offset, and a click on
-/// the track centers the thumb and continues as a drag.
+/// Each scrollbar has stable keyed identity and view-owned gesture state.
+/// Raster-window publications may replace every paragraph while it is held.
 #[allow(clippy::too_many_arguments)]
 fn axis_scrollbar(
-    vertical: bool,
+    axis: crate::features::markdown::reader::ScrollAxis,
     track: UiRect,
     content: f32,
     viewport: f32,
     scroll: f32,
     max: f32,
     emphasized: bool,
-    on_scroll: impl Fn(f32) + Clone + Send + Sync + 'static,
+    binding: Binding,
+    focus: UiFocusHandle,
 ) -> Element {
+    use crate::features::markdown::reader::ScrollAxis;
+    let vertical = axis == ScrollAxis::Vertical;
     let (start, length) = if vertical {
         (track.top, track.height())
     } else {
@@ -895,30 +897,50 @@ fn axis_scrollbar(
     let travel = (length - thumb).max(0.0);
     let thumb_start = start + travel * (scroll / max.max(1.0)).clamp(0.0, 1.0);
     let pick = move |x: f32, y: f32| if vertical { y } else { x };
-    let to_scroll = move |thumb_start: f32| {
-        if travel <= 0.0 {
-            0.0
-        } else {
-            (thumb_start.clamp(0.0, travel) / travel * max).clamp(0.0, max)
-        }
+    let policy = EventPolicy {
+        focus: false,
+        ..EventPolicy::INTERACTIVE
     };
-    let (down, drag, held) = (on_scroll.clone(), on_scroll.clone(), on_scroll);
+    let (down, drag, up) = (binding.clone(), binding.clone(), binding.clone());
+    let track_focus = focus.clone();
     let track_hit = scrollbar::track(track)
-        .event_policy(EventPolicy::INTERACTIVE)
+        .key("track")
+        .event_policy(policy)
         .on_pointer_down_with_button(move |cx, pointer, button| {
             if button != PointerButton::Left {
                 return;
             }
-            set_grab(thumb * 0.5);
-            down(to_scroll(
-                pick(pointer.point.x, pointer.point.y) - start - thumb * 0.5,
-            ));
+            track_focus.focus();
+            let frame = down.get();
+            let position = if travel > 0.0 {
+                ((pick(pointer.point.x, pointer.point.y) - start - thumb * 0.5) / travel)
+                    .clamp(0.0, 1.0)
+                    * max
+            } else {
+                0.0
+            };
+            down.send(ReaderEvent::ScrollbarDown {
+                key: frame.key,
+                axis,
+                grab: thumb * 0.5,
+                position: Some(position),
+            });
             cx.stop_propagation();
         })
         .on_pointer_drag(move |cx, pointer| {
-            drag(to_scroll(
-                pick(pointer.point.x, pointer.point.y) - start - grab(),
-            ));
+            drag.send(ReaderEvent::ScrollbarDrag {
+                key: drag.get().key,
+                axis,
+                position: pick(pointer.point.x, pointer.point.y) - start,
+                travel,
+            });
+            cx.stop_propagation();
+        })
+        .on_pointer_up(move |cx, _| {
+            up.send(ReaderEvent::ScrollbarUp {
+                key: up.get().key,
+                axis,
+            });
             cx.stop_propagation();
         });
     let rect = if vertical {
@@ -936,22 +958,52 @@ fn axis_scrollbar(
             track.bottom - scrollbar::INSET,
         )
     };
+    let (down, drag, up) = (binding.clone(), binding.clone(), binding);
     let thumb_hit = scrollbar::thumb(rect, if emphasized { 0xb8 } else { 0x68 })
-        .event_policy(EventPolicy::INTERACTIVE)
+        .key("thumb")
+        .semantics(Semantics::new(SemanticRole::Group).name(if vertical {
+            "Markdown vertical scrollbar thumb"
+        } else {
+            "Markdown horizontal scrollbar thumb"
+        }))
+        .event_policy(policy)
         .on_pointer_down_with_button(move |cx, pointer, button| {
             if button != PointerButton::Left {
                 return;
             }
-            set_grab(pick(pointer.point.x, pointer.point.y) - thumb_start);
+            focus.focus();
+            down.send(ReaderEvent::ScrollbarDown {
+                key: down.get().key,
+                axis,
+                grab: pick(pointer.point.x, pointer.point.y) - thumb_start,
+                position: None,
+            });
             cx.stop_propagation();
         })
         .on_pointer_drag(move |cx, pointer| {
-            held(to_scroll(
-                pick(pointer.point.x, pointer.point.y) - start - grab(),
-            ));
+            drag.send(ReaderEvent::ScrollbarDrag {
+                key: drag.get().key,
+                axis,
+                position: pick(pointer.point.x, pointer.point.y) - start,
+                travel,
+            });
+            cx.stop_propagation();
+        })
+        .on_pointer_up(move |cx, _| {
+            up.send(ReaderEvent::ScrollbarUp {
+                key: up.get().key,
+                axis,
+            });
             cx.stop_propagation();
         });
-    lgui::core::group(track).child(track_hit).child(thumb_hit)
+    let key = match axis {
+        ScrollAxis::Vertical => "markdown-vertical-scrollbar".to_owned(),
+        ScrollAxis::Horizontal(node) => format!("markdown-horizontal-scrollbar-{}", node.0),
+    };
+    lgui::core::group(track)
+        .key(key)
+        .child(track_hit)
+        .child(thumb_hit)
 }
 
 /// How long a code block's copy button reads "Copied" after a successful copy.
@@ -977,12 +1029,11 @@ fn recently_copied_at(
 
 /// Narrow value-only inspection for cross-thread application tests.
 #[cfg(test)]
-pub(crate) fn context_feedback() -> (f32, Option<crate::features::markdown::model::NodeId>) {
-    (grab(), COPIED.get().map(|(node, _)| node))
+pub(crate) fn context_feedback() -> Option<crate::features::markdown::model::NodeId> {
+    COPIED.get().map(|(node, _)| node)
 }
 #[cfg(test)]
-pub(crate) fn set_context_feedback(offset: f32, node: crate::features::markdown::model::NodeId) {
-    set_grab(offset);
+pub(crate) fn set_context_feedback(node: crate::features::markdown::model::NodeId) {
     mark_copied(node);
 }
 

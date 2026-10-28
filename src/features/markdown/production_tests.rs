@@ -246,6 +246,7 @@ fn frame(document: MarkdownDocument, width: f32) -> ReaderFrame {
         .unwrap(),
     );
     ReaderFrame {
+        scrollbar_dragging: false,
         key: FrameKey {
             parse: 1,
             layout: 1,
@@ -682,4 +683,184 @@ fn html_with_multibyte_text_keeps_exact_source_mapping() {
     let at = source.find('说').unwrap();
     let mapped = doc.source_at(DisplayByte(doc.display_text.find('说').unwrap()));
     assert_eq!(mapped.map(|range| range.start.0), Some(at));
+}
+
+#[test]
+fn markdown_scrollbar_gestures_are_view_local_and_survive_raster_frames() {
+    let mut f = frame(
+        parse(&format!(
+            "```text\n{}\n```\n\n```text\n{}\n```",
+            "wide ".repeat(100),
+            "second ".repeat(100)
+        )),
+        240.0,
+    );
+    assert_eq!(f.layout.horizontal.len(), 2);
+    let a = f.layout.horizontal[0].node;
+    let b = f.layout.horizontal[1].node;
+    let mut first = InteractionState::default();
+    let mut second = InteractionState::default();
+    reduce(
+        &mut first,
+        &f,
+        ReaderEvent::ScrollbarDown {
+            key: f.key,
+            axis: ScrollAxis::Horizontal(a),
+            grab: 7.0,
+            position: None,
+        },
+    );
+    reduce(
+        &mut second,
+        &f,
+        ReaderEvent::ScrollbarDown {
+            key: f.key,
+            axis: ScrollAxis::Horizontal(b),
+            grab: 19.0,
+            position: None,
+        },
+    );
+    let prior = f.key;
+    f.key.layout += 1;
+    let drag = ReaderEvent::ScrollbarDrag {
+        key: prior,
+        axis: ScrollAxis::Horizontal(a),
+        position: 57.0,
+        travel: 100.0,
+    }
+    .on_frame(f.key)
+    .unwrap();
+    reduce(&mut first, &f, drag);
+    assert_eq!(first.horizontal[&a], f.layout.max_scroll(a) * 0.5);
+    assert_eq!(second.scrollbar.unwrap().grab, 19.0);
+    reduce(
+        &mut first,
+        &f,
+        ReaderEvent::ScrollbarDrag {
+            key: f.key,
+            axis: ScrollAxis::Horizontal(b),
+            position: 100.0,
+            travel: 100.0,
+        },
+    );
+    assert!(!first.horizontal.contains_key(&b));
+    reduce(
+        &mut first,
+        &f,
+        ReaderEvent::ScrollbarUp {
+            key: f.key,
+            axis: ScrollAxis::Horizontal(a),
+        },
+    );
+    assert!(first.scrollbar.is_none());
+    let before = first.horizontal[&a];
+    reduce(
+        &mut first,
+        &f,
+        ReaderEvent::ScrollbarDrag {
+            key: f.key,
+            axis: ScrollAxis::Horizontal(a),
+            position: 99.0,
+            travel: 100.0,
+        },
+    );
+    assert_eq!(first.horizontal[&a], before);
+    reduce(&mut second, &f, ReaderEvent::Focus(false));
+    assert!(second.scrollbar.is_none());
+    reduce(
+        &mut first,
+        &f,
+        ReaderEvent::ScrollbarDown {
+            key: f.key,
+            axis: ScrollAxis::Horizontal(a),
+            grab: 0.0,
+            position: Some(f32::NAN),
+        },
+    );
+    f.key.parse += 1;
+    reduce(
+        &mut first,
+        &f,
+        ReaderEvent::Scroll {
+            key: f.key,
+            delta: 0.0,
+        },
+    );
+    assert!(first.scrollbar.is_none());
+    assert!(first.horizontal.is_empty());
+}
+
+#[test]
+fn markdown_selection_scrolls_at_code_block_edges_and_clamps_offsets() {
+    let mut f = frame(
+        parse(&format!("```text\n{}\n```\n", "中e\u{301}😀 ".repeat(100))),
+        260.0,
+    );
+    let block = f.layout.horizontal[0].clone();
+    let y = (block.rect.top + block.rect.bottom) * 0.5;
+    f.geometry = Arc::from([ParagraphGeometry {
+        paragraph: 0,
+        glyphs: Arc::from([]),
+    }]);
+    let mut state = InteractionState::default();
+    reduce(
+        &mut state,
+        &f,
+        ReaderEvent::PointerDown {
+            key: f.key,
+            hit: Some(Hit {
+                display: DisplayByte(0),
+                link: None,
+            }),
+            extend: false,
+        },
+    );
+    let point = (block.rect.right + 20.0, y);
+    let (vertical, horizontal) = drag_scroll_delta(&f.layout, f.viewport, point);
+    assert_eq!(vertical, 0.0);
+    assert_eq!(horizontal, Some((block.node, 5.0)));
+    for _ in 0..3 {
+        reduce(
+            &mut state,
+            &f,
+            ReaderEvent::PointerDrag {
+                key: f.key,
+                hit: None,
+                point,
+            },
+        );
+    }
+    assert_eq!(state.horizontal[&block.node], 15.0);
+    for _ in 0..8 {
+        reduce(
+            &mut state,
+            &f,
+            ReaderEvent::PointerDrag {
+                key: f.key,
+                hit: None,
+                point: (block.rect.left - 20.0, y),
+            },
+        );
+    }
+    assert_eq!(state.horizontal[&block.node], 0.0);
+    let (_, horizontal) = drag_scroll_delta(
+        &f.layout,
+        f.viewport,
+        (block.rect.right + 30.0, block.rect.bottom + 1.0),
+    );
+    assert!(horizontal.is_none());
+    assert_eq!(
+        drag_scroll_delta(&f.layout, f.viewport, (f32::NAN, y)),
+        (0.0, None)
+    );
+    reduce(
+        &mut state,
+        &f,
+        ReaderEvent::PointerUp {
+            key: f.key,
+            hit: None,
+        },
+    );
+    assert!(state.drag_point.is_none());
+    assert!(state.pressed.is_none());
 }
