@@ -124,8 +124,10 @@ impl Cached {
         &self.window.spans[first..last]
     }
 }
+type StructuralRanges = Arc<[std::ops::Range<usize>]>;
 #[derive(Default)]
 struct State {
+    structural: HashMap<FileId, (DocumentStamp, StructuralRanges)>,
     targets: HashMap<PaneId, Request>,
     pending: VecDeque<FileId>,
     running: Option<(Request, Vec<Window>, Arc<AtomicBool>)>,
@@ -296,6 +298,7 @@ impl Worker {
                         &windows,
                         &cancel,
                     );
+                    let structural = trees.folding(request.document, &request.source, &cancel);
                     let mut state = background.state.lock().unwrap();
                     state.running = None;
                     state.tree_stats = trees.stats;
@@ -312,6 +315,13 @@ impl Worker {
                     let Some(result) = result else {
                         continue;
                     };
+                    if let Some(ranges) = structural {
+                        state
+                            .structural
+                            .insert(request.document, (request.stamp, ranges));
+                    } else {
+                        state.structural.remove(&request.document);
+                    }
                     for (window, tokens) in windows.iter().zip(result) {
                         let key = Key::new(&request, window);
                         let bytes = std::mem::size_of::<Cached>()
@@ -389,6 +399,7 @@ impl Worker {
                 .get(&document)
                 .is_some_and(|epoch| epoch.cancel.load(Ordering::Relaxed));
         if changed {
+            state.structural.remove(&document);
             let old = state.epochs.insert(
                 document,
                 Epoch {
@@ -577,10 +588,19 @@ impl Worker {
             }
         });
         state.ready.retain(|key, _| open.contains(&key.document));
+        state.structural.retain(|id, _| open.contains(id));
         state.bytes = state.ready.values().map(|entry| entry.bytes).sum();
         state.retained.retain(&open);
         state.prune = Some(open);
         self.0.0.wake.notify_one();
+    }
+    pub fn folding(&self, stamp: DocumentStamp) -> Option<Arc<[std::ops::Range<usize>]>> {
+        let state = self.0.0.state.lock().unwrap();
+        state
+            .structural
+            .get(&stamp.document)
+            .filter(|(current, _)| *current == stamp)
+            .map(|(_, ranges)| ranges.clone())
     }
     pub fn stats(&self) -> Stats {
         let state = self.0.0.state.lock().unwrap();

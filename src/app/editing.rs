@@ -14,6 +14,7 @@ pub enum Menu {
 }
 #[derive(Clone, Default)]
 pub struct State {
+    pub folding: super::folding::State,
     pub selected: usize,
     pub menu: Option<(ViewId, Menu)>,
     pub manual: HashMap<FileId, EditorOverrides>,
@@ -256,7 +257,11 @@ pub fn projection(
             .floor()
             .max(4.0) as usize
     });
-    crate::ui::editor::projection::cached(&doc.buffer, columns, &[])
+    crate::ui::editor::projection::cached(
+        &doc.buffer,
+        columns,
+        &super::folding::collapsed(app, view),
+    )
 }
 pub fn active_projection(
     app: &AppState,
@@ -298,7 +303,7 @@ pub fn move_displayed(app: &mut AppState, command: loom_editor_core::commands::C
         .rect
         .unwrap_or_else(|| lgui::prelude::UiRect::new(0.0, 0.0, 800.0, 600.0));
     let map = projection(app, view, rect);
-    if !map.wrapped() {
+    if !map.wrapped() && !map.folded() {
         return false;
     }
     let Some(mut editor) = app.workspace.active_editor_mut() else {

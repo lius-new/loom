@@ -18,7 +18,15 @@ pub(crate) struct DocumentMeta {
     pub path: PathBuf,
     pub lang: ResolvedLanguage,
 }
+#[derive(Clone)]
+pub(crate) struct FoldMarker {
+    pub line: usize,
+    pub start: usize,
+    pub end: usize,
+    pub collapsed: bool,
+}
 pub(crate) struct ViewDocument {
+    pub folds: Arc<[FoldMarker]>,
     pub id: ViewId,
     /// Names the exact document lifetime, text and language this view shows.
     pub stamp: DocumentStamp,
@@ -118,6 +126,11 @@ pub(crate) struct Metrics {
     pub max_y: f32,
 }
 pub(crate) enum Event {
+    Fold {
+        view: ViewId,
+        stamp: DocumentStamp,
+        start: usize,
+    },
     DiagnosticLink(String),
     /// A link in the hover documentation was clicked.
     OpenLink(String),

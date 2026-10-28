@@ -59,6 +59,7 @@ pub(crate) struct TreeStats {
 }
 
 struct DocTree {
+    folds: Option<Arc<[Range<usize>]>>,
     tree: Tree,
     /// Embedded languages, parsed as windows reach them.
     layers: Layers,
@@ -103,6 +104,84 @@ impl TreeIndex {
             resource_generation,
         }
     }
+    /// Structural ranges come from the current syntax tree, never highlight spans.
+    pub(crate) fn folding(
+        &mut self,
+        id: FileId,
+        source: &Source,
+        cancel: &AtomicBool,
+    ) -> Option<Arc<[Range<usize>]>> {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        let doc = self.docs.get_mut(&id)?;
+        if doc.source.version != source.version
+            || doc.source.identity() != source.identity()
+            || source.text.len() > 1024 * 1024
+        {
+            return None;
+        }
+        if let Some(ranges) = &doc.folds {
+            return Some(ranges.clone());
+        }
+        let mut cursor = doc.tree.walk();
+        let mut ranges = Vec::new();
+        let mut visited = 0usize;
+        loop {
+            let node = cursor.node();
+            visited += 1;
+            if visited > 250_000 || visited.is_multiple_of(256) && cancel.load(Ordering::Relaxed) {
+                return None;
+            }
+            let kind = node.kind();
+            let structural = [
+                "function",
+                "method",
+                "class",
+                "struct",
+                "enum",
+                "impl",
+                "block",
+                "body",
+                "object",
+                "array",
+                "element",
+                "namespace",
+                "declaration_list",
+            ]
+            .iter()
+            .any(|name| kind.contains(name));
+            if visited > 1
+                && node.is_named()
+                && !node.is_error()
+                && !node.is_missing()
+                && structural
+                && node.end_position().row > node.start_position().row
+            {
+                ranges.push(node.start_byte()..node.end_byte());
+                if ranges.len() > 8192 {
+                    return None;
+                }
+            }
+            if cursor.goto_first_child() {
+                continue;
+            }
+            loop {
+                if cursor.goto_next_sibling() {
+                    break;
+                }
+                if !cursor.goto_parent() {
+                    drop(cursor);
+                    ranges.sort_by_key(|r| (r.start, r.end));
+                    ranges.dedup();
+                    let ranges: Arc<[Range<usize>]> = ranges.into();
+                    doc.folds = Some(ranges.clone());
+                    return Some(ranges);
+                }
+            }
+        }
+    }
+
     pub(crate) fn retain(&mut self, open: &[FileId]) {
         self.docs.retain(|id, _| open.contains(id));
         self.stats.trees = self.docs.len();
@@ -300,6 +379,7 @@ impl TreeIndex {
         self.docs.insert(
             id,
             DocTree {
+                folds: None,
                 tree,
                 layers,
                 source: source.clone(),

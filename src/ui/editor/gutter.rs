@@ -111,7 +111,7 @@ pub fn render_rows(
         let num_rect = UiRect::new(
             rect.left + theme::GUTTER_ACTION_W,
             y,
-            rect.right - 10.0,
+            rect.right - 24.0,
             y + fonts::editor().line_h,
         );
         g = g.child(text(

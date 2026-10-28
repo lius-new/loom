@@ -332,3 +332,25 @@ fn wasm_worker_loads_and_publishes_from_the_background_thread() {
     assert!(source.activity().errors.is_empty());
     worker.shutdown();
 }
+
+#[test]
+fn wasm_tree_folding_is_structural_cached_and_rejects_a_new_text_snapshot() {
+    let fixture=Fixture::new();
+    let mut trees=crate::features::syntax::TreeIndex::new(fixture.source());
+    let id=FileId::new(42001);
+    let mut buffer=TextBuffer::new("impl A {\n fn run(&self) {\n  if true {\n   work();\n  }\n }\n}\n");
+    let source=Source::new(&buffer);let cancel=AtomicBool::new(false);
+    let window=Window{line:0..buffer.len(),range:0..buffer.len()};
+    trees.prepare(id,source.clone(),language::builtin("rust"),&[window],&cancel).unwrap();
+    let ranges=trees.folding(id,&source,&cancel).expect("current Rust syntax tree");
+    assert!(ranges.len()>=3,"{ranges:?}");
+    assert!(ranges.iter().all(|r|r.start<r.end && r.end<=buffer.len()));
+    assert!(Arc::ptr_eq(&ranges,&trees.folding(id,&source,&cancel).unwrap()));
+    let mut selection=Selection::default();EditorMut::new(&mut buffer,&mut selection,Vec::new()).replace(0..0,"// new\n",EditKind::Other).unwrap();
+    let newer=Source::new(&buffer);assert!(trees.folding(id,&newer,&cancel).is_none());
+    let window=Window{line:0..buffer.len(),range:0..buffer.len()};
+    trees.prepare(id,newer.clone(),language::builtin("rust"),&[window],&cancel).unwrap();
+    let new_ranges=trees.folding(id,&newer,&cancel).unwrap();
+    assert_eq!(new_ranges.len(),ranges.len());assert_eq!(new_ranges[0].start,ranges[0].start+7);
+    assert!(trees.folding(id,&newer,&AtomicBool::new(true)).is_none());
+}

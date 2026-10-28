@@ -80,7 +80,7 @@ pub(crate) fn snapshot(
     rect: UiRect,
 ) -> ViewState {
     let focused_pane = app.workspace.active_pane() == pane;
-    let document = app
+    let mut document = app
         .workspace
         .pane(pane)
         .and_then(|value| value.active())
@@ -89,6 +89,7 @@ pub(crate) fn snapshot(
             let meta = app.workspace.meta(document)?;
             let value = app.workspace.editor(pane)?;
             Some(ViewDocument {
+                folds: Arc::from([]),
                 id,
                 stamp: app.workspace.documents.get(&document)?.stamp(document),
                 meta: DocumentMeta {
@@ -124,6 +125,9 @@ pub(crate) fn snapshot(
             }
         })
         .unwrap_or(0..0);
+    if let Some(doc) = document.as_mut() {
+        doc.folds = super::folding::markers(&app, doc.id, &visible_lines);
+    }
     let state = app.editor;
     let vim_view = state.vim.is_enabled()
         && document.as_ref().is_some_and(|doc| {
@@ -620,6 +624,9 @@ pub(crate) fn binding(
 
 pub(crate) fn dispatch(app: &mut AppState, pane: PaneId, rect: UiRect, event: Event) -> bool {
     match event {
+        Event::Fold { view, stamp, start } => {
+            return super::folding::toggle(app, view, stamp, start, rect);
+        }
         Event::Signature { revision, forward } => {
             return super::language_ui::signature::step(app, forward, Some(revision));
         }

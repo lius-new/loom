@@ -192,7 +192,7 @@
       "migrated_in": "Markdown reading host"
     },
     "editing": {
-      "owner": "app/editing: effective editing policy and document-scoped status choices",
+      "owner": "app/editing and app/folding: editing policy, status choices, and view-local display/folding state",
       "migrated_in": "editor preferences"
     }
   },

@@ -94,6 +94,20 @@ mod tests {
     }
 
     #[test]
+    fn metadata_versions_remain_in_the_revision_chain_even_with_in_place_text_edits() {
+        let mut buffer = TextBuffer::new("text");
+        let version = buffer.version();
+        let identity = buffer.snapshot_identity();
+        buffer.set_metadata(7);
+        buffer.apply_edits(vec![Edit::insert(0, "new")]).unwrap();
+        buffer.set_metadata(9);
+        let revisions = buffer.revisions_since(version, identity).unwrap();
+        assert_eq!(revisions.len(), 3);
+        assert!(revisions[0].edits.is_empty());
+        assert!(revisions[2].edits.is_empty());
+        assert_eq!(revisions.iter().fold(2, |at, r| r.map(at, false)), 5);
+    }
+    #[test]
     fn journal_is_bounded_and_reload_and_divergent_snapshots_break_provenance() {
         let mut buffer = TextBuffer::new("a");
         let old = buffer.clone();

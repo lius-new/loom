@@ -17,6 +17,7 @@ pub struct DisplayMap {
     rows: Option<Vec<DisplayRow>>,
     count: usize,
     wrapped: bool,
+    folded: bool,
 }
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_ROWS: usize = 100_000;
@@ -26,6 +27,7 @@ impl DisplayMap {
             rows: None,
             count: buffer.line_count(),
             wrapped: false,
+            folded: false,
         };
         if columns.is_none() && folds.is_empty()
             || buffer.len() > MAX_BYTES
@@ -75,6 +77,9 @@ impl DisplayMap {
                     continuation: at != range.start,
                 });
                 if rows.len() > MAX_ROWS {
+                    if columns.is_some() && !folds.is_empty() {
+                        return Self::new(buffer, None, &folds);
+                    }
                     return linear();
                 }
                 if end >= range.end {
@@ -90,6 +95,7 @@ impl DisplayMap {
             count: rows.len(),
             rows: Some(rows),
             wrapped: columns.is_some(),
+            folded: !folds.is_empty(),
         }
     }
     pub fn caret_row(&self, buffer: &TextBuffer, offset: usize, affinity: Assoc) -> usize {
@@ -120,6 +126,9 @@ impl DisplayMap {
     }
     pub fn is_empty(&self) -> bool {
         self.count == 0
+    }
+    pub fn folded(&self) -> bool {
+        self.folded
     }
     pub fn wrapped(&self) -> bool {
         self.wrapped

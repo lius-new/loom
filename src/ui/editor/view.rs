@@ -263,6 +263,38 @@ pub(crate) fn render(
                 gutter_hover,
             )),
         );
+        for row in visible_rows.clone() {
+            let source = projection.row(&buffer, row);
+            if source.continuation {
+                continue;
+            }
+            if let Some(marker) = document.folds.iter().find(|f| f.line == source.line) {
+                let y = code_top + row as f32 * fonts::editor().line_h - scroll_y;
+                content = content.child(super::fold::button(
+                    UiRect::new(
+                        gutter_viewport.right - 22.0,
+                        y,
+                        gutter_viewport.right - 8.0,
+                        y + fonts::editor().line_h,
+                    ),
+                    format!(
+                        "{} code at line {}",
+                        if marker.collapsed { "Unfold" } else { "Fold" },
+                        marker.line + 1
+                    ),
+                    if marker.collapsed {
+                        "▸".into()
+                    } else {
+                        "▾".into()
+                    },
+                    state.clone(),
+                    editor_focus.clone(),
+                    id,
+                    document.stamp,
+                    marker.start,
+                ));
+            }
+        }
         // The hovered change bar opens its peek, like a link.
         if let Some(run) = gutter::hovered_run(&decorations, gutter_hover)
             && let Some(line) = gutter_hover
@@ -527,6 +559,33 @@ pub(crate) fn render(
                         UiRect::new(hint_x, y, hint_x + width + 4.0, y + fonts::editor().line_h),
                         (*hint).to_owned(),
                         fonts::editor().style(theme::c().text_faint),
+                    ));
+                }
+            }
+            if window.end == buffer.line_end(line_index) {
+                if let Some(marker) = document
+                    .folds
+                    .iter()
+                    .find(|f| f.line == line_index && f.collapsed)
+                {
+                    let count = buffer
+                        .line_of(marker.end.saturating_sub(1))
+                        .saturating_sub(marker.line);
+                    let glyph = format!(" ⋯ {count} lines ");
+                    let width = glyph.chars().count() as f32 * fonts::editor().char_w;
+                    let edge = caret_x(layout.as_ref(), line.chars().count()).unwrap_or(line_left);
+                    let left = (edge + 4.0)
+                        .min(code_left + metrics.viewport_w - width)
+                        .max(code_left);
+                    code = code.child(super::fold::button(
+                        UiRect::new(left, y, left + width, y + fonts::editor().line_h),
+                        "Expand folded lines".into(),
+                        glyph,
+                        state.clone(),
+                        editor_focus.clone(),
+                        id,
+                        document.stamp,
+                        marker.start,
                     ));
                 }
             }

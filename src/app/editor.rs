@@ -101,6 +101,7 @@ pub fn finish_scrollbar_drag(app: &mut AppState) -> bool {
 }
 
 pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
+    super::folding::reveal(app);
     let projection = super::editing::active_projection(app, rect);
     let Some(buffer) = app.workspace.active_editor() else {
         return;

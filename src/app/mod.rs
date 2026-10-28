@@ -135,3 +135,5 @@ mod encoding_tests;
 mod render_context_tests;
 
 pub(crate) mod editing;
+
+pub(crate) mod folding;

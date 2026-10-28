@@ -110,13 +110,29 @@ impl TextBuffer {
         if self.metadata != value {
             let before = self.metadata;
             self.history_mut().record_metadata(before, value);
-            self.metadata = value;
-            self.version += 1;
+            self.change_metadata(value);
         }
     }
     pub(super) fn replay_metadata(&mut self, value: u32) {
+        self.change_metadata(value);
+    }
+    fn change_metadata(&mut self, value: u32) {
+        let before = self.version;
+        let identity = self.snapshot_identity();
         self.metadata = value;
         self.version += 1;
+        let revision = super::revision::TextRevision {
+            before_version: before,
+            after_version: self.version,
+            before_snapshot: identity,
+            after_snapshot: identity,
+            edits: Arc::from([]),
+        };
+        let journal = Arc::make_mut(&mut self.revisions);
+        journal.push_back(revision);
+        while journal.len() > 64 {
+            journal.pop_front();
+        }
     }
     pub fn text(&self) -> &str {
         &self.text

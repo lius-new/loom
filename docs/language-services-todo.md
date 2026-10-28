@@ -15,7 +15,6 @@ platform/toolchain, command, inputs and results when closing an item.
 
 | ID | Remaining behavior | Current evidence and completion condition |
 | --- | --- | --- |
-| LS-01 | Editor folding | `features/language_service/request.rs` exposes folding requests, but the editor lacks the complete folded display-line mapping and controls. Implement Tree-sitter-first/LSP-fallback ranges with hidden-area caret, selection, navigation and hit-test coverage. |
 | LS-02 | Semantic token viewport coverage | `infrastructure/lsp/manager.rs` requests a stamped whole-document range when the server lacks full tokens. Add bounded viewport-range coverage, invalidation and cancellation without coloring uncovered/stale regions as fresh. |
 | LS-03 | Complete snippet compatibility | `features/language_service/snippet/transform.rs` uses bounded `fancy_regex` substitutions. Common transforms, choices and mirrors exist; audit full ECMAScript/UTF-16 behavior, remaining variable sources and complex nested deletion/undo against explicit fixtures before claiming compatibility. |
 | LS-04 | Rich inlay hints | `app/language_ui/inlay.rs` converts hints into text/offsets. Preserve label-part locations, commands and resolve data through rendering; validate actions against the original hint, instance and document. |
@@ -58,3 +57,19 @@ Full third-party theme import, additional standard Tree-sitter CLI semantics
 (`locals`, `tags`, content/first-line recognition), front-matter injection and
 remote/notebook/subdocument language services need separately scoped decisions.
 They are not completion conditions for the already delivered base migration.
+
+## Completed editor work (2026-10-28)
+
+LS-01 is implemented in the editor folding change following 7ddb416. Current
+Tree-sitter trees publish structural ranges; LSP supplies a versioned fallback.
+View-local folding shares display rows with wrapping and covers hidden caret/
+selection, navigation, hit testing, scrolling and target expansion. See
+[Editing](editing.md#folding) for limits and shortcuts.
+
+Evidence on Windows: workspace tests (1,728 passed, 31 ignored), fmt, architecture
+gate and workspace all-targets Clippy; tests/language-runtime/run-wasm.mjs
+--offline (12 catalog and 9 WASM checks plus installed probe); folding tests
+repeated 10 times at 32 threads (6 passed each). Includes a real Rust WASM tree
+and a fake-server save barrier for a late folding response after switching tabs.
+Linux/macOS interaction results remain for subsequent CI; this record does not
+claim those platforms were run locally.

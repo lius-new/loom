@@ -254,6 +254,7 @@ pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
     lightbulb::observe(ctx, app);
     quickfix::observe(ctx, app);
     outline::observe(ctx, app);
+    super::folding::observe(ctx, app);
 }
 
 /// Ends what Escape ends: the hover card, the signature, a grown selection.
@@ -529,6 +530,7 @@ pub(crate) fn tick(state: &AppContext) {
         signature::tick(app);
         highlight::tick(app);
         inlay::tick(app);
+        super::folding::tick(app);
         lightbulb::tick(state, app);
         quickfix::tick(state, app);
         expand::tick(app);

@@ -269,6 +269,38 @@ pub fn perform(env: &KeyEnv, action: Action) -> bool {
         return true;
     }
     match action {
+        Action::Fold => {
+            super::folding::command(
+                &env.state,
+                super::folding::FoldAction::Fold,
+                env.editor_rect,
+            );
+            true
+        }
+        Action::Unfold => {
+            super::folding::command(
+                &env.state,
+                super::folding::FoldAction::Unfold,
+                env.editor_rect,
+            );
+            true
+        }
+        Action::FoldAll => {
+            super::folding::command(
+                &env.state,
+                super::folding::FoldAction::FoldAll,
+                env.editor_rect,
+            );
+            true
+        }
+        Action::UnfoldAll => {
+            super::folding::command(
+                &env.state,
+                super::folding::FoldAction::UnfoldAll,
+                env.editor_rect,
+            );
+            true
+        }
         Action::ToggleSoftWrap => {
             env.state.update(|app| {
                 app.editor.language.rect = Some(env.editor_rect);

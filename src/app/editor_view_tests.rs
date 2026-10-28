@@ -3852,3 +3852,212 @@ fn soft_wrap_keeps_paint_hits_navigation_selection_ime_and_resize_in_agreement()
         source
     );
 }
+
+#[test]
+fn folding_controls_hide_source_and_keep_wrapped_hits_caret_and_expansion_correct() {
+    use lgui::{
+        application::{AppView, ApplicationContext},
+        core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output},
+        session::UiSession,
+    };
+    use std::sync::Arc;
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
+    let output = exposed.clone();
+    let rect = UiRect::new(0.0, 0.0, 240.0, 350.0);
+    let application = ApplicationContext::empty(Default::default());
+    let source = "fn long_function_name_with_parameters() {\n  hidden();\n}\nnext\n";
+    let view: AppView = Arc::new(move |cx| {
+        let mut initial = document(source);
+        initial.editor.focused = true;
+        initial.preferences.values_mut().editor.soft_wrap = true;
+        initial.preferences.values_mut().smooth_caret = false;
+        crate::app::editing::configure_all(&mut initial);
+        let id = initial.workspace.active_document().unwrap();
+        let doc = &initial.workspace.documents[&id];
+        let stamp = doc.stamp(id);
+        let range = 0..doc.buffer.line_start(3);
+        crate::app::folding::publish_syntax(
+            &mut initial,
+            stamp,
+            Some(Arc::from(std::slice::from_ref(&range))),
+        );
+        let state = AppContext::detached(cx.state(initial));
+        let git = cx.state(GitStoreSnapshot::default());
+        *output.lock().unwrap() = Some(state.clone());
+        let id = UiId::new("fold-controls-test");
+        let focus = cx.focus_handle(id.clone());
+        render(PaneId::new(1), rect, state, git, id, focus)
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, rect, UiScale::ONE);
+    let state = exposed.lock().unwrap().clone().unwrap();
+    let send = |session: &mut UiSession, input| {
+        dispatch_runtime_output(
+            session.handle_input(input),
+            &application,
+            &lgui::window::WindowId::new("fold-controls"),
+            |a| session.handle_default_action(a),
+            |_| {},
+        );
+        session.render_view(&view, rect, UiScale::ONE);
+    };
+    let click = |session: &mut UiSession, name: &str| {
+        let r = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|n| n.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name))
+            .unwrap()
+            .layout_rect;
+        let pointer = PointerData::mouse(Point::new(
+            (r.left + r.right) / 2.0,
+            (r.top + r.bottom) / 2.0,
+        ));
+        send(
+            session,
+            InputEvent::PointerDown {
+                pointer,
+                button: PointerButton::Left,
+            },
+        );
+        send(
+            session,
+            InputEvent::PointerUp {
+                pointer,
+                button: PointerButton::Left,
+            },
+        );
+    };
+    click(&mut session, "Fold code at line 1");
+    let app = state.get();
+    let id = app.workspace.active().unwrap();
+    let map = crate::app::editing::projection(&app, id, rect);
+    assert!(map.folded());
+    assert!(map.wrapped());
+    assert!(map.hidden(
+        &app.workspace.active_editor().unwrap(),
+        source.find("hidden").unwrap()
+    ));
+    assert!(
+        !session
+            .tree()
+            .nodes()
+            .iter()
+            .any(|n| n.text.as_deref().is_some_and(|t| t.contains("hidden")))
+    );
+    drop(app);
+    let app = state.get();
+    let buffer = app.workspace.active_editor().unwrap();
+    let target = source.find("next").unwrap();
+    let left = fonts::editor().gutter_w() + theme::CODE_PAD;
+    let metrics = crate::ui::editor::projection::metrics(rect, left, &buffer, &map);
+    let (x, y) = crate::ui::editor::projection::caret(
+        &buffer,
+        &map,
+        loom_editor_core::text::Selection::caret(target),
+        left,
+        0.0,
+        0.0,
+        metrics.viewport_w,
+    );
+    drop(app);
+    let pointer = PointerData::mouse(Point::new(x + 1.0, y + 4.0));
+    send(
+        &mut session,
+        InputEvent::PointerDown {
+            pointer,
+            button: PointerButton::Left,
+        },
+    );
+    send(
+        &mut session,
+        InputEvent::PointerUp {
+            pointer,
+            button: PointerButton::Left,
+        },
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().line_col().0,
+        3
+    );
+    click(&mut session, "Expand folded lines");
+    assert!(!crate::app::editing::active_projection(&state.get(), rect).folded());
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        source
+    );
+    assert!(!state.get().workspace.active_editor().unwrap().can_undo());
+}
+
+#[test]
+fn lsp_folding_fallback_is_versioned_and_late_results_do_not_fold_a_switched_tab() {
+    let log = std::env::temp_dir().join(format!(
+        "loom-fold-late-{}-{}.jsonl",
+        std::process::id(),
+        LANGUAGE_CASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let path = log.to_string_lossy().to_string();
+    let mut h = LanguageHarness::configured(
+        "fn f() {\n body();\n}\nnext\n",
+        &[
+            "--features",
+            "folding",
+            "--defer-feature-replies",
+            "--log",
+            &path,
+        ],
+        |app| {
+            app.preferences.values_mut().language_servers[0]
+                .args
+                .as_mut()
+                .unwrap()[1] = "object".into();
+        },
+    );
+    h.until_ready();
+    let first = h.state.get().workspace.active().unwrap();
+    let count_requests = || {
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| {
+                serde_json::from_str::<serde_json::Value>(line)
+                    .ok()
+                    .is_some_and(|v| {
+                        v.get("method").and_then(|v| v.as_str())
+                            == Some("textDocument/foldingRange")
+                    })
+            })
+            .count()
+    };
+    let before = count_requests();
+    crate::app::folding::command(&h.state, crate::app::folding::FoldAction::Fold, h.rect);
+    h.until("the folding request to reach the server", |_| {
+        count_requests() > before
+    });
+    let target = h.state.get().workspace.active_path().unwrap().to_path_buf();
+    h.state.update(|app| {
+        app.workspace
+            .test_open_view("fold-other.txt".into(), "other".into());
+    });
+    h.runtime
+        .language_services()
+        .unwrap()
+        .saved(target, Arc::new("fn f() {\n body();\n}\nnext\n".into()));
+    h.until("the folding reply after the save barrier", |h| {
+        h.state.try_update(crate::app::folding::tick);
+        let app = h.state.get();
+        !crate::app::folding::markers(&app, first, &(0..100)).is_empty()
+    });
+    assert!(!crate::app::editing::projection(&h.state.get(), first, h.rect).folded());
+    assert_eq!(
+        h.state.get().workspace.active_editor().unwrap().text(),
+        "other"
+    );
+    h.state.update(|app| {
+        app.workspace.set_active(first);
+    });
+    crate::app::folding::command(&h.state, crate::app::folding::FoldAction::Fold, h.rect);
+    h.render();
+    assert!(crate::app::editing::active_projection(&h.state.get(), h.rect).folded());
+    let _ = std::fs::remove_file(log);
+}

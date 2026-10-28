@@ -157,6 +157,10 @@ actions! {
     DeleteToNextWordEnd => "editor::DeleteToNextWordEnd", "Delete to the next word end";
     Newline => "editor::Newline", "Insert a line break";
     Tab => "editor::Tab", "Indent";
+    Fold => "editor::Fold", "Fold code at the caret";
+    Unfold => "editor::Unfold", "Unfold code at the caret";
+    FoldAll => "editor::FoldAll", "Fold all code regions";
+    UnfoldAll => "editor::UnfoldAll", "Unfold all code regions";
     ToggleSoftWrap => "editor::ToggleSoftWrap", "Toggle soft wrapping in the current document";
     MoveLineUp => "editor::MoveLineUp", "Move selected lines up";
     MoveLineDown => "editor::MoveLineDown", "Move selected lines down";

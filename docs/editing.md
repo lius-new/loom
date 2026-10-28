@@ -182,3 +182,22 @@ Vim's logical-line motions retain their normal meaning.
 Documents over 1 MiB or 100,000 displayed rows use the existing horizontal-scroll
 view to bound reflow memory and work. The status preference is retained. Display
 geometry caches retain immutable source snapshots and are bounded per UI thread.
+
+## Folding
+
+Click a gutter triangle to fold a function, class or code block; click it again
+or the inline folded-lines label to expand. Ctrl+Shift+[ / ] folds/unfolds the
+current region; Ctrl+K Ctrl+0 folds all, Ctrl+K Ctrl+J unfolds all (Cmd on macOS).
+These editor::Fold/Unfold/FoldAll/UnfoldAll actions can be rebound.
+
+Ranges come from the current Tree-sitter tree, with a debounced LSP fallback.
+Every result is checked against document identity, incarnation, text version
+and language generation. Folding is independent in split views. Edits outside
+a folded region map its boundaries; edits inside it or missing revision history
+expand it. Search and jumps expand hidden targets. Vertical navigation skips
+hidden lines; entering one through a logical motion expands it. Folding uses
+the same display map as soft wrap, including hit testing and scrolling.
+
+Folding uses the same 1 MiB/100,000-row large-file fallback as wrapping. Ranges
+are bounded and crossing server ranges are rejected. Fold state is temporary
+for the open views and does not change the file or create text undo entries.

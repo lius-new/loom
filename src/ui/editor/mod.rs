@@ -13,3 +13,5 @@ mod syntax;
 pub(crate) mod view;
 
 pub(crate) mod projection;
+
+mod fold;

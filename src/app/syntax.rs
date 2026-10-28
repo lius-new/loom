@@ -29,12 +29,25 @@ impl Highlighter {
                 return;
             }
             state.try_update(|app| {
-                if !completed.into_iter().any(|(document, stamp)| {
-                    app.workspace
+                let worker = state
+                    .services()
+                    .and_then(|r| r.highlighter())
+                    .map(|h| h.worker);
+                let mut changed = false;
+                for (document, stamp) in completed {
+                    if app
+                        .workspace
                         .documents
                         .get(&document)
                         .is_some_and(|doc| doc.is_text() && doc.stamp(document) == stamp)
-                }) {
+                    {
+                        if let Some(worker) = &worker {
+                            super::folding::publish_syntax(app, stamp, worker.folding(stamp));
+                        }
+                        changed = true;
+                    }
+                }
+                if !changed {
                     return false;
                 }
                 app.editor.syntax_revision = app.editor.syntax_revision.wrapping_add(1);
