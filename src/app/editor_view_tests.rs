@@ -4827,3 +4827,182 @@ fn vim_editor_inlay_hints_recover_when_a_provider_appears_without_an_edit() {
     assert_eq!(h.cursor(), cursor);
     let _ = std::fs::remove_file(script);
 }
+
+#[test]
+fn folding_keeps_original_source_margin_and_shares_gutter_with_actions_and_git() {
+    use crate::ui::editor_binding::Binding;
+    use lgui::{
+        application::{AppView, ApplicationContext},
+        core::{InputEvent, Point, PointerData, UiScale, dispatch_runtime_output},
+        session::UiSession,
+    };
+    use std::sync::Arc;
+    let application = ApplicationContext::empty(Default::default());
+    let _text = lgui::backend::install_text_environment(
+        &application,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    let rect = UiRect::new(0.0, 0.0, 640.0, 180.0);
+    let source = "first {\n  hidden\n}\nnext\n";
+    for (size, expected_left) in [(12, 50.0), (18, 73.0), (24, 96.0)] {
+        let font = fonts::FontSettings {
+            size,
+            ..fonts::FontSettings::EDITOR
+        };
+        fonts::set(&font, &fonts::FontSettings::TERMINAL);
+        for factor in [1.0, 1.25, 2.0] {
+            let font = font.clone();
+            let scale = UiScale::new(factor);
+            let exposed = Arc::new(Mutex::new(None::<AppContext>));
+            let output = exposed.clone();
+            let view: AppView = Arc::new(move |cx| {
+                let mut initial = document(source);
+                initial.editor.focused = true;
+                initial.preferences.values_mut().editor_font = font.clone();
+                initial.preferences.values_mut().smooth_caret = false;
+                let document = initial.workspace.active_document().unwrap();
+                let doc = &initial.workspace.documents[&document];
+                let stamp = doc.stamp(document);
+                let range = 0..doc.buffer.line_start(3);
+                crate::app::folding::publish_syntax(&mut initial, stamp, Some(Arc::from([range])));
+                let state = AppContext::detached(cx.state(initial));
+                *output.lock().unwrap() = Some(state.clone());
+                let git = cx.state(GitStoreSnapshot::default());
+                let base =
+                    crate::app::editor_view::binding(state.clone(), git, PaneId::new(1), rect);
+                let binding = Binding::new(
+                    move || {
+                        let mut s = crate::app::editor_view::snapshot(
+                            state.get(),
+                            GitStoreSnapshot::default(),
+                            PaneId::new(1),
+                            rect,
+                        );
+                        s.lightbulb = Some(0);
+                        s.has_repository = true;
+                        s.line_changes.insert(1, LineChange::Modified);
+                        s.editor_gutter_hover = Some((PaneId::new(1), 1));
+                        s
+                    },
+                    move |event| base.send(event),
+                    |_| None,
+                );
+                let id = UiId::new("fold-margin-test");
+                let focus = cx.focus_handle(id.clone());
+                crate::ui::editor::view::render(PaneId::new(1), rect, binding, id, focus)
+            });
+            let mut session = UiSession::new();
+            session.render_view(&view, rect, scale);
+            let bounds = |session: &UiSession, name| {
+                session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|n| n.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name))
+                    .unwrap()
+                    .layout_rect
+            };
+            let fold = bounds(&session, "Fold code at line 1");
+            let bulb = bounds(&session, "Code actions (Ctrl+.)");
+            let git = bounds(&session, "Show change");
+            assert!(bulb.right <= fold.left && fold.right <= git.left);
+            let check_source = |session: &UiSession| {
+                let painted = session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|n| n.text.as_deref() == Some("first {"))
+                    .unwrap();
+                assert_eq!(
+                    painted.layout_rect.left, expected_left,
+                    "original source margin at size {size}, scale {factor}"
+                );
+                let number = session
+                    .tree()
+                    .nodes()
+                    .iter()
+                    .find(|n| n.text.as_deref() == Some("1"))
+                    .unwrap();
+                assert_eq!(
+                    number.layout_rect.right,
+                    expected_left - 14.0,
+                    "original number-to-source spacing"
+                );
+            };
+            check_source(&session);
+            let send = |session: &mut UiSession, input| {
+                dispatch_runtime_output(
+                    session.handle_input(input),
+                    &application,
+                    &lgui::window::WindowId::new("fold-margin"),
+                    |a| session.handle_default_action(a),
+                    |_| {},
+                );
+                session.render_view(&view, rect, scale);
+            };
+            let click = |session: &mut UiSession, x, y| {
+                let pointer = PointerData::mouse(Point::new(x, y));
+                send(
+                    session,
+                    InputEvent::PointerDown {
+                        pointer,
+                        button: PointerButton::Left,
+                    },
+                );
+                send(
+                    session,
+                    InputEvent::PointerUp {
+                        pointer,
+                        button: PointerButton::Left,
+                    },
+                );
+            };
+            click(
+                &mut session,
+                (fold.left + fold.right) / 2.0,
+                (fold.top + fold.bottom) / 2.0,
+            );
+            let state = exposed.lock().unwrap().clone().unwrap();
+            assert!(
+                crate::app::editing::active_projection(&state.get(), rect).folded(),
+                "Git hover and lightbulb must not intercept folding"
+            );
+            check_source(&session);
+            click(&mut session, expected_left + 0.5, 4.0);
+            assert_eq!(
+                state.get().workspace.active_editor().unwrap().cursor(),
+                0,
+                "first character hit matches its painted position"
+            );
+            let fold = bounds(&session, "Unfold code at line 1");
+            click(
+                &mut session,
+                (fold.left + fold.right) / 2.0,
+                (fold.top + fold.bottom) / 2.0,
+            );
+            assert!(!crate::app::editing::active_projection(&state.get(), rect).folded());
+            check_source(&session);
+            if size == 12 && factor == 1.0 {
+                if let Some(path) = std::env::var_os("LOOM_FOLD_PREVIEW") {
+                    let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(4 * 1024 * 1024);
+                    let frame = lgui::renderer::FrameInfo::new(
+                        lgui::core::PhysicalRect::new(0, 0, 640, 180),
+                        &[],
+                        scale,
+                        lgui::renderer::FrameReason::SceneChange,
+                        true,
+                    );
+                    surface
+                        .draw(&session.tree().scene().project_to_physical(scale), &frame)
+                        .unwrap();
+                    let mut pixels = surface.pixels().to_vec();
+                    for pixel in pixels.as_chunks_mut::<4>().0 {
+                        pixel.swap(0, 2);
+                    }
+                    image::save_buffer(path, &pixels, 640, 180, image::ColorType::Rgba8).unwrap();
+                }
+            }
+        }
+    }
+    fonts::set(&fonts::FontSettings::EDITOR, &fonts::FontSettings::TERMINAL);
+}

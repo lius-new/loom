@@ -272,9 +272,9 @@ pub(crate) fn render(
                 let y = code_top + row as f32 * fonts::editor().line_h - scroll_y;
                 content = content.child(super::fold::button(
                     UiRect::new(
-                        gutter_viewport.right - 22.0,
+                        gutter_viewport.left + theme::GUTTER_CODE_ACTION_W,
                         y,
-                        gutter_viewport.right - 8.0,
+                        gutter_viewport.left + theme::GUTTER_ACTION_W,
                         y + fonts::editor().line_h,
                     ),
                     format!(
@@ -282,10 +282,8 @@ pub(crate) fn render(
                         if marker.collapsed { "Unfold" } else { "Fold" },
                         marker.line + 1
                     ),
-                    if marker.collapsed {
-                        "▸".into()
-                    } else {
-                        "▾".into()
+                    super::fold::Content::Chevron {
+                        collapsed: marker.collapsed,
                     },
                     state.clone(),
                     editor_focus.clone(),
@@ -317,7 +315,13 @@ pub(crate) fn render(
             let st_peek = state.clone();
             content = content.child(
                 panel(
-                    UiRect::new(gutter_viewport.left, top, gutter_viewport.right, bottom),
+                    // Keep the action strip clickable while a changed line is hovered.
+                    UiRect::new(
+                        gutter_viewport.left + theme::GUTTER_ACTION_W,
+                        top,
+                        gutter_viewport.right,
+                        bottom,
+                    ),
                     VisualStyle::default(),
                 )
                 .key(format!("gutter-change-{}", pane.get()))
@@ -343,7 +347,7 @@ pub(crate) fn render(
                     UiRect::new(
                         gutter_viewport.left,
                         top,
-                        gutter_viewport.left + theme::GUTTER_ACTION_W,
+                        gutter_viewport.left + theme::GUTTER_CODE_ACTION_W,
                         top + fonts::editor().line_h,
                     ),
                     move || st_actions.send(Event::CodeActions { revision }),
@@ -580,7 +584,7 @@ pub(crate) fn render(
                     code = code.child(super::fold::button(
                         UiRect::new(left, y, left + width, y + fonts::editor().line_h),
                         "Expand folded lines".into(),
-                        glyph,
+                        super::fold::Content::Placeholder(glyph),
                         state.clone(),
                         editor_focus.clone(),
                         id,
