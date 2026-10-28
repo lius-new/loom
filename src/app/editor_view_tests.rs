@@ -4947,6 +4947,8 @@ fn folding_gutter_hover_reveals_right_column_and_preserves_numbers_actions_and_g
                     expected_left - 24.0,
                     "original line-number position is unchanged"
                 );
+                assert_eq!(fold.left - number.layout_rect.right, 7.0);
+                assert_eq!(painted.layout_rect.left - fold.right, 7.0);
             };
             check_source(&session);
             let send = |session: &mut UiSession, input| {

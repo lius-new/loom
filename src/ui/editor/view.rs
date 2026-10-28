@@ -245,7 +245,7 @@ pub(crate) fn render(
         let gutter_content = UiRect::new(
             gutter_viewport.left,
             code_top,
-            gutter_viewport.right - theme::GUTTER_FOLD_W,
+            gutter_viewport.right - theme::GUTTER_FOLD_W - theme::GUTTER_FOLD_PAD,
             code_top + metrics.content_h,
         );
         let gutter_hover = s
@@ -253,9 +253,9 @@ pub(crate) fn render(
             .filter(|(hovered_pane, _)| *hovered_pane == pane)
             .map(|(_, line)| line);
         let fold_viewport = UiRect::new(
-            gutter_viewport.right - theme::GUTTER_FOLD_W,
+            gutter_viewport.right - theme::GUTTER_FOLD_W - theme::GUTTER_FOLD_PAD,
             gutter_viewport.top,
-            gutter_viewport.right,
+            gutter_viewport.right - theme::GUTTER_FOLD_PAD,
             gutter_viewport.bottom,
         );
         let fold_rows: Vec<_> = visible_rows
@@ -337,7 +337,7 @@ pub(crate) fn render(
             let change_rect = UiRect::new(
                 gutter_viewport.left + theme::GUTTER_ACTION_W,
                 top,
-                gutter_viewport.right - theme::GUTTER_FOLD_W,
+                fold_viewport.left,
                 bottom,
             );
             fold_controls = fold_controls.child(

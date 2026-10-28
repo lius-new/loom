@@ -111,7 +111,7 @@ pub fn render_rows(
         let num_rect = UiRect::new(
             rect.left + theme::GUTTER_ACTION_W,
             y,
-            rect.right - 10.0,
+            rect.right - theme::GUTTER_NUMBER_PAD,
             y + fonts::editor().line_h,
         );
         g = g.child(text(
@@ -121,7 +121,12 @@ pub fn render_rows(
         ));
 
         if has_bp {
-            let dot = UiRect::new(rect.right - 11.0, y + 8.0, rect.right - 5.0, y + 14.0);
+            let dot = UiRect::new(
+                num_rect.right - 1.0,
+                y + 8.0,
+                num_rect.right + 5.0,
+                y + 14.0,
+            );
             g = g.child(ellipse(dot, VisualStyle::filled(theme::c().error)));
         }
         // A conflict's bar replaces the Git change bar: Git sees its lines as

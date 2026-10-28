@@ -541,6 +541,9 @@ pub const GUTTER_W: f32 = 46.0;
 pub const GUTTER_ACTION_W: f32 = 14.0;
 // A narrow folding column follows the original line-number and Git gutter.
 pub const GUTTER_FOLD_W: f32 = 10.0;
+// Redistribute existing spacing without moving line numbers or source text.
+pub const GUTTER_NUMBER_PAD: f32 = 7.0;
+pub const GUTTER_FOLD_PAD: f32 = 3.0;
 pub const CODE_PAD: f32 = 4.0;
 /// Estimated monospace advance of UI text at `UI_SIZE`. Code surfaces use
 /// the measured `fonts::Metrics::char_w` instead.
