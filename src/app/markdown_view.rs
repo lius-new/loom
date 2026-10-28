@@ -538,6 +538,10 @@ fn open_link(state: &AppContext, pane: PaneId, view: ViewId, result: &Rendered, 
                 state.update(|app| app.show_error(format!("Heading not found: {fragment}")));
             }
         }
+        // As with Ctrl-click in the editor, a folder is shown in the Explorer.
+        Some(Address::Local { path, .. }) if path.is_dir() => {
+            crate::app::explorer::reveal_folder(state, &path);
+        }
         Some(Address::Local { path, fragment }) => open_local(state, pane, path, fragment),
         None => state.update(|app| app.show_error("Unsupported Markdown link")),
     }
