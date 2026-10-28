@@ -34,6 +34,143 @@ pub fn insert(editor: &mut EditorMut<'_>, text: &str) {
     let _ = editor.replace_selection(text, kind);
 }
 
+/// Type one key with delimiter pairing. IME commits and paste use literal insertion.
+pub fn type_text(editor: &mut EditorMut<'_>, text: &str, language: &str) {
+    let mut chars = text.chars();
+    let Some(ch) = chars.next() else {
+        return;
+    };
+    if chars.next().is_some() {
+        insert(editor, text);
+        return;
+    }
+    let cursor = editor.cursor();
+    if editor.selection().is_none()
+        && editor.is_auto_close(cursor)
+        && editor.text()[cursor..].starts_with(ch)
+        && matches!(ch, ')' | ']' | '}' | '\'' | '"')
+    {
+        editor.set_cursor(cursor + ch.len_utf8());
+        return;
+    }
+    let close = match ch {
+        '(' => ')',
+        '[' => ']',
+        '{' => '}',
+        '"' if quotes(language) => '"',
+        '\'' if quotes(language) && (language != "rust" || editor.selection().is_some()) => '\'',
+        _ => {
+            insert(editor, text);
+            return;
+        }
+    };
+    let range = editor.selection().unwrap_or(cursor..cursor);
+    let before = editor.selection_state();
+    let previous = editor.text()[..range.start].chars().next_back();
+    let next = editor.text()[range.end..].chars().next();
+    let quote = ch == '\'' || ch == '"';
+    if (language == "rust" && previous == Some('\''))
+        || !code_context(editor.text(), range.start, language)
+        || (quote && previous.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '\\'))
+        || (range.is_empty()
+            && next.is_some_and(|c| {
+                !c.is_whitespace() && !matches!(c, ')' | ']' | '}' | ',' | ';' | ':')
+            }))
+    {
+        insert(editor, text);
+        return;
+    }
+    let content = &editor.text()[range.clone()];
+    let value = format!("{ch}{content}{close}");
+    let open = range.start;
+    let end = open + 1 + content.len();
+    let selected = !range.is_empty();
+    let _ = editor.edit(
+        EditKind::Other,
+        vec![Edit::replace(range.clone(), value)],
+        |_, _| {
+            if selected {
+                if before.cursor < before.anchor.unwrap_or(before.cursor) {
+                    Selection::spanning(end, open + 1)
+                } else {
+                    Selection::spanning(open + 1, end)
+                }
+            } else {
+                Selection::caret(open + 1)
+            }
+        },
+    );
+    editor.track_pair(open, end);
+    editor.break_undo_group();
+}
+
+fn quotes(language: &str) -> bool {
+    !matches!(language, "text" | "plain" | "plaintext" | "markdown" | "")
+}
+
+/// Bounded lexical fallback: uncertainty in long prefixes disables pairing.
+/// Comments and strings deliberately suppress pairs until a reliable boundary.
+fn code_context(text: &str, end: usize, language: &str) -> bool {
+    if end > 64 * 1024 {
+        return false;
+    }
+    let hash = matches!(
+        language,
+        "python" | "ruby" | "shell" | "bash" | "toml" | "yaml"
+    );
+    let dash = matches!(language, "sql" | "lua" | "haskell");
+    let slash = !hash && !matches!(language, "text" | "plain" | "plaintext" | "markdown" | "");
+    let bytes = &text.as_bytes()[..end];
+    let (mut i, mut quote, mut block, mut line, mut escaped) = (0, 0, 0usize, false, false);
+    while i < bytes.len() {
+        let c = bytes[i];
+        let n = bytes.get(i + 1).copied().unwrap_or(0);
+        if line {
+            if c == b'\n' {
+                line = false;
+            }
+            i += 1;
+            continue;
+        }
+        if block > 0 {
+            if c == b'/' && n == b'*' {
+                block += 1;
+                i += 2;
+            } else if c == b'*' && n == b'/' {
+                block -= 1;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+            } else if c == b'\\' {
+                escaped = true;
+            } else if c == quote {
+                quote = 0;
+            }
+            i += 1;
+            continue;
+        }
+        if (hash && c == b'#')
+            || (dash && c == b'-' && n == b'-')
+            || (slash && c == b'/' && n == b'/')
+        {
+            line = true;
+        } else if slash && c == b'/' && n == b'*' {
+            block = 1;
+            i += 1;
+        } else if quotes(language) && (c == b'"' || c == b'\'' && language != "rust" || c == b'`') {
+            quote = c;
+        }
+        i += 1;
+    }
+    !line && block == 0 && quote == 0
+}
+
 /// Paste text, converting its line breaks to the document's convention.
 pub fn paste(editor: &mut EditorMut<'_>, text: &str) {
     let newline = editor.line_ending();
@@ -56,6 +193,11 @@ pub fn delete_forward(editor: &mut EditorMut<'_>) {
 /// Delete the selection, or one character or word before or after the caret.
 pub fn erase(editor: &mut EditorMut<'_>, forward: bool, word: bool) {
     let cursor = editor.cursor();
+    if !forward && !word && editor.selection().is_none() && editor.is_empty_auto_pair(cursor) {
+        let _ = editor.replace(cursor - 1..cursor + 1, "", EditKind::Other);
+        editor.break_undo_group();
+        return;
+    }
     let range = editor.selection().unwrap_or_else(|| match (forward, word) {
         (true, true) => cursor..editor.word_right(cursor),
         (true, false) => cursor..editor.next_grapheme(cursor),

@@ -163,6 +163,25 @@ impl<'a> EditorMut<'a> {
         self.selection.preferred_column = column;
     }
 
+    /// Register a pair created by the most recent edit, including redo state.
+    pub fn track_pair(&mut self, open: usize, close: usize) {
+        let before = self.buffer.pairs.clone();
+        std::sync::Arc::make_mut(&mut self.buffer.pairs).push(super::pairs::Pair { open, close });
+        let after = self.buffer.pairs.clone();
+        self.buffer.history_mut().attach_pairs(before, after);
+    }
+
+    pub fn is_auto_close(&self, at: usize) -> bool {
+        self.buffer.pairs.iter().any(|pair| pair.close == at)
+    }
+
+    pub fn is_empty_auto_pair(&self, at: usize) -> bool {
+        self.buffer
+            .pairs
+            .iter()
+            .any(|pair| pair.close == at && pair.open + 1 == at)
+    }
+
     // ---- Editing -------------------------------------------------------------
 
     /// Apply `edits` (all in the current text's offsets) as one change and
@@ -175,6 +194,7 @@ impl<'a> EditorMut<'a> {
         select: impl FnOnce(&ChangeSet, &TextBuffer) -> Selection,
     ) -> Result<ChangeSet, EditError> {
         let before = *self.selection;
+        let pairs = self.buffer.pairs.clone();
         let changes = self.buffer.apply_edits(edits)?;
         if changes.is_empty() {
             return Ok(changes);
@@ -185,6 +205,8 @@ impl<'a> EditorMut<'a> {
         self.buffer
             .history_mut()
             .record(changes.clone(), kind, before, after);
+        let after_pairs = self.buffer.pairs.clone();
+        self.buffer.history_mut().attach_pairs(pairs, after_pairs);
         Ok(changes)
     }
 
@@ -286,6 +308,9 @@ impl<'a> EditorMut<'a> {
         let entry = self.buffer.history_mut().pop_undo()?;
         let reverse = entry.changes.iter().rev().map(ChangeSet::inverse).collect();
         let extent = self.replay(reverse)?;
+        if let Some((before, _)) = &entry.pairs {
+            self.buffer.pairs = before.clone();
+        }
         if let Some((before, _)) = entry.metadata {
             self.buffer.replay_metadata(before);
         }
@@ -304,6 +329,9 @@ impl<'a> EditorMut<'a> {
         let entry = self.buffer.history_mut().pop_redo()?;
         let forward = entry.changes.iter().map(ChangeSet::forward).collect();
         let extent = self.replay(forward)?;
+        if let Some((_, after)) = &entry.pairs {
+            self.buffer.pairs = after.clone();
+        }
         if let Some((_, after)) = entry.metadata {
             self.buffer.replay_metadata(after);
         }

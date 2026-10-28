@@ -133,3 +133,14 @@ Click the server name in the status bar to open the language server panel: it
 shows each running server, what it is busy with (for example indexing a large
 project, during which errors may not appear yet), its recent messages, and a
 button to restart the servers.
+
+## Delimiter pairing
+
+Typing an opening bracket wraps a selection or inserts a matching closer. Only
+automatically inserted closers are skipped; Backspace inside an empty automatic
+pair removes both characters. Undo and redo restore pair provenance. Selections
+keep their direction when wrapped. Paste and IME composition commits stay literal.
+Quotes pair in code languages, with conservative string/comment handling; Rust
+single quotes remain literal for lifetimes. Plain text and Markdown pair brackets
+only. When a lexical prefix exceeds 64 KiB, typing falls back to literal insertion
+to bound work on large files.

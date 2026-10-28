@@ -453,12 +453,21 @@ pub fn insert_text(app: &mut AppState, input: &str, rect: UiRect) {
     if !input.is_empty() {
         app.workspace.promote_preview(pane, document);
     }
+    let language = app
+        .workspace
+        .view_meta(document)
+        .map(|m| m.lang.name())
+        .unwrap_or("text");
     if let Some(mut editor) = app.workspace.view_editor_mut(pane, document) {
         // A composition commit is an undo step of its own.
         if session.is_some() {
             editor.break_undo_group();
         }
-        normal::insert(&mut editor, input);
+        if session.is_some() {
+            normal::insert(&mut editor, input);
+        } else {
+            normal::type_text(&mut editor, input, language);
+        }
         if session.is_some() {
             editor.break_undo_group();
         }

@@ -3289,3 +3289,70 @@ fn the_language_panel_cancel_button_ends_only_the_selected_server_task() {
             .all(|line| line.cancel.is_none())
     );
 }
+
+#[test]
+fn typed_delimiters_and_ime_commits_take_distinct_paths_through_editor_events() {
+    use lgui::application::{AppView, ApplicationContext};
+    use lgui::core::{ImeEvent, InputEvent, Point, PointerData, UiScale, dispatch_runtime_output};
+    use lgui::session::UiSession;
+    use std::sync::Arc;
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
+    let output = exposed.clone();
+    let rect = UiRect::new(0.0, 0.0, 600.0, 300.0);
+    let application = ApplicationContext::empty(Default::default());
+    let view: AppView = Arc::new(move |cx| {
+        let mut initial = document("");
+        initial.editor.focused = true;
+        let state = AppContext::detached(cx.state(initial));
+        let git = cx.state(GitStoreSnapshot::default());
+        *output.lock().unwrap() = Some(state.clone());
+        let id = UiId::new("pair-editor-test");
+        let focus = cx.focus_handle(id.clone());
+        render(PaneId::new(1), rect, state, git, id, focus)
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, rect, UiScale::ONE);
+    let state = exposed.lock().unwrap().clone().unwrap();
+    let mut send = |input| {
+        dispatch_runtime_output(
+            session.handle_input(input),
+            &application,
+            &lgui::window::WindowId::new("pair-test"),
+            |action| session.handle_default_action(action),
+            |_| {},
+        );
+        session.render_view(&view, rect, UiScale::ONE);
+    };
+    let pointer = PointerData::mouse(Point::new(
+        fonts::editor().gutter_w() + theme::CODE_PAD + 1.0,
+        5.0,
+    ));
+    send(InputEvent::PointerDown {
+        pointer,
+        button: PointerButton::Left,
+    });
+    send(InputEvent::PointerUp {
+        pointer,
+        button: PointerButton::Left,
+    });
+    send(InputEvent::Ime(ImeEvent::Commit("{".into())));
+    assert_eq!(state.get().workspace.active_editor().unwrap().text(), "{}");
+    send(InputEvent::Ime(ImeEvent::Preedit {
+        text: "中文".into(),
+        cursor: None,
+    }));
+    send(InputEvent::Ime(ImeEvent::Commit("中文()".into())));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "{中文()}"
+    );
+    send(InputEvent::Ime(ImeEvent::Commit("}".into())));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "{中文()}"
+    );
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().cursor(),
+        "{中文()}".len()
+    );
+}

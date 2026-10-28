@@ -62,6 +62,7 @@ pub(super) fn apply(text: &mut String, edits: Vec<Edit>) -> ChangeSet {
 /// change, which copies them only while an older clone is still alive.
 #[derive(Clone, Debug)]
 pub struct TextBuffer {
+    pub(super) pairs: Arc<Vec<super::pairs::Pair>>,
     text: Arc<String>,
     lines: Arc<LineIndex>,
     history: Arc<History>,
@@ -78,6 +79,7 @@ impl TextBuffer {
         let lines = LineIndex::new(&text);
         let ending = first_line_ending(&text, &lines).unwrap_or("\n");
         Self {
+            pairs: Arc::default(),
             lines: Arc::new(lines),
             text: Arc::new(text),
             history: Arc::default(),
@@ -195,6 +197,14 @@ impl TextBuffer {
             })
             .collect();
         let changes = apply(Arc::make_mut(&mut self.text), edits);
+        Arc::make_mut(&mut self.pairs).retain_mut(|pair| {
+            if let Some(mapped) = pair.transform(&changes) {
+                *pair = mapped;
+                true
+            } else {
+                false
+            }
+        });
         Arc::make_mut(&mut self.lines).update(&self.text, &changes);
         self.version += 1;
         let revision = super::revision::TextRevision {

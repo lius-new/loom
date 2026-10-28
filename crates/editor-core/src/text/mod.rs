@@ -15,6 +15,7 @@ mod change;
 mod editor;
 mod history;
 mod lines;
+mod pairs;
 mod revision;
 mod selection;
 pub use self::revision::{BytePoint, RevisionEdit, TextExtent, TextRevision};

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use super::change::ChangeSet;
 use super::selection::Selection;
+type PairSnapshot = std::sync::Arc<Vec<super::pairs::Pair>>;
 
 /// Entries kept before the oldest is dropped.
 const MAX_ENTRIES: usize = 500;
@@ -30,6 +31,7 @@ impl EditKind {
 pub(super) struct Entry {
     pub changes: Vec<ChangeSet>,
     pub metadata: Option<(u32, u32)>,
+    pub pairs: Option<(PairSnapshot, PairSnapshot)>,
     /// Selection of the editing view before the step.
     pub before: Selection,
     /// Selection of the editing view after the step's last edit.
@@ -54,6 +56,19 @@ pub(super) struct History {
 }
 
 impl History {
+    pub fn attach_pairs(
+        &mut self,
+        before: std::sync::Arc<Vec<super::pairs::Pair>>,
+        after: std::sync::Arc<Vec<super::pairs::Pair>>,
+    ) {
+        if let Some(entry) = self.undo.last_mut() {
+            match &mut entry.pairs {
+                Some((_, last)) => *last = after,
+                None => entry.pairs = Some((before, after)),
+            }
+        }
+    }
+
     pub fn attach_metadata(&mut self, before: u32, after: u32) {
         if let Some(entry) = self.undo.last_mut() {
             entry.metadata = Some((before, after));
@@ -69,6 +84,7 @@ impl History {
         self.undo.push(Entry {
             changes: Vec::new(),
             metadata: Some((before, after)),
+            pairs: None,
             before: Selection::default(),
             after: Selection::default(),
             transaction: None,
@@ -137,6 +153,7 @@ impl History {
                     }
                     self.undo.push(Entry {
                         metadata: None,
+                        pairs: None,
                         changes: vec![changes],
                         before,
                         after,
@@ -171,6 +188,7 @@ impl History {
                 }
                 self.undo.push(Entry {
                     metadata: None,
+                    pairs: None,
                     changes: vec![changes],
                     before,
                     after,
