@@ -122,8 +122,9 @@ upload their packages to that draft without changing its notes. Review the
 notes, all build results and packages before publishing the draft on GitHub.
 
 No per-version release note files are maintained. Record Added, Improved,
-Fixed or Upgrade entries in the relevant commit body, or `- N/A` for internal
-changes. Keep the section when squash-merging a PR. Before releasing, sync
+Changed, Removed, Fixed or Upgrade entries in the relevant commit body, or
+`- N/A` for internal changes. Keep the section when squash-merging a PR. Before
+releasing, sync
 the root package version and lock entry, the CI version, and the default
 version inputs in all four release workflows. The scripts require an existing
 tag matching the build commit and never create or move tags. See

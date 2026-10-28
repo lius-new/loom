@@ -6,7 +6,7 @@ import {parseArgs} from 'node:util';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
-const GROUPS = ['Added', 'Improved', 'Fixed', 'Upgrade notes'];
+const GROUPS = ['Added', 'Improved', 'Changed', 'Removed', 'Fixed', 'Upgrade notes'];
 
 export function validateVersion(version) {
   if (!VERSION.test(version ?? '')) throw new Error(`Invalid release version: ${version}`);
@@ -44,17 +44,17 @@ export function parseReleaseNotes(body) {
     const bullet = line.match(/^[-*]\s+(.+)$/);
     if (bullet) entries.push(bullet[1].trim());
     else if (/^\s+\S/.test(line) && entries.length) entries[entries.length - 1] += ' ' + line.trim();
-    else throw new Error(`Release Notes must contain English Added/Improved/Fixed/Upgrade bullets or - N/A: ${line}`);
+    else throw new Error(`Release Notes must contain English Added/Improved/Changed/Removed/Fixed/Upgrade bullets or - N/A: ${line}`);
   }
   if (!entries.length) throw new Error('Release Notes section is empty; use - N/A for internal changes.');
   return {
     present: true,
     entries: entries.filter(entry => !/^N\/A[.!]?$/i.test(entry)).map(entry => {
       if (/\p{Extended_Pictographic}/u.test(entry)) throw new Error('Release Notes must not contain icons.');
-      const match = entry.match(/^(Added|Improved|Fixed|Upgrade|Breaking change)(?::\s*|\s+)(.+)$/i);
+      const match = entry.match(/^(Added|Improved|Changed|Removed|Fixed|Upgrade|Breaking change)(?::\s*|\s+)(.+)$/i);
       if (!match) throw new Error(`Unsupported Release Notes entry: ${entry}`);
       const kind = match[1].toLowerCase();
-      const group = kind === 'added' ? 'Added' : kind === 'improved' ? 'Improved' : kind === 'fixed' ? 'Fixed' : 'Upgrade notes';
+      const group = GROUPS.find(group => group.toLowerCase() === kind) ?? 'Upgrade notes';
       return {group, text: group === 'Upgrade notes' ? match[2] : `${group} ${match[2]}`};
     }),
   };

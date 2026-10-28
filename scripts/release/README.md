@@ -18,8 +18,8 @@ Release Notes:
 
 Use `- N/A` for internal work with no user-facing changes. Use the exact
 `Release Notes:` heading and top-level bullets starting with `Added`, `Improved`,
-`Fixed`, `Upgrade:` or `Breaking change:`. Indent wrapped continuation lines.
-Put Git trailers such as `Co-authored-by:` after the section. Write prose without
+`Changed`, `Removed`, `Fixed`, `Upgrade:` or `Breaking change:`. Indent wrapped
+continuation lines. Put Git trailers such as `Co-authored-by:` after the section. Write prose without
 icons. Upgrade entries must describe the action users need to take.
 
 Preview the next version without creating a tag or contacting GitHub:
@@ -33,9 +33,10 @@ The generator reads the complete commit bodies between the nearest reachable
 application version tag and the selected commit. Tags for language packages and
 language servers are excluded. It also works when the current application tag
 does not exist yet. `- N/A` entries are omitted, identical entries are deduplicated,
-and recorded changes are grouped under Added, Improved, Fixed and Upgrade notes,
-with commit links and a full changelog link. Commits without a section are listed
-as warnings and omitted; their titles are not guessed into user-facing prose.
+and recorded changes are grouped under Added, Improved, Changed, Removed, Fixed
+and Upgrade notes, with commit links and a full changelog link. Commits without
+a section are listed as warnings and omitted; their titles are not guessed into
+user-facing prose.
 Malformed sections fail generation instead of silently dropping their contents.
 
 ## Publishing

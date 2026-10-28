@@ -39,7 +39,7 @@ test('only the Release Notes section supplies text, with wrapped bullets and Git
 });
 
 test('malformed sections cannot silently lose a migration or publish icons', () => {
-  for (const body of ['Release Notes:\n', 'Release Notes:\n\n- Changed settings.', 'Release Notes:\n\nUnstructured text', 'Release Notes:\n\n- Added \u2728 an icon.']) {
+  for (const body of ['Release Notes:\n', 'Release Notes:\n\n- Deleted settings.', 'Release Notes:\n\nUnstructured text', 'Release Notes:\n\n- Added \u2728 an icon.']) {
     assert.throws(() => parseReleaseNotes(body), /Release Notes/);
   }
 });
@@ -79,6 +79,17 @@ test('N/A is skipped, duplicate notes are folded, and current checkout bounds th
   const result = generateReleaseNotes({root: f.directory, version: '0.1.3', ref: target});
   assert.equal(result.text.match(/Fixed labels/g).length, 1);
   assert.ok(!result.text.includes('future text'));
+});
+
+test('historical Changed and Removed notes survive generation with their commit links', t => {
+  const f = fixture(t);
+  const hash = f.commit('Preview and Changes polish\n\nRelease Notes:\n\n- Changed Markdown selection to match the editor,\n  without gaps between lines.\n- Removed group headings from the All Changes file list.');
+  const result = generateReleaseNotes({root: f.directory, version: '0.1.3'});
+  assert.equal(result.missing.length, 0);
+  assert.match(result.text, /## Changed\n\n- Changed Markdown selection to match the editor, without gaps between lines\./);
+  assert.match(result.text, /## Removed\n\n- Removed group headings from the All Changes file list\./);
+  assert.equal(result.text.split('/commit/' + hash).length - 1, 2);
+  assert.throws(() => parseReleaseNotes('Release Notes:\n\n- Deleted settings.'), /Unsupported Release Notes entry/);
 });
 
 test('first releases and releases without user-facing entries still have useful notes', t => {
