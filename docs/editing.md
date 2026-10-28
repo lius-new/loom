@@ -144,3 +144,17 @@ Quotes pair in code languages, with conservative string/comment handling; Rust
 single quotes remain literal for lifetimes. Plain text and Markdown pair brackets
 only. When a lexical prefix exceeds 64 KiB, typing falls back to literal insertion
 to bound work on large files.
+
+## Line commands
+
+Alt+Up/Down moves the current or selected lines. Shift+Alt+Up/Down duplicates
+them above/below. Ctrl+Shift+K deletes lines; Ctrl+/ toggles line comments using
+the language package's line marker (Cmd replaces Ctrl on macOS). Mixed comments
+are all commented; toggle again to restore them. Blank lines in a selection
+are skipped. Selections retain their direction and exclude a final line whose
+start is the selection endpoint. Each command is one undo step.
+
+The actions editor::MoveLineUp/Down, editor::DuplicateLineUp/Down,
+editor::DeleteLine and editor::ToggleComment can be rebound in keymap.json.
+They apply in source Editor contexts, including explicit bindings in Vim;
+terminal, preview and text-diff views keep their own contexts.

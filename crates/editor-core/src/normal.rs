@@ -1,6 +1,9 @@
 //! Default editing behaviour: what typing, deleting, moving and indenting
 //! mean in an ordinary editor, expressed as edits on the editing core.
 
+mod lines;
+pub use self::lines::{LineOperation, comment, lines};
+
 use crate::text::{Assoc, Edit, EditKind, EditorMut, Selection};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

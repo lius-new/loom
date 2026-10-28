@@ -254,7 +254,23 @@ pub(crate) fn apply_command(
                 return Ok(Some(value));
             }
         }
-        Command::Delete(..)
+        Command::ToggleComment => {
+            let prefix = app
+                .workspace
+                .active()
+                .and_then(|id| app.workspace.view_meta(id))
+                .and_then(|m| m.lang.definition().comments.line.as_deref());
+            if let Some(prefix) = prefix {
+                app.workspace.promote_active_preview();
+                if let Some(mut buffer) = app.workspace.active_editor_mut() {
+                    normal::comment(&mut buffer, prefix);
+                }
+            } else {
+                app.show_toast("This language has no line comment marker");
+            }
+        }
+        Command::Line(..)
+        | Command::Delete(..)
         | Command::Enter
         | Command::Indent(..)
         | Command::Undo

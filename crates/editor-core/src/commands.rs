@@ -8,6 +8,8 @@ pub enum Command {
     Delete(bool, bool),
     Enter,
     Indent(bool),
+    Line(normal::LineOperation),
+    ToggleComment,
     SelectAll,
     Escape,
     Undo,
@@ -24,6 +26,8 @@ pub fn apply(editor: &mut EditorMut<'_>, command: Command) {
         Command::Delete(forward, word) => normal::erase(editor, forward, word),
         Command::Enter => normal::enter(editor),
         Command::Indent(outdent) => normal::indent(editor, outdent),
+        Command::Line(operation) => normal::lines(editor, operation),
+        Command::ToggleComment => normal::comment(editor, "//"),
         Command::SelectAll => editor.select_all(),
         Command::Escape => editor.clear_selection(),
         Command::Undo => {

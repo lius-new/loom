@@ -157,6 +157,12 @@ actions! {
     DeleteToNextWordEnd => "editor::DeleteToNextWordEnd", "Delete to the next word end";
     Newline => "editor::Newline", "Insert a line break";
     Tab => "editor::Tab", "Indent";
+    MoveLineUp => "editor::MoveLineUp", "Move selected lines up";
+    MoveLineDown => "editor::MoveLineDown", "Move selected lines down";
+    DuplicateLineUp => "editor::DuplicateLineUp", "Duplicate selected lines above";
+    DuplicateLineDown => "editor::DuplicateLineDown", "Duplicate selected lines below";
+    DeleteLine => "editor::DeleteLine", "Delete selected lines";
+    ToggleComment => "editor::ToggleComment", "Toggle line comments for the current language";
     Backtab => "editor::Backtab", "Outdent";
     ShowCompletions => "editor::ShowCompletions", "Show the completion list";
     NextSnippetTabstop => "editor::NextSnippetTabstop", "Move to the next place to fill in a snippet";
@@ -342,6 +348,18 @@ impl Action {
             Action::DeleteToNextWordEnd => Command::Delete(true, true),
             Action::Newline => Command::Enter,
             Action::Tab => Command::Indent(false),
+            Action::MoveLineUp => Command::Line(loom_editor_core::normal::LineOperation::MoveUp),
+            Action::MoveLineDown => {
+                Command::Line(loom_editor_core::normal::LineOperation::MoveDown)
+            }
+            Action::DuplicateLineUp => {
+                Command::Line(loom_editor_core::normal::LineOperation::CopyUp)
+            }
+            Action::DuplicateLineDown => {
+                Command::Line(loom_editor_core::normal::LineOperation::CopyDown)
+            }
+            Action::DeleteLine => Command::Line(loom_editor_core::normal::LineOperation::Delete),
+            Action::ToggleComment => Command::ToggleComment,
             Action::Backtab => Command::Indent(true),
             _ => return None,
         })

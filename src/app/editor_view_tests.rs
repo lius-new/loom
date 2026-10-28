@@ -3408,3 +3408,116 @@ fn document_tab_width_changes_paint_geometry_hits_and_ime_columns_together() {
     }
     assert!(positions[0] < positions[1] && positions[1] < positions[2]);
 }
+
+#[test]
+fn line_shortcuts_dispatch_through_real_source_editor_and_undo_in_order() {
+    use lgui::application::{AppView, ApplicationContext};
+    use lgui::core::{InputEvent, NamedKey, Point, PointerData, UiScale, dispatch_runtime_output};
+    use lgui::session::UiSession;
+    use std::sync::Arc;
+    let exposed = Arc::new(Mutex::new(None::<AppContext>));
+    let output = exposed.clone();
+    let rect = UiRect::new(0.0, 0.0, 600.0, 300.0);
+    let application = ApplicationContext::empty(Default::default());
+    let environment = application.clone();
+    let view: AppView = Arc::new(move |cx| {
+        let mut initial = document("one\ntwo\n");
+        initial.editor.focused = true;
+        let id = initial.workspace.active_document().unwrap();
+        initial.workspace.documents.get_mut(&id).unwrap().meta.lang =
+            crate::domain::language::builtin("rust");
+        let state = AppContext::detached(cx.state(initial));
+        let git = cx.state(GitStoreSnapshot::default());
+        *output.lock().unwrap() = Some(state.clone());
+        let id = UiId::new("line-shortcut-test");
+        let focus = cx.focus_handle(id.clone());
+        let env = crate::app::key_actions::KeyEnv {
+            state: state.clone(),
+            git_store: git.clone(),
+            application: environment.clone(),
+            editor_focus: focus.clone(),
+            editor_rect: rect,
+            terminal: None,
+        };
+        crate::app::key_actions::attach(
+            group(rect).child(render(PaneId::new(1), rect, state, git, id, focus)),
+            env,
+        )
+    });
+    let mut session = UiSession::new();
+    session.render_view(&view, rect, UiScale::ONE);
+    let state = exposed.lock().unwrap().clone().unwrap();
+    let mut send = |input| {
+        dispatch_runtime_output(
+            session.handle_input(input),
+            &application,
+            &lgui::window::WindowId::new("line-shortcuts"),
+            |a| session.handle_default_action(a),
+            |_| {},
+        );
+        session.render_view(&view, rect, UiScale::ONE);
+    };
+    let pointer = PointerData::mouse(Point::new(
+        fonts::editor().gutter_w() + theme::CODE_PAD + 1.0,
+        fonts::editor().line_h + 5.0,
+    ));
+    send(InputEvent::PointerDown {
+        pointer,
+        button: PointerButton::Left,
+    });
+    send(InputEvent::PointerUp {
+        pointer,
+        button: PointerButton::Left,
+    });
+    let key = |key, modifiers| {
+        InputEvent::Keyboard(KeyboardEvent {
+            state: KeyState::Down,
+            key,
+            modifiers,
+            ..Default::default()
+        })
+    };
+    send(key(LogicalKey::Named(NamedKey::ArrowUp), KeyModifiers::ALT));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "two\none\n"
+    );
+    send(key(
+        LogicalKey::Named(NamedKey::ArrowDown),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "two\ntwo\none\n"
+    );
+    let secondary = if cfg!(target_os = "macos") {
+        KeyModifiers::META
+    } else {
+        KeyModifiers::CONTROL
+    };
+    send(key(LogicalKey::Character("/".into()), secondary));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "two\n// two\none\n"
+    );
+    send(key(
+        LogicalKey::Character("k".into()),
+        secondary | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(
+        state.get().workspace.active_editor().unwrap().text(),
+        "two\none\n"
+    );
+    for expected in [
+        "two\n// two\none\n",
+        "two\ntwo\none\n",
+        "two\none\n",
+        "one\ntwo\n",
+    ] {
+        send(key(LogicalKey::Character("z".into()), secondary));
+        assert_eq!(
+            state.get().workspace.active_editor().unwrap().text(),
+            expected
+        );
+    }
+}
