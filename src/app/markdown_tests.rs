@@ -42,11 +42,18 @@ struct Reader {
 }
 impl Reader {
     fn new(text: String) -> Self {
+        Self::create(text, false)
+    }
+    fn create(text: String, tabs: bool) -> Self {
         let rect = UiRect::new(0.0, 0.0, 640.0, 340.0);
         let mut app = AppState::new();
         app.workspace.open_path("reader-test.md".into(), text);
         let view = app.workspace.active().unwrap();
         app.workspace.set_presentation(view, Presentation::Markdown);
+        if tabs {
+            app.workspace
+                .open_path("editing-test.txt".into(), "original".into());
+        }
         let initial = Arc::new(Mutex::new(Some(app)));
         let exposed = Arc::new(Mutex::new(None));
         let output = exposed.clone();
@@ -72,7 +79,46 @@ impl Reader {
             *output.lock().unwrap() = Some(state.clone());
             let id = UiId::new("file-markdown-test");
             let focus = cx.focus_handle(id.clone());
-            super::markdown_view::render(PaneId::new(1), rect, state, id, focus, copy.clone())
+            if !tabs {
+                return super::markdown_view::render(
+                    PaneId::new(1),
+                    rect,
+                    state,
+                    id,
+                    focus,
+                    copy.clone(),
+                );
+            }
+            let git = cx.state_with(crate::features::git::GitStoreSnapshot::default);
+            let pane = state.get().workspace.active_pane();
+            let strip = UiRect::new(
+                rect.left,
+                rect.top,
+                rect.right,
+                rect.top + crate::ui::theme::TABS_H,
+            );
+            let body = UiRect::new(rect.left, strip.bottom, rect.right, rect.bottom);
+            let surface = if state.get().pane_surface(pane) == super::state::MainSurface::Markdown {
+                super::markdown_view::render(
+                    pane,
+                    body,
+                    state.clone(),
+                    id,
+                    focus.clone(),
+                    copy.clone(),
+                )
+            } else {
+                crate::ui::editor::view::render(
+                    pane,
+                    body,
+                    super::editor_view::binding(state.clone(), git, pane, body),
+                    id,
+                    focus.clone(),
+                )
+            };
+            lgui::prelude::group(rect)
+                .child(surface)
+                .child(super::tabs::render(pane, strip, state, focus))
         });
         let mut session = UiSession::new();
         session.render_view(&view, rect, UiScale::ONE);
@@ -850,4 +896,82 @@ fn visible_snippets_load_known_wasm_resources_and_unknown_languages_remain_plain
     assert_eq!(packages.activity().wasm_loads, 1);
     assert_eq!(highlighter.highlight("json", text, &cancelled), spans);
     assert_eq!(packages.activity().wasm_loads, 1);
+}
+
+#[test]
+fn returning_from_a_markdown_tab_restores_the_source_caret_and_typing() {
+    for ready in [false, true] {
+        let mut reader = Reader::create("# Heading\n\nPreview text".into(), true);
+        let source = reader.state.get().workspace.active().unwrap();
+        let pane = reader.state.get().workspace.active_pane();
+        let preview = reader.state.get().workspace.active_items()[0];
+        let click = |reader: &mut Reader, x, y| {
+            let pointer = PointerData::mouse(Point::new(x, y));
+            reader.send(InputEvent::PointerDown {
+                pointer,
+                button: PointerButton::Left,
+            });
+            reader.send(InputEvent::PointerUp {
+                pointer,
+                button: PointerButton::Left,
+            });
+        };
+        click(&mut reader, 120.0, 70.0);
+        assert!(reader.state.get().editor.focused);
+        assert!(
+            reader
+                .session
+                .tree()
+                .node(&UiId::new("editor-caret-1"))
+                .is_some()
+        );
+        reader.state.update(|app| {
+            app.workspace.activate(pane, preview);
+        });
+        reader.render();
+        if ready {
+            reader.wait(|reader| reader.text_rect("Heading").is_some());
+        }
+        let app = reader.state.get();
+        let strip = UiRect::new(0.0, 0.0, reader.rect.right, crate::ui::theme::TABS_H);
+        let layout = crate::ui::tabs::tab_layout(strip, &super::tabs::frame(&app), pane, false);
+        let index = app
+            .workspace
+            .active_items()
+            .iter()
+            .position(|id| *id == source)
+            .unwrap();
+        let tab = layout.items[index];
+        drop(app);
+        click(
+            &mut reader,
+            tab.left + 10.0 - layout.scroll_x,
+            strip.bottom * 0.5,
+        );
+        assert_eq!(reader.state.get().workspace.active(), Some(source));
+        assert!(
+            reader.state.get().editor.focused,
+            "source must regain focus after preview (ready={ready})"
+        );
+        assert!(
+            reader
+                .session
+                .tree()
+                .node(&UiId::new("editor-caret-1"))
+                .is_some(),
+            "source caret must return after preview (ready={ready})"
+        );
+        reader.send(InputEvent::TextInput("!".into()));
+        assert!(
+            reader
+                .state
+                .get()
+                .workspace
+                .active_editor()
+                .unwrap()
+                .text()
+                .contains('!'),
+            "typing must reach the restored source editor (ready={ready})"
+        );
+    }
 }

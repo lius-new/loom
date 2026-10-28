@@ -76,6 +76,9 @@ pub fn run(state: &AppContext, command: Command) {
             crate::app::file_loading::cancel(app);
             let clicks = app.editor.tab_click_count(id, x, y);
             app.workspace.activate(pane, id);
+            // The shared surface can retain native focus across this switch,
+            // so its new view will not receive another focus event.
+            app.editor.focused = true;
             app.editor.tabs.tab_context_menu = None;
             if clicks > 1 {
                 app.workspace.promote_preview(pane, id);
