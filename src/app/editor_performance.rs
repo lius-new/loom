@@ -21,7 +21,9 @@ fn wait_ready(state: &AppContext, queue: &UiTasks, rect: UiRect, verify: bool) {
     let pane = app.workspace.active_pane();
     let id = app.workspace.pane_document(pane).unwrap();
     let doc = app.workspace.documents.get(&id).unwrap();
-    let left = rect.left + crate::ui::fonts::editor().gutter_w() + crate::ui::theme::CODE_PAD;
+    let left = rect.left
+        + crate::ui::fonts::editor().gutter_w_for_lines(doc.buffer.line_count())
+        + crate::ui::theme::CODE_PAD;
     let metrics = view::scroll_metrics(rect, left, &doc.buffer);
     let (x, y) = app.workspace.active_scroll();
     let x = x.clamp(0.0, metrics.max_x);
@@ -367,7 +369,8 @@ fn editor_viewport_benchmark() {
         // Check the actual input's position mapping without logging any text.
         let app = state.get();
         let buffer = app.workspace.active_editor().unwrap();
-        let left = crate::ui::fonts::editor().gutter_w() + crate::ui::theme::CODE_PAD;
+        let left = crate::ui::fonts::editor().gutter_w_for_lines(buffer.line_count())
+            + crate::ui::theme::CODE_PAD;
         let metrics = view::scroll_metrics(rect, left, &buffer);
         for line in [0, buffer.line_count() / 2, buffer.line_count() - 1] {
             let visual = buffer.line_display_width(line) / 2;

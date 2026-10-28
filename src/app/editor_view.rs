@@ -110,8 +110,9 @@ pub(crate) fn snapshot(
     let visible_lines = document
         .as_ref()
         .map(|doc| {
-            let left =
-                rect.left + crate::ui::fonts::editor().gutter_w() + crate::ui::theme::CODE_PAD;
+            let left = rect.left
+                + crate::ui::fonts::editor().gutter_w_for_lines(doc.buffer.line_count())
+                + crate::ui::theme::CODE_PAD;
             let metrics =
                 crate::ui::editor::projection::metrics(rect, left, &doc.buffer, &doc.projection);
             let rows = crate::ui::editor::view::visible_line_range(

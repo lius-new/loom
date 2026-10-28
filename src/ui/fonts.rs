@@ -67,6 +67,19 @@ impl Metrics {
             .max(crate::ui::theme::GUTTER_W)
             + crate::ui::theme::GUTTER_FOLD_W
     }
+
+    /// Reserve the widest line number without changing width while scrolling.
+    pub fn gutter_w_for_lines(&self, lines: usize) -> f32 {
+        let digits = lines.max(1).ilog10() + 1;
+        let numbers = (digits as f32 * self.char_w).ceil() + 4.0;
+        self.gutter_w().max(
+            crate::ui::theme::GUTTER_ACTION_W
+                + numbers
+                + crate::ui::theme::GUTTER_NUMBER_PAD
+                + crate::ui::theme::GUTTER_FOLD_W
+                + crate::ui::theme::GUTTER_FOLD_PAD,
+        )
+    }
 }
 
 /// The family stack for `family`: the user's choice first, then the

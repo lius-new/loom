@@ -22,7 +22,11 @@ pub fn drag_scrollbars(app: &mut AppState, rect: UiRect, pointer_x: f32, pointer
         return false;
     }
 
-    let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+    let lines = app
+        .workspace
+        .active_editor()
+        .map_or(1, |buffer| buffer.line_count());
+    let code_left = rect.left + fonts::editor().gutter_w_for_lines(lines) + theme::CODE_PAD;
     let Some(metrics) = app
         .workspace
         .active_editor()
@@ -111,7 +115,8 @@ pub(crate) fn reveal_cursor(app: &mut AppState, rect: UiRect) {
         buffer.cursor(),
         buffer.selection_state().wrap_affinity,
     );
-    let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+    let code_left =
+        rect.left + fonts::editor().gutter_w_for_lines(buffer.line_count()) + theme::CODE_PAD;
     let metrics = projected::metrics(rect, code_left, &buffer, &projection);
     let (mut scroll_x, mut scroll_y) = app.workspace.active_scroll();
 
@@ -331,7 +336,11 @@ pub(crate) fn update_drag_selection(app: &mut AppState, rect: UiRect) {
         return;
     }
     let (sx, sy) = app.workspace.active_scroll();
-    let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+    let lines = app
+        .workspace
+        .active_editor()
+        .map_or(1, |buffer| buffer.line_count());
+    let left = rect.left + fonts::editor().gutter_w_for_lines(lines) + theme::CODE_PAD;
     if let Some(mut buffer) = app.workspace.active_editor_mut() {
         let metrics = projected::metrics(rect, left, &buffer, &projection);
         let (cursor, affinity) = projected::hit(
@@ -397,7 +406,11 @@ pub fn drag_scroll_tick(app: &mut AppState, rect: UiRect) -> bool {
         app.editor.drag = None;
         return true;
     }
-    let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+    let lines = app
+        .workspace
+        .active_editor()
+        .map_or(1, |buffer| buffer.line_count());
+    let left = rect.left + fonts::editor().gutter_w_for_lines(lines) + theme::CODE_PAD;
     let speed = |p: f32, low: f32, high: f32| {
         if p < low {
             -(low - p).clamp(4.0, 80.0)

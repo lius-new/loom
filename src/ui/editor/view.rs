@@ -108,7 +108,8 @@ pub(crate) fn render(
         let cursor_row =
             projection.caret_row(&buffer, buffer.cursor(), document.selection.wrap_affinity);
         let code_top = rect.top;
-        let code_left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+        let code_left =
+            rect.left + fonts::editor().gutter_w_for_lines(line_count) + theme::CODE_PAD;
         let metrics = projection::metrics(rect, code_left, &buffer, &projection);
         let (stored_x, stored_y) = document.scroll;
         let scroll_x = stored_x.clamp(0.0, metrics.max_x);
@@ -239,7 +240,7 @@ pub(crate) fn render(
         let gutter_viewport = UiRect::new(
             rect.left,
             code_top,
-            rect.left + fonts::editor().gutter_w(),
+            code_left - theme::CODE_PAD,
             rect.bottom,
         );
         let gutter_content = UiRect::new(
@@ -2487,7 +2488,8 @@ pub(crate) fn ime_cursor_rect(app: &ViewState, rect: UiRect) -> UiRect {
     };
     let buffer = document.editor();
     let (sx, sy) = document.scroll;
-    let left = rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+    let left =
+        rect.left + fonts::editor().gutter_w_for_lines(buffer.line_count()) + theme::CODE_PAD;
     let metrics = projection::metrics(rect, left, &buffer, &document.projection);
     let (mut x, top) = projection::caret(
         &buffer,

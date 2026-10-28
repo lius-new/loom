@@ -250,7 +250,9 @@ pub fn projection(
             &[],
         ));
     };
-    let left = rect.left + crate::ui::fonts::editor().gutter_w() + crate::ui::theme::CODE_PAD;
+    let left = rect.left
+        + crate::ui::fonts::editor().gutter_w_for_lines(doc.buffer.line_count())
+        + crate::ui::theme::CODE_PAD;
     let columns = doc.buffer.options().soft_wrap.then(|| {
         ((rect.right - left - crate::ui::editor::view::SCROLLBAR_SIZE)
             / crate::ui::fonts::editor().char_w)

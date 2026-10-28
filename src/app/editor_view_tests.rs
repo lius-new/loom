@@ -1861,7 +1861,14 @@ impl LanguageHarness {
 
     /// The screen position of the character at `column` of `line`.
     fn point_at(&self, line: usize, column: usize) -> (f32, f32) {
-        let code_left = self.rect.left + fonts::editor().gutter_w() + theme::CODE_PAD;
+        let lines = self
+            .state
+            .get()
+            .workspace
+            .active_editor()
+            .map_or(1, |buffer| buffer.line_count());
+        let code_left =
+            self.rect.left + fonts::editor().gutter_w_for_lines(lines) + theme::CODE_PAD;
         (
             code_left + (column as f32 + 0.5) * fonts::editor().char_w,
             self.rect.top + (line as f32 + 0.5) * fonts::editor().line_h,

@@ -131,8 +131,14 @@ impl Ui {
             viewport,
         };
         // Focus the editor with a click at the start of the text.
+        let lines = ui
+            .state
+            .get()
+            .workspace
+            .active_editor()
+            .map_or(1, |buffer| buffer.line_count());
         let point = PointerData::mouse(Point::new(
-            crate::ui::fonts::editor().gutter_w() + theme::CODE_PAD,
+            crate::ui::fonts::editor().gutter_w_for_lines(lines) + theme::CODE_PAD,
             5.0,
         ));
         ui.send(InputEvent::PointerDown {
