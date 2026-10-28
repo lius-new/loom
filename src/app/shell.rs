@@ -5,7 +5,9 @@ use crate::ui::git::{
     panel as git_panel, stash_switch,
 };
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -658,6 +660,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         .map(UiRect::from)
         .unwrap_or_default();
     let drag_state = state.clone();
+    let drag_application = application.as_ref().clone();
     let dragging = s.editor.drag.is_some();
     cx.use_effect((dragging, s.workspace.active(), code_rect), move || {
         let (sender, receiver) = mpsc::channel();
@@ -665,11 +668,20 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             thread::Builder::new()
                 .name("loom-selection-scroll".into())
                 .spawn(move || {
+                    // Font metrics and other layout inputs are per-thread, so
+                    // the tick has to run on the UI thread to agree with it.
+                    let pending = Arc::new(AtomicBool::new(false));
                     while let Err(RecvTimeoutError::Timeout) =
                         receiver.recv_timeout(Duration::from_millis(30))
                     {
-                        drag_state
-                            .try_update(|app| crate::app::editor::drag_scroll_tick(app, code_rect));
+                        if pending.swap(true, Ordering::AcqRel) {
+                            continue;
+                        }
+                        let (state, pending) = (drag_state.clone(), pending.clone());
+                        drag_application.post(move || {
+                            state.try_update(|app| crate::app::editor::drag_scroll_tick(app, code_rect));
+                            pending.store(false, Ordering::Release);
+                        });
                     }
                 })
                 .ok()
