@@ -36,6 +36,58 @@ fn layout_cache_reuses_geometry_across_scroll_and_resize_with_correct_hit_testin
 }
 
 #[test]
+fn font_weight_changes_refresh_layout_and_keep_carets_and_hits_aligned() {
+    use lgui::text::{TextLayoutRequest, layout};
+    let context = lgui::application::ApplicationContext::empty(Default::default());
+    let _text = lgui::backend::install_text_environment(
+        &context,
+        lgui::render_skia::skia_text_system_handle(),
+    );
+    clear_layout_cache();
+    let source = "ab\t中e\u{301}😀";
+    let mut layouts = Vec::new();
+    for weight in [400, 700, 900, 400] {
+        let font = fonts::FontSettings {
+            weight,
+            ..fonts::FontSettings::EDITOR
+        };
+        fonts::set(&font, &fonts::FontSettings::TERMINAL);
+        let metrics = fonts::editor();
+        assert_eq!(metrics.style(theme::c().text).weight, i32::from(weight));
+        assert_eq!(
+            metrics.bold(theme::c().text).weight,
+            i32::from(weight.max(700))
+        );
+        assert_eq!(fonts::terminal().style(theme::c().text).weight, 400);
+        let bounds = UiRect::new(0.0, 0.0, 16_777_216.0, metrics.line_h);
+        let mut digits = TextLayoutRequest::single_line(
+            "0000000000000000",
+            bounds,
+            metrics.size,
+            i32::from(weight),
+        );
+        digits.font_families = metrics.families;
+        assert!((metrics.char_w - layout(&digits).unwrap().width / 16.0).abs() < 0.01);
+        let (display, _, _) = expand_tabs(source, 0);
+        let mut request =
+            TextLayoutRequest::single_line(&display, bounds, metrics.size, i32::from(weight));
+        request.font_families = metrics.families;
+        let expected = layout(&request).unwrap();
+        let measured = layout_line(source, 30.0, 40.0, 800.0).unwrap();
+        assert!((measured.width - expected.width).abs() < 0.01);
+        for index in [0, 1, 2, 3, 4, 6, 7] {
+            let x = caret_x(Some(&measured), index).unwrap();
+            assert_eq!(hit_column(&measured, x + 0.01, 45.0), index);
+        }
+        layouts.push(measured.layout);
+    }
+    assert!(!std::sync::Arc::ptr_eq(&layouts[0], &layouts[1]));
+    assert!(!std::sync::Arc::ptr_eq(&layouts[1], &layouts[2]));
+    assert!(std::sync::Arc::ptr_eq(&layouts[0], &layouts[3]));
+    fonts::set(&fonts::FontSettings::EDITOR, &fonts::FontSettings::TERMINAL);
+}
+
+#[test]
 fn layout_cache_evicts_individual_cold_entries_without_clearing_hot_geometry() {
     let context = lgui::application::ApplicationContext::empty(Default::default());
     let _fonts = lgui::backend::install_text_environment(

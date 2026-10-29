@@ -1,7 +1,7 @@
 //! Code fonts for the editor and terminal, chosen on the Settings page.
 //!
 //! `FontSettings` is the persisted preference; `Metrics` is the resolved
-//! family list, size, line height and character advance every code surface
+//! family list, size, weight, line height and character advance every code surface
 //! lays out with. The active metrics are set once per frame from `AppState`
 //! and read through `editor()` and `terminal()`, like the palette in `theme`.
 
@@ -32,6 +32,7 @@ pub const SANS_FAMILIES: &[&str] = &["Noto Sans", "Noto Sans CJK SC", "DejaVu Sa
 pub struct Metrics {
     pub families: &'static [&'static str],
     pub size: f32,
+    pub weight: i32,
     pub line_h: f32,
     /// Monospace advance, measured with the renderer when it is available.
     pub char_w: f32,
@@ -47,20 +48,22 @@ impl Metrics {
         };
         let families = families(family);
         let size = f32::from(font.size);
+        let weight = i32::from(font.weight);
         Self {
             families,
             size,
+            weight,
             line_h: font.line_px(),
-            char_w: measured_advance(families, size).unwrap_or(size * 0.6),
+            char_w: measured_advance(families, size, weight).unwrap_or(size * 0.6),
         }
     }
 
     pub fn style(&self, color: Color) -> TextStyle {
-        TextStyle::new(color, self.size, 400).font_families(self.families)
+        TextStyle::new(color, self.size, self.weight).font_families(self.families)
     }
 
     pub fn bold(&self, color: Color) -> TextStyle {
-        TextStyle::new(color, self.size, 700).font_families(self.families)
+        TextStyle::new(color, self.size, self.weight.max(700)).font_families(self.families)
     }
 
     pub fn right(&self, color: Color) -> TextStyle {
@@ -113,13 +116,13 @@ pub fn families(family: &str) -> &'static [&'static str] {
 }
 
 /// Average advance of a digit run, or `None` before a text system exists.
-fn measured_advance(families: &'static [&'static str], size: f32) -> Option<f32> {
+fn measured_advance(families: &'static [&'static str], size: f32, weight: i32) -> Option<f32> {
     const SAMPLE: &str = "0000000000000000";
     let mut request = TextLayoutRequest::single_line(
         SAMPLE,
         UiRect::new(0.0, 0.0, 10_000.0, size * 2.0),
         size,
-        400,
+        weight,
     );
     request.font_families = families;
     text_layout::layout(&request)
@@ -163,7 +166,12 @@ fn resolve(editor: &FontSettings, terminal: &FontSettings) -> Active {
     Active {
         editor: editor.clone(),
         terminal: terminal.clone(),
-        measured: measured_advance(editor_metrics.families, editor_metrics.size).is_some(),
+        measured: measured_advance(
+            editor_metrics.families,
+            editor_metrics.size,
+            editor_metrics.weight,
+        )
+        .is_some(),
         editor_metrics,
         terminal_metrics,
     }
@@ -222,11 +230,13 @@ mod tests {
         let font = FontSettings {
             family: "  Fira Code ".into(),
             size: 200,
+            weight: 0,
             line_height: 10,
         }
         .clamped();
         assert_eq!(font.family, "Fira Code");
         assert_eq!(font.size, MAX_SIZE);
+        assert_eq!(font.weight, MIN_WEIGHT);
         assert_eq!(font.line_height, MIN_LINE_HEIGHT);
     }
 
@@ -257,6 +267,7 @@ mod tests {
     fn missing_fields_use_defaults() {
         let font: FontSettings = serde_json::from_str(r#"{"size": 14}"#).unwrap();
         assert_eq!(font.size, 14);
+        assert_eq!(font.weight, 400);
         assert_eq!(font.line_height, FontSettings::EDITOR.line_height);
     }
 }

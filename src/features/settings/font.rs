@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 
 pub const MIN_SIZE: u16 = 8;
 pub const MAX_SIZE: u16 = 32;
+pub const MIN_WEIGHT: u16 = 100;
+pub const MAX_WEIGHT: u16 = 900;
+pub const WEIGHT_STEP: u16 = 100;
 pub const MIN_LINE_HEIGHT: u16 = 100;
 pub const MAX_LINE_HEIGHT: u16 = 250;
 pub const LINE_HEIGHT_STEP: u16 = 10;
@@ -17,6 +20,8 @@ pub struct FontSettings {
     pub family: String,
     /// Font size in logical pixels.
     pub size: u16,
+    /// Font weight: 400 is regular, 700 is bold.
+    pub weight: u16,
     /// Line height as a percentage of `size`.
     pub line_height: u16,
 }
@@ -29,6 +34,7 @@ impl FontSettings {
         Self {
             family: String::new(),
             size,
+            weight: 400,
             line_height,
         }
     }
@@ -38,6 +44,7 @@ impl FontSettings {
         Self {
             family: self.family.trim().to_owned(),
             size: self.size.clamp(MIN_SIZE, MAX_SIZE),
+            weight: self.weight.clamp(MIN_WEIGHT, MAX_WEIGHT),
             line_height: self.line_height.clamp(MIN_LINE_HEIGHT, MAX_LINE_HEIGHT),
         }
     }

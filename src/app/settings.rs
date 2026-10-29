@@ -77,9 +77,11 @@ impl Setting {
             Self::Theme | Self::UiScale | Self::DefaultShell => {}
             Self::EditorFontFamily
             | Self::EditorFontSize
+            | Self::EditorFontWeight
             | Self::EditorLineHeight
             | Self::TerminalFontFamily
             | Self::TerminalFontSize
+            | Self::TerminalFontWeight
             | Self::TerminalLineHeight => {}
             Self::TerminalCursorBlink => app.preferences.values_mut().terminal_cursor_blink ^= true,
             Self::MatchBrackets => app.preferences.values_mut().editor.match_brackets ^= true,
@@ -336,6 +338,47 @@ mod tests {
     }
 
     #[test]
+    fn font_weight_commands_clamp_snap_and_keep_editor_and_terminal_independent() {
+        let mut app = AppState::new();
+        app.workspace
+            .open_path("weight.rs".into(), "fn main() {}\n".repeat(100));
+        app.workspace.set_active_scroll(17.0, 240.0);
+        let state = crate::app::test_support::live(app);
+        for _ in 0..3 {
+            run(
+                &state,
+                Command::FontStep(FontTarget::Editor, FontField::Weight, true),
+            );
+        }
+        assert_eq!(state.get().settings().editor_font.weight, 700);
+        assert_eq!(state.get().settings().terminal_font.weight, 400);
+        assert_eq!(state.get().workspace.active_scroll(), (17.0, 240.0));
+        run(
+            &state,
+            Command::FontStep(FontTarget::Terminal, FontField::Weight, false),
+        );
+        assert_eq!(state.get().settings().terminal_font.weight, 300);
+        assert_eq!(state.get().settings().editor_font.weight, 700);
+        for (up, limit) in [(true, fonts::MAX_WEIGHT), (false, fonts::MIN_WEIGHT)] {
+            for _ in 0..12 {
+                run(
+                    &state,
+                    Command::FontStep(FontTarget::Editor, FontField::Weight, up),
+                );
+            }
+            let font = state.get().settings().editor_font;
+            assert_eq!(font.weight, limit);
+            assert_eq!(FontField::Weight.value(&font), (limit.to_string(), up, !up));
+        }
+        let font = FontSettings {
+            weight: 450,
+            ..FontSettings::EDITOR
+        };
+        assert_eq!(FontField::Weight.step(&font, false).weight, 400);
+        assert_eq!(FontField::Weight.step(&font, true).weight, 500);
+    }
+
+    #[test]
     fn family_input_commits_trimmed_and_reverts_on_cancel() {
         let mut app = AppState::new();
         app.settings_ui.editor_font_input.set_text("  Fira Code ");
@@ -359,9 +402,11 @@ mod tests {
         for setting in [
             Setting::EditorFontFamily,
             Setting::EditorFontSize,
+            Setting::EditorFontWeight,
             Setting::EditorLineHeight,
             Setting::TerminalFontFamily,
             Setting::TerminalFontSize,
+            Setting::TerminalFontWeight,
             Setting::TerminalLineHeight,
         ] {
             assert_eq!(setting.enabled(&frame(&app)), None, "{setting:?}");

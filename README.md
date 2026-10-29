@@ -63,7 +63,8 @@ window.
 - **Customizable** — light, dark and high-contrast themes, a Zed-style
   `keymap.json` with contexts and key sequences, per-project
   `.loom/settings.json`, interface scaling from 80% to 200% and Material file
-  icons.
+  icons. Editor and terminal fonts have independent family, size, weight and
+  line-height settings.
 
 ## Installation
 

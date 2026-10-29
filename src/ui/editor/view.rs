@@ -2203,7 +2203,7 @@ impl LineLayout {
     }
 }
 
-type LayoutKey = (u32, usize, u32, usize);
+type LayoutKey = (u32, i32, usize, u32, usize);
 struct LayoutEntry {
     layout: LineLayout,
     used: u64,
@@ -2346,6 +2346,7 @@ pub(crate) fn layout_line_hinted(
     let font = fonts::editor();
     let key = (
         font.size.to_bits(),
+        font.weight,
         font.families.as_ptr() as usize,
         font.line_h.to_bits(),
         tab_size() * 32 + column % tab_size(),
@@ -2388,9 +2389,9 @@ pub(crate) fn layout_line_hinted(
             (display, source, ranges)
         }
     };
-    let bounds = UiRect::new(0.0, 0.0, 16_777_216.0, fonts::editor().line_h);
-    let mut request = TextLayoutRequest::single_line(&display, bounds, fonts::editor().size, 400);
-    request.font_families = fonts::editor().families;
+    let bounds = UiRect::new(0.0, 0.0, 16_777_216.0, font.line_h);
+    let mut request = TextLayoutRequest::single_line(&display, bounds, font.size, font.weight);
+    request.font_families = font.families;
     let layout = text::layout(&request).map(|layout| LineLayout {
         width: layout.width,
         layout: std::sync::Arc::new(layout),

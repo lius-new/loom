@@ -512,6 +512,7 @@ mod tests {
             editor_font: FontSettings {
                 family: "Fira Code".into(),
                 size: 14,
+                weight: 600,
                 line_height: 150,
             },
             terminal_font: FontSettings {
@@ -782,6 +783,34 @@ mod file_tests {
     }
 
     #[test]
+    fn font_weights_load_patch_and_reset_without_losing_other_preferences() {
+        let source = "{\n  // keep my font\n  \"editor_font\": {\"family\": \"Consolas\", \"size\": 14},\n  \"terminal_font\": {\"line_height\": 180}\n}\n";
+        let original = parse(source).unwrap().settings;
+        assert_eq!(original.editor_font.weight, 400);
+        assert_eq!(original.terminal_font.weight, 400);
+        let mut changed = original.clone();
+        changed.editor_font.weight = 600;
+        changed.terminal_font.weight = 300;
+        let saved = patch(source, &original, &changed).unwrap();
+        assert!(saved.contains("// keep my font"));
+        let loaded = parse(&saved).unwrap();
+        assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
+        assert_eq!(loaded.settings, changed);
+        let reset = patch(&saved, &changed, &original).unwrap();
+        assert!(!reset.contains("\"weight\""));
+        assert_eq!(parse(&reset).unwrap().settings, original);
+
+        let invalid =
+            parse(r#"{"editor_font":{"weight":"bold","size":16},"terminal_font":{"weight":700}}"#)
+                .unwrap();
+        assert_eq!(invalid.errors.len(), 1);
+        assert!(invalid.errors[0].starts_with("editor_font.weight:"));
+        assert_eq!(invalid.settings.editor_font.weight, 400);
+        assert_eq!(invalid.settings.editor_font.size, 16);
+        assert_eq!(invalid.settings.terminal_font.weight, 700);
+    }
+
+    #[test]
     fn bad_values_are_reported_without_resetting_the_rest() {
         let outcome = parse(
             r#"{
@@ -789,7 +818,7 @@ mod file_tests {
                 "theme": "no-such-theme",
                 "git_tree_view": "yes",
                 "thme": "ember",
-                "editor_font": { "size": "big", "line_height": 150, "weight": 7 }
+                "editor_font": { "size": "big", "line_height": 150, "width": 7 }
             }"#,
         )
         .unwrap();
@@ -805,7 +834,7 @@ mod file_tests {
             outcome
                 .errors
                 .iter()
-                .any(|e| e.contains("editor_font.weight"))
+                .any(|e| e.contains("editor_font.width"))
         );
         assert!(
             outcome

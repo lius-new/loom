@@ -65,9 +65,11 @@ pub(crate) enum Setting {
     UiScale,
     EditorFontFamily,
     EditorFontSize,
+    EditorFontWeight,
     EditorLineHeight,
     TerminalFontFamily,
     TerminalFontSize,
+    TerminalFontWeight,
     TerminalLineHeight,
     DefaultShell,
     TerminalCursorBlink,
@@ -92,6 +94,7 @@ const SECTIONS: [(&str, &[Setting]); 6] = [
         &[
             Setting::EditorFontFamily,
             Setting::EditorFontSize,
+            Setting::EditorFontWeight,
             Setting::EditorLineHeight,
             Setting::SoftWrap,
             Setting::SmoothCaret,
@@ -107,6 +110,7 @@ const SECTIONS: [(&str, &[Setting]); 6] = [
         &[
             Setting::TerminalFontFamily,
             Setting::TerminalFontSize,
+            Setting::TerminalFontWeight,
             Setting::TerminalLineHeight,
             Setting::DefaultShell,
             Setting::TerminalCursorBlink,
@@ -127,6 +131,7 @@ impl Setting {
             Self::UiScale => "Interface scale",
             Self::EditorFontFamily | Self::TerminalFontFamily => "Font family",
             Self::EditorFontSize | Self::TerminalFontSize => "Font size",
+            Self::EditorFontWeight | Self::TerminalFontWeight => "Font weight",
             Self::EditorLineHeight | Self::TerminalLineHeight => "Line height",
             Self::DefaultShell => "Default shell",
             Self::TerminalCursorBlink => "Cursor blinking",
@@ -153,11 +158,13 @@ impl Setting {
                 "Font for code, diffs and change previews. Leave empty for the default."
             }
             Self::EditorFontSize => "Size of code text in pixels.",
+            Self::EditorFontWeight => "Weight of code text: 400 is regular, 700 is bold.",
             Self::EditorLineHeight => "Height of each code line, as a multiple of the font size.",
             Self::TerminalFontFamily => {
                 "Font for terminal text. Leave empty to use the editor font."
             }
             Self::TerminalFontSize => "Size of terminal text in pixels.",
+            Self::TerminalFontWeight => "Weight of terminal text: 400 is regular, 700 is bold.",
             Self::TerminalLineHeight => {
                 "Height of each terminal row, as a multiple of the font size."
             }
@@ -192,9 +199,11 @@ impl Setting {
             Self::Theme | Self::UiScale | Self::DefaultShell => None,
             Self::EditorFontFamily
             | Self::EditorFontSize
+            | Self::EditorFontWeight
             | Self::EditorLineHeight
             | Self::TerminalFontFamily
             | Self::TerminalFontSize
+            | Self::TerminalFontWeight
             | Self::TerminalLineHeight => None,
             Self::TerminalCursorBlink => Some(app.prefs.terminal_cursor_blink),
             Self::MatchBrackets => Some(app.prefs.editor.match_brackets),
@@ -228,9 +237,11 @@ impl Setting {
         Some(match self {
             Self::EditorFontFamily => (FontTarget::Editor, FontField::Family),
             Self::EditorFontSize => (FontTarget::Editor, FontField::Size),
+            Self::EditorFontWeight => (FontTarget::Editor, FontField::Weight),
             Self::EditorLineHeight => (FontTarget::Editor, FontField::LineHeight),
             Self::TerminalFontFamily => (FontTarget::Terminal, FontField::Family),
             Self::TerminalFontSize => (FontTarget::Terminal, FontField::Size),
+            Self::TerminalFontWeight => (FontTarget::Terminal, FontField::Weight),
             Self::TerminalLineHeight => (FontTarget::Terminal, FontField::LineHeight),
             _ => return None,
         })
@@ -247,6 +258,7 @@ pub(crate) enum FontTarget {
 pub(crate) enum FontField {
     Family,
     Size,
+    Weight,
     LineHeight,
 }
 
@@ -279,6 +291,11 @@ impl FontField {
                 font.size > fonts::MIN_SIZE,
                 font.size < fonts::MAX_SIZE,
             ),
+            Self::Weight => (
+                font.weight.to_string(),
+                font.weight > fonts::MIN_WEIGHT,
+                font.weight < fonts::MAX_WEIGHT,
+            ),
             Self::LineHeight => (
                 line_height_label(font.line_height),
                 font.line_height > fonts::MIN_LINE_HEIGHT,
@@ -299,6 +316,14 @@ impl FontField {
         match self {
             Self::Family => {}
             Self::Size => font.size = step(font.size, 1),
+            Self::Weight => {
+                let snapped = font.weight / fonts::WEIGHT_STEP * fonts::WEIGHT_STEP;
+                font.weight = if up || snapped == font.weight {
+                    step(snapped, fonts::WEIGHT_STEP)
+                } else {
+                    snapped
+                };
+            }
             Self::LineHeight => {
                 // Snap to the step grid so a hand-edited value lines up again.
                 let snapped = font.line_height / fonts::LINE_HEIGHT_STEP * fonts::LINE_HEIGHT_STEP;

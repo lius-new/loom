@@ -52,7 +52,7 @@ Rust GUI 库 [lgui](https://github.com/lius-new/lgui) 构建。它希望在保�
   worktree，并在后台刷新工作区内各仓库的状态。
 - **自定义** — 提供浅色、深色和高对比度主题，支持 Zed 风格的 `keymap.json`
   （上下文与组合键序列）、项目级 `.loom/settings.json`、80% 至 200% 的界面缩放，
-  以及 Material 文件图标。
+  以及 Material 文件图标。编辑器与终端可独立设置字体、字号、粗细和行高。
 
 ## 安装
 

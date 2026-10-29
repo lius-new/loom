@@ -36,6 +36,29 @@ The same setting is available in the user `settings.json` as `"ui_scale": 120`.
 Remove it or set it to `null` to restore automatic scaling. Like other appearance
 preferences, it cannot be overridden by project settings.
 
+## Code fonts
+
+Settings → Editor → **Font weight** adjusts the weight of code text, including
+diffs and change previews. Use **−** / **+** to choose 100–900 in steps of 100;
+400 is regular and 700 is bold. Changes apply immediately and persist across
+restarts. Settings → Terminal has an independent **Font weight** control.
+
+The user `settings.json` accepts the same preferences:
+
+```json
+{
+  "editor_font": { "weight": 500 },
+  "terminal_font": { "weight": 400 }
+}
+```
+
+Both fonts default to weight 400 when the field is omitted. Numeric weights
+outside 100–900 are clamped to that range; values between steps, such as 450,
+can be entered in JSON. The appearance depends on the weights available in the
+chosen font. Font preferences are user settings and cannot be overridden by a
+project's `.loom/settings.json`. Font family, size and line height remain
+independent of weight.
+
 ## File associations
 
 Loom picks a file's language from the file itself: its name and extension. To
