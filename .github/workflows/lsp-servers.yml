@@ -126,7 +126,7 @@ jobs:
             producer_commit=$(git rev-parse HEAD)
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m "chore: sync language server catalog for $RESOURCE_TAG"
+            git commit -m "chore: sync language server catalog for $RESOURCE_TAG" -m "Release Notes:" -m "- Changed the bundled language server catalog."
             git fetch origin "refs/heads/$CATALOG_BRANCH"
             git merge-base --is-ancestor "$producer_commit" FETCH_HEAD
             git rebase FETCH_HEAD

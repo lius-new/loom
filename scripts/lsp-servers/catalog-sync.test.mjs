@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {checkMessage} from '../commit/check.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -56,6 +57,7 @@ test('the workflow pushes only the released catalog and an unchanged rerun creat
   fs.writeFileSync(path.join(f.runner, 'untracked'), 'leave this local\n');
   succeeded(f.sync());
   const tip = git(f.remote, 'rev-parse', 'refs/heads/main');
+  assert.deepEqual(checkMessage(git(f.remote, 'log', '-1', '--format=%B', tip)).entries, [{group: 'Changed', text: 'Changed the bundled language server catalog.'}]);
   assert.equal(git(f.remote, 'show', 'main:' + catalog), 'published batch');
   assert.equal(git(f.remote, 'diff-tree', '--no-commit-id', '--name-only', '-r', tip), catalog);
   assert.match(fs.readFileSync(f.summary, 'utf8'), /Committed and pushed/);

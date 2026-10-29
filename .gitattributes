@@ -1,4 +1,6 @@
 * text=auto
+.githooks/* text eol=lf
+.github/commit-message.txt text eol=lf
 *.md text eol=lf
 *.rs text eol=lf
 *.svg text eol=lf

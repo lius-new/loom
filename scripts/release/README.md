@@ -1,5 +1,10 @@
 # Release notes and drafts
 
+Enable local commit checks with `node scripts/commit/install.mjs`. Every new
+commit must have exactly one `Release Notes:` section, including `- N/A` for
+internal changes. CI also validates the complete introduced commit range; see
+[CONTRIBUTING.md](../../CONTRIBUTING.md).
+
 Write English release notes in the body of the commit that introduces a change.
 For pull requests, write the same section in the PR description and preserve it
 in the squash commit message. A conventional commit title is optional; the notes

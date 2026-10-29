@@ -22,6 +22,13 @@ test('daily CI has no npm install, tool self-tests, evidence, WASM rebuilds or p
   assert.match(runs(ci.jobs.static),/node scripts\/architecture\/check\.mjs/);
   assert.equal(ci.jobs.quality,undefined);
 });
+test('commit notes are checked before scope selection without a new CI job or dependency install', () => {
+  const job = ci.jobs.changes;
+  assert.equal(job.steps.find(step => step.uses === 'actions/checkout@v7').with['fetch-depth'], 0);
+  const commands = job.steps.find(step => step.id === 'scope').run.split('\n');
+  assert.deepEqual(commands, ['node scripts/commit/check.mjs --event', 'node scripts/ci/plan.mjs']);
+  assert.doesNotMatch(runs(job), /npm |fetch |curl |gh /);
+});
 test('three-platform functionality stays unconditional and Clippy shares the Linux test environment', () => {
   const build = ci.jobs.build;
   assert.equal(build.if,undefined);assert.equal(build.strategy['fail-fast'],false);

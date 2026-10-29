@@ -38,7 +38,9 @@ jobs:
           package-manager-cache: false
       - name: Select expensive checks from event and changed paths
         id: scope
-        run: node scripts/ci/plan.mjs
+        run: |-
+          node scripts/commit/check.mjs --event
+          node scripts/ci/plan.mjs
   static:
     name: Format and architecture
     runs-on: ubuntu-24.04
