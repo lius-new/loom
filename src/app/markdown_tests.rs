@@ -45,6 +45,13 @@ impl Reader {
         Self::create(text, false)
     }
     fn create(text: String, tabs: bool) -> Self {
+        Self::create_with_image_gate(text, tabs, None)
+    }
+    fn create_with_image_gate(
+        text: String,
+        tabs: bool,
+        gate: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Self {
         let rect = UiRect::new(0.0, 0.0, 640.0, 340.0);
         let mut app = AppState::new();
         app.workspace.open_path("reader-test.md".into(), text);
@@ -70,11 +77,12 @@ impl Reader {
                 AppContext::detached(cx.state_with(|| initial.lock().unwrap().take().unwrap()))
                     .with_runtime(&runtime_view);
             if runtime_view.markdown().is_none() {
-                runtime_view.install_markdown(MarkdownService::new(
-                    state.clone(),
-                    application.clone(),
-                    copy.clone(),
-                ));
+                let service =
+                    MarkdownService::new(state.clone(), application.clone(), copy.clone());
+                if let Some(gate) = &gate {
+                    service.render.before_image_load(gate.clone());
+                }
+                runtime_view.install_markdown(service);
             }
             *output.lock().unwrap() = Some(state.clone());
             let id = UiId::new("file-markdown-test");
@@ -716,28 +724,55 @@ fn images_load_off_the_render_thread_and_the_view_updates_when_they_arrive() {
 }
 
 #[test]
-fn text_appears_without_waiting_for_an_image_server_that_never_answers() {
-    // A server that accepts the connection and then says nothing.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let hold = std::thread::spawn(move || {
-        let connection = listener.accept();
-        std::thread::sleep(Duration::from_secs(12));
-        drop(connection);
+fn text_appears_while_image_loading_is_explicitly_blocked() {
+    use std::sync::{Condvar, mpsc};
+    // Release on unwind too, so a failed assertion never leaves a loader stuck.
+    struct Gate(Arc<(Mutex<bool>, Condvar)>);
+    impl Drop for Gate {
+        fn drop(&mut self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+    }
+    let gate = Gate(Arc::new((Mutex::new(false), Condvar::new())));
+    let blocked = gate.0.clone();
+    let (entered, started) = mpsc::channel();
+    let hook = Arc::new(move || {
+        let _ = entered.send(());
+        let (released, timeout) = blocked
+            .1
+            .wait_timeout_while(
+                blocked.0.lock().unwrap(),
+                Duration::from_secs(60),
+                |released| !*released,
+            )
+            .unwrap();
+        assert!(
+            *released && !timeout.timed_out(),
+            "image gate was never released"
+        );
     });
-    let started = Instant::now();
-    let mut reader = Reader::new(format!(
-        "![badge](http://127.0.0.1:{port}/badge.png)\n\nbody text after the badge\n"
-    ));
-    reader.wait(|r| r.text_rect("body").is_some());
-    // The read timeout alone is five seconds; the text must not pay for it.
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "text took {:?}",
-        started.elapsed()
+    let mut reader = Reader::create_with_image_gate(
+        "![Loom](icons/source/app-icon-transparent-128.png)\n\nbody text after the image\n".into(),
+        false,
+        Some(hook),
     );
-    drop(reader);
-    drop(hold);
+    reader.wait(|r| r.text_rect("body").is_some());
+    reader.wait(|_| started.try_recv().is_ok());
+    assert!(!*gate.0.0.lock().unwrap(), "image loader is still blocked");
+    let latest = |reader: &Reader| {
+        let view = reader.state.get().workspace.active().unwrap();
+        reader.runtime.markdown().unwrap().render.latest(
+            crate::infrastructure::markdown_worker::Consumer::Document(view),
+        )
+    };
+    assert!(latest(&reader).unwrap().images.is_empty());
+    // No duration threshold: text must be present before loading is allowed.
+    assert!(reader.text_rect("body").is_some());
+    drop(gate);
+    reader.wait(|r| latest(r).is_some_and(|result| !result.images.is_empty()));
+    let result = latest(&reader).unwrap();
+    assert!(result.images.values().all(|asset| asset.outcome.is_ok()));
 }
 
 #[test]

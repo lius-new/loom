@@ -8,8 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { downloadVerified } from '../../lib/download.mjs';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -103,20 +102,8 @@ export async function download({ url, file, sha256 }) {
   }
 
   info(`Downloading ${url}`);
-  const response = await fetch(url, { redirect: 'follow' });
-  if (!response.ok || !response.body) {
-    fail(`Download failed (${response.status} ${response.statusText}): ${url}`);
-  }
-  const partial = `${target}.partial`;
-  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(partial));
-
-  const actual = sha256File(partial);
-  if (actual !== sha256) {
-    fs.rmSync(partial);
-    fail(`SHA-256 mismatch for ${file}\n  expected ${sha256}\n  actual   ${actual}`);
-  }
-  fs.renameSync(partial, target);
-  return target;
+  try {return await downloadVerified({url, destination:target, sha256});}
+  catch (error) {fail(error.message);}
 }
 
 /** The Windows bsdtar, which reads and writes zip archives. */

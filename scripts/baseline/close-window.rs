@@ -130,7 +130,11 @@ fn main() {
         };
         if let Err(error) = result {
             eprintln!("{error}");
-            std::process::exit(1);
+            std::process::exit(if error == "No main window for the smoke child" {
+                2
+            } else {
+                1
+            });
         }
     }
     #[cfg(not(windows))]

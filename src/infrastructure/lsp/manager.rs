@@ -364,6 +364,11 @@ enum Msg {
         generation: u64,
         error: String,
     },
+    #[cfg(test)]
+    ProgressTime {
+        now: Instant,
+        done: Sender<()>,
+    },
     Stop,
 }
 
@@ -420,6 +425,8 @@ impl Manager {
             snapshot: Snapshot::default(),
             assignments: HashMap::new(),
             published: Vec::new(),
+            #[cfg(test)]
+            progress_time: None,
         };
         let thread = thread::Builder::new()
             .name("loom-lsp-manager".into())
@@ -433,6 +440,14 @@ impl Manager {
             results,
             thread: Some(thread),
         }
+    }
+
+    /// Freeze/advance only progress expiry; real transport deadlines stay live.
+    #[cfg(test)]
+    pub(crate) fn set_progress_time(&self, now: Instant) {
+        let (done, ready) = mpsc::channel();
+        self.tx.send(Msg::ProgressTime { now, done }).unwrap();
+        ready.recv_timeout(Duration::from_secs(15)).unwrap();
     }
 
     pub fn update(&self, snapshot: Snapshot) {
@@ -687,6 +702,8 @@ struct Coordinator {
     /// never touches the disk to look for project markers.
     assignments: HashMap<PathBuf, (ResolvedLanguage, Vec<Assignment>)>,
     published: Vec<InstanceInfo>,
+    #[cfg(test)]
+    progress_time: Option<Instant>,
 }
 
 /// The settings the person gave `server`, by their top-level names.
@@ -732,6 +749,14 @@ impl Coordinator {
     /// Returns false to stop.
     fn handle(&mut self, message: Msg) -> bool {
         match message {
+            #[cfg(test)]
+            Msg::ProgressTime { now, done } => {
+                assert!(self.progress_time.is_none_or(|previous| now >= previous));
+                self.progress_time = Some(now);
+                self.expire_progress(now);
+                self.publish();
+                let _ = done.send(());
+            }
             Msg::Stop => return false,
             Msg::Snapshot(snapshot) => {
                 // Only the newest snapshot matters.
@@ -832,6 +857,22 @@ impl Coordinator {
         true
     }
 
+    fn progress_now(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(now) = self.progress_time {
+            return now;
+        }
+        Instant::now()
+    }
+
+    fn progress_deadline(&self, deadline: Option<Instant>) -> Option<Instant> {
+        #[cfg(test)]
+        if self.progress_time.is_some() {
+            return None;
+        }
+        deadline
+    }
+
     fn next_deadline(&self) -> Option<Instant> {
         self.instances
             .iter()
@@ -871,10 +912,17 @@ impl Coordinator {
                         .map(|pending| pending.deadline),
                     _ => None,
                 };
-                [idle, retry, semantic, pull, progress, registration]
-                    .into_iter()
-                    .flatten()
-                    .min()
+                [
+                    idle,
+                    retry,
+                    semantic,
+                    pull,
+                    self.progress_deadline(progress),
+                    registration,
+                ]
+                .into_iter()
+                .flatten()
+                .min()
             })
             .chain(self.book.deadline())
             .min()
@@ -885,7 +933,7 @@ impl Coordinator {
         self.expire_requests(now);
         self.request_semantic_tokens(now);
         self.request_pulls(now);
-        self.expire_progress(now);
+        self.expire_progress(self.progress_now());
         self.expire_registrations(now);
         let idle_stop = self.options.idle_stop;
         let mut stopping = Vec::new();
@@ -1408,6 +1456,7 @@ impl Coordinator {
         token: crate::features::language_service::message::Id,
         update: ProgressUpdate,
     ) {
+        let now = self.progress_now();
         let Phase::Running(Running {
             ready: Some(ready), ..
         }) = &mut self.instances[at].phase
@@ -1435,7 +1484,7 @@ impl Coordinator {
                             cancellable: cancellable.unwrap_or(false),
                             cancelling: false,
                         },
-                        updated: Instant::now(),
+                        updated: now,
                         cancelled: None,
                     });
                 }
@@ -1455,7 +1504,7 @@ impl Coordinator {
                     if let Some(cancellable) = cancellable {
                         task.info.cancellable = cancellable;
                     }
-                    task.updated = Instant::now();
+                    task.updated = now;
                 }
             }
             ProgressUpdate::End { .. } => tasks.retain(|task| task.token != token),
@@ -1463,6 +1512,7 @@ impl Coordinator {
     }
 
     fn cancel_task(&mut self, instance: u64, run: u64, task_id: u64) {
+        let now = self.progress_now();
         let Some(instance) = self
             .instances
             .iter_mut()
@@ -1488,7 +1538,7 @@ impl Coordinator {
             )
         {
             task.info.cancelling = true;
-            task.cancelled = Some(Instant::now());
+            task.cancelled = Some(now);
         }
     }
 

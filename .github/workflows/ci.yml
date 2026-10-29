@@ -68,6 +68,7 @@ jobs:
         run: |
           node --test scripts/architecture/check.test.mjs scripts/architecture/markdown.test.mjs scripts/architecture/standalone-host.test.mjs scripts/architecture/language-resources.test.mjs
           node --test scripts/baseline/test-results.test.mjs scripts/baseline/report.test.mjs scripts/baseline/run.test.mjs
+          node --test scripts/lib/download.test.mjs
           node --test scripts/package/lib/language-packs.test.mjs scripts/package/lib/lsp-servers.test.mjs
           node scripts/architecture/check.mjs
 

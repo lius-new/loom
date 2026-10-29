@@ -144,9 +144,9 @@ test('first platform creates a draft with file notes and never creates a tag or 
   assert.ok(!calls.some(args => args[1] === 'edit'));
 });
 
-test('later platforms preserve the existing draft body and upload their own assets', () => {
+test('later platforms preserve the existing draft body and upload their own assets', async () => {
   const calls = [];
-  uploadToDraft(options, args => { calls.push(args); return ok(args[1] === 'view' ? 'true' : 'uploaded'); });
+  await uploadToDraft(options, args => { calls.push(args); return ok(args[1] === 'view' ? 'true' : 'uploaded'); });
   assert.deepEqual(calls.map(args => args[1]), ['view', 'upload']);
   assert.ok(calls[1].includes('/tmp/dist/Loom package.zip'));
 });
@@ -158,9 +158,9 @@ test('simultaneous draft creation is recovered only after verifying the competin
   assert.deepEqual(calls.map(args => args[1]), ['view', 'create', 'view']);
 });
 
-test('published releases, API creation failures and upload failures remain failures', () => {
+test('published releases, API creation failures and upload failures remain failures', async () => {
   const publishedCalls = [];
-  assert.throws(() => uploadToDraft(options, args => { publishedCalls.push(args); return ok('false'); }), /already published/);
+  await assert.rejects(uploadToDraft(options, args => { publishedCalls.push(args); return ok('false'); }), /already published/);
   assert.equal(publishedCalls.length, 1);
   for (const [responses, expected] of [
     [[failed('not found'), failed('permission denied'), failed('not found')], /permission denied/],
@@ -168,6 +168,50 @@ test('published releases, API creation failures and upload failures remain failu
     [[failed('not found'), failed('already exists'), ok('false')], /already published/],
   ]) assert.throws(() => createDraft(options, () => responses.shift()), expected);
   const interrupted = [ok('true'), failed('upload interrupted')];
-  assert.throws(() => uploadToDraft(options, () => interrupted.shift()), /upload interrupted/);
-  assert.throws(() => uploadToDraft(options, () => failed('not found')), /Prepare release draft workflow/);
+  await assert.rejects(uploadToDraft(options, () => interrupted.shift()), /upload interrupted/);
+  await assert.rejects(uploadToDraft(options, () => failed('not found'), {timeoutMs:0}), /Prepare release draft workflow/);
+});
+
+test('uploads wait for delayed draft preparation without creating or editing the release', async () => {
+  const calls = [], pauses = []; let clock = 0;
+  await uploadToDraft(options, args => {
+    calls.push(args[1]);
+    if (args[1] === 'upload') return ok('uploaded');
+    return clock < 6000 ? failed('release not found') : ok('true');
+  }, {timeoutMs:10000, pollMs:2000, now:() => clock, wait:async ms => {pauses.push(ms); clock += ms;}});
+  assert.deepEqual(pauses, [2000,2000,2000]);
+  assert.deepEqual(calls, ['view','view','view','view','upload']);
+});
+
+test('missing drafts stop at the deadline; auth failures and published releases never upload', async () => {
+  let clock = 0, views = 0;
+  await assert.rejects(uploadToDraft(options, args => {
+    assert.equal(args[1], 'view'); views++; return failed('release not found');
+  }, {timeoutMs:5000, pollMs:2000, now:() => clock, wait:async ms => {clock += ms;}}), /Prepare release draft/);
+  assert.equal(clock, 5000); assert.equal(views, 4);
+  for (const result of [failed('HTTP 403: permission denied'), failed('HTTP 401: Bad credentials'), failed('HTTP 403: release not found'), ok('false')]) {
+    let calls = 0;
+    await assert.rejects(uploadToDraft(options, args => {
+      calls++; assert.equal(args[1], 'view'); return result;
+    }, {wait:async () => assert.fail('must fail immediately')}), /unavailable|already published/);
+    assert.equal(calls, 1);
+  }
+});
+
+test('a temporary GitHub API outage can recover while waiting for the draft', async () => {
+  let clock = 0;
+  const replies = [failed('HTTP 503: Service Unavailable'), ok('true'), ok('uploaded')];
+  await uploadToDraft(options, () => replies.shift(), {now:() => clock, wait:async ms => {clock += ms;}});
+  assert.equal(clock, 2000); assert.equal(replies.length, 0);
+});
+
+test('a timed-out draft lookup retries within the remaining subprocess budget', async () => {
+  let clock = 0, calls = 0; const timeouts = [];
+  await uploadToDraft(options, (args, execution) => {
+    if (args[1] === 'upload') return ok('uploaded');
+    timeouts.push(execution.timeout);
+    if (++calls === 1) throw Object.assign(Error('lookup timed out'), {code:'ETIMEDOUT'});
+    return ok('true');
+  }, {timeoutMs:5000, now:() => clock, wait:async ms => {clock += ms;}});
+  assert.deepEqual(timeouts, [5000,3000]);
 });

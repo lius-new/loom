@@ -154,6 +154,7 @@ jobs:
 
       # Draft creation and notes belong to the Prepare release draft workflow.
       - name: Upload packages to release draft
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.package.outputs.version }}

@@ -3,8 +3,7 @@ import path from 'node:path';
 import {createHash, randomUUID} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {Readable} from 'node:stream';
-import {pipeline} from 'node:stream/promises';
+import {downloadVerified} from '../lib/download.mjs';
 import {gunzipSync} from 'node:zlib';
 import {parse, stringify} from 'smol-toml';
 import * as tar from 'tar';
@@ -141,19 +140,10 @@ export function selectPackages(recipes, options) {
   return ids.sort();
 }
 
-export async function fetchPinned(url, expected, destination, {offline = false, fetcher = fetch} = {}) {
+export async function fetchPinned(url, expected, destination, {offline = false, ...options} = {}) {
   if (fs.existsSync(destination) && fileHash(destination) === expected) return destination;
   assert(!offline, `Missing or corrupt offline input: ${destination}`);
-  fs.mkdirSync(path.dirname(destination), {recursive:true});
-  const temporary = `${destination}.${randomUUID()}.partial`;
-  try {
-    const response = await fetcher(url, {signal:AbortSignal.timeout(300000)});
-    assert(response.ok && response.body, `Download failed (${response.status}): ${url}`);
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, {flags:'wx'}));
-    assert(fileHash(temporary) === expected, `SHA-256 mismatch: ${url}`);
-    fs.renameSync(temporary, destination);
-    return destination;
-  } finally { fs.rmSync(temporary, {force:true}); }
+  return downloadVerified({url, destination, sha256:expected}, options);
 }
 export async function extractArchive(archive, destination) {
   fs.mkdirSync(destination, {recursive:true});

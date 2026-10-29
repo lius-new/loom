@@ -67,6 +67,7 @@ unsafe extern "system" fn procedure(
         if mode == "ignore-close" {
             return 0;
         }
+        fixture_delay("LOOM_STARTUP_FIXTURE_CLOSE_DELAY_MS");
         if mode != "no-session" {
             let root = std::path::PathBuf::from(std::env::var_os("APPDATA").unwrap()).join("Loom");
             std::fs::create_dir_all(&root).unwrap();
@@ -101,7 +102,13 @@ unsafe extern "system" fn procedure(
     }
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
+fn fixture_delay(name: &str) {
+    if let Ok(value) = std::env::var(name) {
+        std::thread::sleep(std::time::Duration::from_millis(value.parse().unwrap()));
+    }
+}
 fn main() {
+    fixture_delay("LOOM_STARTUP_FIXTURE_START_DELAY_MS");
     if std::env::var("LOOM_STARTUP_FIXTURE_MODE").as_deref() == Ok("early-exit") {
         std::process::exit(3);
     }

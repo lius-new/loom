@@ -22,7 +22,7 @@ test('Windows GUI smoke requests normal close and diagnoses startup, session and
   for (const mode of ['normal', 'early-exit', 'no-session', 'wrong-session', 'bad-exit', 'ignore-close']) {
     await t.test(mode, async () => {
       const outputDirectory = path.join(root, mode);
-      const result = await startupSmoke({executable, outputDirectory, startupMs: 300, closeTimeoutMs: 300,
+      const result = await startupSmoke({executable, outputDirectory, startupMs: 300, closeTimeoutMs: mode === 'ignore-close' ? 300 : 3000,
         env: {...process.env, LOOM_STARTUP_FIXTURE_MODE: mode}});
       assert.equal(result.result, mode === 'normal' ? 'passed' : 'failed', JSON.stringify(result));
       assert.equal(result.forced_cleanup, mode === 'ignore-close', JSON.stringify(result));
@@ -36,6 +36,24 @@ test('Windows GUI smoke requests normal close and diagnoses startup, session and
       if (result.pid) assert.throws(() => process.kill(result.pid, 0));
     });
   }
+  for (const [name, startDelay, closeDelay] of [['delayed-window', 1200, 0], ['delayed-close', 0, 1200]]) {
+    await t.test(name, async () => {
+      const result = await startupSmoke({executable, outputDirectory:path.join(root, name), startupMs:100,
+        startupTimeoutMs:10000, closeTimeoutMs:10000, env:{...process.env, LOOM_STARTUP_FIXTURE_MODE:'normal',
+          LOOM_STARTUP_FIXTURE_START_DELAY_MS:String(startDelay), LOOM_STARTUP_FIXTURE_CLOSE_DELAY_MS:String(closeDelay)}});
+      assert.equal(result.result, 'passed', JSON.stringify(result));
+      assert.equal(result.forced_cleanup, false);
+      assert.equal(result.saved_synthetic_workspace, true);
+    });
+  }
+  await t.test('a window that never becomes ready remains a failure and its child is cleaned up', async () => {
+    const result = await startupSmoke({executable, outputDirectory:path.join(root, 'no-window'), startupMs:50,
+      startupTimeoutMs:500, env:{...process.env, LOOM_STARTUP_FIXTURE_START_DELAY_MS:'60000'}});
+    assert.equal(result.result, 'failed');
+    assert.match(result.error, /Timed out waiting.*main window/);
+    assert.equal(result.forced_cleanup, true);
+    assert.throws(() => process.kill(result.pid, 0));
+  });
   await t.test('cancellation during observation cleans up only the created child', async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 600);

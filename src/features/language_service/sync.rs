@@ -763,17 +763,37 @@ mod tests {
         }
     }
 
-    #[test]
-    fn planning_an_edit_in_a_big_document_is_fast() {
+    fn big_document_edit_fixture() -> (String, String) {
         let big = "let value = compute(1, 2, 3);\n".repeat(280_000);
         assert!(big.len() > 8_000_000);
         let mut edited = big.clone();
         edited.insert(big.len() / 2, 'x');
+        (big, edited)
+    }
+
+    #[test]
+    fn planning_an_edit_in_a_big_document_is_correct() {
+        let (big, edited) = big_document_edit_fixture();
+        let change = incremental_change(&big, &edited, PositionEncoding::Utf16).unwrap();
+        assert_eq!(change["text"], "x");
+        assert_eq!(apply(&big, &change, PositionEncoding::Utf16), edited);
+    }
+
+    #[test]
+    #[ignore = "performance budget; run explicitly in release mode on a controlled runner"]
+    fn planning_an_edit_in_a_big_document_is_fast() {
+        let (big, edited) = big_document_edit_fixture();
         let started = std::time::Instant::now();
         let change = incremental_change(&big, &edited, PositionEncoding::Utf16).unwrap();
         let took = started.elapsed();
         assert_eq!(change["text"], "x");
-        // Generous in debug builds; the release figure is a few milliseconds.
+        eprintln!(
+            "LOOM_BASELINE {}",
+            json!({
+                "scenario":"8 MiB document", "metric":"incremental_edit",
+                "value":took.as_secs_f64() * 1000.0, "unit":"ms"
+            })
+        );
         assert!(took < std::time::Duration::from_millis(1500), "{took:?}");
     }
 }

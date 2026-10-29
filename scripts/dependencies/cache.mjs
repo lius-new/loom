@@ -1,36 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {createHash, randomUUID} from 'node:crypto';
-import {Readable} from 'node:stream';
-import {pipeline} from 'node:stream/promises';
+import {downloadVerified, sha256} from '../lib/download.mjs';
+export {sha256} from '../lib/download.mjs';
 import {execFileSync} from 'node:child_process';
-
-export async function sha256(file) {
-  const hash = createHash('sha256');
-  for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
-  return hash.digest('hex');
-}
 
 // Only complete, verified downloads are published. Concurrent preparers use
 // unique temporary paths and can safely publish the same pinned content.
-export async function archive(spec, {cache, offline = false, fetcher = fetch} = {}) {
+export async function archive(spec, {cache, offline = false, ...options} = {}) {
   const directory = path.join(cache, 'archives', spec.sha256);
   const file = path.join(directory, spec.file);
   if (fs.existsSync(file) && await sha256(file) === spec.sha256) return file;
   if (offline) throw Error(`Missing or corrupt dependency cache: ${file}. Run node scripts/dependencies/ensure.mjs online first.`);
-  fs.mkdirSync(directory, {recursive: true});
-  const temporary = file + '.' + randomUUID() + '.partial';
-  try {
-    console.error(`Preparing ${spec.file}`);
-    const response = await fetcher(spec.url, {signal: AbortSignal.timeout(300_000)});
-    if (!response.ok) throw Error(`Download failed (${response.status}): ${spec.url}`);
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, {flags: 'wx'}));
-    if (await sha256(temporary) !== spec.sha256) throw Error(`SHA-256 mismatch: ${spec.url}`);
-    // rename replaces corrupt files, and every competing writer has checked
-    // exactly the same expected digest before reaching this point.
-    fs.renameSync(temporary, file);
-    return file;
-  } finally { fs.rmSync(temporary, {force: true}); }
+  console.error('Preparing ' + spec.file);
+  return downloadVerified({url:spec.url, destination:file, sha256:spec.sha256}, options);
 }
 
 export function tar(args) {

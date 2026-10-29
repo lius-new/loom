@@ -21,7 +21,7 @@ export function buildCloseHelper(directory) {
 }
 
 export async function startupSmoke({executable = path.join(ROOT, 'target/release/Loom.exe'), outputDirectory,
-  startupMs = 4000, closeTimeoutMs = 10000, env = process.env, signal} = {}) {
+  startupMs = 4000, startupTimeoutMs = 30000, closeTimeoutMs = 10000, pollMs = 50, env = process.env, signal} = {}) {
   if (process.platform !== 'win32') throw Error('This startup smoke requires Windows');
   if (!outputDirectory) throw Error('An output directory is required');
   executable = fs.realpathSync(executable);
@@ -42,6 +42,7 @@ export async function startupSmoke({executable = path.join(ROOT, 'target/release
     descriptor = fs.openSync(path.join(outputDirectory, 'startup-process.log'), 'w');
     child = spawn(executable, [workspace], {cwd: workspace, env: {...env, APPDATA: appdata, LOCALAPPDATA: localdata},
       stdio: ['ignore', descriptor, descriptor], windowsHide: true});
+    const startupDeadline = Date.now() + startupTimeoutMs;
     result.pid = child.pid;
     finished = new Promise(resolve => {
       child.on('error', error => {spawnError = error;});
@@ -59,9 +60,25 @@ export async function startupSmoke({executable = path.join(ROOT, 'target/release
     result.observation_milliseconds = startupMs;
     result.root_effect_configuration_files = fs.readdirSync(appdata, {recursive: true}).filter(name => fs.statSync(path.join(appdata, name)).isFile());
     if (exited) throw Error(`Loom exited during startup, code ${result.exit_code}`);
-    const request = spawnSync(helper, [String(child.pid), executable], {encoding: 'utf8', windowsHide: true, timeout: 5000});
-    result.close_requested = !request.error && request.status === 0;
-    if (!result.close_requested) throw Error(`Could not request normal window close: ${request.error?.message || request.stderr}`);
+    // A live process may still be loading before its main window exists.
+    // The helper returns 2 only for that condition, and verifies PID/executable
+    // ownership on every attempt before posting a close request.
+    for (;;) {
+      if (signal?.aborted) throw Error('Startup smoke cancelled');
+      if (exited) throw Error(`Loom exited during startup, code ${result.exit_code}`);
+      const remaining = startupDeadline - Date.now();
+      if (remaining <= 0) throw Error('Timed out waiting for the smoke child main window');
+      const request = spawnSync(helper, [String(child.pid), executable],
+        {encoding:'utf8', windowsHide:true, timeout:Math.min(5000, remaining)});
+      result.close_requested = !request.error && request.status === 0;
+      if (result.close_requested) break;
+      if (request.error || request.status !== 2) {
+        throw Error(`Could not request normal window close: ${request.error?.message || request.stderr}`);
+      }
+      const poll = new AbortController();
+      await Promise.race([finished, delay(Math.min(pollMs, Math.max(1, startupDeadline - Date.now())), undefined, {signal:poll.signal}).catch(() => {})]);
+      poll.abort();
+    }
     const timeout = new AbortController();
     await Promise.race([finished, delay(closeTimeoutMs, undefined, {signal: timeout.signal}).catch(() => {})]);
     timeout.abort();

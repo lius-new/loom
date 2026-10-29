@@ -109,3 +109,11 @@ test('CLI writes failure artifacts and returns nonzero rather than hiding a comp
   assert.match(fs.readFileSync(path.join(directory, 'measurements.md'), 'utf8'), /build.log.*FAILED.*101/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(directory, 'measurements.json'))).complete, false);
 });
+
+test('the language-service benchmark remains an explicit release measurement', () => {
+  const spec = BENCHMARKS.find(item => item.id === 'language-service');
+  const sample = parseMeasurements('LOOM_BASELINE {"scenario":"8 MiB document","metric":"incremental_edit","value":12.345,"unit":"ms"}', 1).rows;
+  assert.ok(spec.filter.endsWith('planning_an_edit_in_a_big_document_is_fast'));
+  assert.equal(sample.length, 1);
+  assert.equal(sample[0].scenario + '/' + sample[0].metric, spec.metrics[0]);
+});

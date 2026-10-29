@@ -107,3 +107,10 @@ test('different remote assets are never overwritten and cannot promote the catal
   await assert.rejects(publishPrepared(f.args,github,{requireClean:false,commit:'a'.repeat(40)}),/never overwritten/);
   assert.equal(github.calls.length,calls);assert.equal(fileHash(f.catalog),before);
 });
+
+test('language and shared LSP input downloads recover from upstream rate limiting', async t => {
+  const f = fixture(t), destination = path.join(f.work, 'retry-input'); let calls = 0;
+  await fetchPinned('https://example.invalid/input', hash('verified'), destination, {wait:async () => {},
+    fetcher:async () => ++calls === 1 ? new Response('', {status:429}) : new Response('verified')});
+  assert.equal(calls, 2); assert.equal(fs.readFileSync(destination, 'utf8'), 'verified');
+});

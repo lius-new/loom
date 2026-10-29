@@ -29,6 +29,19 @@ tools/<sha256>/content/<CMake distribution>
 tools/<sha256>/receipt.json
 ```
 
+All pinned network inputs (CMake/Skia, language/LSP resources and packaging
+tools) share scripts/lib/download.mjs. Transient connection failures, HTTP 408,
+429 and 5xx retry at most four attempts within a five-minute total download
+budget, using exponential backoff and honoring Retry-After. Every attempt uses
+its own temporary file; only a complete SHA-256-verified file is published.
+Permanent HTTP failures and digest mismatches fail immediately.
+
+Delay/failure injection regressions run without external network access:
+
+~~~sh
+node --test scripts/lib/download.test.mjs scripts/dependencies/dependencies.test.mjs
+~~~
+
 Archives are hashed on every reuse. Temporary downloads are verified before
 publication. Extracted CMake files/symlinks are checked against a receipt and
 repaired from the archive if missing or changed; concurrent extraction is locked.

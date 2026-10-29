@@ -1545,12 +1545,22 @@ fn ignored_progress_cancellation_and_missing_end_reports_are_bounded() {
         "--progress-cancellable",
         "--ignore-progress-cancel",
     ]);
+    let now = Instant::now();
+    f.mgr().set_progress_time(now);
+    // Observe the final scripted report before advancing expiry boundaries.
     f.show(vec![f.doc("a.fk", 0, "x")]);
     let info = f.wait_for("a cancellable task", || {
-        f.mgr().infos().into_iter().find(|i| !i.tasks.is_empty())
+        f.mgr()
+            .infos()
+            .into_iter()
+            .find(|i| i.tasks.iter().any(|task| task.percentage == Some(30)))
     });
     f.mgr().cancel_task(info.id, info.run, info.tasks[0].id);
     f.mgr().cancel_task(info.id, info.run, info.tasks[0].id);
+    f.wait_method_count("window/workDoneProgress/cancel", 1);
+    // Deliberately miss the old 150ms sampling window. Expiry is controlled by
+    // the coordinator's progress clock, not by how soon this observer runs.
+    std::thread::sleep(Duration::from_millis(450));
     f.wait_for("cancelling is visible", || {
         f.mgr().infos()[0]
             .tasks
@@ -1558,6 +1568,9 @@ fn ignored_progress_cancellation_and_missing_end_reports_are_bounded() {
             .any(|t| t.cancelling)
             .then_some(())
     });
+    f.mgr().set_progress_time(now + Duration::from_millis(149));
+    assert!(!f.mgr().infos()[0].tasks.is_empty());
+    f.mgr().set_progress_time(now + Duration::from_millis(150));
     f.wait_for("unacknowledged cancellation stops being displayed", || {
         let info = f.mgr().infos().into_iter().next()?;
         (info.tasks.is_empty()
@@ -1574,6 +1587,7 @@ fn ignored_progress_cancellation_and_missing_end_reports_are_bounded() {
             .count(),
         1
     );
+
     let f = Fixture::with_options(
         servers(&[("fake-server", "fake", 0)]),
         &[("fake-server", &["--progress"])],
@@ -1582,10 +1596,21 @@ fn ignored_progress_cancellation_and_missing_end_reports_are_bounded() {
             ..options()
         },
     );
+    let now = Instant::now();
+    f.mgr().set_progress_time(now);
     f.show(vec![f.doc("a.fk", 0, "x")]);
+    f.wait_method_count("textDocument/didOpen", 1);
+    // Inject observer latency longer than the former 300ms task lifetime.
+    std::thread::sleep(Duration::from_millis(450));
     f.wait_for("a task before its timeout", || {
-        f.mgr().infos().into_iter().find(|i| !i.tasks.is_empty())
+        f.mgr()
+            .infos()
+            .into_iter()
+            .find(|i| i.tasks.iter().any(|task| task.percentage == Some(30)))
     });
+    f.mgr().set_progress_time(now + Duration::from_millis(299));
+    assert!(!f.mgr().infos()[0].tasks.is_empty());
+    f.mgr().set_progress_time(now + Duration::from_millis(300));
     f.wait_for("a missing end is not shown forever", || {
         let info = f.mgr().infos().into_iter().next()?;
         (info.tasks.is_empty()

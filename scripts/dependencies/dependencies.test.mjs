@@ -36,7 +36,7 @@ test('cold download is pinned, offline reuse verifies bytes, corruption fails of
 test('missing cache offline, failed HTTP, wrong digest and interrupted streams never publish a cache file', async t => {
   const cache = fixture(t), spec = input('expected');
   await assert.rejects(archive(spec, {cache, offline: true}), /online first/);
-  await assert.rejects(archive(spec, {cache, fetcher: async () => new Response('no', {status: 503})}), /503/);
+  await assert.rejects(archive(spec, {cache, wait: async () => {}, fetcher: async () => new Response('no', {status: 503})}), /503/);
   await assert.rejects(archive(spec, {cache, fetcher: async () => new Response('wrong')}), /SHA-256/);
   const interrupted = async () => new Response(new ReadableStream({start(controller) {controller.enqueue(new Uint8Array([1])); controller.error(Error('interrupted'));}}));
   await assert.rejects(archive(spec, {cache, fetcher: interrupted}), /interrupted/);
@@ -165,4 +165,12 @@ test('every host CI/release job prepares dependencies before first compilation; 
   }
   for (const file of ['scripts/architecture/standalone-host.mjs','tests/language-runtime/run.mjs','tests/language-runtime/run-wasm.mjs']) assert.ok(read(file).includes('await prepareDependencies('));
   assert.ok(read('scripts/baseline/run.mjs').includes('../dependencies/ensure.mjs'));
+});
+
+test('cold dependency download recovers from a temporary upstream failure', async t => {
+  const cache = fixture(t), bytes = Buffer.from('recovered archive'), spec = input(bytes); let calls = 0;
+  const file = await archive(spec, {cache, wait:async () => {}, fetcher:async () =>
+    ++calls === 1 ? new Response('', {status:503}) : new Response(bytes)});
+  assert.equal(calls,2); assert.equal(await sha256(file), spec.sha256);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), [spec.file]);
 });

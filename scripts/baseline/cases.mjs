@@ -1,6 +1,8 @@
 // Explicit opt-in cases: keep exact Rust paths and expected measurements together.
 const keys = (scenarios, metrics) => scenarios.flatMap(scenario => metrics.map(metric => `${scenario}/${metric}`));
 export const BENCHMARKS = [
+  {id: 'language-service', group: 'language-service', filter: 'features::language_service::sync::tests::planning_an_edit_in_a_big_document_is_fast',
+    metrics: ['8 MiB document/incremental_edit']},
   {id: 'editor', group: 'editor', filter: 'app::editor_baseline_tests::perf_baseline', aliases: ['legacy-editor'],
     metrics: keys(['ascii-1m', 'ascii-10m'], ['typing_per_char', 'paste_1m', 'undo_paste', 'select_all_indent', 'history_bytes_rounded'])},
   {id: 'ui-interaction', group: 'ui', filter: 'app::editor::tests::large_file_interaction_baseline',

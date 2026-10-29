@@ -10,13 +10,13 @@ runs:
     - uses: actions/cache@v6
       with:
         path: .packaging/dependencies
-        key: dependencies-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/dependencies/manifest.json', 'scripts/dependencies/*.mjs', 'Cargo.lock') }}
+        key: dependencies-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/dependencies/manifest.json', 'scripts/dependencies/*.mjs', 'scripts/lib/*.mjs', 'Cargo.lock') }}
     - name: Prepare verified CMake and host Skia
       shell: bash
       run: node scripts/dependencies/ensure.mjs --github
     - name: Check dependency regressions on this OS
       shell: bash
-      run: node --test scripts/dependencies/dependencies.test.mjs
+      run: node --test scripts/lib/download.test.mjs scripts/dependencies/dependencies.test.mjs
     - name: Verify private tools and exported environment
       shell: bash
       run: node scripts/dependencies/smoke.mjs

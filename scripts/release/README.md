@@ -49,7 +49,9 @@ Malformed sections fail generation instead of silently dropping their contents.
    **Prepare release draft** workflow generates a temporary notes file and creates
    a GitHub Release draft. It preserves the body if a draft already exists.
 3. The Windows, Linux and macOS workflows build and upload their assets to that
-   draft. They never create another release or change its notes. If draft
+   draft. Uploads wait up to five minutes for draft creation (or transient API
+   recovery), and fail immediately on authentication errors or published releases.
+   They never create another release or change its notes. If draft
    preparation fails, fix it and rerun that workflow before retrying uploads.
 4. Review the English notes, build results and all platform packages on GitHub,
    then publish the draft manually. Nothing publishes the release automatically.

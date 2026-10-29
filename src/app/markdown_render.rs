@@ -101,6 +101,8 @@ struct Shared {
     alive: AtomicBool,
     budget: MemoryBudget,
     notify: Box<dyn Fn() + Send + Sync>,
+    #[cfg(test)]
+    before_image_load: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 pub struct RenderWorker {
     shared: Arc<Shared>,
@@ -113,6 +115,8 @@ impl RenderWorker {
             alive: AtomicBool::new(true),
             budget,
             notify: Box::new(notify),
+            #[cfg(test)]
+            before_image_load: Mutex::default(),
         });
         let worker = shared.clone();
         thread::Builder::new()
@@ -120,6 +124,10 @@ impl RenderWorker {
             .spawn(move || run(worker))
             .expect("Markdown layout worker");
         Self { shared }
+    }
+    #[cfg(test)]
+    pub(super) fn before_image_load(&self, hook: Arc<dyn Fn() + Send + Sync>) {
+        *self.shared.before_image_load.lock().unwrap() = Some(hook);
     }
     pub fn request(&self, request: Request) -> Status {
         if !self.shared.alive.load(Ordering::Acquire) {
@@ -352,6 +360,13 @@ fn start_load(
     let spawned = thread::Builder::new()
         .name("loom-markdown-image".into())
         .spawn(move || {
+            #[cfg(test)]
+            {
+                let hook = worker.before_image_load.lock().unwrap().clone();
+                if let Some(hook) = hook {
+                    hook();
+                }
+            }
             let fetched =
                 super::markdown_assets::Assets::fetch(base.as_deref(), &destination, remote);
             let mut queue = worker.queue.lock().unwrap();

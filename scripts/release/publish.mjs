@@ -3,10 +3,11 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
+import {setTimeout as delay} from 'node:timers/promises';
 import {ROOT, commitId, generateReleaseNotes, validateVersion, writeReleaseNotes} from './notes.mjs';
 
-function gh(args) {
-  const result = spawnSync('gh', args, {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
+function gh(args, {timeout = args[1] === 'view' ? 30000 : 300000} = {}) {
+  const result = spawnSync('gh', args, {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout});
   if (result.error) throw result.error;
   return result;
 }
@@ -27,13 +28,34 @@ export function createDraft({version, repo, notes}, run = gh) {
   if (existing.stdout.trim() !== 'true') throw new Error(`${tag} is already published; refusing to change its notes or assets.`);
 }
 
-export function uploadToDraft({version, repo, assets}, run = gh) {
-  const tag = `v${version}`;
-  const existing = run(['release', 'view', tag, '--repo', repo, '--json', 'isDraft', '--jq', '.isDraft']);
-  if (existing.status !== 0) throw new Error(`Draft ${tag} is unavailable; check the Prepare release draft workflow. ${existing.stderr || existing.stdout}`);
-  if (existing.stdout.trim() !== 'true') throw new Error(`${tag} is already published; refusing to change its notes or assets.`);
-  const uploaded = run(['release', 'upload', tag, ...assets, '--clobber', '--repo', repo]);
-  if (uploaded.status !== 0) throw new Error(`Could not upload release assets: ${uploaded.stderr || uploaded.stdout}`);
+// Packaging and draft preparation are independent workflows. Wait only for a
+// missing draft or a transient API failure; authentication/configuration errors
+// and already published releases must still fail without uploading anything.
+export async function uploadToDraft({version, repo, assets}, run = gh,
+  {timeoutMs = 300000, pollMs = 2000, wait = delay, now = Date.now} = {}) {
+  if (timeoutMs < 0 || !(pollMs > 0)) throw Error('Invalid draft wait budget');
+  const tag = `v${version}`, deadline = now() + timeoutMs;
+  for (;;) {
+    let existing;
+    try {
+      existing = await run(['release', 'view', tag, '--repo', repo, '--json', 'isDraft', '--jq', '.isDraft'],
+        {timeout:Math.max(1, Math.min(30000, deadline - now()))});
+    } catch (error) {
+      if (!['ETIMEDOUT','ECONNRESET','EAI_AGAIN'].includes(error.code)) throw error;
+      existing = {status:1, stderr:'temporary failure: ' + error.message};
+    }
+    if (existing.status === 0) {
+      if (existing.stdout.trim() !== 'true') throw Error(`${tag} is already published; refusing to change its notes or assets.`);
+      break;
+    }
+    const reason = existing.stderr || existing.stdout || 'unknown GitHub error';
+    const transient = /release not found|^not found$|HTTP (?:404|429|5\d\d)|connection reset|timed? out|TLS handshake timeout|temporary failure/i.test(reason);
+    const remaining = deadline - now();
+    if (/HTTP (?:401|403)|permission denied|bad credentials|authentication/i.test(reason) || !transient || remaining <= 0) throw Error(`Draft ${tag} is unavailable; check the Prepare release draft workflow. ${reason}`);
+    await wait(Math.min(pollMs, remaining));
+  }
+  const uploaded = await run(['release', 'upload', tag, ...assets, '--clobber', '--repo', repo]);
+  if (uploaded.status !== 0) throw Error(`Could not upload release assets: ${uploaded.stderr || uploaded.stdout}`);
 }
 
 function verifySource({root = ROOT, version, target = 'HEAD', repo}) {
@@ -69,7 +91,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const {values} = parseArgs({options: {create: {type: 'boolean', default: false}, version: {type: 'string'}, target: {type: 'string', default: 'HEAD'}, repo: {type: 'string'}, assets: {type: 'string', default: 'dist'}, notes: {type: 'string'}}});
     if (values.create) createDraft(prepareDraft(values));
-    else uploadToDraft(prepareUpload(values));
+    else await uploadToDraft(prepareUpload(values));
     console.log(`Prepared draft v${values.version}. Review all platform packages and notes before publishing it on GitHub.`);
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
