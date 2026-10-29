@@ -5,6 +5,10 @@
 <h1 align="center">Loom</h1>
 
 <p align="center">
+  <strong>English</strong> | <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   A fast, minimal code editor with an integrated terminal and Git, written in Rust.
 </p>
 
@@ -27,15 +31,27 @@ window.
 
 ## Features
 
-- **Editing** — grapheme-aware UTF-8 editing (CJK, combining marks, emoji),
-  preserved LF/CRLF line endings, per-tab undo history, split panes, IME input
-  and an optional Vim mode. Files up to 64 MiB open on a background
-  worker; long lines and large files stay responsive.
+- **Editing** — grapheme-aware text editing (CJK, combining marks, emoji),
+  multiple cursors, rectangular selections, soft wrap, code folding, split panes,
+  IME input and an optional Vim mode. Views of the same file share text and
+  undo history while keeping their own selection and scroll position. Files up
+  to 64 MiB open on a background worker; large files use plain text rendering.
+- **Languages** — Tree-sitter syntax highlighting with embedded languages and
+  syntax resources downloaded on demand. Language servers provide completion,
+  hover documentation, signature help, definitions, references, rename,
+  formatting, diagnostics and code actions. The Outline shows Markdown headings
+  or symbols from language servers. Servers are installed manually from the
+  language panel by default; automatic installation is optional.
+- **Encodings** — UTF-8, UTF-16, GBK, GB18030, Big5, Shift_JIS and more, with
+  automatic detection and a status-bar encoding selector. Saves preserve the
+  selected encoding, BOM and LF/CRLF line endings. See
+  [Text file encodings](docs/encoding.md).
 - **Markdown** — live reading and side previews of unsaved buffers, shared with
   hover/completion/signature documentation; logical copy, outline, code, tables
   and bounded images. See [Markdown reading](docs/markdown.md).
-- **Sessions** — tabs, panes, selections and terminals come back exactly as you
-  left them after a restart.
+- **Sessions** — restore file tabs, pane layout, source positions and terminal
+  working directories after a restart. Extra cursors and folded regions are
+  temporary; terminal sessions start new shells.
 - **Workspace search** — search every folder with case, whole-word, regex and
   include/exclude globs; respects `.gitignore` and searches unsaved buffers.
 - **Integrated terminal** — PowerShell, Command Prompt, Git Bash, bash, zsh,
@@ -71,9 +87,18 @@ Each release includes a `SHA256SUMS` file per platform.
 - **Linux**: requires glibc 2.39 or newer (for example Ubuntu 24.04, Fedora 40)
   and an X11 or Wayland session. Loom uses the system `git`.
 
-All packages provide a `loom` command that opens files and folders:
-`loom .`, `loom path/to/file`. See [Packaging](scripts/package/README.md) for
-what each package installs.
+Use `loom .` or `loom path/to/file` to open folders and files from a terminal.
+The Windows installer offers to add `loom` to your PATH; Linux `.deb` and
+`install.sh` installs provide the command. On macOS, link the bundled launcher
+into a directory on your PATH, for example:
+
+```sh
+ln -s /Applications/Loom.app/Contents/Resources/bin/loom /usr/local/bin/loom
+```
+
+See [Packaging](scripts/package/README.md) for portable launchers and what each
+package installs, and [Updates](docs/updates.md) for automatic update support by
+installation type.
 
 ## Building from source
 
@@ -109,24 +134,39 @@ the first build; no system CMake or manual Skia download is required. See
 
 ## Documentation
 
-- [Markdown reading](docs/markdown.md) and [architecture](docs/architecture/markdown.md)
+- [Editing](docs/editing.md) — files, sessions, multiple cursors, folding, soft wrap and Vim
+- [Text file encodings](docs/encoding.md) — detection, switching and saving
+- [Language resources](docs/languages.md) — syntax packages and downloads on demand
+- [Settings and key bindings](docs/settings.md) — language servers, formatting, themes and shortcuts
+- [Markdown reading](docs/markdown.md) — reading mode and live previews
+- [Workspace search](docs/search.md) and [Outline](docs/outline.md) — find text and navigate file structure
+- [Terminal](docs/terminal.md) — shells, WSL and working directories
+- [Git](docs/git.md) — source control, diffs, history and worktrees
+- [Updates](docs/updates.md) — checking, downloading and applying releases
+- [Building Loom](docs/building.md) — toolchains, tests, CI and packaging
 
-- [Editing](docs/editing.md) — mouse, keyboard shortcuts, files, sessions and large files
-- [Language packages](docs/languages.md) — independent, demand-loaded packages and user installation
-- [Language services architecture](docs/architecture/language-services.md), [LSP architecture](docs/architecture/lsp.md) and [remaining work](docs/language-services-todo.md)
-- [Workspace search](docs/search.md)
-- [Outline](docs/outline.md) — the structure of the current file
-- [Terminal](docs/terminal.md)
-- [Git](docs/git.md)
-- [Settings and key bindings](docs/settings.md)
-- [Updates](docs/updates.md)
-- [Building Loom](docs/building.md)
+For implementation details, see the architecture docs for
+[language services](docs/architecture/language-services.md),
+[LSP](docs/architecture/lsp.md) and [Markdown](docs/architecture/markdown.md),
+plus [remaining language-service work](docs/language-services-todo.md).
 
 ## Contributing
 
 Bug reports and pull requests are welcome on
-[GitHub](https://github.com/lius-new/loom/issues). Before opening a pull
-request, run the same checks as CI:
+[GitHub](https://github.com/lius-new/loom/issues). Start with
+[CONTRIBUTING.md](CONTRIBUTING.md). Use Node.js 24 for contribution tooling and
+enable the local commit hook and message template after cloning:
+
+```sh
+node scripts/commit/install.mjs
+```
+
+Every commit must contain exactly one `Release Notes:` section in its body.
+Use English release-note bullets for user-facing changes and `- N/A` for
+internal changes only; see [Release notes](scripts/release/README.md) for
+accepted note types. Preserve the section when squashing or merging.
+
+Before opening a pull request, run the same checks as CI:
 
 ```sh
 cargo fmt --all -- --check
