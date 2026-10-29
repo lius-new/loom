@@ -21,6 +21,16 @@ pub struct ProfileEditor {
     pub args: InputState,
     pub error: Option<String>,
 }
+/// Live text-selection drag, kept so a timer can keep scrolling while the
+/// pointer rests above or below the screen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelectionDrag {
+    pub session: crate::features::terminal::SessionId,
+    pub content: lgui::prelude::UiRect,
+    pub point: lgui::core::Point,
+    pub rows: u16,
+    pub cols: u16,
+}
 #[derive(Clone, Default)]
 pub struct TerminalUiState {
     /// Session under the pointer, used to reveal its overlay scrollbar.
@@ -28,6 +38,7 @@ pub struct TerminalUiState {
     /// Session and pointer offset within the dragged scrollbar thumb.
     pub terminal_scrollbar_drag: Option<(crate::features::terminal::SessionId, f32)>,
     pub selecting_terminal: bool,
+    pub selection_drag: Option<SelectionDrag>,
     pub terminal_focused: bool,
     pub terminal_shell_menu: bool,
     pub terminal_shell_scroll: usize,

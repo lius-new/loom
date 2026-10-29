@@ -16,6 +16,19 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn selection_drag_scrolls_only_outside_the_screen_and_speeds_up_with_distance() {
+        let content = UiRect::new(10.0, 100.0, 400.0, 300.0);
+        let line = terminal_line_h();
+        assert_eq!(selection_scroll_rows(content, 100.0), 0);
+        assert_eq!(selection_scroll_rows(content, 300.0), 0);
+        assert_eq!(selection_scroll_rows(content, 99.0), 1);
+        assert_eq!(selection_scroll_rows(content, 301.0), -1);
+        assert_eq!(selection_scroll_rows(content, 100.0 - line * 3.0), 3);
+        assert_eq!(selection_scroll_rows(content, 300.0 + line * 3.0), -3);
+        assert_eq!(selection_scroll_rows(content, -10_000.0), 8);
+    }
+
+    #[test]
     fn terminal_header_rule_and_underline_are_crisp_at_fractional_scales() {
         use lgui::application::{AppView, ApplicationContext};
         use lgui::core::{PhysicalRect, UiScale};

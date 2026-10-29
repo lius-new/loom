@@ -25,6 +25,7 @@ use crate::ui::tabs::{
     GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
     TEXT_MARGIN, ellipsize, measure,
 };
+use crate::ui::terminal::state::SelectionDrag;
 use crate::ui::theme;
 
 const HEADER_H: f32 = theme::TABS_H;
@@ -544,7 +545,16 @@ pub(crate) fn render_session(
         match button {
             PointerButton::Left => {
                 commands::begin_selection(&select_input_tabs, session_id, row, col);
-                select_state.ui.update(|app| app.selecting_terminal = true);
+                select_state.ui.update(|app| {
+                    app.selecting_terminal = true;
+                    app.selection_drag = Some(SelectionDrag {
+                        session: session_id,
+                        content,
+                        point: pointer.point,
+                        rows: screen_rows,
+                        cols: screen_cols,
+                    });
+                });
             }
             // Right click copies a selection, or pastes when there is none.
             PointerButton::Right => {
@@ -569,6 +579,14 @@ pub(crate) fn render_session(
         if drag_state.get().ui.selecting_terminal {
             let (row, col) = cell_at(content, pointer.point, screen_rows, screen_cols);
             commands::extend_selection(&drag_tabs, session_id, row, col);
+            let point = pointer.point;
+            drag_state.ui.try_update(|app| match app.selection_drag.as_mut() {
+                Some(drag) if drag.point != point => {
+                    drag.point = point;
+                    true
+                }
+                _ => false,
+            });
             drag_application.request_frame();
             cx.stop_propagation();
         }
@@ -577,7 +595,10 @@ pub(crate) fn render_session(
     terminal = terminal.on_pointer_up(move |_cx, _pointer| {
         select_up_state
             .ui
-            .try_update(|app| std::mem::take(&mut app.selecting_terminal));
+            .try_update(|app| {
+                app.selection_drag = None;
+                std::mem::take(&mut app.selecting_terminal)
+            });
     });
 
     let wheel_tabs = terminal_tabs.clone();
@@ -691,6 +712,7 @@ fn vertical_scrollbar(
             focus.focus();
             state.ui.update(|ui| {
                 ui.selecting_terminal = false;
+                ui.selection_drag = None;
                 ui.terminal_scrollbar_drag = Some((session, offset));
             });
             if jump {
@@ -1196,6 +1218,21 @@ pub(crate) fn cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u
         .round()
         .clamp(0.0, f32::from(cols));
     (row as u16, col as u16)
+}
+
+/// History rows to scroll per tick while a selection drag rests outside the
+/// screen: positive reveals older output, negative newer. Zero inside.
+pub(crate) fn selection_scroll_rows(content: UiRect, y: f32) -> i32 {
+    let line = terminal_line_h();
+    let past = if y < content.top {
+        content.top - y
+    } else if y > content.bottom {
+        -(y - content.bottom)
+    } else {
+        return 0;
+    };
+    let rows = ((past.abs() / line).ceil() as i32).clamp(1, 8);
+    if past < 0.0 { -rows } else { rows }
 }
 
 pub(crate) fn mouse_cell_at(content: UiRect, point: Point, rows: u16, cols: u16) -> (u16, u16) {

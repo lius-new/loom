@@ -697,6 +697,48 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             }
         }
     });
+    let select_scroll_state = state.clone();
+    let select_scroll_tabs = terminal_tabs.clone();
+    let select_scroll_application = application.as_ref().clone();
+    let selecting_terminal = s.terminal.ui.selection_drag.is_some();
+    cx.use_effect(selecting_terminal, move || {
+        let (sender, receiver) = mpsc::channel();
+        let worker = if selecting_terminal {
+            thread::Builder::new()
+                .name("loom-terminal-selection-scroll".into())
+                .spawn(move || {
+                    let pending = Arc::new(AtomicBool::new(false));
+                    while let Err(RecvTimeoutError::Timeout) =
+                        receiver.recv_timeout(Duration::from_millis(40))
+                    {
+                        if pending.swap(true, Ordering::AcqRel) {
+                            continue;
+                        }
+                        let (state, tabs, pending) = (
+                            select_scroll_state.clone(),
+                            select_scroll_tabs.clone(),
+                            pending.clone(),
+                        );
+                        let application = select_scroll_application.clone();
+                        select_scroll_application.post(move || {
+                            if crate::app::terminal::selection_scroll_tick(&state, &tabs) {
+                                application.request_frame();
+                            }
+                            pending.store(false, Ordering::Release);
+                        });
+                    }
+                })
+                .ok()
+        } else {
+            None
+        };
+        move || {
+            let _ = sender.send(());
+            if let Some(worker) = worker {
+                let _ = worker.join();
+            }
+        }
+    });
     let terminal_cwd = {
         s.explorer
             .model

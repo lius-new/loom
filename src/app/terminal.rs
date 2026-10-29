@@ -410,6 +410,25 @@ pub(crate) fn extend_selection(tabs: &TerminalStore, id: SessionId, row: u16, co
         tab.controller.extend_selection(row, col);
     }
 }
+/// Scrolls history while a selection drag rests outside the screen and drags
+/// the selection head along. Returns whether anything moved.
+pub(crate) fn selection_scroll_tick(state: &AppContext, tabs: &TerminalStore) -> bool {
+    let Some(drag) = state.get().terminal.ui.selection_drag else {
+        return false;
+    };
+    let rows = crate::ui::terminal::view::selection_scroll_rows(drag.content, drag.point.y);
+    if rows == 0 {
+        return false;
+    }
+    let Some(tab) = target(tabs, drag.session) else {
+        return false;
+    };
+    tab.controller.scroll(rows);
+    let (row, col) =
+        crate::ui::terminal::view::cell_at(drag.content, drag.point, drag.rows, drag.cols);
+    tab.controller.extend_selection(row, col);
+    true
+}
 pub(crate) fn wheel(
     tabs: &TerminalStore,
     id: SessionId,
