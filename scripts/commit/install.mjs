@@ -3,6 +3,16 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
+function canonicalPath(value) {
+  const resolved = path.resolve(value);
+  try { return fs.realpathSync(resolved); }
+  catch (error) {
+    // Missing custom paths must still be rejected as configuration conflicts.
+    if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+    return resolved;
+  }
+}
+
 export function install(cwd = process.cwd()) {
   const git = args => execFileSync('git', args, {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
   const root = git(['rev-parse', '--show-toplevel']);
@@ -14,7 +24,7 @@ export function install(cwd = process.cwd()) {
     let current;
     try { current = git(['config', '--path', '--get', key]); }
     catch (error) { if (error.status !== 1) throw error; }
-    if (current && path.resolve(root, current) !== path.resolve(value)) throw new Error('Existing ' + key + ' is configured: ' + current + '. Integrate the Release Notes checker with that tooling before changing it.');
+    if (current && canonicalPath(path.resolve(root, current)) !== canonicalPath(value)) throw new Error('Existing ' + key + ' is configured: ' + current + '. Integrate the Release Notes checker with that tooling before changing it.');
   }
   const defaultHooks = path.resolve(root, git(['rev-parse', '--git-path', 'hooks']));
   const existingHooks = fs.existsSync(defaultHooks) ? fs.readdirSync(defaultHooks).filter(name => !name.endsWith('.sample') && !name.startsWith('.') && fs.statSync(path.join(defaultHooks, name)).isFile()) : [];
