@@ -31,6 +31,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         window_options.scale_preference(window_geometry::scale_preference(settings.ui_scale));
 
     Application::with_backend(WinitApplication::new(GraphicsPreference::Auto))
+        .font_families(ui::fonts::SANS_FAMILIES)
         .svg_icons(svg_icons())
         .provide(RendererKind::Skia(GraphicsPreference::Auto))
         .memory_options(MemoryOptions::unbounded(

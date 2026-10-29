@@ -37,9 +37,10 @@ the dependency preparer; use the Node entry point for full application builds.
 GUI-free core/domain tests and formatting do not prepare these dependencies.
 Installed Loom users need none of these build tools.
 
-The project follows the `main` branch of the lgui repository. `Cargo.lock`
-pins the exact lgui commit used by a build. Run `cargo update -p lgui` when you
-want to update that pinned commit.
+The framework dependency uses a fixed Git revision in `Cargo.toml` and
+`Cargo.lock`; no sibling lgui checkout is required. To update the framework,
+change its `rev` in `Cargo.toml` and run `cargo update -p lgui` to refresh the lock
+file before validating the build.
 
 The host build and default tests require no language resources or grammar sources.
 Loom includes the generic Tree-sitter engine and dynamically loads compatible

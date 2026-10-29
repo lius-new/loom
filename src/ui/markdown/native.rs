@@ -14,13 +14,7 @@ use std::{collections::VecDeque, ops::Range, sync::Arc};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-const FAMILIES: &[&str] = &[
-    "Microsoft YaHei",
-    "Segoe UI",
-    "PingFang SC",
-    "Noto Sans CJK SC",
-    "sans-serif",
-];
+const FAMILIES: &[&str] = crate::ui::fonts::SANS_FAMILIES;
 const MONO: &[&str] = &[
     "Cascadia Mono",
     "Consolas",
@@ -30,6 +24,7 @@ const MONO: &[&str] = &[
 ];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ink {
+    pub rendering: lgui::text::TextRenderingOptions,
     pub text: u32,
     pub link: u32,
     pub code: u32,
@@ -39,6 +34,7 @@ pub struct Ink {
 impl Default for Ink {
     fn default() -> Self {
         Self {
+            rendering: crate::ui::text_rendering::defaults(),
             text: 0xffd4d4d4,
             link: 0xff70a5ff,
             code: 0xffd4d4d4,
@@ -63,6 +59,7 @@ struct Key {
 impl Ink {
     pub fn current() -> Self {
         let mut out = Self {
+            rendering: crate::ui::theme::text_rendering(crate::ui::theme::current()),
             text: 0xff000000 | crate::ui::theme::c().text.0,
             link: 0xff000000 | crate::ui::theme::c().accent.0,
             code: 0xff000000 | crate::ui::theme::c().text_bright.0,
@@ -131,7 +128,7 @@ fn text_style(style: InlineStyle, r: &ParagraphRequest<'_>, ink: Ink) -> TextSty
     let mut out = TextStyle::new();
     // These paragraphs are painted into transparent tiles. Use the same font
     // policy as the screen renderer, with its transparent-target fallback.
-    lgui::render_skia::TextRasterization::Grayscale.configure(&mut out);
+    lgui::render_skia::TextRasterization::Grayscale.configure_with_options(&mut out, ink.rendering);
     let size = if style.heading > 0 {
         match style.heading {
             1 => 30.0,
@@ -350,9 +347,12 @@ impl NativeBackend {
         if w <= 0 || h <= 0 || (w as usize).saturating_mul(h as usize) > 4 * 1024 * 1024 {
             return Err(TextFailure::GeometryBudget);
         }
+        let props = lgui::render_skia::TextRasterization::Grayscale
+            .surface_props_with_options(self.ink.rendering);
         let cached = self.get(r)?;
+        let info = sk::ImageInfo::new_n32_premul((w, h), None);
         let mut surface =
-            sk::surfaces::raster_n32_premul((w, h)).ok_or(TextFailure::Unsupported)?;
+            sk::surfaces::raster(&info, None, Some(&props)).ok_or(TextFailure::Unsupported)?;
         let canvas = surface.canvas();
         canvas.clear(sk::Color::TRANSPARENT);
         // Rasterize directly at the requested physical density, including <1.
@@ -582,6 +582,37 @@ mod tests {
 #[cfg(test)]
 mod coordinate_tests {
     use super::*;
+    #[test]
+    fn application_raster_profile_invalidates_tiles_without_changing_layout() {
+        let request = ParagraphRequest {
+            text: "English 中文 00 0689",
+            spans: &[],
+            width: 320.0,
+            alignment: ColumnAlignment::Left,
+            wrap: true,
+            tab_columns: 4,
+            font_generation: 0,
+            scale: 1.0,
+            line_height: 22.0,
+        };
+        let mut native = NativeBackend::default();
+        let before = native.summary(&request).unwrap();
+        let a = native
+            .tile(&request, 0.0, 0.0, 320.0, before.height, 0.8)
+            .unwrap();
+        native.ink.rendering = native.ink.rendering.with_grayscale_gamma(1.2).unwrap();
+        let after = native.summary(&request).unwrap();
+        let b = native
+            .tile(&request, 0.0, 0.0, 320.0, after.height, 0.8)
+            .unwrap();
+        assert_eq!(before.width, after.width);
+        assert_eq!(before.height, after.height);
+        assert_ne!(a.as_slice(), b.as_slice());
+        let cached = native
+            .tile(&request, 0.0, 0.0, 320.0, after.height, 0.8)
+            .unwrap();
+        assert!(Arc::ptr_eq(&b, &cached));
+    }
     #[test]
     fn tabs_surrogates_and_far_horizontal_geometry_use_one_native_paragraph() {
         let text = format!("中\t😀 e\u{301} {}END", "x".repeat(2000));

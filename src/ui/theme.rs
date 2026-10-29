@@ -483,7 +483,7 @@ pub fn set(id: ThemeId) {
 /// it does not inspect themes or choose a curve from the window background.
 pub fn text_rendering(id: ThemeId) -> lgui::text::TextRenderingOptions {
     use super::text_rendering::{ColorPair, coverage};
-    let defaults = lgui::text::TextRenderingOptions::default();
+    let defaults = super::text_rendering::defaults();
     let palette = &id.theme().palette;
     let pair = |foreground: Color, background: Color, weight| ColorPair {
         foreground: foreground.0,
@@ -519,6 +519,8 @@ pub fn text_rendering(id: ThemeId) -> lgui::text::TextRenderingOptions {
     defaults
         .with_lcd_gamma(profile.gamma)
         .and_then(|options| options.with_lcd_contrast(profile.contrast))
+        .and_then(|options| options.with_grayscale_gamma(profile.gamma))
+        .and_then(|options| options.with_grayscale_contrast(profile.contrast))
         .expect("Loom's bounded coverage profile is valid")
 }
 
@@ -579,11 +581,11 @@ pub fn mono_right(color: Color, size: f32) -> TextStyle {
 }
 
 pub fn sans(color: Color, size: f32) -> TextStyle {
-    TextStyle::new(color, size, 400)
+    TextStyle::new(color, size, 400).font_families(super::fonts::SANS_FAMILIES)
 }
 
 pub fn sans_semibold(color: Color, size: f32) -> TextStyle {
-    TextStyle::new(color, size, 600)
+    TextStyle::new(color, size, 600).font_families(super::fonts::SANS_FAMILIES)
 }
 
 pub fn hairline(color: Color) -> Stroke {

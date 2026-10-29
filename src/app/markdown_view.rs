@@ -19,8 +19,7 @@ use crate::ui::{
     theme,
 };
 use lgui::core::{
-    CursorIcon, EventPolicy, ImageFit, ImageRequest, PointerButton, UiElement, UiFocusHandle, UiId,
-    UiImageSource,
+    CursorIcon, EventPolicy, ImageFit, PointerButton, UiElement, UiFocusHandle, UiId, UiImageSource,
 };
 use lgui::prelude::{Element, UiRect, VisualStyle, group, panel, text};
 use std::sync::Arc;
@@ -327,7 +326,7 @@ pub(super) fn paint(result: &Rendered, paragraph: usize, bounds: UiRect) -> Elem
             0,
             tile.png.clone(),
         );
-        let request = ImageRequest::new(source)
+        let request = crate::ui::image_rendering::pixel_exact(source)
             .cache_policy(lgui::memory::ImageCachePolicy::WhileVisible)
             .namespace("markdown-reader");
         let id = UiId::owned(format!(
@@ -753,7 +752,7 @@ fn paint_image(
                 0,
                 image.encoded.clone(),
             );
-            let request = ImageRequest::new(source)
+            let request = crate::ui::image_rendering::image(source)
                 .cache_policy(lgui::memory::ImageCachePolicy::WhileVisible)
                 .namespace("markdown-resources");
             Element::new(move |_| {

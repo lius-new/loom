@@ -1,4 +1,12 @@
-//! Loom's color-based LCD coverage policy. No renderer or theme identities.
+//! Shared application text policy for window, layered and worker-rendered text.
+//! Font raster choices belong here, not to individual document views.
+
+pub(crate) fn defaults() -> lgui::text::TextRenderingOptions {
+    // Symmetric grayscale smoothing avoids platform grid-fitting stair steps
+    // on transparent targets. Native LCD text keeps the system raster mode.
+    lgui::text::TextRenderingOptions::default()
+        .with_grayscale_hinting(lgui::text::TextHinting::None)
+}
 
 // Retain 50% of the color-based correction. Returning
 // partway to the reference curve keeps strokes more substantial on either

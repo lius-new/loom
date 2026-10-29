@@ -18,6 +18,7 @@ pub mod explorer;
 pub(crate) mod file_error;
 pub mod git;
 pub(crate) mod image_preview;
+pub(crate) mod image_rendering;
 pub mod keymap_page;
 pub mod language_details;
 pub mod language_panel;

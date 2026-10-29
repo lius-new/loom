@@ -113,6 +113,15 @@ reader audit, which requires a desktop accessibility bridge test.
 
 ## Resources and extension points
 
+Rendering policy is shared with the rest of Loom: `ui/fonts` owns the proportional
+font stack, `ui/text_rendering` and the theme supply raster options, and
+`ui/image_rendering` selects image sampling. Worker requests snapshot text options
+in `Ink`; those options participate in paragraph/tile identity, so a changed
+profile cannot reuse pixels from an older profile. Native paragraphs remain on
+their owning worker thread. Glyph tiles use pixel-exact presentation, while
+ordinary document images and image previews share filtered sampling. lgui only
+provides generic controls for these choices and has no document/theme policy.
+
 Address resolution is pure: base document, percent-decoded path/query/fragment,
 allowed HTTP(S), local files or heading anchor. Application navigation uses the
 normal asynchronous FileLoader and rejects delayed results for changed input.

@@ -2,8 +2,8 @@
 use crate::domain::media::{Background, Image, Position};
 use crate::ui::theme;
 use lgui::core::{
-    CursorIcon, EventPolicy, ImageFit, ImageRequest, PathStyle, Point, PointerButton, SemanticRole,
-    Semantics, UiElement, UiEventContext, UiEventKind, UiEventPayload, UiId, UiImageSource, UiPath,
+    CursorIcon, EventPolicy, ImageFit, PathStyle, Point, PointerButton, SemanticRole, Semantics,
+    UiElement, UiEventContext, UiEventKind, UiEventPayload, UiId, UiImageSource, UiPath,
     UiPathCommand, clip, path,
 };
 use lgui::prelude::{Color, Element, ShadowStyle, TextAlign, UiRect, VisualStyle, panel, text};
@@ -182,7 +182,7 @@ pub fn render(frame: Frame, id: UiId, focus: lgui::core::UiFocusHandle, send: Se
         0,
         animation.bytes.clone(),
     );
-    let request = ImageRequest::new(source)
+    let request = crate::ui::image_rendering::image(source)
         .cache_policy(lgui::memory::ImageCachePolicy::WhileVisible)
         .namespace("image-preview");
     content = content.child(Element::new(move |_| {

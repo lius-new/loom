@@ -18,6 +18,15 @@ use crate::ui::theme::MONO_FAMILIES;
 
 pub use crate::features::settings::font::*;
 
+/// Shared proportional stack for UI and rich documents. Latin text uses the
+/// platform UI face; missing scripts fall back without changing code fonts.
+#[cfg(target_os = "windows")]
+pub const SANS_FAMILIES: &[&str] = &["Segoe UI", "Microsoft YaHei", "sans-serif"];
+#[cfg(target_os = "macos")]
+pub const SANS_FAMILIES: &[&str] = &["Helvetica Neue", "PingFang SC", "sans-serif"];
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub const SANS_FAMILIES: &[&str] = &["Noto Sans", "Noto Sans CJK SC", "DejaVu Sans", "sans-serif"];
+
 /// Resolved layout values of one code font.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
