@@ -108,6 +108,21 @@ fn render_overlay(viewport: UiRect, map: MapBinding, focus: lgui::core::UiFocusH
     let Some(drag) = map.snapshot() else {
         return overlay;
     };
+    if let (Some(strip), Some(index)) = (&drag.strip, drag.reorder)
+        && !drag.active
+        && let Some(x) = strip.marker_x(drag.session, index)
+    {
+        let bar = UiRect::new(
+            x - 1.0,
+            strip.rect.top + 4.0,
+            x + 1.0,
+            strip.rect.bottom - 4.0,
+        );
+        return overlay.child(panel(
+            bar,
+            VisualStyle::filled(theme::c().accent).radius(1.0),
+        ));
+    }
     let Some(scene) = &drag.scene else {
         return overlay;
     };

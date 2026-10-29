@@ -25,6 +25,7 @@ use crate::ui::tabs::{
     GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
     TEXT_MARGIN, ellipsize, measure,
 };
+use crate::ui::terminal::layout_binding::StripDrag;
 use crate::ui::terminal::state::SelectionDrag;
 use crate::ui::theme;
 
@@ -840,6 +841,19 @@ pub(crate) fn render_terminal_tabs(
         })
         .collect::<Vec<_>>();
     let mut active_rect = None;
+    let strip_drag = {
+        let mut left = rect.left + TABS_PAD;
+        let slots = tabs
+            .iter()
+            .zip(&widths)
+            .map(|(tab, width)| {
+                let slot = (tab.id, left, left + width);
+                left += width + TAB_GAP;
+                slot
+            })
+            .collect();
+        StripDrag { rect, tabs: slots }
+    };
     let mut left = rect.left + TABS_PAD;
     for (index, tab) in tabs.iter().enumerate() {
         let name = &labels[index];
@@ -903,6 +917,7 @@ pub(crate) fn render_terminal_tabs(
         let select_focus = terminal_focus.clone();
         let press_state = state.clone();
         let select_map = map.clone();
+        let select_strip = strip_drag.clone();
         let menu_state = state.clone();
         let tab_id = tab.id;
         let close_id = UiId::owned(format!("terminal-tab-close-{tab_id}"));
@@ -988,6 +1003,7 @@ pub(crate) fn render_terminal_tabs(
                         select_map.run(MapCommand::Begin {
                             session: tab_id,
                             point: pointer.point,
+                            strip: Some(select_strip.clone()),
                         });
                         cx.stop_propagation();
                     }

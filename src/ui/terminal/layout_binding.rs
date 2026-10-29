@@ -17,9 +17,50 @@ pub struct MapScene {
     pub cells: Vec<(RegionId, Content, UiRect)>,
     pub zones: Vec<Zone>,
 }
+/// Horizontal slots of the pressed tab strip, so a drag that stays inside it
+/// reorders tabs instead of opening the layout map.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StripDrag {
+    pub rect: UiRect,
+    /// Session id with the left and right edge of its tab, in strip order.
+    pub tabs: Vec<(u64, f32, f32)>,
+}
+/// Vertical slack around the strip before a drag counts as leaving it.
+const STRIP_SLACK: f32 = 16.0;
+impl StripDrag {
+    pub fn holds(&self, point: Point) -> bool {
+        point.x >= self.rect.left
+            && point.x < self.rect.right
+            && point.y >= self.rect.top - STRIP_SLACK
+            && point.y < self.rect.bottom + STRIP_SLACK
+    }
+    /// Final index of `session` when dropped at `x`: how many other tabs have
+    /// their centre left of the pointer.
+    pub fn target(&self, session: u64, x: f32) -> usize {
+        self.tabs
+            .iter()
+            .filter(|(id, left, right)| *id != session && (left + right) / 2.0 < x)
+            .count()
+    }
+    /// Where the insertion marker sits for a final index of `session`.
+    pub fn marker_x(&self, session: u64, index: usize) -> Option<f32> {
+        let others = self
+            .tabs
+            .iter()
+            .filter(|(id, _, _)| *id != session)
+            .collect::<Vec<_>>();
+        match others.get(index) {
+            Some((_, left, _)) => Some(left - 2.0),
+            None => others.last().map(|(_, _, right)| right + 2.0),
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalDrag {
     pub session: u64,
+    pub strip: Option<StripDrag>,
+    /// Final tab index while the drag reorders within its own strip.
+    pub reorder: Option<usize>,
     pub origin: Point,
     pub point: Point,
     pub active: bool,
@@ -44,6 +85,7 @@ pub enum MapCommand {
     Begin {
         session: u64,
         point: Point,
+        strip: Option<StripDrag>,
     },
     Pointer {
         point: Point,

@@ -5,7 +5,7 @@ use crate::app::state::AppState;
 use crate::app::terminal_binding::TerminalTabs;
 use crate::domain::application_layout::{ApplicationLayout, Content, Placement, Visibility};
 use crate::domain::pane_layout::{Axis, Direction};
-use crate::ui::terminal::layout_binding::{MapScene, MapSignal, TerminalDrag, Zone};
+use crate::ui::terminal::layout_binding::{MapScene, MapSignal, StripDrag, TerminalDrag, Zone};
 #[cfg(test)]
 use crate::ui::theme;
 use lgui::core::{CursorIcon, Observable, ObservableListener, Point};
@@ -120,10 +120,18 @@ pub fn visibility(app: &AppState) -> Visibility {
         terminal: app.terminal_chrome.show_terminal,
     }
 }
-pub fn begin(app: &mut AppState, map: &MapStore, session: u64, point: Point) {
+pub fn begin(
+    app: &mut AppState,
+    map: &MapStore,
+    session: u64,
+    point: Point,
+    strip: Option<StripDrag>,
+) {
     map.update(|d| {
         *d = Some(TerminalDrag {
             session,
+            strip,
+            reorder: None,
             origin: point,
             point,
             active: false,
@@ -374,13 +382,34 @@ pub fn update_pointer(
             return false;
         };
         drag.point = point;
-        let activated =
-            !drag.active && (point.x - drag.origin.x).hypot(point.y - drag.origin.y) >= 5.0;
-        drag.active |= activated;
-        activated
+        if drag.active {
+            return false;
+        }
+        let moved = (point.x - drag.origin.x).hypot(point.y - drag.origin.y) >= 5.0;
+        // Staying inside the pressed strip reorders its tabs; the map only
+        // opens once the pointer leaves it.
+        if let Some(strip) = drag.strip.as_ref().filter(|s| s.holds(point)) {
+            if drag.reorder.is_none() && !moved {
+                return false;
+            }
+            let target = Some(strip.target(drag.session, point.x));
+            let changed = drag.reorder != target;
+            drag.reorder = target;
+            return changed;
+        }
+        if moved {
+            drag.reorder = None;
+            drag.active = true;
+        }
+        moved
     });
-    let pending = map.with(|d| d.is_some_and(|d| d.release.is_none()));
-    pending && refresh(app, map, viewport, sessions) | activated
+    let (pending, reordering) = map.with(|d| {
+        (
+            d.is_some_and(|d| d.release.is_none()),
+            d.is_some_and(|d| d.reorder.is_some()),
+        )
+    });
+    pending && ((!reordering && refresh(app, map, viewport, sessions)) | activated)
 }
 /// Return whether a drag was consumed and which session should receive focus.
 pub fn finish(
@@ -399,6 +428,12 @@ pub fn finish(
         return (false, None);
     };
     if !drag.active {
+        if let Some(index) = drag.reorder {
+            if let Some(layout) = &mut app.layout.application_layout {
+                layout.reorder_terminal(drag.session, index);
+            }
+            return (true, Some(drag.session));
+        }
         return (false, Some(drag.session));
     }
     let visible = visibility(app);
@@ -416,7 +451,8 @@ pub fn finish(
     (true, None)
 }
 pub fn drag_cursor(map: &MapStore) -> CursorIcon {
-    map.with(|d| match d.filter(|d| d.active) {
+    map.with(|d| match d.filter(|d| d.active || d.reorder.is_some()) {
+        Some(d) if d.reorder.is_some() => CursorIcon::Move,
         Some(d)
             if d.scene
                 .as_ref()
@@ -459,11 +495,15 @@ pub(crate) fn binding(
                         focus: false,
                     };
                 }
-                MapCommand::Begin { session, point } => {
+                MapCommand::Begin {
+                    session,
+                    point,
+                    strip,
+                } => {
                     if sessions.get().tabs().iter().any(|tab| tab.id == session) {
                         target.update(|app| {
                             if app.layout.application_layout.is_some() {
-                                begin(app, &operated, session, point);
+                                begin(app, &operated, session, point, strip);
                             }
                         });
                     }
@@ -487,6 +527,19 @@ pub(crate) fn binding(
                             true
                         });
                         (true, None)
+                    } else if operated.with(|d| d.is_some_and(|d| d.reorder.is_some())) {
+                        // A reorder changes the layout, so it must invalidate the app.
+                        let mut result = (true, None);
+                        target.update(|app| {
+                            result = finish(app, &operated, point, viewport, &ids.clone());
+                        });
+                        if let Some(id) = result.1 {
+                            sessions.update(|tabs| tabs.select(id));
+                        }
+                        return MapOutcome {
+                            consumed: result.0,
+                            focus: result.1.is_some(),
+                        };
                     } else {
                         with_app(&target, |app| {
                             finish(app, &operated, point, viewport, &ids.clone())
@@ -670,7 +723,7 @@ mod tests {
         layout = plan.layout;
         app.layout.application_layout = Some(layout);
         let map = MapStore::default();
-        begin(&mut app, &map, 1, Point::new(10.0, 600.0));
+        begin(&mut app, &map, 1, Point::new(10.0, 600.0), None);
         update_pointer(&app, &map, center(r), r, vec![1, 2]);
         (app, map, r)
     }
@@ -802,7 +855,7 @@ mod tests {
         let after = &scene_of(&map);
         assert_ne!(&before.unwrap().cells, &after.cells);
         assert_eq!(after.viewport, resized);
-        begin(&mut app, &map, 1, Point::new(10.0, 10.0));
+        begin(&mut app, &map, 1, Point::new(10.0, 10.0), None);
         update_pointer(&app, &map, Point::new(12.0, 12.0), r, vec![1, 2]);
         assert!(!map.snapshot().unwrap().active);
         assert!(map.snapshot().unwrap().scene.is_some());
@@ -826,7 +879,7 @@ mod tests {
             )
             .unwrap();
         app.layout.application_layout = Some(plan.layout);
-        begin(&mut app, &map, 2, Point::new(30.0, 600.0));
+        begin(&mut app, &map, 2, Point::new(30.0, 600.0), None);
         update_pointer(&app, &map, center(r), r, vec![1, 2]);
         let scene = scene_of(&map);
         let nested = scene.zones.iter().find(|z| matches!(z.placement, Placement::Between { split, .. } if split != 5 && split != 6)).unwrap();
@@ -838,6 +891,77 @@ mod tests {
             scene.zones[scene.hit(junction).unwrap()].placement,
             nested.placement
         );
+    }
+
+    fn strip_app() -> (AppState, UiRect, StripDrag) {
+        let r = UiRect::new(0.0, 0.0, 1200.0, 800.0);
+        let mut app = AppState::new();
+        app.terminal_chrome.show_terminal = true;
+        let mut layout = ApplicationLayout::initial(r.into(), 220.0, 220.0, 240.0);
+        layout.sync(&[(1, 1), (2, 2), (3, 3)], Some(1));
+        app.layout.application_layout = Some(layout);
+        let strip = StripDrag {
+            rect: UiRect::new(0.0, 600.0, 400.0, 630.0),
+            tabs: vec![(1, 10.0, 110.0), (2, 114.0, 214.0), (3, 218.0, 318.0)],
+        };
+        (app, r, strip)
+    }
+    fn strip_order(app: &AppState) -> Vec<u64> {
+        let layout = app.layout.application_layout.as_ref().unwrap();
+        layout.terminal_view(layout.terminal_region(1).unwrap()).unwrap().0
+    }
+
+    #[test]
+    fn dragging_inside_the_strip_reorders_without_opening_the_map() {
+        let (mut app, r, strip) = strip_app();
+        let map = MapStore::default();
+        begin(&mut app, &map, 1, Point::new(50.0, 615.0), Some(strip));
+        // Below the threshold nothing happens, so a click stays a click.
+        update_pointer(&app, &map, Point::new(52.0, 615.0), r, vec![1, 2, 3]);
+        assert_eq!(map.snapshot().unwrap().reorder, None);
+        // Past tab 2's centre but short of tab 3's: final index 1.
+        update_pointer(&app, &map, Point::new(170.0, 640.0), r, vec![1, 2, 3]);
+        let drag = map.snapshot().unwrap();
+        assert!(!drag.active);
+        assert_eq!(drag.reorder, Some(1));
+        update_pointer(&app, &map, Point::new(350.0, 615.0), r, vec![1, 2, 3]);
+        assert_eq!(map.snapshot().unwrap().reorder, Some(2));
+        assert_eq!(
+            finish(&mut app, &map, Point::new(350.0, 615.0), r, &[1, 2, 3]),
+            (true, Some(1))
+        );
+        assert_eq!(strip_order(&app), vec![2, 3, 1]);
+        assert!(!map.is_dragging());
+    }
+
+    #[test]
+    fn leaving_the_strip_opens_the_map_and_never_reorders() {
+        let (mut app, r, strip) = strip_app();
+        let map = MapStore::default();
+        begin(&mut app, &map, 1, Point::new(50.0, 615.0), Some(strip));
+        update_pointer(&app, &map, Point::new(170.0, 615.0), r, vec![1, 2, 3]);
+        assert_eq!(map.snapshot().unwrap().reorder, Some(1));
+        update_pointer(&app, &map, Point::new(170.0, 300.0), r, vec![1, 2, 3]);
+        let drag = map.snapshot().unwrap();
+        assert!(drag.active);
+        assert_eq!(drag.reorder, None);
+        assert!(drag.scene.is_some());
+        finish(&mut app, &map, Point::new(170.0, 300.0), r, &[1, 2, 3]);
+        assert_eq!(strip_order(&app), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn dropping_a_reorder_on_its_own_slot_changes_nothing() {
+        let (mut app, r, strip) = strip_app();
+        let version = app.layout.application_layout.as_ref().unwrap().version;
+        let map = MapStore::default();
+        begin(&mut app, &map, 2, Point::new(160.0, 615.0), Some(strip));
+        update_pointer(&app, &map, Point::new(175.0, 615.0), r, vec![1, 2, 3]);
+        assert_eq!(map.snapshot().unwrap().reorder, Some(1));
+        finish(&mut app, &map, Point::new(175.0, 615.0), r, &[1, 2, 3]);
+        let layout = app.layout.application_layout.as_ref().unwrap();
+        assert_eq!(layout.version, version);
+        assert_eq!(strip_order(&app), vec![1, 2, 3]);
     }
 
     #[test]
@@ -868,7 +992,7 @@ mod tests {
             .unwrap();
         layout = plan.layout;
         app.layout.application_layout = Some(layout);
-        begin(&mut app, &map, 1, Point::new(30.0, 575.0));
+        begin(&mut app, &map, 1, Point::new(30.0, 575.0), None);
         update_pointer(&app, &map, center(r), r, vec![1, 2]);
         let scene = scene_of(&map);
         let terminals = scene

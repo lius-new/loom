@@ -200,6 +200,30 @@ impl ApplicationLayout {
             _ => None,
         }
     }
+    /// Moves a session within its own tab strip to a final index.
+    pub fn reorder_terminal(&mut self, session: u64, index: usize) -> bool {
+        let Some(region) = self.terminal_region(session) else {
+            return false;
+        };
+        let Some(Node::Leaf {
+            content: Content::Terminal { tabs, .. },
+            ..
+        }) = self.root.find_mut(region)
+        else {
+            return false;
+        };
+        let Some(from) = tabs.iter().position(|id| *id == session) else {
+            return false;
+        };
+        let to = index.min(tabs.len() - 1);
+        if from == to {
+            return false;
+        }
+        let id = tabs.remove(from);
+        tabs.insert(to, id);
+        self.version += 1;
+        true
+    }
     pub fn default_terminal_active(&self) -> Option<u64> {
         let (tabs, active) = self.terminal_view(self.default_terminal?)?;
         active
