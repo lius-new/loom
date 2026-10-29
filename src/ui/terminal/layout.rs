@@ -114,9 +114,9 @@ fn render_overlay(viewport: UiRect, map: MapBinding, focus: lgui::core::UiFocusH
     {
         let bar = UiRect::new(
             x - 1.0,
-            strip.rect.top + 4.0,
+            strip.rect.top + crate::ui::tabs::REORDER_MARKER_INSET,
             x + 1.0,
-            strip.rect.bottom - 4.0,
+            strip.rect.bottom - crate::ui::tabs::REORDER_MARKER_INSET,
         );
         return overlay.child(panel(
             bar,

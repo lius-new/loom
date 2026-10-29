@@ -274,9 +274,25 @@ fn drag_drop_target(
     pointer_y: f32,
     changed: &mut bool,
 ) -> Option<TabDrop> {
+    // A reorder inside the dragged tab's own strip tolerates vertical drift, so
+    // a slightly sloppy drag does not fall through to a pane drop.
+    let own_strip = regions.iter().find(|region| {
+        region.pane == drag.pane
+            && point_inside(
+                UiRect::new(
+                    region.strip.left,
+                    region.strip.top - DRAG_REORDER_SLACK,
+                    region.strip.right,
+                    region.strip.bottom + DRAG_REORDER_SLACK,
+                ),
+                pointer_x,
+                pointer_y,
+            )
+    });
     if let Some(region) = regions
         .iter()
         .find(|region| point_inside(region.strip, pointer_x, pointer_y))
+        .or(own_strip)
     {
         let (pane, rect) = (region.pane, region.strip);
         let mut layout = tab_layout(rect, app, pane, false);
@@ -295,7 +311,12 @@ fn drag_drop_target(
         }
         let content_x = pointer_x - rect.left + layout.scroll_x;
         if pane == drag.pane {
-            if let Some(target_index) = tab_layout::reorder_target(&layout.items, content_x)
+            let source_index = pane_items(app, pane)
+                .iter()
+                .position(|id| *id == drag.source)
+                .unwrap_or(usize::MAX);
+            if let Some(target_index) =
+                tab_layout::reorder_slot(&layout.items, source_index, content_x)
                 && target_index != drag.target_index
             {
                 drag.target_index = target_index;
@@ -767,6 +788,98 @@ mod tests {
             active: false,
             drop: None,
         });
+    }
+
+    #[test]
+    fn editor_tabs_show_the_pointer_cursor() {
+        use lgui::application::AppView;
+        use lgui::core::{CursorIcon, Point, UiId, UiScale};
+        use lgui::session::UiSession;
+        use std::sync::Arc;
+        let viewport = UiRect::new(0.0, 0.0, 760.0, 100.0);
+        let strip = UiRect::new(0.0, 30.0, 700.0, 30.0 + theme::TABS_H);
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(|| {
+                let mut app = AppState::new();
+                for index in 0..3 {
+                    app.workspace
+                        .test_open_view(PathBuf::from(format!("file{index}.rs")), String::new());
+                }
+                app
+            }));
+            let pane = state.get().workspace.active_pane();
+            lgui::prelude::panel(viewport, lgui::prelude::VisualStyle::default()).child(render(
+                pane,
+                strip,
+                state,
+                cx.focus_handle(UiId::new("probe")),
+            ))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        // Active and inactive tabs show the same hand as the terminal tabs,
+        // including along the active tab's underline.
+        for (x, y) in [
+            (20.0, strip.top + 10.0),
+            (60.0, strip.top + 10.0),
+            (200.0, strip.top + 10.0),
+            (60.0, strip.bottom - 1.5),
+        ] {
+            assert_eq!(
+                session.tree().cursor_at(Point::new(x, y)),
+                Some(CursorIcon::Pointer),
+                "({x}, {y})"
+            );
+        }
+        // Empty strip space keeps the default cursor.
+        assert_eq!(session.tree().cursor_at(Point::new(650.0, strip.top + 10.0)), None);
+    }
+
+    #[test]
+    fn reordering_follows_centres_and_tolerates_vertical_drift_in_the_own_strip() {
+        let mut app = AppState::new();
+        let pane = app.workspace.active_pane();
+        let first = app
+            .workspace
+            .test_open_view(PathBuf::from("first.rs"), String::new());
+        let second = app
+            .workspace
+            .test_open_view(PathBuf::from("second.rs"), String::new());
+        let third = app
+            .workspace
+            .test_open_view(PathBuf::from("third.rs"), String::new());
+        let ids = app.workspace.pane(pane).unwrap().items().to_vec();
+        assert_eq!(ids, vec![first, second, third]);
+        let strip = UiRect::new(0.0, 100.0, 900.0, 100.0 + theme::TABS_H);
+        let regions = [region(pane, strip)];
+        let layout = tab_layout(strip, &app, pane, false);
+        let centre = |i: usize| (layout.items[i].left + layout.items[i].right) / 2.0;
+        drag_from(&mut app, pane, first, centre(0), strip.top + 5.0);
+
+        // Inside tab 1's left half: tab 1's centre is not crossed yet.
+        let drifting = strip.bottom + 10.0;
+        update_pointer(&mut app, &regions, centre(1) - 5.0, drifting, true);
+        let drag = app.editor.tabs.tab_drag.as_ref().unwrap();
+        assert!(drag.active);
+        assert_eq!(drag.drop, None);
+        assert_eq!(drag.target_index, 0);
+
+        update_pointer(&mut app, &regions, centre(1) + 5.0, drifting, true);
+        assert_eq!(app.editor.tabs.tab_drag.as_ref().unwrap().target_index, 1);
+
+        // Far below the slack the drag targets the pane surface again.
+        update_pointer(&mut app, &regions, centre(1) + 5.0, strip.bottom + 60.0, true);
+        assert!(matches!(
+            app.editor.tabs.tab_drag.as_ref().unwrap().drop,
+            Some(TabDrop::Pane { .. })
+        ));
+
+        update_pointer(&mut app, &regions, centre(2) + 5.0, drifting, true);
+        assert!(finish_pointer_interaction(&mut app));
+        assert_eq!(
+            app.workspace.pane(pane).unwrap().items(),
+            &[second, third, first]
+        );
     }
 
     #[test]

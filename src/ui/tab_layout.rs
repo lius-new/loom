@@ -82,9 +82,10 @@ pub fn calculate(input: TabLayoutInput<'_>) -> TabLayoutResult {
     }
 }
 
-/// Return the final tab index nearest to a pointer in content coordinates.
+/// Final index of the dragged tab `source` for a pointer in content
+/// coordinates: how many other tabs have their center left of the pointer.
 /// Crossing another tab's center is what changes the reorder target.
-pub fn reorder_target(items: &[TabLayoutItem], pointer_x: f32) -> Option<usize> {
+pub fn reorder_slot(items: &[TabLayoutItem], source: usize, pointer_x: f32) -> Option<usize> {
     if items.is_empty() {
         return None;
     }
@@ -93,11 +94,12 @@ pub fn reorder_target(items: &[TabLayoutItem], pointer_x: f32) -> Option<usize> 
     } else {
         0.0
     };
-    items
-        .iter()
-        .find(|item| pointer_x < (item.left + item.right) / 2.0)
-        .map(|item| item.index)
-        .or_else(|| items.last().map(|item| item.index))
+    Some(
+        items
+            .iter()
+            .filter(|item| item.index != source && (item.left + item.right) / 2.0 < pointer_x)
+            .count(),
+    )
 }
 
 /// Indices of the tabs that intersect the viewport, widened by `overscan` on
@@ -238,12 +240,22 @@ mod tests {
     }
 
     #[test]
-    fn reorder_target_changes_after_crossing_tab_centers() {
+    fn reorder_slot_changes_only_after_crossing_tab_centers() {
         let result = layout(&[120.0, 120.0, 120.0], 500.0, 0.0, Some(0), false);
 
-        assert_eq!(reorder_target(&result.items, 0.0), Some(0));
-        assert_eq!(reorder_target(&result.items, 150.0), Some(1));
-        assert_eq!(reorder_target(&result.items, 10_000.0), Some(2));
+        let centre = |i: usize| (result.items[i].left + result.items[i].right) / 2.0;
+        // Dragging the first tab right: nothing changes until a centre is crossed.
+        assert_eq!(reorder_slot(&result.items, 0, 0.0), Some(0));
+        assert_eq!(reorder_slot(&result.items, 0, centre(1) - 1.0), Some(0));
+        assert_eq!(reorder_slot(&result.items, 0, centre(1) + 1.0), Some(1));
+        assert_eq!(reorder_slot(&result.items, 0, centre(2) - 1.0), Some(1));
+        assert_eq!(reorder_slot(&result.items, 0, 10_000.0), Some(2));
+        // Dragging the last tab left uses the same rule.
+        assert_eq!(reorder_slot(&result.items, 2, 10_000.0), Some(2));
+        assert_eq!(reorder_slot(&result.items, 2, centre(1) + 1.0), Some(2));
+        assert_eq!(reorder_slot(&result.items, 2, centre(1) - 1.0), Some(1));
+        assert_eq!(reorder_slot(&result.items, 2, centre(0) - 1.0), Some(0));
+        assert_eq!(reorder_slot(&[], 0, 10.0), None);
     }
 
     #[test]

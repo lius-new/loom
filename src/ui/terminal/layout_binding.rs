@@ -26,7 +26,7 @@ pub struct StripDrag {
     pub tabs: Vec<(u64, f32, f32)>,
 }
 /// Vertical slack around the strip before a drag counts as leaving it.
-const STRIP_SLACK: f32 = 16.0;
+const STRIP_SLACK: f32 = crate::ui::tabs::DRAG_REORDER_SLACK;
 impl StripDrag {
     pub fn holds(&self, point: Point) -> bool {
         point.x >= self.rect.left
@@ -42,16 +42,15 @@ impl StripDrag {
             .filter(|(id, left, right)| *id != session && (left + right) / 2.0 < x)
             .count()
     }
-    /// Where the insertion marker sits for a final index of `session`.
+    /// Where the insertion marker sits for a final index of `session`, on the
+    /// edge the tab would move across. None when the tab would stay where it is.
     pub fn marker_x(&self, session: u64, index: usize) -> Option<f32> {
-        let others = self
-            .tabs
-            .iter()
-            .filter(|(id, _, _)| *id != session)
-            .collect::<Vec<_>>();
-        match others.get(index) {
-            Some((_, left, _)) => Some(left - 2.0),
-            None => others.last().map(|(_, _, right)| right + 2.0),
+        let from = self.tabs.iter().position(|(id, _, _)| *id == session)?;
+        let (_, left, right) = *self.tabs.get(index)?;
+        match index.cmp(&from) {
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Less => Some(left),
+            std::cmp::Ordering::Greater => Some(right),
         }
     }
 }

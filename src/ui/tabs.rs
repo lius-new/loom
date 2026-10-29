@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use lgui::core::{
-    Color, EventPolicy, IconStyle, PointerButton, UiElement, UiFocusHandle, UiId, WheelUnit, clip,
+    Color, CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiFocusHandle, UiId, WheelUnit, clip,
     precompiled,
 };
 use lgui::prelude::{Element, TextStyle, UiRect, VisualStyle, panel, text};
@@ -42,6 +42,11 @@ const DISK_STATE_MARK: &str = "!";
 const FADE_W: f32 = 16.0;
 pub(crate) const DRAG_THRESHOLD: f32 = 5.0;
 pub(crate) const DRAG_EDGE_W: f32 = 28.0;
+/// Vertical drift allowed around the dragged tab's own strip before the drag
+/// stops reordering and targets a pane drop instead.
+pub(crate) const DRAG_REORDER_SLACK: f32 = 16.0;
+/// Insertion marker inset from the strip's top and bottom edges.
+pub(crate) const REORDER_MARKER_INSET: f32 = 4.0;
 pub(crate) const DRAG_SCROLL_STEP: f32 = 18.0;
 const TAB_SCROLLBAR_H: f32 = 4.0;
 const TAB_SCROLLBAR_HIT_H: f32 = 8.0;
@@ -617,6 +622,13 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
     // even when edge auto-scroll moves it away so its keyed element survives
     // until the gesture ends.
     let open_files = pane_items(&s, pane);
+    // Same as the terminal tabs: a pointer while idle, a move cursor for the
+    // whole drag.
+    let tab_cursor = if s.editor.tabs.tab_drag.as_ref().is_some_and(|drag| drag.active) {
+        CursorIcon::Move
+    } else {
+        CursorIcon::Pointer
+    };
     let visible = tab_layout::visible_range(
         &layout.items,
         layout.scroll_x,
@@ -692,6 +704,7 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
         }
         .key(format!("editor-tab-{}-{id:?}", pane.get()))
         .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(tab_cursor)
         .on_pointer_down_with_button(move |cx, pointer, button| {
             match button {
                 PointerButton::Left => {
@@ -913,9 +926,9 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
             bar = bar.child(panel(
                 UiRect::new(
                     screen_x - 1.0,
-                    rect.top + PILL_INSET,
+                    rect.top + REORDER_MARKER_INSET,
                     screen_x + 1.0,
-                    rect.bottom - PILL_INSET,
+                    rect.bottom - REORDER_MARKER_INSET,
                 ),
                 VisualStyle::filled(theme::c().accent).radius(1.0),
             ));
@@ -1001,15 +1014,29 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
     // fades and scrollbar layers so they cannot tint or cover the edge.
     bar = bar.child(crate::ui::components::divider::bottom(rect));
     if let Some(active) = active_rect {
-        bar = bar.child(clip(tab_viewport, -layout.scroll_x, 0.0).child(panel(
-            UiRect::new(
+        // Decoration only: a hit-testable clip over the whole viewport would
+        // sit in front of the tabs and hide their cursor.
+        let scroll_x = layout.scroll_x;
+        bar = bar.child(Element::new(move |cx| {
+            let no_hit = UiRect::new(0.0, 0.0, 0.0, 0.0);
+            let underline = UiRect::new(
                 active.left,
                 (active.bottom - 2.0).max(active.top),
                 active.right,
                 active.bottom,
-            ),
-            VisualStyle::filled(theme::c().accent),
-        )));
+            );
+            let underline_id = cx.auto_id();
+            UiElement::clip(cx.id, tab_viewport, -scroll_x, 0.0)
+                .hit_rect(no_hit)
+                .children(vec![
+                    UiElement::panel(
+                        underline_id,
+                        underline,
+                        VisualStyle::filled(theme::c().accent),
+                    )
+                    .hit_rect(no_hit),
+                ])
+        }));
     }
 
     bar

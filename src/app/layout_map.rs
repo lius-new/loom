@@ -935,6 +935,19 @@ mod tests {
     }
 
     #[test]
+    fn marker_appears_only_where_the_tab_would_actually_move() {
+        let (_, _, strip) = strip_app();
+        // Tab 2 stays put: no marker on either side of its own slot.
+        assert_eq!(strip.marker_x(2, 1), None);
+        // Moving right shows the right edge of the slot it moves into.
+        assert_eq!(strip.marker_x(1, 1), Some(214.0));
+        assert_eq!(strip.marker_x(1, 2), Some(318.0));
+        // Moving left shows the left edge.
+        assert_eq!(strip.marker_x(3, 1), Some(114.0));
+        assert_eq!(strip.marker_x(3, 0), Some(10.0));
+    }
+
+    #[test]
     fn leaving_the_strip_opens_the_map_and_never_reorders() {
         let (mut app, r, strip) = strip_app();
         let map = MapStore::default();
