@@ -104,35 +104,29 @@ checks.
 
 ## Continuous integration and releases
 
-GitHub Actions checks formatting, Clippy and architecture boundaries on Linux,
-then tests and builds Loom on Linux x64, Windows x64 and macOS (universal).
-All host CI and release jobs call the shared dependency preparer before host tests,
-linting or compilation, then expose build artifacts. Managed inputs are cached by
-OS, architecture and dependency manifest/implementation/lock hashes. macOS packaging
-prepares each target separately before merging the binaries. Core-only CI remains
-independent of CMake and Skia.
+Daily CI checks formatting and architecture, runs independent crate tests once,
+and retains all host functional tests on Linux x64, Windows x64 and macOS.
+Clippy shares the Linux host environment. Expensive tool/integration/evidence
+and preview-package checks run only when selected by Additional validation.
+Verified Cargo sources and tool archives are cached; native preparation never
+runs test suites. Universal macOS builds belong to release/preview packaging.
 
-Each platform has its own release workflow (`release-windows.yml`,
-`release-macos.yml`, `release-linux.yml`). Each validates the requested
-version against `Cargo.toml` and builds packages with the scripts in
-[`scripts/package`](../scripts/package/README.md). Application tag pushes also
-run **Prepare release draft**, which collects English `Release Notes:` entries
-from commit bodies and creates a GitHub Release draft. Platform workflows
-upload their packages to that draft without changing its notes. Review the
-notes, all build results and packages before publishing the draft on GitHub.
+The unified release.yml workflow first verifies successful CI for the exact
+tagged commit. It then builds/packages each platform once, runs minimal final
+artifact checks, and creates/uploads one complete draft after all platforms
+succeed. Release does not repeat CI test suites or wait for another workflow
+to create a draft. Manual runs default to packaging without draft upload.
 
-No per-version release note files are maintained. Record Added, Improved,
-Changed, Removed, Fixed or Upgrade entries in the relevant commit body, or
-`- N/A` for internal changes. Keep the section when squash-merging a PR. Before
-releasing, sync
-the root package version and lock entry, the CI version, and the default
-version inputs in all four release workflows. The scripts require an existing
-tag matching the build commit and never create or move tags. See
-[Release notes and drafts](../scripts/release/README.md) for the format,
-local preview command and manual workflow behavior.
+See [release tooling](../scripts/release/README.md) and
+[CI validation policy](../scripts/ci/README.md) for trigger rules and prerequisites.
 
-Build the packages for the current platform locally with:
+Build packages for the current platform locally with:
 
-```sh
+~~~sh
 node scripts/package/package.mjs all
-```
+~~~
+
+Release versions come from the application tag. The verified release runner
+materializes Cargo.toml/Cargo.lock version fields before compiling; generated
+version changes are never committed or pushed. Development builds retain the
+source manifest version. A version-only commit is not required.

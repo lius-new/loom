@@ -1,22 +1,61 @@
 name: CI
-
 on:
   push:
-  pull_request:
+    branches:
+      - main
+  pull_request: null
   workflow_dispatch:
-
+    inputs:
+      full:
+        description: Run packaging and every deep integration check
+        type: boolean
+        default: false
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
-  LOOM_VERSION: 0.1.8
-
 jobs:
+  changes:
+    name: Select validation scope
+    runs-on: ubuntu-24.04
+    outputs:
+      tooling: ${{ steps.scope.outputs.tooling }}
+      evidence: ${{ steps.scope.outputs.evidence }}
+      wasm: ${{ steps.scope.outputs.wasm }}
+      standalone: ${{ steps.scope.outputs.standalone }}
+      package: ${{ steps.scope.outputs.package }}
+      validation: ${{ steps.scope.outputs.validation }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Select expensive checks from event and changed paths
+        id: scope
+        run: node scripts/ci/plan.mjs
+  static:
+    name: Format and architecture
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+          components: rustfmt
+      - name: Check formatting and architecture
+        run: |-
+          cargo fmt --all -- --check
+          node scripts/architecture/check.mjs
   core:
     name: Independent editor and workspace rules
     runs-on: ubuntu-24.04
@@ -27,83 +66,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
-
+      - uses: ./.github/actions/cargo-cache
       - name: Test core without GUI build dependencies
         run: cargo test --locked -p loom-editor-core
       - name: Test workspace domain without GUI build dependencies
         run: cargo test --locked -p loom-workspace-tests
       - name: Test production Markdown rules without GUI build dependencies
         run: cargo test --locked -p loom-markdown-tests
-
-  quality:
-    name: Format and lint
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential \
-            libfreetype-dev \
-            libfontconfig-dev \
-            libegl1-mesa-dev \
-            libgl1-mesa-dev \
-            libgles2-mesa-dev \
-            libwayland-dev \
-            libxkbcommon-dev fonts-noto-cjk fonts-noto-color-emoji
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.1
-          components: clippy, rustfmt
-
-      - name: Prepare build dependencies
-        uses: ./.github/actions/dependencies
-
-      - name: Check architecture boundaries
-        run: |
-          node --test scripts/architecture/check.test.mjs scripts/architecture/markdown.test.mjs scripts/architecture/standalone-host.test.mjs scripts/architecture/language-resources.test.mjs
-          node --test scripts/baseline/test-results.test.mjs scripts/baseline/report.test.mjs scripts/baseline/run.test.mjs
-          node --test scripts/lib/download.test.mjs
-          node --test scripts/package/lib/language-packs.test.mjs scripts/package/lib/lsp-servers.test.mjs
-          node scripts/architecture/check.mjs
-
-      - name: Check release tooling
-        run: node --test scripts/release/release.test.mjs
-
-      - name: Check language-package tooling
-        run: |
-          npm ci --ignore-scripts --prefix scripts/language-packs
-          node scripts/language-packs/check.mjs --all
-          node --test scripts/language-packs/pipeline.test.mjs scripts/language-packs/catalog-sync.test.mjs
-
-      - name: Check language-server tooling
-        run: |
-          node scripts/lsp-servers/check.mjs
-          node --test scripts/lsp-servers/pipeline.test.mjs scripts/lsp-servers/catalog-sync.test.mjs
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run Clippy
-        run: >-
-          cargo clippy --locked --workspace --all-targets --
-          -D warnings
-          -A clippy::redundant_closure_call
-          -A clippy::collapsible_if
-          -A clippy::too_many_arguments
-          -A clippy::let_and_return
-          -A clippy::manual_div_ceil
-
-      - name: Verify host without language sources
-        run: node scripts/architecture/standalone-host.mjs
-
   build:
-    name: Build ${{ matrix.label }}
+    name: Test ${{ matrix.label }}
+    needs: changes
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -117,117 +89,54 @@ jobs:
             os: windows-2025
             target_name: windows-x86_64
             extension: zip
-          - label: macOS universal
+          - label: macOS host
             os: macos-15
             target_name: macos-universal
             extension: zip
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
+      - uses: actions/checkout@v7
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential \
-            libfreetype-dev \
-            libfontconfig-dev \
-            libegl1-mesa-dev \
-            libgl1-mesa-dev \
-            libgles2-mesa-dev \
-            libwayland-dev \
-            libxkbcommon-dev fonts-noto-cjk fonts-noto-color-emoji
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/linux-build-dependencies
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.1
-
+          components: ${{ runner.os == 'Linux' && 'clippy' || '' }}
       - name: Prepare build dependencies
         uses: ./.github/actions/dependencies
-
-      - name: Run tests
-        run: cargo test --locked --workspace
-
-      - name: Check Windows startup smoke tooling
-        if: runner.os == 'Windows'
-        run: node --test scripts/baseline/startup-smoke.test.mjs
-
-      - name: Record production Markdown native/UI evidence
-        env:
-          LOOM_MARKDOWN_EVIDENCE_DIR: markdown-evidence
-        run: cargo test --locked -p loom app::markdown_tests::production_markdown_evidence -- --ignored --exact --nocapture
-
-      - name: Upload Markdown evidence
-        uses: actions/upload-artifact@v7
-        with:
-          name: Markdown-evidence-${{ matrix.target_name }}
-          path: markdown-evidence/
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Test upstream WASM modules without native language binaries
-        run: node tests/language-runtime/run-wasm.mjs
-
-      # macOS packaging compiles both architectures itself.
-      - name: Build release binary
-        if: runner.os != 'macOS'
-        run: cargo build --locked --release
-
-      - name: Build macOS universal host
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          node scripts/package/package.mjs setup --platform macos --expect-version "$LOOM_VERSION"
-          node scripts/package/package.mjs compile --platform macos --expect-version "$LOOM_VERSION"
-
-      # Same staged folder and tar.gz as the Linux release; it uses the system Git.
-      - name: Package Linux binary
+      - name: Run Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings -A clippy::redundant_closure_call -A clippy::collapsible_if -A clippy::too_many_arguments -A clippy::let_and_return -A clippy::manual_div_ceil
         if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          node scripts/package/package.mjs package --platform linux --expect-version "$LOOM_VERSION"
-          mkdir -p dist
-          cp ".packaging/dist/Loom-$LOOM_VERSION-linux-x86_64.tar.gz" dist/
-
-      # Release-style packaging copies the checked-in WASM packages unchanged.
-      - name: Package macOS app
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          node scripts/package/package.mjs package --platform macos --expect-version "$LOOM_VERSION"
-          mkdir -p dist
-          cp ".packaging/dist/Loom-$LOOM_VERSION-macos-universal.zip" dist/
-
-      - name: Package Windows binary
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          PACKAGE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}
-          ARCHIVE: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}.${{ matrix.extension }}
-        run: |
-          $packageDir = Join-Path dist $env:PACKAGE
-          New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-          Copy-Item target/release/Loom.exe, README.md, LICENSE-MIT, LICENSE-APACHE, THIRD_PARTY_NOTICES.md $packageDir
-          node scripts/package/stage-languages.mjs (Join-Path $packageDir 'language-packs')
-          $gitExe = (Get-Command git).Source
-          $gitRoot = Split-Path (Split-Path $gitExe -Parent) -Parent
-          $gitVersion = (& $gitExe --version).Split(' ')[2]
-          & scripts/package-git-runtime.ps1 -SourceRoot $gitRoot -PackageRoot $packageDir -Version $gitVersion -SourceUrl "system-package:Windows"
-          $runtimeGit = Join-Path $packageDir 'runtime/git/bin/git.exe'
-          if (-not (Test-Path $runtimeGit)) { $runtimeGit = Join-Path $packageDir 'runtime/git/cmd/git.exe' }
-          $smoke = Join-Path $env:RUNNER_TEMP 'loom-git-smoke'
-          New-Item -ItemType Directory -Path $smoke -Force | Out-Null
-          & $runtimeGit -C $smoke init
-          & $runtimeGit -C $smoke status --porcelain=v2
-          Compress-Archive -Path $packageDir -DestinationPath (Join-Path dist $env:ARCHIVE)
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7
+      - name: Run tests
+        run: cargo test --locked -p loom
+  result:
+    name: CI result
+    if: ${{ always() }}
+    needs:
+      - changes
+      - static
+      - core
+      - build
+      - validation
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          name: Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}
-          path: dist/Loom-${{ env.LOOM_VERSION }}-${{ matrix.target_name }}.${{ matrix.extension }}
-          if-no-files-found: error
-          retention-days: 14
+          node-version: "24"
+          package-manager-cache: false
+      - name: Require all mandatory and selected checks
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci/result.mjs
+  validation:
+    name: Additional validation
+    needs: changes
+    if: needs.changes.outputs.validation == 'true'
+    uses: ./.github/workflows/validation.yml
+    with:
+      tooling: ${{ fromJSON(needs.changes.outputs.tooling) }}
+      evidence: ${{ fromJSON(needs.changes.outputs.evidence) }}
+      wasm: ${{ fromJSON(needs.changes.outputs.wasm) }}
+      standalone: ${{ fromJSON(needs.changes.outputs.standalone) }}
+      package: ${{ fromJSON(needs.changes.outputs.package) }}

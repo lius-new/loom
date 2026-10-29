@@ -207,7 +207,7 @@ it with Control-click > Open, or run `xattr -dr com.apple.quarantine
 Application identity in the keychain signs with the hardened runtime; adding
 `LOOM_MACOS_NOTARY_APPLE_ID`, `LOOM_MACOS_NOTARY_TEAM_ID` and
 `LOOM_MACOS_NOTARY_PASSWORD` (an app-specific password) also notarizes and
-staples the app and the disk image. `release-macos.yml` lists the matching
+staples the app and the disk image. `release.yml` lists the matching
 repository secrets.
 
 Loom.app declares no document types: opening a file from Finder sends an

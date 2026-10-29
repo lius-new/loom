@@ -5,18 +5,26 @@ runs:
   steps:
     - uses: actions/setup-node@v7
       with:
-        node-version: '24'
+        node-version: "24"
         package-manager-cache: false
+    - uses: ./.github/actions/cargo-cache
     - uses: actions/cache@v6
       with:
-        path: .packaging/dependencies
-        key: dependencies-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/dependencies/manifest.json', 'scripts/dependencies/*.mjs', 'scripts/lib/*.mjs', 'Cargo.lock') }}
+        path: |-
+          .packaging/dependencies
+          .packaging/downloads
+        key: build-inputs-${{ runner.os }}-${{ runner.arch }}-${{ inputs.variant }}-${{ hashFiles('scripts/dependencies/manifest.json', 'scripts/package/windows/index.mjs', 'scripts/package/linux/index.mjs', 'scripts/package/macos/index.mjs', 'Cargo.lock') }}
+        restore-keys: |-
+          build-inputs-${{ runner.os }}-${{ runner.arch }}-${{ inputs.variant }}-
+          build-inputs-${{ runner.os }}-${{ runner.arch }}-
     - name: Prepare verified CMake and host Skia
+      if: inputs.prepare == 'true'
       shell: bash
       run: node scripts/dependencies/ensure.mjs --github
-    - name: Check dependency regressions on this OS
-      shell: bash
-      run: node --test scripts/lib/download.test.mjs scripts/dependencies/dependencies.test.mjs
-    - name: Verify private tools and exported environment
-      shell: bash
-      run: node scripts/dependencies/smoke.mjs
+inputs:
+  prepare:
+    description: Prepare now; release compile prepares each target itself
+    default: "true"
+  variant:
+    description: Separate native and universal release archive caches
+    default: native

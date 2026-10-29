@@ -1,0 +1,12 @@
+name: Cache Cargo sources
+description: Reuse registry and Git sources; Cargo.lock still pins and verifies inputs
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v6
+      with:
+        path: |-
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: cargo-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'tests/language-runtime/Cargo.lock', 'rust-toolchain.toml') }}
+        restore-keys: cargo-sources-${{ runner.os }}-${{ runner.arch }}-

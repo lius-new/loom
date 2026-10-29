@@ -143,20 +143,16 @@ test('unsupported features and missing offline cache fail before any Cargo compi
   await assert.rejects(prepareDependencies({skia:false, offline:true, cache:fixture(t)}), /online first/);
 });
 
-test('every host CI/release job prepares dependencies before first compilation; GUI-free core stays independent', () => {
-  const read = file => fs.readFileSync(path.join(ROOT, file), 'utf8');
+test('native CI prepares once; release compile owns target preparation and setup never runs tests', () => {
+  const read = file => fs.readFileSync(path.join(ROOT,file),'utf8');
   const ci = read('.github/workflows/ci.yml');
-  const core = ci.slice(ci.indexOf('  core:'), ci.indexOf('  quality:'));
+  const core = ci.slice(ci.search(/^  core:/m),ci.search(/^  build:/m));
   assert.ok(!core.includes('actions/dependencies'));
-  for (const section of [ci.slice(ci.indexOf('  quality:'), ci.indexOf('  build:')), ci.slice(ci.indexOf('  build:')),
-    ...['linux','windows','macos'].map(os => read(`.github/workflows/release-${os}.yml`))]) {
-    const prepare = section.indexOf('uses: ./.github/actions/dependencies');
-    assert.ok(prepare > 0);
-    assert.ok(prepare < section.search(/run: (?:>-[\s\S]*?\n\s+)?cargo (?:test|clippy|build)/));
-    assert.ok(!/\n\s+cmake \\/.test(section));
-  }
+  const host = ci.slice(ci.search(/^  build:/m),ci.search(/^  result:/m));
+  assert.ok(host.indexOf('uses: ./.github/actions/dependencies') < host.indexOf('cargo test --locked -p loom'));
   const action = read('.github/actions/dependencies/action.yml');
   assert.ok(action.includes('node scripts/dependencies/ensure.mjs --github'));
+  assert.doesNotMatch(action,/node --test|smoke\.mjs/);
   assert.ok(action.includes('runner.os') && action.includes('runner.arch') && action.includes('manifest.json'));
   for (const os of ['windows','linux','macos']) {
     const code = read(`scripts/package/${os}/index.mjs`);

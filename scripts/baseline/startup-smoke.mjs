@@ -72,6 +72,9 @@ export async function startupSmoke({executable = path.join(ROOT, 'target/release
         {encoding:'utf8', windowsHide:true, timeout:Math.min(5000, remaining)});
       result.close_requested = !request.error && request.status === 0;
       if (result.close_requested) break;
+      if (request.error?.code === 'ETIMEDOUT' && Date.now() >= startupDeadline) {
+        throw Error('Timed out waiting for the smoke child main window');
+      }
       if (request.error || request.status !== 2) {
         throw Error(`Could not request normal window close: ${request.error?.message || request.stderr}`);
       }

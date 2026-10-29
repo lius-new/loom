@@ -107,7 +107,7 @@ test('first releases and releases without user-facing entries still have useful 
   assert.throws(() => generateReleaseNotes({root: f.directory, version: '../../escape'}), /Invalid release version/);
 });
 
-test('draft preparation requires the existing tag to match the build, synced version and real assets', t => {
+test('draft preparation requires the existing tag to match the build and real assets without a version-only source commit', t => {
   const f = fixture(t);
   fs.writeFileSync(path.join(f.directory, 'Cargo.toml'), '[package]\nname = "loom"\nversion = "0.1.3"\n');
   const assets = path.join(f.directory, 'dist');
@@ -123,7 +123,7 @@ test('draft preparation requires the existing tag to match the build, synced ver
   assert.equal(prepared.assets.length, 1);
   prepareDraft(options);
   assert.match(fs.readFileSync(notes, 'utf8'), /# Loom v0\.1\.3/);
-  assert.throws(() => prepareDraft({...options, version: '0.1.4'}), /Cargo.toml is 0.1.3/);
+  assert.throws(() => prepareDraft({...options, version: '0.1.4'}), /must already exist/);
   f.commit('Newer source\n\nRelease Notes:\n\n- N/A');
   assert.throws(() => prepareDraft(options), /does not point to the build commit/);
 });
@@ -132,10 +132,10 @@ const ok = stdout => ({status: 0, stdout, stderr: ''});
 const failed = stderr => ({status: 1, stdout: '', stderr});
 const options = {version: '0.1.3', repo: 'test/loom', notes: '/tmp/release-notes.md', assets: ['/tmp/dist/Loom package.zip']};
 
-test('first platform creates a draft with file notes and never creates a tag or publishes', () => {
+test('the single publisher creates a draft with file notes and never creates a tag or publishes', async () => {
   const calls = [];
   const responses = [failed('not found'), ok('created'), ok('true'), ok('uploaded')];
-  createDraft(options, args => { calls.push(args); return responses.shift(); });
+  await createDraft(options, args => { calls.push(args); return responses.shift(); });
   assert.deepEqual(calls.map(args => args[1]), ['view', 'create', 'view']);
   assert.ok(calls[1].includes('--draft'));
   assert.ok(calls[1].includes('--verify-tag'));
@@ -151,10 +151,10 @@ test('later platforms preserve the existing draft body and upload their own asse
   assert.ok(calls[1].includes('/tmp/dist/Loom package.zip'));
 });
 
-test('simultaneous draft creation is recovered only after verifying the competing draft', () => {
+test('simultaneous manual draft creation is recovered only after verification', async () => {
   const calls = [];
   const responses = [failed('not found'), failed('already exists'), ok('true'), ok('uploaded')];
-  createDraft(options, args => { calls.push(args); return responses.shift(); });
+  await createDraft(options, args => { calls.push(args); return responses.shift(); });
   assert.deepEqual(calls.map(args => args[1]), ['view', 'create', 'view']);
 });
 
@@ -166,52 +166,8 @@ test('published releases, API creation failures and upload failures remain failu
     [[failed('not found'), failed('permission denied'), failed('not found')], /permission denied/],
     [[failed('not found'), ok('created'), failed('cannot verify')], /Could not verify/],
     [[failed('not found'), failed('already exists'), ok('false')], /already published/],
-  ]) assert.throws(() => createDraft(options, () => responses.shift()), expected);
+  ]) await assert.rejects(createDraft(options, () => responses.shift()), expected);
   const interrupted = [ok('true'), failed('upload interrupted')];
   await assert.rejects(uploadToDraft(options, () => interrupted.shift()), /upload interrupted/);
-  await assert.rejects(uploadToDraft(options, () => failed('not found'), {timeoutMs:0}), /Prepare release draft workflow/);
-});
-
-test('uploads wait for delayed draft preparation without creating or editing the release', async () => {
-  const calls = [], pauses = []; let clock = 0;
-  await uploadToDraft(options, args => {
-    calls.push(args[1]);
-    if (args[1] === 'upload') return ok('uploaded');
-    return clock < 6000 ? failed('release not found') : ok('true');
-  }, {timeoutMs:10000, pollMs:2000, now:() => clock, wait:async ms => {pauses.push(ms); clock += ms;}});
-  assert.deepEqual(pauses, [2000,2000,2000]);
-  assert.deepEqual(calls, ['view','view','view','view','upload']);
-});
-
-test('missing drafts stop at the deadline; auth failures and published releases never upload', async () => {
-  let clock = 0, views = 0;
-  await assert.rejects(uploadToDraft(options, args => {
-    assert.equal(args[1], 'view'); views++; return failed('release not found');
-  }, {timeoutMs:5000, pollMs:2000, now:() => clock, wait:async ms => {clock += ms;}}), /Prepare release draft/);
-  assert.equal(clock, 5000); assert.equal(views, 4);
-  for (const result of [failed('HTTP 403: permission denied'), failed('HTTP 401: Bad credentials'), failed('HTTP 403: release not found'), ok('false')]) {
-    let calls = 0;
-    await assert.rejects(uploadToDraft(options, args => {
-      calls++; assert.equal(args[1], 'view'); return result;
-    }, {wait:async () => assert.fail('must fail immediately')}), /unavailable|already published/);
-    assert.equal(calls, 1);
-  }
-});
-
-test('a temporary GitHub API outage can recover while waiting for the draft', async () => {
-  let clock = 0;
-  const replies = [failed('HTTP 503: Service Unavailable'), ok('true'), ok('uploaded')];
-  await uploadToDraft(options, () => replies.shift(), {now:() => clock, wait:async ms => {clock += ms;}});
-  assert.equal(clock, 2000); assert.equal(replies.length, 0);
-});
-
-test('a timed-out draft lookup retries within the remaining subprocess budget', async () => {
-  let clock = 0, calls = 0; const timeouts = [];
-  await uploadToDraft(options, (args, execution) => {
-    if (args[1] === 'upload') return ok('uploaded');
-    timeouts.push(execution.timeout);
-    if (++calls === 1) throw Object.assign(Error('lookup timed out'), {code:'ETIMEDOUT'});
-    return ok('true');
-  }, {timeoutMs:5000, now:() => clock, wait:async ms => {clock += ms;}});
-  assert.deepEqual(timeouts, [5000,3000]);
+  await assert.rejects(uploadToDraft(options, () => failed('not found'), {timeoutMs:0}), /publish-draft/);
 });

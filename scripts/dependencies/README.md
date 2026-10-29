@@ -68,11 +68,11 @@ Cargo crates and the Rust toolchain must already be cached separately.
 The Cargo wrapper also accepts that option. Formatting/core-only tests skip both
 dependencies. macOS universal packaging prepares Skia separately for each target.
 
-`.github/actions/dependencies` selects Node 24, caches the same private directory,
-and calls `ensure.mjs --github` before any host test/lint/build in CI and release
-workflows. That mode writes the verified bin path and Skia URL to GitHub's
-environment files for subsequent steps. Cache keys include OS, architecture and
-manifest/implementation/Cargo.lock hashes. All matrix platforms run the regression
-tests and a real private-CMake/Actions-export smoke check. Inno Setup/MinGit retain their separate packaging roles; bundled language
-resources are copied from assets/language-packs. This directory does not build
-grammar resources.
+The dependency action selects Node 24, restores verified CMake/Skia/download
+archives and Cargo source caches, then prepares the host environment. It does
+not run regression suites. Additional validation runs those suites once per
+selected platform. Release uses prepare=false: each platform compiler already
+calls prepareDependencies for its actual target, avoiding duplicate preparation.
+macOS prepares each universal slice once. Cache reuse still hashes archives,
+checks extraction receipts and executes the pinned CMake version check.
+Installed packaging tools are rebuilt from verified cached downloads.

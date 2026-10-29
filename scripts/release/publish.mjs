@@ -1,69 +1,51 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
-import {setTimeout as delay} from 'node:timers/promises';
+import {github as gh} from './github.mjs';
+import {verifyAssets} from './assets.mjs';
 import {ROOT, commitId, generateReleaseNotes, validateVersion, writeReleaseNotes} from './notes.mjs';
 
-function gh(args, {timeout = args[1] === 'view' ? 30000 : 300000} = {}) {
-  const result = spawnSync('gh', args, {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout});
-  if (result.error) throw result.error;
-  return result;
-}
-
-export function createDraft({version, repo, notes}, run = gh) {
+export async function createDraft({version, repo, notes}, run = gh) {
   const tag = `v${version}`;
   const view = () => run(['release', 'view', tag, '--repo', repo, '--json', 'isDraft', '--jq', '.isDraft']);
-  let existing = view();
+  let existing = await view();
   if (existing.status !== 0) {
-    const created = run(['release', 'create', tag, '--repo', repo, '--draft', '--verify-tag', '--title', `Loom ${version}`, '--notes-file', notes]);
+    if (/HTTP (401|403)|permission denied|bad credentials/i.test(existing.stderr || existing.stdout) || !/release not found|^not found$|HTTP 404/i.test(existing.stderr || existing.stdout)) throw Error('Could not inspect release draft: ' + (existing.stderr || existing.stdout));
+    const created = await run(['release', 'create', tag, '--repo', repo, '--draft', '--verify-tag', '--title', `Loom ${version}`, '--notes-file', notes]);
     if (created.status !== 0) {
       // Recover a competing manual creation without replacing its edited notes.
-      existing = view();
+      existing = await view();
       if (existing.status !== 0) throw new Error(`Could not create release draft: ${created.stderr || created.stdout}`);
-    } else existing = view();
+    } else existing = await view();
   }
   if (existing.status !== 0) throw new Error(`Could not verify release draft: ${existing.stderr || existing.stdout}`);
   if (existing.stdout.trim() !== 'true') throw new Error(`${tag} is already published; refusing to change its notes or assets.`);
 }
 
-// Packaging and draft preparation are independent workflows. Wait only for a
-// missing draft or a transient API failure; authentication/configuration errors
-// and already published releases must still fail without uploading anything.
-export async function uploadToDraft({version, repo, assets}, run = gh,
-  {timeoutMs = 300000, pollMs = 2000, wait = delay, now = Date.now} = {}) {
-  if (timeoutMs < 0 || !(pollMs > 0)) throw Error('Invalid draft wait budget');
-  const tag = `v${version}`, deadline = now() + timeoutMs;
-  for (;;) {
-    let existing;
-    try {
-      existing = await run(['release', 'view', tag, '--repo', repo, '--json', 'isDraft', '--jq', '.isDraft'],
-        {timeout:Math.max(1, Math.min(30000, deadline - now()))});
-    } catch (error) {
-      if (!['ETIMEDOUT','ECONNRESET','EAI_AGAIN'].includes(error.code)) throw error;
-      existing = {status:1, stderr:'temporary failure: ' + error.message};
-    }
-    if (existing.status === 0) {
-      if (existing.stdout.trim() !== 'true') throw Error(`${tag} is already published; refusing to change its notes or assets.`);
-      break;
-    }
-    const reason = existing.stderr || existing.stdout || 'unknown GitHub error';
-    const transient = /release not found|^not found$|HTTP (?:404|429|5\d\d)|connection reset|timed? out|TLS handshake timeout|temporary failure/i.test(reason);
-    const remaining = deadline - now();
-    if (/HTTP (?:401|403)|permission denied|bad credentials|authentication/i.test(reason) || !transient || remaining <= 0) throw Error(`Draft ${tag} is unavailable; check the Prepare release draft workflow. ${reason}`);
-    await wait(Math.min(pollMs, remaining));
-  }
-  const uploaded = await run(['release', 'upload', tag, ...assets, '--clobber', '--repo', repo]);
-  if (uploaded.status !== 0) throw Error(`Could not upload release assets: ${uploaded.stderr || uploaded.stdout}`);
+// Single-writer release orchestration makes missing-draft polling unnecessary.
+export async function uploadToDraft({version,repo,assets},run = gh) {
+  const tag = 'v' + version;
+  const existing = await run(['release','view',tag,'--repo',repo,'--json','isDraft','--jq','.isDraft']);
+  if (existing.status !== 0) throw Error('Draft ' + tag + ' is unavailable; use --publish-draft to create and upload in order. ' + (existing.stderr || existing.stdout));
+  if (existing.stdout.trim() !== 'true') throw Error(tag + ' is already published; refusing to change its notes or assets.');
+  await upload({version,repo,assets},run);
+}
+async function upload({version,repo,assets},run) {
+  const result = await run(['release','upload','v' + version,...assets,'--clobber','--repo',repo]);
+  if (result.status !== 0) throw Error('Could not upload release assets: ' + (result.stderr || result.stdout));
+}
+export async function publishDraft(options,run = gh) {
+  const prepared = prepareUpload(options);
+  prepared.assets = verifyAssets(options.assets,options.version);
+  const draft = prepareDraft(options);
+  await createDraft(draft,run);
+  await upload(prepared,run);
 }
 
-function verifySource({root = ROOT, version, target = 'HEAD', repo}) {
+export function verifySource({root = ROOT, version, target = 'HEAD', repo}) {
   validateVersion(version);
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo ?? '')) throw new Error(`Invalid GitHub repository: ${repo}`);
-  const manifest = fs.readFileSync(path.join(root, 'Cargo.toml'), 'utf8');
-  const packageVersion = manifest.split(/^\[/m).find(section => section.startsWith('package]'))?.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
-  if (packageVersion !== version) throw new Error(`Requested ${version}, but Cargo.toml is ${packageVersion}`);
   const targetId = commitId(root, target);
   let tagId;
   try { tagId = commitId(root, `refs/tags/v${version}`); }
@@ -89,8 +71,9 @@ export function prepareUpload({root = ROOT, version, target = 'HEAD', repo, asse
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const {values} = parseArgs({options: {create: {type: 'boolean', default: false}, version: {type: 'string'}, target: {type: 'string', default: 'HEAD'}, repo: {type: 'string'}, assets: {type: 'string', default: 'dist'}, notes: {type: 'string'}}});
-    if (values.create) createDraft(prepareDraft(values));
+    const {values} = parseArgs({options: {'publish-draft': {type:'boolean',default:false}, create: {type: 'boolean', default: false}, version: {type: 'string'}, target: {type: 'string', default: 'HEAD'}, repo: {type: 'string'}, assets: {type: 'string', default: 'dist'}, notes: {type: 'string'}}});
+    if (values['publish-draft']) await publishDraft(values);
+    else if (values.create) await createDraft(prepareDraft(values));
     else await uploadToDraft(prepareUpload(values));
     console.log(`Prepared draft v${values.version}. Review all platform packages and notes before publishing it on GitHub.`);
   } catch (error) { console.error(error.message); process.exitCode = 1; }

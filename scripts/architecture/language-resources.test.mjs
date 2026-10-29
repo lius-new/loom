@@ -29,11 +29,12 @@ test('the host is independent of the language producer and concrete grammar crat
   for (const manifest of ['Cargo.toml', 'tests/language-runtime/Cargo.toml']) {
     assert.match(fs.readFileSync(path.join(root, manifest), 'utf8'), /tree-sitter\s*=\s*\{[^}]*features\s*=\s*\[[^\]]*"wasm"/);
   }
-  for (const workflow of ['ci.yml', 'release-linux.yml', 'release-macos.yml', 'release-windows.yml']) {
+  for (const workflow of ['ci.yml', 'validation.yml', 'release.yml']) {
     const text = fs.readFileSync(path.join(root, '.github/workflows', workflow), 'utf8');
     assert.doesNotMatch(text, /language-packs\/build|loom-grammar-/);
     assert.doesNotMatch(text, /fetch-languages\.mjs|LOOM_LANGUAGE_PACKS/);
-    assert.match(text, /run-wasm\.mjs/, 'WASM regressions run even without a native resource feed');
+    if (workflow === 'validation.yml') assert.match(text, /run-wasm\.mjs/, 'Optional WASM verification remains available without a native resource feed');
+    if (workflow === 'release.yml') assert.doesNotMatch(text, /run-wasm\.mjs/, 'Release reuses exact-commit CI verification');
   }
   assert.match(fs.readFileSync(path.join(root, 'scripts/package/macos/entitlements.plist'), 'utf8'), /com\.apple\.security\.cs\.allow-jit/);
 });

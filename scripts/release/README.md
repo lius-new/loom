@@ -41,28 +41,44 @@ Malformed sections fail generation instead of silently dropping their contents.
 
 ## Publishing
 
-1. Sync the application version in `Cargo.toml`, its `loom` entry in `Cargo.lock`,
-   `LOOM_VERSION` in the CI workflow and the default version inputs in the four
-   release workflows. Commit the changes, keeping any release entries in the
-   commit body.
-2. When ready to release, push the corresponding application tag. The separate
-   **Prepare release draft** workflow generates a temporary notes file and creates
-   a GitHub Release draft. It preserves the body if a draft already exists.
-3. The Windows, Linux and macOS workflows build and upload their assets to that
-   draft. Uploads wait up to five minutes for draft creation (or transient API
-   recovery), and fail immediately on authentication errors or published releases.
-   They never create another release or change its notes. If draft
-   preparation fails, fix it and rerun that workflow before retrying uploads.
-4. Review the English notes, build results and all platform packages on GitHub,
-   then publish the draft manually. Nothing publishes the release automatically.
+1. Commit product changes and wait for their exact-SHA CI to succeed. There is
+   no per-release source version bump. The tag is the release version authority.
+2. Create and push a version tag such as v0.2.0 on that tested commit. Release accepts successful push/manual CI runs from this
+   repository, never a PR run that tested a synthetic merge commit. The latest
+   matching run and all three host checks plus CI result must have succeeded.
+3. The single Release workflow validates the tag/version/CI before building.
+   Each platform verifies its checkout SHA and temporarily materializes the tag
+   version into Cargo.toml and the root Loom entry in Cargo.lock. Only these two
+   version fields may change. HEAD/tags/index remain unchanged; dependencies stay
+   locked. Each platform then runs setup, compile, package and bundle once. It does not rerun
+   workspace tests, WASM integration, development-tool tests or evidence capture.
+4. Final product checks remain: staged Windows startup/normal close, Linux .deb
+   installation, macOS .dmg/signature checks, and signed update manifest creation.
+5. Once all platform jobs succeed, one writer downloads this run's artifacts,
+   checks every platform package/checksum/update record, creates or reuses the
+   draft and uploads the complete set. It never changes existing draft notes,
+   creates/moves tags, or publishes the release publicly.
+6. Review all packages and notes, then publish the draft manually on GitHub.
 
-The draft workflow can also be run manually for an existing tag. Linux and macOS
-manual packaging runs upload only with the `publish` input enabled; Windows
-manual runs upload automatically. Uploads require the tag to match the build
-commit and the release to remain a draft. A published release is left untouched.
-The scripts use `--verify-tag` and never create or move tags.
+Manual Release dispatch defaults to publish=false and still requires exact-SHA
+CI. Enable publish to upload the resulting packages to a draft. Missing, pending
+or failed CI stops before builds; finish/rerun CI and rerun Release. There is no
+cross-workflow polling or background CI rerun.
 
-No version-specific notes files are maintained in the repository. For v0.1.3,
-the release preparation commit contains a one-time summary of changes since
-v0.1.2, including the installation setting migration. Existing published commit
-history is preserved. Subsequent versions collect notes from their own commits.
+Transient GitHub transport/429/5xx errors retry only the current operation up to
+three attempts with bounded subprocess timeouts. Missing drafts and permission
+errors are not polled. Failed publishing can be rerun without rebuilding the
+successful platform jobs, while their artifacts remain available. Reruns must
+retain the same verified tag/commit. A published release is left untouched.
+
+Portable preview packaging, evidence, tool self-tests and source-removal/WASM
+verification remain available through Additional validation. Production build
+dependencies and checksums stay verified even when tool tests are not selected.
+
+The generated Cargo version feeds CARGO_PKG_VERSION, Windows resources, package
+names and signed update manifests. Cargo.toml may retain its development
+baseline version in Git. Manual releases require an explicit existing tag
+version and have no hardcoded version default. Preview packages read the
+development version from Cargo.toml automatically. Nothing commits or pushes
+generated version changes. The workflow implementation itself must first be
+committed normally before GitHub can execute it.
