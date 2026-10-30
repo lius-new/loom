@@ -73,6 +73,7 @@ pub struct LanguageUi {
     pub refactor: Option<refactor::Pending>,
     /// The completion list, once asked for.
     pub completion: Option<completion::Session>,
+    pub words_request: Option<Arc<()>>,
     pub completion_timer: Option<Arc<crate::app::ui_timer::Timer>>,
     /// The last character typed into the document, until the next update looks.
     pub typed: Option<char>,
@@ -95,6 +96,7 @@ impl LanguageUi {
         self.pending = None;
         self.refactor = None;
         self.lists = None;
+        completion::close_words(self);
         self.completion = None;
     }
 }

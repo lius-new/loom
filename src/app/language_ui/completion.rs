@@ -28,6 +28,7 @@ pub struct Session {
     pub incarnation: u64,
     /// The text the servers were asked about, to read their ranges in.
     pub requested: Arc<String>,
+    local_identity: Option<usize>,
     pub manual: bool,
     /// Started by a trigger character (so an empty word is expected).
     triggered: bool,
@@ -98,6 +99,11 @@ pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
         app.editor.language.completion = None;
         return;
     };
+    if typed.is_some() {
+        // Any intervening input invalidates an outstanding answer. A following
+        // typed identifier schedules a fresh, debounced request below.
+        close_words(&mut app.editor.language);
+    }
     let mut ended = false;
     if let Some(session) = &app.editor.language.completion {
         if session.document != t.document
@@ -164,7 +170,15 @@ fn offers_completion(ctx: &AppContext) -> bool {
 fn schedule(ctx: &AppContext, app: &mut AppState, trigger: Option<char>) {
     if !offers_completion(ctx) {
         if app.preferences.values().lsp.completion.words_fallback && trigger.is_none() {
-            words(app);
+            if app
+                .editor
+                .language
+                .completion
+                .as_ref()
+                .is_none_or(|s| s.local_identity.is_none())
+            {
+                schedule_words(ctx, app);
+            }
         }
         return;
     }
@@ -182,6 +196,7 @@ fn schedule(ctx: &AppContext, app: &mut AppState, trigger: Option<char>) {
 }
 
 /// The words of the document, as completions, for when no server offers any.
+#[cfg(test)]
 pub fn words(app: &mut AppState) {
     if crate::app::editor_vim::is_active(app) && !app.editor.vim.is_inserting() {
         crate::app::editor_vim::start_multi(app);
@@ -189,17 +204,138 @@ pub fn words(app: &mut AppState) {
     crate::app::multicursor::primary_only(app);
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else { return };
-    let start = word_start(&t.text, t.cursor);
-    let mut seen = std::collections::BTreeSet::new();
-    let skip = start..crate::features::language_service::completion::word_end(&t.text, t.cursor);
-    for (at, word) in words_of(&t.text) {
-        if word.chars().count() >= 3 && !skip.contains(&at) {
-            seen.insert(word);
+    let Some(start) = local_start(&t.text, t.cursor) else {
+        return;
+    };
+    let Some(seen) = collect_words(&t.text, t.cursor, &|| false) else {
+        return;
+    };
+    publish_words(app, t, start, seen);
+}
+
+pub(super) fn close_words(language: &mut super::LanguageUi) {
+    if language.words_request.take().is_some() {
+        language.completion_timer = None;
+    }
+}
+
+fn schedule_words(ctx: &AppContext, app: &mut AppState) {
+    let Some(application) = ctx.services().and_then(|r| r.application()) else {
+        return;
+    };
+    let Some(t) = target(app, app.workspace.active_pane()) else {
+        return;
+    };
+    let Some(start) = local_start(&t.text, t.cursor) else {
+        return;
+    };
+    let token = Arc::new(());
+    app.editor.language.words_request = Some(token.clone());
+    let state = ctx.clone();
+    let text = t.text.clone();
+    let cursor = t.cursor;
+    // Keep only metadata in the UI callback: do not retain the source after scanning.
+    let stamp = t.stamp;
+    let view = t.view;
+    let generation = t.input_generation;
+    app.editor.language.completion_timer = Some(Arc::new(ui_timer::background_after(
+        application,
+        DEBOUNCE,
+        move |cancelled| collect_words(&text, cursor, cancelled),
+        move |seen| {
+            state.try_update(|app| {
+                if !app
+                    .editor
+                    .language
+                    .words_request
+                    .as_ref()
+                    .is_some_and(|r| Arc::ptr_eq(r, &token))
+                {
+                    return false;
+                }
+                let Some(current) = target(app, app.workspace.active_pane()) else {
+                    return false;
+                };
+                if current.stamp != stamp
+                    || current.view != view
+                    || current.input_generation != generation
+                    || current.cursor != cursor
+                {
+                    return false;
+                }
+                close_words(&mut app.editor.language);
+                publish_words(app, current, start, seen);
+                true
+            });
+        },
+    )));
+}
+
+const WORD_BYTES: usize = 256 * 1024;
+const IDENTIFIER_BYTES: usize = 128;
+
+fn local_start(text: &str, cursor: usize) -> Option<usize> {
+    let mut start = cursor;
+    for c in text.get(..cursor)?.chars().rev() {
+        if !is_word(c) {
+            break;
         }
-        if seen.len() >= 5000 {
+        start -= c.len_utf8();
+        if cursor - start > IDENTIFIER_BYTES {
+            return None;
+        }
+    }
+    Some(start)
+}
+
+fn collect_words(
+    text: &str,
+    cursor: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<std::collections::BTreeSet<String>> {
+    let skip = local_start(text, cursor)?..cursor;
+    let mut from = cursor.saturating_sub(WORD_BYTES / 2);
+    let mut to = (from + WORD_BYTES).min(text.len());
+    from = from.min(to.saturating_sub(WORD_BYTES));
+    while !text.is_char_boundary(from) {
+        from += 1;
+    }
+    while !text.is_char_boundary(to) {
+        to -= 1;
+    }
+    let slice = &text[from..to];
+    let mut seen = std::collections::BTreeSet::new();
+    for (at, word) in words_of(slice) {
+        if cancelled() {
+            return None;
+        }
+        // Never offer fragments cut off by the scan window, or the current word.
+        if (at == 0 && from > 0)
+            || (at + word.len() == slice.len() && to < text.len())
+            || (from + at <= skip.end && from + at + word.len() >= skip.start)
+        {
+            continue;
+        }
+        if word.len() <= IDENTIFIER_BYTES
+            && word.chars().take(3).count() == 3
+            && !seen.contains(word)
+        {
+            seen.insert(word.to_owned());
+        }
+        if seen.len() == 5000 {
             break;
         }
     }
+    (!cancelled()).then_some(seen)
+}
+
+fn publish_words(
+    app: &mut AppState,
+    t: Target,
+    start: usize,
+    seen: std::collections::BTreeSet<String>,
+) {
+    let pane = t.pane;
     let list = reply::CompletionList {
         items: seen
             .into_iter()
@@ -232,7 +368,8 @@ pub fn words(app: &mut AppState) {
         view: t.view,
         input_generation: t.input_generation,
         incarnation: t.stamp.incarnation,
-        requested: t.text.clone(),
+        requested: Arc::default(),
+        local_identity: Some(t.stamp.snapshot_identity),
         manual: false,
         triggered: false,
         handle: None,
@@ -254,26 +391,11 @@ pub fn words(app: &mut AppState) {
 }
 
 /// Identifiers in `text` with where each starts.
-pub fn words_of(text: &str) -> Vec<(usize, String)> {
-    let mut out = Vec::new();
-    let mut start = None;
-    for (at, c) in text
-        .char_indices()
-        .chain(std::iter::once((text.len(), ' ')))
-    {
-        match (is_word(c), start) {
-            (true, None) => start = Some(at),
-            (false, Some(from)) => {
-                let word = &text[from..at];
-                if !word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-                    out.push((from, word.to_owned()));
-                }
-                start = None;
-            }
-            _ => {}
-        }
-    }
-    out
+pub fn words_of(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.split(|c: char| !is_word(c)).filter_map(move |word| {
+        let at = word.as_ptr() as usize - text.as_ptr() as usize;
+        (!word.is_empty() && !word.starts_with(|c: char| c.is_ascii_digit())).then_some((at, word))
+    })
 }
 
 /// Asks the servers now. `manual` is the person pressing the key.
@@ -296,6 +418,10 @@ pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Opti
     }
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else { return };
+    if !offers_completion(ctx) && app.preferences.values().lsp.completion.words_fallback {
+        schedule_words(ctx, app);
+        return;
+    }
     let Some(services) = services(ctx) else {
         return;
     };
@@ -339,6 +465,7 @@ pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Opti
         input_generation: t.input_generation,
         incarnation: t.stamp.incarnation,
         requested: t.text.clone(),
+        local_identity: None,
         manual,
         triggered: trigger.is_some(),
         handle: Some(handle),
@@ -364,10 +491,24 @@ fn follow(app: &mut AppState, t: &Target) -> bool {
     let start = session.data.word_start;
     // The text before the word is what the list was asked about; the cursor must
     // still be in the word.
-    let prefix_same = t.text.len() >= start
-        && session.requested.len() >= start
-        && t.text.is_char_boundary(start)
-        && t.text.as_bytes()[..start] == session.requested.as_bytes()[..start];
+    let prefix_same = if let Some(identity) = session.local_identity {
+        local_start(&t.text, t.cursor) == Some(start)
+            && app
+                .workspace
+                .documents
+                .get(&t.document)
+                .and_then(|doc| doc.buffer.revisions_since(session.last_version, identity))
+                .is_some_and(|revisions| {
+                    revisions
+                        .iter()
+                        .all(|r| r.edits.iter().all(|e| e.old.start >= start))
+                })
+    } else {
+        t.text.len() >= start
+            && session.requested.len() >= start
+            && t.text.is_char_boundary(start)
+            && t.text.as_bytes()[..start] == session.requested.as_bytes()[..start]
+    };
     if !prefix_same || t.cursor < start || !t.text.is_char_boundary(t.cursor) {
         return false;
     }
@@ -377,6 +518,9 @@ fn follow(app: &mut AppState, t: &Target) -> bool {
     }
     if typed.is_empty() && !session.manual && !session.triggered {
         return false;
+    }
+    if session.local_identity.is_some() {
+        session.local_identity = Some(t.stamp.snapshot_identity);
     }
     session.last_cursor = t.cursor;
     let version_changed = session.last_version != t.stamp.version;
@@ -781,6 +925,7 @@ fn line_indent(text: &str, offset: usize) -> String {
 }
 
 pub fn close(app: &mut AppState) {
+    close_words(&mut app.editor.language);
     app.editor.language.completion = None;
     app.editor.language.completion_timer = None;
 }
@@ -879,9 +1024,95 @@ mod tests {
     }
 
     #[test]
+    fn background_words_reject_closed_or_changed_requests() {
+        use crate::app::{
+            runtime::AppRuntime,
+            test_support::{UiTasks, live},
+        };
+        use std::time::Instant;
+        for change in [false, true] {
+            let mut app = AppState::new();
+            app.workspace
+                .open_path("words.txt".into(), "alphabet alphanumeric\nal".into());
+            app.workspace.active_editor_mut().unwrap().set_cursor(24);
+            let queue = UiTasks::default();
+            let runtime = Arc::new(AppRuntime::default());
+            runtime.set_application(queue.application());
+            let state = live(app).with_runtime(&runtime);
+            state.update(|app| schedule_words(&state, app));
+            let limit = Instant::now() + Duration::from_secs(5);
+            while queue.pending_ids().is_empty() {
+                assert!(Instant::now() < limit);
+                std::thread::yield_now();
+            }
+            if change {
+                state.update(|app| {
+                    app.workspace
+                        .active_editor_mut()
+                        .unwrap()
+                        .replace_selection("x", EditKind::Typing)
+                        .unwrap();
+                });
+            } else {
+                state.update(close);
+            }
+            queue.run_all();
+            assert!(state.get().editor.language.completion.is_none());
+        }
+    }
+
+    #[test]
+    fn local_list_reuses_candidates_without_retaining_source() {
+        let mut app = AppState::new();
+        app.workspace
+            .open_path("words.txt".into(), "alphabet alphanumeric\nal".into());
+        app.workspace.active_editor_mut().unwrap().set_cursor(24);
+        words(&mut app);
+        assert!(
+            app.editor
+                .language
+                .completion
+                .as_ref()
+                .unwrap()
+                .requested
+                .is_empty()
+        );
+        app.workspace
+            .active_editor_mut()
+            .unwrap()
+            .replace_selection("p", EditKind::Typing)
+            .unwrap();
+        let t = target(&app, app.workspace.active_pane()).unwrap();
+        assert!(follow(&mut app, &t));
+        assert_eq!(
+            app.editor.language.completion.as_ref().unwrap().shown.len(),
+            2
+        );
+        assert!(accept(&mut app, None));
+        assert!(
+            app.workspace
+                .active_editor()
+                .unwrap()
+                .text()
+                .ends_with("alphabet")
+        );
+    }
+
+    #[test]
+    fn local_words_are_bounded_unicode_safe_and_cancellable() {
+        let text = format!("distantword {}\nnearbyword ne", "变量 ".repeat(100_000));
+        let words = collect_words(&text, text.len(), &|| false).unwrap();
+        assert!(words.contains("nearbyword"));
+        assert!(!words.contains("distantword"));
+        assert!(!words.contains("ne"));
+        assert!(collect_words(&text, text.len(), &|| true).is_none());
+        assert!(local_start(&"x".repeat(1024 * 1024), 1024 * 1024).is_none());
+    }
+
+    #[test]
     fn words_are_identifiers_without_the_numbers() {
-        let found = words_of("let value_1 = 42 + other; 9abc");
-        let words: Vec<&str> = found.iter().map(|(_, w)| w.as_str()).collect();
+        let found: Vec<_> = words_of("let value_1 = 42 + other; 9abc").collect();
+        let words: Vec<&str> = found.iter().map(|(_, w)| *w).collect();
         assert_eq!(words, ["let", "value_1", "other"]);
         assert_eq!(found[1].0, 4);
     }

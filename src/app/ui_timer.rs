@@ -39,6 +39,30 @@ pub(crate) fn after(
     Timer { cancel }
 }
 
+/// Debounced background work. Cancellation is checked during work and before posting.
+pub(crate) fn background_after<T: Send + 'static>(
+    application: ApplicationHandle,
+    delay: Duration,
+    work: impl FnOnce(&dyn Fn() -> bool) -> Option<T> + Send + 'static,
+    deliver: impl FnOnce(T) + Send + 'static,
+) -> Timer {
+    let (cancel, cancelled) = mpsc::channel::<()>();
+    let _ = std::thread::Builder::new()
+        .name("loom-completion".to_owned())
+        .spawn(move || {
+            if let Err(RecvTimeoutError::Timeout) = cancelled.recv_timeout(delay) {
+                let is_cancelled =
+                    || !matches!(cancelled.try_recv(), Err(mpsc::TryRecvError::Empty));
+                if let Some(result) = work(&is_cancelled)
+                    && !is_cancelled()
+                {
+                    application.post(move || deliver(result));
+                }
+            }
+        });
+    Timer { cancel }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
