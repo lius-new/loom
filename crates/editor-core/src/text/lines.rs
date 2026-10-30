@@ -178,51 +178,76 @@ impl LineIndex {
         content_end(text, self.starts[line], self.next_start(line))
     }
 
-    /// Rebuild the lines `changes` touched in `text`, the text after them.
+    /// Rebuild only overlapping groups of touched lines in the edited text.
     pub fn update(&mut self, text: &str, changes: &ChangeSet) {
         if self.update_long_line(text, changes) {
             return;
         }
-        let (Some(first), Some(last)) = (changes.changes().first(), changes.changes().last())
-        else {
+        let edits = changes.changes();
+        if edits.is_empty() {
             return;
-        };
-        let delta: isize = changes
-            .changes()
-            .iter()
-            .map(|change| change.inserted.len() as isize - change.removed.len() as isize)
-            .sum();
-        let first_line = self.line_of(first.old.start);
-        let last_line = self.line_of(last.old.end);
-        let region_start = self.starts[first_line];
-        let following = self.next_start(last_line);
-        let to_end = following.is_none();
-        let region_end = following.map_or(text.len(), |next| (next as isize + delta) as usize);
-
-        let mut rebuilt = Self {
-            tab_width: self.tab_width,
-            starts: Vec::new(),
-            endings: Vec::new(),
-            crlf_count: 0,
-            widths: Vec::new(),
-            positions: Vec::new(),
-            max_width: 0,
-        };
-        rebuilt.scan(text, region_start, region_end, to_end);
-        let tail = last_line + 1;
-        for start in &mut self.starts[tail..] {
-            *start = (*start as isize + delta) as usize;
         }
-        self.crlf_count -= self.endings[first_line..tail]
-            .iter()
-            .filter(|&&b| b)
-            .count();
-        self.crlf_count += rebuilt.crlf_count;
-        self.endings.splice(first_line..tail, rebuilt.endings);
-        self.starts.splice(first_line..tail, rebuilt.starts);
-        self.widths.splice(first_line..tail, rebuilt.widths);
-        self.positions.splice(first_line..tail, rebuilt.positions);
-        self.max_width = self.widths.iter().copied().max().unwrap_or(0) as usize;
+        // Merge only overlapping old line ranges. Offsets of later groups are
+        // mapped by the accumulated byte delta, so insertions and deletions are
+        // handled just like equal-length replacements.
+        let mut groups: Vec<(usize, usize, usize, usize)> = Vec::new();
+        for (i, edit) in edits.iter().enumerate() {
+            let first = self.line_of(edit.old.start);
+            let last = self.line_of(edit.old.end);
+            if let Some(group) = groups.last_mut()
+                && first <= group.1
+            {
+                group.1 = group.1.max(last);
+                group.3 = i + 1;
+            } else {
+                groups.push((first, last, i, i + 1));
+            }
+        }
+        let mut old = std::mem::replace(
+            self,
+            Self {
+                tab_width: self.tab_width,
+                starts: Vec::new(),
+                endings: Vec::new(),
+                crlf_count: 0,
+                widths: Vec::new(),
+                positions: Vec::new(),
+                max_width: 0,
+            },
+        );
+        self.starts.reserve(old.len());
+        self.endings.reserve(old.len());
+        self.widths.reserve(old.len());
+        self.positions.reserve(old.len());
+        let mut line = 0;
+        let mut delta = 0isize;
+        for (first, last, from, to) in groups {
+            self.keep_lines(&mut old, line..first, delta);
+            let start = (old.starts[first] as isize + delta) as usize;
+            delta += edits[from..to]
+                .iter()
+                .map(|c| c.inserted.len() as isize - c.removed.len() as isize)
+                .sum::<isize>();
+            let following = old.next_start(last);
+            let end = following.map_or(text.len(), |n| (n as isize + delta) as usize);
+            self.scan(text, start, end, following.is_none());
+            line = last + 1;
+        }
+        let end = old.len();
+        self.keep_lines(&mut old, line..end, delta);
+    }
+
+    fn keep_lines(&mut self, old: &mut Self, lines: std::ops::Range<usize>, delta: isize) {
+        for line in lines {
+            self.starts
+                .push((old.starts[line] as isize + delta) as usize);
+            self.endings.push(old.endings[line]);
+            self.crlf_count += usize::from(old.endings[line]);
+            self.widths.push(old.widths[line]);
+            self.max_width = self.max_width.max(old.widths[line] as usize);
+            self.positions
+                .push(std::mem::take(&mut old.positions[line]));
+        }
     }
 
     /// Re-index the edit's surrounding graphemes, shifting sparse tail entries.
@@ -357,6 +382,29 @@ mod tests {
             let changes = apply(&mut text, edits);
             index.update(&text, &changes);
             assert_eq!(index, LineIndex::new(&text), "after edits to {text:?}");
+        }
+    }
+
+    #[test]
+    fn disjoint_edits_with_different_lengths_preserve_untouched_lines() {
+        let original = format!("head\r\n{}tail\n", "中\tstay\r\n".repeat(4096));
+        for inserted in ["longer", "", "new\nlines\r\n", "e\u{301}"] {
+            let mut text = original.clone();
+            let mut index = LineIndex::new(&text);
+            let at = text.len() - 5;
+            let changes = apply(
+                &mut text,
+                validate(
+                    &original,
+                    vec![
+                        Edit::replace(0..4, inserted),
+                        Edit::replace(at..at + 4, "尾"),
+                    ],
+                )
+                .unwrap(),
+            );
+            index.update(&text, &changes);
+            assert_eq!(index, LineIndex::new(&text));
         }
     }
 
