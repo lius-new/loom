@@ -408,15 +408,20 @@ fn perform(state: &AppContext, requests: Vec<Request>, rect: UiRect) {
             Request::Quit { force } => quit(state, force),
             Request::SaveAndQuit => {
                 let document = state.get().workspace.active_document();
+                let view = state.get().workspace.active();
                 crate::app::language_ui::save::save(
                     state,
                     rect,
                     std::sync::Arc::new(move |state| {
-                        if let Some(document) = document
-                            && crate::app::workspace_commands::save_document(state, document)
-                            && state.get().workspace.active_document() == Some(document)
-                        {
-                            quit(state, false);
+                        if let Some(document) = document {
+                            crate::app::saving::document(state, document, move |state, saved| {
+                                if saved
+                                    && state.get().workspace.active_document() == Some(document)
+                                    && state.get().workspace.active() == view
+                                {
+                                    quit(state, false);
+                                }
+                            });
                         }
                     }),
                 )

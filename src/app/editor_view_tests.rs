@@ -2949,13 +2949,16 @@ fn a_server_that_does_not_answer_never_keeps_the_file_from_being_saved() {
 }
 
 #[test]
-fn a_language_without_save_settings_saves_at_once() {
+fn a_language_without_save_settings_saves_without_waiting_for_the_server() {
     use crate::features::keymap::action::Action;
     let mut h = LanguageHarness::new("fn alpha() {}\n", &["--features", "formatting"]);
     h.until_ready();
     h.act(Action::Save);
     let path = h.state.get().workspace.active_path().unwrap().to_path_buf();
-    assert!(std::fs::read_to_string(&path).is_ok_and(|t| t == "fn alpha() {}\n"));
+    h.until("the background save", |h| {
+        h.state.get().editor.saving.pending == 0
+            && std::fs::read_to_string(&path).is_ok_and(|t| t == "fn alpha() {}\n")
+    });
     let _ = std::fs::remove_file(&path);
 }
 

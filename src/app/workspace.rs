@@ -160,6 +160,7 @@ impl Workspace {
                 id,
                 path: original.meta.path.clone(),
                 expected_disk: original.disk_state.clone(),
+                expected_observation: original.disk_observation,
                 expected_saved: original.saved_text.clone(),
                 expected_version: original.buffer.version(),
                 replacement,

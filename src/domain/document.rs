@@ -57,6 +57,16 @@ pub struct DiskState {
     pub format: crate::domain::encoding::TextFormat,
 }
 
+/// Immutable input to a background save. Text shares the editor's COW snapshot.
+#[derive(Clone, Debug)]
+pub struct SaveSnapshot {
+    pub stamp: DocumentStamp,
+    pub path: PathBuf,
+    pub text: std::sync::Arc<String>,
+    pub disk_observation: u64,
+    pub format: crate::domain::encoding::TextFormat,
+}
+
 /// A filesystem result. Missing and unreadable are distinct observations.
 #[derive(Clone, Debug)]
 pub enum DiskRead {

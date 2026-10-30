@@ -40,35 +40,9 @@ pub fn save_active_document(state: &AppContext) -> bool {
     save_document(state, id)
 }
 
+/// Returns whether the request was queued; completion is reported on the UI thread.
 pub fn save_document(state: &AppContext, id: FileId) -> bool {
-    let Some((id, path, contents)) = state.get().workspace.save_snapshot(id) else {
-        return false;
-    };
-    let contents = std::sync::Arc::new(contents);
-
-    let format = state.get().workspace.documents[&id].format();
-    match crate::infrastructure::document_filesystem::write_encoded(&path, &contents, format) {
-        Ok(()) => {
-            let saved_path = path.clone();
-            let project_settings = crate::features::settings::project::is_settings_file(&path);
-            state.update(move |app| {
-                app.workspace.mark_saved(id);
-                if project_settings {
-                    app.refresh_project_settings();
-                }
-            });
-            if let Some(services) = state.services().and_then(|r| r.language_services()) {
-                services.saved(saved_path, contents);
-            }
-            true
-        }
-        Err(error) => {
-            state.update(move |app| {
-                app.show_error(format!("Could not save {}: {error}", path.display()));
-            });
-            false
-        }
-    }
+    crate::app::saving::document(state, id, |_, _| {})
 }
 
 pub fn request_close_tab(state: &AppContext, pane: PaneId, id: ViewId) {
@@ -124,6 +98,9 @@ pub fn request_close_tabs(state: &AppContext, pane: PaneId, target: ViewId, scop
 }
 
 fn request_close_tabs_in(app: &mut AppState, targets: Vec<(PaneId, ViewId)>) {
+    if app.editor.saving.closing {
+        return;
+    }
     let mut existing = Vec::with_capacity(targets.len());
     for (pane, id) in targets {
         if app.workspace.pane(pane).is_some_and(|p| p.contains(id))
@@ -157,6 +134,9 @@ fn request_close_tabs_in(app: &mut AppState, targets: Vec<(PaneId, ViewId)>) {
 }
 
 pub fn cancel_close_request(state: &AppContext) {
+    if state.get().editor.saving.closing {
+        return;
+    }
     state.update(cancel_close_request_in);
 }
 
@@ -172,7 +152,7 @@ pub fn discard_close_request(state: &AppContext) -> Option<CloseContinuation> {
     Some(continuation)
 }
 
-fn discard_close_request_in(app: &mut AppState) -> Option<CloseContinuation> {
+pub(super) fn discard_close_request_in(app: &mut AppState) -> Option<CloseContinuation> {
     let request = app.editor.close_request.take()?;
     if request.continuation == CloseContinuation::ExitApplication {
         for id in app.workspace.released_by(&request.targets) {
@@ -194,47 +174,18 @@ fn discard_close_request_in(app: &mut AppState) -> Option<CloseContinuation> {
     Some(request.continuation)
 }
 
-pub fn save_close_request(state: &AppContext) -> Option<CloseContinuation> {
-    let mut next = state.get();
-    match save_close_request_in(&mut next) {
-        Ok(continuation) => {
-            state.set(next);
-            continuation
-        }
-        Err(error) => {
-            next.show_error(error);
-            state.set(next);
-            None
-        }
-    }
+pub fn save_close_request(
+    state: &AppContext,
+    done: impl FnOnce(&AppContext, CloseContinuation) + Send + 'static,
+) -> bool {
+    crate::app::saving::close(state, true, done)
 }
 
-fn save_close_request_in(app: &mut AppState) -> Result<Option<CloseContinuation>, String> {
-    let Some(request) = app.editor.close_request.clone() else {
-        return Ok(None);
-    };
-    for id in app.workspace.released_by(&request.targets) {
-        if !app.workspace.is_dirty(id) {
-            continue;
-        }
-        let Some((id, path, contents)) = app.workspace.save_snapshot(id) else {
-            continue;
-        };
-        crate::infrastructure::document_filesystem::write_encoded(
-            &path,
-            &contents,
-            app.workspace.documents[&id].format(),
-        )
-        .map_err(|error| format!("Could not save {}: {error}", path.display()))?;
-        app.workspace.mark_saved(id);
-    }
-    if request.continuation == CloseContinuation::CloseTabs {
-        for (pane, id) in request.targets {
-            app.workspace.close_item(pane, id);
-        }
-    }
-    app.editor.close_request = None;
-    Ok(Some(request.continuation))
+pub(crate) fn discard_close_request_after_saves(
+    state: &AppContext,
+    done: impl FnOnce(&AppContext, CloseContinuation) + Send + 'static,
+) -> bool {
+    crate::app::saving::close(state, false, done)
 }
 
 #[cfg(test)]
@@ -574,9 +525,20 @@ mod tests {
             continuation: CloseContinuation::ExitApplication,
         });
 
-        let result = save_close_request_in(&mut app).unwrap();
+        let saving = super::super::test_support::SavingUi::new(app);
+        let completed = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let result = completed.clone();
+        assert!(save_close_request(&saving.state, move |_, next| *result
+            .lock()
+            .unwrap() =
+            Some(next)));
+        saving.wait();
+        let app = saving.state.get();
 
-        assert_eq!(result, Some(CloseContinuation::ExitApplication));
+        assert_eq!(
+            *completed.lock().unwrap(),
+            Some(CloseContinuation::ExitApplication)
+        );
         assert!(app.workspace.view_meta(first).is_some());
         assert!(app.workspace.view_meta(second).is_some());
         assert!(!app.workspace.is_view_dirty(first));
@@ -630,9 +592,21 @@ mod tests {
             continuation: CloseContinuation::CloseTabs,
         });
 
-        let error = save_close_request_in(&mut app).unwrap_err();
+        let saving = super::super::test_support::SavingUi::new(app);
+        assert!(save_close_request(&saving.state, |_, _| panic!(
+            "failed save must not close"
+        )));
+        saving.wait();
+        let app = saving.state.get();
 
-        assert!(error.contains("Could not save"));
+        assert!(
+            app.chrome
+                .toast
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("Could not save")
+        );
         assert!(app.workspace.view_meta(first).is_some());
         assert!(app.workspace.view_meta(second).is_some());
         assert!(!app.workspace.is_view_dirty(first));

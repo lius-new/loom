@@ -85,6 +85,40 @@ pub(crate) fn live(initial: crate::app::state::AppState) -> crate::app::context:
     let state = output.lock().unwrap().take().unwrap();
     state
 }
+/// A mounted application runtime with deterministic delivery of background save results.
+pub(crate) struct SavingUi {
+    pub state: crate::app::context::AppContext,
+    pub runtime: Arc<crate::app::runtime::AppRuntime>,
+    pub tasks: UiTasks,
+}
+impl SavingUi {
+    pub fn new(app: crate::app::state::AppState) -> Self {
+        let tasks = UiTasks::default();
+        let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
+        runtime.set_application(tasks.application());
+        let state = live(app).with_runtime(&runtime);
+        Self {
+            state,
+            runtime,
+            tasks,
+        }
+    }
+    pub fn wait(&self) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            self.tasks.run_all();
+            if self.state.get().editor.saving.pending == 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "save did not complete"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

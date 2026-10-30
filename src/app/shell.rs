@@ -232,6 +232,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let close_terminals = terminal_tabs.clone();
     cx.use_event_once::<window_geometry::AppCloseRequested>(move |_| {
         let app = close_state.get();
+        if app.editor.saving.closing {
+            return;
+        }
+        let pending_saves = app.editor.saving.pending > 0;
         terminal_effects::save(
             &close_terminals,
             app.default_terminal_open(),
@@ -243,7 +247,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             .into_iter()
             .flat_map(|id| workspace.tabs_of(id))
             .collect::<Vec<_>>();
-        if dirty_targets.is_empty() {
+        if dirty_targets.is_empty() && !pending_saves {
             if crate::app::workspace_commands::save_editor_session(&close_state) {
                 window_manager.close("loom");
             }
@@ -262,6 +266,15 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 app.git.ui.menu = None;
                 app.editor.menu = None;
             });
+            if pending_saves && close_state.get().workspace.dirty_file_ids().is_empty() {
+                let windows = window_manager.clone();
+                crate::app::workspace_commands::save_close_request(
+                    &close_state,
+                    move |state, next| {
+                        super::close_dialog::finish(state, next, &windows, None);
+                    },
+                );
+            }
         }
     });
     cx.use_effect((), || {
@@ -1738,6 +1751,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             state.clone(),
             close_dialog_id,
             editor_focus.clone(),
+            application_context.windows(),
         ));
     }
     root = root.child(toast::render(

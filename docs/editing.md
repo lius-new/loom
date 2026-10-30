@@ -18,6 +18,11 @@
   taking more than 300 ms show a loading indicator. Close that tab to cancel;
   choosing another file or existing tab supersedes the pending open.
 
+Saving writes a snapshot on a background worker, including encoding and disk
+flushes. The unsaved marker clears only after a successful write; edits made
+while saving remain unsaved. Repeated saves run in order. Save-and-close and
+Vim `:wq` wait for completion, and a failed save keeps the file open.
+
 ## Sessions
 
 - Restarting restores every file tab left open, including single-click previews

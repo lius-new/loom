@@ -22,6 +22,12 @@ pub fn render(
         return panel(viewport, VisualStyle::default());
     };
 
+    let busy = state.busy();
+    let buttons = if busy {
+        EventPolicy::NONE
+    } else {
+        EventPolicy::INTERACTIVE
+    };
     let center_x = viewport.left + viewport.width() / 2.0;
     let top = viewport.top + (viewport.height() - CARD_H) * 0.36;
     let card = UiRect::new(
@@ -81,7 +87,11 @@ pub fn render(
             card.right - 22.0,
             card.top + 96.0,
         ),
-        "Your changes will be lost if you don't save them.",
+        if busy {
+            "Pending saves must finish before closing."
+        } else {
+            "Your changes will be lost if you don't save them."
+        },
         theme::sans(theme::c().text_dim, theme::SMALL),
     ));
 
@@ -109,7 +119,7 @@ pub fn render(
     let discard_focus = editor_focus.clone();
     root = root.child(
         theme::bordered(discard_rect, theme::c().sidebar, theme::c().error, 4.0, 1.0)
-            .event_policy(EventPolicy::INTERACTIVE)
+            .event_policy(buttons)
             .cursor(CursorIcon::Pointer)
             .on_click(move |cx: &mut UiEventContext| {
                 let outcome = discard_state.run(CloseCommand::Discard);
@@ -126,7 +136,7 @@ pub fn render(
     let cancel_focus = editor_focus.clone();
     root = root.child(
         theme::bordered(cancel_rect, theme::c().sidebar, theme::c().border, 4.0, 1.0)
-            .event_policy(EventPolicy::INTERACTIVE)
+            .event_policy(buttons)
             .cursor(CursorIcon::Pointer)
             .on_click(move |cx: &mut UiEventContext| {
                 let outcome = cancel_state.run(CloseCommand::Cancel);
@@ -145,7 +155,7 @@ pub fn render(
             save_rect,
             VisualStyle::filled(theme::c().accent).radius(4.0),
         )
-        .event_policy(EventPolicy::INTERACTIVE)
+        .event_policy(buttons)
         .cursor(CursorIcon::Pointer)
         .on_click(move |cx: &mut UiEventContext| {
             let outcome = save_state.run(CloseCommand::Save);
@@ -153,7 +163,7 @@ pub fn render(
         })
         .child(text(
             save_rect,
-            "Save",
+            if busy { "Saving…" } else { "Save" },
             centered(theme::sans_semibold(theme::c().on_accent, theme::UI_SIZE)),
         )),
     )

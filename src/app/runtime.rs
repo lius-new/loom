@@ -9,6 +9,7 @@ use lgui::ApplicationHandle;
 #[derive(Default)]
 pub(crate) struct AppRuntime {
     services: Mutex<Services>,
+    saver: Mutex<Option<crate::infrastructure::file_saver::Worker>>,
     git_poll: PollControl,
     terminals: Arc<crate::infrastructure::terminal::runtime::TerminalRuntime>,
     terminal_mounts: Arc<crate::app::terminal_effects::Mounts>,
@@ -26,6 +27,17 @@ struct Services {
 }
 
 impl AppRuntime {
+    pub(crate) fn save(&self, task: crate::infrastructure::file_saver::Task) -> Result<(), String> {
+        let mut saver = self.saver.lock().unwrap();
+        if saver.is_none() {
+            *saver = Some(
+                crate::infrastructure::file_saver::Worker::new()
+                    .map_err(|e| format!("Could not start file saver: {e}"))?,
+            );
+        }
+        saver.as_ref().unwrap().submit(task)
+    }
+
     pub(crate) fn images(&self) -> Option<Arc<super::image_service::ImageService>> {
         self.services.lock().unwrap().images.clone()
     }

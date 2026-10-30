@@ -21,6 +21,7 @@ pub mod settings_filesystem;
 pub mod keymap_filesystem;
 
 pub mod file_loader;
+pub(crate) mod file_saver;
 
 pub mod file_watcher;
 pub(crate) mod lsp_watch;

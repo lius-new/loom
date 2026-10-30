@@ -244,7 +244,8 @@ fn encoding_status_picker_marks_dirty_and_ctrl_s_flow_writes_selected_bytes() {
     files::write_encoded(&path, fixture(), gbk()).unwrap();
     let mut app = AppState::new();
     let id = open(&mut app.workspace, &path);
-    let state = super::test_support::live(app);
+    let saving = super::test_support::SavingUi::new(app);
+    let state = saving.state.clone();
     let binding = super::chrome::status_binding(&state);
     assert_eq!(binding.frame().file.unwrap().encoding, "GBK");
     binding.run(crate::ui::chrome::StatusCommand::Encoding);
@@ -258,6 +259,7 @@ fn encoding_status_picker_marks_dirty_and_ctrl_s_flow_writes_selected_bytes() {
             .starts_with(&[0xef, 0xbb, 0xbf])
     );
     assert!(super::workspace_commands::save_document(&state, id));
+    saving.wait();
     assert!(!state.get().workspace.is_dirty(id));
     assert!(
         std::fs::read(&path)
@@ -271,7 +273,18 @@ fn encoding_status_picker_marks_dirty_and_ctrl_s_flow_writes_selected_bytes() {
         loom_editor_core::normal::insert(&mut e, "😀");
     });
     let before = std::fs::read(&path).unwrap();
-    assert!(!super::workspace_commands::save_document(&state, id));
+    assert!(super::workspace_commands::save_document(&state, id));
+    saving.wait();
+    assert!(
+        state
+            .get()
+            .chrome
+            .toast
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("cannot represent")
+    );
     assert_eq!(std::fs::read(&path).unwrap(), before);
     assert!(state.get().workspace.is_dirty(id));
 }

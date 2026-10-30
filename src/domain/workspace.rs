@@ -38,6 +38,10 @@ pub(crate) struct OpenDocument {
     /// Membership index only. Per-view state lives in Workspace::views.
     pub(crate) view_ids: BTreeSet<ViewId>,
     pub(crate) disk_state: DiskState,
+    /// Last watcher observation, separate from the saved disk baseline. Dirty
+    /// conflicts deliberately leave disk_state unchanged.
+    pub(crate) disk_observation: u64,
+    pub(crate) observed_disk: Option<DiskState>,
     pub(crate) disk_conflict: bool,
     pub(crate) missing_on_disk: bool,
     /// A restored tab has metadata before its text is ready. Never expose its
@@ -66,6 +70,8 @@ impl OpenDocument {
             dirty_cache: Arc::new(Mutex::new((u64::MAX, 0, 0, false))),
             view_ids: BTreeSet::new(),
             disk_state,
+            disk_observation: 0,
+            observed_disk: None,
             disk_conflict: false,
             missing_on_disk: false,
             loading: None,
@@ -188,6 +194,7 @@ pub struct PreparedDiskUpdate {
     pub(crate) id: FileId,
     pub(crate) path: PathBuf,
     pub(crate) expected_disk: DiskState,
+    pub(crate) expected_observation: u64,
     pub(crate) expected_saved: Arc<String>,
     pub(crate) expected_version: u64,
     pub(crate) replacement: OpenDocument,
@@ -318,6 +325,8 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             } => (contents, state, bytes),
             DiskRead::Missing => {
                 if let Some(document) = self.documents.get_mut(&id) {
+                    document.disk_observation += 1;
+                    document.observed_disk = None;
                     document.missing_on_disk = true;
                     document.disk_conflict = dirty;
                 }
@@ -325,6 +334,10 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             }
             DiskRead::Failed(error) => return ReconcileResult::Failed(path, error),
         };
+        if let Some(document) = self.documents.get_mut(&id) {
+            document.disk_observation += 1;
+            document.observed_disk = Some(current.clone());
+        }
         if previous.content_hash == current.content_hash && previous.size == current.size {
             if let Some(document) = self.documents.get_mut(&id) {
                 document.disk_state = current;
@@ -1503,6 +1516,55 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         Ok(true)
     }
 
+    pub fn shared_save_snapshot(
+        &self,
+        id: FileId,
+    ) -> Option<crate::domain::document::SaveSnapshot> {
+        let document = self.documents.get(&id).filter(|d| d.is_text())?;
+        Some(crate::domain::document::SaveSnapshot {
+            stamp: document.stamp(id),
+            path: document.meta.path.clone(),
+            text: document.buffer.text_snapshot(),
+            disk_observation: document.disk_observation,
+            format: document.format(),
+        })
+    }
+
+    /// A completed write advances only the saved baseline, never newer edits.
+    pub fn mark_snapshot_saved(
+        &mut self,
+        saved: &crate::domain::document::SaveSnapshot,
+        disk: DiskState,
+    ) -> bool {
+        let Some(document) = self.documents.get_mut(&saved.stamp.document).filter(|d| {
+            d.is_text() && d.incarnation == saved.stamp.incarnation && d.meta.path == saved.path
+        }) else {
+            return false;
+        };
+        // A watcher may have observed another writer after this save started.
+        // A known conflict must not be cleared by a delayed completion or an
+        // older save; an echo of these exact bytes is safe to acknowledge.
+        let newer_conflict = document.disk_conflict
+            && document.disk_observation != saved.disk_observation
+            && (document.missing_on_disk
+                || document.observed_disk.as_ref().is_none_or(|observed| {
+                    observed.content_hash != disk.content_hash || observed.size != disk.size
+                }));
+        document.saved_text = saved.text.clone();
+        document.saved_format = saved.format;
+        if !newer_conflict {
+            document.disk_state = disk;
+            document.disk_bytes = None;
+            document.disk_conflict = false;
+            document.missing_on_disk = false;
+        }
+        document.encoding_bytes = None;
+        if document.buffer.version() == saved.stamp.version {
+            document.buffer.break_undo_group();
+        }
+        true
+    }
+
     pub fn save_snapshot(&self, id: FileId) -> Option<(FileId, PathBuf, String)> {
         let document = self.documents.get(&id)?;
         if !document.is_text() {
@@ -1862,11 +1924,14 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             };
             if document.meta.path != update.path
                 || document.disk_state != update.expected_disk
+                || document.disk_observation != update.expected_observation
                 || !Arc::ptr_eq(&document.saved_text, &update.expected_saved)
             {
                 retired.push(update);
                 continue;
             }
+            document.disk_observation += 1;
+            document.observed_disk = update.replacement.observed_disk.clone();
             if matches!(update.outcome, ReconcileResult::Reloaded(_))
                 && document.buffer.version() != update.expected_version
             {

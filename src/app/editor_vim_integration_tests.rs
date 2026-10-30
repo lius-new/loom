@@ -20,6 +20,7 @@ use crate::ui::theme;
 use loom_editor_core::vim::Mode;
 
 struct Ui {
+    tasks: crate::app::test_support::UiTasks,
     session: UiSession,
     view: AppView,
     app: ApplicationContext,
@@ -56,6 +57,9 @@ impl Ui {
         let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
         let app = ApplicationContext::empty(Default::default());
         let view_app = app.clone();
+        let tasks = crate::app::test_support::UiTasks::default();
+        let runtime = Arc::new(crate::app::runtime::AppRuntime::default());
+        runtime.set_application(tasks.application());
         let contents = contents.to_owned();
         let view: AppView = Arc::new(move |cx| {
             let state = AppContext::detached(cx.state({
@@ -73,7 +77,8 @@ impl Ui {
                 setup(&mut app);
                 crate::app::editing::configure_all(&mut app);
                 app
-            }));
+            }))
+            .with_runtime(&runtime);
             let git_store = cx.state(GitStoreSnapshot::default());
             let terminals = crate::app::terminal_binding::test_store(
                 cx,
@@ -124,6 +129,7 @@ impl Ui {
         session.render_view(&view, viewport, UiScale::ONE);
         let state = exposed.lock().unwrap().clone().unwrap();
         let mut ui = Self {
+            tasks,
             session,
             view,
             app,
@@ -576,6 +582,12 @@ fn vim_editor_tab_smart_enter_line_endings_and_write_share_preferences() {
     ui.keys("<<");
     assert_eq!(ui.text(), "{\r\n\tx\r\n}");
     ui.keys(":w<CR>");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while ui.state.get().editor.saving.pending > 0 {
+        ui.tasks.run_all();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     assert_eq!(std::fs::read(&path).unwrap(), ui.text().as_bytes());
     ui.keys("i");
     ui.state.update(|app| {
@@ -752,4 +764,76 @@ fn vim_editor_display_motions_folding_and_reading_aids_use_the_shared_map() {
             .options()
             .indent_guides
     );
+}
+
+#[test]
+fn vim_write_and_quit_waits_for_disk_and_keeps_the_tab_on_failure() {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    for case in 0..3 {
+        let fail = case == 1;
+        let root = std::env::temp_dir().join(format!(
+            "loom-vim-wq-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = if fail {
+            root.join("missing/file.txt")
+        } else {
+            root.join("file.txt")
+        };
+        let target = path.clone();
+        let mut ui = Ui::configured("", move |app| {
+            app.workspace.open_path(target.clone(), "before".into());
+        });
+        let id = ui.state.get().workspace.active_document().unwrap();
+        let (release, receive) = std::sync::mpsc::channel::<()>();
+        ui.state
+            .services()
+            .unwrap()
+            .save(Box::new(move || {
+                let _ = receive.recv();
+            }))
+            .unwrap();
+        ui.keys("A!<Esc>:wq<CR>");
+        assert_eq!(ui.state.get().editor.saving.pending, 1);
+        assert!(ui.state.get().workspace.documents.contains_key(&id));
+        let switched = if case == 2 {
+            ui.state.update(|app| {
+                app.workspace
+                    .split(
+                        app.workspace.active_pane(),
+                        crate::domain::pane_layout::Direction::Right,
+                    )
+                    .unwrap();
+            });
+            ui.state.get().workspace.active()
+        } else {
+            None
+        };
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while ui.state.get().editor.saving.pending > 0 {
+            ui.tasks.run_all();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(
+            ui.state.get().workspace.documents.contains_key(&id),
+            fail || switched.is_some()
+        );
+        if let Some(view) = switched {
+            assert_eq!(
+                ui.state.get().workspace.active(),
+                Some(view),
+                "late :wq must not close a different view of the same document"
+            );
+        }
+        if fail {
+            assert!(ui.state.get().workspace.is_dirty(id));
+        } else {
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "before!");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

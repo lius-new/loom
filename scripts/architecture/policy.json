@@ -194,6 +194,10 @@
     "editing": {
       "owner": "app/editing and app/folding: editing policy, status choices, and view-local display/folding state",
       "migrated_in": "editor preferences"
+    },
+    "saving": {
+      "owner": "app/saving: pending background writes and close barrier; worker owned by AppRuntime",
+      "migrated_in": "background file saves"
     }
   },
   "workspace_core_ownership": {

@@ -347,7 +347,15 @@ mod tests {
             1
         );
 
-        crate::app::workspace_commands::save_active_document(&state);
+        let tasks = crate::app::test_support::UiTasks::default();
+        runtime.set_application(tasks.application());
+        assert!(crate::app::workspace_commands::save_active_document(&state));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while state.get().editor.saving.pending > 0 {
+            tasks.run_all();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
         wait(&log, "textDocument/didSave", 1);
 
         drop(state);

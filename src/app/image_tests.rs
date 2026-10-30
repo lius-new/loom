@@ -150,8 +150,10 @@ fn svg_defaults_to_preview_and_toggles_in_place_without_writing_until_save() {
     assert_eq!(app.workspace.active(), Some(preview));
     assert_eq!(app.workspace.active_items().len(), 1);
     image_preview::run(&mut app, preview, Command::Zoom(Some(2.0)));
-    let state = super::test_support::live(app);
+    let saving = super::test_support::SavingUi::new(app);
+    let state = saving.state.clone();
     assert!(super::workspace_commands::save_active_document(&state));
+    saving.wait();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), unsaved);
     assert!(!state.get().workspace.is_view_dirty(preview));
     let layout = super::workspace_session::saved_app_editor_layout(&state.get()).unwrap();

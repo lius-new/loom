@@ -220,18 +220,24 @@ pub struct CloseOutcome {
 }
 #[derive(Clone)]
 pub struct CloseBinding {
+    busy: Arc<dyn Fn() -> bool + Send + Sync>,
     read: Arc<dyn Fn() -> Option<String> + Send + Sync>,
     run: Arc<dyn Fn(CloseCommand) -> CloseOutcome + Send + Sync>,
 }
 impl CloseBinding {
     pub fn new(
         read: impl Fn() -> Option<String> + Send + Sync + 'static,
+        busy: impl Fn() -> bool + Send + Sync + 'static,
         run: impl Fn(CloseCommand) -> CloseOutcome + Send + Sync + 'static,
     ) -> Self {
         Self {
             read: Arc::new(read),
+            busy: Arc::new(busy),
             run: Arc::new(run),
         }
+    }
+    pub fn busy(&self) -> bool {
+        (self.busy)()
     }
     pub fn message(&self) -> Option<String> {
         (self.read)()
