@@ -36,8 +36,18 @@ pub(super) fn apply(text: &mut String, edits: Vec<Edit>) -> ChangeSet {
         });
         return ChangeSet::new(changes);
     }
-    let grown: usize = edits.iter().map(|edit| edit.text.len()).sum();
-    let mut out = String::with_capacity(text.len() + grown);
+    let (out, changes) = rebuild(text, edits);
+    *text = out;
+    changes
+}
+
+/// Build a batch directly from a shared source without first cloning it.
+fn rebuild(text: &str, edits: Vec<Edit>) -> (String, ChangeSet) {
+    let inserted: usize = edits.iter().map(|edit| edit.text.len()).sum();
+    let removed: usize = edits.iter().map(|edit| edit.range.len()).sum();
+    let capacity = (text.len() - removed + inserted).saturating_add(4096);
+    let mut out = String::with_capacity(capacity);
+    let mut changes = Vec::with_capacity(edits.len());
     let mut copied = 0;
     for edit in edits {
         out.push_str(&text[copied..edit.range.start]);
@@ -52,8 +62,7 @@ pub(super) fn apply(text: &mut String, edits: Vec<Edit>) -> ChangeSet {
         copied = edit.range.end;
     }
     out.push_str(&text[copied..]);
-    *text = out;
-    ChangeSet::new(changes)
+    (out, ChangeSet::new(changes))
 }
 
 /// The text of one document with its line index and undo history.
@@ -230,7 +239,16 @@ impl TextBuffer {
             })
             .collect();
         self.bracket_index = Arc::default();
-        let changes = apply(Arc::make_mut(&mut self.text), edits);
+        let changes = if Arc::strong_count(&self.text) > 1 {
+            // Copy directly into the final layout with insertion headroom.
+            // Cloning String first would allocate again when it grows, and a
+            // batch would then build another full output from that clone.
+            let (text, changes) = rebuild(&self.text, edits);
+            self.text = Arc::new(text);
+            changes
+        } else {
+            apply(Arc::make_mut(&mut self.text), edits)
+        };
         Arc::make_mut(&mut self.pairs).retain_mut(|pair| {
             if let Some(mapped) = pair.transform(&changes) {
                 *pair = mapped;
@@ -981,5 +999,28 @@ mod tests {
         assert!(Arc::ptr_eq(&buffer.text, &snapshot.text));
         buffer.apply_edits(vec![Edit::insert(0, ">")]).unwrap();
         assert_eq!((buffer.text(), snapshot.text()), (">shared", "shared"));
+    }
+
+    #[test]
+    fn shared_single_and_batch_edits_preserve_source_and_revision_provenance() {
+        for edits in [
+            vec![Edit::insert(0, "中")],
+            vec![Edit::replace(0..3, "begin"), Edit::replace(8..13, "尾\n")],
+            vec![Edit::delete(0..3), Edit::delete(8..13)],
+        ] {
+            let mut buffer = TextBuffer::new("one two three");
+            let saved = buffer.text_snapshot();
+            let identity = buffer.snapshot_identity();
+            let mut expected = saved.as_str().to_owned();
+            let changes = apply(&mut expected, edits.clone());
+            let applied = buffer.apply_edits(edits).unwrap();
+            assert_eq!(buffer.text(), expected);
+            assert_eq!(saved.as_str(), "one two three");
+            assert_eq!(applied, changes);
+            let revisions = buffer.revisions_since(0, identity).unwrap();
+            assert_eq!(revisions.len(), 1);
+            assert_eq!(revisions[0].after_snapshot, buffer.snapshot_identity());
+            assert_eq!(buffer.line_count(), TextBuffer::new(expected).line_count());
+        }
     }
 }
