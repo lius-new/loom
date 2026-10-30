@@ -34,7 +34,7 @@ pub(crate) struct OpenDocument {
     pub(crate) disk_bytes: Option<Arc<Vec<u8>>>,
     pub(crate) encoding_bytes: Option<Arc<Vec<u8>>>,
     pub(crate) recovery: Option<crate::domain::workspace_session::SavedEncoding>,
-    pub(crate) dirty_cache: Arc<Mutex<(u64, usize, usize, bool)>>,
+    dirty_cache: Arc<Mutex<super::dirty::DirtyCache>>,
     /// Membership index only. Per-view state lives in Workspace::views.
     pub(crate) view_ids: BTreeSet<ViewId>,
     pub(crate) disk_state: DiskState,
@@ -58,6 +58,10 @@ impl OpenDocument {
         let mut buffer = TextBuffer::new(contents);
         buffer.initialize_metadata(saved_format.code());
         let saved_text = buffer.text_snapshot();
+        let dirty_cache = Arc::new(Mutex::new(super::dirty::DirtyCache::clean(
+            &buffer,
+            &saved_text,
+        )));
         Self {
             incarnation: 0,
             meta,
@@ -67,7 +71,7 @@ impl OpenDocument {
             disk_bytes: None,
             encoding_bytes: None,
             recovery: None,
-            dirty_cache: Arc::new(Mutex::new((u64::MAX, 0, 0, false))),
+            dirty_cache,
             view_ids: BTreeSet::new(),
             disk_state,
             disk_observation: 0,
@@ -100,20 +104,16 @@ impl OpenDocument {
         crate::domain::encoding::TextFormat::from_code(self.buffer.metadata())
     }
     pub(crate) fn is_dirty(&self) -> bool {
-        if self.is_text() && self.format() != self.saved_format {
+        if !self.is_text() {
+            return false;
+        }
+        if self.format() != self.saved_format {
             return true;
         }
-        let version = self.buffer.version();
-        let saved = Arc::as_ptr(&self.saved_text) as usize;
-        let text = self.buffer.snapshot_identity();
-        let mut cache = self.dirty_cache.lock().unwrap();
-        let (previous, identity, snapshot, dirty) = *cache;
-        if version == previous && saved == identity && snapshot == text {
-            return dirty;
-        }
-        let dirty = self.is_text() && !self.buffer.matches_snapshot(&self.saved_text);
-        *cache = (version, saved, text, dirty);
-        dirty
+        self.dirty_cache
+            .lock()
+            .unwrap()
+            .is_dirty(&self.buffer, &self.saved_text)
     }
 }
 
@@ -1561,6 +1561,10 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
         document.encoding_bytes = None;
         if document.buffer.version() == saved.stamp.version {
             document.buffer.break_undo_group();
+            if document.buffer.snapshot_identity() == saved.stamp.snapshot_identity {
+                *document.dirty_cache.lock().unwrap() =
+                    super::dirty::DirtyCache::clean(&document.buffer, &document.saved_text);
+            }
         }
         true
     }

@@ -1,6 +1,7 @@
 //! Framework-free types. Existing model transactions migrate in later phases.
 pub(crate) mod notification;
 
+mod dirty;
 pub mod document;
 pub(crate) mod document_snapshot;
 pub mod encoding;
