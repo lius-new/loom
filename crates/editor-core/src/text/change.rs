@@ -113,12 +113,14 @@ pub enum Assoc {
 /// The replacements one edit call applied, sorted and non-overlapping.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChangeSet {
-    changes: Vec<Change>,
+    changes: std::sync::Arc<[Change]>,
 }
 
 impl ChangeSet {
     pub(super) fn new(changes: Vec<Change>) -> Self {
-        Self { changes }
+        Self {
+            changes: changes.into(),
+        }
     }
 
     pub fn changes(&self) -> &[Change] {
@@ -135,7 +137,7 @@ impl ChangeSet {
     /// before the inserted text or moves past it, depending on `assoc`.
     pub fn map(&self, offset: usize, assoc: Assoc) -> usize {
         let mut delta = 0isize;
-        for change in &self.changes {
+        for change in self.changes.iter() {
             let shifted = (offset as isize + delta) as usize;
             if offset < change.old.start {
                 return shifted;
@@ -178,6 +180,16 @@ impl ChangeSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloned_changes_share_immutable_payloads_and_replay_independently() {
+        let original = ChangeSet::new(vec![change(0..3, 0, "old", "new")]);
+        let snapshot = original.clone();
+        assert!(std::sync::Arc::ptr_eq(&original.changes, &snapshot.changes));
+        drop(original);
+        assert_eq!(snapshot.inverse(), [Edit::replace(0..3, "old")]);
+        assert_eq!(snapshot.forward(), [Edit::replace(0..3, "new")]);
+    }
 
     fn change(old: Range<usize>, new_start: usize, removed: &str, inserted: &str) -> Change {
         Change {

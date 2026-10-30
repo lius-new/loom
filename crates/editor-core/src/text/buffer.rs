@@ -1023,4 +1023,33 @@ mod tests {
             assert_eq!(buffer.line_count(), TextBuffer::new(expected).line_count());
         }
     }
+
+    #[test]
+    fn history_forks_preserve_independent_undo_and_redo() {
+        let mut original = TextBuffer::new("base");
+        let mut selection = Selection::caret(0);
+        super::super::editor::EditorMut::new(&mut original, &mut selection, vec![])
+            .replace(0..4, "first", super::super::history::EditKind::Other)
+            .unwrap();
+        let mut fork = original.clone();
+        let mut fork_selection = selection;
+        let mut editor =
+            super::super::editor::EditorMut::new(&mut fork, &mut fork_selection, vec![]);
+        editor
+            .replace(0..5, "branch", super::super::history::EditKind::Other)
+            .unwrap();
+        editor.undo();
+        assert_eq!(editor.text(), "first");
+        editor.undo();
+        assert_eq!(editor.text(), "base");
+        editor.redo();
+        assert_eq!(editor.text(), "first");
+        assert_eq!(original.text(), "first");
+        let mut editor =
+            super::super::editor::EditorMut::new(&mut original, &mut selection, vec![]);
+        editor.undo();
+        assert_eq!(editor.text(), "base");
+        editor.redo();
+        assert_eq!(editor.text(), "first");
+    }
 }
