@@ -90,6 +90,11 @@ impl Default for TreeIndex {
 }
 
 impl TreeIndex {
+    pub(crate) fn forget(&mut self, id: FileId) {
+        self.docs.remove(&id);
+        self.stats.trees = self.docs.len();
+    }
+
     pub(crate) fn new(resources: Arc<dyn super::Resources>) -> Self {
         let resource_generation = resources.generation();
         Self {

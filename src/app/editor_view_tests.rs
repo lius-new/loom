@@ -189,6 +189,20 @@ fn real_layout_keeps_scrolled_carets_hits_ime_and_selection_in_agreement() {
         "中e\u{301}👩‍💻\tabc123 ".repeat(180),
     ] {
         let mut app = document(&source);
+        let document = app.workspace.active_document().unwrap();
+        if source.starts_with("const ") {
+            app.workspace
+                .documents
+                .get_mut(&document)
+                .unwrap()
+                .meta
+                .lang = crate::domain::language::builtin("javascript");
+        }
+        let asynchronous = app.workspace.documents[&document]
+            .meta
+            .lang
+            .grammar
+            .is_some();
         app.editor.focused = true;
         let rect = UiRect::new(0.0, 0.0, 800.0, 400.0);
         let left = fonts::editor().gutter_w() + theme::CODE_PAD;
@@ -248,13 +262,18 @@ fn real_layout_keeps_scrolled_carets_hits_ime_and_selection_in_agreement() {
             })
             .unwrap()
             .layout_rect;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while tasks.pending_ids().is_empty() {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::yield_now();
+        if asynchronous {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while tasks.pending_ids().is_empty() {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            tasks.run_all();
+            assert!(state.get().editor.syntax_revision > 0);
+        } else {
+            assert!(tasks.pending_ids().is_empty());
+            assert_eq!(state.get().editor.syntax_revision, 0);
         }
-        tasks.run_all();
-        assert!(state.get().editor.syntax_revision > 0);
         session.render_view(&view, rect, UiScale::ONE);
         assert_eq!(
             session

@@ -13,6 +13,7 @@ mod presentation_tests;
 mod queries;
 mod treesitter;
 mod window;
+pub(crate) use self::treesitter::MAX_DOCUMENT_BYTES;
 pub(crate) use self::treesitter::{TreeIndex, TreeStats};
 pub(crate) use self::window::{Freshness, Source, Window, WindowTokens};
 use crate::features::highlighting::HighlightId;

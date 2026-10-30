@@ -90,13 +90,12 @@ pub fn observe(ctx: &AppContext, app: &mut AppState, typed: Option<char>) {
         .active_editor()
         .is_some_and(|e| !e.secondary().is_empty())
     {
-        app.editor.language.completion = None;
-        app.editor.language.completion_timer = None;
+        close(app);
         return;
     }
     let pane = app.workspace.active_pane();
     let Some(t) = target(app, pane) else {
-        app.editor.language.completion = None;
+        close(app);
         return;
     };
     if typed.is_some() {
@@ -232,7 +231,13 @@ fn schedule_words(ctx: &AppContext, app: &mut AppState) {
     let token = Arc::new(());
     app.editor.language.words_request = Some(token.clone());
     let state = ctx.clone();
-    let text = t.text.clone();
+    // Retain only a bounded window while debouncing and scanning. Keeping an
+    // Arc of the entire source here would force a full copy on the next key.
+    let window = word_window(&t.text, t.cursor);
+    let truncated_start = window.start > 0;
+    let truncated_end = window.end < t.text.len();
+    let local_cursor = t.cursor - window.start;
+    let text = t.text[window].to_owned();
     let cursor = t.cursor;
     // Keep only metadata in the UI callback: do not retain the source after scanning.
     let stamp = t.stamp;
@@ -241,7 +246,15 @@ fn schedule_words(ctx: &AppContext, app: &mut AppState) {
     app.editor.language.completion_timer = Some(Arc::new(ui_timer::background_after(
         application,
         DEBOUNCE,
-        move |cancelled| collect_words(&text, cursor, cancelled),
+        move |cancelled| {
+            collect_window(
+                &text,
+                local_cursor,
+                truncated_start,
+                truncated_end,
+                cancelled,
+            )
+        },
         move |seen| {
             state.try_update(|app| {
                 if !app
@@ -288,12 +301,7 @@ fn local_start(text: &str, cursor: usize) -> Option<usize> {
     Some(start)
 }
 
-fn collect_words(
-    text: &str,
-    cursor: usize,
-    cancelled: &dyn Fn() -> bool,
-) -> Option<std::collections::BTreeSet<String>> {
-    let skip = local_start(text, cursor)?..cursor;
+fn word_window(text: &str, cursor: usize) -> std::ops::Range<usize> {
     let mut from = cursor.saturating_sub(WORD_BYTES / 2);
     let mut to = (from + WORD_BYTES).min(text.len());
     from = from.min(to.saturating_sub(WORD_BYTES));
@@ -303,16 +311,43 @@ fn collect_words(
     while !text.is_char_boundary(to) {
         to -= 1;
     }
-    let slice = &text[from..to];
+    from..to
+}
+
+#[cfg(test)]
+fn collect_words(
+    text: &str,
+    cursor: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<std::collections::BTreeSet<String>> {
+    local_start(text, cursor)?;
+    let window = word_window(text, cursor);
+    collect_window(
+        &text[window.clone()],
+        cursor - window.start,
+        window.start > 0,
+        window.end < text.len(),
+        cancelled,
+    )
+}
+
+fn collect_window(
+    text: &str,
+    cursor: usize,
+    truncated_start: bool,
+    truncated_end: bool,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<std::collections::BTreeSet<String>> {
+    let skip = local_start(text, cursor)?..cursor;
     let mut seen = std::collections::BTreeSet::new();
-    for (at, word) in words_of(slice) {
+    for (at, word) in words_of(text) {
         if cancelled() {
             return None;
         }
         // Never offer fragments cut off by the scan window, or the current word.
-        if (at == 0 && from > 0)
-            || (at + word.len() == slice.len() && to < text.len())
-            || (from + at <= skip.end && from + at + word.len() >= skip.start)
+        if (at == 0 && truncated_start)
+            || (at + word.len() == text.len() && truncated_end)
+            || (at <= skip.end && at + word.len() >= skip.start)
         {
             continue;
         }
@@ -1039,7 +1074,19 @@ mod tests {
             let runtime = Arc::new(AppRuntime::default());
             runtime.set_application(queue.application());
             let state = live(app).with_runtime(&runtime);
+            let snapshot = state
+                .get()
+                .workspace
+                .active_editor()
+                .unwrap()
+                .text_snapshot();
+            let owners = Arc::strong_count(&snapshot);
             state.update(|app| schedule_words(&state, app));
+            assert_eq!(
+                Arc::strong_count(&snapshot),
+                owners,
+                "debouncing retains only the bounded window"
+            );
             let limit = Instant::now() + Duration::from_secs(5);
             while queue.pending_ids().is_empty() {
                 assert!(Instant::now() < limit);

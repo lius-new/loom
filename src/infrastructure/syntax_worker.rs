@@ -138,6 +138,7 @@ struct State {
     hits: usize,
     evictions: usize,
     prune: Option<Vec<FileId>>,
+    forget: Vec<FileId>,
     tree_stats: TreeStats,
     /// The last fully coloured spans of each document, for drawing while a
     /// newer version is parsed.
@@ -242,12 +243,22 @@ impl Worker {
                         let mut state = background.state.lock().unwrap();
                         while state.pending.is_empty()
                             && state.prune.is_none()
+                            && state.forget.is_empty()
                             && !background.stopped.load(Ordering::Acquire)
                         {
                             state = background.wake.wait(state).unwrap();
                         }
                         if background.stopped.load(Ordering::Acquire) {
                             break;
+                        }
+                        if !state.forget.is_empty() {
+                            let forgotten = std::mem::take(&mut state.forget);
+                            drop(state);
+                            for id in forgotten {
+                                trees.forget(id);
+                            }
+                            background.state.lock().unwrap().tree_stats = trees.stats;
+                            continue;
                         }
                         if let Some(open) = state.prune.take() {
                             drop(state);
@@ -382,6 +393,54 @@ impl Worker {
             "the stamp and the source must describe the same text"
         );
         let document = stamp.document;
+        if lang.grammar.is_none() || source.text.len() > crate::features::syntax::MAX_DOCUMENT_BYTES
+        {
+            // Plain rendering needs no source, epoch, or asynchronous viewport
+            // request. In particular it must not force a copy on the next edit.
+            let previous = state.targets.remove(&pane);
+            if let Some(previous) = previous
+                && previous.document != document
+                && !state
+                    .targets
+                    .values()
+                    .any(|r| r.document == previous.document)
+                && let Some(epoch) = state.epochs.get(&previous.document)
+            {
+                epoch.cancel.store(true, Ordering::Release);
+            }
+            state.targets.retain(|_, r| r.document != document);
+            let old_epoch = state.epochs.remove(&document);
+            if let Some(epoch) = &old_epoch {
+                epoch.cancel.store(true, Ordering::Release);
+            }
+            state.pending.retain(|id| *id != document);
+            state.ready.retain(|key, _| key.document != document);
+            state.structural.remove(&document);
+            state.retained.forget(document);
+            state.bytes = state.ready.values().map(|entry| entry.bytes).sum();
+            // The worker owns parsed trees outside the mutex. Dispose of any
+            // older tree there, including a parse cancelled by this query.
+            if old_epoch.is_some() && !state.forget.contains(&document) {
+                state.forget.push(document);
+                shared.wake.notify_one();
+            }
+            return windows
+                .into_iter()
+                .filter(|window| window.range.end <= source.text.len())
+                .map(|window| {
+                    let range = window.range;
+                    let spans = if range.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![TokenSpan {
+                            range: range.clone(),
+                            class: None,
+                        }]
+                    };
+                    WindowTokens::fresh(range, spans)
+                })
+                .collect();
+        }
         let request = Request {
             stamp,
             document,
@@ -616,3 +675,119 @@ impl Worker {
 
 #[path = "syntax_worker_retained.rs"]
 mod retained;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::language;
+    use loom_editor_core::text::TextBuffer;
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn plain_queries_release_sources_and_return_complete_windows_immediately() {
+        let notifications = Arc::new(AtomicUsize::new(0));
+        let count = notifications.clone();
+        let worker = Worker::new(move |_| {
+            count.fetch_add(1, Ordering::SeqCst);
+        });
+        for (text, lang) in [
+            (
+                "small plain text".into(),
+                language::from_path(std::path::Path::new("file.txt")),
+            ),
+            (
+                "x".repeat(crate::features::syntax::MAX_DOCUMENT_BYTES + 1),
+                language::builtin("javascript"),
+            ),
+        ] {
+            let buffer = TextBuffer::new(text);
+            let snapshot = buffer.text_snapshot();
+            let document = FileId::new(1);
+            let stamp = DocumentStamp::new(document, 1, 0, &buffer);
+            let result = worker.query(
+                PaneId::new(1),
+                stamp,
+                Source::new(&buffer),
+                lang,
+                vec![Window {
+                    line: 0..buffer.len(),
+                    range: 1..8,
+                }],
+            );
+            assert_eq!(Arc::strong_count(&snapshot), 2);
+            assert!(result[0].complete);
+            assert_eq!(
+                result[0].spans[0],
+                TokenSpan {
+                    range: 1..8,
+                    class: None
+                }
+            );
+            let state = worker.0.0.state.lock().unwrap();
+            assert!(state.targets.is_empty());
+            assert!(state.epochs.is_empty());
+        }
+        assert_eq!(notifications.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn switching_to_plain_cancels_and_releases_an_in_flight_source() {
+        use std::{
+            sync::mpsc,
+            time::{Duration, Instant},
+        };
+        let (entered, receiving) = mpsc::channel();
+        let (release, gate) = mpsc::channel();
+        let worker = Worker::start(
+            |_| {},
+            move || {
+                entered.send(()).unwrap();
+                gate.recv().unwrap();
+            },
+        );
+        let buffer = TextBuffer::new("const value=123;");
+        let snapshot = buffer.text_snapshot();
+        let document = FileId::new(1);
+        let stamp = DocumentStamp::new(document, 1, 0, &buffer);
+        let windows = vec![Window {
+            line: 0..buffer.len(),
+            range: 0..buffer.len(),
+        }];
+        worker.query(
+            PaneId::new(1),
+            stamp,
+            Source::new(&buffer),
+            language::builtin("javascript"),
+            windows.clone(),
+        );
+        receiving.recv_timeout(Duration::from_secs(5)).unwrap();
+        let result = worker.query(
+            PaneId::new(1),
+            stamp,
+            Source::new(&buffer),
+            language::from_path(std::path::Path::new("file.txt")),
+            windows,
+        );
+        assert!(result[0].complete);
+        assert!(
+            worker
+                .0
+                .0
+                .state
+                .lock()
+                .unwrap()
+                .running
+                .as_ref()
+                .unwrap()
+                .2
+                .load(Ordering::Acquire)
+        );
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&snapshot) != 2 {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(worker.0.0.state.lock().unwrap().targets.is_empty());
+    }
+}

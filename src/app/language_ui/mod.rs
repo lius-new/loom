@@ -213,6 +213,7 @@ pub(crate) fn observe(ctx: &AppContext, app: &mut AppState) {
     let owner = target(app, app.workspace.active_pane()).map(|t| (t.view, t.input_generation));
     let language = &mut app.editor.language;
     if language.interaction_view.is_some() && language.interaction_view != owner {
+        completion::close_words(language);
         language.hover = Default::default();
         language.link = Default::default();
         language.highlights = Default::default();

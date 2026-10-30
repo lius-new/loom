@@ -134,6 +134,13 @@ once it has analysed the current text. Nothing changes if the server is missing
 or still starting: the syntax colours stay. See [settings](settings.md) to choose
 another program or turn a server off.
 
+Without a completion provider, document word suggestions use identifiers near
+the caret. After a 30 ms typing pause, a background scan reads at most 256 KiB
+and keeps up to 5,000 distinct identifiers of 3 or more characters and at most
+128 UTF-8 bytes. The list is reused while typing the same word; identifiers
+farther away or beyond these limits may not appear. Editing, moving to another
+view, or closing the list invalidates pending results.
+
 Click the server name in the status bar to open the language server panel: it
 shows each running server, what it is busy with (for example indexing a large
 project, during which errors may not appear yet), its recent messages, and a
