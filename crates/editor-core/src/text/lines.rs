@@ -361,17 +361,26 @@ impl LineIndex {
             } else {
                 (0, 0, start)
             };
-            let mut positions = if long && i == 0 {
-                old.positions[first][..prefix_index].to_vec()
-            } else {
-                Vec::new()
-            };
             let last_line = i + 1 == starts.len();
             let until = if last_line {
                 suffix.map_or(end, |(offset, _)| offset)
             } else {
                 end
             };
+            let prefix_count = if i == 0 { prefix_index } else { 0 };
+            let suffix_count = if last_line && suffix.is_some() {
+                old.positions[last].len() - suffix_index
+            } else {
+                0
+            };
+            let mut positions = Vec::with_capacity(if long {
+                prefix_count + suffix_count + (until - from) / 256 + 2
+            } else {
+                0
+            });
+            if long && i == 0 {
+                positions.extend_from_slice(&old.positions[first][..prefix_index]);
+            }
             for (at, grapheme) in text[from..until].grapheme_indices(true) {
                 let byte = from + at - start;
                 if long && positions.last().is_none_or(|p| byte - p.byte >= 256) {
