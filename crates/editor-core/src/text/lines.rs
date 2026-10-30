@@ -4,6 +4,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::change::{Change, ChangeSet};
+use super::line_tree::{Line, LineTree};
+use std::sync::Arc;
 
 /// Display columns a tab advances to the next multiple of.
 pub const TAB_WIDTH: usize = 4;
@@ -51,12 +53,7 @@ pub(super) struct Position {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct LineIndex {
-    starts: Vec<usize>,
-    endings: Vec<bool>,
-    crlf_count: usize,
-    widths: Vec<u32>,
-    positions: Vec<Vec<Position>>,
-    max_width: usize,
+    tree: LineTree,
     tab_width: usize,
 }
 
@@ -67,12 +64,7 @@ impl LineIndex {
     pub fn with_tab_width(text: &str, tab_width: usize) -> Self {
         let mut index = Self {
             tab_width,
-            starts: Vec::new(),
-            endings: Vec::new(),
-            crlf_count: 0,
-            widths: Vec::new(),
-            positions: Vec::new(),
-            max_width: 0,
+            tree: LineTree::default(),
         };
         index.scan(text, 0, text.len(), true);
         index
@@ -88,13 +80,11 @@ impl LineIndex {
             }
         }
         let next_after_region = (!to_end).then_some(to);
+        let mut lines = Vec::with_capacity(starts.len());
         for (i, &start) in starts.iter().enumerate() {
             let next = starts.get(i + 1).copied().or(next_after_region);
             let end = content_end(text, start, next);
             let crlf = next.is_some_and(|n| n >= 2 && text.as_bytes()[n - 2] == b'\r');
-            self.endings.push(crlf);
-            self.crlf_count += usize::from(crlf);
-            self.starts.push(start);
             let line = &text[start..end];
             let mut positions: Vec<Position> = Vec::new();
             let mut columns = 0;
@@ -121,34 +111,38 @@ impl LineIndex {
                     columns,
                 });
             }
-            self.max_width = self.max_width.max(columns);
-            self.widths.push(columns as u32);
-            self.positions.push(positions);
+            lines.push(Line {
+                bytes: next.unwrap_or(text.len()) - start,
+                width: columns as u32,
+                crlf,
+                positions: (!positions.is_empty()).then(|| Arc::new(positions)),
+            });
         }
+        self.tree.extend(lines);
     }
 
     pub fn mixed_endings(&self) -> bool {
-        self.crlf_count > 0 && self.crlf_count < self.starts.len().saturating_sub(1)
+        self.tree.crlf_count() > 0 && self.tree.crlf_count() < self.len().saturating_sub(1)
     }
     pub fn len(&self) -> usize {
-        self.starts.len()
+        self.tree.len()
     }
 
     pub fn start(&self, line: usize) -> usize {
-        self.starts[line]
+        self.tree.start(line)
     }
 
     /// The start of the following line, if there is one.
     pub fn next_start(&self, line: usize) -> Option<usize> {
-        self.starts.get(line + 1).copied()
+        (line + 1 < self.len()).then(|| self.start(line + 1))
     }
 
     pub fn width(&self, line: usize) -> usize {
-        self.widths[line] as usize
+        self.tree.get(line).width as usize
     }
 
     pub fn max_width(&self) -> usize {
-        self.max_width
+        self.tree.max_width()
     }
 
     pub fn position_by(
@@ -157,7 +151,7 @@ impl LineIndex {
         key: usize,
         value: impl Fn(&Position) -> usize,
     ) -> Position {
-        let positions = &self.positions[line];
+        let positions = self.tree.get(line).positions();
         let index = positions.partition_point(|p| value(p) <= key);
         index
             .checked_sub(1)
@@ -171,11 +165,11 @@ impl LineIndex {
 
     /// The line containing `offset`; a line break belongs to the line it ends.
     pub fn line_of(&self, offset: usize) -> usize {
-        self.starts.partition_point(|&start| start <= offset) - 1
+        self.tree.line_of(offset)
     }
 
     pub fn content_end(&self, text: &str, line: usize) -> usize {
-        content_end(text, self.starts[line], self.next_start(line))
+        content_end(text, self.start(line), self.next_start(line))
     }
 
     /// Rebuild only overlapping groups of touched lines in the edited text.
@@ -207,57 +201,32 @@ impl LineIndex {
                 groups.push((first, last, i, i + 1));
             }
         }
-        let mut old = std::mem::replace(
-            self,
-            Self {
-                tab_width: self.tab_width,
-                starts: Vec::new(),
-                endings: Vec::new(),
-                crlf_count: 0,
-                widths: Vec::new(),
-                positions: Vec::new(),
-                max_width: 0,
-            },
-        );
-        self.starts.reserve(old.len());
-        self.endings.reserve(old.len());
-        self.widths.reserve(old.len());
-        self.positions.reserve(old.len());
-        let mut line = 0;
+        let mut rebuilt = Vec::with_capacity(groups.len());
         let mut delta = 0isize;
         for (first, last, from, to) in groups {
-            self.keep_lines(&mut old, line..first, delta);
-            let start = (old.starts[first] as isize + delta) as usize;
+            let start = (self.start(first) as isize + delta) as usize;
             delta += edits[from..to]
                 .iter()
                 .map(|c| c.inserted.len() as isize - c.removed.len() as isize)
                 .sum::<isize>();
-            let following = old.next_start(last);
+            let following = self.next_start(last);
             let end = following.map_or(text.len(), |n| (n as isize + delta) as usize);
-            self.scan_changed(
+            let mut region = Self {
+                tree: LineTree::default(),
+                tab_width: self.tab_width,
+            };
+            region.scan_changed(
                 text,
-                &old,
+                self,
                 first..last + 1,
                 &edits[from..to],
                 start..end,
                 following.is_none(),
             );
-            line = last + 1;
+            rebuilt.push((first..last + 1, region.tree));
         }
-        let end = old.len();
-        self.keep_lines(&mut old, line..end, delta);
-    }
-
-    fn keep_lines(&mut self, old: &mut Self, lines: std::ops::Range<usize>, delta: isize) {
-        for line in lines {
-            self.starts
-                .push((old.starts[line] as isize + delta) as usize);
-            self.endings.push(old.endings[line]);
-            self.crlf_count += usize::from(old.endings[line]);
-            self.widths.push(old.widths[line]);
-            self.max_width = self.max_width.max(old.widths[line] as usize);
-            self.positions
-                .push(std::mem::take(&mut old.positions[line]));
+        for (range, region) in rebuilt.into_iter().rev() {
+            self.tree.replace(range, region);
         }
     }
 
@@ -269,35 +238,17 @@ impl LineIndex {
         let end = following.map_or(text.len(), |n| (n as isize + delta) as usize);
         let mut rebuilt = Self {
             tab_width: self.tab_width,
-            starts: Vec::new(),
-            endings: Vec::new(),
-            crlf_count: 0,
-            widths: Vec::new(),
-            positions: Vec::new(),
-            max_width: 0,
+            tree: LineTree::default(),
         };
         rebuilt.scan_changed(
             text,
             self,
             first..last + 1,
             std::slice::from_ref(change),
-            self.starts[first]..end,
+            self.start(first)..end,
             following.is_none(),
         );
-        let tail = last + 1;
-        for start in &mut self.starts[tail..] {
-            *start = (*start as isize + delta) as usize;
-        }
-        self.crlf_count -= self.endings[first..tail]
-            .iter()
-            .filter(|&&crlf| crlf)
-            .count();
-        self.crlf_count += rebuilt.crlf_count;
-        self.starts.splice(first..tail, rebuilt.starts);
-        self.endings.splice(first..tail, rebuilt.endings);
-        self.widths.splice(first..tail, rebuilt.widths);
-        self.positions.splice(first..tail, rebuilt.positions);
-        self.max_width = self.widths.iter().copied().max().unwrap_or(0) as usize;
+        self.tree.replace(first..last + 1, rebuilt.tree);
     }
 
     /// Reuse the unchanged sparse prefix and suffix even when a line splits or
@@ -313,14 +264,16 @@ impl LineIndex {
     ) {
         let first = lines.start;
         let last = lines.end - 1;
-        if old.positions[first].is_empty() && old.positions[last].is_empty() {
+        let first_positions = old.tree.get(first).positions();
+        let last_positions = old.tree.get(last).positions();
+        if first_positions.is_empty() && last_positions.is_empty() {
             self.scan(text, region.start, region.end, to_end);
             return;
         }
-        let prefix_index = old.positions[first]
-            .partition_point(|p| p.byte < changes[0].old.start - old.starts[first])
+        let prefix_index = first_positions
+            .partition_point(|p| p.byte < changes[0].old.start - old.start(first))
             .saturating_sub(1);
-        let prefix = old.positions[first]
+        let prefix = first_positions
             .get(prefix_index)
             .cloned()
             .unwrap_or(Position {
@@ -330,10 +283,10 @@ impl LineIndex {
             });
         let tail = changes.last().unwrap();
         let suffix_index =
-            old.positions[last].partition_point(|p| p.byte <= tail.old.end - old.starts[last]);
-        let suffix = old.positions[last].get(suffix_index).and_then(|p| {
+            last_positions.partition_point(|p| p.byte <= tail.old.end - old.start(last));
+        let suffix = last_positions.get(suffix_index).and_then(|p| {
             let offset =
-                tail.new_start + tail.inserted.len() + (old.starts[last] + p.byte - tail.old.end);
+                tail.new_start + tail.inserted.len() + (old.start(last) + p.byte - tail.old.end);
             (offset <= region.end
                 && text.is_char_boundary(offset)
                 && unicode_segmentation::GraphemeCursor::new(offset, text.len(), true)
@@ -349,6 +302,7 @@ impl LineIndex {
                 starts.push(scan_from + i + 1);
             }
         }
+        let mut rebuilt = Vec::with_capacity(starts.len());
         for (i, &start) in starts.iter().enumerate() {
             let next = starts
                 .get(i + 1)
@@ -369,7 +323,7 @@ impl LineIndex {
             };
             let prefix_count = if i == 0 { prefix_index } else { 0 };
             let suffix_count = if last_line && suffix.is_some() {
-                old.positions[last].len() - suffix_index
+                last_positions.len() - suffix_index
             } else {
                 0
             };
@@ -379,7 +333,7 @@ impl LineIndex {
                 0
             });
             if long && i == 0 {
-                positions.extend_from_slice(&old.positions[first][..prefix_index]);
+                positions.extend_from_slice(&first_positions[..prefix_index]);
             }
             for (at, grapheme) in text[from..until].grapheme_indices(true) {
                 let byte = from + at - start;
@@ -404,7 +358,7 @@ impl LineIndex {
                     .flatten()
                     .map(|at| {
                         let old_byte = after.byte + at;
-                        let p = &old.positions[last][old.positions[last]
+                        let p = &last_positions[last_positions
                             .partition_point(|p| p.byte <= old_byte)
                             .saturating_sub(1)];
                         let from = (start as isize + p.byte as isize + byte_delta) as usize;
@@ -418,7 +372,7 @@ impl LineIndex {
                         let old_after_tab = column + self.tab_width - column % self.tab_width;
                         (old_byte, after_tab as isize - old_after_tab as isize)
                     });
-                for p in &old.positions[last][suffix_index..] {
+                for p in &last_positions[suffix_index..] {
                     let shift = tab
                         .filter(|(at, _)| p.byte > *at)
                         .map_or(column_delta, |(_, d)| d);
@@ -430,7 +384,7 @@ impl LineIndex {
                         });
                     }
                 }
-                let terminal = old.positions[last].last().unwrap();
+                let terminal = last_positions.last().unwrap();
                 columns =
                     (terminal.columns as isize + tab.map_or(column_delta, |(_, d)| d)) as usize;
             } else if long {
@@ -441,13 +395,14 @@ impl LineIndex {
                 });
             }
             let crlf = next.is_some_and(|n| n >= 2 && text.as_bytes()[n - 2] == b'\r');
-            self.starts.push(start);
-            self.endings.push(crlf);
-            self.crlf_count += usize::from(crlf);
-            self.widths.push(columns as u32);
-            self.max_width = self.max_width.max(columns);
-            self.positions.push(positions);
+            rebuilt.push(Line {
+                bytes: next.unwrap_or(text.len()) - start,
+                width: columns as u32,
+                crlf,
+                positions: (!positions.is_empty()).then(|| Arc::new(positions)),
+            });
         }
+        self.tree.extend(rebuilt);
     }
 
     /// Re-index the edit's surrounding graphemes, shifting sparse tail entries.
@@ -463,16 +418,16 @@ impl LineIndex {
         if self.line_of(change.old.end) != line {
             return false;
         }
-        let start = self.starts[line];
+        let start = self.start(line);
         let delta = change.inserted.len() as isize - change.removed.len() as isize;
         let next = self
             .next_start(line)
             .map(|offset| (offset as isize + delta) as usize);
         let end = content_end(text, start, next);
-        if end - start <= 256 || self.positions[line].len() < 3 {
+        if end - start <= 256 || self.tree.get(line).positions().len() < 3 {
             return false;
         }
-        let positions = &mut self.positions[line];
+        let positions = self.tree.get(line).positions();
         let from = positions
             .partition_point(|p| p.byte < change.old.start - start)
             .saturating_sub(1);
@@ -512,22 +467,19 @@ impl LineIndex {
             return false;
         }
         let char_delta = chars as isize - after.chars as isize;
-        for position in &mut positions[to..] {
-            position.byte = (position.byte as isize + delta) as usize;
-            position.chars = (position.chars as isize + char_delta) as usize;
-            position.columns = (position.columns as isize + column_delta) as usize;
-        }
-        positions.splice(from + 1..to, rebuilt);
-        self.widths[line] = (self.widths[line] as isize + column_delta) as u32;
-        for offset in &mut self.starts[line + 1..] {
-            *offset = (*offset as isize + delta) as usize;
-        }
-        let crlf = self
-            .next_start(line)
-            .is_some_and(|n| n >= 2 && text.as_bytes()[n - 2] == b'\r');
-        self.crlf_count = self.crlf_count + usize::from(crlf) - usize::from(self.endings[line]);
-        self.endings[line] = crlf;
-        self.max_width = self.widths.iter().copied().max().unwrap_or(0) as usize;
+        let crlf = next.is_some_and(|n| n >= 2 && text.as_bytes()[n - 2] == b'\r');
+        self.tree.update_line(line, |info| {
+            let positions = Arc::make_mut(info.positions.as_mut().unwrap());
+            for position in &mut positions[to..] {
+                position.byte = (position.byte as isize + delta) as usize;
+                position.chars = (position.chars as isize + char_delta) as usize;
+                position.columns = (position.columns as isize + column_delta) as usize;
+            }
+            positions.splice(from + 1..to, rebuilt);
+            info.bytes = (info.bytes as isize + delta) as usize;
+            info.width = (info.width as isize + column_delta) as u32;
+            info.crlf = crlf;
+        });
         true
     }
 }
@@ -542,8 +494,14 @@ mod tests {
     fn lines_split_on_lf_and_crlf_and_measure_tabs_and_wide_characters() {
         let text = "a\tb\r\n中文\n\nend\n";
         let index = LineIndex::new(text);
-        assert_eq!(index.starts, [0, 5, 12, 13, 17]);
-        assert_eq!(index.widths, [5, 4, 0, 3, 0]);
+        assert_eq!(
+            (0..index.len()).map(|n| index.start(n)).collect::<Vec<_>>(),
+            [0, 5, 12, 13, 17]
+        );
+        assert_eq!(
+            (0..index.len()).map(|n| index.width(n)).collect::<Vec<_>>(),
+            [5, 4, 0, 3, 0]
+        );
         assert_eq!(index.content_end(text, 0), 3);
         assert_eq!(index.line_of(4), 0, "the LF belongs to the line it ends");
         assert_eq!(index.line_of(5), 1);
@@ -610,15 +568,18 @@ mod tests {
 
     fn assert_sparse_index(text: &str, index: &LineIndex) {
         let fresh = LineIndex::with_tab_width(text, index.tab_width);
-        assert_eq!(index.starts, fresh.starts);
-        assert_eq!(index.endings, fresh.endings);
-        assert_eq!(index.widths, fresh.widths);
-        assert_eq!(index.crlf_count, fresh.crlf_count);
-        assert_eq!(index.max_width, fresh.max_width);
+        assert_eq!(index.len(), fresh.len());
+        for n in 0..index.len() {
+            assert_eq!(index.start(n), fresh.start(n));
+            assert_eq!(index.width(n), fresh.width(n));
+            assert_eq!(index.tree.get(n).crlf, fresh.tree.get(n).crlf);
+        }
+        assert_eq!(index.tree.crlf_count(), fresh.tree.crlf_count());
+        assert_eq!(index.max_width(), fresh.max_width());
         for line in 0..index.len() {
             let start = index.start(line);
             let end = index.content_end(text, line);
-            let mut checkpoints = index.positions[line].iter().peekable();
+            let mut checkpoints = index.tree.get(line).positions().iter().peekable();
             let (mut chars, mut columns) = (0, 0);
             for (byte, g) in text[start..end]
                 .grapheme_indices(true)

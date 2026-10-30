@@ -17,6 +17,7 @@ pub use self::display::{DisplayMap, DisplayRow};
 mod change;
 mod editor;
 mod history;
+mod line_tree;
 mod lines;
 mod options;
 mod pairs;
