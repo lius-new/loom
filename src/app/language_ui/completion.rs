@@ -435,6 +435,7 @@ pub fn words_of(text: &str) -> impl Iterator<Item = (usize, &str)> {
 
 /// Asks the servers now. `manual` is the person pressing the key.
 pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Option<char>) {
+    close_words(&mut app.editor.language);
     if manual {
         if crate::app::editor_vim::is_active(app) && !app.editor.vim.is_inserting() {
             crate::app::editor_vim::start_multi(app);
@@ -489,6 +490,7 @@ pub fn request(ctx: &AppContext, app: &mut AppState, manual: bool, trigger: Opti
             session.resolving = None;
             session.handle = Some(handle);
             session.requested = t.text.clone();
+            session.local_identity = None;
             session.data.cursor = t.cursor;
         }
         return;
@@ -1065,7 +1067,7 @@ mod tests {
             test_support::{UiTasks, live},
         };
         use std::time::Instant;
-        for change in [false, true] {
+        for change in 0..3 {
             let mut app = AppState::new();
             app.workspace
                 .open_path("words.txt".into(), "alphabet alphanumeric\nal".into());
@@ -1092,13 +1094,18 @@ mod tests {
                 assert!(Instant::now() < limit);
                 std::thread::yield_now();
             }
-            if change {
+            if change == 1 {
                 state.update(|app| {
                     app.workspace
                         .active_editor_mut()
                         .unwrap()
                         .replace_selection("x", EditKind::Typing)
                         .unwrap();
+                });
+            } else if change == 2 {
+                state.update(|app| {
+                    app.preferences.values_mut().lsp.completion.words_fallback = false;
+                    request(&state, app, true, None);
                 });
             } else {
                 state.update(close);
