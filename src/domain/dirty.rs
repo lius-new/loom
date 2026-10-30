@@ -14,7 +14,7 @@ struct Span {
     current: Range<usize>,
 }
 
-pub(super) struct DirtyCache {
+pub(crate) struct DirtyCache {
     version: u64,
     source: Weak<String>,
     saved: Weak<String>,
@@ -143,8 +143,10 @@ fn difference(a: &[u8], b: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::domain::dirty::DirtyCache;
+    use loom_editor_core::text::TextBuffer;
     use loom_editor_core::text::{EditKind, EditorMut, Selection};
+    use std::{ops::Range, sync::Arc};
     fn edit(buffer: &mut TextBuffer, range: Range<usize>, text: &str) {
         let mut selection = Selection::caret(0);
         EditorMut::new(buffer, &mut selection, vec![])

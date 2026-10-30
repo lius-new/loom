@@ -8,6 +8,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::domain::dirty::DirtyCache;
 use crate::domain::document::{
     DiskRead, DiskState, DocumentStamp, FileId, FileMeta, ResolvedLanguage,
 };
@@ -34,7 +35,7 @@ pub(crate) struct OpenDocument {
     pub(crate) disk_bytes: Option<Arc<Vec<u8>>>,
     pub(crate) encoding_bytes: Option<Arc<Vec<u8>>>,
     pub(crate) recovery: Option<crate::domain::workspace_session::SavedEncoding>,
-    dirty_cache: Arc<Mutex<super::dirty::DirtyCache>>,
+    dirty_cache: Arc<Mutex<DirtyCache>>,
     /// Membership index only. Per-view state lives in Workspace::views.
     pub(crate) view_ids: BTreeSet<ViewId>,
     pub(crate) disk_state: DiskState,
@@ -58,10 +59,7 @@ impl OpenDocument {
         let mut buffer = TextBuffer::new(contents);
         buffer.initialize_metadata(saved_format.code());
         let saved_text = buffer.text_snapshot();
-        let dirty_cache = Arc::new(Mutex::new(super::dirty::DirtyCache::clean(
-            &buffer,
-            &saved_text,
-        )));
+        let dirty_cache = Arc::new(Mutex::new(DirtyCache::clean(&buffer, &saved_text)));
         Self {
             incarnation: 0,
             meta,
@@ -1563,7 +1561,7 @@ impl<D: Clone, K: Clone + Ord> Workspace<D, K> {
             document.buffer.break_undo_group();
             if document.buffer.snapshot_identity() == saved.stamp.snapshot_identity {
                 *document.dirty_cache.lock().unwrap() =
-                    super::dirty::DirtyCache::clean(&document.buffer, &document.saved_text);
+                    DirtyCache::clean(&document.buffer, &document.saved_text);
             }
         }
         true
