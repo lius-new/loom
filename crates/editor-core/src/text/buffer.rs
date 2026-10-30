@@ -36,6 +36,37 @@ pub(super) fn apply(text: &mut String, edits: Vec<Edit>) -> ChangeSet {
         });
         return ChangeSet::new(changes);
     }
+    let mut tail_delta = 0isize;
+    let mut moved = 0usize;
+    let mut peak_len = text.len();
+    for edit in edits.iter().rev() {
+        let delta = edit.text.len() as isize - edit.range.len() as isize;
+        if delta != 0 {
+            moved = moved
+                .saturating_add((text.len() - edit.range.end).saturating_add_signed(tail_delta));
+        }
+        tail_delta += delta;
+        peak_len = peak_len.max(text.len().saturating_add_signed(tail_delta));
+    }
+    if peak_len <= text.capacity() && moved <= text.len().saturating_add(4096) {
+        let mut delta = 0isize;
+        for edit in edits {
+            let new_start = (edit.range.start as isize + delta) as usize;
+            delta += edit.text.len() as isize - edit.range.len() as isize;
+            changes.push(Change {
+                removed: text[edit.range.clone()].to_owned(),
+                old: edit.range,
+                new_start,
+                inserted: edit.text,
+            });
+        }
+        // Descending old offsets remain valid. The estimate above bounds total
+        // suffix movement; equal-length edits move no untouched bytes at all.
+        for change in changes.iter().rev() {
+            text.replace_range(change.old.clone(), &change.inserted);
+        }
+        return ChangeSet::new(changes);
+    }
     let (out, changes) = rebuild(text, edits);
     *text = out;
     changes
@@ -1051,5 +1082,52 @@ mod tests {
         assert_eq!(editor.text(), "base");
         editor.redo();
         assert_eq!(editor.text(), "first");
+    }
+
+    #[test]
+    fn bounded_batch_edits_keep_storage_and_replay_with_exact_provenance() {
+        let mut text = String::from("ab中文\r\ncdtail");
+        text.reserve(64);
+        let mut buffer = TextBuffer::new(text);
+        let mut selection = Selection::caret(0);
+        let storage = buffer.text().as_ptr();
+        let mut editor = super::super::editor::EditorMut::new(&mut buffer, &mut selection, vec![]);
+        let changes = editor
+            .edit(
+                super::super::history::EditKind::Other,
+                vec![
+                    Edit::replace(0..2, "AB"),
+                    Edit::replace(2..8, "世界"),
+                    Edit::replace(10..12, "CD"),
+                ],
+                |_, _| Selection::caret(0),
+            )
+            .unwrap();
+        assert_eq!(editor.text(), "AB世界\r\nCDtail");
+        assert_eq!(editor.text().as_ptr(), storage);
+        assert_eq!(
+            changes
+                .changes()
+                .iter()
+                .map(|c| c.new_start)
+                .collect::<Vec<_>>(),
+            [0, 2, 10]
+        );
+        editor.undo();
+        assert_eq!(editor.text(), "ab中文\r\ncdtail");
+        editor.redo();
+        assert_eq!(editor.text(), "AB世界\r\nCDtail");
+        let changes = editor
+            .edit(
+                super::super::history::EditKind::Other,
+                vec![Edit::insert(0, "前"), Edit::insert(16, "后")],
+                |_, _| Selection::caret(0),
+            )
+            .unwrap();
+        assert_eq!(editor.text(), "前AB世界\r\nCDtail后");
+        assert_eq!(editor.text().as_ptr(), storage);
+        assert_eq!(changes.changes()[1].new_start, 19);
+        editor.undo();
+        assert_eq!(editor.text(), "AB世界\r\nCDtail");
     }
 }
