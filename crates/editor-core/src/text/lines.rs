@@ -3,7 +3,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use super::change::ChangeSet;
+use super::change::{Change, ChangeSet};
 
 /// Display columns a tab advances to the next multiple of.
 pub const TAB_WIDTH: usize = 4;
@@ -184,6 +184,10 @@ impl LineIndex {
             return;
         }
         let edits = changes.changes();
+        if let [change] = edits {
+            self.update_single(text, change);
+            return;
+        }
         if edits.is_empty() {
             return;
         }
@@ -230,7 +234,14 @@ impl LineIndex {
                 .sum::<isize>();
             let following = old.next_start(last);
             let end = following.map_or(text.len(), |n| (n as isize + delta) as usize);
-            self.scan(text, start, end, following.is_none());
+            self.scan_changed(
+                text,
+                &old,
+                first..last + 1,
+                &edits[from..to],
+                start..end,
+                following.is_none(),
+            );
             line = last + 1;
         }
         let end = old.len();
@@ -247,6 +258,186 @@ impl LineIndex {
             self.max_width = self.max_width.max(old.widths[line] as usize);
             self.positions
                 .push(std::mem::take(&mut old.positions[line]));
+        }
+    }
+
+    fn update_single(&mut self, text: &str, change: &Change) {
+        let first = self.line_of(change.old.start);
+        let last = self.line_of(change.old.end);
+        let delta = change.inserted.len() as isize - change.removed.len() as isize;
+        let following = self.next_start(last);
+        let end = following.map_or(text.len(), |n| (n as isize + delta) as usize);
+        let mut rebuilt = Self {
+            tab_width: self.tab_width,
+            starts: Vec::new(),
+            endings: Vec::new(),
+            crlf_count: 0,
+            widths: Vec::new(),
+            positions: Vec::new(),
+            max_width: 0,
+        };
+        rebuilt.scan_changed(
+            text,
+            self,
+            first..last + 1,
+            std::slice::from_ref(change),
+            self.starts[first]..end,
+            following.is_none(),
+        );
+        let tail = last + 1;
+        for start in &mut self.starts[tail..] {
+            *start = (*start as isize + delta) as usize;
+        }
+        self.crlf_count -= self.endings[first..tail]
+            .iter()
+            .filter(|&&crlf| crlf)
+            .count();
+        self.crlf_count += rebuilt.crlf_count;
+        self.starts.splice(first..tail, rebuilt.starts);
+        self.endings.splice(first..tail, rebuilt.endings);
+        self.widths.splice(first..tail, rebuilt.widths);
+        self.positions.splice(first..tail, rebuilt.positions);
+        self.max_width = self.widths.iter().copied().max().unwrap_or(0) as usize;
+    }
+
+    /// Reuse the unchanged sparse prefix and suffix even when a line splits or
+    /// several lines join. Only the middle needs grapheme segmentation.
+    fn scan_changed(
+        &mut self,
+        text: &str,
+        old: &Self,
+        lines: std::ops::Range<usize>,
+        changes: &[Change],
+        region: std::ops::Range<usize>,
+        to_end: bool,
+    ) {
+        let first = lines.start;
+        let last = lines.end - 1;
+        if old.positions[first].is_empty() && old.positions[last].is_empty() {
+            self.scan(text, region.start, region.end, to_end);
+            return;
+        }
+        let prefix_index = old.positions[first]
+            .partition_point(|p| p.byte < changes[0].old.start - old.starts[first])
+            .saturating_sub(1);
+        let prefix = old.positions[first]
+            .get(prefix_index)
+            .cloned()
+            .unwrap_or(Position {
+                byte: 0,
+                chars: 0,
+                columns: 0,
+            });
+        let tail = changes.last().unwrap();
+        let suffix_index =
+            old.positions[last].partition_point(|p| p.byte <= tail.old.end - old.starts[last]);
+        let suffix = old.positions[last].get(suffix_index).and_then(|p| {
+            let offset =
+                tail.new_start + tail.inserted.len() + (old.starts[last] + p.byte - tail.old.end);
+            (offset <= region.end
+                && text.is_char_boundary(offset)
+                && unicode_segmentation::GraphemeCursor::new(offset, text.len(), true)
+                    .is_boundary(text, 0)
+                    .unwrap_or(false))
+            .then_some((offset, p))
+        });
+        let scan_from = region.start + prefix.byte;
+        let scan_to = suffix.map_or(region.end, |(offset, _)| offset);
+        let mut starts = vec![region.start];
+        for (i, byte) in text.as_bytes()[scan_from..scan_to].iter().enumerate() {
+            if *byte == b'\n' && (to_end || scan_from + i + 1 < region.end) {
+                starts.push(scan_from + i + 1);
+            }
+        }
+        for (i, &start) in starts.iter().enumerate() {
+            let next = starts
+                .get(i + 1)
+                .copied()
+                .or((!to_end).then_some(region.end));
+            let end = content_end(text, start, next);
+            let long = end - start > 256;
+            let (mut chars, mut columns, from) = if i == 0 {
+                (prefix.chars, prefix.columns, scan_from)
+            } else {
+                (0, 0, start)
+            };
+            let mut positions = if long && i == 0 {
+                old.positions[first][..prefix_index].to_vec()
+            } else {
+                Vec::new()
+            };
+            let last_line = i + 1 == starts.len();
+            let until = if last_line {
+                suffix.map_or(end, |(offset, _)| offset)
+            } else {
+                end
+            };
+            for (at, grapheme) in text[from..until].grapheme_indices(true) {
+                let byte = from + at - start;
+                if long && positions.last().is_none_or(|p| byte - p.byte >= 256) {
+                    positions.push(Position {
+                        byte,
+                        chars,
+                        columns,
+                    });
+                }
+                columns += grapheme_width_with_tab_width(grapheme, columns, self.tab_width);
+                chars += grapheme.chars().count();
+            }
+            if let Some((offset, after)) = suffix.filter(|_| last_line) {
+                let byte_delta = (offset - start) as isize - after.byte as isize;
+                let char_delta = chars as isize - after.chars as isize;
+                let column_delta = columns as isize - after.columns as isize;
+                // A changed tab phase converges at the first unchanged tab.
+                // Locate it by bytes, then measure only its checkpoint fragment.
+                let tab = (column_delta % self.tab_width as isize != 0)
+                    .then(|| text[offset..end].find('\t'))
+                    .flatten()
+                    .map(|at| {
+                        let old_byte = after.byte + at;
+                        let p = &old.positions[last][old.positions[last]
+                            .partition_point(|p| p.byte <= old_byte)
+                            .saturating_sub(1)];
+                        let from = (start as isize + p.byte as isize + byte_delta) as usize;
+                        let column = text[from..offset + at]
+                            .graphemes(true)
+                            .fold(p.columns, |col, g| {
+                                col + grapheme_width_with_tab_width(g, col, self.tab_width)
+                            });
+                        let new_column = (column as isize + column_delta) as usize;
+                        let after_tab = new_column + self.tab_width - new_column % self.tab_width;
+                        let old_after_tab = column + self.tab_width - column % self.tab_width;
+                        (old_byte, after_tab as isize - old_after_tab as isize)
+                    });
+                for p in &old.positions[last][suffix_index..] {
+                    let shift = tab
+                        .filter(|(at, _)| p.byte > *at)
+                        .map_or(column_delta, |(_, d)| d);
+                    if long {
+                        positions.push(Position {
+                            byte: (p.byte as isize + byte_delta) as usize,
+                            chars: (p.chars as isize + char_delta) as usize,
+                            columns: (p.columns as isize + shift) as usize,
+                        });
+                    }
+                }
+                let terminal = old.positions[last].last().unwrap();
+                columns =
+                    (terminal.columns as isize + tab.map_or(column_delta, |(_, d)| d)) as usize;
+            } else if long {
+                positions.push(Position {
+                    byte: end - start,
+                    chars,
+                    columns,
+                });
+            }
+            let crlf = next.is_some_and(|n| n >= 2 && text.as_bytes()[n - 2] == b'\r');
+            self.starts.push(start);
+            self.endings.push(crlf);
+            self.crlf_count += usize::from(crlf);
+            self.widths.push(columns as u32);
+            self.max_width = self.max_width.max(columns);
+            self.positions.push(positions);
         }
     }
 
@@ -405,6 +596,93 @@ mod tests {
             );
             index.update(&text, &changes);
             assert_eq!(index, LineIndex::new(&text));
+        }
+    }
+
+    fn assert_sparse_index(text: &str, index: &LineIndex) {
+        let fresh = LineIndex::with_tab_width(text, index.tab_width);
+        assert_eq!(index.starts, fresh.starts);
+        assert_eq!(index.endings, fresh.endings);
+        assert_eq!(index.widths, fresh.widths);
+        assert_eq!(index.crlf_count, fresh.crlf_count);
+        assert_eq!(index.max_width, fresh.max_width);
+        for line in 0..index.len() {
+            let start = index.start(line);
+            let end = index.content_end(text, line);
+            let mut checkpoints = index.positions[line].iter().peekable();
+            let (mut chars, mut columns) = (0, 0);
+            for (byte, g) in text[start..end]
+                .grapheme_indices(true)
+                .chain(std::iter::once((end - start, "")))
+            {
+                if checkpoints.peek().is_some_and(|p| p.byte == byte) {
+                    assert_eq!(
+                        checkpoints.next().unwrap(),
+                        &Position {
+                            byte,
+                            chars,
+                            columns
+                        }
+                    );
+                }
+                chars += g.chars().count();
+                columns += grapheme_width_with_tab_width(g, columns, index.tab_width);
+            }
+            assert!(checkpoints.next().is_none(), "checkpoint split a grapheme");
+        }
+    }
+
+    #[test]
+    fn long_line_splits_joins_and_sparse_tabs_reuse_correct_checkpoints() {
+        for width in [2, 4, 8] {
+            for pattern in ["a", "中e\u{301}😀", "🇨🇳", "👩\u{200d}💻"] {
+                let mut text = format!("{}\tend\r\n{}", pattern.repeat(1500), pattern.repeat(1200));
+                let mut index = LineIndex::with_tab_width(&text, width);
+                for step in 0..4 {
+                    let (range, insert) = match step {
+                        0 => (0..0, "x"),
+                        1 => (text.len()..text.len(), "\n"),
+                        2 => (0..0, "\n"),
+                        _ => (0..1, ""),
+                    };
+                    let edits = validate(&text, vec![Edit::replace(range, insert)]).unwrap();
+                    let changes = apply(&mut text, edits);
+                    index.update(&text, &changes);
+                    assert_sparse_index(&text, &index);
+                }
+                let boundary = text.find('\n').unwrap();
+                let start =
+                    boundary.saturating_sub(usize::from(text.as_bytes()[boundary - 1] == b'\r'));
+                let edits =
+                    validate(&text, vec![Edit::replace(start..boundary + 1, "e\u{301}")]).unwrap();
+                let changes = apply(&mut text, edits);
+                index.update(&text, &changes);
+                assert_sparse_index(&text, &index);
+            }
+        }
+    }
+
+    #[test]
+    fn randomized_long_line_edits_match_full_segmentation() {
+        let mut text = format!(
+            "{}\t{}\r\n{}",
+            "中a".repeat(700),
+            "🇨🇳".repeat(300),
+            "abc".repeat(700)
+        );
+        let mut index = LineIndex::new(&text);
+        let pieces = ["", "\n", "\r\n", "\t", "e\u{301}", "🇨🇳", "👩\u{200d}💻"];
+        let mut seed = 17u64;
+        for i in 0..200 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let at = floor(&text, seed as usize % (text.len() + 1));
+            let end = floor(&text, (at + (seed >> 32) as usize % 50).min(text.len()));
+            let changes = apply(
+                &mut text,
+                vec![Edit::replace(at..end, pieces[i % pieces.len()])],
+            );
+            index.update(&text, &changes);
+            assert_sparse_index(&text, &index);
         }
     }
 
