@@ -68,6 +68,16 @@ pub(crate) fn svg_icons() -> SvgIconRegistry {
             .with_icon("copy", icondata::VsCopy)
             .with_icon("enter", r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M13 3v6H3m4-4L3 9l4 4"/></svg>"#)
             .with_icon("terminal", icondata::VsTerminal)
+            .with_icon("terminal-stop", icondata::VsDebugStop)
+            .with_icon("terminal-split", icondata::VsSplitHorizontal)
+            .with_icon("terminal-more", icondata::VsEllipsis)
+            // Four bare corners pointing out (maximize) or in (restore), with no
+            // inner frame, as in the design.
+            .with_icon("terminal-maximize", r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>"#)
+            .with_icon("terminal-restore", r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" d="M6 2.5V6H2.5M10 2.5V6h3.5M13.5 10H10v3.5M2.5 10H6v3.5"/></svg>"#)
+            .with_icon("terminal-minimize", icondata::VsChromeMinimize)
+            .with_icon("terminal-list", icondata::VsListFlat)
+            .with_icon("terminal-purpose", icondata::VsTag)
             .with_icon("plus", icondata::VsAdd)
             .with_icon("chevron-down", icondata::VsChevronDown)
             .with_icon("chevron-up", icondata::VsChevronUp)

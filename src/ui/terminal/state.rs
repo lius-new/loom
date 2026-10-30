@@ -1,6 +1,5 @@
 //! Terminal interaction and draft state; no session or process ownership.
 use crate::ui::components::input::InputState;
-use std::time::Instant;
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalTabContextMenuState {
     pub position: (f32, f32),
@@ -11,6 +10,10 @@ pub struct TerminalTabContextMenuState {
 pub enum TerminalTabMenuKind {
     Actions,
     Purpose,
+    /// The header's more-actions menu: rename, purpose and clear output.
+    More,
+    /// Every terminal in a list, for strips with more tabs than fit.
+    Sessions,
 }
 #[derive(Clone)]
 pub struct ProfileEditor {
@@ -31,8 +34,26 @@ pub struct SelectionDrag {
     pub rows: u16,
     pub cols: u16,
 }
+/// The session being renamed and the text typed so far.
+#[derive(Clone)]
+pub struct RenameEditor {
+    pub target: crate::features::terminal::SessionId,
+    pub input: InputState,
+}
+/// The find box over a terminal: the text typed and how the last search went.
+#[derive(Clone)]
+pub struct SearchBar {
+    pub target: crate::features::terminal::SessionId,
+    pub input: InputState,
+    pub status: crate::features::terminal::SearchStatus,
+}
 #[derive(Clone, Default)]
 pub struct TerminalUiState {
+    pub terminal_rename: Option<RenameEditor>,
+    pub terminal_search: Option<SearchBar>,
+    /// Stands in for a text field's state after its editor has closed, so an
+    /// event that arrives in the same frame cannot reach a missing editor.
+    detached_input: InputState,
     /// Session under the pointer, used to reveal its overlay scrollbar.
     pub hovered_terminal: Option<crate::features::terminal::SessionId>,
     /// Session and pointer offset within the dragged scrollbar thumb.
@@ -48,7 +69,54 @@ pub struct TerminalUiState {
     pub terminal_tab_context_menu: Option<TerminalTabContextMenuState>,
     pub shell_editor: Option<ProfileEditor>,
     pub terminal_split_drag: Option<u64>,
-    pub last_terminal_tab_click: Option<(Instant, u64, f32, f32, u8)>,
+    /// How far each scrolling tab strip is scrolled, keyed by its first tab.
+    tab_scrolls: std::collections::BTreeMap<crate::features::terminal::SessionId, f32>,
+}
+impl TerminalUiState {
+    pub fn tab_scroll(&self, strip: crate::features::terminal::SessionId) -> f32 {
+        self.tab_scrolls.get(&strip).copied().unwrap_or(0.0)
+    }
+    pub fn set_tab_scroll(&mut self, strip: crate::features::terminal::SessionId, value: f32) {
+        if value > 0.0 {
+            self.tab_scrolls.insert(strip, value);
+        } else {
+            self.tab_scrolls.remove(&strip);
+        }
+    }
+    /// Scrolls a strip by `delta` pixels (positive moves toward the end).
+    pub fn scroll_tabs(
+        &mut self,
+        strip: crate::features::terminal::SessionId,
+        delta: f32,
+        max: f32,
+    ) {
+        let next = (self.tab_scroll(strip) + delta).clamp(0.0, max);
+        self.set_tab_scroll(strip, next);
+    }
+    /// The rename field's text. Once the editor has closed, a throwaway one.
+    pub fn rename_input(&self) -> &InputState {
+        self.terminal_rename
+            .as_ref()
+            .map_or(&self.detached_input, |editor| &editor.input)
+    }
+    pub fn rename_input_mut(&mut self) -> &mut InputState {
+        match self.terminal_rename {
+            Some(ref mut editor) => &mut editor.input,
+            None => &mut self.detached_input,
+        }
+    }
+    /// The find box's text. Once the box has closed, a throwaway one.
+    pub fn search_input(&self) -> &InputState {
+        self.terminal_search
+            .as_ref()
+            .map_or(&self.detached_input, |bar| &bar.input)
+    }
+    pub fn search_input_mut(&mut self) -> &mut InputState {
+        match self.terminal_search {
+            Some(ref mut bar) => &mut bar.input,
+            None => &mut self.detached_input,
+        }
+    }
 }
 #[derive(Clone)]
 pub struct WorkspacePicker {
@@ -57,27 +125,36 @@ pub struct WorkspacePicker {
     pub selected: usize,
     pub scroll: usize,
 }
-impl TerminalUiState {
-    pub fn terminal_tab_click_count(&mut self, terminal: u64, x: f32, y: f32) -> u8 {
-        next_click_count(&mut self.last_terminal_tab_click, terminal, x, y)
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::terminal::SearchStatus;
+
+    #[test]
+    fn text_fields_survive_a_late_event_after_their_editor_closed() {
+        let mut ui = TerminalUiState::default();
+        // A rename or search that just ended can still receive one more event
+        // from the field in the same frame; it must not find a missing editor.
+        ui.rename_input_mut().set_text("late rename");
+        ui.search_input_mut().set_text("late search");
+        assert!(ui.terminal_rename.is_none() && ui.terminal_search.is_none());
+        assert_eq!(ui.rename_input().text(), "late search");
+
+        ui.terminal_rename = Some(RenameEditor {
+            target: 1,
+            input: InputState::new("name"),
+        });
+        ui.terminal_search = Some(SearchBar {
+            target: 1,
+            input: InputState::new("query"),
+            status: SearchStatus::default(),
+        });
+        assert_eq!(ui.rename_input().text(), "name");
+        assert_eq!(ui.search_input().text(), "query");
+        ui.rename_input_mut().set_text("renamed");
+        ui.search_input_mut().set_text("found");
+        assert_eq!(ui.terminal_rename.as_ref().unwrap().input.text(), "renamed");
+        assert_eq!(ui.terminal_search.as_ref().unwrap().input.text(), "found");
     }
-}
-fn next_click_count<K: PartialEq>(
-    previous: &mut Option<(Instant, K, f32, f32, u8)>,
-    key: K,
-    x: f32,
-    y: f32,
-) -> u8 {
-    let now = Instant::now();
-    let count = previous
-        .as_ref()
-        .filter(|(time, previous_key, previous_x, previous_y, _)| {
-            previous_key == &key
-                && now.duration_since(*time).as_millis() < 500
-                && (x - *previous_x).abs() < 5.0
-                && (y - *previous_y).abs() < 5.0
-        })
-        .map_or(1, |(_, _, _, _, count)| count % 3 + 1);
-    *previous = Some((now, key, x, y, count));
-    count
 }

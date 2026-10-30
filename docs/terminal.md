@@ -44,6 +44,45 @@ directory. If a saved directory no longer exists, Loom falls back to the first
 workspace folder, then the application's working directory. Shell profiles
 and custom prompts are loaded without modifying user configuration files.
 
+## Header tools
+
+The terminal header keeps its tools on the right, in three groups separated by
+thin rules. The first group acts on sessions: **Stop** (shown only while a
+program is running; it sends Ctrl+C), **New terminal** and the shell menu. The
+second acts on the terminal itself: **Split**, **Search** and **More**. The last
+belongs to the panel: **Maximize** or **Restore**, and a collapse icon. The panel
+is still shown and hidden with its own toggle.
+
+On the left, a **Terminal** capsule shows how many sessions there are. Each
+session is a pill tab with a status icon: a spinner while a program runs in it,
+a quiet dot otherwise.
+
+**Search** opens a find box over the top right of the terminal. Typing searches
+the scrollback and the screen, ignoring case, selects the last match and shows
+`3/12` style counts. **Enter** or the arrow buttons move to the next or previous
+match, wrapping around, and the view scrolls to it. **Escape**, the close button
+or the Search button again closes the box and drops the highlight.
+
+**Split** opens a new terminal, in the same directory, in a region of its own
+beside the current one. Drag the divider between the two to set their widths.
+Close one and the other takes the space back.
+
+**Maximize** gives the bottom terminal the editor area's height, down to the
+editor's minimum, and the same button restores the previous size. Dragging a
+divider ends the maximized state.
+
+## Naming a terminal
+
+**More → Rename Session** gives a terminal a name of your own. The name
+replaces the shell's label in the tab, keeps up to 48 characters and returns
+with the workspace. Leave it blank to go back to the automatic name. The icon at
+the end of that row opens the purpose panel (Development, Server, Testing,
+Build, Debugging, Other, or Automatic name), which replaces double-clicking a
+tab. A purpose, or the program that is running, still follows the name.
+
+**More → Clear Output** forgets the screen and its scrollback, then asks the
+shell to redraw its prompt. A full-screen program is left alone.
+
 ## Font size
 
 **Ctrl + +** (or **Ctrl + =**) and **Ctrl + −** adjust the terminal font size

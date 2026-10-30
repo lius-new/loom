@@ -18,6 +18,8 @@ pub struct SessionFrame {
     pub short_label: String,
     pub title: String,
     pub cwd: Option<PathBuf>,
+    /// The user's own name for the session, when there is one.
+    pub title_override: Option<String>,
     pub purpose: Option<String>,
     pub running_program: Option<String>,
 }
@@ -92,6 +94,11 @@ pub struct Frame {
     pub chrome: Chrome,
     pub modifiers: lgui::core::KeyModifiers,
     pub shell_options: Vec<crate::features::terminal::profiles::ShellOption>,
+    /// The default bottom terminal region fills its split.
+    pub maximized: bool,
+    /// The region that owns the panel tools (maximize, collapse). Every other
+    /// terminal region is a detached group of tabs.
+    pub default_region: Option<u64>,
 }
 #[derive(Clone)]
 pub struct Binding {
@@ -209,6 +216,20 @@ pub enum Command {
         purpose: Option<String>,
     },
     ShellMenu(SessionId),
+    BeginRename(SessionId),
+    CommitRename,
+    CancelRename,
+    ClearOutput(SessionId),
+    ToggleMaximize,
+    /// Hides the default bottom terminal panel.
+    CollapsePanel,
+    /// Opens the find box over a terminal, or closes it when already open there.
+    ToggleSearch(SessionId),
+    /// Searches for the text now in the find box.
+    Search,
+    /// Moves to the next (`+1`) or previous (`-1`) match.
+    SearchStep(i32),
+    CloseSearch,
     Write {
         target: SessionId,
         bytes: Vec<u8>,
@@ -251,11 +272,6 @@ pub enum Command {
         position: (f32, f32),
         kind: TerminalTabMenuKind,
     },
-    TabClick {
-        target: SessionId,
-        point: (f32, f32),
-        menu_position: (f32, f32),
-    },
     ClipboardError(String),
 }
 #[derive(Default)]
@@ -274,6 +290,9 @@ pub fn new_from_target(
     shell: Option<ShellKind>,
 ) -> Option<SessionId> {
     tabs.run(Command::New { target, shell }).created
+}
+pub fn split(tabs: &Sessions, target: SessionId) -> Option<SessionId> {
+    tabs.run(Command::Split(target)).created
 }
 pub fn shell_menu(state: &Binding, _tabs: &Sessions, id: SessionId) -> bool {
     state.run(Command::ShellMenu(id)).applied

@@ -39,6 +39,8 @@ pub struct WorkspaceSession {
     #[serde(default)]
     pub terminal_purposes: Vec<Option<String>>,
     #[serde(default)]
+    pub terminal_titles: Vec<Option<String>>,
+    #[serde(default)]
     pub terminal_directories: Vec<Option<PathBuf>>,
     #[serde(default)]
     pub terminal_workspace_root: Option<PathBuf>,
@@ -153,6 +155,7 @@ pub fn save_terminal_state(
     terminal_groups: &[usize],
     terminal_widths: &[f32],
     terminal_purposes: &[Option<String>],
+    terminal_titles: &[Option<String>],
     terminal_directories: &[Option<PathBuf>],
     active_terminal: Option<usize>,
     show_terminal: bool,
@@ -163,6 +166,7 @@ pub fn save_terminal_state(
         session.terminal_groups = terminal_groups.to_vec();
         session.terminal_widths = terminal_widths.to_vec();
         session.terminal_purposes = terminal_purposes.to_vec();
+        session.terminal_titles = terminal_titles.to_vec();
         session.terminal_directories = terminal_directories.to_vec();
         session.active_terminal = active_terminal;
         session.show_terminal = show_terminal;
@@ -489,6 +493,7 @@ mod tests {
             terminal_groups: vec![0, 0, 1],
             terminal_widths: vec![1.5, 0.5, 1.0],
             terminal_purposes: vec![Some("Testing".into()), None, Some("Development".into())],
+            terminal_titles: vec![Some("API".into()), None, None],
             terminal_directories: vec![
                 Some(PathBuf::from("one")),
                 None,

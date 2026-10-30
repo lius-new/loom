@@ -16,10 +16,12 @@ use std::sync::Arc;
 
 fn session_frame(tab: crate::app::terminal_binding::TerminalTab) -> SessionFrame {
     let short_label = tab.controller.short_label();
-    let title = match tab.purpose.as_ref().or(tab.running_program.as_ref()) {
-        Some(name) => format!("{short_label} · {name}"),
-        None => short_label.clone(),
-    };
+    let title = crate::app::terminal_binding::display_title(
+        &short_label,
+        tab.title.as_deref(),
+        tab.purpose.as_deref(),
+        tab.running_program.as_deref(),
+    );
     SessionFrame {
         id: tab.id,
         group_id: tab.group_id,
@@ -28,6 +30,7 @@ fn session_frame(tab: crate::app::terminal_binding::TerminalTab) -> SessionFrame
         short_label,
         title,
         cwd: tab.working_directory(),
+        title_override: tab.title,
         purpose: tab.purpose,
         running_program: tab.running_program,
     }
@@ -42,12 +45,15 @@ pub(crate) fn project(tabs: TerminalTabs) -> View {
             let (short_label, cwd) = live
                 .remove(&tab.id())
                 .unwrap_or_else(|| (tab.shell().short_label().to_owned(), None));
+            let custom = tab.title();
             let purpose = tab.purpose();
             let running_program = tab.running_program();
-            let title = match purpose.as_ref().or(running_program.as_ref()) {
-                Some(name) => format!("{short_label} · {name}"),
-                None => short_label.clone(),
-            };
+            let title = crate::app::terminal_binding::display_title(
+                &short_label,
+                custom.as_deref(),
+                purpose.as_deref(),
+                running_program.as_deref(),
+            );
             SessionFrame {
                 id: tab.id(),
                 group_id: tab.group_id(),
@@ -56,6 +62,7 @@ pub(crate) fn project(tabs: TerminalTabs) -> View {
                 short_label,
                 title,
                 cwd: cwd.or_else(|| tab.cwd()),
+                title_override: custom,
                 purpose,
                 running_program,
             }
@@ -89,6 +96,20 @@ pub(crate) fn binding(
                 },
                 modifiers: app.editor.modifiers,
                 shell_options: app.preferences.values().shell_options.clone(),
+                default_region: app
+                    .layout
+                    .application_layout
+                    .as_ref()
+                    .and_then(|layout| layout.default_terminal_region()),
+                maximized: app
+                    .layout
+                    .application_layout
+                    .as_ref()
+                    .is_some_and(|layout| {
+                        layout
+                            .default_terminal_region()
+                            .is_some_and(|region| layout.is_maximized(region))
+                    }),
             }
         },
         move |command| run(&command_state, &command_tabs, &command_application, command),
@@ -187,6 +208,16 @@ pub(crate) fn run(
             commands::purpose(state, tabs, target, purpose.as_deref())
         }
         Command::ShellMenu(id) => result.applied = commands::shell_menu(state, tabs, id),
+        Command::BeginRename(id) => result.applied = commands::begin_rename(state, tabs, id),
+        Command::CommitRename => commands::commit_rename(state, tabs),
+        Command::CancelRename => commands::cancel_rename(state),
+        Command::ClearOutput(id) => result.applied = commands::clear_output(state, tabs, id),
+        Command::ToggleMaximize => result.applied = commands::toggle_maximize(state),
+        Command::CollapsePanel => result.applied = commands::collapse_panel(state, tabs),
+        Command::ToggleSearch(id) => result.applied = commands::toggle_search(state, tabs, id),
+        Command::Search => commands::run_search(state, tabs),
+        Command::SearchStep(delta) => commands::search_step(state, tabs, delta),
+        Command::CloseSearch => commands::close_search(state, tabs),
         Command::Write { target, bytes } => result.applied = commands::write(tabs, target, &bytes),
         Command::ResizePair {
             left,
@@ -226,32 +257,6 @@ pub(crate) fn run(
                 state.update(|app| open_menu(app, target, position, kind));
             } else {
                 result.applied = false;
-            }
-        }
-        Command::TabClick {
-            target,
-            point,
-            menu_position,
-        } => {
-            result.applied = false;
-            if tabs.get().tabs().iter().any(|tab| tab.id == target) {
-                state.update(|app| {
-                    if app
-                        .terminal
-                        .ui
-                        .terminal_tab_click_count(target, point.0, point.1)
-                        == 2
-                    {
-                        app.terminal.ui.last_terminal_tab_click = None;
-                        open_menu(
-                            app,
-                            target,
-                            menu_position,
-                            crate::ui::terminal::state::TerminalTabMenuKind::Purpose,
-                        );
-                        result.applied = true;
-                    }
-                });
             }
         }
         Command::ClipboardError(error) => {
@@ -398,6 +403,7 @@ pub(crate) fn render_terminal_tabs(
     lgui::prelude::group(no_hit)
         .child(strip.contents)
         .child(view::tab_header_rule(rect, rect, strip.active))
+        .child(strip.extras)
 }
 #[cfg(test)]
 mod ownership_tests {

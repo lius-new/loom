@@ -7,8 +7,8 @@ pub(crate) mod program;
 pub(crate) mod screen;
 mod types;
 pub(crate) use self::types::{
-    SessionId, ShellKind, TERMINAL_PURPOSES, TerminalCellStyle, TerminalRun, TerminalSize,
-    TerminalSnapshot, TerminalStatus,
+    SearchStatus, SessionId, ShellKind, TERMINAL_PURPOSES, TerminalCellStyle, TerminalRun,
+    TerminalSize, TerminalSnapshot, TerminalStatus,
 };
 
 pub mod actions;

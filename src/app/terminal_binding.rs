@@ -64,8 +64,27 @@ pub(crate) struct TerminalTab {
     pub width_weight: f32,
     pub controller: TerminalHandle,
     pub cwd: Option<PathBuf>,
+    pub title: Option<String>,
     pub purpose: Option<String>,
     pub running_program: Option<String>,
+}
+/// The tab text: the user's own name or the shell's short label, followed by
+/// the purpose, or else the program that is running.
+pub(crate) fn display_title(
+    short_label: &str,
+    title: Option<&str>,
+    purpose: Option<&str>,
+    running_program: Option<&str>,
+) -> String {
+    let name = title.unwrap_or(short_label);
+    match (purpose, running_program) {
+        (Some(purpose), _) => format!("{name} · {purpose}"),
+        // A program running in an unnamed terminal is all the tab says; the shell
+        // label would only repeat what the program already tells.
+        (None, Some(program)) if title.is_none() => program.to_owned(),
+        (None, Some(program)) => format!("{name} · {program}"),
+        (None, None) => name.to_owned(),
+    }
 }
 impl TerminalTab {
     pub fn working_directory(&self) -> Option<PathBuf> {
@@ -74,11 +93,12 @@ impl TerminalTab {
             .or_else(|| self.cwd.clone())
     }
     pub fn label(&self) -> String {
-        let shell = self.controller.short_label();
-        match self.purpose.as_ref().or(self.running_program.as_ref()) {
-            Some(name) => format!("{shell} · {name}"),
-            None => shell,
-        }
+        display_title(
+            &self.controller.short_label(),
+            self.title.as_deref(),
+            self.purpose.as_deref(),
+            self.running_program.as_deref(),
+        )
     }
 }
 impl TerminalTabs {
@@ -141,6 +161,7 @@ impl TerminalTabs {
                 .map(|r| r.handle(tab.id(), tab.shell()))
                 .unwrap_or_else(|| TerminalHandle::detached(tab.id(), tab.shell())),
             cwd: tab.cwd(),
+            title: tab.title(),
             purpose: tab.purpose(),
             running_program: tab.running_program(),
         }
@@ -182,6 +203,9 @@ impl TerminalTabs {
     pub fn purposes(&self) -> Vec<Option<String>> {
         self.model.purposes()
     }
+    pub fn titles(&self) -> Vec<Option<String>> {
+        self.model.titles()
+    }
     pub fn directories(&self) -> Vec<Option<PathBuf>> {
         self.tabs()
             .iter()
@@ -196,6 +220,12 @@ impl TerminalTabs {
     }
     pub fn restore_purposes(&mut self, values: &[Option<String>]) {
         self.model.restore_purposes(values);
+    }
+    pub fn restore_titles(&mut self, values: &[Option<String>]) {
+        self.model.restore_titles(values);
+    }
+    pub fn set_title(&mut self, id: u64, title: Option<&str>) {
+        self.model.set_title(id, title);
     }
     pub fn update_directories(&mut self, values: &[(u64, Option<PathBuf>)]) {
         self.model.update_directories(values);

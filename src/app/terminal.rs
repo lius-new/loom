@@ -174,11 +174,22 @@ pub(crate) fn split(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> 
     let mut created = None;
     tabs.update(|tabs| created = tabs.split(id));
     if let Some(created) = created {
+        let mut placed = false;
         state.update(|app| {
             if let Some(layout) = &mut app.layout.application_layout {
+                // The new session lands in the default strip, then moves into a
+                // region of its own beside the one it was split from; the divider
+                // between them is draggable like any other.
                 layout.attach(created);
+                if let Some(beside) = layout.terminal_region(id) {
+                    placed = layout.split_beside(created, beside);
+                }
             }
         });
+        if placed {
+            // Its own region now, not a legacy side-by-side group.
+            tabs.update(|tabs| tabs.detach_group(created));
+        }
     }
     sync_layout(state, tabs);
     created
@@ -244,6 +255,128 @@ pub(crate) fn purpose(
     }
     state.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
 }
+/// Names a session for good; blank text restores its automatic name.
+pub(crate) fn set_title(tabs: &TerminalStore, id: SessionId, title: Option<&str>) {
+    if target(tabs, id).is_some() {
+        tabs.update(|tabs| tabs.set_title(id, title));
+    }
+}
+pub(crate) fn begin_rename(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> bool {
+    let Some(tab) = target(tabs, id) else {
+        return false;
+    };
+    let current = tab
+        .title
+        .clone()
+        .unwrap_or_else(|| tab.controller.short_label());
+    state.update(|app| {
+        app.terminal.ui.terminal_tab_context_menu = None;
+        app.terminal.ui.terminal_rename = Some(crate::ui::terminal::state::RenameEditor {
+            target: id,
+            input: crate::ui::components::input::InputState::new_selected(current),
+        });
+    });
+    true
+}
+pub(crate) fn commit_rename(state: &AppContext, tabs: &TerminalStore) {
+    let Some(editor) = state.get().terminal.ui.terminal_rename else {
+        return;
+    };
+    state.update(|app| app.terminal.ui.terminal_rename = None);
+    set_title(tabs, editor.target, Some(editor.input.text()));
+}
+pub(crate) fn cancel_rename(state: &AppContext) {
+    state.update(|app| app.terminal.ui.terminal_rename = None);
+}
+/// Opens the find box over a session, or closes it when it is already there.
+pub(crate) fn toggle_search(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> bool {
+    if target(tabs, id).is_none() {
+        return false;
+    }
+    if state
+        .get()
+        .terminal
+        .ui
+        .terminal_search
+        .is_some_and(|bar| bar.target == id)
+    {
+        close_search(state, tabs);
+        return true;
+    }
+    close_search(state, tabs);
+    state.update(|app| {
+        app.terminal.ui.terminal_tab_context_menu = None;
+        app.terminal.ui.terminal_search = Some(crate::ui::terminal::state::SearchBar {
+            target: id,
+            input: crate::ui::components::input::InputState::new(""),
+            status: Default::default(),
+        });
+    });
+    true
+}
+/// Searches for what the find box holds and shows the last match.
+pub(crate) fn run_search(state: &AppContext, tabs: &TerminalStore) {
+    let Some(bar) = state.get().terminal.ui.terminal_search else {
+        return;
+    };
+    let Some(tab) = target(tabs, bar.target) else {
+        return;
+    };
+    let status = if bar.input.text().is_empty() {
+        tab.controller.search_clear();
+        Default::default()
+    } else {
+        tab.controller.search(bar.input.text())
+    };
+    state.update(|app| {
+        if let Some(bar) = app.terminal.ui.terminal_search.as_mut() {
+            bar.status = status;
+        }
+    });
+}
+pub(crate) fn search_step(state: &AppContext, tabs: &TerminalStore, delta: i32) {
+    let Some(bar) = state.get().terminal.ui.terminal_search else {
+        return;
+    };
+    let Some(tab) = target(tabs, bar.target) else {
+        return;
+    };
+    let status = tab.controller.search_step(delta);
+    state.update(|app| {
+        if let Some(bar) = app.terminal.ui.terminal_search.as_mut() {
+            bar.status = status;
+        }
+    });
+}
+pub(crate) fn close_search(state: &AppContext, tabs: &TerminalStore) {
+    let Some(bar) = state.get().terminal.ui.terminal_search else {
+        return;
+    };
+    if let Some(tab) = target(tabs, bar.target) {
+        tab.controller.search_clear();
+    }
+    state.update(|app| app.terminal.ui.terminal_search = None);
+}
+/// Fills the split the default terminal region sits in, or restores it.
+pub(crate) fn toggle_maximize(state: &AppContext) -> bool {
+    let mut changed = false;
+    state.update(|app| {
+        if let Some(layout) = app.layout.application_layout.as_mut()
+            && let Some(region) = layout.default_terminal_region()
+        {
+            changed = layout.toggle_maximize(region);
+        }
+    });
+    changed
+}
+pub(crate) fn clear_output(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> bool {
+    state.update(|app| app.terminal.ui.terminal_tab_context_menu = None);
+    let Some(tab) = target(tabs, id) else {
+        return false;
+    };
+    tab.controller.clear_output();
+    true
+}
 pub(crate) fn resize_pair(tabs: &TerminalStore, left: SessionId, right: SessionId, fraction: f32) {
     if target(tabs, left).is_some() && target(tabs, right).is_some() {
         tabs.update(|tabs| tabs.resize_pair(left, right, fraction));
@@ -257,6 +390,31 @@ pub fn toggle_panel(
     editor_focus: &UiFocusHandle,
     terminal_focus: &UiFocusHandle,
 ) {
+    let (opening, active_visible) = apply_toggle(state, terminal_tabs);
+    if opening {
+        terminal_focus.focus();
+    } else if !active_visible {
+        editor_focus.focus();
+    }
+}
+/// Hides the default terminal region from the panel's own collapse icon.
+/// Returns false when it was not shown. The caller moves focus to the editor.
+pub(crate) fn collapse_panel(
+    state: &AppContext,
+    terminal_tabs: &crate::app::terminal_binding::TerminalStore,
+) -> bool {
+    if !state.get().default_terminal_open() {
+        return false;
+    }
+    apply_toggle(state, terminal_tabs);
+    true
+}
+/// The state half of [`toggle_panel`]: returns whether the region is now open and
+/// whether the active session is still visible.
+fn apply_toggle(
+    state: &AppContext,
+    terminal_tabs: &crate::app::terminal_binding::TerminalStore,
+) -> (bool, bool) {
     let app = state.get();
     let opening = !app.default_terminal_open();
     let default_session = app
@@ -312,11 +470,7 @@ pub fn toggle_panel(
         }
     });
     sync_layout(state, terminal_tabs);
-    if opening {
-        terminal_focus.focus();
-    } else if !active_visible {
-        editor_focus.focus();
-    }
+    (opening, active_visible)
 }
 /// The terminal's clipboard actions (`terminal::Copy` and friends).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

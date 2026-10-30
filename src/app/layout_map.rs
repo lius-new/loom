@@ -908,7 +908,10 @@ mod tests {
     }
     fn strip_order(app: &AppState) -> Vec<u64> {
         let layout = app.layout.application_layout.as_ref().unwrap();
-        layout.terminal_view(layout.terminal_region(1).unwrap()).unwrap().0
+        layout
+            .terminal_view(layout.terminal_region(1).unwrap())
+            .unwrap()
+            .0
     }
 
     #[test]
@@ -1232,7 +1235,26 @@ mod tests {
             session.tree().cursor_at(Point::new(400.0, 650.0)),
             Some(CursorIcon::Text)
         );
-        let header = Point::new(35.0, 575.0);
+        // The real app renders every terminal as a region; only the default bottom
+        // one carries the panel tools, a detached group does not.
+        let maximize_buttons = session
+            .tree()
+            .nodes()
+            .iter()
+            .filter(|n| {
+                n.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some("Maximize terminal")
+            })
+            .count();
+        assert_eq!(maximize_buttons, 1);
+        let select = session
+            .tree()
+            .node(&UiId::new("terminal-tab-select-1"))
+            .unwrap()
+            .hit_rect;
+        let header = Point::new(
+            (select.left + select.right) / 2.0,
+            (select.top + select.bottom) / 2.0,
+        );
         // An ordinary click retains text-input focus without invoking layout.
         send(&mut session, down(header));
         send(&mut session, up(header));
@@ -1309,7 +1331,16 @@ mod tests {
         );
         assert!(controllers[0].snapshot().selection.is_empty());
         let original = state.get().layout.application_layout.clone();
-        send(&mut session, down(Point::new(35.0, 16.0)));
+        // The detached region's tab sits at the top left, after its category capsule.
+        let detached_tab = session
+            .tree()
+            .nodes()
+            .iter()
+            .filter(|n| n.id.as_str().starts_with("terminal-tab-select-") && n.hit_rect.top < 40.0)
+            .min_by(|a, b| a.hit_rect.left.total_cmp(&b.hit_rect.left))
+            .map(|n| center(n.hit_rect))
+            .expect("a tab in the detached region");
+        send(&mut session, down(detached_tab));
         send(
             &mut session,
             InputEvent::PointerMove(PointerData::mouse(Point::new(600.0, 400.0))),
@@ -1331,8 +1362,8 @@ mod tests {
         assert!(state.get().default_terminal_open());
         assert_eq!(tabs.get().active_id(), Some(2));
         // Restore the moved session's focus for the following drag checks.
-        send(&mut session, down(Point::new(35.0, 16.0)));
-        send(&mut session, up(Point::new(35.0, 16.0)));
+        send(&mut session, down(detached_tab));
+        send(&mut session, up(detached_tab));
         // Start from its new header; leaving the window cancels the captured press.
         let topology = state.get().layout.application_layout.unwrap().root;
         let sash_down = Point::new(600.0, 400.0);
@@ -1363,7 +1394,7 @@ mod tests {
             .unwrap()
             .2;
         assert!((left.width() - 520.0).abs() < 0.01);
-        let moved = Point::new(35.0, 16.0);
+        let moved = detached_tab;
         send(&mut session, down(moved));
         send(
             &mut session,
@@ -1468,7 +1499,19 @@ mod tests {
         let layout = app.layout.application_layout.as_ref().unwrap();
         let snapshot = layout.snapshot(viewport.into(), visibility(&app));
         let moved_rect = snapshot.regions.iter().find(|r| r.0 == 7).unwrap().2;
-        let plus = Point::new(moved_rect.right - 19.0, moved_rect.top + 17.0);
+        let plus = session
+            .tree()
+            .nodes()
+            .iter()
+            .filter(|n| {
+                n.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some("New terminal")
+            })
+            .map(|n| center(n.layout_rect))
+            .find(|point| {
+                (moved_rect.left..=moved_rect.right).contains(&point.x)
+                    && (moved_rect.top..=moved_rect.bottom).contains(&point.y)
+            })
+            .expect("the moved terminal's + button");
         send(&mut session, down(plus));
         send(&mut session, up(plus));
         assert_eq!(tabs.get().tabs().len(), 3);
@@ -1487,10 +1530,21 @@ mod tests {
         assert_eq!(new_rect, default_rect);
         assert_eq!(layout.terminal_view(4), Some((vec![2, 3], Some(3))));
         // Return the moved session to the default group via its center target.
-        send(
-            &mut session,
-            down(Point::new(moved_rect.left + 30.0, moved_rect.top + 16.0)),
-        );
+        let moved_tab = session
+            .tree()
+            .nodes()
+            .iter()
+            .filter(|n| {
+                n.id.as_str().starts_with("terminal-tab-select-")
+                    && n.hit_rect.left >= moved_rect.left
+                    && n.hit_rect.right <= moved_rect.right
+                    && n.hit_rect.top < moved_rect.top + 40.0
+                    && n.hit_rect.top >= moved_rect.top
+            })
+            .min_by(|a, b| a.hit_rect.left.total_cmp(&b.hit_rect.left))
+            .map(|n| center(n.hit_rect))
+            .expect("a tab in the moved region");
+        send(&mut session, down(moved_tab));
         send(
             &mut session,
             InputEvent::PointerMove(PointerData::mouse(Point::new(600.0, 400.0))),

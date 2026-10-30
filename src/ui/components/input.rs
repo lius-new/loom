@@ -54,6 +54,13 @@ impl InputState {
         }
     }
 
+    /// The text, all of it selected, so typing replaces it.
+    pub fn new_selected(value: impl Into<String>) -> Self {
+        let mut input = Self::new(value);
+        input.selection.anchor = Some(0);
+        input
+    }
+
     pub fn text(&self) -> &str {
         self.buffer.text()
     }

@@ -192,6 +192,18 @@ impl TerminalHandle {
     pub fn set_scrollback(&self, rows: usize) {
         self.with(|c| c.set_scrollback(rows));
     }
+    pub fn clear_output(&self) {
+        self.with(|c| c.clear_output());
+    }
+    pub fn search(&self, query: &str) -> crate::features::terminal::SearchStatus {
+        self.with(|c| c.search(query)).unwrap_or_default()
+    }
+    pub fn search_step(&self, delta: i32) -> crate::features::terminal::SearchStatus {
+        self.with(|c| c.search_step(delta)).unwrap_or_default()
+    }
+    pub fn search_clear(&self) {
+        self.with(|c| c.search_clear());
+    }
     pub fn set_mouse_position(&self, row: u16, col: u16) {
         self.with(|c| c.set_mouse_position(row, col));
     }

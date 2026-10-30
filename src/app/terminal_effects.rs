@@ -41,6 +41,7 @@ pub(crate) fn restored(session: crate::app::workspace_session::WorkspaceSession)
     );
     tabs.restore_widths(&session.terminal_widths);
     tabs.restore_purposes(&session.terminal_purposes);
+    tabs.restore_titles(&session.terminal_titles);
     tabs.restore_directories(&session.terminal_directories);
     tabs.into_model()
 }
@@ -327,6 +328,7 @@ pub(crate) fn save(tabs: &TerminalStore, visible: bool, height: f32) {
         &tabs.saved_groups(),
         &tabs.widths(),
         &tabs.purposes(),
+        &tabs.titles(),
         &tabs.directories(),
         tabs.active_index(),
         visible,
@@ -346,6 +348,7 @@ pub(crate) fn install_save(cx: &mut RenderCx<'_, '_>, tabs: &TerminalStore, app:
         snapshot.saved_groups(),
         snapshot.widths(),
         snapshot.purposes(),
+        snapshot.titles(),
         snapshot.directories(),
         app.terminal.ui.terminal_split_drag,
         snapshot.active_index(),

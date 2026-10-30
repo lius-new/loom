@@ -86,6 +86,9 @@ pub struct ApplicationLayout {
     default_terminal: Option<RegionId>,
     default_terminal_fraction: f32,
     next_id: RegionId,
+    /// The region that was maximized, its parent split and the weights that split
+    /// had before, so toggling again restores them.
+    maximized: Option<(RegionId, RegionId, Vec<f32>)>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Divider {
@@ -173,7 +176,97 @@ impl ApplicationLayout {
             default_terminal: Some(4),
             default_terminal_fraction: (terminal_height / rect.height().max(1.0)).clamp(0.1, 0.7),
             next_id: 7,
+            maximized: None,
         }
+    }
+    /// Moves `session` out of its tab strip into a new region to the right of
+    /// `beside`. The two regions share `beside`'s extent equally and a divider
+    /// between them can be dragged. Needs no viewport; sizes are enforced when
+    /// the layout is next measured.
+    pub fn split_beside(&mut self, session: u64, beside: RegionId) -> bool {
+        let Some(source) = self.terminal_region(session) else {
+            return false;
+        };
+        // A session alone in the region it would split off from has nothing to split.
+        if source == beside
+            && self
+                .terminal_view(source)
+                .is_none_or(|(tabs, _)| tabs.len() < 2)
+        {
+            return false;
+        }
+        let temporary = self.alloc();
+        let leaf = Node::Leaf {
+            id: temporary,
+            content: Content::Terminal {
+                tabs: vec![session],
+                active: Some(session),
+            },
+        };
+        if !self.wrap(beside, Direction::Right, leaf) {
+            return false;
+        }
+        if let Some(Node::Leaf {
+            content: Content::Terminal { tabs, active },
+            ..
+        }) = self.root.find_mut(source)
+        {
+            tabs.retain(|id| *id != session);
+            if *active == Some(session) {
+                *active = tabs.first().copied();
+            }
+        }
+        self.clean();
+        self.maximized = None;
+        self.version += 1;
+        true
+    }
+    pub fn default_terminal_region(&self) -> Option<RegionId> {
+        self.default_terminal
+    }
+    pub fn is_maximized(&self, region: RegionId) -> bool {
+        self.maximized.as_ref().is_some_and(|m| m.0 == region)
+    }
+    /// Gives `region` nearly all of its parent split, which squeezes its siblings
+    /// down to their minimum sizes; a second call restores the previous weights.
+    /// Returns whether anything changed.
+    pub fn toggle_maximize(&mut self, region: RegionId) -> bool {
+        if let Some((_, split, weights)) = self.maximized.take() {
+            if let Some(current) = self.sizes.get_mut(&split) {
+                if current.len() == weights.len() {
+                    *current = weights;
+                }
+            }
+            self.version += 1;
+            return true;
+        }
+        fn parent(node: &Node, target: RegionId) -> Option<RegionId> {
+            let Node::Split { id, children, .. } = node else {
+                return None;
+            };
+            if children.iter().any(|child| child.id() == target) {
+                return Some(*id);
+            }
+            children.iter().find_map(|child| parent(child, target))
+        }
+        let Some(split) = parent(&self.root, region) else {
+            return false;
+        };
+        let Some(Node::Split { children, .. }) = self.root.find(split) else {
+            return false;
+        };
+        let Some(index) = children.iter().position(|child| child.id() == region) else {
+            return false;
+        };
+        let Some(previous) = self.sizes.get(&split).cloned() else {
+            return false;
+        };
+        let mut next = vec![0.001; previous.len()];
+        next[index] = 1.0;
+        self.sizes.insert(split, next);
+        self.maximized = Some((region, split, previous));
+        self.version += 1;
+        true
     }
     fn alloc(&mut self) -> RegionId {
         let id = self.next_id;
@@ -620,6 +713,8 @@ impl ApplicationLayout {
         if (allocations[divider.before] - first).abs() < 0.01 {
             return false;
         }
+        // Dragging a divider is a deliberate resize: it ends any maximized state.
+        self.maximized = None;
         let weights = self.sizes.get_mut(&divider.split).unwrap();
         // The viewport may have shrunk since the last edit. Start from the
         // actual constrained extents, so neighbouring boundaries do not jump.
@@ -815,6 +910,92 @@ mod tests {
             .unwrap()
             .2
     }
+    #[test]
+    fn maximizing_the_terminal_squeezes_the_editor_and_toggling_restores_the_split() {
+        let (mut layout, rect) = setup();
+        let terminal = layout.terminal_region(10).unwrap();
+        let before = region(&layout, rect, terminal);
+        let editor_before = region(&layout, rect, 1);
+        assert!(!layout.is_maximized(terminal));
+
+        assert!(layout.toggle_maximize(terminal));
+        assert!(layout.is_maximized(terminal));
+        let maximized = region(&layout, rect, terminal);
+        let editor = region(&layout, rect, 1);
+        assert!(maximized.height() > before.height());
+        // The editor keeps its 120px minimum and the drawers keep their widths.
+        assert_eq!(editor.height(), 120.0);
+        assert_eq!(editor.left, editor_before.left);
+        assert_eq!(editor.right, editor_before.right);
+        assert!((maximized.top - editor.bottom).abs() < 0.01);
+        assert!((maximized.bottom - rect.bottom).abs() < 0.01);
+
+        assert!(layout.toggle_maximize(terminal));
+        assert!(!layout.is_maximized(terminal));
+        assert_eq!(region(&layout, rect, terminal), before);
+        assert_eq!(region(&layout, rect, 1), editor_before);
+    }
+
+    #[test]
+    fn splitting_places_a_session_beside_its_region_with_a_draggable_divider() {
+        let (mut layout, rect) = setup();
+        let terminal = layout.terminal_region(10).unwrap();
+        let before = region(&layout, rect, terminal);
+        // Session 11 shares the default strip with 10; split it off to the right.
+        assert_eq!(layout.terminal_region(11), Some(terminal));
+        assert!(layout.split_beside(11, terminal));
+        let moved = layout.terminal_region(11).unwrap();
+        assert_ne!(moved, terminal);
+        assert_eq!(layout.terminal_region(10), Some(terminal));
+        let (left, right) = (
+            region(&layout, rect, terminal),
+            region(&layout, rect, moved),
+        );
+        assert!((left.width() + right.width() - before.width()).abs() < 1.0);
+        assert!((left.width() - right.width()).abs() < 1.0);
+        assert!((left.right - right.left).abs() < 1.0);
+        // Their shared boundary is a divider the user can drag.
+        let divider = layout
+            .snapshot(rect, V)
+            .dividers
+            .into_iter()
+            .find(|d| d.axis == Axis::Horizontal && (d.position - left.right).abs() < 2.0)
+            .expect("a divider between the two terminals");
+        assert!(layout.resize(&divider, divider.position + 100.0, V));
+        assert!(region(&layout, rect, terminal).width() > left.width());
+    }
+
+    #[test]
+    fn a_lone_session_cannot_be_split_from_its_own_region_and_unknown_ones_are_ignored() {
+        let mut layout =
+            ApplicationLayout::initial(Rect::new(0.0, 30.0, 1200.0, 800.0), 220.0, 220.0, 240.0);
+        layout.sync(&[(10, 10)], Some(10));
+        let terminal = layout.terminal_region(10).unwrap();
+        assert!(!layout.split_beside(10, terminal));
+        assert!(!layout.split_beside(99, terminal));
+        assert!(!layout.split_beside(10, 999));
+    }
+
+    #[test]
+    fn dragging_a_divider_ends_the_maximized_state_and_unknown_regions_are_ignored() {
+        let (mut layout, rect) = setup();
+        let terminal = layout.terminal_region(10).unwrap();
+        assert!(!layout.toggle_maximize(999));
+        assert!(layout.toggle_maximize(terminal));
+        let divider = layout
+            .snapshot(rect, V)
+            .dividers
+            .into_iter()
+            .find(|d| d.axis == Axis::Vertical)
+            .unwrap();
+        // The editor already sits at its minimum, so the divider can only move down.
+        assert!(layout.resize(&divider, divider.position + 60.0, V));
+        assert!(!layout.is_maximized(terminal));
+        // With nothing maximized the next toggle maximizes again.
+        assert!(layout.toggle_maximize(terminal));
+        assert!(layout.is_maximized(terminal));
+    }
+
     #[test]
     fn outer_moves_beyond_drawers_and_preview_is_pure() {
         for dir in [

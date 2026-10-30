@@ -1,9 +1,11 @@
 //! PTY controller and worker lifecycle; GUI notifications are injected.
 use crate::features::terminal::input::paste_bytes;
 use crate::features::terminal::screen::{
-    GridPoint, Palette, Selection, line_runs, selection_text, visible_selection,
+    GridPoint, Palette, Selection, find_matches, line_runs, selection_text, visible_selection,
 };
-use crate::features::terminal::{ShellKind, TerminalSize, TerminalSnapshot, TerminalStatus};
+use crate::features::terminal::{
+    SearchStatus, ShellKind, TerminalSize, TerminalSnapshot, TerminalStatus,
+};
 use crate::infrastructure::terminal::notification::FrameNotifier;
 use crate::infrastructure::terminal::pty::{
     RunningProcess, resize_process, spawn_shell_option, terminate_process,
@@ -33,6 +35,8 @@ struct TerminalInner {
     detected_name: Mutex<Option<String>>,
     status: Mutex<TerminalStatus>,
     selection: Mutex<Option<Selection>>,
+    /// The text being searched for and the match shown, counted from 0.
+    search: Mutex<(String, usize)>,
     mouse: Mutex<crate::features::terminal::mouse::TerminalMouse>,
     generation: AtomicU64,
     cwd: Mutex<Option<PathBuf>>,
@@ -62,6 +66,7 @@ impl TerminalController {
                 }),
                 status: Mutex::new(TerminalStatus::Idle),
                 selection: Mutex::new(None),
+                search: Mutex::new((String::new(), 0)),
                 mouse: Mutex::new(crate::features::terminal::mouse::TerminalMouse::default()),
                 generation: AtomicU64::new(0),
                 cwd: Mutex::new(None),
@@ -354,6 +359,22 @@ impl TerminalController {
         lock(&self.inner.parser).screen_mut().set_scrollback(rows);
     }
 
+    /// Forgets the screen and its history, then asks the shell to redraw its
+    /// prompt. A full-screen program on the alternate screen is left alone.
+    pub fn clear_output(&self) {
+        {
+            let mut parser = lock(&self.inner.parser);
+            if parser.screen().alternate_screen() {
+                return;
+            }
+            let (rows, cols) = parser.screen().size();
+            *parser = vt100::Parser::new(rows, cols, SCROLLBACK_ROWS);
+            *lock(&self.inner.selection) = None;
+        }
+        // Ctrl+L: shells redraw their prompt on a freshly cleared screen.
+        self.write(&[0x0c]);
+    }
+
     pub fn set_mouse_position(&self, row: u16, col: u16) {
         lock(&self.inner.mouse).set_position(row, col);
     }
@@ -391,6 +412,60 @@ impl TerminalController {
         let point = self.grid_point(row, col);
         if let Some(selection) = lock(&self.inner.selection).as_mut() {
             selection.head = point;
+        }
+    }
+
+    /// Starts a search and shows its last match, the one nearest the live end.
+    pub fn search(&self, query: &str) -> SearchStatus {
+        *lock(&self.inner.search) = (query.to_owned(), usize::MAX);
+        self.show_match(0)
+    }
+
+    /// Moves to the next (`+1`) or previous (`-1`) match, wrapping around. The
+    /// matches are read again, so output that arrived since is included.
+    pub fn search_step(&self, delta: i32) -> SearchStatus {
+        self.show_match(delta)
+    }
+
+    /// Ends the search and drops the highlighted match.
+    pub fn search_clear(&self) {
+        *lock(&self.inner.search) = (String::new(), 0);
+        *lock(&self.inner.selection) = None;
+    }
+
+    fn show_match(&self, delta: i32) -> SearchStatus {
+        let (query, current) = lock(&self.inner.search).clone();
+        let mut parser = lock(&self.inner.parser);
+        let matches = find_matches(parser.screen_mut(), &query);
+        let total = matches.len();
+        if total == 0 {
+            *lock(&self.inner.selection) = None;
+            *lock(&self.inner.search) = (query, 0);
+            return SearchStatus::default();
+        }
+        // A fresh search arrives with `usize::MAX`, which lands on the last match.
+        let index = if current == usize::MAX {
+            total - 1
+        } else {
+            (current.min(total - 1) as i64 + i64::from(delta)).rem_euclid(total as i64) as usize
+        };
+        let (start, end) = matches[index];
+        *lock(&self.inner.selection) = Some(Selection {
+            anchor: start,
+            head: end,
+        });
+        // Show the match in the middle of the view; the live screen needs no scrolling.
+        let rows = i64::from(parser.screen().size().0);
+        let offset = if start.row >= 0 {
+            0
+        } else {
+            usize::try_from(rows / 2 - start.row).unwrap_or(0)
+        };
+        parser.screen_mut().set_scrollback(offset);
+        *lock(&self.inner.search) = (query, index);
+        SearchStatus {
+            total,
+            current: index + 1,
         }
     }
 
@@ -702,6 +777,74 @@ mod generation_tests {
             *lock(&controller.inner.status),
             TerminalStatus::Stopped
         ));
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    fn seeded() -> TerminalController {
+        let controller = TerminalController::new();
+        controller.test_parser().screen_mut().set_size(3, 20);
+        controller
+            .test_parser()
+            .process(b"alpha ERROR\r\nbeta\r\nerror gamma\r\ndelta\r\nlast error");
+        controller
+    }
+
+    #[test]
+    fn search_starts_at_the_last_match_wraps_both_ways_and_selects_each_match() {
+        let controller = seeded();
+        let status = controller.search("error");
+        assert_eq!(
+            status,
+            SearchStatus {
+                total: 3,
+                current: 3
+            }
+        );
+        // The newest match is on the live screen, so no scrolling is needed.
+        assert_eq!(controller.test_parser().screen().scrollback(), 0);
+        assert_eq!(controller.selected_text().as_deref(), Some("error"));
+
+        // The middle match is still on the live screen.
+        assert_eq!(controller.search_step(-1).current, 2);
+        assert_eq!(controller.test_parser().screen().scrollback(), 0);
+        assert_eq!(controller.selected_text().as_deref(), Some("error"));
+        // The first one is in the history, so the view scrolls to it; the text
+        // keeps the case it was printed with.
+        assert_eq!(controller.search_step(-1).current, 1);
+        assert!(controller.test_parser().screen().scrollback() > 0);
+        assert_eq!(controller.selected_text().as_deref(), Some("ERROR"));
+        // Wraps around in both directions, and returning to the live end scrolls back.
+        assert_eq!(controller.search_step(-1).current, 3);
+        assert_eq!(controller.test_parser().screen().scrollback(), 0);
+        assert_eq!(controller.search_step(1).current, 1);
+        assert_eq!(controller.search_step(1).current, 2);
+    }
+
+    #[test]
+    fn a_search_with_no_match_or_after_clearing_leaves_no_selection() {
+        let controller = seeded();
+        assert_eq!(controller.search("nothing"), SearchStatus::default());
+        assert!(controller.selected_text().is_none());
+        assert_eq!(controller.search_step(1), SearchStatus::default());
+
+        controller.search("alpha");
+        assert!(controller.selected_text().is_some());
+        controller.search_clear();
+        assert!(controller.selected_text().is_none());
+        assert_eq!(controller.search_step(1), SearchStatus::default());
+    }
+
+    #[test]
+    fn stepping_reads_output_that_arrived_after_the_search_began() {
+        let controller = seeded();
+        assert_eq!(controller.search("error").total, 3);
+        controller.test_parser().process(b"\r\nanother ERROR");
+        let status = controller.search_step(0);
+        assert_eq!(status.total, 4);
     }
 }
 

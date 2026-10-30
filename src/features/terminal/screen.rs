@@ -87,6 +87,89 @@ pub(crate) fn selection_text(
     text
 }
 
+/// Every case-insensitive occurrence of `query` in the scrollback and the live
+/// screen, in reading order, as cell ranges ready to be selected. A match stays
+/// on one row; text wrapped across rows is not joined.
+pub(crate) fn find_matches(screen: &mut vt100::Screen, query: &str) -> Vec<(GridPoint, GridPoint)> {
+    let needle = query
+        .chars()
+        .filter_map(|c| c.to_lowercase().next())
+        .collect::<Vec<_>>();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let original = screen.scrollback();
+    let (rows, cols) = screen.size();
+    let history = screen.scrollback_rows();
+    // Read the buffer one screenful at a time; the last page may overlap the one
+    // before it, so key the rows by their grid position.
+    let mut lines = std::collections::BTreeMap::new();
+    let mut offset = 0;
+    loop {
+        screen.set_scrollback(offset);
+        let shown = screen.scrollback();
+        for row in 0..rows {
+            let grid_row = i64::from(row) - shown as i64;
+            lines.entry(grid_row).or_insert_with(|| {
+                let mut chars = Vec::new();
+                let mut col = 0;
+                while col < cols {
+                    let Some(cell) = screen.cell(row, col) else {
+                        break;
+                    };
+                    let width = if cell.is_wide() { 2 } else { 1 };
+                    if !cell.is_wide_continuation() {
+                        let text = if cell.has_contents() {
+                            cell.contents()
+                        } else {
+                            " "
+                        };
+                        for c in text.chars() {
+                            chars.push((c.to_lowercase().next().unwrap_or(c), col, width));
+                        }
+                    }
+                    col += 1;
+                }
+                chars
+            });
+        }
+        if offset >= history {
+            break;
+        }
+        offset = (offset + usize::from(rows)).min(history);
+    }
+    screen.set_scrollback(original);
+    let mut found = Vec::new();
+    for (grid_row, chars) in &lines {
+        let mut start = 0;
+        while start + needle.len() <= chars.len() {
+            if chars[start..start + needle.len()]
+                .iter()
+                .map(|(c, _, _)| c)
+                .eq(needle.iter())
+            {
+                let (_, first, _) = chars[start];
+                let (_, last, width) = chars[start + needle.len() - 1];
+                found.push((
+                    GridPoint {
+                        row: *grid_row,
+                        col: first,
+                    },
+                    GridPoint {
+                        row: *grid_row,
+                        col: last + width,
+                    },
+                ));
+                // Matches never overlap, as in the shell's own search tools.
+                start += needle.len();
+            } else {
+                start += 1;
+            }
+        }
+    }
+    found
+}
+
 pub(crate) fn line_runs(
     screen: &vt100::Screen,
     row: u16,
@@ -308,6 +391,43 @@ mod tests {
         );
         assert_eq!(text, "one\ntwo");
         assert_eq!(parser.screen().scrollback(), 0);
+    }
+
+    #[test]
+    fn find_matches_reads_history_and_screen_ignoring_case_without_moving_the_view() {
+        let mut parser = vt100::Parser::new(2, 20, 50);
+        parser.process(b"Error: one\r\nok\r\nerror two ERROR\r\nfine\r\nlast ERROR");
+        parser.screen_mut().set_scrollback(1);
+        let found = find_matches(parser.screen_mut(), "error");
+        assert_eq!(parser.screen().scrollback(), 1);
+        let rows = |m: &(GridPoint, GridPoint)| (m.0.row, m.0.col, m.1.col);
+        // The screen holds the last two lines; earlier lines are history.
+        assert_eq!(
+            found.iter().map(rows).collect::<Vec<_>>(),
+            vec![(-3, 0, 5), (-1, 0, 5), (-1, 10, 15), (1, 5, 10)]
+        );
+        assert!(find_matches(parser.screen_mut(), "").is_empty());
+        assert!(find_matches(parser.screen_mut(), "missing").is_empty());
+        // The text of a match can be read back through the selection rules.
+        let (start, end) = found[1];
+        assert_eq!(selection_text(parser.screen_mut(), start, end), "error");
+    }
+
+    #[test]
+    fn find_matches_uses_cell_columns_for_wide_characters_and_never_overlaps() {
+        let mut parser = vt100::Parser::new(2, 20, 0);
+        parser.process("中文 aaaa".as_bytes());
+        let found = find_matches(parser.screen_mut(), "文 a");
+        // "中" and "文" take two columns each, so "文" starts at column 2 and
+        // the match ends after the "a" at column 5.
+        assert_eq!(
+            found,
+            vec![(GridPoint { row: 0, col: 2 }, GridPoint { row: 0, col: 6 })]
+        );
+        let found = find_matches(parser.screen_mut(), "aa");
+        assert_eq!(found.len(), 2);
+        assert_eq!((found[0].0.col, found[0].1.col), (5, 7));
+        assert_eq!((found[1].0.col, found[1].1.col), (7, 9));
     }
 
     #[test]

@@ -611,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_names_keep_shell_type_and_prioritize_purpose_then_running_program() {
+    fn tab_names_show_the_purpose_then_the_running_program_alone_then_the_shell() {
         let mut tabs =
             TerminalTabs::restored(vec![ShellKind::Bash, ShellKind::Bash, ShellKind::Cmd], None);
         let first = tabs.tabs()[0].id;
@@ -623,13 +623,13 @@ mod tests {
             vec!["bash", "bash", "cmd"]
         );
         tabs.update_programs(&[(first, Some("node".into()))]);
-        assert_eq!(tabs.tabs()[0].label(), "bash · node");
+        assert_eq!(tabs.tabs()[0].label(), "node");
         tabs.set_purpose(first, Some("  Testing  "));
         assert_eq!(tabs.tabs()[0].label(), "bash · Testing");
         tabs.update_programs(&[(first, Some("python".into()))]);
         assert_eq!(tabs.tabs()[0].label(), "bash · Testing");
         tabs.set_purpose(first, None);
-        assert_eq!(tabs.tabs()[0].label(), "bash · python");
+        assert_eq!(tabs.tabs()[0].label(), "python");
         tabs.update_programs(&[(first, None)]);
         assert_eq!(tabs.tabs()[0].label(), "bash");
         tabs.set_purpose(first, Some("\r\n "));

@@ -20,6 +20,14 @@ pub struct TerminalSize {
     pub pixel_height: u16,
 }
 
+/// How a search went: the number of matches and the selected one, counted from 1.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SearchStatus {
+    pub total: usize,
+    /// `0` when there is no match.
+    pub current: usize,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShellKind {

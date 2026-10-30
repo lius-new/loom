@@ -15,6 +15,21 @@ mod tests {
     use lgui::prelude::{Element, UiRect, VisualStyle, group};
     use std::sync::Arc;
 
+    /// The center of the control with this accessible name, so tests follow the
+    /// header's layout instead of hard-coding where a button sits.
+    fn named_point(session: &lgui::session::UiSession, name: &str) -> Point {
+        let node = session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|n| n.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name))
+            .unwrap_or_else(|| panic!("missing control {name}"));
+        Point::new(
+            (node.layout_rect.left + node.layout_rect.right) * 0.5,
+            (node.layout_rect.top + node.layout_rect.bottom) * 0.5,
+        )
+    }
+
     #[test]
     fn selection_drag_scrolls_only_outside_the_screen_and_speeds_up_with_distance() {
         let content = UiRect::new(10.0, 100.0, 400.0, 300.0);
@@ -44,7 +59,7 @@ mod tests {
         for factor in [0.75_f32, 1.0, 1.25, 1.5, 2.0] {
             let scale = UiScale::new(factor);
             for fraction in [0.0, 0.25, 0.5, 0.75] {
-                for width in [360.0, 640.0] {
+                for width in [400.0, 640.0] {
                     let top = (80.0 + fraction) / factor;
                     let viewport = UiRect::new(0.0, 0.0, width / factor, top + 180.0);
                     let terminal = UiRect::new(0.0, top, viewport.right, viewport.bottom);
@@ -78,7 +93,6 @@ mod tests {
                     let physical = scale.physical_rect(viewport);
                     let bottom = scale.physical_value(top + theme::TABS_H);
                     let border_width = scale.physical_length(1.0);
-                    let underline_width = scale.physical_length(2.0);
                     let dirty = [PhysicalRect::new(0, bottom - 6, physical.right, bottom + 6)];
                     let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(4 * 1024 * 1024);
                     for full in [true, false] {
@@ -112,13 +126,17 @@ mod tests {
                         for y in bottom - border_width..bottom {
                             check(physical.width() as usize - 4, y, theme::c().border);
                         }
-                        for y in bottom - underline_width..bottom {
-                            check(4, y, theme::c().accent);
-                        }
                     }
                     // Decorations must not intercept selecting/dragging the tab at its bottom.
-                    let point =
-                        Point::new(scale.logical_value(4), top + theme::TABS_H - 0.25 / factor);
+                    let select = session
+                        .tree()
+                        .node(&UiId::new("terminal-tab-select-1"))
+                        .unwrap()
+                        .hit_rect;
+                    let point = Point::new(
+                        select.left + 4.0, // inside the clipped strip, even when it is narrow
+                        top + theme::TABS_H - 0.25 / factor,
+                    );
                     let hit = session.tree().hit_test(point).unwrap();
                     assert!(hit.id.as_str().starts_with("terminal-tab-select-"));
                     let above = Point::new(point.x, point.y - 6.0 / factor);
@@ -265,20 +283,9 @@ mod tests {
             Some(ShellKind::Custom(10))
         );
         assert!(!state.get().terminal.ui.terminal_shell_menu);
-        assert!(
-            session
-                .tree()
-                .nodes()
-                .iter()
-                .any(|n| n.text.as_deref() == Some("Custom 10"))
-        );
-        click(
-            &mut session,
-            &context,
-            &view,
-            viewport,
-            Point::new(viewport.right - 19.0, 17.0),
-        );
+        // The header keeps no shell label; the + button names the chosen shell.
+        let plus = named_point(&session, "New terminal: Custom 10");
+        click(&mut session, &context, &view, viewport, plus);
         assert_eq!(tabs.get().tabs().len(), 2);
         let tab = tabs.get().active().unwrap().clone();
         assert_eq!(tab.controller.shell(), ShellKind::Custom(10));
@@ -707,7 +714,7 @@ mod tests {
                 .iter()
                 .filter(|node| node.text.as_deref() == Some(ShellKind::default().short_label()))
                 .count(),
-            3 // Two tab labels and the shell selector in the terminal header.
+            2 // The two tab labels; the header has no shell selector label.
         );
         let context = ApplicationContext::empty(Default::default());
         // Closing controls follow the editor tabs: active or hovered only.
@@ -725,8 +732,16 @@ mod tests {
             let active_bounds = session.tree().node(&active_close).unwrap().hit_rect;
             assert!(session.tree().node(&inactive_close).is_none());
 
+            let select = session
+                .tree()
+                .node(&UiId::owned(format!("terminal-tab-select-{inactive}")))
+                .unwrap()
+                .hit_rect;
             session.handle_input(InputEvent::PointerMove(lgui::core::PointerData::mouse(
-                Point::new(30.0, 10.0),
+                Point::new(
+                    (select.left + select.right) / 2.0,
+                    (select.top + select.bottom) / 2.0,
+                ),
             )));
             session.render_view(&view, viewport, UiScale::ONE);
             let close_bounds = session.tree().node(&inactive_close).unwrap().hit_rect;
@@ -746,6 +761,7 @@ mod tests {
                 active_bounds
             );
         }
+        let add_point = named_point(&session, "New terminal");
         let mut send = |input| {
             let events = session.handle_input(input);
             dispatch_runtime_output(
@@ -824,7 +840,7 @@ mod tests {
         assert!(left.snapshot().selection.is_empty());
         assert!(!right.snapshot().selection.is_empty());
 
-        let add = PointerData::mouse(Point::new(585.0, 17.0));
+        let add = PointerData::mouse(add_point);
         send(InputEvent::PointerDown {
             pointer: add,
             button: PointerButton::Left,
@@ -1040,6 +1056,7 @@ mod tests {
             button: PointerButton::Left,
         });
         assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
+        // Double-clicking a tab no longer opens the purpose panel.
         send(InputEvent::PointerDown {
             pointer: label,
             button: PointerButton::Left,
@@ -1048,6 +1065,20 @@ mod tests {
             pointer: label,
             button: PointerButton::Left,
         });
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
+        // The header's more menu reaches the same panel; that path is covered by
+        // `more_menu_renames_by_hand_and_reaches_the_purpose_panel`.
+        state.update(|app| {
+            app.terminal.ui.terminal_tab_context_menu =
+                Some(crate::ui::terminal::state::TerminalTabContextMenuState {
+                    position: (30.0, 28.0),
+                    target: 1,
+                    kind: crate::ui::terminal::state::TerminalTabMenuKind::Purpose,
+                })
+        });
+        send(InputEvent::PointerMove(lgui::core::PointerData::mouse(
+            Point::new(60.0, 40.0),
+        )));
         let purpose_menu = state.get().terminal.ui.terminal_tab_context_menu.unwrap();
         assert_eq!(
             purpose_menu.kind,
@@ -1124,10 +1155,7 @@ mod tests {
             pointer: automatic,
             button: PointerButton::Left,
         });
-        assert_eq!(
-            tabs.get().tabs()[0].label(),
-            format!("{} · node", ShellKind::default().short_label())
-        );
+        assert_eq!(tabs.get().tabs()[0].label(), "node");
         tabs.update(|tabs| tabs.update_programs(&[(1, None)]));
 
         send(InputEvent::PointerDown {
@@ -1239,6 +1267,713 @@ mod tests {
         let cursor = terminal_cursor_rect(content, parser.screen().cursor_position(), 2, 8);
         assert_eq!(cursor.left, width);
         assert_eq!(cursor.top, terminal_line_h() + 2.0);
+    }
+
+    #[test]
+    fn more_menu_renames_by_hand_and_reaches_the_purpose_panel() {
+        use crate::ui::terminal::state::TerminalTabMenuKind;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, PointerData, UiScale, dispatch_runtime_output};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+
+        let viewport = UiRect::new(0.0, 0.0, 700.0, 300.0);
+        let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
+        let exposed = Arc::new(Mutex::new(
+            None::<(AppContext, crate::app::terminal_binding::TerminalStore)>,
+        ));
+        let output = exposed.clone();
+        let view_application = application.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(AppState::new));
+            let tabs = crate::app::terminal_binding::test_store(
+                cx,
+                Some(state.clone()),
+                TerminalTabs::new,
+            );
+            *output.lock().unwrap() = Some((state.clone(), tabs.clone()));
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id.clone());
+            let editor_id = cx.use_stable_id();
+            let editor_focus = cx.focus_handle(editor_id);
+            let controller = tabs.get().active().unwrap().controller.clone();
+            group(viewport)
+                .child(render(
+                    viewport,
+                    state.clone(),
+                    editor_focus.clone(),
+                    focus.clone(),
+                    id,
+                    controller,
+                    tabs.clone(),
+                    view_application.clone(),
+                    true,
+                    viewport.height(),
+                ))
+                .child(crate::app::terminal_view::menu(
+                    viewport,
+                    state,
+                    tabs,
+                    view_application.clone(),
+                    focus,
+                    editor_focus,
+                ))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let (state, tabs) = exposed.lock().unwrap().clone().unwrap();
+        let context = ApplicationContext::empty(Default::default());
+        let send = |session: &mut UiSession, input| {
+            let events = session.handle_input(input);
+            dispatch_runtime_output(
+                events,
+                &context,
+                &lgui::window::WindowId::new("terminal-more-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+            session.runtime().run_effects();
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        let click = |session: &mut UiSession, point: Point| {
+            send(
+                session,
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            );
+            send(
+                session,
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            );
+        };
+        let text_point = |session: &UiSession, label: &str| {
+            let node = session
+                .tree()
+                .nodes()
+                .iter()
+                .find(|n| n.text.as_deref().is_some_and(|t| t.trim_start() == label))
+                .unwrap_or_else(|| panic!("missing label {label}"));
+            Point::new(
+                (node.layout_rect.left + node.layout_rect.right) * 0.5,
+                (node.layout_rect.top + node.layout_rect.bottom) * 0.5,
+            )
+        };
+        let click_named = |session: &mut UiSession, name: &str| {
+            let point = named_point(session, name);
+            click(session, point);
+        };
+        let click_text = |session: &mut UiSession, label: &str| {
+            let point = text_point(session, label);
+            click(session, point);
+        };
+        let shell = ShellKind::default().short_label();
+        let target = tabs.get().active_id().unwrap();
+
+        // More opens beneath its button, right-aligned to it.
+        let more = named_point(&session, "More terminal actions");
+        click(&mut session, more);
+        let menu = state.get().terminal.ui.terminal_tab_context_menu.unwrap();
+        assert_eq!(
+            (menu.kind, menu.target),
+            (TerminalTabMenuKind::More, target)
+        );
+
+        // The icon at the end of "Rename Session" opens the purpose presets.
+        let purpose_button = named_point(&session, "Choose purpose");
+        click(&mut session, purpose_button);
+        let menu = state.get().terminal.ui.terminal_tab_context_menu.unwrap();
+        assert_eq!(menu.kind, TerminalTabMenuKind::Purpose);
+        let testing = text_point(&session, "Testing");
+        click(&mut session, testing);
+        assert_eq!(tabs.get().tabs()[0].label(), format!("{shell} · Testing"));
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
+
+        // The label itself renames by hand, starting from the current name.
+        click_named(&mut session, "More terminal actions");
+        click_text(&mut session, "Rename Session");
+        let editor = state.get().terminal.ui.terminal_rename.unwrap();
+        assert_eq!(editor.target, target);
+        assert_eq!(editor.input.text(), shell);
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
+        // The field sits inside the tab, in the header row, with no popover.
+        let field = named_point(&session, "Session name");
+        assert!(
+            field.y < 28.0,
+            "the field is in the tab strip, not below it"
+        );
+        state.update(|app| {
+            app.terminal
+                .ui
+                .terminal_rename
+                .as_mut()
+                .unwrap()
+                .input
+                .set_text("  API server ");
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        send(
+            &mut session,
+            InputEvent::Keyboard(key(LogicalKey::Named(NamedKey::Enter), Default::default())),
+        );
+        assert!(state.get().terminal.ui.terminal_rename.is_none());
+        // The typed name replaces the shell label; the purpose still follows it.
+        assert_eq!(tabs.get().tabs()[0].label(), "API server · Testing");
+        assert_eq!(tabs.get().tabs()[0].title.as_deref(), Some("API server"));
+
+        // Escape abandons a rename without changing the name.
+        click_named(&mut session, "More terminal actions");
+        click_text(&mut session, "Rename Session");
+        state.update(|app| {
+            app.terminal
+                .ui
+                .terminal_rename
+                .as_mut()
+                .unwrap()
+                .input
+                .set_text("discarded");
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        send(
+            &mut session,
+            InputEvent::Keyboard(key(LogicalKey::Named(NamedKey::Escape), Default::default())),
+        );
+        assert!(state.get().terminal.ui.terminal_rename.is_none());
+        assert_eq!(tabs.get().tabs()[0].title.as_deref(), Some("API server"));
+
+        // A blank name restores the automatic one.
+        click_named(&mut session, "More terminal actions");
+        click_text(&mut session, "Rename Session");
+        state.update(|app| {
+            app.terminal
+                .ui
+                .terminal_rename
+                .as_mut()
+                .unwrap()
+                .input
+                .set_text("   ");
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        send(
+            &mut session,
+            InputEvent::Keyboard(key(LogicalKey::Named(NamedKey::Enter), Default::default())),
+        );
+        assert_eq!(tabs.get().tabs()[0].title, None);
+        assert_eq!(tabs.get().tabs()[0].label(), format!("{shell} · Testing"));
+
+        // Clear Output closes the menu and leaves the session alive.
+        click_named(&mut session, "More terminal actions");
+        click_text(&mut session, "Clear Output");
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
+        assert_eq!(tabs.get().tabs().len(), 1);
+    }
+
+    #[test]
+    fn maximize_button_fills_the_default_region_and_restores_it() {
+        use crate::domain::application_layout::ApplicationLayout;
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, PointerData, UiScale, dispatch_runtime_output};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+
+        let viewport = UiRect::new(0.0, 0.0, 700.0, 400.0);
+        let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
+        let exposed = Arc::new(Mutex::new(None::<AppContext>));
+        let output = exposed.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(|| {
+                let mut app = AppState::new();
+                let mut layout = ApplicationLayout::initial(viewport.into(), 40.0, 40.0, 200.0);
+                layout.attach(1);
+                app.layout.application_layout = Some(layout);
+                app.terminal_chrome.show_terminal = true;
+                app
+            }));
+            let tabs = crate::app::terminal_binding::test_store(
+                cx,
+                Some(state.clone()),
+                TerminalTabs::new,
+            );
+            *output.lock().unwrap() = Some(state.clone());
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id.clone());
+            let editor_id = cx.use_stable_id();
+            let editor_focus = cx.focus_handle(editor_id);
+            let controller = tabs.get().active().unwrap().controller.clone();
+            group(viewport).child(render(
+                UiRect::new(0.0, 200.0, 700.0, 400.0),
+                state,
+                editor_focus,
+                focus,
+                id,
+                controller,
+                tabs,
+                application.clone(),
+                true,
+                viewport.height(),
+            ))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let state = exposed.lock().unwrap().clone().unwrap();
+        let context = ApplicationContext::empty(Default::default());
+        let click = |session: &mut UiSession, name: &str| {
+            let point = named_point(session, name);
+            for event in [
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            ] {
+                let events = session.handle_input(event);
+                dispatch_runtime_output(
+                    events,
+                    &context,
+                    &lgui::window::WindowId::new("terminal-maximize-test"),
+                    |action| session.handle_default_action(action),
+                    |_| {},
+                );
+                session.render_view(&view, viewport, UiScale::ONE);
+            }
+        };
+        let maximized = |state: &AppContext| {
+            let app = state.get();
+            let layout = app.layout.application_layout.as_ref().unwrap();
+            layout.is_maximized(layout.default_terminal_region().unwrap())
+        };
+        assert!(!maximized(&state));
+        click(&mut session, "Maximize terminal");
+        assert!(maximized(&state));
+        // The same button now restores the previous split.
+        click(&mut session, "Restore terminal size");
+        assert!(!maximized(&state));
+        click(&mut session, "Maximize terminal");
+        assert!(maximized(&state));
+
+        // Split puts a new session in a region of its own beside this one, with a
+        // divider between them, instead of adding a tab to the strip.
+        let terminal_regions = |state: &AppContext| {
+            let app = state.get();
+            app.layout
+                .application_layout
+                .as_ref()
+                .unwrap()
+                .leaves()
+                .iter()
+                .filter(|(_, content)| {
+                    matches!(
+                        content,
+                        crate::domain::application_layout::Content::Terminal { .. }
+                    )
+                })
+                .count()
+        };
+        assert_eq!(terminal_regions(&state), 1);
+        click(&mut session, "Split terminal");
+        assert_eq!(terminal_regions(&state), 2);
+
+        // The collapse icon at the end hides the panel, like the app's own toggle.
+        assert!(state.get().default_terminal_open());
+        click(&mut session, "Hide terminal panel");
+        assert!(!state.get().default_terminal_open());
+    }
+
+    #[test]
+    fn search_finds_output_selects_matches_and_keeps_keys_out_of_the_shell() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::{InputEvent, PointerData, UiScale, dispatch_runtime_output};
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+
+        let viewport = UiRect::new(0.0, 0.0, 700.0, 300.0);
+        let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
+        let exposed = Arc::new(Mutex::new(
+            None::<(AppContext, crate::app::terminal_binding::TerminalStore)>,
+        ));
+        let output = exposed.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(AppState::new));
+            let tabs = crate::app::terminal_binding::test_store(
+                cx,
+                Some(state.clone()),
+                TerminalTabs::new,
+            );
+            *output.lock().unwrap() = Some((state.clone(), tabs.clone()));
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id.clone());
+            let editor_id = cx.use_stable_id();
+            let editor_focus = cx.focus_handle(editor_id);
+            let controller = tabs.get().active().unwrap().controller.clone();
+            group(viewport).child(render(
+                viewport,
+                state,
+                editor_focus,
+                focus,
+                id,
+                controller,
+                tabs,
+                application.clone(),
+                true,
+                viewport.height(),
+            ))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let (state, tabs) = exposed.lock().unwrap().clone().unwrap();
+        let controller = tabs.get().active().unwrap().controller.test_controller();
+        controller
+            .test_parser()
+            .process(b"build ERROR one\r\nok\r\nerror two\r\nfine\r\nthe last Error");
+        let context = ApplicationContext::empty(Default::default());
+        let step = |session: &mut UiSession, input| {
+            let events = session.handle_input(input);
+            dispatch_runtime_output(
+                events,
+                &context,
+                &lgui::window::WindowId::new("terminal-search-test"),
+                |action| session.handle_default_action(action),
+                |_| {},
+            );
+            session.render_view(&view, viewport, UiScale::ONE);
+            session.runtime().run_effects();
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+        let click = |session: &mut UiSession, name: &str| {
+            let point = named_point(session, name);
+            for event in [
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            ] {
+                step(session, event);
+            }
+        };
+        let write_count =
+            |controller: &crate::infrastructure::terminal::session::TerminalController| {
+                controller.test_writes().len()
+            };
+
+        // The header button opens the box; nothing is searched for yet.
+        click(&mut session, "Search terminal output");
+        let bar = state.get().terminal.ui.terminal_search.unwrap();
+        assert_eq!(bar.target, tabs.get().active_id().unwrap());
+        assert!(named_point(&session, "Find in terminal output").x > 0.0);
+        assert_eq!(bar.status.total, 0);
+
+        // Typing in the box searches, selects the last match and counts them.
+        let before = write_count(&controller);
+        state.update(|app| {
+            app.terminal
+                .ui
+                .terminal_search
+                .as_mut()
+                .unwrap()
+                .input
+                .set_text("error");
+        });
+        session.render_view(&view, viewport, UiScale::ONE);
+        session.runtime().run_effects();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let status = state.get().terminal.ui.terminal_search.unwrap().status;
+        assert_eq!((status.current, status.total), (3, 3));
+        assert_eq!(controller.selected_text().as_deref(), Some("Error"));
+
+        // The buttons step through matches, wrapping around.
+        click(&mut session, "Previous match");
+        assert_eq!(controller.selected_text().as_deref(), Some("error"));
+        click(&mut session, "Next match");
+        click(&mut session, "Next match");
+        let status = state.get().terminal.ui.terminal_search.unwrap().status;
+        assert_eq!(status.current, 1);
+        assert_eq!(controller.selected_text().as_deref(), Some("ERROR"));
+        // Enter in the box means next, and none of this reaches the shell.
+        click(&mut session, "Find in terminal output");
+        step(
+            &mut session,
+            InputEvent::Keyboard(key(LogicalKey::Named(NamedKey::Enter), Default::default())),
+        );
+        assert_eq!(
+            state
+                .get()
+                .terminal
+                .ui
+                .terminal_search
+                .unwrap()
+                .status
+                .current,
+            2
+        );
+        assert_eq!(write_count(&controller), before);
+
+        // Closing drops the highlight and the box; the button toggles it too.
+        click(&mut session, "Close search");
+        assert!(state.get().terminal.ui.terminal_search.is_none());
+        assert!(controller.selected_text().is_none());
+        click(&mut session, "Search terminal output");
+        assert!(state.get().terminal.ui.terminal_search.is_some());
+        click(&mut session, "Search terminal output");
+        assert!(state.get().terminal.ui.terminal_search.is_none());
+
+        // Escape inside the box closes it as well.
+        click(&mut session, "Search terminal output");
+        click(&mut session, "Find in terminal output");
+        step(
+            &mut session,
+            InputEvent::Keyboard(key(LogicalKey::Named(NamedKey::Escape), Default::default())),
+        );
+        assert!(state.get().terminal.ui.terminal_search.is_none());
+    }
+
+    /// Renders the whole terminal for tab-strip tests and hands back the handles.
+    fn strip_harness(
+        width: f32,
+        sessions: usize,
+    ) -> (
+        lgui::session::UiSession,
+        lgui::application::AppView,
+        AppContext,
+        crate::app::terminal_binding::TerminalStore,
+        UiRect,
+    ) {
+        use lgui::application::AppView;
+        use lgui::core::UiScale;
+        use lgui::session::UiSession;
+        use std::sync::Mutex;
+        let viewport = UiRect::new(0.0, 0.0, width, 200.0);
+        let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
+        let exposed = Arc::new(Mutex::new(None));
+        let output = exposed.clone();
+        let view: AppView = Arc::new(move |cx| {
+            let state = AppContext::detached(cx.state_with(AppState::new));
+            let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
+                let mut tabs = TerminalTabs::new();
+                for _ in 1..sessions {
+                    tabs.add(ShellKind::Bash);
+                }
+                tabs
+            });
+            *output.lock().unwrap() = Some((state.clone(), tabs.clone()));
+            let id = cx.use_stable_id();
+            let focus = cx.focus_handle(id.clone());
+            let editor_id = cx.use_stable_id();
+            let editor_focus = cx.focus_handle(editor_id);
+            let controller = tabs.get().active().unwrap().controller.clone();
+            group(viewport)
+                .child(render(
+                    viewport,
+                    state.clone(),
+                    editor_focus.clone(),
+                    focus.clone(),
+                    id,
+                    controller,
+                    tabs.clone(),
+                    application.clone(),
+                    true,
+                    viewport.height(),
+                ))
+                .child(crate::app::terminal_view::menu(
+                    viewport,
+                    state,
+                    tabs,
+                    application.clone(),
+                    focus,
+                    editor_focus,
+                ))
+        });
+        let mut session = UiSession::new();
+        session.render_view(&view, viewport, UiScale::ONE);
+        let (state, tabs) = exposed.lock().unwrap().clone().unwrap();
+        (session, view, state, tabs, viewport)
+    }
+
+    fn tab_rects(session: &lgui::session::UiSession, ids: &[u64]) -> Vec<UiRect> {
+        ids.iter()
+            .map(|id| {
+                session
+                    .tree()
+                    .node(&UiId::owned(format!("terminal-tab-select-{id}")))
+                    .unwrap_or_else(|| panic!("no tab {id}"))
+                    .hit_rect
+            })
+            .collect()
+    }
+
+    #[test]
+    fn tab_widths_follow_the_name_and_never_selection_hover_or_programs() {
+        use lgui::core::{InputEvent, PointerData, UiScale};
+        let (mut session, view, state, tabs, viewport) = strip_harness(1400.0, 4);
+        let ids = [1_u64, 2, 3, 4];
+        let baseline = tab_rects(&session, &ids);
+        // Short names all get the minimum width, 100px apart, equal selecting areas.
+        assert!(
+            baseline
+                .windows(2)
+                .all(|w| (w[1].left - w[0].left - 100.0).abs() < 0.01)
+        );
+        assert!(
+            baseline
+                .iter()
+                .all(|r| (r.width() - baseline[0].width()).abs() < 0.01)
+        );
+        let render = |session: &mut lgui::session::UiSession| {
+            session.render_view(&view, viewport, UiScale::ONE);
+        };
+
+        // Selecting another tab moves nothing.
+        tabs.update(|tabs| tabs.select(3));
+        render(&mut session);
+        assert_eq!(tab_rects(&session, &ids), baseline);
+        // Neither does a program starting or exiting in one of them.
+        tabs.update(|tabs| tabs.update_programs(&[(2, Some("cargo watch -x run".into()))]));
+        render(&mut session);
+        assert_eq!(tab_rects(&session, &ids), baseline);
+        // A longer name does widen its own tab, up to the maximum, and only that.
+        let long = "a long session name that cannot fit in its tab";
+        tabs.update(|tabs| tabs.set_title(3, Some(long)));
+        render(&mut session);
+        let named = tab_rects(&session, &ids);
+        assert!(named[2].width() > baseline[2].width());
+        assert_eq!(named[0], baseline[0]);
+        assert_eq!(named[1], baseline[1]);
+
+        // The long name is cut in the tab for the active and inactive alike, and is
+        // shown in full only while the pointer rests on the tab.
+        let full = tabs.get().tabs()[2].label();
+        let nodes_with_full = |session: &lgui::session::UiSession| {
+            session
+                .tree()
+                .nodes()
+                .iter()
+                .filter(|n| n.text.as_deref() == Some(full.as_str()))
+                .count()
+        };
+        assert_eq!(nodes_with_full(&session), 0);
+        let target = named[2];
+        let over = Point::new(
+            (target.left + target.right) / 2.0,
+            (target.top + target.bottom) / 2.0,
+        );
+        session.handle_input(InputEvent::PointerMove(PointerData::mouse(over)));
+        render(&mut session);
+        assert_eq!(nodes_with_full(&session), 1);
+        assert!(
+            session
+                .tree()
+                .node(&UiId::new("terminal-tab-tip-3"))
+                .is_some()
+        );
+        // Hovering moved nothing either.
+        assert_eq!(tab_rects(&session, &ids), named);
+        session.handle_input(InputEvent::PointerMove(PointerData::mouse(Point::new(
+            600.0, 150.0,
+        ))));
+        render(&mut session);
+        assert_eq!(nodes_with_full(&session), 0);
+        let _ = state;
+    }
+
+    #[test]
+    fn tabs_scroll_with_a_list_of_every_terminal_when_they_cannot_shrink_further() {
+        use crate::ui::terminal::state::TerminalTabMenuKind;
+        use lgui::application::ApplicationContext;
+        use lgui::core::{InputEvent, PointerData, UiScale, dispatch_runtime_output};
+        let context = ApplicationContext::empty(Default::default());
+        // Four short names fit at the minimum width: no scrolling and no list.
+        let (session, _, _, _, _) = strip_harness(1400.0, 4);
+        let rects = tab_rects(&session, &[1, 2, 3, 4]);
+        assert!(
+            rects
+                .windows(2)
+                .all(|w| (w[1].left - w[0].left - 100.0).abs() < 0.01)
+        );
+        assert!(
+            named_try(&session, "All terminals").is_none(),
+            "no list while everything fits"
+        );
+
+        // Twelve tabs cannot squeeze to the floor: the strip scrolls at 100px each and shows a list.
+        let (mut session, view, state, tabs, viewport) = strip_harness(1200.0, 12);
+        let rects = tab_rects(&session, &[1, 2, 3, 4, 5, 6]);
+        assert!(
+            rects
+                .windows(2)
+                .all(|w| (w[1].left - w[0].left - 100.0).abs() < 0.01)
+        );
+        let list = named_point(&session, "All terminals");
+        let click = |session: &mut lgui::session::UiSession, point: Point| {
+            for event in [
+                InputEvent::PointerDown {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+                InputEvent::PointerUp {
+                    pointer: PointerData::mouse(point),
+                    button: PointerButton::Left,
+                },
+            ] {
+                let events = session.handle_input(event);
+                dispatch_runtime_output(
+                    events,
+                    &context,
+                    &lgui::window::WindowId::new("terminal-list-test"),
+                    |action| session.handle_default_action(action),
+                    |_| {},
+                );
+                session.render_view(&view, viewport, UiScale::ONE);
+            }
+        };
+        click(&mut session, list);
+        let menu = state.get().terminal.ui.terminal_tab_context_menu.unwrap();
+        assert_eq!(menu.kind, TerminalTabMenuKind::Sessions);
+        // Picking a terminal from the list selects it and closes the list.
+        let last = tabs.get().tabs().last().unwrap().id;
+        let row = session
+            .tree()
+            .node(&UiId::owned(format!("terminal-session-row-{last}")))
+            .expect("a row for every terminal")
+            .hit_rect;
+        click(
+            &mut session,
+            Point::new((row.left + row.right) / 2.0, (row.top + row.bottom) / 2.0),
+        );
+        assert_eq!(tabs.get().active_id(), Some(last));
+        assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
+        // Selecting it scrolled the strip so the tab is in view.
+        let strip_right = list.x - 4.0;
+        let shown = tab_rects(&session, &[last])[0];
+        assert!(
+            shown.left >= 0.0 && shown.left < strip_right,
+            "{shown:?} vs {strip_right}"
+        );
+    }
+
+    /// The center of the control with this accessible name, if there is one.
+    fn named_try(session: &lgui::session::UiSession, name: &str) -> Option<Point> {
+        session
+            .tree()
+            .nodes()
+            .iter()
+            .find(|n| n.semantics.as_ref().and_then(|s| s.name.as_deref()) == Some(name))
+            .map(|n| {
+                Point::new(
+                    (n.layout_rect.left + n.layout_rect.right) * 0.5,
+                    (n.layout_rect.top + n.layout_rect.bottom) * 0.5,
+                )
+            })
     }
 
     #[test]

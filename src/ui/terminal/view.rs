@@ -1,13 +1,16 @@
 //! Bottom terminal panel backed by a real platform PTY.
 
 use super::keys::{self, key_bytes};
-use std::sync::Arc;
 
 use super::bindings as commands;
 use super::bindings::{
     Binding, Command, FrameRequest, SessionFrame as TerminalTab, Sessions, View as TerminalTabs,
 };
+use super::find;
+use super::header;
 use super::layout_binding::{MapBinding, MapCommand};
+use super::state::TerminalTabMenuKind;
+use super::strip;
 
 use lgui::core::{
     CursorIcon, EventPolicy, IconStyle, PhysicalRect, Point, PointerButton, SemanticRole,
@@ -22,14 +25,23 @@ use crate::ui::components::scrollbar;
 use crate::ui::editor::view::{scroll_from_thumb, thumb_geometry};
 use crate::ui::fonts;
 use crate::ui::tabs::{
-    GAP as TAB_CONTENT_GAP, MAX_TAB_W, MIN_TAB_W, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD,
-    TEXT_MARGIN, ellipsize, measure,
+    GAP as TAB_CONTENT_GAP, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD, TEXT_MARGIN, ellipsize,
+    measure,
 };
 use crate::ui::terminal::layout_binding::StripDrag;
 use crate::ui::terminal::state::SelectionDrag;
 use crate::ui::theme;
 
 const HEADER_H: f32 = theme::TABS_H;
+/// How much wider the search button's box is on its right than the other tools'.
+const SEARCH_BOX_EXTRA: f32 = 2.0;
+/// Space above and below the active tab's pill inside its hit area.
+const PILL_V_INSET: f32 = 3.0;
+/// Narrowest header that still shows the maximize and collapse group.
+const PANEL_TOOLS_MIN_W: f32 = 380.0;
+/// Status glyph at the start of a session tab, and its gap to the name.
+const GLYPH: f32 = 14.0;
+const GLYPH_GAP: f32 = 6.0;
 const BODY_PAD_X: f32 = 12.0;
 /// The right edge is nearly flush: the overlay scrollbar draws over the text
 /// instead of reserving columns, as in the editor.
@@ -238,67 +250,210 @@ pub(crate) fn render_view(
             .find(|option| option.kind == kind && option.available())
     });
     let new_shell = selected_shell.map(|option| option.kind);
+    let running = tab_items
+        .iter()
+        .find(|tab| tab.id == active_tab_id)
+        .is_some_and(|tab| tab.running_program.is_some());
+    // Only the default bottom region has maximize and collapse. The app always
+    // renders regions, so compare with the default one; a plain render (no
+    // region) is the default panel too.
+    let owns_panel_tools = region_view
+        .as_ref()
+        .is_none_or(|(region, _, _)| app_state.default_region == Some(*region));
+    let tools = header::layout(
+        header,
+        header::Spec {
+            running,
+            // A narrow header gives the room to the tabs instead of the panel group.
+            panel: owns_panel_tools && header.width() >= PANEL_TOOLS_MIN_W,
+        },
+    );
+    let tool_color = theme::c().text_soft;
+    let menu_target = app_state
+        .ui
+        .terminal_tab_context_menu
+        .as_ref()
+        .filter(|menu| menu.target == active_tab_id);
+    let more_open = menu_target.is_some_and(|menu| menu.kind == TerminalTabMenuKind::More);
+
+    if let Some(stop) = tools.stop {
+        let stop_tabs = terminal_tabs.clone();
+        let stop_focus = terminal_focus.clone();
+        let stop_application = application.clone();
+        terminal = terminal.child(header::button(
+            "terminal-stop",
+            stop,
+            "terminal-stop",
+            "Stop running program",
+            false,
+            theme::c().error,
+            move || {
+                // The same byte a keyboard Ctrl+C sends to the foreground program.
+                commands::write(&stop_tabs, active_tab_id, &[0x03]);
+                stop_application.request_frame();
+                stop_focus.focus();
+            },
+        ));
+    }
     let add_tabs = terminal_tabs.clone();
     let add_state = state.clone();
     let add_focus = terminal_focus.clone();
-    let add_size = (header.height() - 6.0).max(0.0);
-    let add_rect = UiRect::new(
-        rect.right - 6.0 - add_size,
-        header.top + 3.0,
-        rect.right - 6.0,
-        header.bottom - 3.0,
+    // The chosen shell has no visible label any more, so name it for assistive
+    // technology and tests.
+    let new_name = selected_shell.map_or_else(
+        || "New terminal".to_owned(),
+        |option| format!("New terminal: {}", option.name),
     );
-    let tool_right = add_rect.left - 6.0;
-    terminal = terminal.child(
-        panel(
-            add_rect,
-            VisualStyle::filled(theme::c().surface).radius(3.0),
-        )
-        .key("terminal-new-tab")
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(CursorIcon::Pointer)
-        .on_click(move || {
+    terminal = terminal.child(header::button(
+        "terminal-new-tab",
+        tools.new,
+        "plus",
+        new_name,
+        false,
+        tool_color,
+        move || {
             if commands::new_from_target(&add_state, &add_tabs, active_tab_id, new_shell).is_none()
             {
                 return;
             }
             add_focus.focus();
-        })
-        .child(icon(
-            "terminal.new.icon",
-            "plus",
-            theme::icon_rect(add_rect),
-            theme::c().text_soft,
-        )),
+        },
+    ));
+    let menu_tabs = terminal_tabs.clone();
+    let menu_state = state.clone();
+    let menu_focus = terminal_focus.clone();
+    terminal = terminal.child(header::button(
+        "terminal-shell-menu",
+        tools.shell,
+        "chevron-down",
+        "Choose shell",
+        shell_menu_open,
+        tool_color,
+        move || {
+            if !commands::shell_menu(&menu_state, &menu_tabs, active_tab_id) {
+                return;
+            }
+            menu_focus.focus();
+        },
+    ));
+    let split_tabs = terminal_tabs.clone();
+    let split_focus = terminal_focus.clone();
+    terminal = terminal.child(header::button(
+        "terminal-split",
+        tools.split,
+        "terminal-split",
+        "Split terminal",
+        sessions.len() > 1,
+        tool_color,
+        move || {
+            if commands::split(&split_tabs, active_tab_id).is_some() {
+                split_focus.focus();
+            }
+        },
+    ));
+    let find_open = app_state
+        .ui
+        .terminal_search
+        .as_ref()
+        .is_some_and(|bar| bar.target == active_tab_id);
+    let find_state = state.clone();
+    // The magnifier's mass sits toward its handle, leaving more empty space on
+    // the left of the box; the box grows on the right while the glyph stays put.
+    let search_box = UiRect::new(
+        tools.search.left,
+        tools.search.top,
+        tools.search.right + SEARCH_BOX_EXTRA,
+        tools.search.bottom,
     );
-    let available_width = (tool_right - rect.left).max(0.0);
-    let max_instance_width = (available_width * 0.5)
-        .clamp(52.0, 220.0)
-        .min(available_width);
-    let shell_label = ellipsize(
-        &selected_shell
-            .map(|option| option.name.clone())
-            .unwrap_or_else(|| terminal_tabs.short_label(controller)),
-        (max_instance_width - 47.0 - TEXT_MARGIN).max(0.0),
-        theme::SMALL,
-        400,
-    );
-    // Reserve the leading icon and trailing arrow around the shaped label.
-    let instance_width = (25.0 + measure(&shell_label, theme::SMALL, 400) + TEXT_MARGIN + 22.0)
-        .ceil()
-        .min(max_instance_width);
-    let instance_rect = UiRect::new(
-        tool_right - instance_width,
-        header.top + 3.0,
-        tool_right,
-        header.bottom - 3.0,
-    );
+    terminal = terminal.child(header::button_in(
+        "terminal-search",
+        search_box,
+        tools.search,
+        "search",
+        "Search terminal output",
+        find_open,
+        tool_color,
+        move || {
+            find_state.run(Command::ToggleSearch(active_tab_id));
+        },
+    ));
+    let more_state = state.clone();
+    let more_anchor = tools.more;
+    terminal = terminal.child(header::button(
+        "terminal-more",
+        tools.more,
+        "terminal-more",
+        "More terminal actions",
+        more_open,
+        tool_color,
+        move || {
+            more_state.run(Command::OpenMenu {
+                target: active_tab_id,
+                // The menu aligns its right edge with the button.
+                position: (more_anchor.right, more_anchor.bottom + 2.0),
+                kind: TerminalTabMenuKind::More,
+            });
+        },
+    ));
+    if let Some(maximize) = tools.maximize {
+        let maximized = app_state.maximized;
+        let maximize_state = state.clone();
+        let maximize_focus = terminal_focus.clone();
+        terminal = terminal.child(header::button(
+            "terminal-maximize",
+            maximize,
+            if maximized {
+                "terminal-restore"
+            } else {
+                "terminal-maximize"
+            },
+            if maximized {
+                "Restore terminal size"
+            } else {
+                "Maximize terminal"
+            },
+            maximized,
+            tool_color,
+            move || {
+                maximize_state.run(Command::ToggleMaximize);
+                maximize_focus.focus();
+            },
+        ));
+    }
+    if let Some(collapse) = tools.collapse {
+        let collapse_state = state.clone();
+        let collapse_editor = editor_focus.clone();
+        terminal = terminal.child(header::button(
+            "terminal-collapse",
+            collapse,
+            "terminal-minimize",
+            "Hide terminal panel",
+            false,
+            tool_color,
+            move || {
+                if collapse_state.run(Command::CollapsePanel).applied {
+                    collapse_editor.focus();
+                }
+            },
+        ));
+    }
+    for center in &tools.rules {
+        terminal = terminal.child(header::rule(header, *center));
+    }
 
-    let tab_strip_left = rect.left;
+    // The category capsule hides in a narrow header so the tabs keep their room.
+    let mut tab_strip_left = rect.left;
+    if header.width() >= 420.0 {
+        let (category, right) = header::category(header, tab_items.len());
+        terminal = terminal
+            .child(category)
+            .child(header::rule(header, right + 8.0));
+        tab_strip_left = right + 14.0;
+    }
     let tab_strip = UiRect::new(
         tab_strip_left,
         header.top,
-        (instance_rect.left - 8.0).max(tab_strip_left),
+        (tools.left - 8.0).max(tab_strip_left),
         header.bottom,
     );
     let tab_strip_element = render_terminal_tabs(
@@ -311,56 +466,6 @@ pub(crate) fn render_view(
         terminal_focus.clone(),
         editor_focus.clone(),
         application.clone(),
-    );
-
-    let menu_state = state.clone();
-    let menu_focus = terminal_focus.clone();
-    let menu_tabs = terminal_tabs.clone();
-    terminal = terminal.child(
-        panel(
-            instance_rect,
-            VisualStyle::filled(theme::c().surface).radius(3.0),
-        )
-        .event_policy(EventPolicy::INTERACTIVE)
-        .cursor(CursorIcon::Pointer)
-        .on_click(move || {
-            if !commands::shell_menu(&menu_state, &menu_tabs, active_tab_id) {
-                return;
-            }
-            menu_focus.focus();
-        })
-        .child(icon(
-            "terminal.instance.icon",
-            "terminal",
-            theme::icon_rect(UiRect::new(
-                instance_rect.left + 7.0,
-                instance_rect.top,
-                instance_rect.left + 19.0,
-                instance_rect.bottom,
-            )),
-            theme::c().text_muted,
-        ))
-        .child(text(
-            UiRect::new(
-                instance_rect.left + 25.0,
-                instance_rect.top,
-                instance_rect.right - 22.0,
-                instance_rect.bottom,
-            ),
-            shell_label,
-            theme::mono(theme::c().text_soft, theme::SMALL),
-        ))
-        .child(icon(
-            "terminal.instance.chevron",
-            "chevron-down",
-            theme::icon_rect(UiRect::new(
-                instance_rect.right - 17.0,
-                instance_rect.top,
-                instance_rect.right - 5.0,
-                instance_rect.bottom,
-            )),
-            theme::c().text_dim,
-        )),
     );
 
     for (session, session_rect) in sessions.iter().zip(body_rects.iter().copied()) {
@@ -380,10 +485,27 @@ pub(crate) fn render_view(
         ));
     }
 
+    if let Some(bar) = app_state
+        .ui
+        .terminal_search
+        .as_ref()
+        .filter(|bar| bar.target == active_tab_id)
+    {
+        terminal = terminal.child(find::render(
+            active_body,
+            state.clone(),
+            bar,
+            terminal_focus.clone(),
+        ));
+    }
+
     // Paint one full-width rule after the clipped tab contents and session surfaces.
     terminal = terminal
         .child(tab_strip_element.contents)
-        .child(tab_header_rule(header, tab_strip, tab_strip_element.active));
+        // The active tab is a pill now, so the rule carries no underline.
+        .child(tab_header_rule(header, tab_strip, None))
+        // The list button and tooltips sit outside the strip's clip.
+        .child(tab_strip_element.extras);
 
     // Add handles after all session surfaces so they win hit testing.
     for index in 0..sessions.len().saturating_sub(1) {
@@ -426,7 +548,7 @@ pub(crate) fn render_view(
 
     if shell_menu_open {
         terminal = terminal.child(shell_menu(
-            instance_rect,
+            tools.shell,
             rect,
             state.clone(),
             terminal_focus.clone(),
@@ -581,25 +703,25 @@ pub(crate) fn render_session(
             let (row, col) = cell_at(content, pointer.point, screen_rows, screen_cols);
             commands::extend_selection(&drag_tabs, session_id, row, col);
             let point = pointer.point;
-            drag_state.ui.try_update(|app| match app.selection_drag.as_mut() {
-                Some(drag) if drag.point != point => {
-                    drag.point = point;
-                    true
-                }
-                _ => false,
-            });
+            drag_state
+                .ui
+                .try_update(|app| match app.selection_drag.as_mut() {
+                    Some(drag) if drag.point != point => {
+                        drag.point = point;
+                        true
+                    }
+                    _ => false,
+                });
             drag_application.request_frame();
             cx.stop_propagation();
         }
     });
     let select_up_state = state.clone();
     terminal = terminal.on_pointer_up(move |_cx, _pointer| {
-        select_up_state
-            .ui
-            .try_update(|app| {
-                app.selection_drag = None;
-                std::mem::take(&mut app.selecting_terminal)
-            });
+        select_up_state.ui.try_update(|app| {
+            app.selection_drag = None;
+            std::mem::take(&mut app.selecting_terminal)
+        });
     });
 
     let wheel_tabs = terminal_tabs.clone();
@@ -786,6 +908,9 @@ fn vertical_scrollbar(
 pub(crate) struct TabStrip {
     pub(crate) contents: Element,
     pub(crate) active: Option<UiRect>,
+    /// What belongs outside the strip's clip: the full-list button and the
+    /// hover tooltips.
+    pub(crate) extras: Element,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -805,44 +930,46 @@ pub(crate) fn render_terminal_tabs(
         return TabStrip {
             contents: strip,
             active: None,
+            extras: group(UiRect::new(rect.left, rect.top, rect.left, rect.top)),
         };
     }
 
-    let count = tabs.len() as f32;
-    let available_tabs_width = (rect.width() - TABS_PAD).max(MIN_TAB_W);
     let labels = tabs.iter().map(TerminalTab::label).collect::<Vec<_>>();
     let close_width = measure("✕", theme::SMALL, 400);
-    let fixed_width = TAB_PAD + TAB_CONTENT_GAP + close_width + TAB_PAD;
-    let active_width = tabs
+    // A tab is as wide as its name asks, between the minimum and the maximum
+    // width. The name leaves out the running program, so selecting, hovering or
+    // a program starting or exiting never moves a tab or its close button.
+    let fixed_width =
+        TAB_PAD + GLYPH + GLYPH_GAP + TAB_CONTENT_GAP + close_width + TAB_PAD + TEXT_MARGIN;
+    let naturals = tabs
         .iter()
-        .position(|tab| tab.id == active_id)
-        .map(|index| {
-            (fixed_width + measure(&labels[index], theme::UI_SIZE, 400) + TEXT_MARGIN)
-                .max(MIN_TAB_W)
-        })
-        .unwrap_or(0.0);
-    let inactive_count = count - f32::from(active_width > 0.0);
-    let tab_cap = if inactive_count > 0.0 {
-        ((available_tabs_width - active_width - TAB_GAP * (count - 1.0)) / inactive_count)
-            .clamp(MIN_TAB_W, MAX_TAB_W)
-    } else {
-        MAX_TAB_W
-    };
-    let widths = labels
-        .iter()
-        .enumerate()
-        .map(|(index, name)| {
-            let natural_width = fixed_width + measure(name, theme::UI_SIZE, 400);
-            if tabs[index].id == active_id {
-                (natural_width + TEXT_MARGIN).max(MIN_TAB_W)
-            } else {
-                natural_width.min(tab_cap).max(MIN_TAB_W)
-            }
-        })
+        .map(|tab| fixed_width + measure(&stable_name(tab), theme::UI_SIZE, 400))
         .collect::<Vec<_>>();
+    let metrics = strip::layout(rect.width(), &naturals, TABS_PAD, TAB_GAP);
+    let strip_key = tabs[0].id;
+    let scroll = state
+        .get()
+        .ui
+        .tab_scroll(strip_key)
+        .clamp(0.0, metrics.max_scroll);
+    // The tab being renamed holds a text field instead of its name.
+    let renaming = state
+        .get()
+        .ui
+        .terminal_rename
+        .as_ref()
+        .map(|editor| editor.target);
+    let widths = metrics.widths.clone();
+    let viewport = UiRect::new(
+        rect.left,
+        rect.top,
+        rect.left + metrics.viewport_w,
+        rect.bottom,
+    );
+    let mut tips: Vec<(UiId, UiId, UiId, Element)> = Vec::new();
     let mut active_rect = None;
     let strip_drag = {
-        let mut left = rect.left + TABS_PAD;
+        let mut left = rect.left + TABS_PAD - scroll;
         let slots = tabs
             .iter()
             .zip(&widths)
@@ -854,7 +981,7 @@ pub(crate) fn render_terminal_tabs(
             .collect();
         StripDrag { rect, tabs: slots }
     };
-    let mut left = rect.left + TABS_PAD;
+    let mut left = rect.left + TABS_PAD - scroll;
     for (index, tab) in tabs.iter().enumerate() {
         let name = &labels[index];
         let active = tab.id == active_id;
@@ -865,7 +992,7 @@ pub(crate) fn render_terminal_tabs(
             left + tab_width,
             rect.bottom - PILL_INSET,
         );
-        let name_left = tab_rect.left + TAB_PAD;
+        let name_left = tab_rect.left + TAB_PAD + GLYPH + GLYPH_GAP;
         let close_left = tab_rect.right - TAB_PAD - close_width;
         let close_rect = UiRect::new(
             close_left,
@@ -874,16 +1001,23 @@ pub(crate) fn render_terminal_tabs(
             tab_rect.bottom,
         );
         let name_slot_width = (close_left - TAB_CONTENT_GAP - name_left).max(0.0);
-        let display_name = if active {
-            name.clone()
-        } else {
-            ellipsize(
-                name,
-                (name_slot_width - TEXT_MARGIN).max(0.0),
-                theme::UI_SIZE,
-                400,
-            )
-        };
+        // A long name is cut to the same slot in every tab, active or not; the
+        // tooltip shows it in full.
+        let display_name = ellipsize(
+            name,
+            (name_slot_width - TEXT_MARGIN).max(0.0),
+            theme::UI_SIZE,
+            400,
+        );
+        if tab_rect.right > viewport.left && tab_rect.left < viewport.right {
+            let tip_id = UiId::owned(format!("terminal-tab-tip-{}", tab.id));
+            tips.push((
+                UiId::owned(format!("terminal-tab-select-{}", tab.id)),
+                UiId::owned(format!("terminal-tab-close-{}", tab.id)),
+                tip_id.clone(),
+                tab_tooltip(tip_id, rect, tab_rect, tab),
+            ));
+        }
         let label_rect = UiRect::new(
             name_left,
             tab_rect.top,
@@ -893,26 +1027,69 @@ pub(crate) fn render_terminal_tabs(
         if active {
             active_rect = Some(tab_rect);
         }
-        let visual = panel(
-            tab_rect,
-            if active {
-                VisualStyle::filled(theme::c().active_tab).alpha(51)
-            } else {
-                VisualStyle::default()
-            },
-        )
-        .child(text(
-            label_rect,
-            display_name,
-            theme::mono(
-                if active {
-                    theme::c().text_bright
-                } else {
-                    theme::c().text_muted
-                },
-                theme::UI_SIZE,
-            ),
-        ));
+        let mut visual = panel(tab_rect, VisualStyle::default());
+        let editing = renaming == Some(tab.id);
+        if active || editing {
+            // A tinted pill with a faint accent outline; a solid, thicker one
+            // while its name is being edited.
+            let (outline_alpha, edge) = if editing { (255, 2.0) } else { (90, 1.0) };
+            // The pill is shorter than the hit area, so it floats in the header
+            // instead of touching its top and bottom edges.
+            let pill = UiRect::new(
+                tab_rect.left,
+                tab_rect.top + PILL_V_INSET,
+                tab_rect.right,
+                tab_rect.bottom - PILL_V_INSET,
+            );
+            let radius = pill.height() / 2.0;
+            let inner = UiRect::new(
+                pill.left + edge,
+                pill.top + edge,
+                pill.right - edge,
+                pill.bottom - edge,
+            );
+            visual = visual
+                .child(panel(
+                    pill,
+                    VisualStyle::filled(theme::c().accent)
+                        .alpha(outline_alpha)
+                        .radius(radius),
+                ))
+                .child(panel(
+                    inner,
+                    VisualStyle::filled(theme::c().sidebar).radius(radius - edge),
+                ))
+                .child(panel(
+                    inner,
+                    VisualStyle::filled(theme::c().accent)
+                        .alpha(34)
+                        .radius(radius - edge),
+                ));
+        }
+        // Editing a name leaves only the field in the pill, as in the design.
+        if !editing {
+            let glyph_top = tab_rect.top + (tab_rect.height() - GLYPH) / 2.0;
+            let glyph_left = tab_rect.left + TAB_PAD;
+            visual = visual.child(session_glyph(
+                tab.id,
+                UiRect::new(glyph_left, glyph_top, glyph_left + GLYPH, glyph_top + GLYPH),
+                tab.running_program.is_some(),
+            ));
+        }
+        if !editing {
+            visual = visual.child(text(
+                label_rect,
+                display_name,
+                theme::mono(
+                    if active {
+                        theme::c().text_bright
+                    } else {
+                        theme::c().text_muted
+                    },
+                    theme::UI_SIZE,
+                ),
+            ));
+        }
         let select_tabs = terminal_tabs.clone();
         let select_focus = terminal_focus.clone();
         let press_state = state.clone();
@@ -955,6 +1132,23 @@ pub(crate) fn render_terminal_tabs(
             }
         })
         .child(visual);
+        if renaming == Some(tab_id) {
+            // Renaming replaces selecting and closing: the field fills the tab.
+            tab_element = tab_element.child(super::rename::input(
+                // Inside the pill's thicker outline, across its whole width.
+                UiRect::new(
+                    tab_rect.left + 6.0,
+                    tab_rect.top + PILL_V_INSET + 2.0,
+                    tab_rect.right - 6.0,
+                    tab_rect.bottom - PILL_V_INSET - 2.0,
+                ),
+                state.clone(),
+                terminal_focus.clone(),
+            ));
+            strip = strip.child(tab_element);
+            left += tab_width + TAB_GAP;
+            continue;
+        }
         let select_rect = UiRect::new(
             tab_rect.left,
             tab_rect.top,
@@ -965,12 +1159,6 @@ pub(crate) fn render_terminal_tabs(
         // component it follows the map's cursor without re-rendering the strip.
         tab_element = tab_element.child(
             component(select_rect, move |cx, &select_rect| {
-                let press_point = cx
-                    .state_with(|| Arc::new(std::sync::Mutex::new(None::<Point>)))
-                    .get();
-                let click_point = press_point.clone();
-                let click_state = press_state.clone();
-                let click_map = select_map.clone();
                 let cursor = cx.use_observable(
                     select_map.observable(),
                     |s: &super::layout_binding::MapSignal| s.cursor,
@@ -995,7 +1183,6 @@ pub(crate) fn render_terminal_tabs(
                 .cursor(cursor)
                 .on_pointer_down_with_button(move |cx, pointer, button| {
                     if button == PointerButton::Left {
-                        *press_point.lock().unwrap() = Some(pointer.point);
                         if !commands::select(&press_state, &select_tabs, tab_id) {
                             return;
                         }
@@ -1006,21 +1193,6 @@ pub(crate) fn render_terminal_tabs(
                             strip: Some(select_strip.clone()),
                         });
                         cx.stop_propagation();
-                    }
-                })
-                .on_click(move || {
-                    let Some(point) = click_point.lock().unwrap().take() else {
-                        return;
-                    };
-                    if click_state
-                        .run(Command::TabClick {
-                            target: tab_id,
-                            point: (point.x, point.y),
-                            menu_position: (tab_rect.left, tab_rect.bottom),
-                        })
-                        .applied
-                    {
-                        click_map.cancel();
                     }
                 })
             })
@@ -1072,10 +1244,175 @@ pub(crate) fn render_terminal_tabs(
         left += tab_width + TAB_GAP;
     }
 
-    TabStrip {
-        contents: clip(rect, 0.0, 0.0).child(strip),
-        active: active_rect,
+    if metrics.scrolls() {
+        let wheel_state = state.clone();
+        let max = metrics.max_scroll;
+        strip = strip.on_wheel(move |cx, delta| {
+            let primary = if delta.x.abs() > delta.y.abs() {
+                delta.x
+            } else {
+                delta.y
+            };
+            let step = match delta.unit {
+                WheelUnit::Lines => primary * 48.0,
+                WheelUnit::Pixels => primary,
+            };
+            // Wheel down or right moves toward the later tabs.
+            wheel_state
+                .ui
+                .update(|ui| ui.scroll_tabs(strip_key, -step, max));
+            cx.stop_propagation();
+        });
     }
+    // Selecting a tab that is out of view, or a changed room or count, brings the
+    // active tab into view once; scrolling by hand afterwards is left alone.
+    let active_index = tabs.iter().position(|t| t.id == active_id).unwrap_or(0);
+    let reveal_state = state.clone();
+    let reveal_layout = metrics.clone();
+    strip = strip.child(
+        component(rect, move |cx, _| {
+            let state = reveal_state.clone();
+            let layout = reveal_layout.clone();
+            cx.use_effect(
+                (
+                    strip_key,
+                    active_id,
+                    active_index,
+                    (layout.widths.iter().sum::<f32>() * 10.0) as i32,
+                    (layout.viewport_w * 10.0) as i32,
+                ),
+                move || {
+                    state.ui.update(|ui| {
+                        let current = ui.tab_scroll(strip_key);
+                        let next = strip::reveal(current, &layout, active_index, TABS_PAD, TAB_GAP);
+                        ui.set_tab_scroll(strip_key, next);
+                    });
+                },
+            );
+            group(UiRect::new(rect.left, rect.top, rect.left, rect.top))
+        })
+        .key(format!("terminal-tab-reveal-{strip_key}")),
+    );
+
+    // Outside the clip: the full-list button and the hover tooltips.
+    let mut extras = group(UiRect::new(rect.left, rect.top, rect.left, rect.top));
+    if metrics.scrolls() {
+        let button = UiRect::new(
+            viewport.right + 2.0,
+            rect.top + 3.0,
+            rect.right - 2.0,
+            rect.bottom - 3.0,
+        );
+        let list_state = state.clone();
+        let list_open = state
+            .get()
+            .ui
+            .terminal_tab_context_menu
+            .as_ref()
+            .is_some_and(|menu| menu.kind == TerminalTabMenuKind::Sessions);
+        extras = extras.child(header::button(
+            "terminal-sessions",
+            button,
+            "terminal-list",
+            "All terminals",
+            list_open,
+            theme::c().text_soft,
+            move || {
+                list_state.run(Command::OpenMenu {
+                    target: active_id,
+                    // The list aligns its right edge with the button.
+                    position: (button.right, button.bottom + 2.0),
+                    kind: TerminalTabMenuKind::Sessions,
+                });
+            },
+        ));
+    }
+    if renaming.is_none() {
+        extras = extras.child(
+            Element::new(move |cx| {
+                let hovered = tips
+                    .iter()
+                    .find(|(select, close, _, _)| {
+                        cx.context.interaction_flags(select).hovered
+                            || cx.context.interaction_flags(close).hovered
+                    })
+                    .map(|(_, _, tip, _)| tip.clone());
+                UiElement::group(cx.id, rect).children(
+                    cx.children
+                        .into_iter()
+                        .filter(|child| Some(&child.node().id) == hovered.as_ref()),
+                )
+            })
+            .key("terminal-tab-tips"),
+        );
+    }
+
+    TabStrip {
+        contents: clip(viewport, 0.0, 0.0).child(strip),
+        active: active_rect,
+        extras,
+    }
+}
+
+/// The name that decides a tab's width: the user's name or the shell's label,
+/// and the purpose. The running program is left out because it comes and goes.
+fn stable_name(tab: &TerminalTab) -> String {
+    let name = tab.title_override.as_deref().unwrap_or(&tab.short_label);
+    match tab.purpose.as_deref() {
+        Some(purpose) => format!("{name} · {purpose}"),
+        None => name.to_owned(),
+    }
+}
+
+/// The card shown under a hovered tab with its full name and where it runs.
+fn tab_tooltip(id: UiId, strip: UiRect, tab_rect: UiRect, tab: &TerminalTab) -> Element {
+    let title = tab.label();
+    let detail = match tab.working_directory() {
+        Some(dir) => format!("{} · {}", tab.short_label, dir.display()),
+        None => tab.short_label.clone(),
+    };
+    let width = (measure(&title, theme::SMALL, 400).max(measure(&detail, theme::SMALL, 400))
+        + 20.0)
+        .clamp(120.0, 520.0);
+    let left = tab_rect.left.max(strip.left);
+    let card = UiRect::new(
+        left,
+        strip.bottom + 4.0,
+        left + width,
+        strip.bottom + 4.0 + 44.0,
+    );
+    let line = |top: f32, content: String, color| {
+        text(
+            UiRect::new(card.left + 9.0, top, card.right - 9.0, top + 18.0),
+            ellipsize(&content, width - 18.0, theme::SMALL, 400),
+            theme::mono(color, theme::SMALL),
+        )
+    };
+    let body = theme::bordered(card, theme::c().surface, theme::c().border, 4.0, 1.0)
+        .child(line(card.top + 5.0, title, theme::c().text))
+        .child(line(card.top + 23.0, detail, theme::c().text_muted));
+    Element::new(move |cx| UiElement::group(id.clone(), card).children(cx.children))
+        .key("terminal-tab-tip")
+        .child(body)
+}
+
+/// A spinner while a program runs in the session, a quiet dot otherwise.
+fn session_glyph(id: u64, rect: UiRect, running: bool) -> Element {
+    if running {
+        return crate::ui::components::loading_indicator::render(
+            rect,
+            theme::c().diff.add_mark,
+            format!("terminal-spin-{id}"),
+        );
+    }
+    let (x, y) = (
+        (rect.left + rect.right) / 2.0,
+        (rect.top + rect.bottom) / 2.0,
+    );
+    panel(
+        UiRect::new(x - 3.0, y - 3.0, x + 3.0, y + 3.0),
+        VisualStyle::filled(theme::c().text_dim).radius(3.0),
+    )
 }
 
 // Keep vertical edges out of the fractional tab clip. Only the underline's

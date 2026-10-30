@@ -10,11 +10,19 @@ pub struct TerminalMetadata {
     width_weight: f32,
     shell: ShellKind,
     cwd: Option<PathBuf>,
+    /// A name the user typed; replaces the shell's short label in the tab.
+    title: Option<String>,
     purpose: Option<String>,
     running_program: Option<String>,
 }
 
+/// Longest custom session name kept, in characters.
+const TITLE_MAX_CHARS: usize = 48;
+
 impl TerminalMetadata {
+    pub fn title(&self) -> Option<String> {
+        self.title.clone()
+    }
     pub fn id(&self) -> SessionId {
         self.id
     }
@@ -184,6 +192,23 @@ impl TerminalModel {
         self.tabs.iter().map(|tab| tab.purpose.clone()).collect()
     }
 
+    pub fn titles(&self) -> Vec<Option<String>> {
+        self.tabs.iter().map(|tab| tab.title.clone()).collect()
+    }
+
+    pub fn restore_titles(&mut self, titles: &[Option<String>]) {
+        for (tab, title) in self.tabs.iter_mut().zip(titles) {
+            tab.title = normalized_title(title.as_deref());
+        }
+    }
+
+    /// `None`, or a name that is blank once trimmed, restores the automatic name.
+    pub fn set_title(&mut self, id: u64, title: Option<&str>) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.title = normalized_title(title);
+        }
+    }
+
     pub fn directories(&self) -> Vec<Option<PathBuf>> {
         self.tabs.iter().map(|tab| tab.cwd.clone()).collect()
     }
@@ -247,6 +272,7 @@ impl TerminalModel {
                 width_weight,
                 shell,
                 cwd,
+                title: None,
                 purpose: None,
                 running_program: None,
             },
@@ -281,6 +307,7 @@ impl TerminalModel {
             width_weight: 1.0,
             shell,
             cwd,
+            title: None,
             purpose: None,
             running_program: None,
         });
@@ -330,6 +357,11 @@ impl TerminalModel {
         }
         Some(removed)
     }
+}
+
+fn normalized_title(title: Option<&str>) -> Option<String> {
+    let title = title.map(str::trim).filter(|value| !value.is_empty())?;
+    Some(title.chars().take(TITLE_MAX_CHARS).collect())
 }
 
 fn normalized_purpose(purpose: Option<&str>) -> Option<String> {
@@ -387,6 +419,36 @@ mod tests {
         }
         tabs.set_purpose(first, Some("arbitrary custom name"));
         assert_eq!(tabs.tabs()[0].purpose.as_deref(), Some("Other"));
+    }
+
+    #[test]
+    fn custom_titles_are_trimmed_capped_restored_and_cleared_when_blank() {
+        let mut tabs = TerminalModel::restored(vec![ShellKind::Bash; 3], None);
+        let first = tabs.tabs()[0].id;
+        tabs.set_title(first, Some("  API server  "));
+        assert_eq!(tabs.tabs()[0].title().as_deref(), Some("API server"));
+        tabs.set_title(first, Some(&"长".repeat(100)));
+        assert_eq!(tabs.tabs()[0].title().unwrap().chars().count(), 48);
+        tabs.set_title(first, Some("   "));
+        assert_eq!(tabs.tabs()[0].title(), None);
+
+        tabs.restore_titles(&[Some("web".into()), None, Some(" db ".into())]);
+        assert_eq!(
+            tabs.titles(),
+            vec![Some("web".into()), None, Some("db".into())]
+        );
+        // A split starts with the automatic name, like its purpose.
+        let split = tabs.split(first).unwrap();
+        assert_eq!(
+            tabs.tabs()
+                .iter()
+                .find(|tab| tab.id() == split)
+                .unwrap()
+                .title(),
+            None
+        );
+        // A title never changes the purpose.
+        assert!(tabs.purposes().iter().all(Option::is_none));
     }
 
     #[test]

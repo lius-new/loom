@@ -97,7 +97,19 @@ fn menu_new_uses_workspace_root_while_split_inherits_target_live_directory() {
         &application()
     ));
     let sibling = tabs.get().active().unwrap();
-    assert_eq!(sibling.group_id, target(&tabs, clicked).unwrap().group_id);
+    // The split lives in a region of its own beside the target's, not in a
+    // side-by-side group within one strip.
+    assert_ne!(sibling.group_id, target(&tabs, clicked).unwrap().group_id);
+    {
+        let app = state.get();
+        let layout = app.layout.application_layout.as_ref().unwrap();
+        let (beside, own) = (
+            layout.terminal_region(clicked).unwrap(),
+            layout.terminal_region(sibling.id).unwrap(),
+        );
+        assert_ne!(beside, own);
+        assert_eq!(layout.terminal_view(own).unwrap().0, vec![sibling.id]);
+    }
     assert_eq!(sibling.cwd, Some("live-cwd".into()));
     assert!(menu_action(
         &state,
@@ -106,9 +118,10 @@ fn menu_new_uses_workspace_root_while_split_inherits_target_live_directory() {
         MenuAction::Others,
         &application()
     ));
+    // The split is a separate terminal now, so "Close Others" closes it too.
     assert_eq!(
         tabs.get().tabs().iter().map(|t| t.id).collect::<Vec<_>>(),
-        vec![clicked, sibling.id]
+        vec![clicked]
     );
     assert!(
         controller.test_same_runtime(&target(&tabs, clicked).unwrap().controller.test_controller())

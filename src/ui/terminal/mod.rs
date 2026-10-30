@@ -1,8 +1,12 @@
 pub(crate) mod bindings;
+mod find;
+mod header;
 pub(crate) mod keys;
 pub(crate) mod layout;
 pub(crate) mod layout_binding;
 pub(crate) mod menu;
+mod rename;
+mod strip;
 pub(crate) mod settings;
 pub(crate) mod settings_binding;
 pub(crate) mod state;
