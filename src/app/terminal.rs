@@ -2,7 +2,7 @@
 use crate::app::context::AppContext;
 use crate::app::state::AppState;
 use crate::app::terminal_binding::TerminalStore;
-use crate::features::terminal::actions::{MenuAction, close_targets};
+use crate::features::terminal::actions::{MenuAction, close_targets_in};
 use crate::features::terminal::{SessionId, ShellKind};
 use crate::infrastructure::terminal::runtime::TerminalHandle;
 use lgui::core::UiFocusHandle;
@@ -67,11 +67,25 @@ pub(crate) fn new(
     shell: ShellKind,
     cwd: Option<PathBuf>,
 ) -> SessionId {
+    new_beside(state, tabs, shell, cwd, None)
+}
+/// Like [`new`], placing the session in the region of `beside` when given, so a
+/// terminal created from a detached region stays in it.
+fn new_beside(
+    state: &AppContext,
+    tabs: &TerminalStore,
+    shell: ShellKind,
+    cwd: Option<PathBuf>,
+    beside: Option<SessionId>,
+) -> SessionId {
     let mut id = 0;
     tabs.update(|tabs| id = tabs.add_at(shell, cwd));
     state.update(|app| {
         if let Some(layout) = &mut app.layout.application_layout {
-            layout.attach(id);
+            match beside {
+                Some(beside) => layout.attach_beside(id, beside),
+                None => layout.attach(id),
+            };
         }
     });
     sync_layout(state, tabs);
@@ -133,7 +147,7 @@ fn request_new(
         return None;
     }
     let shell = shell.unwrap_or_else(|| app.effective_shell_at(cwd.as_deref()));
-    Some(new(state, tabs, shell, cwd))
+    Some(new_beside(state, tabs, shell, cwd, target))
 }
 
 pub(crate) fn choose_workspace(
@@ -153,7 +167,7 @@ pub(crate) fn choose_workspace(
     let shell = picker
         .shell
         .unwrap_or_else(|| app.effective_shell_at(Some(&root)));
-    let id = new(state, tabs, shell, Some(root.clone()));
+    let id = new_beside(state, tabs, shell, Some(root.clone()), picker.target);
     state.update(|app| {
         app.terminal.ui.terminal_workspace_root = Some(root);
         app.terminal.ui.terminal_workspace_picker = None;
@@ -232,7 +246,19 @@ pub(crate) fn close(
     if target(tabs, id).is_none() {
         return false;
     }
-    let ids = close_targets(tabs.get().model(), id, action);
+    let region = state
+        .get()
+        .layout
+        .application_layout
+        .as_ref()
+        .and_then(|layout| {
+            layout
+                .terminal_region(id)
+                .and_then(|region| layout.terminal_view(region))
+        })
+        .map(|(ids, _)| ids)
+        .unwrap_or_default();
+    let ids = close_targets_in(tabs.get().model(), id, action, &region);
     let mut handles = Vec::new();
     tabs.update(|tabs| {
         for id in ids {

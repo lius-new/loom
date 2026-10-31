@@ -166,6 +166,7 @@ pub(crate) fn render_view(
     max_height: f32,
     region_view: Option<(u64, TerminalTabs, bool)>,
 ) -> Element {
+    let _scope = header::Scope::enter(region_view.as_ref().map(|view| view.0));
     let app_state = state.get();
     let primary = region_view.as_ref().is_none_or(|v| v.2);
     let terminal_focused = app_state.ui.terminal_focused && primary;

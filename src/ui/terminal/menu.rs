@@ -16,10 +16,19 @@ use crate::ui::tabs::ellipsize;
 use crate::ui::theme;
 
 use crate::features::terminal::actions::{
-    MenuAction as Action, close_targets as model_close_targets,
+    MenuAction as Action, close_targets_in as model_close_targets,
 };
-fn close_targets(tabs: &TerminalTabs, target: u64, action: Action) -> Vec<u64> {
-    model_close_targets(tabs.model(), target, action)
+fn close_targets(
+    tabs: &TerminalTabs,
+    regions: &[Vec<u64>],
+    target: u64,
+    action: Action,
+) -> Vec<u64> {
+    let region = regions
+        .iter()
+        .find(|ids| ids.contains(&target))
+        .map_or(&[][..], Vec::as_slice);
+    model_close_targets(tabs.model(), target, action, region)
 }
 
 const MENU_W: f32 = 224.0;
@@ -145,7 +154,7 @@ pub fn render(
             y += SEP_H;
         }
         let enabled = matches!(action, Action::New | Action::Split)
-            || !close_targets(&tab_snapshot, target, action).is_empty();
+            || !close_targets(&tab_snapshot, &snapshot.regions, target, action).is_empty();
         let row = UiRect::new(card.left + 1.0, y, card.right - 1.0, y + ITEM_H);
         let action_state = state.clone();
         let action_tabs = tabs.clone();

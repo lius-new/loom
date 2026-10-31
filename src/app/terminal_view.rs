@@ -96,6 +96,19 @@ pub(crate) fn binding(
                 },
                 modifiers: app.editor.modifiers,
                 shell_options: app.preferences.values().shell_options.clone(),
+                regions: app
+                    .layout
+                    .application_layout
+                    .as_ref()
+                    .map(|layout| {
+                        layout
+                            .leaves()
+                            .into_iter()
+                            .filter_map(|(region, _)| layout.terminal_view(region))
+                            .map(|(ids, _)| ids)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 default_region: app
                     .layout
                     .application_layout

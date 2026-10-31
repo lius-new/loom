@@ -39,6 +39,34 @@ const ROOMY_MIN_W: f32 = 560.0;
 const INSET: f32 = 8.0;
 const RULE_H: f32 = 14.0;
 
+thread_local! {
+    static SCOPE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Marks the buttons built while it lives as belonging to one terminal region,
+/// so two regions on screen never share a node id.
+pub(super) struct Scope;
+
+impl Scope {
+    pub(super) fn enter(region: Option<u64>) -> Self {
+        SCOPE.with(|scope| scope.set(region));
+        Self
+    }
+}
+
+impl Drop for Scope {
+    fn drop(&mut self) {
+        SCOPE.with(|scope| scope.set(None));
+    }
+}
+
+fn scoped(id: &str) -> String {
+    match SCOPE.with(std::cell::Cell::get) {
+        Some(region) => format!("{id}-region-{region}"),
+        None => id.to_owned(),
+    }
+}
+
 fn metrics(header: UiRect) -> Metrics {
     if header.width() >= ROOMY_MIN_W {
         ROOMY
@@ -398,7 +426,8 @@ pub(super) fn button_styled(
     semantics.state.selected = active;
     // An explicit node id, so a neighbour such as a highlighted menu row can ask
     // whether this button is hovered.
-    let node_id = UiId::owned(id);
+    let scoped_id = scoped(id);
+    let node_id = UiId::owned(scoped_id.clone());
     Element::new(move |cx| {
         let flags = cx.context.interaction_flags(&node_id);
         let style = if active || flags.hovered || flags.pressed {
@@ -408,7 +437,7 @@ pub(super) fn button_styled(
         };
         UiElement::panel(node_id.clone(), rect, style).children(cx.children)
     })
-    .key(id)
+    .key(scoped_id)
     .event_policy(EventPolicy::INTERACTIVE)
     .cursor(CursorIcon::Pointer)
     .semantics(semantics)

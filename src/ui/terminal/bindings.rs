@@ -99,6 +99,8 @@ pub struct Frame {
     /// The region that owns the panel tools (maximize, collapse). Every other
     /// terminal region is a detached group of tabs.
     pub default_region: Option<u64>,
+    /// The tab strip of every terminal region, in display order.
+    pub regions: Vec<Vec<u64>>,
 }
 #[derive(Clone)]
 pub struct Binding {

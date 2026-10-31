@@ -403,6 +403,27 @@ impl ApplicationLayout {
         }
         unreachable!("default terminal must be a terminal leaf");
     }
+    /// Joins `session` to the strip of the terminal region holding `beside`, so a
+    /// terminal created from a detached region stays there. Falls back to the
+    /// default strip when `beside` is unknown.
+    pub fn attach_beside(&mut self, session: u64, beside: u64) -> RegionId {
+        if let Some(existing) = self.terminal_region(session) {
+            return existing;
+        }
+        let Some(region) = self.terminal_region(beside) else {
+            return self.attach(session);
+        };
+        if let Some(Node::Leaf {
+            content: Content::Terminal { tabs, active },
+            ..
+        }) = self.root.find_mut(region)
+        {
+            tabs.push(session);
+            *active = Some(session);
+            self.version += 1;
+        }
+        region
+    }
     /// Reconcile creates/closes from existing commands without touching controllers.
     pub fn sync(&mut self, sessions: &[(u64, u64)], active_id: Option<u64>) {
         let before = self.clone();

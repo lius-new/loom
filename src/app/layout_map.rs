@@ -1494,7 +1494,7 @@ mod tests {
             2
         );
         assert_eq!(tabs.get().tabs().len(), 2);
-        // The + button of a moved item still creates in the default strip.
+        // The + button of a moved item creates in its own region.
         let app = state.get();
         let layout = app.layout.application_layout.as_ref().unwrap();
         let snapshot = layout.snapshot(viewport.into(), visibility(&app));
@@ -1518,17 +1518,12 @@ mod tests {
         let app = state.get();
         let layout = app.layout.application_layout.as_ref().unwrap();
         let snapshot = layout.snapshot(viewport.into(), visibility(&app));
-        let new_id = layout.terminal_region(3).unwrap();
-        let new_rect = snapshot.regions.iter().find(|r| r.0 == new_id).unwrap().2;
-        let default_rect = snapshot.regions.iter().find(|r| r.0 == 4).unwrap().2;
+        assert_eq!(layout.terminal_region(3), Some(7));
         assert_eq!(
             snapshot.regions.iter().find(|r| r.0 == 7).unwrap().2,
             moved_rect
         );
-        assert_eq!(new_rect.top, default_rect.top);
-        assert_eq!(new_rect.bottom, default_rect.bottom);
-        assert_eq!(new_rect, default_rect);
-        assert_eq!(layout.terminal_view(4), Some((vec![2, 3], Some(3))));
+        assert_eq!(layout.terminal_view(4), Some((vec![2], Some(2))));
         // Return the moved session to the default group via its center target.
         let moved_tab = session
             .tree()
@@ -1571,7 +1566,7 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .terminal_view(4),
-            Some((vec![2, 3, 1], Some(1)))
+            Some((vec![2, 1], Some(1)))
         );
         send(&mut session, down(toggle));
         send(&mut session, up(toggle));
