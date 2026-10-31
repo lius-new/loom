@@ -227,20 +227,56 @@ pub fn render(
     }
     let header_bottom = header_bottom_rule(header, viewport, active_tab);
 
+    root.child(render_body(
+        body,
+        panel_tab,
+        state.clone(),
+        store,
+        editor_focus,
+    ))
+    .child(resize_handle(rect, state))
+    .child(header_bottom)
+}
+
+/// Existing history content hosted under the shared bottom-panel header.
+pub fn render_content(
+    rect: UiRect,
+    state: Binding,
+    store: Snapshot,
+    editor_focus: UiFocusHandle,
+) -> Element {
+    render_body(rect, HISTORY, state, store, editor_focus)
+}
+
+fn render_body(
+    rect: UiRect,
+    panel_tab: u8,
+    state: Binding,
+    store: Snapshot,
+    editor_focus: UiFocusHandle,
+) -> Element {
+    let app = state.get();
+    let git = store.get();
+    let body = rect;
+    let mut root = Element::new(move |cx| {
+        let scale = cx.context.scale();
+        let painted = scale.logical_rect(scale.physical_rect(rect));
+        UiElement::panel(cx.id, painted, VisualStyle::filled(theme::c().sidebar))
+            .hit_rect(rect)
+            .children(cx.children)
+    })
+    .key("git-panel-content");
     let Some(repository) = git.active() else {
-        return root
-            .child(text(
-                UiRect::new(
-                    body.left + 14.0,
-                    body.top + 10.0,
-                    body.right - 14.0,
-                    body.top + 10.0 + ROW_H,
-                ),
-                "Open a Git repository to browse its history.",
-                theme::mono(theme::c().text_ghost, theme::SMALL),
-            ))
-            .child(resize_handle(rect, state))
-            .child(header_bottom);
+        return root.child(text(
+            UiRect::new(
+                body.left + 14.0,
+                body.top + 10.0,
+                body.right - 14.0,
+                body.top + 10.0 + ROW_H,
+            ),
+            "Open a Git repository to browse its history.",
+            theme::mono(theme::c().text_ghost, theme::SMALL),
+        ));
     };
 
     let history = app
@@ -584,7 +620,7 @@ pub fn render(
             state.clone(),
         ));
     }
-    root.child(resize_handle(rect, state)).child(header_bottom)
+    root
 }
 
 /// A vertical strip on a history pane's edge that drags its width.

@@ -520,12 +520,23 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
         .content_rect(&application_snapshot, &Content::Editor)
         .map(UiRect::from)
         .unwrap_or(content_area);
-    // The bottom Git panel is only part of the active Commit/Changes view.
-    let (editor_area, git_panel_rect) = if s.git_panel_visible() {
-        crate::ui::git::workbench::split(editor_region, s.git.ui.panel_open, s.git.ui.panel_height)
+    let default_terminal_region = application_layout.default_terminal_region();
+    let dock_rect = application_snapshot
+        .regions
+        .iter()
+        .find(|(region, _, _)| Some(*region) == default_terminal_region)
+        .map(|(_, _, rect)| UiRect::from(*rect));
+    // History uses the same dock as terminals. With no sessions, reserve it
+    // below the editor without manufacturing or starting a shell.
+    let (editor_area, fallback_commits_rect) = if s.git_panel_visible() && dock_rect.is_none() {
+        crate::ui::git::workbench::split(editor_region, true, Some(s.terminal_chrome.terminal_h))
     } else {
         (editor_region, None)
     };
+    let git_panel_rect = s
+        .git_panel_visible()
+        .then(|| dock_rect.or(fallback_commits_rect))
+        .flatten();
     // The navigator replaces the stash, worktree and tag tabs, so the log is the
     // one tab left and must be what loads.
     let navigator = git_panel_rect
@@ -761,19 +772,27 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             .or_else(|| std::env::current_dir().ok())
     };
 
-    let terminal_starts = terminal_effects::visible_starts(
+    let mut terminal_starts = terminal_effects::visible_starts(
         application_layout,
         &application_snapshot,
         &terminal_tab_snapshot,
         &terminal_cwd,
     );
+    if s.git_panel_visible() {
+        terminal_starts.retain(|(id, _, _, _)| {
+            application_layout.terminal_region(*id) != default_terminal_region
+        });
+    }
     let terminal_start_key = terminal_starts
         .iter()
         .map(|(id, _, cwd, size)| (*id, cwd.clone(), *size))
         .collect::<Vec<_>>();
     let terminal_start_application = application.clone();
-    let active_visible_terminal =
-        active_terminal_id.filter(|id| application_layout.terminal_visible(*id, layout_visibility));
+    let active_visible_terminal = active_terminal_id.filter(|id| {
+        application_layout.terminal_visible(*id, layout_visibility)
+            && (!s.git_panel_visible()
+                || application_layout.terminal_region(*id) != default_terminal_region)
+    });
     let terminal_visible = active_visible_terminal.is_some();
     cx.use_effect(terminal_start_key, move || {
         terminal_effects::start_visible(terminal_starts, terminal_cwd, terminal_start_application)
@@ -991,7 +1010,10 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let terminal_hover_sessions = application_snapshot
         .regions
         .iter()
-        .flat_map(|(_, content, rect)| {
+        .flat_map(|(region, content, rect)| {
+            if s.git_panel_visible() && Some(*region) == default_terminal_region {
+                return Vec::new();
+            }
             let Content::Terminal { tabs, active } = content else {
                 return Vec::new();
             };
@@ -1359,12 +1381,17 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     for sash in s.workspace.layout().sashes(editor_area.into()) {
         root = root.child(super::pane_chrome::render(sash, state.clone()));
     }
-    if let Some(rect) = git_panel_rect {
-        root = root.child(crate::ui::git::workbench::render(
+    if let Some(rect) = fallback_commits_rect {
+        root = root.child(terminal::render_commits(
             rect,
-            super::git_view::binding(&state, &git_store),
-            git_store.clone().into(),
+            state.clone(),
+            terminal_tabs.clone(),
+            git_store.clone(),
             editor_focus.clone(),
+            terminal_focus.clone(),
+            application.clone(),
+            None,
+            editor_region.height(),
         ));
     }
     if source_control_left {
@@ -1424,6 +1451,20 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
 
     for (region, content, rect) in &application_snapshot.regions {
         if !matches!(content, Content::Terminal { .. }) {
+            continue;
+        }
+        if s.git_panel_visible() && Some(*region) == default_terminal_region {
+            root = root.child(terminal::render_commits(
+                (*rect).into(),
+                state.clone(),
+                terminal_tabs.clone(),
+                git_store.clone(),
+                editor_focus.clone(),
+                terminal_focus.clone(),
+                application.clone(),
+                Some(*region),
+                editor_region.height(),
+            ));
             continue;
         }
         root = root.child(terminal::render_region(

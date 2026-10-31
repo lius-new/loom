@@ -434,14 +434,15 @@ impl AppState {
             .unwrap_or_else(|| kind.label().into())
     }
 
-    /// Whether the default terminal region currently owns visible sessions.
+    /// Whether the shared default dock is open with terminal or commit content.
     pub fn default_terminal_open(&self) -> bool {
         self.terminal_chrome.show_terminal
-            && self
-                .layout
-                .application_layout
-                .as_ref()
-                .is_none_or(|layout| layout.default_terminal_active().is_some())
+            && (self.terminal.ui.panel_tab == crate::ui::terminal::state::PanelTab::Commits
+                || self
+                    .layout
+                    .application_layout
+                    .as_ref()
+                    .is_none_or(|layout| layout.default_terminal_active().is_some()))
     }
 
     /// Apply a `workspace::`, `pane::` or `menu::` action. Actions that need a
@@ -474,9 +475,21 @@ impl AppState {
                 }
             }
             Action::ToggleGitPanel => {
-                if self.git_panel_visible() {
-                    let open = !self.git.ui.panel_open;
-                    self.git.ui.set_panel(open);
+                let opening = !self.git_panel_visible();
+                self.terminal.ui.panel_tab = crate::ui::terminal::state::PanelTab::Commits;
+                self.terminal_chrome.show_terminal = opening;
+                self.terminal.ui.terminal_focused = false;
+                self.terminal.ui.terminal_tab_context_menu = None;
+                self.terminal.ui.terminal_shell_menu = false;
+                self.terminal.ui.terminal_workspace_picker = None;
+                self.git.ui.menu = None;
+                self.git.ui.hover = None;
+                self.git.ui.scroll_hover = None;
+                self.git.ui.clear_hover_cards();
+                if self.git.ui.panel_tab == crate::ui::git::panel::HISTORY {
+                    self.git.ui.set_panel(true);
+                } else {
+                    self.git.ui.select_panel_tab(crate::ui::git::panel::HISTORY);
                 }
             }
             Action::MenuSelectNext => {
@@ -648,17 +661,10 @@ impl AppState {
         self.pane_surface(self.workspace.active_pane())
     }
 
-    /// The bottom Git panel belongs to the focused Git diff, and to any open
-    /// document while the Source Control drawer is open. Welcome and application
-    /// pages never show it. Its expansion preference survives switching views.
+    /// Commit history shares the default bottom panel with terminals.
     pub fn git_panel_visible(&self) -> bool {
-        self.workspace.active_diff().is_some()
-            || (self.source_control.visible
-                && self.workspace.active().is_some()
-                && self
-                    .workspace
-                    .pane_page(self.workspace.active_pane())
-                    .is_none())
+        self.terminal_chrome.show_terminal
+            && self.terminal.ui.panel_tab == crate::ui::terminal::state::PanelTab::Commits
     }
 
     /// What one pane shows. Welcome and Workspace Home fill the editor area
@@ -795,49 +801,23 @@ mod tests {
     }
 
     #[test]
-    fn git_panel_only_belongs_to_the_focused_git_view() {
+    fn commits_are_a_bottom_category_independent_of_the_editor() {
         let mut app = AppState::new();
         assert!(!app.git_panel_visible());
         app.workspace
             .open_path("project/main.rs".into(), String::new());
-        let file = app.workspace.active().unwrap();
-        app.git.ui.set_panel(true);
-        assert!(!app.git_panel_visible());
-        app.apply(Action::ToggleGitPanel);
-        assert!(
-            app.git.ui.panel_open,
-            "Hidden panel shortcuts must not change its preference"
-        );
-
-        let changes = app.workspace.open_diff(DiffDocument::from_content(
-            crate::features::git::DiffRequest {
-                repository_root: "project".into(),
-                path: PathBuf::new(),
-                target: DiffTarget::Changes,
-            },
-            crate::features::git::DiffContent::Changes(Vec::new()),
-        ));
-        assert!(app.git_panel_visible());
-        app.workspace.set_active(file);
-        assert!(!app.git_panel_visible());
-        app.workspace.set_active(changes);
-        assert!(app.git_panel_visible());
-        app.workspace.open_settings();
-        assert!(!app.git_panel_visible());
-        // With the Source Control drawer open, a file shows the panel too, but
-        // an application page still does not.
         app.source_control.visible = true;
         assert!(!app.git_panel_visible());
-        app.workspace.set_active(file);
+        app.apply(Action::ToggleGitPanel);
         assert!(app.git_panel_visible());
-        app.source_control.visible = false;
+        assert!(app.default_terminal_open());
+        app.workspace.open_settings();
+        assert!(app.git_panel_visible());
+        app.apply(Action::ToggleGitPanel);
         assert!(!app.git_panel_visible());
-        app.workspace.open_diff(DiffDocument::commit_changes(
-            "project".into(),
-            "abc1234".into(),
-            crate::features::git::DiffContent::Changes(Vec::new()),
-        ));
-        assert!(app.git_panel_visible());
+        app.terminal.ui.panel_tab = crate::ui::terminal::state::PanelTab::Terminal;
+        app.terminal_chrome.show_terminal = true;
+        assert!(!app.git_panel_visible());
     }
 
     #[test]

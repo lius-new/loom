@@ -32,8 +32,7 @@ pub(crate) fn poll_target(app: &AppState) -> PollTarget {
     target
 }
 
-/// The active repository's history, only while a Git diff and its Commits
-/// panel are visible. Remembered expansion in an ordinary editor does no work.
+/// Load the active repository's history while the bottom Commits view is shown.
 pub(crate) fn history_key(
     app: &AppState,
     store: &GitStoreSnapshot,

@@ -53,7 +53,10 @@ second acts on the terminal itself: **Split**, **Search** and **More**. The last
 belongs to the panel: **Maximize** or **Restore**, and a collapse icon. The panel
 is still shown and hidden with its own toggle.
 
-On the left, a **Terminal** capsule shows how many sessions there are. Each
+On the left, a compact **Terminal / Commits** switch chooses the bottom panel's
+content. **Terminal** shows the session count when space allows. **Commits** opens
+the existing Git history; switching back keeps terminal sessions and their output.
+Each
 session is a rectangular tab with full-height separators between groups and an always
 visible close button. The selected session uses the theme's contrasting tab
 background, including in dark and high-contrast themes. Its

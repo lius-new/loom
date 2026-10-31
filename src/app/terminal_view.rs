@@ -185,6 +185,9 @@ pub(crate) fn run(
         created: None,
     };
     match command {
+        Command::SelectPanel(panel) => {
+            commands::select_panel(state, tabs, panel);
+        }
         Command::ChooseWorkspace(root) => {
             result.created = commands::choose_workspace(state, tabs, root);
             result.applied = result.created.is_some();
@@ -346,6 +349,57 @@ pub(crate) fn render_region(
         Some((region, project(frame), primary)),
     )
     .key(format!("terminal-region-{region}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_commits(
+    rect: UiRect,
+    state: AppContext,
+    terminal_tabs: TerminalStore,
+    git_store: lgui::prelude::State<crate::features::git::GitStoreSnapshot>,
+    editor_focus: UiFocusHandle,
+    terminal_focus: UiFocusHandle,
+    application: Arc<ApplicationHandle>,
+    region: Option<crate::domain::application_layout::RegionId>,
+    max_height: f32,
+) -> Element {
+    let sessions = state
+        .get()
+        .layout
+        .application_layout
+        .as_ref()
+        .and_then(|layout| region.and_then(|id| layout.terminal_view(id)))
+        .map_or(0, |(ids, _)| ids.len());
+    let body = UiRect::new(
+        rect.left,
+        rect.top + crate::ui::theme::TABS_H,
+        rect.right,
+        rect.bottom,
+    );
+    let content = crate::ui::git::workbench::render_content(
+        body,
+        super::git_view::binding(&state, &git_store),
+        git_store.into(),
+        editor_focus.clone(),
+    );
+    let (binding, _, _) = binding(&state, &terminal_tabs, &application);
+    let header = view::commits_header(
+        rect,
+        sessions,
+        binding.clone(),
+        terminal_focus,
+        editor_focus,
+        region.is_some(),
+    );
+    let root = lgui::prelude::group(rect)
+        .key("bottom-commits-panel")
+        .child(content)
+        .child(header);
+    if region.is_some() {
+        root
+    } else {
+        view::resize_panel(root, rect, binding, max_height)
+    }
 }
 pub(crate) fn menu(
     viewport: UiRect,

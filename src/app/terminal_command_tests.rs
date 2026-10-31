@@ -66,6 +66,56 @@ fn invariant(state: &AppContext, tabs: &TerminalStore) {
 }
 
 #[test]
+fn bottom_categories_keep_sessions_and_allow_history_without_a_shell() {
+    use crate::ui::terminal::state::PanelTab;
+    let (_session, state, tabs) = fixture();
+    let original = tabs.get().active_id().unwrap();
+    let sibling = split(&state, &tabs, original).unwrap();
+    let handle = target(&tabs, original)
+        .unwrap()
+        .controller
+        .test_controller();
+    handle.test_parser().process(b"preserved output\r\n");
+    let groups = tabs.get().saved_groups();
+    let generation = handle.test_generation();
+    state.update(|app| app.git.ui.details_scroll = 44.0);
+    select_panel(&state, &tabs, PanelTab::Commits);
+    assert!(state.get().git_panel_visible());
+    assert!(!state.get().terminal.ui.terminal_focused);
+    assert_eq!(tabs.get().saved_groups(), groups);
+    assert_eq!(state.get().git.ui.details_scroll, 44.0);
+    handle.test_parser().process(b"background output\r\n");
+    select_panel(&state, &tabs, PanelTab::Terminal);
+    assert!(!state.get().git_panel_visible());
+    assert_eq!(tabs.get().active_id(), Some(sibling));
+    assert_eq!(handle.test_generation(), generation);
+    assert!(
+        handle
+            .test_parser()
+            .screen()
+            .contents()
+            .contains("background output")
+    );
+    assert!(close(
+        &state,
+        &tabs,
+        original,
+        MenuAction::All,
+        &application()
+    ));
+    select_panel(&state, &tabs, PanelTab::Commits);
+    assert!(tabs.get().is_empty());
+    assert!(state.get().default_terminal_open());
+    assert!(collapse_panel(&state, &tabs));
+    assert!(!state.get().git_panel_visible());
+    select_panel(&state, &tabs, PanelTab::Commits);
+    assert!(tabs.get().is_empty());
+    select_panel(&state, &tabs, PanelTab::Terminal);
+    assert_eq!(tabs.get().tabs().len(), 1);
+    invariant(&state, &tabs);
+}
+
+#[test]
 fn menu_new_uses_workspace_root_while_split_inherits_target_live_directory() {
     let (_session, state, tabs) = fixture();
     state.update(|app| {

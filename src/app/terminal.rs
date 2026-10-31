@@ -169,6 +169,44 @@ pub(crate) fn select(state: &AppContext, tabs: &TerminalStore, id: SessionId) ->
     sync_layout(state, tabs);
     true
 }
+pub(crate) fn select_panel(
+    state: &AppContext,
+    tabs: &TerminalStore,
+    panel: crate::ui::terminal::state::PanelTab,
+) {
+    use crate::ui::terminal::state::PanelTab;
+    state.update(|app| {
+        app.terminal.ui.panel_tab = panel;
+        app.terminal_chrome.show_terminal = true;
+        app.terminal.ui.terminal_focused = false;
+        app.terminal.ui.terminal_tab_context_menu = None;
+        app.terminal.ui.terminal_shell_menu = false;
+        app.terminal.ui.terminal_workspace_picker = None;
+        app.git.ui.menu = None;
+        app.git.ui.hover = None;
+        app.git.ui.scroll_hover = None;
+        app.git.ui.clear_hover_cards();
+        if panel == PanelTab::Commits {
+            if app.git.ui.panel_tab != crate::ui::git::panel::HISTORY {
+                app.git.ui.select_panel_tab(crate::ui::git::panel::HISTORY);
+            } else {
+                app.git.ui.set_panel(true);
+            }
+        }
+    });
+    if panel == PanelTab::Terminal {
+        let app = state.get();
+        let session = app.layout.application_layout.as_ref().map_or_else(
+            || tabs.get().active_id(),
+            |layout| layout.default_terminal_active(),
+        );
+        if let Some(id) = session {
+            select(state, tabs, id);
+        } else {
+            request_new(state, tabs, None, None);
+        }
+    }
+}
 pub(crate) fn split(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> Option<SessionId> {
     target(tabs, id)?;
     let mut created = None;
@@ -380,9 +418,11 @@ pub fn toggle_panel(
     terminal_focus: &UiFocusHandle,
 ) {
     let (opening, active_visible) = apply_toggle(state, terminal_tabs);
-    if opening {
+    if opening
+        && state.get().terminal.ui.panel_tab == crate::ui::terminal::state::PanelTab::Terminal
+    {
         terminal_focus.focus();
-    } else if !active_visible {
+    } else if opening || !active_visible {
         editor_focus.focus();
     }
 }
@@ -419,10 +459,16 @@ fn apply_toggle(
                 .flatten()
         });
     let mut selected = default_session;
-    if opening && selected.is_none() {
+    if opening
+        && selected.is_none()
+        && app.terminal.ui.panel_tab == crate::ui::terminal::state::PanelTab::Terminal
+    {
         selected = request_new(state, terminal_tabs, None, None);
     }
-    if opening && let Some(id) = selected {
+    if opening
+        && app.terminal.ui.panel_tab == crate::ui::terminal::state::PanelTab::Terminal
+        && let Some(id) = selected
+    {
         terminal_tabs.update(|tabs| tabs.select(id));
     }
     let active = terminal_tabs.get().active_id();

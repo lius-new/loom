@@ -1,5 +1,11 @@
 //! Terminal interaction and draft state; no session or process ownership.
 use crate::ui::components::input::InputState;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PanelTab {
+    #[default]
+    Terminal,
+    Commits,
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalTabContextMenuState {
     pub position: (f32, f32),
@@ -49,6 +55,7 @@ pub struct SearchBar {
 }
 #[derive(Clone, Default)]
 pub struct TerminalUiState {
+    pub panel_tab: PanelTab,
     pub terminal_rename: Option<RenameEditor>,
     pub terminal_search: Option<SearchBar>,
     /// Stands in for a text field's state after its editor has closed, so an

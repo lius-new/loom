@@ -852,6 +852,10 @@
       "owner": "ui/terminal/state",
       "migrated_in": "R7.4"
     },
+    "ui/terminal/state.panel_tab": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "shared bottom panel categories"
+    },
     "ui/terminal/state.terminal_shell_menu": {
       "owner": "ui/terminal/state",
       "migrated_in": "R7.4"

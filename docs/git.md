@@ -42,25 +42,23 @@ changes. A repository with no changes says **Working tree clean.**
 
 ## Git panel
 
-The Git panel's tab bar appears at the bottom of the active Git diff
-(Commit/Changes), and under any open file while the Source Control drawer is
-open. With the drawer closed, ordinary file editing does not show it, and
-Settings and other pages never do or reserve space for it. Switching back restores its expansion state, tab
-and height. It is expanded by default. Click **History**,
-**Stashes**, **Worktrees** or **Tags** to expand its content. Clicking the active
-tab again, or the arrow at the right, collapses the content while keeping the
-tab bar available. `Ctrl+Shift+H` (or `Command+Shift+H`) also expands or collapses
-the panel. There is no title-bar toggle for the Git panel.
+Choose **Commits** in the bottom panel's **Terminal / Commits** switch to open
+Git history below any editor or Settings page. Switching categories preserves
+terminal sessions, output and the history's scroll position. History can also
+open when no terminal sessions exist. `Ctrl+Shift+H` (or `Command+Shift+H`)
+shows or hides the bottom panel with **Commits** selected. The panel shares its
+height and collapse control with Terminal, without a second History tab bar.
 
-When the panel is at least 900px wide, its only tab is **History** and a
-navigator fills the left side. An icon rail along its edge switches between
+When the panel is at least 900px wide, a navigator fills the left side.
+An icon rail along its edge switches between
 branches (Local and Remote folders), tags and stashes, each with its count; only
 the chosen kind is listed. Choose a
 branch or tag to show its commits; the current branch returns to HEAD. Choose a
 stash to list its files in the detail pane, where **Apply**, **Pop** and **Drop**
 live. Right-click a tag to push or delete it. A branch checked out in another
 worktree shows a folder icon whose menu opens the worktree, adds it to the
-workspace or deletes it. Narrower panels keep the four tabs.
+workspace or deletes it. Narrower panels prioritize the commit list and show
+the detail pane when space allows.
 
 The detail pane puts the changed files first, with the commit or stash summary
 below a divider at the bottom. The summary takes at most 30% of the pane and 120px;
@@ -78,13 +76,10 @@ new name creates a branch and **New Worktree** checks it out in its own folder;
 stashes the current changes. Branch names with `/` group into folders that fold
 shut, and a remote's branches sit under its name.
 
-Drag the expanded panel's top edge to resize it. Collapsing and reopening keeps
-the chosen height and tab. Hovering a commit or tag shows its details card, and
+Drag the panel's top edge to resize it. Collapsing and reopening keeps
+the chosen height and category. Hovering a commit or tag shows its details card, and
 the rows keep the same actions and context menus as before. History loads only
-while the History tab is expanded.
-
-In narrow editor regions, the tabs scroll horizontally using the wheel or the
-header's arrow buttons. The collapse button stays fixed at the right edge.
+while **Commits** is visible.
 
 ## Diffs
 

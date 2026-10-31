@@ -35,7 +35,7 @@ const HEADER_H: f32 = theme::TABS_H;
 /// How much wider the search button's box is on its right than the other tools'.
 const SEARCH_BOX_EXTRA: f32 = 2.0;
 /// Narrowest header that still shows the maximize and collapse group.
-const PANEL_TOOLS_MIN_W: f32 = 380.0;
+const PANEL_TOOLS_MIN_W: f32 = 640.0;
 /// Status glyph at the start of a session tab, and its gap to the name.
 const GLYPH: f32 = 14.0;
 const GLYPH_GAP: f32 = 6.0;
@@ -167,7 +167,6 @@ pub(crate) fn render_view(
     region_view: Option<(u64, TerminalTabs, bool)>,
 ) -> Element {
     let app_state = state.get();
-    let resizing = app_state.chrome.resizing_terminal;
     let primary = region_view.as_ref().is_none_or(|v| v.2);
     let terminal_focused = app_state.ui.terminal_focused && primary;
     let shell_menu_open = app_state.ui.terminal_shell_menu && primary;
@@ -439,14 +438,25 @@ pub(crate) fn render_view(
         terminal = terminal.child(header::rule(header, *center));
     }
 
-    // The category capsule hides in a narrow header so the tabs keep their room.
+    // Categories belong to the shared default dock, rather than detached sessions.
     let mut tab_strip_left = rect.left;
-    if header.width() >= 420.0 {
-        let (category, right) = header::category(header, tab_items.len());
+    if owns_panel_tools && header.width() >= 360.0 {
+        let gap = if header.width() < PANEL_TOOLS_MIN_W {
+            8.0
+        } else {
+            12.0
+        };
+        let (category, right) = categories(
+            header,
+            tab_items.len(),
+            state.clone(),
+            terminal_focus.clone(),
+            editor_focus.clone(),
+        );
         terminal = terminal
             .child(category)
-            .child(header::rule(header, right + 8.0));
-        tab_strip_left = right + 14.0;
+            .child(header::rule(header, right + gap));
+        tab_strip_left = right + gap * 2.0;
     }
     let tab_strip = UiRect::new(
         tab_strip_left,
@@ -556,6 +566,16 @@ pub(crate) fn render_view(
     if region_view.is_some() {
         return terminal;
     }
+    resize_panel(terminal, rect, state, max_height)
+}
+
+pub(crate) fn resize_panel(
+    mut terminal: Element,
+    rect: UiRect,
+    state: Binding,
+    max_height: f32,
+) -> Element {
+    let resizing = state.get().chrome.resizing_terminal;
     let handle = UiRect::new(
         rect.left,
         rect.top - RESIZE_HIT_H / 2.0,
@@ -592,6 +612,100 @@ pub(crate) fn render_view(
     );
 
     terminal
+}
+
+pub(crate) fn categories(
+    header: UiRect,
+    sessions: usize,
+    state: Binding,
+    terminal_focus: UiFocusHandle,
+    editor_focus: UiFocusHandle,
+) -> (Element, f32) {
+    let selected = state.get().ui.panel_tab;
+    header::category(
+        header,
+        sessions,
+        selected,
+        std::sync::Arc::new(move |panel| {
+            if state.get().ui.panel_tab != panel {
+                state.run(Command::SelectPanel(panel));
+            }
+            if panel == super::state::PanelTab::Terminal {
+                terminal_focus.focus();
+            } else {
+                editor_focus.focus();
+            }
+        }),
+    )
+}
+
+/// Common dock header while its content is the existing commit history.
+pub(crate) fn commits_header(
+    rect: UiRect,
+    sessions: usize,
+    state: Binding,
+    terminal_focus: UiFocusHandle,
+    editor_focus: UiFocusHandle,
+    can_maximize: bool,
+) -> Element {
+    let header = UiRect::new(rect.left, rect.top + 1.0, rect.right, rect.top + HEADER_H);
+    let (category, right) = categories(
+        header,
+        sessions,
+        state.clone(),
+        terminal_focus,
+        editor_focus.clone(),
+    );
+    let tools = header::layout(
+        header,
+        header::Spec {
+            running: false,
+            panel: true,
+        },
+    );
+    let mut root = panel(header, VisualStyle::filled(theme::c().sidebar))
+        .key("commits-panel-header")
+        .child(crate::ui::components::divider::top(rect))
+        .child(category)
+        .child(header::rule(header, right + 12.0));
+    if can_maximize {
+        let maximized = state.get().maximized;
+        let maximize = state.clone();
+        root = root.child(header::button(
+            "commits-maximize",
+            tools.maximize.unwrap(),
+            if maximized {
+                "terminal-restore"
+            } else {
+                "terminal-maximize"
+            },
+            if maximized {
+                "Restore panel size"
+            } else {
+                "Maximize panel"
+            },
+            false,
+            theme::c().text_soft,
+            move || {
+                maximize.run(Command::ToggleMaximize);
+            },
+        ));
+    }
+    let collapse = state;
+    root.child(header::button(
+        "commits-collapse",
+        tools.collapse.unwrap(),
+        "terminal-minimize",
+        "Hide bottom panel",
+        false,
+        theme::c().text_soft,
+        move || {
+            if collapse.run(Command::CollapsePanel).applied {
+                editor_focus.focus();
+            }
+        },
+    ))
+    .child(tab_header_rule(header))
 }
 
 #[allow(clippy::too_many_arguments)]

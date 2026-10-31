@@ -1177,47 +1177,97 @@ mod panel_virtualization_tests {
     }
 
     #[test]
-    fn git_panel_collapse_keeps_the_header_and_restores_its_height() {
-        use crate::features::keymap::action::Action;
-        use crate::ui::git::workbench::{HEADER_H, split};
+    fn bottom_categories_host_history_and_preserve_terminal_sessions() {
+        use crate::app::terminal_binding::TerminalTabs;
+        use crate::app::terminal_runtime::TerminalDisplay;
+        use crate::domain::application_layout::ApplicationLayout;
+        use crate::ui::terminal::state::PanelTab;
         use lgui::application::{AppView, ApplicationContext};
         use lgui::session::UiSession;
-
-        let viewport = UiRect::new(0.0, 0.0, 800.0, 600.0);
+        let viewport = UiRect::new(0.0, 0.0, 1000.0, 700.0);
+        let dock = UiRect::new(0.0, 300.0, 1000.0, 700.0);
         let (_, snapshot, history) = drawer_fixture();
         let exposed = Arc::new(std::sync::Mutex::new(None));
         let output = exposed.clone();
+        let application = Arc::new(lgui::ApplicationHandle::new(|task| task(), || {}));
         let view: AppView = Arc::new(move |cx| {
             let state = AppContext::detached(cx.state_with(|| {
                 let mut app = AppState::new();
                 history(&mut app);
-                app.git.ui.panel_height = Some(180.0);
-                app.workspace.open_diff(
-                    crate::features::git::diff_document::DiffDocument::from_content(
-                        DiffRequest {
-                            repository_root: "loom".into(),
-                            path: PathBuf::new(),
-                            target: DiffTarget::Changes,
-                        },
-                        DiffContent::Changes(Vec::new()),
-                    ),
-                );
+                app.terminal_chrome.show_terminal = true;
+                app.layout.application_layout = Some(ApplicationLayout::initial(
+                    viewport.into(),
+                    100.0,
+                    100.0,
+                    300.0,
+                ));
+                app.workspace
+                    .open_path("loom/main.rs".into(), "fn main() {}".into());
                 app
             }));
+            let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
+                let mut tabs = TerminalTabs::new();
+                tabs.split(1);
+                tabs
+            });
+            let current = tabs.get();
+            state.try_update(|app| {
+                let layout = app.layout.application_layout.as_mut().unwrap();
+                let before = layout.version;
+                current.sync_layout(layout);
+                before != layout.version
+            });
             let fixture = snapshot.clone();
             let store = cx.state_with(move || fixture);
-            *output.lock().unwrap() = Some((state.clone(), store.clone()));
+            *output.lock().unwrap() = Some((state.clone(), tabs.clone(), store.clone()));
+            let focus = cx.focus_handle(UiId::new("bottom-test-terminal"));
+            let editor_focus = cx.focus_handle(UiId::new("bottom-test-editor"));
+            let mut root = Element::new(move |cx| {
+                UiElement::panel(
+                    UiId::new("bottom-test-editor"),
+                    UiRect::new(0.0, 0.0, 1000.0, 300.0),
+                    VisualStyle::default(),
+                )
+                .children(cx.children)
+            })
+            .event_policy(EventPolicy::INTERACTIVE);
             let app = state.get();
-            if !app.git_panel_visible() {
-                return lgui::prelude::group(viewport);
+            if !app.default_terminal_open() {
+                return root;
             }
-            let (_, panel) = split(viewport, app.git.ui.panel_open, app.git.ui.panel_height);
-            crate::ui::git::workbench::render(
-                panel.unwrap(),
-                crate::app::git_view::binding(&state, &store),
-                store.into(),
-                cx.focus_handle(UiId::new("collapse-test-editor")),
-            )
+            let region = app
+                .layout
+                .application_layout
+                .as_ref()
+                .unwrap()
+                .default_terminal_region();
+            root = root.child(if app.git_panel_visible() {
+                crate::app::terminal_view::render_commits(
+                    dock,
+                    state,
+                    tabs,
+                    store,
+                    editor_focus,
+                    focus,
+                    application.clone(),
+                    region,
+                    600.0,
+                )
+            } else {
+                crate::app::terminal_view::render_region(
+                    dock,
+                    state,
+                    crate::app::layout_map::MapStore::default(),
+                    editor_focus,
+                    focus,
+                    UiId::new("bottom-test-terminal"),
+                    tabs,
+                    application.clone(),
+                    true,
+                    region.unwrap(),
+                )
+            });
+            root
         });
         let context = ApplicationContext::empty(Default::default());
         let _fonts = lgui::backend::install_text_environment(
@@ -1226,70 +1276,92 @@ mod panel_virtualization_tests {
         );
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
-        let (state, store) = exposed.lock().unwrap().clone().unwrap();
-        let commits = named(&session, "History").unwrap();
-        assert!(state.get().git.ui.panel_open);
-        assert!(commits.top < viewport.bottom - 150.0);
+        let (state, tabs, store) = exposed.lock().unwrap().clone().unwrap();
+        let handle = tabs.get().tabs()[0].controller.test_controller();
+        let generation = handle.test_generation();
+        handle.test_parser().process(b"preserved output\r\n");
+        let terminal_button = session
+            .tree()
+            .node(&UiId::new("bottom-panel-terminal"))
+            .unwrap()
+            .layout_rect;
+        let commits_button = named(&session, "Commits").unwrap();
+        assert!(named(&session, "New terminal").is_some());
+        save_drawer_preview(&session, &context, viewport, "bottom-panel-terminal");
+        click(&mut session, &view, viewport, center(commits_button));
+        assert_eq!(state.get().terminal.ui.panel_tab, PanelTab::Commits);
+        assert!(state.get().git_panel_visible());
+        assert!(!state.get().terminal.ui.terminal_focused);
+        assert_eq!(
+            session
+                .tree()
+                .node(&UiId::new("bottom-panel-terminal"))
+                .unwrap()
+                .layout_rect,
+            terminal_button
+        );
+        assert_eq!(named(&session, "Commits"), Some(commits_button));
+        assert!(named(&session, "New terminal").is_none());
+        assert!(
+            named(&session, "History").is_none(),
+            "no nested legacy header"
+        );
+        assert!(named(&session, "Search commits").is_none());
+        save_drawer_preview(&session, &context, viewport, "bottom-panel-commits");
         assert!(
             text_nodes(&session)
                 .iter()
                 .any(|line| line.contains("Improve editor behavior"))
         );
         assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_some());
-        // Normal editing gets all the editor space and pauses history loading,
-        // without changing the Git panel's remembered expansion or height.
-        let changes = state.get().workspace.active().unwrap();
         state.update(|app| {
-            app.workspace
-                .open_path("loom/main.rs".into(), "fn main() {}".into());
+            app.git.ui.details_scroll = 44.0;
         });
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(named(&session, "History").is_none());
-        assert!(named(&session, "Collapse Git panel").is_none());
+        handle.test_parser().process(b"background output\r\n");
+        click(&mut session, &view, viewport, center(terminal_button));
+        assert_eq!(state.get().terminal.ui.panel_tab, PanelTab::Terminal);
         assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_none());
-        assert!(state.get().git.ui.panel_open);
-        assert_eq!(state.get().git.ui.panel_height, Some(180.0));
-        state.update(|app| app.workspace.set_active(changes));
+        assert!(named(&session, "New terminal").is_some());
+        assert_eq!(tabs.get().saved_groups(), vec![0, 0]);
+        assert_eq!(handle.test_generation(), generation);
+        assert!(
+            handle
+                .test_parser()
+                .screen()
+                .contents()
+                .contains("background output")
+        );
+        click(&mut session, &view, viewport, center(commits_button));
+        assert_eq!(state.get().git.ui.details_scroll, 44.0);
+        let collapse = center(named(&session, "Hide bottom panel").unwrap());
+        click(&mut session, &view, viewport, collapse);
+        assert!(!state.get().default_terminal_open());
+        assert_eq!(tabs.get().tabs().len(), 2);
+        crate::app::terminal::close(
+            &state,
+            &tabs,
+            1,
+            crate::features::terminal::actions::MenuAction::All,
+            &Arc::new(lgui::ApplicationHandle::new(|task| task(), || {})),
+        );
+        crate::app::terminal::select_panel(&state, &tabs, PanelTab::Commits);
         session.render_view(&view, viewport, UiScale::ONE);
-        assert!(named(&session, "Collapse Git panel").is_some());
-        assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_some());
-        state.update(|app| app.git.ui.panel_resize_offset = Some(2.0));
-        let commits = named(&session, "History").unwrap();
-        click(&mut session, &view, viewport, center(commits));
-        assert!(!state.get().git.ui.panel_open);
-        assert_eq!(state.get().git.ui.panel_resize_offset, None);
-        assert_eq!(state.get().git.ui.panel_height, Some(180.0));
-        assert!(named(&session, "Expand Git panel").is_some());
-        assert!(named(&session, "History").unwrap().top >= viewport.bottom - HEADER_H);
-        assert!(crate::app::git_poll::history_key(&state.get(), &store.get()).is_none());
-
-        let stashes = named(&session, "Stashes").unwrap();
-        click(&mut session, &view, viewport, center(stashes));
-        assert_eq!(state.get().git.ui.panel_tab, STASHES);
+        assert!(tabs.get().is_empty());
         assert!(
             text_nodes(&session)
                 .iter()
-                .any(|line| line == "WIP: search panel")
+                .any(|line| line.contains("Improve editor behavior"))
         );
-        let collapse = named(&session, "Collapse Git panel").unwrap();
-        click(&mut session, &view, viewport, center(collapse));
-        let expand = named(&session, "Expand Git panel").unwrap();
-        click(&mut session, &view, viewport, center(expand));
-        assert_eq!(state.get().git.ui.panel_tab, STASHES);
-        assert!(state.get().git.ui.panel_open);
-        assert_eq!(state.get().git.ui.panel_height, Some(180.0));
-
-        state.update(|app| app.apply(Action::ToggleGitPanel));
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(named(&session, "Expand Git panel").is_some());
-        state.update(|app| app.apply(Action::ToggleGitPanel));
-        session.render_view(&view, viewport, UiScale::ONE);
-        assert!(named(&session, "Collapse Git panel").is_some());
-        assert!(
-            text_nodes(&session)
-                .iter()
-                .any(|line| line == "WIP: search panel")
+        let terminal = center(
+            session
+                .tree()
+                .node(&UiId::new("bottom-panel-terminal"))
+                .unwrap()
+                .layout_rect,
         );
+        click(&mut session, &view, viewport, terminal);
+        assert_eq!(tabs.get().tabs().len(), 1);
+        assert!(named(&session, "New terminal").is_some());
     }
 
     #[test]

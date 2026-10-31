@@ -83,7 +83,7 @@ actions! {
     SearchToggleFilters => "search::ToggleFilters", "Show or hide search filters";
     OpenSourceControl => "workspace::OpenSourceControl", "Show the Source Control panel";
     ToggleSourceControl => "workspace::ToggleSourceControl", "Show or hide the Source Control panel";
-    ToggleGitPanel => "workspace::ToggleGitPanel", "Expand or collapse the Git panel with history, stashes, worktrees and tags";
+    ToggleGitPanel => "workspace::ToggleGitPanel", "Show or hide commit history in the bottom panel";
     ToggleTerminal => "workspace::ToggleTerminal", "Show or hide the terminal panel";
     OpenSettings => "workspace::OpenSettings", "Open the Settings page";
     OpenKeymap => "workspace::OpenKeymap", "Open the Keymap page";

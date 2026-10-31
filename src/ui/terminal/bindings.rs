@@ -196,6 +196,7 @@ pub enum ClipboardShortcut {
     CopyOrPaste,
 }
 pub enum Command {
+    SelectPanel(super::state::PanelTab),
     ChooseWorkspace(PathBuf),
     Select(SessionId),
     New {

@@ -2,8 +2,9 @@
 //! groups: actions on the sessions, tools of the terminal itself, and actions
 //! of the whole panel. A thin rule separates the groups.
 
-use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId};
-use lgui::prelude::{Color, Element, UiRect, VisualStyle, panel};
+use lgui::core::{CursorIcon, EventPolicy, SemanticRole, Semantics, UiElement, UiId, UiScale};
+use lgui::prelude::{Color, Element, TextStyle, UiRect, VisualStyle, panel};
+use lgui::text::{self, TextLayoutRequest};
 
 use crate::ui::theme;
 
@@ -34,7 +35,7 @@ const ROOMY: Metrics = Metrics {
 };
 /// Narrowest header that uses the roomy distances.
 const ROOMY_MIN_W: f32 = 560.0;
-/// Space before the category capsule on the header's left.
+/// Space before the category switch on the header's left.
 const INSET: f32 = 8.0;
 const RULE_H: f32 = 14.0;
 
@@ -129,78 +130,215 @@ pub(super) fn layout(header: UiRect, spec: Spec) -> Layout {
     }
 }
 
-/// The category switcher's only capsule for now: the terminal icon, its name
-/// and how many sessions there are, on a rounded track. Returns the element and
-/// the track's right edge.
-pub(super) fn category(header: UiRect, sessions: usize) -> (Element, f32) {
+/// A compact segmented switch, distinct from the full-height session tabs.
+pub(super) fn category(
+    header: UiRect,
+    sessions: usize,
+    selected: super::state::PanelTab,
+    switch: std::sync::Arc<dyn Fn(super::state::PanelTab) + Send + Sync>,
+) -> (Element, f32) {
+    use super::state::PanelTab;
+    use crate::ui::components::text::SingleLineText;
     use crate::ui::tabs::measure;
-    let label_w = measure("Terminal", theme::UI_SIZE, 600);
+    let compact = header.width() < 640.0;
+    let size = if compact {
+        theme::SMALL
+    } else {
+        theme::UI_SIZE
+    };
     let count = sessions.to_string();
-    let count_w = (measure(&count, theme::SMALL, 400) + 10.0).max(16.0);
-    let track_h = 24.0;
-    let top = header.top + (header.height() - track_h) / 2.0;
-    let left = header.left + INSET;
-    // Icon slot, gap, label, gap, count pill, with 8px inside each end.
-    let capsule_w = 8.0 + 16.0 + 5.0 + label_w + 6.0 + count_w + 8.0;
-    let track = UiRect::new(left, top, left + capsule_w + 4.0, top + track_h);
-    let capsule = UiRect::new(
-        track.left + 2.0,
-        track.top + 2.0,
-        track.right - 2.0,
-        track.bottom - 2.0,
-    );
-    let icon_left = capsule.left + 8.0;
-    let label_left = icon_left + 16.0 + 5.0;
-    let pill_left = label_left + label_w + 6.0;
-    let pill = UiRect::new(
-        pill_left,
-        capsule.top + 3.0,
-        pill_left + count_w,
-        capsule.bottom - 3.0,
-    );
-    let element = panel(
-        track,
-        VisualStyle::filled(theme::c().active_line).radius(track_h / 2.0),
-    )
-    .key("terminal-category")
-    .child(
-        panel(
-            capsule,
-            VisualStyle::filled(theme::c().accent)
-                .alpha(40)
-                .radius(capsule.height() / 2.0),
+    let count_w = if compact {
+        0.0
+    } else {
+        measure(&count, theme::SMALL, 400)
+    };
+    let label_width = |label| {
+        SingleLineText::new(
+            label,
+            UiRect::new(0.0, 0.0, 10_000.0, size),
+            theme::sans_semibold(theme::c().text, size),
         )
-        .child(super::view::icon(
-            "terminal-category.icon",
-            "terminal",
-            theme::icon_rect(UiRect::new(
-                icon_left,
-                capsule.top,
-                icon_left + 16.0,
-                capsule.bottom,
-            )),
-            theme::c().accent,
-        ))
-        .child(lgui::prelude::text(
-            UiRect::new(label_left, capsule.top, pill_left, capsule.bottom),
-            "Terminal",
-            theme::sans_semibold(theme::c().accent, theme::UI_SIZE),
-        ))
-        .child(
-            panel(
-                pill,
-                VisualStyle::filled(theme::c().accent)
-                    .alpha(48)
-                    .radius(pill.height() / 2.0),
-            )
-            .child(lgui::prelude::text(pill, count, {
-                let mut style = theme::mono(theme::c().accent, theme::SMALL);
-                style.align = lgui::prelude::TextAlign::Center;
-                style
-            })),
-        ),
+        .width()
+    };
+    let terminal_w = label_width("Terminal") + if compact { 0.0 } else { count_w + 6.0 };
+    let terminal_w = terminal_w + 14.0 + 6.0 + 12.0;
+    let commits_w = label_width("Commits") + 14.0 + 6.0 + 12.0;
+    let track_h = 22.0;
+    let top = header.top + (header.height() - track_h) / 2.0;
+    let track = UiRect::new(
+        header.left + INSET,
+        top,
+        header.left + INSET + 6.0 + terminal_w + commits_w + 2.0,
+        top + track_h,
     );
-    (element, track.right)
+    let mut root = Element::new(move |cx| {
+        category_frame(
+            cx.id,
+            track,
+            theme::c().active_line,
+            4.0,
+            cx.context.scale(),
+        )
+        .children(cx.children)
+    })
+    .key("bottom-panel-categories");
+    let mut left = track.left + 3.0;
+    for (tab, label, glyph, id, width) in [
+        (
+            PanelTab::Terminal,
+            "Terminal",
+            "terminal",
+            "bottom-panel-terminal",
+            terminal_w,
+        ),
+        (
+            PanelTab::Commits,
+            "Commits",
+            "git-commit",
+            "bottom-panel-commits",
+            commits_w,
+        ),
+    ] {
+        let slot = UiRect::new(left, track.top + 2.0, left + width, track.bottom - 2.0);
+        left = slot.right + 2.0;
+        let active = tab == selected;
+        let color = if active {
+            theme::c().accent
+        } else {
+            theme::c().text_muted
+        };
+        let mut semantics = Semantics::new(SemanticRole::Button).name(label);
+        semantics.state.selected = active;
+        let click = switch.clone();
+        let node_id = UiId::new(id);
+        let mut button = Element::new(move |cx| {
+            let flags = cx.context.interaction_flags(&node_id);
+            let scale = cx.context.scale();
+            let background_id = UiId::owned(format!("{id}-background"));
+            let button = UiElement::panel(node_id, slot, VisualStyle::default());
+            if active {
+                // Match the prototype's 1px outline outside the selected segment.
+                let outline = UiRect::new(
+                    slot.left - 1.0,
+                    slot.top - 1.0,
+                    slot.right + 1.0,
+                    slot.bottom + 1.0,
+                );
+                return button
+                    .child(category_frame(
+                        background_id,
+                        outline,
+                        theme::c().surface,
+                        3.0,
+                        scale,
+                    ))
+                    .children(cx.children);
+            }
+            let style = if flags.hovered {
+                VisualStyle::filled(theme::c().surface)
+                    .alpha(140)
+                    .radius(2.0)
+            } else {
+                VisualStyle::filled(theme::c().active_line).radius(2.0)
+            };
+            let painted = scale.logical_rect(scale.physical_rect(slot));
+            button
+                .child(UiElement::panel(background_id, painted, style))
+                .children(cx.children)
+        })
+        .key(id)
+        .event_policy(EventPolicy::INTERACTIVE)
+        .cursor(CursorIcon::Pointer)
+        .semantics(semantics)
+        .on_click(move || click(tab));
+        let label_w = label_width(label);
+        let content_w = 14.0
+            + 6.0
+            + label_w
+            + if tab == PanelTab::Terminal && !compact {
+                6.0 + count_w
+            } else {
+                0.0
+            };
+        let icon_left = slot.left + (slot.width() - content_w) / 2.0;
+        let label_rect = UiRect::new(
+            icon_left + 20.0,
+            slot.top,
+            icon_left + 20.0 + label_w + 2.0,
+            slot.bottom,
+        );
+        let label_style = if active {
+            theme::sans_semibold(color, size)
+        } else {
+            theme::sans(color, size)
+        };
+        button = button
+            .child(super::view::icon(
+                id,
+                glyph,
+                UiRect::new(
+                    icon_left,
+                    slot.top + 2.0,
+                    icon_left + 14.0,
+                    slot.bottom - 2.0,
+                ),
+                color,
+            ))
+            .child(lgui::prelude::text(label_rect, label, label_style));
+        if tab == PanelTab::Terminal && !compact {
+            let count_rect = UiRect::new(
+                icon_left + 26.0 + label_w,
+                slot.top,
+                slot.right - 4.0,
+                slot.bottom,
+            );
+            let count_style = theme::mono(theme::c().text_faint, theme::SMALL);
+            let baseline_offset = category_baseline(label, label_rect, label_style)
+                .zip(category_baseline(&count, count_rect, count_style))
+                .map_or(0.0, |(label, count)| label - count);
+            button = button.child(lgui::prelude::text(
+                count_rect.translate(0.0, baseline_offset),
+                count.clone(),
+                count_style,
+            ));
+        }
+        root = root.child(button);
+    }
+    (root, track.right)
+}
+
+/// Smaller monospace counts share the label's baseline, rather than centring
+/// each font's capital-height box independently.
+fn category_baseline(value: &str, rect: UiRect, style: TextStyle) -> Option<f32> {
+    text::layout(&TextLayoutRequest::for_style(value, rect, &style))?
+        .lines()
+        .first()
+        .map(|line| line.baseline)
+}
+
+/// Keep both edges of the border on physical pixels, including when a 22px
+/// control is centred in the header's odd-height content area.
+fn category_frame(id: UiId, rect: UiRect, fill: Color, radius: f32, scale: UiScale) -> UiElement {
+    let painted = scale.logical_rect(scale.physical_rect(rect));
+    let inset = scale.logical_value(scale.physical_length(1.0));
+    let inner = UiRect::new(
+        painted.left + inset,
+        painted.top + inset,
+        painted.right - inset,
+        painted.bottom - inset,
+    );
+    let fill_id = UiId::owned(format!("{}-fill", id.as_str()));
+    UiElement::panel(
+        id,
+        painted,
+        VisualStyle::filled(theme::c().border).radius(radius),
+    )
+    .hit_rect(rect)
+    .child(UiElement::panel(
+        fill_id,
+        inner,
+        VisualStyle::filled(fill).radius((radius - inset).max(0.0)),
+    ))
 }
 
 /// Transparent until hovered or pressed, filled while `active`.
