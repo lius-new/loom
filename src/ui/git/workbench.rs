@@ -960,15 +960,12 @@ pub fn history_toolbar(
     use std::sync::Arc;
 
     let app = state.get();
-    let active_file = state
-        .frame()
-        .active_file
-        .filter(|path| {
-            store
-                .get()
-                .active()
-                .is_some_and(|repository| path.starts_with(&repository.worktree_root))
-        });
+    let active_file = state.frame().active_file.filter(|path| {
+        store
+            .get()
+            .active()
+            .is_some_and(|repository| path.starts_with(&repository.worktree_root))
+    });
     let file_scope = app.ui.history_file_scope && active_file.is_some();
     let commits = app
         .model
@@ -985,8 +982,19 @@ pub fn history_toolbar(
     let count = if commits.is_none() {
         String::new()
     } else {
-        let more = if app.model.history_can_load_more() { "+" } else { "" };
-        format!("{shown}{more} {}", if shown == 1 && more.is_empty() { "commit" } else { "commits" })
+        let more = if app.model.history_can_load_more() {
+            "+"
+        } else {
+            ""
+        };
+        format!(
+            "{shown}{more} {}",
+            if shown == 1 && more.is_empty() {
+                "commit"
+            } else {
+                "commits"
+            }
+        )
     };
 
     let size = theme::UI_SIZE;
@@ -1025,14 +1033,30 @@ pub fn history_toolbar(
         // Too narrow for the toolbar; the commit list alone remains.
         return lgui::prelude::group(rect);
     }
-    let mut root = lgui::prelude::group(rect).key("history-toolbar").child(panel(
-        track,
-        VisualStyle::filled(theme::c().active_line).radius(4.0),
-    ));
+    let mut root = lgui::prelude::group(rect)
+        .key("history-toolbar")
+        .child(panel(
+            track,
+            VisualStyle::filled(theme::c().active_line).radius(4.0),
+        ));
     let mut left = track.left + 3.0;
     for (id, label, width, active, enabled, to_file) in [
-        ("history-scope-branch", "Branch".to_owned(), branch_w, !file_scope, true, false),
-        ("history-scope-file", file_label, file_w, file_scope, active_file.is_some(), true),
+        (
+            "history-scope-branch",
+            "Branch".to_owned(),
+            branch_w,
+            !file_scope,
+            true,
+            false,
+        ),
+        (
+            "history-scope-file",
+            file_label,
+            file_w,
+            file_scope,
+            active_file.is_some(),
+            true,
+        ),
     ] {
         let slot = UiRect::new(left, track.top + 2.0, left + width, track.bottom - 2.0);
         left = slot.right + 2.0;
@@ -1064,12 +1088,7 @@ pub fn history_toolbar(
                     });
                 });
         }
-        let label_rect = UiRect::new(
-            slot.left + 10.0,
-            slot.top,
-            slot.right,
-            slot.bottom,
-        );
+        let label_rect = UiRect::new(slot.left + 10.0, slot.top, slot.right, slot.bottom);
         root = root.child(button.child(text(label_rect, label, theme::sans(color, size))));
     }
 
@@ -1087,7 +1106,11 @@ pub fn history_toolbar(
         let box_ = theme::bordered(
             field,
             theme::c().bg,
-            if searching { theme::c().accent } else { theme::c().border },
+            if searching {
+                theme::c().accent
+            } else {
+                theme::c().border
+            },
             4.0,
             1.0,
         )
@@ -1102,37 +1125,44 @@ pub fn history_toolbar(
             ),
             theme::c().text_ghost,
         ));
-        root = root.child(box_).child(crate::ui::components::input::render_access(
-            UiRect::new(field.left + 20.0, field.top, field.right - 2.0, field.bottom),
-            UiId::new(HISTORY_QUERY_ID),
-            focus,
-            InputBinding::new_access(
-                state.panel.clone(),
-                |app| &app.ui.history_query,
-                |app| {
-                    app.ui.details_scroll = 0.0;
-                    &mut app.ui.history_query
-                },
-            ),
-            AccessInputOptions {
-                label: "Search commits",
-                placeholder: "Search commits, authors, hashes…",
-                style: InputStyle {
-                    text: theme::sans(theme::c().text, 12.0),
-                    placeholder: theme::sans(theme::c().text_ghost, 12.0),
-                    caret: theme::c().text,
-                    selection: theme::c().accent,
-                },
-                on_submit: None,
-                on_cancel: Some(Arc::new(move || {
-                    reset.update(|app| {
-                        app.ui.history_query.clear();
+        root = root
+            .child(box_)
+            .child(crate::ui::components::input::render_access(
+                UiRect::new(
+                    field.left + 20.0,
+                    field.top,
+                    field.right - 2.0,
+                    field.bottom,
+                ),
+                UiId::new(HISTORY_QUERY_ID),
+                focus,
+                InputBinding::new_access(
+                    state.panel.clone(),
+                    |app| &app.ui.history_query,
+                    |app| {
                         app.ui.details_scroll = 0.0;
-                    })
-                })),
-                on_blur: None,
-            },
-        ));
+                        &mut app.ui.history_query
+                    },
+                ),
+                AccessInputOptions {
+                    label: "Search commits",
+                    placeholder: "Search commits, authors, hashes…",
+                    style: InputStyle {
+                        text: theme::sans(theme::c().text, 12.0),
+                        placeholder: theme::sans(theme::c().text_ghost, 12.0),
+                        caret: theme::c().text,
+                        selection: theme::c().accent,
+                    },
+                    on_submit: None,
+                    on_cancel: Some(Arc::new(move || {
+                        reset.update(|app| {
+                            app.ui.history_query.clear();
+                            app.ui.details_scroll = 0.0;
+                        })
+                    })),
+                    on_blur: None,
+                },
+            ));
         if count_w > 0.0 {
             root = root.child(text(
                 UiRect::new(field.right + 8.0, rect.top, rect.right, rect.bottom),

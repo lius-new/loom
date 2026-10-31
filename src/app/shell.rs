@@ -361,7 +361,8 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let history_key = super::git_poll::history_key(&s, &git_store.get());
     let history_file = super::git_poll::history_file(&s, &git_store.get());
     let history_state = state.clone();
-    let history_query_focus = cx.focus_handle(UiId::new(crate::ui::git::workbench::HISTORY_QUERY_ID));
+    let history_query_focus =
+        cx.focus_handle(UiId::new(crate::ui::git::workbench::HISTORY_QUERY_ID));
     // A moved HEAD also moves the branch list the history can be scoped to.
     let branch_key = (
         history_key.clone(),

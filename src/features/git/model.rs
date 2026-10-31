@@ -471,9 +471,11 @@ mod tests {
         assert!(model.finish_history_page(&branch, Ok(commits(0, 3))));
         assert!(model.history_path().is_none());
         // The same listing is kept, but another file needs its own log.
-        assert!(model
-            .begin_history_of("repo".into(), Some("head".into()), None)
-            .is_none());
+        assert!(
+            model
+                .begin_history_of("repo".into(), Some("head".into()), None)
+                .is_none()
+        );
         let file = model
             .begin_history_of("repo".into(), Some("head".into()), Some("f.rs".into()))
             .unwrap();
@@ -481,9 +483,11 @@ mod tests {
         assert!(model.history().is_none());
         assert!(!model.finish_history_page(&branch, Ok(commits(0, 3))));
         assert!(model.finish_history_page(&file, Ok(commits(0, 2))));
-        assert!(model
-            .begin_history_of("repo".into(), Some("head".into()), Some("f.rs".into()))
-            .is_none());
+        assert!(
+            model
+                .begin_history_of("repo".into(), Some("head".into()), Some("f.rs".into()))
+                .is_none()
+        );
         let back = model
             .begin_history("repo".into(), Some("head".into()))
             .unwrap();

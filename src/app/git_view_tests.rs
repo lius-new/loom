@@ -3047,9 +3047,14 @@ mod panel_action_tests {
         assert_eq!(rows.len(), 1);
         assert!(matches!(&rows[0], HistoryRow::Commit(c, false) if c.parents.is_empty()));
         let chained = history_rows_matching(Some(&history), None, "", true);
-        assert!(matches!(&chained[0], HistoryRow::Commit(c, _) if c.parents == ["aaa2".to_owned()]));
+        assert!(
+            matches!(&chained[0], HistoryRow::Commit(c, _) if c.parents == ["aaa2".to_owned()])
+        );
         assert!(matches!(&chained[1], HistoryRow::Commit(c, _) if c.parents.is_empty()));
-        assert_eq!(history_rows_matching(Some(&history), None, "aaa", false).len(), 1);
+        assert_eq!(
+            history_rows_matching(Some(&history), None, "aaa", false).len(),
+            1
+        );
         assert_eq!(
             history_rows_matching(Some(&history), None, "nothing", false),
             [HistoryRow::Message("No commits match.".into())]

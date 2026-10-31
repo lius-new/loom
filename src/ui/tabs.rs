@@ -5,8 +5,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use lgui::core::{
-    Color, CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiFocusHandle, UiId, WheelUnit, clip,
-    precompiled,
+    Color, CursorIcon, EventPolicy, IconStyle, PointerButton, UiElement, UiFocusHandle, UiId,
+    WheelUnit, clip, precompiled,
 };
 use lgui::prelude::{Element, TextStyle, UiRect, VisualStyle, panel, text};
 use lgui::text::{self, TextLayoutRequest};
@@ -624,7 +624,13 @@ pub fn render(pane: PaneId, rect: UiRect, state: Binding, editor_focus: UiFocusH
     let open_files = pane_items(&s, pane);
     // Same as the terminal tabs: a pointer while idle, a move cursor for the
     // whole drag.
-    let tab_cursor = if s.editor.tabs.tab_drag.as_ref().is_some_and(|drag| drag.active) {
+    let tab_cursor = if s
+        .editor
+        .tabs
+        .tab_drag
+        .as_ref()
+        .is_some_and(|drag| drag.active)
+    {
         CursorIcon::Move
     } else {
         CursorIcon::Pointer

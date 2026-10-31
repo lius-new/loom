@@ -254,7 +254,7 @@ export function violations(sources, policy) {
       if(/#\s*\[\s*path\s*=/.test(source)||ts.some((t,i)=>['include','include_str','include_bytes'].includes(t)&&ts[i+1]==='!'))problems.push(`${file}: editing core cannot include sources outside its crate boundary`);
     }
     if(file==='src/app/terminal_binding.rs'||file==='src/infrastructure/terminal/runtime.rs') {
-      const contracts=file==='src/app/terminal_binding.rs'?[['TerminalStore',['model','runtime']],['TerminalTabs',['model','runtime']],['TerminalTab',['id','group_id','width_weight','controller','cwd','purpose','running_program']]]:[['TerminalHandle',['runtime','id','shell']]];
+      const contracts=file==='src/app/terminal_binding.rs'?[['TerminalStore',['model','runtime']],['TerminalTabs',['model','runtime']],['TerminalTab',['id','group_id','width_weight','controller','cwd','title','purpose','running_program']]]:[['TerminalHandle',['runtime','id','shell']]];
       for(const [name,expected]of contracts){
         if(!ts.some((t,i)=>t==='struct'&&ts[i+1]===name))continue;
         const actual=structFields(source,name);if(actual.length!==expected.length||actual.some(f=>!expected.includes(f)))problems.push(name+': unexpected snapshot/handle ownership field');

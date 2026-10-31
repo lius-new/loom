@@ -265,7 +265,6 @@ impl Graph {
                 .decorations
                 .iter()
                 .any(|value| value == "HEAD" || value.starts_with("HEAD -> "));
-            let merge = commit.parents.len() > 1;
             let faded = alpha(node.color) < 230;
             let fill = |color: Color| {
                 let style = VisualStyle::filled(color);
@@ -283,13 +282,7 @@ impl Graph {
                     style,
                 ))
             };
-            let radius = if current {
-                5.0
-            } else if merge {
-                3.5
-            } else {
-                3.5
-            };
+            let radius = if current { 5.0 } else { 3.5 };
             // The halo cuts the lines that pass behind the node; a thin one keeps
             // the lane readable between neighbouring rows.
             graph = graph.child(circle(

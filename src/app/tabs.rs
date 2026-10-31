@@ -832,7 +832,12 @@ mod tests {
             );
         }
         // Empty strip space keeps the default cursor.
-        assert_eq!(session.tree().cursor_at(Point::new(650.0, strip.top + 10.0)), None);
+        assert_eq!(
+            session
+                .tree()
+                .cursor_at(Point::new(650.0, strip.top + 10.0)),
+            None
+        );
     }
 
     #[test]
@@ -868,7 +873,13 @@ mod tests {
         assert_eq!(app.editor.tabs.tab_drag.as_ref().unwrap().target_index, 1);
 
         // Far below the slack the drag targets the pane surface again.
-        update_pointer(&mut app, &regions, centre(1) + 5.0, strip.bottom + 60.0, true);
+        update_pointer(
+            &mut app,
+            &regions,
+            centre(1) + 5.0,
+            strip.bottom + 60.0,
+            true,
+        );
         assert!(matches!(
             app.editor.tabs.tab_drag.as_ref().unwrap().drop,
             Some(TabDrop::Pane { .. })

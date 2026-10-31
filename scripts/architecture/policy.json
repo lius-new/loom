@@ -699,6 +699,21 @@
       "owner": "ui/git/state",
       "migrated_in": "R6.3",
       "from": "clone_input_focused"
+    },
+    "history_path": {
+      "owner": "features/git/model",
+      "migrated_in": "Git history file scope",
+      "reason": "Remember which file the loaded history is restricted to"
+    },
+    "history_file_scope": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history file scope",
+      "reason": "Choose between the branch and the active file as the history scope"
+    },
+    "history_query": {
+      "owner": "ui/git/state",
+      "migrated_in": "Git history file scope",
+      "reason": "Text the commit list is narrowed to"
     }
   },
   "phase6": {
@@ -805,6 +820,10 @@
     "running_program": {
       "owner": "features/terminal/model:TerminalMetadata",
       "migrated_in": "R7.3"
+    },
+    "title": {
+      "owner": "features/terminal/model:TerminalMetadata",
+      "migrated_in": "terminal rename"
     }
   },
   "terminal_state_ownership": {
@@ -888,10 +907,6 @@
       "owner": "ui/terminal/state",
       "migrated_in": "R7.4"
     },
-    "ui/terminal/state.last_terminal_tab_click": {
-      "owner": "ui/terminal/state",
-      "migrated_in": "R7.4"
-    },
     "ui/terminal/state:ProfileEditor.open": {
       "owner": "ui/terminal/state:ProfileEditor",
       "migrated_in": "R7.4"
@@ -919,6 +934,26 @@
     "features/terminal/availability.fallback": {
       "owner": "features/terminal/availability",
       "migrated_in": "R7.4"
+    },
+    "ui/terminal/state.terminal_rename": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "terminal header redesign"
+    },
+    "ui/terminal/state.terminal_search": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "terminal header redesign"
+    },
+    "ui/terminal/state.detached_input": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "terminal header redesign"
+    },
+    "ui/terminal/state.selection_drag": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "terminal header redesign"
+    },
+    "ui/terminal/state.tab_scrolls": {
+      "owner": "ui/terminal/state",
+      "migrated_in": "terminal header redesign"
     }
   },
   "settings_model_ownership": {

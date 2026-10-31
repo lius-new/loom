@@ -406,7 +406,9 @@ pub(crate) fn render_commits(
         terminal_focus,
         editor_focus,
         region.is_some(),
-        |free| crate::ui::git::workbench::history_toolbar(free, git_binding, git_snapshot, query_focus),
+        |free| {
+            crate::ui::git::workbench::history_toolbar(free, git_binding, git_snapshot, query_focus)
+        },
     );
     let root = lgui::prelude::group(rect)
         .key("bottom-commits-panel")
