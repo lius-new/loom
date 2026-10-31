@@ -10,7 +10,7 @@ pub enum Content {
     Editor,
     Git,
     Files,
-    /// Sessions share a tab strip; only the active tab occupies the body.
+    /// Sessions share a tab strip; the active session's split group occupies the body.
     Terminal {
         tabs: Vec<u64>,
         active: Option<u64>,
@@ -178,6 +178,27 @@ impl ApplicationLayout {
             next_id: 7,
             maximized: None,
         }
+    }
+    /// A split session shares its target's strip, including in a detached region.
+    pub fn attach_split(&mut self, session: u64, target: u64) -> bool {
+        if self.terminal_region(session).is_some() {
+            return false;
+        }
+        let Some(region) = self.terminal_region(target) else {
+            return false;
+        };
+        let Some(Node::Leaf {
+            content: Content::Terminal { tabs, active },
+            ..
+        }) = self.root.find_mut(region)
+        else {
+            return false;
+        };
+        let index = tabs.iter().position(|id| *id == target).unwrap();
+        tabs.insert(index + 1, session);
+        *active = Some(session);
+        self.version += 1;
+        true
     }
     /// Moves `session` out of its tab strip into a new region to the right of
     /// `beside`. The two regions share `beside`'s extent equally and a divider

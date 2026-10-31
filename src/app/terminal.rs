@@ -174,22 +174,11 @@ pub(crate) fn split(state: &AppContext, tabs: &TerminalStore, id: SessionId) -> 
     let mut created = None;
     tabs.update(|tabs| created = tabs.split(id));
     if let Some(created) = created {
-        let mut placed = false;
         state.update(|app| {
             if let Some(layout) = &mut app.layout.application_layout {
-                // The new session lands in the default strip, then moves into a
-                // region of its own beside the one it was split from; the divider
-                // between them is draggable like any other.
-                layout.attach(created);
-                if let Some(beside) = layout.terminal_region(id) {
-                    placed = layout.split_beside(created, beside);
-                }
+                layout.attach_split(created, id);
             }
         });
-        if placed {
-            // Its own region now, not a legacy side-by-side group.
-            tabs.update(|tabs| tabs.detach_group(created));
-        }
     }
     sync_layout(state, tabs);
     created

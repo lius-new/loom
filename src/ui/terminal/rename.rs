@@ -28,7 +28,7 @@ pub(super) fn input(
     let blur = state.clone();
     let (commit_focus, cancel_focus) = (terminal_focus.clone(), terminal_focus);
     // Keys and text typed here belong to the field, never to the shell behind it.
-    // No box of its own: the tab's pill is the frame.
+    // No box of its own: the rectangular tab border is the frame.
     panel(rect, VisualStyle::default())
         .key("terminal-rename-field")
         .event_policy(EventPolicy::INTERACTIVE)

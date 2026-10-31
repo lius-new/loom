@@ -388,10 +388,12 @@ pub(crate) fn render_terminal_tabs(
         .collect::<Vec<_>>();
     let map = super::layout_map::binding(&state, &map, &tabs);
     let (state, tabs, request) = binding(&state, &tabs, &application);
+    let region_focused = state.get().ui.terminal_focused;
     let strip = view::render_terminal_tabs(
         rect,
         &values,
         active,
+        region_focused,
         tabs,
         state,
         map,
@@ -402,7 +404,7 @@ pub(crate) fn render_terminal_tabs(
     let no_hit = UiRect::new(rect.left, rect.bottom, rect.left, rect.bottom);
     lgui::prelude::group(no_hit)
         .child(strip.contents)
-        .child(view::tab_header_rule(rect, rect, strip.active))
+        .child(view::tab_header_rule(rect))
         .child(strip.extras)
 }
 #[cfg(test)]

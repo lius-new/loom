@@ -149,6 +149,123 @@ mod tests {
         }
     }
     #[test]
+    fn split_tab_rules_render_without_seams_across_themes_and_scales() {
+        use lgui::application::{AppView, ApplicationContext};
+        use lgui::core::UiScale;
+        use lgui::prelude::panel;
+        use lgui::renderer::{FrameInfo, FrameReason};
+        use lgui::session::UiSession;
+        let previous = theme::current();
+        let context = ApplicationContext::empty(Default::default());
+        let _fonts = lgui::backend::install_text_environment(
+            &context,
+            lgui::render_skia::skia_text_system_handle(),
+        );
+        for theme_id in theme::ThemeId::all() {
+            theme::set(theme_id);
+            for factor in [0.75_f32, 1.0, 1.25, 1.5, 2.0] {
+                let scale = UiScale::new(factor);
+                for fraction in [0.25, 0.75] {
+                    let viewport = UiRect::new(0.0, 0.0, 400.0, 64.0);
+                    let left = (16.0 + fraction) / factor;
+                    let header = UiRect::new(left, 2.0, left + 360.0, 2.0 + theme::TABS_H);
+                    let view: AppView = Arc::new(move |cx| {
+                        let state = AppContext::detached(cx.state_with(|| {
+                            let mut app = AppState::new();
+                            app.terminal.ui.terminal_focused = true;
+                            app
+                        }));
+                        let tabs = crate::app::terminal_binding::test_store(
+                            cx,
+                            Some(state.clone()),
+                            || {
+                                let mut tabs = TerminalTabs::new();
+                                let second = tabs.split(1).unwrap();
+                                tabs.split(second);
+                                tabs
+                            },
+                        );
+                        let snapshot = tabs.get();
+                        let id = cx.use_stable_id();
+                        let focus = cx.focus_handle(id);
+                        let editor_id = cx.use_stable_id();
+                        let editor_focus = cx.focus_handle(editor_id);
+                        panel(viewport, VisualStyle::filled(theme::c().sidebar)).child(
+                            render_terminal_tabs(
+                                header,
+                                &snapshot.tabs(),
+                                snapshot.active_id().unwrap(),
+                                tabs,
+                                state,
+                                crate::app::layout_map::MapStore::default(),
+                                focus,
+                                editor_focus,
+                                Arc::new(ApplicationHandle::new(|task| task(), || {})),
+                            ),
+                        )
+                    });
+                    let mut session = UiSession::new();
+                    session.render_view(&view, viewport, scale);
+                    let physical = scale.physical_rect(viewport);
+                    let dirty = [physical];
+                    let frame =
+                        FrameInfo::new(physical, &dirty, scale, FrameReason::SceneChange, true);
+                    let mut surface = lgui::render_skia::SkiaSoftwareSurface::new(4 * 1024 * 1024);
+                    lgui::assets::backend::with_render_resources(
+                        &context,
+                        lgui::RenderResources::new(),
+                        || surface.draw(&session.tree().scene().project_to_physical(scale), &frame),
+                    )
+                    .unwrap();
+                    let color = theme::c().active_tab.0;
+                    let expected = [color as u8, (color >> 8) as u8, (color >> 16) as u8, 255];
+                    for member in [1, 2] {
+                        let rule = session
+                            .tree()
+                            .node(&UiId::owned(format!("terminal-tab-separator-{member}")))
+                            .unwrap();
+                        let boundary = scale.physical_value(rule.layout_rect.right);
+                        let center = scale
+                            .physical_value((rule.layout_rect.top + rule.layout_rect.bottom) / 2.0);
+                        let offset = (center as usize * physical.width() as usize
+                            + (boundary - 1) as usize)
+                            * 4;
+                        let line_color = theme::c().text_faint.0;
+                        let expected_line = [
+                            line_color as u8,
+                            (line_color >> 8) as u8,
+                            (line_color >> 16) as u8,
+                            255,
+                        ];
+                        assert_eq!(
+                            &surface.pixels()[offset..offset + 4],
+                            &expected_line,
+                            "{} line, scale={factor}, fraction={fraction}, member={member}",
+                            theme_id.id()
+                        );
+                        for x in [boundary - 1, boundary] {
+                            for y in [
+                                scale.physical_value(header.top) + 2,
+                                scale.physical_value(header.bottom) - 3,
+                            ] {
+                                let offset =
+                                    (y as usize * physical.width() as usize + x as usize) * 4;
+                                assert_eq!(
+                                    &surface.pixels()[offset..offset + 4],
+                                    &expected,
+                                    "{} background, scale={factor}, fraction={fraction}, member={member}, x={x}, y={y}",
+                                    theme_id.id()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        theme::set(previous);
+    }
+
+    #[test]
     fn shell_menu_only_selects_available_profiles_and_plus_creates_selected_shell() {
         use crate::domain::application_layout::ApplicationLayout;
         use crate::features::terminal::profiles::ShellProfile;
@@ -657,7 +774,11 @@ mod tests {
         let application = Arc::new(ApplicationHandle::new(|task| task(), || {}));
         let viewport = UiRect::new(0.0, 0.0, 600.0, 300.0);
         let view: AppView = Arc::new(move |cx| {
-            let state = AppContext::detached(cx.state_with(AppState::new));
+            let state = AppContext::detached(cx.state_with(|| {
+                let mut app = AppState::new();
+                app.terminal.ui.terminal_focused = true;
+                app
+            }));
             let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
                 tabs.split(1);
@@ -697,6 +818,58 @@ mod tests {
         let mut session = UiSession::new();
         session.render_view(&view, viewport, UiScale::ONE);
         let (state, tabs) = exposed.lock().unwrap().clone().unwrap();
+        for id in [1, 2] {
+            let tab = session
+                .tree()
+                .node(&UiId::owned(format!("terminal-tab-{id}")))
+                .unwrap();
+            let rule = session
+                .tree()
+                .node(&UiId::owned(format!("terminal-tab-separator-{id}")))
+                .unwrap();
+            assert_eq!(tab.style.radius, 0.0);
+            assert_eq!(tab.style.fill, None);
+            assert_eq!(
+                session
+                    .tree()
+                    .node(&UiId::new("terminal-tab-group-1"))
+                    .unwrap()
+                    .style
+                    .fill,
+                Some(theme::c().active_tab)
+            );
+            let background = session
+                .tree()
+                .node(&UiId::owned(format!("terminal-tab-background-{id}")))
+                .unwrap();
+            assert_eq!(background.style.radius, 4.0);
+            assert_eq!(background.layout_rect.left, tab.layout_rect.left + 4.0);
+            assert_eq!(background.layout_rect.right, tab.layout_rect.right - 4.0);
+            assert_eq!(background.layout_rect.top, tab.layout_rect.top + 3.0);
+            assert_eq!(background.layout_rect.bottom, tab.layout_rect.bottom - 3.0);
+            assert_eq!(
+                background.style.fill,
+                Some(if id == 2 {
+                    theme::c().sidebar
+                } else {
+                    theme::c().active_tab
+                })
+            );
+            if id == 1 {
+                assert_eq!(rule.layout_rect.height(), 14.0);
+                // An odd-height header needs one extra pixel on one side.
+                assert!(
+                    ((rule.layout_rect.top - tab.layout_rect.top)
+                        - (tab.layout_rect.bottom - rule.layout_rect.bottom))
+                        .abs()
+                        <= 1.0
+                );
+            } else {
+                assert_eq!(rule.layout_rect.top, tab.layout_rect.top);
+                assert_eq!(rule.layout_rect.bottom, tab.layout_rect.bottom);
+            }
+            assert_eq!(rule.layout_rect.width(), 1.0);
+        }
         assert_eq!(
             session
                 .tree()
@@ -717,7 +890,7 @@ mod tests {
             2 // The two tab labels; the header has no shell selector label.
         );
         let context = ApplicationContext::empty(Default::default());
-        // Closing controls follow the editor tabs: active or hovered only.
+        // Both close controls stay visible without moving as the pointer crosses tabs.
         {
             let snapshot = tabs.get();
             let active = snapshot.active_id().unwrap();
@@ -730,7 +903,7 @@ mod tests {
             let active_close = UiId::owned(format!("terminal-tab-close-{active}"));
             let inactive_close = UiId::owned(format!("terminal-tab-close-{inactive}"));
             let active_bounds = session.tree().node(&active_close).unwrap().hit_rect;
-            assert!(session.tree().node(&inactive_close).is_none());
+            let inactive_bounds = session.tree().node(&inactive_close).unwrap().hit_rect;
 
             let select = session
                 .tree()
@@ -755,7 +928,10 @@ mod tests {
                 Point::new(400.0, 240.0),
             )));
             session.render_view(&view, viewport, UiScale::ONE);
-            assert!(session.tree().node(&inactive_close).is_none());
+            assert_eq!(
+                session.tree().node(&inactive_close).unwrap().hit_rect,
+                inactive_bounds
+            );
             assert_eq!(
                 session.tree().node(&active_close).unwrap().hit_rect,
                 active_bounds
@@ -1504,18 +1680,25 @@ mod tests {
             let focus = cx.focus_handle(id.clone());
             let editor_id = cx.use_stable_id();
             let editor_focus = cx.focus_handle(editor_id);
-            let controller = tabs.get().active().unwrap().controller.clone();
-            group(viewport).child(render(
+            let region = state
+                .get()
+                .layout
+                .application_layout
+                .as_ref()
+                .unwrap()
+                .default_terminal_region()
+                .unwrap();
+            group(viewport).child(crate::app::terminal_view::render_region(
                 UiRect::new(0.0, 200.0, 700.0, 400.0),
                 state,
+                crate::app::layout_map::MapStore::default(),
                 editor_focus,
                 focus,
                 id,
-                controller,
                 tabs,
                 application.clone(),
                 true,
-                viewport.height(),
+                region,
             ))
         });
         let mut session = UiSession::new();
@@ -1559,8 +1742,7 @@ mod tests {
         click(&mut session, "Maximize terminal");
         assert!(maximized(&state));
 
-        // Split puts a new session in a region of its own beside this one, with a
-        // divider between them, instead of adding a tab to the strip.
+        // Split keeps one header and adds a side-by-side group to its strip.
         let terminal_regions = |state: &AppContext| {
             let app = state.get();
             app.layout
@@ -1579,7 +1761,19 @@ mod tests {
         };
         assert_eq!(terminal_regions(&state), 1);
         click(&mut session, "Split terminal");
-        assert_eq!(terminal_regions(&state), 2);
+        assert_eq!(terminal_regions(&state), 1);
+        assert!(maximized(&state));
+        let tree = session.tree();
+        assert!(tree.node(&UiId::new("terminal-session-1")).is_some());
+        assert!(tree.node(&UiId::new("terminal-session-2")).is_some());
+        assert!(tree.node(&UiId::new("terminal-tab-separator-1")).is_some());
+        assert_eq!(
+            tree.node(&UiId::new("terminal-tab-background-2"))
+                .unwrap()
+                .style
+                .fill,
+            Some(theme::c().sidebar)
+        );
 
         // The collapse icon at the end hides the panel, like the app's own toggle.
         assert!(state.get().default_terminal_open());
@@ -1758,7 +1952,11 @@ mod tests {
         let exposed = Arc::new(Mutex::new(None));
         let output = exposed.clone();
         let view: AppView = Arc::new(move |cx| {
-            let state = AppContext::detached(cx.state_with(AppState::new));
+            let state = AppContext::detached(cx.state_with(|| {
+                let mut app = AppState::new();
+                app.terminal.ui.terminal_focused = true;
+                app
+            }));
             let tabs = crate::app::terminal_binding::test_store(cx, Some(state.clone()), || {
                 let mut tabs = TerminalTabs::new();
                 for _ in 1..sessions {
@@ -1810,6 +2008,109 @@ mod tests {
                     .hit_rect
             })
             .collect()
+    }
+
+    #[test]
+    fn ordinary_and_split_tab_selection_stays_visible_across_themes() {
+        use lgui::core::UiScale;
+        struct RestoreTheme(theme::ThemeId);
+        impl Drop for RestoreTheme {
+            fn drop(&mut self) {
+                theme::set(self.0);
+            }
+        }
+        fn luminance(color: lgui::prelude::Color) -> f64 {
+            let channel = |shift: u32| {
+                let value = f64::from((color.0 >> shift) & 255_u32) / 255.0;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+        }
+        let _restore = RestoreTheme(theme::current());
+        let (mut session, view, state, tabs, viewport) = strip_harness(1400.0, 3);
+        let mut sibling = None;
+        tabs.update(|tabs| sibling = tabs.split(1));
+        let sibling = sibling.unwrap();
+        for id in theme::ThemeId::all() {
+            theme::set(id);
+            state.update(|app| app.terminal.ui.terminal_focused = true);
+            let palette = theme::c();
+            tabs.update(|tabs| tabs.select(3));
+            session.render_view(&view, viewport, UiScale::ONE);
+            let fill = |session: &lgui::session::UiSession, name: &str| {
+                session
+                    .tree()
+                    .node(&UiId::owned(name))
+                    .unwrap()
+                    .style
+                    .fill
+                    .unwrap()
+            };
+            let selected = fill(&session, "terminal-tab-3");
+            let inactive = fill(&session, "terminal-tab-2");
+            let a = luminance(selected);
+            let b = luminance(inactive);
+            assert!(
+                (a.max(b) + 0.05) / (a.min(b) + 0.05) >= 1.1,
+                "{} tab backgrounds are indistinguishable",
+                id.id()
+            );
+            assert_eq!(
+                selected,
+                palette.active_tab,
+                "{} ordinary selection",
+                id.id()
+            );
+            assert_eq!(inactive, palette.sidebar);
+            assert_eq!(
+                fill(&session, "terminal-tab-group-1"),
+                inactive,
+                "{} unselected split group",
+                id.id()
+            );
+            let separator = fill(&session, "terminal-tab-separator-1");
+            let line_luminance = luminance(separator);
+            assert!(
+                (line_luminance.max(a) + 0.05) / (line_luminance.min(a) + 0.05) >= 1.5,
+                "{} split separator blends into the group background",
+                id.id()
+            );
+            tabs.update(|tabs| tabs.select(sibling));
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert_eq!(fill(&session, "terminal-tab-3"), inactive);
+            assert_eq!(fill(&session, "terminal-tab-group-1"), selected);
+            assert_eq!(
+                fill(&session, &format!("terminal-tab-background-{sibling}")),
+                inactive,
+                "{} split selection",
+                id.id()
+            );
+            assert_eq!(fill(&session, "terminal-tab-background-1"), selected);
+            state.update(|app| app.terminal.ui.terminal_focused = false);
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert_eq!(
+                fill(&session, "terminal-tab-group-1"),
+                inactive,
+                "{} unfocused region",
+                id.id()
+            );
+            assert_eq!(
+                fill(&session, &format!("terminal-tab-background-{sibling}")),
+                selected
+            );
+            assert_eq!(fill(&session, "terminal-tab-background-1"), inactive);
+            state.update(|app| app.terminal.ui.terminal_focused = true);
+            session.render_view(&view, viewport, UiScale::ONE);
+            assert_eq!(fill(&session, "terminal-tab-group-1"), selected);
+            assert_eq!(
+                fill(&session, &format!("terminal-tab-background-{sibling}")),
+                inactive
+            );
+        }
     }
 
     #[test]

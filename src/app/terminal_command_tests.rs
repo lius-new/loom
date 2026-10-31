@@ -97,9 +97,7 @@ fn menu_new_uses_workspace_root_while_split_inherits_target_live_directory() {
         &application()
     ));
     let sibling = tabs.get().active().unwrap();
-    // The split lives in a region of its own beside the target's, not in a
-    // side-by-side group within one strip.
-    assert_ne!(sibling.group_id, target(&tabs, clicked).unwrap().group_id);
+    assert_eq!(sibling.group_id, target(&tabs, clicked).unwrap().group_id);
     {
         let app = state.get();
         let layout = app.layout.application_layout.as_ref().unwrap();
@@ -107,8 +105,11 @@ fn menu_new_uses_workspace_root_while_split_inherits_target_live_directory() {
             layout.terminal_region(clicked).unwrap(),
             layout.terminal_region(sibling.id).unwrap(),
         );
-        assert_ne!(beside, own);
-        assert_eq!(layout.terminal_view(own).unwrap().0, vec![sibling.id]);
+        assert_eq!(beside, own);
+        let (ids, active) = layout.terminal_view(own).unwrap();
+        let index = ids.iter().position(|id| *id == clicked).unwrap();
+        assert_eq!(ids[index + 1], sibling.id);
+        assert_eq!(tabs.get().region_view(&ids, active).active_group().len(), 2);
     }
     assert_eq!(sibling.cwd, Some("live-cwd".into()));
     assert!(menu_action(
@@ -118,14 +119,23 @@ fn menu_new_uses_workspace_root_while_split_inherits_target_live_directory() {
         MenuAction::Others,
         &application()
     ));
-    // The split is a separate terminal now, so "Close Others" closes it too.
+    // "Close Others" preserves both sides of the shared tab.
     assert_eq!(
         tabs.get().tabs().iter().map(|t| t.id).collect::<Vec<_>>(),
-        vec![clicked]
+        vec![clicked, sibling.id]
     );
     assert!(
         controller.test_same_runtime(&target(&tabs, clicked).unwrap().controller.test_controller())
     );
+    assert!(close(
+        &state,
+        &tabs,
+        clicked,
+        MenuAction::Close,
+        &application()
+    ));
+    assert_eq!(tabs.get().active_id(), Some(sibling.id));
+    assert_eq!(tabs.get().active_group().len(), 1);
     invariant(&state, &tabs);
 }
 
@@ -392,6 +402,24 @@ fn detached_session_selection_and_close_preserve_layout_ownership_and_runtime() 
         *layout = plan.layout;
     });
     assert!(select(&state, &tabs, other));
+    let sibling = split(&state, &tabs, other).unwrap();
+    {
+        let app = state.get();
+        let layout = app.layout.application_layout.as_ref().unwrap();
+        assert_eq!(
+            layout.terminal_region(other),
+            layout.terminal_region(sibling)
+        );
+        assert_ne!(layout.terminal_region(sibling), layout.terminal_region(id));
+    }
+    assert!(close(
+        &state,
+        &tabs,
+        sibling,
+        MenuAction::Close,
+        &application()
+    ));
+    assert_eq!(tabs.get().active_id(), Some(other));
     assert!(close(&state, &tabs, id, MenuAction::Close, &application()));
     invariant(&state, &tabs);
     assert!(before.test_same_runtime(&target(&tabs, other).unwrap().controller.test_controller()));

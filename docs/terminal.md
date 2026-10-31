@@ -54,8 +54,10 @@ belongs to the panel: **Maximize** or **Restore**, and a collapse icon. The pane
 is still shown and hidden with its own toggle.
 
 On the left, a **Terminal** capsule shows how many sessions there are. Each
-session is a pill tab with a status icon: a spinner while a program runs in it,
-a quiet dot otherwise.
+session is a rectangular tab with full-height separators between groups and an always
+visible close button. The selected session uses the theme's contrasting tab
+background, including in dark and high-contrast themes. Its
+status icon is a spinner while a program runs in it, a quiet dot otherwise.
 
 **Search** opens a find box over the top right of the terminal. Typing searches
 the scrollback and the screen, ignoring case, selects the last match and shows
@@ -63,9 +65,15 @@ the scrollback and the screen, ignoring case, selects the last match and shows
 match, wrapping around, and the view scrolls to it. **Escape**, the close button
 or the Search button again closes the box and drops the highlight.
 
-**Split** opens a new terminal, in the same directory, in a region of its own
-beside the current one. Drag the divider between the two to set their widths.
-Close one and the other takes the space back.
+**Split** opens a new terminal beside the current one, in the same directory,
+under the same header. Their tabs stay adjacent with a short, centered vertical separator
+between them. The focused region's active group uses the ordinary selected-tab
+background, while its selected session uses the ordinary inactive-tab background
+in an inset rounded rectangle. Unfocused regions and unselected groups use the
+ordinary tab colors. Hover backgrounds use the same inset shape.
+Select or close either session independently. Drag the divider
+between their contents to set their widths. Close one and the other takes the
+space back.
 
 **Maximize** gives the bottom terminal the editor area's height, down to the
 editor's minimum, and the same button restores the previous size. Dragging a

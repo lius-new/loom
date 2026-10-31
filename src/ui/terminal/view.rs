@@ -25,8 +25,7 @@ use crate::ui::components::scrollbar;
 use crate::ui::editor::view::{scroll_from_thumb, thumb_geometry};
 use crate::ui::fonts;
 use crate::ui::tabs::{
-    GAP as TAB_CONTENT_GAP, PAD as TAB_PAD, PILL_INSET, TAB_GAP, TABS_PAD, TEXT_MARGIN, ellipsize,
-    measure,
+    GAP as TAB_CONTENT_GAP, PAD as TAB_PAD, TAB_GAP, TABS_PAD, TEXT_MARGIN, ellipsize, measure,
 };
 use crate::ui::terminal::layout_binding::StripDrag;
 use crate::ui::terminal::state::SelectionDrag;
@@ -35,13 +34,12 @@ use crate::ui::theme;
 const HEADER_H: f32 = theme::TABS_H;
 /// How much wider the search button's box is on its right than the other tools'.
 const SEARCH_BOX_EXTRA: f32 = 2.0;
-/// Space above and below the active tab's pill inside its hit area.
-const PILL_V_INSET: f32 = 3.0;
 /// Narrowest header that still shows the maximize and collapse group.
 const PANEL_TOOLS_MIN_W: f32 = 380.0;
 /// Status glyph at the start of a session tab, and its gap to the name.
 const GLYPH: f32 = 14.0;
 const GLYPH_GAP: f32 = 6.0;
+const SPLIT_TAB_RULE_H: f32 = 14.0;
 const BODY_PAD_X: f32 = 12.0;
 /// The right edge is nearly flush: the overlay scrollbar draws over the text
 /// instead of reserving columns, as in the editor.
@@ -460,6 +458,7 @@ pub(crate) fn render_view(
         tab_strip,
         &tab_items,
         active_tab_id,
+        terminal_focused,
         terminal_tabs.clone(),
         state.clone(),
         map.clone(),
@@ -502,8 +501,7 @@ pub(crate) fn render_view(
     // Paint one full-width rule after the clipped tab contents and session surfaces.
     terminal = terminal
         .child(tab_strip_element.contents)
-        // The active tab is a pill now, so the rule carries no underline.
-        .child(tab_header_rule(header, tab_strip, None))
+        .child(tab_header_rule(header))
         // The list button and tooltips sit outside the strip's clip.
         .child(tab_strip_element.extras);
 
@@ -907,7 +905,6 @@ fn vertical_scrollbar(
 
 pub(crate) struct TabStrip {
     pub(crate) contents: Element,
-    pub(crate) active: Option<UiRect>,
     /// What belongs outside the strip's clip: the full-list button and the
     /// hover tooltips.
     pub(crate) extras: Element,
@@ -918,6 +915,7 @@ pub(crate) fn render_terminal_tabs(
     rect: UiRect,
     tabs: &[TerminalTab],
     active_id: u64,
+    region_focused: bool,
     terminal_tabs: Sessions,
     state: Binding,
     map: MapBinding,
@@ -929,12 +927,15 @@ pub(crate) fn render_terminal_tabs(
     if tabs.is_empty() || rect.width() <= 0.0 {
         return TabStrip {
             contents: strip,
-            active: None,
             extras: group(UiRect::new(rect.left, rect.top, rect.left, rect.top)),
         };
     }
 
     let labels = tabs.iter().map(TerminalTab::label).collect::<Vec<_>>();
+    let active_group = tabs
+        .iter()
+        .find(|tab| tab.id == active_id)
+        .map(|tab| tab.group_id);
     let close_width = measure("✕", theme::SMALL, 400);
     // A tab is as wide as its name asks, between the minimum and the maximum
     // width. The name leaves out the running program, so selecting, hovering or
@@ -967,7 +968,6 @@ pub(crate) fn render_terminal_tabs(
         rect.bottom,
     );
     let mut tips: Vec<(UiId, UiId, UiId, Element)> = Vec::new();
-    let mut active_rect = None;
     let strip_drag = {
         let mut left = rect.left + TABS_PAD - scroll;
         let slots = tabs
@@ -981,17 +981,77 @@ pub(crate) fn render_terminal_tabs(
             .collect();
         StripDrag { rect, tabs: slots }
     };
+    // A continuous group background avoids anti-aliased seams where adjacent
+    // tab rectangles meet at fractional physical pixels. Only short rules
+    // should separate members of the same split group.
+    let mut start = 0;
+    while start < tabs.len() {
+        let mut end = start + 1;
+        while end < tabs.len() && tabs[end].group_id == tabs[start].group_id {
+            end += 1;
+        }
+        if end - start > 1 {
+            let bounds = UiRect::new(
+                strip_drag.tabs[start].1,
+                rect.top,
+                strip_drag.tabs[end - 1].2,
+                rect.bottom,
+            );
+            let group_id = tabs[start].id;
+            let inverted = region_focused && active_group == Some(tabs[start].group_id);
+            strip = strip.child(
+                Element::new(move |_| {
+                    UiElement::panel(
+                        UiId::owned(format!("terminal-tab-group-{group_id}")),
+                        bounds,
+                        VisualStyle::filled(if inverted {
+                            theme::c().active_tab
+                        } else {
+                            theme::c().sidebar
+                        }),
+                    )
+                    .hit_rect(UiRect::new(
+                        bounds.left,
+                        bounds.top,
+                        bounds.left,
+                        bounds.top,
+                    ))
+                })
+                .key(format!("terminal-tab-group-{group_id}")),
+            );
+        }
+        start = end;
+    }
     let mut left = rect.left + TABS_PAD - scroll;
     for (index, tab) in tabs.iter().enumerate() {
         let name = &labels[index];
         let active = tab.id == active_id;
         let tab_width = widths[index];
-        let tab_rect = UiRect::new(
-            left,
-            rect.top + PILL_INSET,
-            left + tab_width,
-            rect.bottom - PILL_INSET,
-        );
+        let tab_rect = UiRect::new(left, rect.top, left + tab_width, rect.bottom);
+        let joins_next = tabs
+            .get(index + 1)
+            .is_some_and(|next| next.group_id == tab.group_id);
+        let split_tab = joins_next
+            || index
+                .checked_sub(1)
+                .is_some_and(|previous| tabs[previous].group_id == tab.group_id);
+        let inverted = split_tab && region_focused && active_group == Some(tab.group_id);
+        let background_rect = if split_tab {
+            UiRect::new(
+                tab_rect.left + 4.0,
+                tab_rect.top + 3.0,
+                tab_rect.right - 4.0,
+                tab_rect.bottom - 3.0,
+            )
+        } else {
+            tab_rect
+        };
+        let background_radius = if split_tab { 4.0 } else { 0.0 };
+        let separator_inset = if joins_next {
+            (tab_rect.height() - SPLIT_TAB_RULE_H).max(0.0) / 2.0
+        } else {
+            0.0
+        };
         let name_left = tab_rect.left + TAB_PAD + GLYPH + GLYPH_GAP;
         let close_left = tab_rect.right - TAB_PAD - close_width;
         let close_rect = UiRect::new(
@@ -1024,49 +1084,22 @@ pub(crate) fn render_terminal_tabs(
             name_left + name_slot_width,
             tab_rect.bottom,
         );
-        if active {
-            active_rect = Some(tab_rect);
-        }
         let mut visual = panel(tab_rect, VisualStyle::default());
         let editing = renaming == Some(tab.id);
-        if active || editing {
-            // A tinted pill with a faint accent outline; a solid, thicker one
-            // while its name is being edited.
-            let (outline_alpha, edge) = if editing { (255, 2.0) } else { (90, 1.0) };
-            // The pill is shorter than the hit area, so it floats in the header
-            // instead of touching its top and bottom edges.
-            let pill = UiRect::new(
-                tab_rect.left,
-                tab_rect.top + PILL_V_INSET,
-                tab_rect.right,
-                tab_rect.bottom - PILL_V_INSET,
-            );
-            let radius = pill.height() / 2.0;
-            let inner = UiRect::new(
-                pill.left + edge,
-                pill.top + edge,
-                pill.right - edge,
-                pill.bottom - edge,
-            );
-            visual = visual
-                .child(panel(
-                    pill,
-                    VisualStyle::filled(theme::c().accent)
-                        .alpha(outline_alpha)
-                        .radius(radius),
-                ))
-                .child(panel(
-                    inner,
-                    VisualStyle::filled(theme::c().sidebar).radius(radius - edge),
-                ))
-                .child(panel(
-                    inner,
-                    VisualStyle::filled(theme::c().accent)
-                        .alpha(34)
-                        .radius(radius - edge),
-                ));
+        if editing {
+            visual = visual.child(theme::bordered(
+                background_rect,
+                if inverted {
+                    theme::c().sidebar
+                } else {
+                    theme::c().active_tab
+                },
+                theme::c().accent,
+                background_radius,
+                1.0,
+            ));
         }
-        // Editing a name leaves only the field in the pill, as in the design.
+        // Editing a name leaves only the field inside a rectangular focus border.
         if !editing {
             let glyph_top = tab_rect.top + (tab_rect.height() - GLYPH) / 2.0;
             let glyph_left = tab_rect.left + TAB_PAD;
@@ -1101,15 +1134,51 @@ pub(crate) fn render_terminal_tabs(
         let close_node_id = close_id.clone();
         let select_node_id = UiId::owned(format!("terminal-tab-select-{tab_id}"));
         let mut tab_element = Element::new(move |cx| {
-            let show_close = active
-                || cx.context.interaction_flags(&cx.id).hovered
+            let id = UiId::owned(format!("terminal-tab-{tab_id}"));
+            let hovered = cx.context.interaction_flags(&id).hovered
                 || cx.context.interaction_flags(&select_node_id).hovered
                 || cx.context.interaction_flags(&close_node_id).hovered;
-            UiElement::group(cx.id, tab_rect).children(
-                cx.children
-                    .into_iter()
-                    .filter(|child| show_close || child.node().id != close_node_id),
-            )
+            let inactive_fill = if inverted {
+                theme::c().active_tab
+            } else {
+                theme::c().sidebar
+            };
+            let fill = if active || editing {
+                if inverted {
+                    theme::c().sidebar
+                } else {
+                    theme::c().active_tab
+                }
+            } else if hovered {
+                theme::c().active_line
+            } else {
+                inactive_fill
+            };
+            let mut node = UiElement::panel(
+                id,
+                tab_rect,
+                if split_tab {
+                    VisualStyle::default()
+                } else {
+                    VisualStyle::filled(fill)
+                },
+            );
+            if split_tab {
+                node = node.child(
+                    UiElement::panel(
+                        UiId::owned(format!("terminal-tab-background-{tab_id}")),
+                        background_rect,
+                        VisualStyle::filled(fill).radius(background_radius),
+                    )
+                    .hit_rect(UiRect::new(
+                        background_rect.left,
+                        background_rect.top,
+                        background_rect.left,
+                        background_rect.top,
+                    )),
+                );
+            }
+            node.children(cx.children)
         })
         .key(format!("terminal-tab-{tab_id}"))
         .event_policy(EventPolicy {
@@ -1131,16 +1200,38 @@ pub(crate) fn render_terminal_tabs(
                 cx.stop_propagation();
             }
         })
-        .child(visual);
+        .child(visual)
+        .child(
+            Element::new(move |cx| {
+                let scale = cx.context.scale();
+                let right = scale.physical_value(tab_rect.right);
+                let line = scale.logical_rect(PhysicalRect::new(
+                    right - scale.physical_length(1.0),
+                    scale.physical_value(tab_rect.top + separator_inset),
+                    right,
+                    scale.physical_value(tab_rect.bottom - separator_inset),
+                ));
+                UiElement::panel(
+                    UiId::owned(format!("terminal-tab-separator-{tab_id}")),
+                    line,
+                    VisualStyle::filled(if joins_next {
+                        theme::c().text_faint
+                    } else {
+                        theme::c().border
+                    }),
+                )
+                .hit_rect(UiRect::new(line.left, line.top, line.left, line.top))
+            })
+            .key(format!("terminal-tab-separator-{tab_id}")),
+        );
         if renaming == Some(tab_id) {
             // Renaming replaces selecting and closing: the field fills the tab.
             tab_element = tab_element.child(super::rename::input(
-                // Inside the pill's thicker outline, across its whole width.
                 UiRect::new(
                     tab_rect.left + 6.0,
-                    tab_rect.top + PILL_V_INSET + 2.0,
+                    tab_rect.top + 4.0,
                     tab_rect.right - 6.0,
-                    tab_rect.bottom - PILL_V_INSET - 2.0,
+                    tab_rect.bottom - 4.0,
                 ),
                 state.clone(),
                 terminal_focus.clone(),
@@ -1349,7 +1440,6 @@ pub(crate) fn render_terminal_tabs(
 
     TabStrip {
         contents: clip(viewport, 0.0, 0.0).child(strip),
-        active: active_rect,
         extras,
     }
 }
@@ -1415,37 +1505,13 @@ fn session_glyph(id: u64, rect: UiRect, running: bool) -> Element {
     )
 }
 
-// Keep vertical edges out of the fractional tab clip. Only the underline's
-// horizontal span is clipped, and decorations never intercept tab input.
-pub(crate) fn tab_header_rule(header: UiRect, viewport: UiRect, active: Option<UiRect>) -> Element {
+// Paint the header's bottom edge outside the fractional tab clip without
+// intercepting selecting or dragging a tab.
+pub(crate) fn tab_header_rule(header: UiRect) -> Element {
     Element::new(move |cx| {
-        let scale = cx.context.scale();
         let no_hit = UiRect::new(header.left, header.bottom, header.left, header.bottom);
-        let mut rule = cx
-            .compile(crate::ui::components::divider::bottom(header))
-            .hit_rect(no_hit);
-        if let Some(active) = active {
-            let left = scale.physical_value(active.left.max(viewport.left));
-            let right = scale.physical_value(active.right.min(viewport.right));
-            if right > left {
-                let bottom = scale.physical_value(header.bottom);
-                let underline = scale.logical_rect(PhysicalRect::new(
-                    left,
-                    bottom - scale.physical_length(2.0),
-                    right,
-                    bottom,
-                ));
-                rule = rule.child(
-                    UiElement::panel(
-                        cx.auto_id(),
-                        underline,
-                        VisualStyle::filled(theme::c().accent),
-                    )
-                    .hit_rect(no_hit),
-                );
-            }
-        }
-        rule
+        cx.compile(crate::ui::components::divider::bottom(header))
+            .hit_rect(no_hit)
     })
 }
 pub(crate) fn render_screen(

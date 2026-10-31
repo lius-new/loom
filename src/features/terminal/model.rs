@@ -121,17 +121,12 @@ impl TerminalModel {
             .collect()
     }
 
-    /// A tabbed region projects metadata only. Legacy split groups must not make
-    /// its tabs render as simultaneous terminal bodies.
+    /// Project the region's sessions while preserving their side-by-side groups.
     pub fn region_view(&self, ids: &[u64], active: Option<u64>) -> Self {
         let tabs = ids
             .iter()
             .filter_map(|id| self.tabs.iter().find(|tab| tab.id == *id))
-            .map(|tab| {
-                let mut tab = tab.clone();
-                tab.group_id = tab.id;
-                tab
-            })
+            .cloned()
             .collect::<Vec<_>>();
         let active_id = self
             .active_id
@@ -145,7 +140,7 @@ impl TerminalModel {
         }
     }
 
-    /// Moving a session out of a legacy side-by-side group does not restart it.
+    /// Moving a session out of a side-by-side group does not restart it.
     pub fn detach_group(&mut self, id: u64) {
         if let Some(group) = self
             .tabs
@@ -469,6 +464,9 @@ mod tests {
         assert_eq!(restored.saved_groups(), vec![0, 0, 1]);
         assert_eq!(restored.active_index(), Some(1));
         assert_eq!(restored.active_group().len(), 2);
+        let region = restored.region_view(&[first, split], Some(first));
+        assert_eq!(region.active_group().len(), 2);
+        assert_eq!(region.widths(), original.widths()[..2]);
         let legacy = TerminalModel::restored(original.shells(), original.active_index());
         assert_eq!(legacy.saved_groups(), vec![0, 1, 2]);
     }
