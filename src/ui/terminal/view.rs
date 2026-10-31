@@ -1541,23 +1541,30 @@ pub(crate) fn render_terminal_tabs(
         ));
     }
     if renaming.is_none() {
-        extras = extras.child(
-            Element::new(move |cx| {
-                let hovered = tips
-                    .iter()
-                    .find(|(select, close, _, _)| {
-                        cx.context.interaction_flags(select).hovered
-                            || cx.context.interaction_flags(close).hovered
-                    })
-                    .map(|(_, _, tip, _)| tip.clone());
-                UiElement::group(cx.id, rect).children(
-                    cx.children
-                        .into_iter()
-                        .filter(|child| Some(&child.node().id) == hovered.as_ref()),
-                )
-            })
-            .key("terminal-tab-tips"),
-        );
+        // Every tooltip is a child, but only the one of the hovered tab is kept.
+        let hover_ids = tips
+            .iter()
+            .map(|(select, close, tip, _)| (select.clone(), close.clone(), tip.clone()))
+            .collect::<Vec<_>>();
+        let mut tooltips = Element::new(move |cx| {
+            let hovered = hover_ids
+                .iter()
+                .find(|(select, close, _)| {
+                    cx.context.interaction_flags(select).hovered
+                        || cx.context.interaction_flags(close).hovered
+                })
+                .map(|(_, _, tip)| tip.clone());
+            UiElement::group(cx.id, rect).children(
+                cx.children
+                    .into_iter()
+                    .filter(|child| Some(&child.node().id) == hovered.as_ref()),
+            )
+        })
+        .key("terminal-tab-tips");
+        for (_, _, _, tip) in tips {
+            tooltips = tooltips.child(tip);
+        }
+        extras = extras.child(tooltips);
     }
 
     TabStrip {

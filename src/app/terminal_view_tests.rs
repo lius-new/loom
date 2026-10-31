@@ -2253,6 +2253,9 @@ mod tests {
         );
         assert_eq!(tabs.get().active_id(), Some(last));
         assert!(state.get().terminal.ui.terminal_tab_context_menu.is_none());
+        // The reveal runs as an effect after that frame, so the next frame shows it.
+        session.runtime().run_effects();
+        session.render_view(&view, viewport, lgui::core::UiScale::ONE);
         // Selecting it scrolled the strip so the tab is in view.
         let strip_right = list.x - 4.0;
         let shown = tab_rects(&session, &[last])[0];

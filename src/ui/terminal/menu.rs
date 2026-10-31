@@ -545,10 +545,12 @@ fn keyed_row(row: UiRect, label: &str, selected: bool, key: String) -> Element {
         row.right - ROW_INSET,
         row.bottom,
     );
+    // An explicit node id, so a row can be found (and hovered) by its key.
+    let node_id = UiId::owned(key.clone());
     Element::new(move |cx| {
-        let hovered = cx.context.interaction_flags(&cx.id).hovered;
+        let hovered = cx.context.interaction_flags(&node_id).hovered;
         UiElement::panel(
-            cx.id,
+            node_id.clone(),
             highlight,
             if hovered {
                 VisualStyle::filled(theme::c().selection).radius(4.0)
