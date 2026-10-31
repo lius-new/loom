@@ -284,16 +284,17 @@ impl Graph {
                 ))
             };
             let radius = if current {
-                6.0
+                5.0
             } else if merge {
-                4.0
+                3.5
             } else {
-                4.5
+                3.5
             };
-            // The halo cuts the lines that pass behind the node.
+            // The halo cuts the lines that pass behind the node; a thin one keeps
+            // the lane readable between neighbouring rows.
             graph = graph.child(circle(
                 "halo",
-                radius + 2.5,
+                radius + 1.5,
                 VisualStyle::filled(background),
             ));
             graph = graph.child(circle("dot", radius, fill(color(node.color))));

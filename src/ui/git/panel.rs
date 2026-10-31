@@ -1489,6 +1489,30 @@ pub(crate) fn history_rows(
     history: Option<&GitHistory>,
     expanded: Option<&ExpandedCommit>,
 ) -> Vec<HistoryRow> {
+    history_rows_matching(history, expanded, "", false)
+}
+
+/// Whether `commit` matches every word of `query` in its subject, author or hash.
+pub(crate) fn commit_matches(commit: &CommitSummary, query: &str) -> bool {
+    let haystack = format!(
+        "{} {} {} {}",
+        commit.subject, commit.author, commit.author_email, commit.oid
+    )
+    .to_lowercase();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|word| haystack.contains(word))
+}
+
+/// The list narrowed to `query`. A narrowed or file-scoped list is drawn without
+/// lanes, since its commits are no longer neighbours in the graph (`plain`).
+pub(crate) fn history_rows_matching(
+    history: Option<&GitHistory>,
+    expanded: Option<&ExpandedCommit>,
+    query: &str,
+    plain: bool,
+) -> Vec<HistoryRow> {
     let commits = match history.map(|history| &history.commits) {
         None => return vec![HistoryRow::Message("Loading commits…".into())],
         Some(Err(error)) => return vec![HistoryRow::Message(error.clone())],
@@ -1497,10 +1521,24 @@ pub(crate) fn history_rows(
         }
         Some(Ok(commits)) => commits,
     };
+    let query = query.trim();
     let mut rows = Vec::new();
-    for commit in commits {
+    let matching = commits
+        .iter()
+        .filter(|commit| commit_matches(commit, query))
+        .collect::<Vec<_>>();
+    for (index, commit) in matching.iter().enumerate() {
         let open = expanded.filter(|expanded| expanded.oid == commit.oid);
-        rows.push(HistoryRow::Commit(commit.clone(), open.is_some()));
+        let mut shown = (*commit).clone();
+        if plain {
+            // Neighbours in the list are chained into one lane, as the real
+            // parents are not necessarily listed.
+            shown.parents = matching
+                .get(index + 1)
+                .map(|next| vec![next.oid.clone()])
+                .unwrap_or_default();
+        }
+        rows.push(HistoryRow::Commit(shown, open.is_some()));
         let Some(open) = open else {
             continue;
         };
@@ -1513,6 +1551,9 @@ pub(crate) fn history_rows(
                 path: path.clone(),
             })),
         }
+    }
+    if rows.is_empty() {
+        rows.push(HistoryRow::Message("No commits match.".into()));
     }
     rows
 }

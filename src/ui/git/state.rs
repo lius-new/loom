@@ -63,6 +63,10 @@ pub struct GitUiState {
     pub history_branches: Option<(PathBuf, Vec<BranchInfo>)>,
     /// The branch whose commits the history shows; None follows HEAD.
     pub history_scope: Option<(PathBuf, String)>,
+    /// Lists only the commits that touched the active file.
+    pub history_file_scope: bool,
+    /// Text the commit list is narrowed to, matched against subject, author and hash.
+    pub history_query: InputState,
     pub history_branch_scroll: f32,
     /// The stash whose files the history's detail pane shows.
     pub history_stash: Option<String>,
@@ -138,6 +142,8 @@ impl Default for GitUiState {
             file_filter: InputState::default(),
             history_branches: None,
             history_scope: None,
+            history_file_scope: false,
+            history_query: InputState::default(),
             history_branch_scroll: 0.0,
             history_stash: None,
             history_nav: NavView::default(),

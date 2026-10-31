@@ -648,6 +648,7 @@ pub(crate) fn commits_header(
     terminal_focus: UiFocusHandle,
     editor_focus: UiFocusHandle,
     can_maximize: bool,
+    toolbar: impl FnOnce(UiRect) -> Element,
 ) -> Element {
     let header = UiRect::new(rect.left, rect.top + 1.0, rect.right, rect.top + HEADER_H);
     let (category, right) = categories(
@@ -668,7 +669,13 @@ pub(crate) fn commits_header(
         .key("commits-panel-header")
         .child(crate::ui::components::divider::top(rect))
         .child(category)
-        .child(header::rule(header, right + 12.0));
+        .child(header::rule(header, right + 12.0))
+        .child(toolbar(UiRect::new(
+            right + 24.0,
+            header.top,
+            (tools.left - 8.0).max(right + 24.0),
+            header.bottom,
+        )));
     if can_maximize {
         let maximized = state.get().maximized;
         let maximize = state.clone();

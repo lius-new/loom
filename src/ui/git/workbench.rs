@@ -12,7 +12,7 @@ use crate::ui::git::commands::{Binding, Command, Snapshot};
 use crate::ui::git::history_detail::Subject;
 use crate::ui::git::panel::{
     GitHover, HISTORY, HistoryRow, ROW_H, STASHES, ScrollRegion, TAGS, WORKTREES, history_row,
-    history_rows, scroll_region, stash_row, tag_row, visible_rows, visible_worktree_rows,
+    history_rows_matching, scroll_region, stash_row, tag_row, visible_rows, visible_worktree_rows,
     worktree_row,
 };
 use crate::ui::git::state::HistoryPane;
@@ -285,7 +285,12 @@ fn render_body(
         .filter(|history| history.repository == repository.worktree_root);
     let history_tab = panel_tab == HISTORY;
     let mut commit_rows = if history_tab {
-        history_rows(history, app.model.history_commit())
+        history_rows_matching(
+            history,
+            app.model.history_commit(),
+            app.ui.history_query.text(),
+            app.model.history_path().is_some() || !app.ui.history_query.text().trim().is_empty(),
+        )
     } else {
         Vec::new()
     };
@@ -936,4 +941,205 @@ fn resize_handle(rect: UiRect, state: Binding) -> Element {
     .on_pointer_up(move |_cx, _pointer| {
         drag_end.update(|app| app.ui.panel_resize_offset = None);
     })
+}
+
+pub const HISTORY_QUERY_ID: &str = "git-history-query";
+
+/// Scope switch, search box and commit count that sit in the Commits header,
+/// right of the Terminal / Commits switch.
+pub fn history_toolbar(
+    rect: UiRect,
+    state: Binding,
+    store: Snapshot,
+    focus: UiFocusHandle,
+) -> Element {
+    use crate::ui::components::input::{AccessInputOptions, InputBinding, InputStyle};
+    use crate::ui::components::text::SingleLineText;
+    use crate::ui::tabs::measure_sans as measure;
+    use lgui::core::UiId;
+    use std::sync::Arc;
+
+    let app = state.get();
+    let active_file = state
+        .frame()
+        .active_file
+        .filter(|path| {
+            store
+                .get()
+                .active()
+                .is_some_and(|repository| path.starts_with(&repository.worktree_root))
+        });
+    let file_scope = app.ui.history_file_scope && active_file.is_some();
+    let commits = app
+        .model
+        .history()
+        .and_then(|history| history.commits.as_ref().ok());
+    let shown = commits.map_or(0, |commits| {
+        commits
+            .iter()
+            .filter(|commit| {
+                crate::ui::git::panel::commit_matches(commit, app.ui.history_query.text().trim())
+            })
+            .count()
+    });
+    let count = if commits.is_none() {
+        String::new()
+    } else {
+        let more = if app.model.history_can_load_more() { "+" } else { "" };
+        format!("{shown}{more} {}", if shown == 1 && more.is_empty() { "commit" } else { "commits" })
+    };
+
+    let size = theme::UI_SIZE;
+    let height = 22.0;
+    let top = rect.top + (rect.height() - height) / 2.0;
+    let file_label = active_file
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map(|name| {
+            let name = name.to_string_lossy();
+            let clipped = name.chars().take(18).collect::<String>();
+            if clipped.len() < name.len() {
+                format!("File · {clipped}…")
+            } else {
+                format!("File · {name}")
+            }
+        })
+        .unwrap_or_else(|| "File".to_owned());
+    let label_width = |label: &str| {
+        SingleLineText::new(
+            label.to_owned(),
+            UiRect::new(0.0, 0.0, 10_000.0, size),
+            theme::sans(theme::c().text, size),
+        )
+        .width()
+    };
+    let branch_w = label_width("Branch") + 20.0;
+    let file_w = label_width(&file_label) + 20.0;
+    let track = UiRect::new(
+        rect.left,
+        top,
+        (rect.left + 6.0 + branch_w + file_w + 2.0).min(rect.right),
+        top + height,
+    );
+    if track.right - track.left < branch_w + file_w {
+        // Too narrow for the toolbar; the commit list alone remains.
+        return lgui::prelude::group(rect);
+    }
+    let mut root = lgui::prelude::group(rect).key("history-toolbar").child(panel(
+        track,
+        VisualStyle::filled(theme::c().active_line).radius(4.0),
+    ));
+    let mut left = track.left + 3.0;
+    for (id, label, width, active, enabled, to_file) in [
+        ("history-scope-branch", "Branch".to_owned(), branch_w, !file_scope, true, false),
+        ("history-scope-file", file_label, file_w, file_scope, active_file.is_some(), true),
+    ] {
+        let slot = UiRect::new(left, track.top + 2.0, left + width, track.bottom - 2.0);
+        left = slot.right + 2.0;
+        let mut semantics = Semantics::new(SemanticRole::Button).name(label.clone());
+        semantics.state.selected = active;
+        semantics.state.disabled = !enabled;
+        let color = if !enabled {
+            theme::c().text_ghost
+        } else if active {
+            theme::c().text
+        } else {
+            theme::c().text_muted
+        };
+        let style = if active {
+            VisualStyle::filled(theme::c().surface).radius(3.0)
+        } else {
+            VisualStyle::default()
+        };
+        let click = state.clone();
+        let mut button = panel(slot, style).key(id).semantics(semantics);
+        if enabled {
+            button = button
+                .event_policy(EventPolicy::INTERACTIVE)
+                .cursor(CursorIcon::Pointer)
+                .on_click(move || {
+                    click.update(|app| {
+                        app.ui.history_file_scope = to_file;
+                        app.ui.details_scroll = 0.0;
+                    });
+                });
+        }
+        let label_rect = UiRect::new(
+            slot.left + 10.0,
+            slot.top,
+            slot.right,
+            slot.bottom,
+        );
+        root = root.child(button.child(text(label_rect, label, theme::sans(color, size))));
+    }
+
+    let count_w = if count.is_empty() {
+        0.0
+    } else {
+        measure(&count, theme::SMALL, 400) + 8.0
+    };
+    let input_left = track.right + 8.0;
+    let input_right = (input_left + 240.0).min(rect.right - count_w - 8.0);
+    if input_right - input_left >= 80.0 {
+        let field = UiRect::new(input_left, top, input_right, top + height);
+        let searching = app.ui.history_query.focused;
+        let reset = state.clone();
+        let box_ = theme::bordered(
+            field,
+            theme::c().bg,
+            if searching { theme::c().accent } else { theme::c().border },
+            4.0,
+            1.0,
+        )
+        .child(crate::ui::drawer::drawer_icon(
+            "history-search-icon",
+            "search",
+            UiRect::new(
+                field.left + 6.0,
+                field.top + 4.0,
+                field.left + 20.0,
+                field.bottom - 4.0,
+            ),
+            theme::c().text_ghost,
+        ));
+        root = root.child(box_).child(crate::ui::components::input::render_access(
+            UiRect::new(field.left + 20.0, field.top, field.right - 2.0, field.bottom),
+            UiId::new(HISTORY_QUERY_ID),
+            focus,
+            InputBinding::new_access(
+                state.panel.clone(),
+                |app| &app.ui.history_query,
+                |app| {
+                    app.ui.details_scroll = 0.0;
+                    &mut app.ui.history_query
+                },
+            ),
+            AccessInputOptions {
+                label: "Search commits",
+                placeholder: "Search commits, authors, hashes…",
+                style: InputStyle {
+                    text: theme::sans(theme::c().text, 12.0),
+                    placeholder: theme::sans(theme::c().text_ghost, 12.0),
+                    caret: theme::c().text,
+                    selection: theme::c().accent,
+                },
+                on_submit: None,
+                on_cancel: Some(Arc::new(move || {
+                    reset.update(|app| {
+                        app.ui.history_query.clear();
+                        app.ui.details_scroll = 0.0;
+                    })
+                })),
+                on_blur: None,
+            },
+        ));
+        if count_w > 0.0 {
+            root = root.child(text(
+                UiRect::new(field.right + 8.0, rect.top, rect.right, rect.bottom),
+                count,
+                theme::mono(theme::c().text_muted, theme::SMALL),
+            ));
+        }
+    }
+    root
 }

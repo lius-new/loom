@@ -1252,6 +1252,7 @@ mod panel_virtualization_tests {
                     application.clone(),
                     region,
                     600.0,
+                    cx.focus_handle(UiId::new(crate::ui::git::workbench::HISTORY_QUERY_ID)),
                 )
             } else {
                 crate::app::terminal_view::render_region(
@@ -1306,7 +1307,8 @@ mod panel_virtualization_tests {
             named(&session, "History").is_none(),
             "no nested legacy header"
         );
-        assert!(named(&session, "Search commits").is_none());
+        assert!(named(&session, "Search commits").is_some());
+        assert!(named(&session, "Branch").is_some());
         save_drawer_preview(&session, &context, viewport, "bottom-panel-commits");
         assert!(
             text_nodes(&session)
@@ -3019,6 +3021,38 @@ mod panel_action_tests {
                 },
                 HistoryRow::Commit(commit("a"), false),
             ]
+        );
+    }
+
+    #[test]
+    fn history_search_matches_every_word_and_draws_without_lanes() {
+        let commit = |oid: &str, subject: &str, author: &str| CommitSummary {
+            oid: oid.into(),
+            parents: vec!["p".into()],
+            author: author.into(),
+            author_email: "a@b".into(),
+            timestamp: 0,
+            subject: subject.into(),
+            decorations: Vec::new(),
+        };
+        let history = GitHistory {
+            repository: PathBuf::from("repo"),
+            head: Some("b".into()),
+            commits: Ok(vec![
+                commit("bee1", "fix terminal tabs", "Ana"),
+                commit("aaa2", "perf text batches", "Bo"),
+            ]),
+        };
+        let rows = history_rows_matching(Some(&history), None, "TERMINAL ana", true);
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(&rows[0], HistoryRow::Commit(c, false) if c.parents.is_empty()));
+        let chained = history_rows_matching(Some(&history), None, "", true);
+        assert!(matches!(&chained[0], HistoryRow::Commit(c, _) if c.parents == ["aaa2".to_owned()]));
+        assert!(matches!(&chained[1], HistoryRow::Commit(c, _) if c.parents.is_empty()));
+        assert_eq!(history_rows_matching(Some(&history), None, "aaa", false).len(), 1);
+        assert_eq!(
+            history_rows_matching(Some(&history), None, "nothing", false),
+            [HistoryRow::Message("No commits match.".into())]
         );
     }
 

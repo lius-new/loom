@@ -27,6 +27,8 @@ pub struct HistoryRequest {
     sequence: u64,
     pub repository: PathBuf,
     pub head: Option<String>,
+    /// Restricts the log to one file's history.
+    pub path: Option<PathBuf>,
     pub skip: usize,
 }
 
@@ -46,6 +48,7 @@ pub struct GitModel {
     history: Option<GitHistory>,
     history_sequence: u64,
     history_pending: Option<HistoryRequest>,
+    history_path: Option<PathBuf>,
     history_has_more: bool,
     history_commit: Option<ExpandedCommit>,
     commit_details: HashMap<String, Result<CommitDetails, String>>,
@@ -77,20 +80,35 @@ impl GitModel {
         repository: PathBuf,
         head: Option<String>,
     ) -> Option<HistoryRequest> {
-        if self
-            .history_pending
-            .as_ref()
-            .is_some_and(|request| request.repository == repository && request.head == head)
-            || self.history.as_ref().is_some_and(|history| {
+        self.begin_history_of(repository, head, None)
+    }
+
+    /// Like [`Self::begin_history`], optionally listing only the commits that touched `path`.
+    pub fn begin_history_of(
+        &mut self,
+        repository: PathBuf,
+        head: Option<String>,
+        path: Option<PathBuf>,
+    ) -> Option<HistoryRequest> {
+        if self.history_pending.as_ref().is_some_and(|request| {
+            request.repository == repository && request.head == head && request.path == path
+        }) || (self.history_path == path
+            && self.history.as_ref().is_some_and(|history| {
                 history.repository == repository && history.head == head && history.commits.is_ok()
-            })
+            }))
         {
             return None;
         }
         self.history = None;
         self.history_has_more = false;
         self.history_commit = None;
-        Some(self.history_request(repository, head, 0))
+        self.history_path = path.clone();
+        Some(self.history_request(repository, head, path, 0))
+    }
+
+    /// The file the loaded history is restricted to.
+    pub fn history_path(&self) -> Option<&Path> {
+        self.history_path.as_deref()
     }
 
     pub fn history_can_load_more(&self) -> bool {
@@ -106,13 +124,19 @@ impl GitModel {
             .as_ref()
             .filter(|history| history.repository == repository && history.head.is_some())?;
         let skip = history.commits.as_ref().ok()?.len();
-        Some(self.history_request(history.repository.clone(), history.head.clone(), skip))
+        Some(self.history_request(
+            history.repository.clone(),
+            history.head.clone(),
+            self.history_path.clone(),
+            skip,
+        ))
     }
 
     fn history_request(
         &mut self,
         repository: PathBuf,
         head: Option<String>,
+        path: Option<PathBuf>,
         skip: usize,
     ) -> HistoryRequest {
         self.history_sequence += 1;
@@ -120,6 +144,7 @@ impl GitModel {
             sequence: self.history_sequence,
             repository,
             head,
+            path,
             skip,
         };
         self.history_pending = Some(request.clone());
@@ -435,6 +460,35 @@ mod tests {
             &commits(100, 103)
         );
         assert!(!model.history_can_load_more());
+    }
+
+    #[test]
+    fn a_file_scope_reloads_the_history_and_rejects_the_branch_listing() {
+        let mut model = GitModel::default();
+        let branch = model
+            .begin_history("repo".into(), Some("head".into()))
+            .unwrap();
+        assert!(model.finish_history_page(&branch, Ok(commits(0, 3))));
+        assert!(model.history_path().is_none());
+        // The same listing is kept, but another file needs its own log.
+        assert!(model
+            .begin_history_of("repo".into(), Some("head".into()), None)
+            .is_none());
+        let file = model
+            .begin_history_of("repo".into(), Some("head".into()), Some("f.rs".into()))
+            .unwrap();
+        assert_eq!(model.history_path(), Some(Path::new("f.rs")));
+        assert!(model.history().is_none());
+        assert!(!model.finish_history_page(&branch, Ok(commits(0, 3))));
+        assert!(model.finish_history_page(&file, Ok(commits(0, 2))));
+        assert!(model
+            .begin_history_of("repo".into(), Some("head".into()), Some("f.rs".into()))
+            .is_none());
+        let back = model
+            .begin_history("repo".into(), Some("head".into()))
+            .unwrap();
+        assert!(model.history_path().is_none());
+        assert!(model.finish_history_page(&back, Ok(commits(0, 3))));
     }
 
     #[test]

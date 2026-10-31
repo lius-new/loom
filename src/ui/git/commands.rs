@@ -220,6 +220,8 @@ pub struct Frame {
     pub terminal_focused: bool,
     pub active_diff: Option<DiffRequest>,
     pub active_diff_focus: Option<DiffRequest>,
+    /// The file in the active editor tab, for the Commits view's file scope.
+    pub active_file: Option<PathBuf>,
 }
 
 #[derive(Clone)]

@@ -49,6 +49,15 @@ open when no terminal sessions exist. `Ctrl+Shift+H` (or `Command+Shift+H`)
 shows or hides the bottom panel with **Commits** selected. The panel shares its
 height and collapse control with Terminal, without a second History tab bar.
 
+To the right of the switch, the Commits header offers a **Branch / File** scope,
+a search box and a commit count. **Branch** lists the commits of the chosen
+branch; **File · name** lists only the commits that touched the file in the
+active editor tab, following renames, and follows the tab as it changes (it is
+unavailable when no file of the repository is open). The search box narrows the
+loaded commits to those whose subject, author, email or hash contain every word
+typed; `Esc` clears it. A narrowed or file-scoped list is drawn without graph
+lanes. The count shows the commits listed, with a `+` while more pages remain.
+
 When the panel is at least 900px wide, a navigator fills the left side.
 An icon rail along its edge switches between
 branches (Local and Remote folders), tags and stashes, each with its count; only

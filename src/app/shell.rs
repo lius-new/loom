@@ -359,10 +359,13 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     let git_target = super::git_poll::poll_target(&s);
     // Keep the history of the active repository's HEAD while it is shown.
     let history_key = super::git_poll::history_key(&s, &git_store.get());
+    let history_file = super::git_poll::history_file(&s, &git_store.get());
     let history_state = state.clone();
+    let history_query_focus = cx.focus_handle(UiId::new(crate::ui::git::workbench::HISTORY_QUERY_ID));
     // A moved HEAD also moves the branch list the history can be scoped to.
     let branch_key = (
         history_key.clone(),
+        history_file.clone(),
         git_store
             .get()
             .active()
@@ -371,7 +374,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
     cx.use_effect(branch_key, move || {
         if let Some((root, head)) = history_key {
             crate::app::git::load_history_branches(&history_state, root.clone());
-            crate::app::git::load_history(&history_state, root, head);
+            crate::app::git::load_history_of(&history_state, root, head, history_file);
         }
         || {}
     });
@@ -1392,6 +1395,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
             application.clone(),
             None,
             editor_region.height(),
+            history_query_focus.clone(),
         ));
     }
     if source_control_left {
@@ -1464,6 +1468,7 @@ fn render_app(cx: &mut RenderCx<'_, '_>) -> Element {
                 application.clone(),
                 Some(*region),
                 editor_region.height(),
+                history_query_focus.clone(),
             ));
             continue;
         }

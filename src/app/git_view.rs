@@ -26,6 +26,7 @@ pub(crate) fn binding(state: &AppContext, store: &State<GitStoreSnapshot>) -> Bi
                     target: d.target,
                 }),
                 active_diff_focus: app.workspace.active_diff_focus().cloned(),
+                active_file: app.workspace.active_path().map(std::path::Path::to_path_buf),
             }
         },
         move |command| run(&dispatch_state, &store, command),

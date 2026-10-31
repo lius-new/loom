@@ -1247,12 +1247,22 @@ pub fn request_discard_block(state: &AppContext, root: PathBuf, path: PathBuf, b
 /// Load the newest commits of `root`'s HEAD, which is at `head`, into the
 /// Source Control history. Read-only, so it runs beside any operation.
 pub fn load_history(state: &AppContext, root: PathBuf, head: Option<String>) {
+    load_history_of(state, root, head, None);
+}
+
+/// Like [`load_history`], restricted to the commits that touched `path`.
+pub fn load_history_of(
+    state: &AppContext,
+    root: PathBuf,
+    head: Option<String>,
+    path: Option<PathBuf>,
+) {
     let Some(application) = state.services().and_then(|runtime| runtime.application()) else {
         return;
     };
     let mut request = None;
     state.try_update(|app| {
-        request = app.git.model.begin_history(root, head);
+        request = app.git.model.begin_history_of(root, head, path);
         if request.is_some() {
             app.git.ui.details_scroll = 0.0;
         }
@@ -1296,7 +1306,7 @@ fn load_history_page(
                         service.backend().history(
                             &request.repository,
                             request.head.as_deref(),
-                            None,
+                            request.path.as_deref(),
                             request.skip,
                             HISTORY_PAGE_SIZE + 1,
                         )

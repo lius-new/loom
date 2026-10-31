@@ -375,6 +375,7 @@ pub(crate) fn render_commits(
     application: Arc<ApplicationHandle>,
     region: Option<crate::domain::application_layout::RegionId>,
     max_height: f32,
+    query_focus: UiFocusHandle,
 ) -> Element {
     let sessions = state
         .get()
@@ -389,10 +390,12 @@ pub(crate) fn render_commits(
         rect.right,
         rect.bottom,
     );
+    let git_binding = super::git_view::binding(&state, &git_store);
+    let git_snapshot: crate::ui::git::commands::Snapshot = git_store.into();
     let content = crate::ui::git::workbench::render_content(
         body,
-        super::git_view::binding(&state, &git_store),
-        git_store.into(),
+        git_binding.clone(),
+        git_snapshot.clone(),
         editor_focus.clone(),
     );
     let (binding, _, _) = binding(&state, &terminal_tabs, &application);
@@ -403,6 +406,7 @@ pub(crate) fn render_commits(
         terminal_focus,
         editor_focus,
         region.is_some(),
+        |free| crate::ui::git::workbench::history_toolbar(free, git_binding, git_snapshot, query_focus),
     );
     let root = lgui::prelude::group(rect)
         .key("bottom-commits-panel")

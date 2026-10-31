@@ -75,6 +75,18 @@ pub(crate) fn history_key(
         })
 }
 
+/// The active file the Commits view is restricted to, when that scope is chosen.
+pub(crate) fn history_file(app: &AppState, store: &GitStoreSnapshot) -> Option<PathBuf> {
+    if !app.git.ui.history_file_scope {
+        return None;
+    }
+    let root = &store.active()?.worktree_root;
+    app.workspace
+        .active_path()
+        .filter(|path| path.starts_with(root))
+        .map(std::path::Path::to_path_buf)
+}
+
 /// Start polling `roots`; dropping the handle stops it.
 pub(crate) fn start(
     roots: Vec<PathBuf>,
